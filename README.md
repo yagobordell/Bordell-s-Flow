@@ -13,22 +13,25 @@ Objetivos principales:
 
 ## Estado
 
-Actualmente estamos en la **Fase 0 — Cimientos del proyecto**.
+**Fase 1 — Guionista y Director: completada.**
+
+Siguiente etapa: **Fase 2 — Audio y sincronización**.
 
 ## Roadmap
 
-1. **Fase 0 — Base del proyecto**
+1. **Fase 0 — Base del proyecto** ✅
    - Estructura Python.
    - Configuración mediante variables de entorno.
    - Contratos Pydantic.
    - Tests.
    - Git.
 
-2. **Fase 1 — Guionista y Director**
+2. **Fase 1 — Guionista y Director** ✅
    - Entrada: un tema.
    - Generación del guion.
    - División en escenas.
    - Prompts visuales estructurados.
+   - Workflow ejecutable con salida JSON.
 
 3. **Fase 2 — Audio y sincronización**
    - TTS por escena.
@@ -86,16 +89,29 @@ Copia las variables de entorno:
 cp .env.example .env
 ```
 
+En Windows puedes duplicar `.env.example` y renombrarlo a `.env`.
+
+## Seguridad de secretos
+
+- Nunca subas `.env` al repositorio.
+- `.env` y `.env.*` están ignorados por Git.
+- Solo `.env.example` se versiona y debe contener valores vacíos o de ejemplo.
+- Las claves reales de OpenAI, AI33 u otros proveedores deben permanecer únicamente en tu entorno local o en un gestor de secretos.
+
 Ejecuta los tests:
 
 ```bash
-pytest
+python -m pytest
 ```
 
-## Primer flujo previsto
+## Fase 1
+
+Flujo implementado:
 
 ```text
 Topic
+  ↓
+ProjectConfig
   ↓
 ScriptWriterAgent
   ↓
@@ -106,4 +122,19 @@ DirectorAgent
 VideoPlan
 ```
 
-El objeto `VideoPlan` será el contrato central del pipeline.
+El objeto `VideoPlan` es el contrato central del pipeline.
+
+Puedes ejecutar la Fase 1 con:
+
+```bash
+python scripts/run_phase1.py "La historia de los samuráis"
+```
+
+La ejecución genera:
+
+```text
+data/output/phase1/
+├── project.json
+├── script.json
+└── video_plan.json
+```
