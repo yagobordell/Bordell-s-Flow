@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     openai_api_key: str | None = None
-    openai_model: str | None = None
+    openai_model: str = "gpt-5.4-mini"
 
     ai33_api_key: str | None = None
     ai33_base_url: str | None = None
