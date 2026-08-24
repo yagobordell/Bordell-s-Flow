@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Generated media
+data/output/*
+data/tmp/*
+!data/output/.gitkeep
+!data/tmp/.gitkeep
+
+# Model caches / large artifacts
+models/
+.cache/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+
+# Media artifacts
+*.wav
+*.mp3
+*.mp4
+*.mov
+*.webm
