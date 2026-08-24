@@ -1,8 +1,6 @@
-"""External model and API providers.
+"""External model and API providers."""
 
-Future examples:
-- OpenAI
-- AI33
-- FLUX worker
-- Wan/LTX worker
-"""
+from .base import StructuredTextProvider
+from .openai import OpenAIProvider
+
+__all__ = ["OpenAIProvider", "StructuredTextProvider"]
