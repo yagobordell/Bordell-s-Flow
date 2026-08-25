@@ -14,9 +14,9 @@ Objetivos principales:
 
 ## Estado
 
-**Fase 3 — Continuidad y shots: en desarrollo.**
+**Fase 3 — Continuidad y shots: completada.** ✅
 
-Subfase actual: **continuidad stateful bloque a bloque implementada; shot planning pendiente**.
+Siguiente etapa: **Fase 4 — Referencias visuales**.
 
 La Fase 1 queda conservada como experimento funcional. El pipeline de producción definitivo
 empieza desde un **guion ya terminado**, no desde un tema.
@@ -51,13 +51,17 @@ empieza desde un **guion ya terminado**, no desde un tema.
    - Validaciones contra pérdida, duplicación o reordenación de contenido.
    - Workflow validado con una ejecución real contra OpenAI.
 
-5. **Fase 3 — Continuidad y shots** 🚧
+5. **Fase 3 — Continuidad y shots** ✅
    - Provider stateful basado en `previous_response_id`.
    - `ContinuityBot`: procesamiento serial bloque a bloque.
-   - Registro canónico de personajes, grupos, lugares y objetos.
+   - Registro canónico de personajes, grupos, lugares y objetos físicos.
+   - Persistencia de entidades contextualmente activas entre bloques.
    - IDs de entidad asignados por Python (`character_001`, `location_001`, etc.).
    - Referencias de entidades por bloque mediante `BlockContinuity`.
-   - Planificación de shots escena a escena pendiente.
+   - `ShotPlannerBot`: planificación serial escena a escena.
+   - IDs de shot globales y deterministas asignados por Python.
+   - Cobertura exacta y ordenada de beats en los shots.
+   - Validación real multi-turn de continuidad y validación real de shot planning.
 
 6. **Fase 4 — Referencias visuales**
    - Referencias consistentes de personajes y escenarios.
@@ -167,12 +171,15 @@ Scene[]
 Shot[]
 ```
 
-Los primeros contratos se mantienen deliberadamente pequeños:
+Los contratos de planificación se mantienen deliberadamente pequeños:
 
 ```text
-NarrativeBlock = { id, text }
-Beat           = { id, block_id, action }
-Scene          = { id, beat_ids }
+NarrativeBlock   = { id, text }
+Beat             = { id, block_id, action }
+Scene            = { id, beat_ids }
+ContinuityEntity = { id, kind, name, description }
+BlockContinuity  = { block_id, entity_ids }
+Shot             = { id, scene_id, beat_ids, entity_ids, action }
 ```
 
 El generador de guion de la Fase 1 sigue disponible como utilidad opcional:
@@ -216,7 +223,7 @@ cortes artificiales únicamente para crear paralelismo.
 
 ## Fase 3 — Continuidad stateful
 
-La primera subfase de la Fase 3 consume los bloques narrativos generados por la Fase 2:
+La continuidad consume los bloques narrativos generados por la Fase 2:
 
 ```bash
 python scripts/run_phase3.py
@@ -250,9 +257,45 @@ location_001
 object_001
 ```
 
-Un guion cuya Fase 2 produzca un único bloque ejecutará correctamente esta subfase, pero no permite
-observar una cadena stateful de varios turnos. Para validar específicamente la propagación de estado,
-conviene probar también con un guion más largo que produzca varios bloques narrativos.
+Las entidades contextualmente activas pueden mantenerse aunque el siguiente bloque no repita su
+nombre, siempre que la narración continúe claramente en el mismo lugar o situación. `object` se
+reserva para objetos físicos tangibles: conceptos como honor, disciplina o bushido no reciben IDs
+de continuidad.
+
+La cadena stateful se validó con un ejemplo de tres bloques: un mismo personaje, una misma
+localización y un mismo objeto mantuvieron IDs canónicos estables entre turnos.
+
+## Fase 3 — Shot planning
+
+Los shots consumen los beats y escenas de la Fase 2 junto con los artefactos de continuidad:
+
+```bash
+python scripts/run_phase3_shots.py
+```
+
+Genera:
+
+```text
+data/output/phase3/shots.json
+```
+
+`ShotPlannerBot` procesa las escenas en orden y mantiene su propia cadena stateful independiente de
+`ContinuityBot`. La continuidad pasa entre etapas mediante IDs y JSON canónicos, no mediante memoria
+oculta compartida entre bots.
+
+El modelo decide únicamente:
+
+- cómo agrupar beats consecutivos en shots coherentes;
+- qué entidades canónicas participan realmente en cada shot;
+- una frase breve con la acción visual principal.
+
+Python controla IDs, relaciones con escenas, cobertura de beats y validez de entidades. Cámara,
+lente, iluminación, duración, transiciones, estilo y prompts de generación siguen deliberadamente
+fuera del contrato.
+
+Validación real completada con el guion de samuráis de la Fase 2: **3 escenas -> 7 shots**, con los
+beats **1–11 cubiertos exactamente una vez y en orden**. Los shots combinaron beats consecutivos
+cuando formaban una misma acción visual, evitando una fragmentación artificial de un shot por beat.
 
 La prueba histórica de la Fase 1 sigue disponible con:
 
