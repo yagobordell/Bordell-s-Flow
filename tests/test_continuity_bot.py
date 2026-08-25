@@ -45,3 +45,24 @@ def test_continuity_bot_rejects_unknown_existing_entity_ids() -> None:
     assert provider.last_call is not None
     assert provider.last_call["previous_response_id"] == "resp_previous"
     assert provider.last_call["output_type"] is ContinuityDecision
+
+
+def test_continuity_bot_instructions_define_objects_as_physical() -> None:
+    provider = FakeStatefulProvider(
+        ContinuityDecision(existing_entity_ids=[], new_entities=[])
+    )
+    bot = ContinuityBot(provider=provider, model="test-model")  # type: ignore[arg-type]
+
+    asyncio.run(
+        bot.run(
+            NarrativeBlock(id=1, text="El bushido exige honor y disciplina."),
+            known_entities=[],
+            previous_response_id=None,
+        )
+    )
+
+    assert provider.last_call is not None
+    instructions = provider.last_call["instructions"]
+    assert "objeto físico tangible" in instructions
+    assert "bushido" in instructions
+    assert "sin recibir un `entity_id`" in instructions
