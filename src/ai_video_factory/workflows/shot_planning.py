@@ -30,7 +30,15 @@ async def plan_shots(
 
     known_entity_ids = set(entity_by_id)
     for item in block_continuity:
-        unknown_ids = [entity_id for entity_id in item.entity_ids if entity_id not in known_entity_ids]
+        if len(item.entity_ids) != len(set(item.entity_ids)):
+            raise ValueError(
+                f"Block continuity for block {item.block_id} contains duplicate entity IDs"
+            )
+        unknown_ids = [
+            entity_id
+            for entity_id in item.entity_ids
+            if entity_id not in known_entity_ids
+        ]
         if unknown_ids:
             raise ValueError(
                 "Block continuity referenced unknown entity IDs: " + ", ".join(unknown_ids)
@@ -44,10 +52,14 @@ async def plan_shots(
         try:
             scene_beats = [beat_by_id[beat_id] for beat_id in scene.beat_ids]
         except KeyError as exc:
-            raise ValueError(f"Scene {scene.id} referenced unknown beat ID: {exc.args[0]}") from exc
+            raise ValueError(
+                f"Scene {scene.id} referenced unknown beat ID: {exc.args[0]}"
+            ) from exc
 
         block_ids = list(dict.fromkeys(beat.block_id for beat in scene_beats))
-        missing_blocks = [block_id for block_id in block_ids if block_id not in continuity_by_block]
+        missing_blocks = [
+            block_id for block_id in block_ids if block_id not in continuity_by_block
+        ]
         if missing_blocks:
             raise ValueError(
                 "Missing continuity for narrative block IDs: "
@@ -58,7 +70,9 @@ async def plan_shots(
         for block_id in block_ids:
             available_ids.update(continuity_by_block[block_id].entity_ids)
 
-        available_entities = [entity for entity in entities if entity.id in available_ids]
+        available_entities = [
+            entity for entity in entities if entity.id in available_ids
+        ]
 
         step = await shot_bot.run(
             scene,
