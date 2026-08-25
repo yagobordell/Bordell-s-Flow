@@ -8,5 +8,12 @@ from .beats import BeatExtractorBot
 from .continuity import ContinuityBot
 from .narrative_blocks import NarrativeBlockBot
 from .scenes import ScenePlannerBot
+from .shots import ShotPlannerBot
 
-__all__ = ["BeatExtractorBot", "ContinuityBot", "NarrativeBlockBot", "ScenePlannerBot"]
+__all__ = [
+    "BeatExtractorBot",
+    "ContinuityBot",
+    "NarrativeBlockBot",
+    "ScenePlannerBot",
+    "ShotPlannerBot",
+]

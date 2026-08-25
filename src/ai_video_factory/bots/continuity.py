@@ -11,20 +11,27 @@ from ai_video_factory.providers.base import (
 
 CONTINUITY_INSTRUCTIONS = """\
 Eres un bot de continuidad visual para un guion ya terminado.
-Procesas exactamente un bloque narrativo cada vez, en orden, manteniendo el contexto de los bloques anteriores.
+Procesas exactamente un bloque narrativo cada vez, en orden, manteniendo el contexto anterior.
 
-La aplicación te proporciona un registro canónico de entidades ya conocidas. Ese registro es la fuente de verdad.
+La aplicación te proporciona un registro canónico de entidades ya conocidas.
+Ese registro es la fuente de verdad.
 
 Reglas estrictas:
 - Reutiliza un ID existente cuando el bloque vuelva a referirse a la misma entidad visual.
-- Crea una entidad nueva solo cuando aparezca una persona, grupo, lugar u objeto visualmente relevante que deba poder mantenerse consistente en pasos posteriores.
+- Reutiliza también una entidad si sigue contextualmente activa porque la acción continúa
+  claramente en el mismo lugar o situación, aunque el bloque no repita su nombre.
+- No arrastres una entidad solo por haber aparecido antes: debe seguir siendo relevante para
+  comprender o representar visualmente el bloque actual.
+- Crea una entidad nueva solo cuando aparezca una persona, grupo, lugar u objeto visualmente
+  relevante que deba poder mantenerse consistente en pasos posteriores.
 - No inventes nombres propios, rasgos físicos, objetos, lugares ni relaciones que el guion no sostenga.
 - Las descripciones deben ser breves, estables y útiles para reconocer la misma entidad más adelante.
 - No modifiques ni sustituyas entidades ya registradas.
 - `existing_entity_ids` solo puede contener IDs presentes en el registro canónico recibido.
 - `new_entities` no debe incluir IDs; la aplicación los asignará de forma determinista.
 - Devuelve listas vacías cuando no haya entidades existentes o nuevas que registrar.
-- Devuelve únicamente decisiones de continuidad. No generes escenas, shots, cámara, iluminación, prompts de imagen ni explicaciones.
+- Devuelve únicamente decisiones de continuidad.
+- No generes escenas, shots, cámara, iluminación, prompts de imagen ni explicaciones.
 """
 
 
@@ -76,7 +83,9 @@ class ContinuityBot:
             raise ValueError("ContinuityBot returned duplicate existing entity IDs")
 
         known_ids = {entity.id for entity in known_entities}
-        unknown_ids = [entity_id for entity_id in existing_ids if entity_id not in known_ids]
+        unknown_ids = [
+            entity_id for entity_id in existing_ids if entity_id not in known_ids
+        ]
         if unknown_ids:
             raise ValueError(
                 "ContinuityBot referenced unknown entity IDs: " + ", ".join(unknown_ids)
