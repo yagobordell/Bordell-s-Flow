@@ -23,7 +23,8 @@ Reglas estrictas:
 - No crees entidades nuevas ni cambies la identidad de las existentes.
 - No inventes hechos que el beat no sostenga.
 - No generes IDs de shot; la aplicación los asignará.
-- No generes cámara, tipo de plano, lente, iluminación, duración, transición, estilo ni prompts de imagen/vídeo.
+- No generes cámara, tipo de plano, lente, iluminación ni duración.
+- No generes transición, estilo ni prompts de imagen o vídeo.
 - Devuelve únicamente la planificación estructurada solicitada.
 """
 
@@ -60,7 +61,9 @@ class ShotPlannerBot:
         expected_beat_ids = scene.beat_ids
         received_beat_ids = [beat.id for beat in beats]
         if received_beat_ids != expected_beat_ids:
-            raise ValueError("ShotPlannerBot beats must exactly match the scene beat IDs and order")
+            raise ValueError(
+                "ShotPlannerBot beats must exactly match the scene beat IDs and order"
+            )
 
         beat_lines = "\n".join(f"{beat.id}: {beat.action}" for beat in beats)
         registry = _format_registry(available_entities)
@@ -82,18 +85,23 @@ class ShotPlannerBot:
             beat_id for shot in result.output.shots for beat_id in shot.beat_ids
         ]
         if returned_beat_ids != expected_beat_ids:
-            raise ValueError("ShotPlannerBot must use every scene beat exactly once and preserve order")
+            raise ValueError(
+                "ShotPlannerBot must use every scene beat exactly once and preserve order"
+            )
 
         available_ids = {entity.id for entity in available_entities}
         for shot in result.output.shots:
             if len(shot.entity_ids) != len(set(shot.entity_ids)):
                 raise ValueError("ShotPlannerBot returned duplicate entity IDs inside a shot")
             unknown_ids = [
-                entity_id for entity_id in shot.entity_ids if entity_id not in available_ids
+                entity_id
+                for entity_id in shot.entity_ids
+                if entity_id not in available_ids
             ]
             if unknown_ids:
                 raise ValueError(
-                    "ShotPlannerBot referenced unavailable entity IDs: " + ", ".join(unknown_ids)
+                    "ShotPlannerBot referenced unavailable entity IDs: "
+                    + ", ".join(unknown_ids)
                 )
 
         return result
