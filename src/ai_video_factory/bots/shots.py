@@ -17,6 +17,9 @@ La aplicación te proporciona las entidades canónicas disponibles para esta esc
 Reglas estrictas:
 - Usa cada beat exactamente una vez y conserva su orden.
 - Cada shot debe contener uno o más beats consecutivos.
+- Combina beats consecutivos cuando puedan representarse como una misma acción visual continua.
+- Separa shots cuando cambien de forma significativa la acción, el sujeto, el lugar o el momento.
+- No fuerces un shot distinto para cada beat si no aporta una separación visual real.
 - `entity_ids` solo puede contener IDs de las entidades canónicas recibidas.
 - Incluye únicamente las entidades que deben verse o participar realmente en ese shot.
 - `action` describe en una frase breve la acción visual principal del shot.
