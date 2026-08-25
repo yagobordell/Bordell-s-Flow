@@ -68,6 +68,7 @@ def test_openai_provider_passes_previous_response_id_for_stateful_calls() -> Non
         "input": "Bloque 2",
         "text_format": Script,
         "previous_response_id": "resp_1",
+        "store": True,
     }
 
 
