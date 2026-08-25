@@ -4,7 +4,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from ai_video_factory.agents.director import DirectedStoryboard, DirectorAgent
-from ai_video_factory.domain import ProjectConfig, Scene, Script
+from ai_video_factory.domain import ProjectConfig, Script, StoryboardScene
 
 
 class FakeStructuredProvider:
@@ -40,7 +40,7 @@ def test_director_builds_video_plan_with_real_project_state() -> None:
         title="Samuráis: de guerreros a leyenda",
         visual_style="cinematic historical realism, feudal Japan, dramatic natural light",
         scenes=[
-            Scene(
+            StoryboardScene(
                 id=1,
                 narration="No siempre fueron la élite de Japón.",
                 visual_prompt="Feudal Japanese mounted warrior at dawn, cinematic realism",
