@@ -1,3 +1,21 @@
-from .models import ProjectConfig, Scene, Script, VideoPlan
+from .models import (
+    Beat,
+    NarrativeBlock,
+    ProjectConfig,
+    Scene,
+    Script,
+    SourceScript,
+    StoryboardScene,
+    VideoPlan,
+)
 
-__all__ = ["ProjectConfig", "Scene", "Script", "VideoPlan"]
+__all__ = [
+    "Beat",
+    "NarrativeBlock",
+    "ProjectConfig",
+    "Scene",
+    "Script",
+    "SourceScript",
+    "StoryboardScene",
+    "VideoPlan",
+]
