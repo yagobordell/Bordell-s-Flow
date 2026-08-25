@@ -30,7 +30,7 @@ SourceScript
   -> NarrativeBlock[]
       -> Beat[]
           -> Scene[]
-              -> Shot[]   (future phase)
+              -> Shot[]   (future step in Phase 3)
 ```
 
 Definitions:
@@ -40,7 +40,7 @@ Definitions:
 - **Scene**: ordered grouping of beat IDs.
 - **Shot**: future audiovisual unit generated from a scene.
 
-The contracts remain intentionally small:
+The early contracts remain intentionally small:
 
 ```text
 NarrativeBlock = { id, text }
@@ -48,14 +48,39 @@ Beat           = { id, block_id, action }
 Scene          = { id, beat_ids }
 ```
 
-A bot must emit only the variables required by the next stage. Camera, lighting, prompts,
-transitions, characters and locations are not fields of these early narrative contracts.
+Camera, lighting, transitions and image-generation prompts remain outside these narrative
+contracts.
 
-## Planned orchestration
+## Continuity registry
 
-### Parallel stages
+Phase 3 introduces a separate continuity layer instead of adding entity data to `NarrativeBlock`,
+`Beat` or `Scene`.
 
-Independent narrative blocks can be processed concurrently:
+```text
+ContinuityEntity = { id, kind, name, description }
+BlockContinuity  = { block_id, entity_ids }
+```
+
+Supported entity kinds are currently:
+
+```text
+character
+group
+location
+object
+```
+
+The model never assigns canonical IDs. It only decides which known entities reappear and describes
+new entities. Python assigns deterministic type-prefixed IDs such as `character_001` and
+`location_001`.
+
+This keeps identity stable even if model wording varies between calls.
+
+## Orchestration patterns
+
+### Parallel fan-out / fan-in
+
+Independent narrative blocks are processed concurrently during beat extraction:
 
 ```text
 block 1 -> BeatExtractorBot --\
@@ -63,23 +88,49 @@ block 2 -> BeatExtractorBot ----> Beat[] -> ScenePlannerBot
 block N -> BeatExtractorBot --/
 ```
 
-This is a fan-out / fan-in stage and can later use `asyncio.gather` or a workflow engine.
+`asyncio.gather` performs the fan-out and the application restores deterministic global beat IDs
+after the calls complete.
 
-### Stateful serial stages
+### Stateful serial continuity
 
-Continuity-sensitive work runs in order and retains prior context:
+Continuity-sensitive work runs in order:
 
 ```text
-block 1 -> context -> block 2 -> context -> block 3
+block 1 -> ContinuityBot -> response_id_1
+                              |
+                              v
+block 2 -> ContinuityBot -> response_id_2
+                              |
+                              v
+block 3 -> ContinuityBot -> ...
 ```
 
-Planned examples:
+Each turn receives:
 
-- continuity and entity assignment, block by block;
-- shot planning, scene by scene.
+1. the current narrative block;
+2. the canonical entity registry accumulated by Python;
+3. the previous OpenAI response ID.
 
-These stages may use the OpenAI Responses API conversation state while still requesting
-Structured Outputs on every step.
+The OpenAI provider uses `previous_response_id` to continue the model context. Stable bot
+instructions are sent again on every request instead of assuming that a previous response carries
+them forward.
+
+The application remains the source of truth for IDs, ordering and relationships. Provider-managed
+conversation state is used only for semantic continuity.
+
+## Provider boundaries
+
+The original `StructuredTextProvider` remains unchanged for independent one-shot transformations.
+Phase 3 adds `StatefulStructuredTextProvider`, whose result contains:
+
+```text
+StatefulStructuredResult
+  output       -> validated Pydantic Structured Output
+  response_id  -> provider state identifier for the next turn
+```
+
+`OpenAIProvider` implements both contracts. This allows Phase 1 and Phase 2 bots to remain stateless
+while continuity and later shot planning can use serial state.
 
 ## Phase 1 compatibility
 
@@ -100,12 +151,22 @@ The Phase 1 flow is not the long-term production architecture.
 - **Media plumbing:** FFmpeg/ffprobe for probing, codecs, audio, transcoding and muxing.
 - **Model execution:** Python/PyTorch directly; no ComfyUI dependency.
 
-## Next implementation step
+## Current implementation status
 
-Phase 2 of the revised roadmap implements three bounded bots:
+Completed:
 
 1. `NarrativeBlockBot`: `SourceScript -> NarrativeBlock[]`
-2. `BeatExtractorBot`: `NarrativeBlock -> Beat[]` (parallel per block)
-3. `ScenePlannerBot`: `NarrativeBlock[] + Beat[] -> Scene[]`
+2. `BeatExtractorBot`: `NarrativeBlock -> Beat[]` in parallel
+3. `ScenePlannerBot`: `Beat[] -> Scene[]`
+4. `ContinuityBot`: serial `NarrativeBlock[] -> ContinuityEntity[] + BlockContinuity[]`
 
-Every bot will return the smallest possible Pydantic model through Structured Outputs.
+Next Phase 3 increment:
+
+```text
+Scene[1] -> ShotPlannerBot -> state
+Scene[2] -> ShotPlannerBot -> state
+Scene[N] -> ShotPlannerBot -> Shot[]
+```
+
+The shot contract should remain minimal and will be designed only after the continuity output is
+validated with a real multi-block OpenAI run.

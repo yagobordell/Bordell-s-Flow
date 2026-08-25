@@ -5,7 +5,8 @@ reserved for later verification and selective-regeneration stages.
 """
 
 from .beats import BeatExtractorBot
+from .continuity import ContinuityBot
 from .narrative_blocks import NarrativeBlockBot
 from .scenes import ScenePlannerBot
 
-__all__ = ["BeatExtractorBot", "NarrativeBlockBot", "ScenePlannerBot"]
+__all__ = ["BeatExtractorBot", "ContinuityBot", "NarrativeBlockBot", "ScenePlannerBot"]

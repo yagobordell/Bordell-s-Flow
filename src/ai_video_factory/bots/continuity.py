@@ -23,6 +23,7 @@ Reglas estrictas:
 - No modifiques ni sustituyas entidades ya registradas.
 - `existing_entity_ids` solo puede contener IDs presentes en el registro canónico recibido.
 - `new_entities` no debe incluir IDs; la aplicación los asignará de forma determinista.
+- Devuelve listas vacías cuando no haya entidades existentes o nuevas que registrar.
 - Devuelve únicamente decisiones de continuidad. No generes escenas, shots, cámara, iluminación, prompts de imagen ni explicaciones.
 """
 
@@ -38,8 +39,8 @@ class NewContinuityEntity(BaseModel):
 class ContinuityDecision(BaseModel):
     """Model-owned continuity decision for one narrative block."""
 
-    existing_entity_ids: list[str] = Field(default_factory=list)
-    new_entities: list[NewContinuityEntity] = Field(default_factory=list)
+    existing_entity_ids: list[str]
+    new_entities: list[NewContinuityEntity]
 
 
 class ContinuityBot:
