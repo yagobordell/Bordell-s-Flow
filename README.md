@@ -14,7 +14,9 @@ Objetivos principales:
 
 ## Estado
 
-**Fase 1.5 — Refactor de arquitectura: en curso.**
+**Fase 1.5 — Refactor de arquitectura: completada.**
+
+Siguiente etapa: **Fase 2 — Narrative planning**.
 
 La Fase 1 queda conservada como experimento funcional. El pipeline de producción definitivo
 empieza ahora desde un **guion ya terminado**, no desde un tema.
@@ -34,7 +36,7 @@ empieza ahora desde un **guion ya terminado**, no desde un tema.
    - Provider desacoplado.
    - Workflow ejecutable con salida JSON.
 
-3. **Fase 1.5 — Refactor de arquitectura** 🚧
+3. **Fase 1.5 — Refactor de arquitectura** ✅
    - El guion pasa a ser la entrada canónica de producción.
    - Bots acotados en lugar de agentes autónomos.
    - Contratos mínimos: `NarrativeBlock`, `Beat` y `Scene`.
