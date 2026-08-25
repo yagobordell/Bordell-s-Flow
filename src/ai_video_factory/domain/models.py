@@ -56,6 +56,22 @@ class Scene(BaseModel):
     beat_ids: list[int] = Field(min_length=1)
 
 
+class ContinuityEntity(BaseModel):
+    """Canonical recurring visual entity tracked across narrative blocks."""
+
+    id: str = Field(pattern=r"^(character|group|location|object)_\d{3,}$")
+    kind: Literal["character", "group", "location", "object"]
+    name: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+
+
+class BlockContinuity(BaseModel):
+    """Entity references that must remain consistent inside one narrative block."""
+
+    block_id: int = Field(ge=1)
+    entity_ids: list[str] = Field(default_factory=list)
+
+
 class StoryboardScene(BaseModel):
     """Legacy rich scene emitted by the experimental Phase 1 DirectorAgent."""
 
