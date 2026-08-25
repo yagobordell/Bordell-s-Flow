@@ -22,8 +22,12 @@ Reglas estrictas:
   claramente en el mismo lugar o situación, aunque el bloque no repita su nombre.
 - No arrastres una entidad solo por haber aparecido antes: debe seguir siendo relevante para
   comprender o representar visualmente el bloque actual.
-- Crea una entidad nueva solo cuando aparezca una persona, grupo, lugar u objeto visualmente
-  relevante que deba poder mantenerse consistente en pasos posteriores.
+- Crea una entidad nueva solo cuando aparezca una persona, grupo, lugar u objeto físico tangible
+  visualmente relevante que deba poder mantenerse consistente en pasos posteriores.
+- `object` significa exclusivamente un objeto físico tangible. No conviertas conceptos abstractos,
+  valores, doctrinas, ideas, épocas o estados mentales en objetos de continuidad.
+- Conceptos como honor, disciplina o bushido pueden permanecer en la narración o en la acción
+  visual posterior sin recibir un `entity_id`.
 - No inventes nombres propios, rasgos físicos, objetos, lugares ni relaciones que el guion no sostenga.
 - Las descripciones deben ser breves, estables y útiles para reconocer la misma entidad más adelante.
 - No modifiques ni sustituyas entidades ya registradas.
