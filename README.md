@@ -14,12 +14,10 @@ Objetivos principales:
 
 ## Estado
 
-**Fase 1.5 — Refactor de arquitectura: completada.**
-
-Siguiente etapa: **Fase 2 — Narrative planning**.
+**Fase 2 — Narrative planning: en validación.**
 
 La Fase 1 queda conservada como experimento funcional. El pipeline de producción definitivo
-empieza ahora desde un **guion ya terminado**, no desde un tema.
+empieza desde un **guion ya terminado**, no desde un tema.
 
 ## Roadmap revisado
 
@@ -42,10 +40,12 @@ empieza ahora desde un **guion ya terminado**, no desde un tema.
    - Contratos mínimos: `NarrativeBlock`, `Beat` y `Scene`.
    - El Director antiguo se mantiene solo como compatibilidad/experimento.
 
-4. **Fase 2 — Narrative planning**
+4. **Fase 2 — Narrative planning** 🚧
    - `NarrativeBlockBot`: guion -> bloques narrativos.
    - `BeatExtractorBot`: bloques -> beats, en paralelo.
    - `ScenePlannerBot`: beats -> escenas.
+   - IDs asignados por código determinista, no por el modelo.
+   - Validaciones contra pérdida, duplicación o reordenación de contenido.
 
 5. **Fase 3 — Continuidad y shots**
    - Procesamiento stateful bloque a bloque.
@@ -122,12 +122,14 @@ En Windows PowerShell, si el entorno no está activado, también puedes usar dir
 
 Copia `.env.example` a `.env` y añade ahí tus claves reales.
 
-## Seguridad de secretos
+## Seguridad y datos locales
 
 - Nunca subas `.env` al repositorio.
 - `.env` y `.env.*` están ignorados por Git.
 - Solo `.env.example` se versiona y debe contener valores vacíos o de ejemplo.
-- Las claves reales de OpenAI, AI33 u otros proveedores deben permanecer únicamente en tu entorno local o en un gestor de secretos.
+- Las claves reales deben permanecer únicamente en local o en un gestor de secretos.
+- Los guiones colocados en `data/input/` se ignoran y no se versionan.
+- Los artefactos de `data/output/` y `data/tmp/` tampoco se versionan.
 
 Ejecuta los tests:
 
@@ -137,14 +139,14 @@ python -m pytest
 
 ## Pipeline de producción
 
-El contrato de entrada pasa a ser:
+El contrato de entrada es:
 
 ```text
 SourceScript
     text
 ```
 
-La jerarquía narrativa prevista es:
+La jerarquía narrativa es:
 
 ```text
 SourceScript
@@ -172,7 +174,34 @@ El generador de guion de la Fase 1 sigue disponible como utilidad opcional:
 Topic -> ScriptWriterAgent -> Script -> SourceScript
 ```
 
-La prueba histórica de la Fase 1 sigue pudiéndose ejecutar con:
+## Ejecutar la Fase 2
+
+Guarda un guion final en un archivo local, por ejemplo:
+
+```text
+data/input/script.txt
+```
+
+Después ejecuta:
+
+```bash
+python scripts/run_phase2.py data/input/script.txt
+```
+
+La Fase 2 genera:
+
+```text
+data/output/phase2/
+├── source_script.json
+├── narrative_blocks.json
+├── beats.json
+└── scenes.json
+```
+
+`BeatExtractorBot` se ejecuta en paralelo para todos los bloques narrativos. El orden y los IDs
+de los beats se reconstruyen después de forma determinista antes de llamar a `ScenePlannerBot`.
+
+La prueba histórica de la Fase 1 sigue disponible con:
 
 ```bash
 python scripts/run_phase1.py "La historia de los samuráis"
