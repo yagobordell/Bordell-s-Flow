@@ -14,9 +14,9 @@ Objetivos principales:
 
 ## Estado
 
-**Fase 2 — Narrative planning: completada.**
+**Fase 3 — Continuidad y shots: en desarrollo.**
 
-Siguiente etapa: **Fase 3 — Continuidad y shots**.
+Subfase actual: **continuidad stateful bloque a bloque implementada; shot planning pendiente**.
 
 La Fase 1 queda conservada como experimento funcional. El pipeline de producción definitivo
 empieza desde un **guion ya terminado**, no desde un tema.
@@ -51,10 +51,13 @@ empieza desde un **guion ya terminado**, no desde un tema.
    - Validaciones contra pérdida, duplicación o reordenación de contenido.
    - Workflow validado con una ejecución real contra OpenAI.
 
-5. **Fase 3 — Continuidad y shots**
-   - Procesamiento stateful bloque a bloque.
-   - Asignación de personajes y escenarios.
-   - Planificación de shots escena a escena.
+5. **Fase 3 — Continuidad y shots** 🚧
+   - Provider stateful basado en `previous_response_id`.
+   - `ContinuityBot`: procesamiento serial bloque a bloque.
+   - Registro canónico de personajes, grupos, lugares y objetos.
+   - IDs de entidad asignados por Python (`character_001`, `location_001`, etc.).
+   - Referencias de entidades por bloque mediante `BlockContinuity`.
+   - Planificación de shots escena a escena pendiente.
 
 6. **Fase 4 — Referencias visuales**
    - Referencias consistentes de personajes y escenarios.
@@ -210,6 +213,46 @@ de forma determinista antes de llamar a `ScenePlannerBot`.
 Validación real completada con un guion corto: 1 bloque narrativo, 11 beats y 3 escenas contiguas.
 Un guion corto puede formar un único bloque si desarrolla una sola unidad temática; no se fuerzan
 cortes artificiales únicamente para crear paralelismo.
+
+## Fase 3 — Continuidad stateful
+
+La primera subfase de la Fase 3 consume los bloques narrativos generados por la Fase 2:
+
+```bash
+python scripts/run_phase3.py
+```
+
+También puede recibir explícitamente otro archivo de bloques:
+
+```bash
+python scripts/run_phase3.py data/output/phase2/narrative_blocks.json
+```
+
+Genera:
+
+```text
+data/output/phase3/
+├── entities.json
+└── block_continuity.json
+```
+
+`ContinuityBot` se ejecuta de forma **serial**. Cada llamada recibe el registro canónico acumulado
+y continúa el estado de la respuesta anterior mediante `previous_response_id`. Las instrucciones se
+envían de nuevo en cada turno y Python mantiene la fuente de verdad para IDs y relaciones.
+
+El modelo solo decide qué entidades existentes reaparecen y qué nuevas entidades visualmente
+relevantes aparecen. Python asigna después IDs deterministas por tipo, por ejemplo:
+
+```text
+character_001
+group_001
+location_001
+object_001
+```
+
+Un guion cuya Fase 2 produzca un único bloque ejecutará correctamente esta subfase, pero no permite
+observar una cadena stateful de varios turnos. Para validar específicamente la propagación de estado,
+conviene probar también con un guion más largo que produzca varios bloques narrativos.
 
 La prueba histórica de la Fase 1 sigue disponible con:
 
