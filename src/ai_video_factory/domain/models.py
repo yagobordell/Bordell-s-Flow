@@ -72,6 +72,16 @@ class BlockContinuity(BaseModel):
     entity_ids: list[str] = Field(default_factory=list)
 
 
+class Shot(BaseModel):
+    """Minimal audiovisual unit planned from consecutive beats inside one scene."""
+
+    id: int = Field(ge=1)
+    scene_id: int = Field(ge=1)
+    beat_ids: list[int] = Field(min_length=1)
+    entity_ids: list[str] = Field(default_factory=list)
+    action: str = Field(min_length=1)
+
+
 class StoryboardScene(BaseModel):
     """Legacy rich scene emitted by the experimental Phase 1 DirectorAgent."""
 
