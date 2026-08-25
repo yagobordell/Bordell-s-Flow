@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 
-from ai_video_factory.domain import ProjectConfig, Scene, Script, VideoPlan
+from ai_video_factory.domain import ProjectConfig, Script, StoryboardScene, VideoPlan
 from ai_video_factory.providers.base import StructuredTextProvider
 
 
@@ -22,15 +22,15 @@ Reglas:
 
 
 class DirectedStoryboard(BaseModel):
-    """Model-owned portion of the final VideoPlan."""
+    """Model-owned portion of the experimental Phase 1 VideoPlan."""
 
     title: str
     visual_style: str
-    scenes: list[Scene] = Field(min_length=1)
+    scenes: list[StoryboardScene] = Field(min_length=1)
 
 
 class DirectorAgent:
-    """Transforms a script into a structured audiovisual plan."""
+    """Experimental Phase 1 director kept as an optional compatibility utility."""
 
     def __init__(self, *, provider: StructuredTextProvider, model: str) -> None:
         self._provider = provider
