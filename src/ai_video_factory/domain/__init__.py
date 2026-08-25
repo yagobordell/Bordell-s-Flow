@@ -1,5 +1,7 @@
 from .models import (
     Beat,
+    BlockContinuity,
+    ContinuityEntity,
     NarrativeBlock,
     ProjectConfig,
     Scene,
@@ -11,6 +13,8 @@ from .models import (
 
 __all__ = [
     "Beat",
+    "BlockContinuity",
+    "ContinuityEntity",
     "NarrativeBlock",
     "ProjectConfig",
     "Scene",
