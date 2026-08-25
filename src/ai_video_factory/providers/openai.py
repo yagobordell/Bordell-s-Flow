@@ -61,6 +61,7 @@ class OpenAIProvider:
             input=input_text,
             text_format=output_type,
             previous_response_id=previous_response_id,
+            store=True,
         )
 
         parsed = response.output_parsed
