@@ -14,7 +14,9 @@ Objetivos principales:
 
 ## Estado
 
-**Fase 2 — Narrative planning: en validación.**
+**Fase 2 — Narrative planning: completada.**
+
+Siguiente etapa: **Fase 3 — Continuidad y shots**.
 
 La Fase 1 queda conservada como experimento funcional. El pipeline de producción definitivo
 empieza desde un **guion ya terminado**, no desde un tema.
@@ -40,12 +42,14 @@ empieza desde un **guion ya terminado**, no desde un tema.
    - Contratos mínimos: `NarrativeBlock`, `Beat` y `Scene`.
    - El Director antiguo se mantiene solo como compatibilidad/experimento.
 
-4. **Fase 2 — Narrative planning** 🚧
+4. **Fase 2 — Narrative planning** ✅
    - `NarrativeBlockBot`: guion -> bloques narrativos.
    - `BeatExtractorBot`: bloques -> beats, en paralelo.
    - `ScenePlannerBot`: beats -> escenas.
    - IDs asignados por código determinista, no por el modelo.
+   - Segmentación por fronteras: el modelo decide cortes y Python reconstruye el texto original.
    - Validaciones contra pérdida, duplicación o reordenación de contenido.
+   - Workflow validado con una ejecución real contra OpenAI.
 
 5. **Fase 3 — Continuidad y shots**
    - Procesamiento stateful bloque a bloque.
@@ -174,7 +178,7 @@ El generador de guion de la Fase 1 sigue disponible como utilidad opcional:
 Topic -> ScriptWriterAgent -> Script -> SourceScript
 ```
 
-## Ejecutar la Fase 2
+## Fase 2 — Narrative planning
 
 Guarda un guion final en un archivo local, por ejemplo:
 
@@ -198,8 +202,14 @@ data/output/phase2/
 └── scenes.json
 ```
 
-`BeatExtractorBot` se ejecuta en paralelo para todos los bloques narrativos. El orden y los IDs
-de los beats se reconstruyen después de forma determinista antes de llamar a `ScenePlannerBot`.
+`NarrativeBlockBot` decide fronteras entre unidades del guion y Python reconstruye los bloques
+a partir del texto original, evitando reescrituras accidentales. `BeatExtractorBot` se ejecuta en
+paralelo para todos los bloques narrativos. El orden y los IDs de los beats se reconstruyen después
+de forma determinista antes de llamar a `ScenePlannerBot`.
+
+Validación real completada con un guion corto: 1 bloque narrativo, 11 beats y 3 escenas contiguas.
+Un guion corto puede formar un único bloque si desarrolla una sola unidad temática; no se fuerzan
+cortes artificiales únicamente para crear paralelismo.
 
 La prueba histórica de la Fase 1 sigue disponible con:
 
