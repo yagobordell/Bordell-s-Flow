@@ -26,6 +26,7 @@ class RecordingContinuityBot:
             assert previous_response_id is None
             return StatefulStructuredResult(
                 output=ContinuityDecision(
+                    existing_entity_ids=[],
                     new_entities=[
                         NewContinuityEntity(
                             kind="group",
@@ -37,7 +38,7 @@ class RecordingContinuityBot:
                             name="Japón feudal",
                             description="Entorno histórico del Japón feudal",
                         ),
-                    ]
+                    ],
                 ),
                 response_id="resp_1",
             )
