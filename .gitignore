@@ -21,9 +21,11 @@ venv/
 .idea/
 .DS_Store
 
-# Generated media
+# Local inputs and generated artifacts
+data/input/*
 data/output/*
 data/tmp/*
+!data/input/.gitkeep
 !data/output/.gitkeep
 !data/tmp/.gitkeep
 
