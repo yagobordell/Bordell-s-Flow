@@ -30,7 +30,7 @@ SourceScript
   -> NarrativeBlock[]
       -> Beat[]
           -> Scene[]
-              -> Shot[]   (future step in Phase 3)
+              -> Shot[]
 ```
 
 Definitions:
@@ -38,30 +38,27 @@ Definitions:
 - **NarrativeBlock**: contiguous semantic section of the script.
 - **Beat**: one visualizable action, change or idea belonging to one block.
 - **Scene**: ordered grouping of beat IDs.
-- **Shot**: future audiovisual unit generated from a scene.
+- **Shot**: minimal audiovisual unit planned from consecutive beats inside one scene.
 
-The early contracts remain intentionally small:
+The planning contracts remain intentionally small:
 
 ```text
-NarrativeBlock = { id, text }
-Beat           = { id, block_id, action }
-Scene          = { id, beat_ids }
+NarrativeBlock   = { id, text }
+Beat             = { id, block_id, action }
+Scene            = { id, beat_ids }
+ContinuityEntity = { id, kind, name, description }
+BlockContinuity  = { block_id, entity_ids }
+Shot             = { id, scene_id, beat_ids, entity_ids, action }
 ```
 
-Camera, lighting, transitions and image-generation prompts remain outside these narrative
-contracts.
+Camera, lighting, duration, transitions and generation prompts remain outside these contracts.
 
 ## Continuity registry
 
-Phase 3 introduces a separate continuity layer instead of adding entity data to `NarrativeBlock`,
-`Beat` or `Scene`.
+Phase 3 adds a separate continuity layer instead of adding entity data directly to
+`NarrativeBlock`, `Beat` or `Scene`.
 
-```text
-ContinuityEntity = { id, kind, name, description }
-BlockContinuity  = { block_id, entity_ids }
-```
-
-Supported entity kinds are currently:
+Supported entity kinds are:
 
 ```text
 character
@@ -70,11 +67,17 @@ location
 object
 ```
 
+`object` means a physical tangible object. Abstract concepts, values, doctrines or mental states
+are not continuity entities. They can remain in narration and shot actions without receiving an
+entity ID.
+
 The model never assigns canonical IDs. It only decides which known entities reappear and describes
 new entities. Python assigns deterministic type-prefixed IDs such as `character_001` and
 `location_001`.
 
-This keeps identity stable even if model wording varies between calls.
+Entities can remain contextually active across blocks when the narrative clearly continues in the
+same place or situation even if the next block does not repeat their names. They are not retained
+merely because they appeared earlier.
 
 ## Orchestration patterns
 
@@ -105,18 +108,38 @@ block 2 -> ContinuityBot -> response_id_2
 block 3 -> ContinuityBot -> ...
 ```
 
-Each turn receives:
+Each turn receives the current block, the canonical entity registry accumulated by Python and the
+previous provider response ID.
 
-1. the current narrative block;
-2. the canonical entity registry accumulated by Python;
-3. the previous OpenAI response ID.
+### Stateful serial shot planning
 
-The OpenAI provider uses `previous_response_id` to continue the model context. Stable bot
-instructions are sent again on every request instead of assuming that a previous response carries
-them forward.
+Shot planning uses a **separate** state chain:
 
-The application remains the source of truth for IDs, ordering and relationships. Provider-managed
-conversation state is used only for semantic continuity.
+```text
+scene 1 -> ShotPlannerBot -> shot_response_id_1
+                              |
+                              v
+scene 2 -> ShotPlannerBot -> shot_response_id_2
+                              |
+                              v
+scene N -> ShotPlannerBot -> Shot[]
+```
+
+The continuity state chain is not reused by the shot planner. Canonical continuity moves between
+stages through application-owned entity IDs and persisted artifacts. Provider-managed state is used
+only for semantic context within one bot's serial process.
+
+For each scene, Python resolves:
+
+1. the scene's canonical beat objects;
+2. the narrative blocks referenced by those beats;
+3. the union of continuity entities available to those blocks.
+
+The model then groups consecutive beats into visual shots, selects only relevant canonical entity
+IDs and describes the visual action. Python validates that all scene beats appear exactly once and
+in order and that no unknown entity is referenced.
+
+Shot IDs are assigned globally and deterministically by Python after each model response.
 
 ## Provider boundaries
 
@@ -129,13 +152,16 @@ StatefulStructuredResult
   response_id  -> provider state identifier for the next turn
 ```
 
-`OpenAIProvider` implements both contracts. This allows Phase 1 and Phase 2 bots to remain stateless
-while continuity and later shot planning can use serial state.
+`OpenAIProvider` implements both contracts. This lets Phase 1 and Phase 2 remain stateless while
+continuity and shot planning use serial state.
+
+Stable instructions are sent on every stateful request. The application remains the source of
+truth for IDs, ordering and relationships.
 
 ## Phase 1 compatibility
 
 The Phase 1 `DirectorAgent` remains as an experiment and regression fixture. Its rich scene type
-has been renamed to `StoryboardScene` so it cannot be confused with the new minimal `Scene`
+has been renamed to `StoryboardScene` so it cannot be confused with the production `Scene`
 contract.
 
 The Phase 1 flow is not the long-term production architecture.
@@ -159,14 +185,24 @@ Completed:
 2. `BeatExtractorBot`: `NarrativeBlock -> Beat[]` in parallel
 3. `ScenePlannerBot`: `Beat[] -> Scene[]`
 4. `ContinuityBot`: serial `NarrativeBlock[] -> ContinuityEntity[] + BlockContinuity[]`
+5. `ShotPlannerBot`: serial `Scene[] -> Shot[]`
 
-Next Phase 3 increment:
+Real validation covered both stateful patterns. A three-block continuity example retained stable
+entity IDs across turns. The samurai production example generated 7 shots from 3 scenes while
+covering beats 1–11 exactly once and in order.
+
+## Next implementation step
+
+Phase 4 adds **visual references** on top of canonical continuity IDs rather than changing the
+narrative contracts.
+
+Likely first increment:
 
 ```text
-Scene[1] -> ShotPlannerBot -> state
-Scene[2] -> ShotPlannerBot -> state
-Scene[N] -> ShotPlannerBot -> Shot[]
+ContinuityEntity[]
+    -> CharacterReferenceBot / LocationReferenceBot
+    -> reference prompts / reference assets
 ```
 
-The shot contract should remain minimal and will be designed only after the continuity output is
-validated with a real multi-block OpenAI run.
+Character and location reference contracts should remain minimal. Camera, per-shot generation
+prompts and storyboard-grid strategy should be added only when required by the following stage.
