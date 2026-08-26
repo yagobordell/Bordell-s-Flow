@@ -3,7 +3,6 @@ from pydantic import BaseModel, Field
 from ai_video_factory.domain import ContinuityEntity, VisualReference
 from ai_video_factory.providers.base import StructuredTextProvider
 
-
 VISUAL_REFERENCE_INSTRUCTIONS = """\
 Eres un bot de diseño de referencias visuales canónicas para un pipeline de vídeo.
 Procesas exactamente una entidad de continuidad cada vez.
@@ -100,9 +99,9 @@ def _build_reference_prompt(*, kind: str, description: str, visual_style: str) -
         ),
         "object": (
             "Canonical object reference, {style}. {description}. "
-            "Single physical object isolated and fully visible, clear shape, materials and recurring "
-            "details, plain neutral background, even reference lighting, no action, no text, "
-            "no labels, no watermark."
+            "Single physical object isolated and fully visible, clear shape, materials and "
+            "recurring details, plain neutral background, even reference lighting, no action, "
+            "no text, no labels, no watermark."
         ),
     }
     try:
