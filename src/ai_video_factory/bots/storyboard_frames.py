@@ -16,8 +16,14 @@ Reglas estrictas:
 - Conserva la identidad visual de las entidades usando las referencias canónicas como restricciones.
 - Las referencias canónicas describen identidad, NO obligan a conservar su fondo neutro, pose de
   referencia o iluminación de estudio.
+- El keyframe debe representar de forma visible el núcleo de `SHOT.action`; no sustituyas la acción
+  por un establishing shot genérico si el sujeto o relación principal puede mostrarse en imagen.
+- Si la acción se centra en una entidad participante, hazla visualmente relevante en el frame salvo
+  que la propia acción describa explícitamente su ausencia.
 - Usa el prompt anterior solo para mantener continuidad visible cuando el shot actual comparte
   entidades o entorno; no arrastres elementos que ya no pertenecen al shot.
+- Continuidad no significa repetición. Si cambia el significado narrativo respecto al frame anterior,
+  introduce una variación visual significativa en sujeto, estado, composición o contexto.
 - La duración sirve para limitar la complejidad visual: representa un momento claro que pueda
   sostener el shot, no una secuencia de acciones comprimida en una sola imagen.
 - Puedes decidir composición, escala de plano, ángulo de cámara estático y distribución espacial.
