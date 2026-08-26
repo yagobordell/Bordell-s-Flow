@@ -103,6 +103,15 @@ class NarrationAudio(BaseModel):
     duration_seconds: float = Field(gt=0)
 
 
+class NarrationWord(BaseModel):
+    """Recognized narration word used as timing evidence for later alignment."""
+
+    id: int = Field(ge=1)
+    text: str = Field(min_length=1)
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+
+
 class StoryboardScene(BaseModel):
     """Legacy rich scene emitted by the experimental Phase 1 DirectorAgent."""
 
