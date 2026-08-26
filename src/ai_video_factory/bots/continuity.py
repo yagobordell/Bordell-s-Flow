@@ -8,7 +8,6 @@ from ai_video_factory.providers.base import (
     StatefulStructuredTextProvider,
 )
 
-
 CONTINUITY_INSTRUCTIONS = """\
 Eres un bot de continuidad visual para un guion ya terminado.
 Procesas exactamente un bloque narrativo cada vez, en orden, manteniendo el contexto anterior.
@@ -28,8 +27,10 @@ Reglas estrictas:
   valores, doctrinas, ideas, épocas o estados mentales en objetos de continuidad.
 - Conceptos como honor, disciplina o bushido pueden permanecer en la narración o en la acción
   visual posterior sin recibir un `entity_id`.
-- No inventes nombres propios, rasgos físicos, objetos, lugares ni relaciones que el guion no sostenga.
-- Las descripciones deben ser breves, estables y útiles para reconocer la misma entidad más adelante.
+- No inventes nombres propios, rasgos físicos, objetos, lugares ni relaciones que el guion no
+  sostenga.
+- Las descripciones deben ser breves, estables y útiles para reconocer la misma entidad más
+  adelante.
 - No modifiques ni sustituyas entidades ya registradas.
 - `existing_entity_ids` solo puede contener IDs presentes en el registro canónico recibido.
 - `new_entities` no debe incluir IDs; la aplicación los asignará de forma determinista.
