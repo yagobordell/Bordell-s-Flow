@@ -3,7 +3,6 @@ from pydantic import BaseModel, Field
 from ai_video_factory.domain import ProjectConfig, Script, StoryboardScene, VideoPlan
 from ai_video_factory.providers.base import StructuredTextProvider
 
-
 DIRECTOR_INSTRUCTIONS = """\
 Eres el director de un vídeo vertical corto para redes sociales.
 Transforma un guion narrado en un plan audiovisual estructurado.
