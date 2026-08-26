@@ -20,8 +20,12 @@ async def build_storyboard_frames(
 
     frames: list[StoryboardFrame] = []
     previous_frame: StoryboardFrame | None = None
+    previous_scene_id: int | None = None
 
     for shot, timing in zip(shots, timings, strict=True):
+        if previous_scene_id is not None and shot.scene_id != previous_scene_id:
+            previous_frame = None
+
         shot_references = [references_by_id[entity_id] for entity_id in shot.entity_ids]
         prompt = await frame_bot.run(
             shot,
@@ -37,6 +41,7 @@ async def build_storyboard_frames(
         frame = StoryboardFrame(shot_id=shot.id, prompt=prompt.strip())
         frames.append(frame)
         previous_frame = frame
+        previous_scene_id = shot.scene_id
 
     return frames
 
@@ -52,6 +57,10 @@ def _validate_inputs(
     shot_ids = [shot.id for shot in shots]
     if shot_ids != list(range(1, len(shots) + 1)):
         raise ValueError("Storyboard shots must have consecutive IDs starting at 1")
+
+    scene_ids = [shot.scene_id for shot in shots]
+    if scene_ids != sorted(scene_ids):
+        raise ValueError("Storyboard shots must preserve non-decreasing scene order")
 
     timing_ids = [timing.shot_id for timing in timings]
     if timing_ids != shot_ids:
@@ -73,6 +82,9 @@ def _validate_inputs(
         ):
             raise ValueError("Storyboard shot timings must form a contiguous timeline")
         previous_end = timing.end_seconds
+
+        if len(shot.entity_ids) != len(set(shot.entity_ids)):
+            raise ValueError(f"Storyboard shot {shot.id} contains duplicate entity IDs")
 
         unknown_entity_ids = [
             entity_id for entity_id in shot.entity_ids if entity_id not in reference_id_set
