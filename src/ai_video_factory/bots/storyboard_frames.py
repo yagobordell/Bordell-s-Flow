@@ -24,6 +24,10 @@ Reglas estrictas:
   entidades o entorno; no arrastres elementos que ya no pertenecen al shot.
 - Continuidad no significa repetición. Si cambia el significado narrativo respecto al frame
   anterior, introduce una variación visual significativa en sujeto, estado, composición o contexto.
+- Si `SHOT.action` expresa una idea abstracta como legado, memoria, símbolo, influencia o mito,
+  tradúcela a una evidencia visual concreta o una metáfora física apoyada por la propia acción.
+- En esos shots abstractos, no repitas simplemente la misma pose y localización del frame anterior
+  con adjetivos distintos; cambia de forma perceptible el recurso visual, el contexto o el estado.
 - La duración sirve para limitar la complejidad visual: representa un momento claro que pueda
   sostener el shot, no una secuencia de acciones comprimida en una sola imagen.
 - Puedes decidir composición, escala de plano, ángulo de cámara estático y distribución espacial.
