@@ -63,6 +63,10 @@ def test_storyboard_instructions_require_action_visibility_and_visual_progressio
     assert expected_action_rule in STORYBOARD_FRAME_INSTRUCTIONS
     assert "Continuidad no significa repetición" in STORYBOARD_FRAME_INSTRUCTIONS
     assert "variación visual significativa" in STORYBOARD_FRAME_INSTRUCTIONS
+    assert "idea abstracta como legado, memoria, símbolo, influencia o mito" in (
+        STORYBOARD_FRAME_INSTRUCTIONS
+    )
+    assert "evidencia visual concreta o una metáfora física" in STORYBOARD_FRAME_INSTRUCTIONS
 
 
 def test_storyboard_workflow_is_serial_and_carries_previous_frame() -> None:
