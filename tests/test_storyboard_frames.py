@@ -59,7 +59,8 @@ def _references() -> list[VisualReference]:
 
 
 def test_storyboard_instructions_require_action_visibility_and_visual_progression() -> None:
-    assert "representar de forma visible el núcleo de `SHOT.action`" in STORYBOARD_FRAME_INSTRUCTIONS
+    expected_action_rule = "representar de forma visible el núcleo de `SHOT.action`"
+    assert expected_action_rule in STORYBOARD_FRAME_INSTRUCTIONS
     assert "Continuidad no significa repetición" in STORYBOARD_FRAME_INSTRUCTIONS
     assert "variación visual significativa" in STORYBOARD_FRAME_INSTRUCTIONS
 
