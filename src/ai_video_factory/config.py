@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.4-mini"
     openai_image_model: str = "gpt-image-2"
+    openai_tts_model: str = "gpt-4o-mini-tts"
+    openai_tts_voice: str = "marin"
 
     ai33_api_key: str | None = None
     ai33_base_url: str | None = None
