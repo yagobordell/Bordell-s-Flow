@@ -1,7 +1,6 @@
 from ai_video_factory.domain import ProjectConfig, Script
 from ai_video_factory.providers.base import StructuredTextProvider
 
-
 SCRIPTWRITER_INSTRUCTIONS = """\
 Eres el guionista de vídeos verticales cortos para redes sociales.
 Tu objetivo es crear una narración clara, dinámica y fácil de locutar.
