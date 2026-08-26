@@ -112,6 +112,16 @@ class NarrationWord(BaseModel):
     end_seconds: float = Field(ge=0)
 
 
+class BeatTiming(BaseModel):
+    """Canonical mapping from one narrative beat to a contiguous narration interval."""
+
+    beat_id: int = Field(ge=1)
+    start_word_id: int = Field(ge=1)
+    end_word_id: int = Field(ge=1)
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+
+
 class StoryboardScene(BaseModel):
     """Legacy rich scene emitted by the experimental Phase 1 DirectorAgent."""
 
