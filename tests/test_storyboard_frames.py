@@ -78,6 +78,27 @@ def test_storyboard_workflow_is_serial_and_carries_previous_frame() -> None:
     assert "PREVIOUS STORYBOARD FRAME:\nFirst keyframe" in provider.calls[1]["input_text"]
 
 
+def test_storyboard_workflow_resets_previous_frame_on_new_scene() -> None:
+    provider = FakeStructuredProvider(["First scene", "Second scene"])
+    bot = StoryboardFrameBot(provider=provider, model="test-model")  # type: ignore[arg-type]
+    shots = _shots()
+    shots[1] = shots[1].model_copy(update={"scene_id": 2})
+
+    asyncio.run(
+        build_storyboard_frames(
+            shots,
+            _timings(),
+            _references(),
+            frame_bot=bot,
+            visual_style="cinematic documentary",
+            aspect_ratio="9:16",
+        )
+    )
+
+    assert "PREVIOUS STORYBOARD FRAME:\n(none)" in provider.calls[0]["input_text"]
+    assert "PREVIOUS STORYBOARD FRAME:\n(none)" in provider.calls[1]["input_text"]
+
+
 def test_storyboard_bot_receives_duration_and_only_relevant_references() -> None:
     provider = FakeStructuredProvider(["Frame one", "Frame two"])
     bot = StoryboardFrameBot(provider=provider, model="test-model")  # type: ignore[arg-type]
