@@ -1,6 +1,8 @@
 from typing import TYPE_CHECKING, Any
 
-from ai_video_factory.providers.base import StatefulStructuredResult, StructuredOutputT
+from pydantic import BaseModel
+
+from ai_video_factory.providers.base import StatefulStructuredResult
 
 if TYPE_CHECKING:
     from openai import AsyncOpenAI
@@ -22,7 +24,7 @@ class OpenAIProvider:
 
         self._client = client
 
-    async def generate_structured(
+    async def generate_structured[StructuredOutputT: BaseModel](
         self,
         *,
         model: str,
@@ -46,7 +48,7 @@ class OpenAIProvider:
 
         return parsed
 
-    async def generate_structured_stateful(
+    async def generate_structured_stateful[StructuredOutputT: BaseModel](
         self,
         *,
         model: str,

@@ -14,7 +14,8 @@ async def plan_narrative(
     """Plan a script as blocks -> beats -> scenes.
 
     Beat extraction fans out across narrative blocks and is gathered back in original block order.
-    IDs are assigned by application code after the parallel work completes, making them deterministic.
+    IDs are assigned by application code after the parallel work completes, making them
+    deterministic.
     """
 
     blocks = await block_bot.run(source)

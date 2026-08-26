@@ -10,7 +10,6 @@ from ai_video_factory.domain import ContinuityEntity
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.workflows.visual_references import build_visual_references
 
-
 DEFAULT_VISUAL_STYLE = "cinematic documentary"
 
 

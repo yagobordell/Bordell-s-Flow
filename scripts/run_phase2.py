@@ -14,7 +14,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Plan a finished script as narrative blocks, beats, and scenes."
     )
-    parser.add_argument("script_file", type=Path, help="UTF-8 text file containing the final script")
+    parser.add_argument(
+        "script_file",
+        type=Path,
+        help="UTF-8 text file containing the final script",
+    )
     parser.add_argument(
         "--output",
         type=Path,

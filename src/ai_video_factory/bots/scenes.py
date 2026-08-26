@@ -3,12 +3,12 @@ from pydantic import BaseModel, Field
 from ai_video_factory.domain import Beat, Scene
 from ai_video_factory.providers.base import StructuredTextProvider
 
-
 SCENE_PLANNER_INSTRUCTIONS = """\
 Eres un bot de planificación narrativa.
 Tu única tarea es agrupar beats consecutivos en escenas coherentes.
 
-Una escena es una unidad narrativa que puede compartir un mismo momento, espacio o continuidad de acción.
+Una escena es una unidad narrativa que puede compartir un mismo momento, espacio o continuidad
+ de acción.
 
 Reglas estrictas:
 - Agrupa únicamente beats consecutivos.

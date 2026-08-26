@@ -6,7 +6,6 @@ from ai_video_factory.providers.base import (
     StatefulStructuredTextProvider,
 )
 
-
 SHOT_PLANNER_INSTRUCTIONS = """\
 Eres un bot de planificación de shots para un vídeo corto.
 Procesas exactamente una escena cada vez y las escenas llegan en orden narrativo.

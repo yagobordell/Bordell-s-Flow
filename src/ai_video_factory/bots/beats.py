@@ -3,7 +3,6 @@ from pydantic import BaseModel, Field
 from ai_video_factory.domain import NarrativeBlock
 from ai_video_factory.providers.base import StructuredTextProvider
 
-
 BEAT_EXTRACTOR_INSTRUCTIONS = """\
 Eres un bot de análisis narrativo.
 Tu única tarea es convertir un bloque narrativo en una secuencia de beats.

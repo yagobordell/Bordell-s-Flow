@@ -5,13 +5,13 @@ from pydantic import BaseModel, Field
 from ai_video_factory.domain import NarrativeBlock, SourceScript
 from ai_video_factory.providers.base import StructuredTextProvider
 
-
 NARRATIVE_BLOCK_INSTRUCTIONS = """\
 Eres un bot de segmentación narrativa.
 Tu única tarea es agrupar unidades consecutivas de un guion ya terminado en bloques narrativos.
 
 Recibirás el guion dividido por la aplicación en unidades numeradas e inmutables.
-Un bloque narrativo agrupa unidades consecutivas que desarrollan la misma idea, momento o unidad del relato.
+Un bloque narrativo agrupa unidades consecutivas que desarrollan la misma idea, momento o unidad
+ del relato.
 
 Reglas estrictas:
 - No reescribas ni devuelvas el texto del guion.
