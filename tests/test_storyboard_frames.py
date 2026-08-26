@@ -3,7 +3,11 @@ from typing import Any
 
 import pytest
 
-from ai_video_factory.bots.storyboard_frames import StoryboardFrameBot, StoryboardPromptOutput
+from ai_video_factory.bots.storyboard_frames import (
+    STORYBOARD_FRAME_INSTRUCTIONS,
+    StoryboardFrameBot,
+    StoryboardPromptOutput,
+)
 from ai_video_factory.domain import Shot, ShotTiming, VisualReference
 from ai_video_factory.workflows.storyboard_frames import build_storyboard_frames
 
@@ -52,6 +56,12 @@ def _references() -> list[VisualReference]:
             prompt="Canonical feudal Japanese environment reference.",
         ),
     ]
+
+
+def test_storyboard_instructions_require_action_visibility_and_visual_progression() -> None:
+    assert "representar de forma visible el núcleo de `SHOT.action`" in STORYBOARD_FRAME_INSTRUCTIONS
+    assert "Continuidad no significa repetición" in STORYBOARD_FRAME_INSTRUCTIONS
+    assert "variación visual significativa" in STORYBOARD_FRAME_INSTRUCTIONS
 
 
 def test_storyboard_workflow_is_serial_and_carries_previous_frame() -> None:
