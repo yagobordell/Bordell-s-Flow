@@ -122,6 +122,14 @@ class BeatTiming(BaseModel):
     end_seconds: float = Field(gt=0)
 
 
+class ShotTiming(BaseModel):
+    """Canonical narration interval occupied by one planned shot."""
+
+    shot_id: int = Field(ge=1)
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+
+
 class StoryboardScene(BaseModel):
     """Legacy rich scene emitted by the experimental Phase 1 DirectorAgent."""
 
