@@ -37,7 +37,7 @@ async def generate_storyboard_keyframes(
     model: str,
     size: str,
     quality: ImageQuality,
-    input_fidelity: ImageInputFidelity = "high",
+    input_fidelity: ImageInputFidelity | None = None,
 ) -> list[StoryboardKeyframe]:
     """Generate one reference-conditioned still image for every storyboard frame."""
 
@@ -99,7 +99,7 @@ async def _generate_keyframe(
     model: str,
     size: str,
     quality: ImageQuality,
-    input_fidelity: ImageInputFidelity,
+    input_fidelity: ImageInputFidelity | None,
 ):
     if references:
         return await image_provider.generate_image_with_references(
