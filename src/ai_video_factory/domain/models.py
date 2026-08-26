@@ -144,6 +144,13 @@ class StoryboardKeyframe(BaseModel):
     uri: str = Field(min_length=1)
 
 
+class StoryboardGrid(BaseModel):
+    """Persisted scene-level contact sheet derived from canonical storyboard keyframes."""
+
+    scene_id: int = Field(ge=1)
+    uri: str = Field(min_length=1)
+
+
 class StoryboardScene(BaseModel):
     """Legacy rich scene emitted by the experimental Phase 1 DirectorAgent."""
 
