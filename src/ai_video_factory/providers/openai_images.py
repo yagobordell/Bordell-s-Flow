@@ -71,7 +71,7 @@ class OpenAIImageProvider:
         size: str,
         quality: ImageQuality,
         output_format: ImageFormat,
-        input_fidelity: ImageInputFidelity,
+        input_fidelity: ImageInputFidelity | None = None,
     ) -> GeneratedImage:
         if not references:
             return await self.generate_image(
@@ -97,16 +97,19 @@ class OpenAIImageProvider:
                 )
             )
 
-        response = await self._client.images.edit(
-            image=image_files,
-            model=model,
-            prompt=prompt,
-            n=1,
-            size=size,
-            quality=quality,
-            output_format=output_format,
-            input_fidelity=input_fidelity,
-        )
+        edit_kwargs: dict[str, Any] = {
+            "image": image_files,
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            "size": size,
+            "quality": quality,
+            "output_format": output_format,
+        }
+        if input_fidelity is not None:
+            edit_kwargs["input_fidelity"] = input_fidelity
+
+        response = await self._client.images.edit(**edit_kwargs)
         return _decode_response_image(response, output_format, operation="edit")
 
 
