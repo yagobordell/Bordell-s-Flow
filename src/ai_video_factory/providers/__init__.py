@@ -5,7 +5,9 @@ from .images import GeneratedImage, ImageProvider
 from .openai import OpenAIProvider
 from .openai_images import OpenAIImageProvider
 from .openai_speech import OpenAISpeechProvider
+from .openai_transcription import OpenAITranscriptionProvider
 from .speech import GeneratedSpeech, SpeechProvider
+from .transcription import TranscribedWord, TranscriptionProvider
 
 __all__ = [
     "GeneratedImage",
@@ -14,6 +16,9 @@ __all__ = [
     "OpenAIImageProvider",
     "OpenAIProvider",
     "OpenAISpeechProvider",
+    "OpenAITranscriptionProvider",
     "SpeechProvider",
     "StructuredTextProvider",
+    "TranscribedWord",
+    "TranscriptionProvider",
 ]
