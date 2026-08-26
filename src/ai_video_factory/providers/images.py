@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-ImageQuality = Literal["low", "medium", "high", "auto"]
-ImageFormat = Literal["png", "jpeg", "webp"]
+type ImageQuality = Literal["low", "medium", "high", "auto"]
+type ImageFormat = Literal["png", "jpeg", "webp"]
 
 
 @dataclass(frozen=True)
