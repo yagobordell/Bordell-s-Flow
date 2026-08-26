@@ -108,9 +108,9 @@ def _build_reference_prompt(*, kind: str, description: str, visual_style: str) -
         ),
         "location": (
             "Canonical location reference, {style}. {description}. "
-            "Single coherent environment rather than a montage, emphasizing permanent architecture, "
-            "materials, layout and recurring landmarks, neutral reference lighting, no temporary "
-            "events, no text, no labels, no watermark."
+            "Single coherent environment rather than a montage, emphasizing permanent "
+            "architecture, materials, layout and recurring landmarks, neutral reference lighting, "
+            "no temporary events, no text, no labels, no watermark."
         ),
         "object": (
             "Canonical object reference, {style}. {description}. "
