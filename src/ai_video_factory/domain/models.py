@@ -96,6 +96,13 @@ class ReferenceAsset(BaseModel):
     uri: str = Field(min_length=1)
 
 
+class NarrationAudio(BaseModel):
+    """Canonical narration audio asset and its measured playback duration."""
+
+    uri: str = Field(min_length=1)
+    duration_seconds: float = Field(gt=0)
+
+
 class StoryboardScene(BaseModel):
     """Legacy rich scene emitted by the experimental Phase 1 DirectorAgent."""
 
