@@ -49,8 +49,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input-fidelity",
         choices=("low", "high"),
-        default="high",
-        help="How strongly image edits should preserve canonical reference appearance.",
+        default=None,
+        help=(
+            "Optional provider/model-specific reference fidelity. Omitted by default for "
+            "GPT-Image-2 compatibility."
+        ),
     )
     parser.add_argument(
         "--output-dir",

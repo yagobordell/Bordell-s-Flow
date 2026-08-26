@@ -33,22 +33,25 @@ class FakeOpenAIClient:
         self.images = FakeImagesResource(payload)
 
 
-def test_openai_image_provider_edits_with_reference_images_and_fidelity() -> None:
+def _image_references() -> list[ImageReferenceInput]:
+    return [
+        ImageReferenceInput(content=b"group", media_type="image/png"),
+        ImageReferenceInput(content=b"place", media_type="image/webp"),
+    ]
+
+
+def test_openai_image_provider_omits_input_fidelity_when_not_requested() -> None:
     client = FakeOpenAIClient(b"edited-png")
     provider = OpenAIImageProvider(client=client)  # type: ignore[arg-type]
 
     image = asyncio.run(
         provider.generate_image_with_references(
             prompt="New storyboard composition",
-            references=[
-                ImageReferenceInput(content=b"group", media_type="image/png"),
-                ImageReferenceInput(content=b"place", media_type="image/webp"),
-            ],
+            references=_image_references(),
             model="gpt-image-2",
             size="1024x1536",
             quality="medium",
             output_format="png",
-            input_fidelity="high",
         )
     )
 
@@ -66,8 +69,27 @@ def test_openai_image_provider_edits_with_reference_images_and_fidelity() -> Non
         "size": "1024x1536",
         "quality": "medium",
         "output_format": "png",
-        "input_fidelity": "high",
     }
+
+
+def test_openai_image_provider_forwards_explicit_input_fidelity() -> None:
+    client = FakeOpenAIClient(b"edited-png")
+    provider = OpenAIImageProvider(client=client)  # type: ignore[arg-type]
+
+    asyncio.run(
+        provider.generate_image_with_references(
+            prompt="New storyboard composition",
+            references=_image_references(),
+            model="compatible-image-model",
+            size="1024x1536",
+            quality="medium",
+            output_format="png",
+            input_fidelity="high",
+        )
+    )
+
+    assert client.images.last_edit is not None
+    assert client.images.last_edit["input_fidelity"] == "high"
 
 
 class ParallelReferenceProvider:
@@ -156,7 +178,6 @@ def test_storyboard_keyframes_run_in_parallel_and_use_only_shot_references(tmp_p
             model="gpt-image-2",
             size="1024x1536",
             quality="medium",
-            input_fidelity="high",
         )
     )
 
@@ -174,7 +195,7 @@ def test_storyboard_keyframes_run_in_parallel_and_use_only_shot_references(tmp_p
         b"group-reference",
         b"location-reference",
     ]
-    assert first_call["input_fidelity"] == "high"
+    assert first_call["input_fidelity"] is None
     assert "identity and appearance references" in first_call["prompt"]
     assert (output_dir / "shot_001.png").is_file()
     assert (output_dir / "shot_002.png").is_file()
