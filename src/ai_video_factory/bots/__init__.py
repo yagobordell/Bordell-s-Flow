@@ -10,6 +10,7 @@ from .continuity import ContinuityBot
 from .narrative_blocks import NarrativeBlockBot
 from .scenes import ScenePlannerBot
 from .shots import ShotPlannerBot
+from .storyboard_frames import StoryboardFrameBot
 from .visual_references import VisualReferenceBot
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "NarrativeBlockBot",
     "ScenePlannerBot",
     "ShotPlannerBot",
+    "StoryboardFrameBot",
     "VisualReferenceBot",
 ]
