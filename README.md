@@ -14,9 +14,9 @@ Objetivos principales:
 
 ## Estado
 
-**Fase 4 — Referencias visuales: completada.** ✅
+**Fase 5 — Audio y timing: completada.** ✅
 
-Siguiente fase formal: **Fase 5 — Audio y timing**.
+Siguiente fase formal: **Fase 6 — Storyboard y planificación visual por shot**.
 
 La Fase 1 queda conservada como experimento funcional. El pipeline de producción definitivo
 empieza desde un **guion ya terminado**, no desde un tema.
@@ -76,30 +76,41 @@ empieza desde un **guion ya terminado**, no desde un tema.
    - PNGs con nombres deterministas por `entity_id`.
    - Persistencia del lote solo después de completar todas las generaciones.
    - Validación real de prompts y assets con el guion de samuráis.
-   - Storyboard grids opcionales y diferidos hasta demostrar que aportan valor downstream.
 
-7. **Fase 5 — Audio y timing**
-   - TTS.
-   - Duraciones reales.
-   - STT/alignment para captions.
+7. **Fase 5 — Audio y timing** ✅
+   - Narración TTS continua desde `SourceScript.text`.
+   - `SpeechProvider` desacoplado y `OpenAISpeechProvider` inicial.
+   - WAV validado y duración medida desde los frames PCM reales.
+   - `TranscriptionProvider` para timestamps por palabra.
+   - `NarrationWord[]` como evidencia temporal sin sustituir el guion canónico.
+   - `BeatTimingBot`: el modelo decide solo fronteras semánticas por palabra.
+   - `BeatTiming[]` reconstruido determinísticamente por Python.
+   - `ShotTiming[]` derivado sin LLM a partir de `Shot.beat_ids`.
+   - Timeline final continua y validada de principio a fin.
 
-8. **Fase 6 — Infraestructura GPU**
+8. **Fase 6 — Storyboard y planificación visual por shot**
+   - Keyframe representativo por shot.
+   - Acción + entidades canónicas + duración real como contexto.
+   - Prompts visuales provider-neutral antes de generar imágenes.
+   - Evaluar grids por escena a partir de keyframes individuales.
+
+9. **Fase 7 — Infraestructura GPU**
    - Docker.
    - Salad.
    - Cloudflare R2.
    - Supabase/Postgres.
    - Benchmark de LTX-2.5 antes de fijar hardware y cuantización.
 
-9. **Fase 7 — Generación de vídeo**
-   - LTX-2.5 ejecutado directamente desde Python/PyTorch.
-   - Jobs reanudables e idempotentes.
-   - Sin dependencia de ComfyUI.
+10. **Fase 8 — Generación de vídeo**
+    - LTX-2.5 ejecutado directamente desde Python/PyTorch.
+    - Jobs reanudables e idempotentes.
+    - Sin dependencia de ComfyUI.
 
-10. **Fase 8 — Compositor**
+11. **Fase 9 — Compositor**
     - Remotion para timeline, transiciones, captions, overlays y motion graphics.
     - FFmpeg/ffprobe para codecs, audio, probing, transcoding y muxing.
 
-11. **Fase 9 — Agentes de verificación**
+12. **Fase 10 — Agentes de verificación**
     - Consistencia narrativa y visual.
     - Verificación técnica.
     - Regeneración selectiva.
@@ -168,7 +179,7 @@ SourceScript
     text
 ```
 
-La jerarquía implementada es:
+La jerarquía narrativa y visual implementada es:
 
 ```text
 SourceScript
@@ -188,6 +199,20 @@ VisualReference[]
 ReferenceAsset[]
 ```
 
+La jerarquía temporal implementada es:
+
+```text
+SourceScript.text
+  ↓
+NarrationAudio
+  ↓
+NarrationWord[]
+  ↓
+BeatTiming[]
+  ↓
+ShotTiming[]
+```
+
 Los contratos se mantienen deliberadamente pequeños:
 
 ```text
@@ -199,6 +224,10 @@ BlockContinuity  = { block_id, entity_ids }
 Shot             = { id, scene_id, beat_ids, entity_ids, action }
 VisualReference  = { entity_id, prompt }
 ReferenceAsset   = { entity_id, uri }
+NarrationAudio   = { uri, duration_seconds }
+NarrationWord    = { id, text, start_seconds, end_seconds }
+BeatTiming       = { beat_id, start_word_id, end_word_id, start_seconds, end_seconds }
+ShotTiming       = { shot_id, start_seconds, end_seconds }
 ```
 
 El generador de guion de la Fase 1 sigue disponible como utilidad opcional:
@@ -296,8 +325,9 @@ oculta compartida entre bots.
 El modelo decide cómo agrupar beats consecutivos, qué entidades participan realmente y una acción
 visual breve. Python controla IDs, relaciones con escenas, cobertura de beats y validez de entidades.
 
-Validación real completada con el guion de samuráis: **3 escenas -> 7 shots**, con los beats
-**1–11 cubiertos exactamente una vez y en orden**.
+La validación histórica de cierre de Fase 3 produjo **3 escenas -> 7 shots**, con los beats **1–11
+cubiertos exactamente una vez y en orden**. Una regeneración posterior usada para validar Fase 5
+produjo 8 shots; los workflows downstream no dependen de una cantidad fija de shots.
 
 ## Fase 4 — Referencias visuales
 
@@ -386,8 +416,88 @@ Validación real completada con el guion de samuráis:
 - 3 prompts canónicos produjeron 3 PNG utilizables.
 - `reference_assets.json` conservó los tres IDs con URIs deterministas.
 
-Con esta validación, **Fase 4 queda cerrada**. Los storyboard grids siguen siendo opcionales y solo se
-introducirán si una prueba posterior demuestra que mejoran la consistencia del vídeo.
+Con esta validación, **Fase 4 queda cerrada**.
+
+## Fase 5 — Audio y timing
+
+### 1. Narración canónica
+
+La narración se genera como una única pista continua directamente desde `SourceScript.text`:
+
+```bash
+python scripts/run_phase5_audio.py
+```
+
+Genera:
+
+```text
+data/output/phase5/
+├── narration.wav
+└── narration.json
+```
+
+El provider devuelve bytes efímeros y el workflow valida el WAV, mide la duración real y solo
+después persiste el archivo. La medición usa los frames PCM realmente presentes para soportar WAV
+streaming con tamaños sentinel en el header.
+
+```text
+NarrationAudio = { uri, duration_seconds }
+```
+
+### 2. Alignment por palabra
+
+```bash
+python scripts/run_phase5_alignment.py --language es
+```
+
+Genera:
+
+```text
+data/output/phase5/narration_words.json
+```
+
+`NarrationWord.text` es evidencia reconocida, no una nueva fuente de verdad narrativa. El guion
+canónico sigue siendo `SourceScript.text`. Se permiten timestamps puntuales donde
+`start_seconds == end_seconds`, siempre que la secuencia global permanezca ordenada y dentro de la
+duración medida.
+
+### 3. Timing de beats
+
+```bash
+python scripts/run_phase5_beat_timing.py
+```
+
+`BeatTimingBot` decide únicamente qué `NarrationWord.id` termina cada beat. Python reconstruye
+rangos de palabras e intervalos contiguos. La pausa entre dos beats se asigna al beat anterior, de
+modo que el siguiente cambio visual coincide con el comienzo de la siguiente idea hablada.
+
+```text
+BeatTiming = { beat_id, start_word_id, end_word_id, start_seconds, end_seconds }
+```
+
+### 4. Timing de shots
+
+```bash
+python scripts/run_phase5_shot_timing.py
+```
+
+No usa LLM ni API externa. Cada shot hereda el inicio de su primer beat y el final de su último
+beat, después de validar cobertura exacta y ordenada.
+
+```text
+ShotTiming = { shot_id, start_seconds, end_seconds }
+```
+
+Validación real de Fase 5 con el guion de samuráis:
+
+- Narración WAV válida de **45.0 s**.
+- **105** palabras alineadas desde `0.0` hasta `44.58 s`.
+- **11** `BeatTiming` consecutivos cubriendo exactamente `0.0–45.0 s`.
+- La regeneración de shots usada en esta fase produjo **8** `ShotTiming` consecutivos.
+- Los 8 shots cubren exactamente `0.0–45.0 s`, sin huecos ni solapes.
+- La derivación temporal no depende de un número fijo de shots.
+
+Con esta validación, **Fase 5 queda cerrada**.
 
 La prueba histórica de la Fase 1 sigue disponible con:
 
