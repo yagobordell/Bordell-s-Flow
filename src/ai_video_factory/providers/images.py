@@ -51,7 +51,7 @@ class ReferenceAwareImageProvider(ImageProvider, Protocol):
         size: str,
         quality: ImageQuality,
         output_format: ImageFormat,
-        input_fidelity: ImageInputFidelity,
+        input_fidelity: ImageInputFidelity | None = None,
     ) -> GeneratedImage:
         """Generate one image while preserving relevant identity from reference inputs."""
         ...
