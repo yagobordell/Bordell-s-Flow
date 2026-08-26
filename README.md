@@ -14,9 +14,9 @@ Objetivos principales:
 
 ## Estado
 
-**Fase 4 — Referencias visuales: en desarrollo.** 🚧
+**Fase 4 — Referencias visuales: completada.** ✅
 
-Subfase actual: **prompts de referencia visual canónicos implementados; generación de assets pendiente**.
+Siguiente fase formal: **Fase 5 — Audio y timing**.
 
 La Fase 1 queda conservada como experimento funcional. El pipeline de producción definitivo
 empieza desde un **guion ya terminado**, no desde un tema.
@@ -63,14 +63,20 @@ empieza desde un **guion ya terminado**, no desde un tema.
    - Cobertura exacta y ordenada de beats en los shots.
    - Validación real multi-turn de continuidad y validación real de shot planning.
 
-6. **Fase 4 — Referencias visuales** 🚧
+6. **Fase 4 — Referencias visuales** ✅
    - Contrato mínimo `VisualReference = { entity_id, prompt }`.
    - `VisualReferenceBot`: diseño visual canónico por entidad.
-   - Plantillas fijas controladas por Python para `character`, `group`, `location` y `object`.
-   - Fan-out/fan-in paralelo para entidades independientes.
-   - Prompts provider-neutral e inspeccionables antes de generar imágenes.
-   - Generación de assets de referencia pendiente.
-   - Storyboard grids de hasta 3x3 pendientes y solo cuando aporten valor.
+   - Contexto narrativo derivado de `NarrativeBlock` + `BlockContinuity`.
+   - Plantillas fijas para `character`, `group`, `location` y `object`.
+   - Localizaciones amplias convertidas en un entorno físico único y contextual.
+   - Fan-out/fan-in paralelo para referencias independientes.
+   - `ImageProvider` desacoplado del dominio.
+   - `OpenAIImageProvider` como implementación inicial.
+   - Contrato mínimo `ReferenceAsset = { entity_id, uri }`.
+   - PNGs con nombres deterministas por `entity_id`.
+   - Persistencia del lote solo después de completar todas las generaciones.
+   - Validación real de prompts y assets con el guion de samuráis.
+   - Storyboard grids opcionales y diferidos hasta demostrar que aportan valor downstream.
 
 7. **Fase 5 — Audio y timing**
    - TTS.
@@ -104,10 +110,10 @@ La arquitectura detallada está en [`docs/architecture.md`](docs/architecture.md
 
 - Python 3.12+
 - Git
+- Cuenta/API de OpenAI para las fases que usan modelos hospedados.
 
 Para fases posteriores:
 
-- Cuenta/API de OpenAI.
 - FFmpeg.
 - Node.js para Remotion.
 - Acceso a GPU remota.
@@ -146,10 +152,11 @@ Copia `.env.example` a `.env` y añade ahí tus claves reales.
 - Los guiones colocados en `data/input/` se ignoran y no se versionan.
 - Los artefactos de `data/output/` y `data/tmp/` tampoco se versionan.
 
-Ejecuta los tests:
+Ejecuta los tests y lint:
 
 ```bash
 python -m pytest
+python -m ruff check .
 ```
 
 ## Pipeline de producción
@@ -161,7 +168,7 @@ SourceScript
     text
 ```
 
-La jerarquía de planificación es:
+La jerarquía implementada es:
 
 ```text
 SourceScript
@@ -177,6 +184,8 @@ Shot[]
 ContinuityEntity[]
   ↓
 VisualReference[]
+  ↓
+ReferenceAsset[]
 ```
 
 Los contratos se mantienen deliberadamente pequeños:
@@ -189,6 +198,7 @@ ContinuityEntity = { id, kind, name, description }
 BlockContinuity  = { block_id, entity_ids }
 Shot             = { id, scene_id, beat_ids, entity_ids, action }
 VisualReference  = { entity_id, prompt }
+ReferenceAsset   = { entity_id, uri }
 ```
 
 El generador de guion de la Fase 1 sigue disponible como utilidad opcional:
@@ -238,12 +248,6 @@ La continuidad consume los bloques narrativos generados por la Fase 2:
 python scripts/run_phase3.py
 ```
 
-También puede recibir explícitamente otro archivo de bloques:
-
-```bash
-python scripts/run_phase3.py data/output/phase2/narrative_blocks.json
-```
-
 Genera:
 
 ```text
@@ -271,9 +275,6 @@ nombre, siempre que la narración continúe claramente en el mismo lugar o situa
 reserva para objetos físicos tangibles: conceptos como honor, disciplina o bushido no reciben IDs
 de continuidad.
 
-La cadena stateful se validó con un ejemplo de tres bloques: un mismo personaje, una misma
-localización y un mismo objeto mantuvieron IDs canónicos estables entre turnos.
-
 ## Fase 3 — Shot planning
 
 Los shots consumen los beats y escenas de la Fase 2 junto con los artefactos de continuidad:
@@ -292,29 +293,23 @@ data/output/phase3/shots.json
 `ContinuityBot`. La continuidad pasa entre etapas mediante IDs y JSON canónicos, no mediante memoria
 oculta compartida entre bots.
 
-El modelo decide únicamente:
+El modelo decide cómo agrupar beats consecutivos, qué entidades participan realmente y una acción
+visual breve. Python controla IDs, relaciones con escenas, cobertura de beats y validez de entidades.
 
-- cómo agrupar beats consecutivos en shots coherentes;
-- qué entidades canónicas participan realmente en cada shot;
-- una frase breve con la acción visual principal.
-
-Python controla IDs, relaciones con escenas, cobertura de beats y validez de entidades. Cámara,
-lente, iluminación, duración, transiciones, estilo y prompts de generación siguen deliberadamente
-fuera del contrato.
-
-Validación real completada con el guion de samuráis de la Fase 2: **3 escenas -> 7 shots**, con los
-beats **1–11 cubiertos exactamente una vez y en orden**. Los shots combinaron beats consecutivos
-cuando formaban una misma acción visual, evitando una fragmentación artificial de un shot por beat.
+Validación real completada con el guion de samuráis: **3 escenas -> 7 shots**, con los beats
+**1–11 cubiertos exactamente una vez y en orden**.
 
 ## Fase 4 — Referencias visuales
 
-La primera subfase consume el registro canónico de entidades de la Fase 3:
+### 1. Prompts canónicos
+
+La primera parte consume entidades, bloques narrativos y continuidad por bloque:
 
 ```bash
 python scripts/run_phase4.py
 ```
 
-Se puede elegir un estilo visual compartido sin modificar los contratos narrativos:
+Se puede elegir un estilo visual compartido:
 
 ```bash
 python scripts/run_phase4.py --style "cinematic documentary"
@@ -326,17 +321,73 @@ Genera:
 data/output/phase4/visual_references.json
 ```
 
-Cada referencia conserva el mismo `entity_id` de continuidad y añade únicamente un `prompt`
-provider-neutral. `VisualReferenceBot` no escribe libremente el prompt completo: genera una
-descripción visual canónica y Python la inserta en una plantilla fija distinta para personajes,
-grupos, localizaciones y objetos.
+`VisualReferenceBot` genera una descripción visual estable por entidad y Python la inserta en una
+plantilla fija según `character`, `group`, `location` u `object`.
 
-Las entidades se procesan en **paralelo** porque sus identidades ya quedaron resueltas en la Fase 3.
-El workflow conserva el orden de entrada y valida que exista exactamente una referencia por cada ID.
+El contexto de cada entidad se deriva únicamente de los `NarrativeBlock` donde aparece en
+`BlockContinuity`. Esto permite resolver época y entorno sin convertir acciones temporales en rasgos
+permanentes. Las localizaciones demasiado amplias se concretan como un único entorno físico
+representativo en vez de una descripción geográfica enciclopédica o un collage de épocas.
 
-Esta subfase produce prompts, no imágenes. La elección e integración del proveedor de generación de
-assets se mantiene separada para que podamos inspeccionar y validar primero las identidades visuales
-sin acoplar el dominio a una API concreta.
+Las referencias se procesan en paralelo y conservan el mismo ID canónico:
+
+```text
+VisualReference = { entity_id, prompt }
+```
+
+### 2. Assets de referencia
+
+Después de inspeccionar los prompts, las imágenes se generan de forma explícita:
+
+```bash
+python scripts/run_phase4_assets.py --quality medium
+```
+
+El modelo de imagen puede configurarse mediante `OPENAI_IMAGE_MODEL` o `--model`.
+
+La frontera del provider es independiente del dominio:
+
+```text
+VisualReference[]
+      ↓
+ImageProvider
+      ↓
+GeneratedImage[]   # bytes efímeros
+      ↓
+ReferenceAsset[]   # metadata persistida
+```
+
+Los bytes no se guardan dentro del JSON. El workflow espera a que todas las generaciones terminen
+antes de escribir el lote, y usa nombres deterministas basados en `entity_id`.
+
+Salida:
+
+```text
+data/output/phase4/
+├── visual_references.json
+├── reference_assets.json
+└── reference_assets/
+    ├── group_001.png
+    ├── group_002.png
+    └── location_001.png
+```
+
+Contrato persistido:
+
+```text
+ReferenceAsset = { entity_id, uri }
+```
+
+Validación real completada con el guion de samuráis:
+
+- `group_001`: referencia visual de samuráis en armadura.
+- `group_002`: referencia visual diferenciada de señores feudales.
+- `location_001`: entorno físico coherente del Japón feudal, sin apariencia moderna injustificada.
+- 3 prompts canónicos produjeron 3 PNG utilizables.
+- `reference_assets.json` conservó los tres IDs con URIs deterministas.
+
+Con esta validación, **Fase 4 queda cerrada**. Los storyboard grids siguen siendo opcionales y solo se
+introducirán si una prueba posterior demuestra que mejoran la consistencia del vídeo.
 
 La prueba histórica de la Fase 1 sigue disponible con:
 
