@@ -54,11 +54,22 @@ def _measure_wav_duration(content: bytes) -> float:
     try:
         with wave.open(io.BytesIO(content), "rb") as wav_file:
             frame_rate = wav_file.getframerate()
-            frame_count = wav_file.getnframes()
+            channel_count = wav_file.getnchannels()
+            sample_width = wav_file.getsampwidth()
+            declared_frame_count = wav_file.getnframes()
+
+            if frame_rate <= 0 or channel_count <= 0 or sample_width <= 0:
+                raise ValueError("Speech provider returned an invalid WAV format")
+            if declared_frame_count <= 0:
+                raise ValueError("Speech provider returned an empty or invalid WAV file")
+
+            frame_data = wav_file.readframes(declared_frame_count)
     except (EOFError, wave.Error) as exc:
         raise ValueError("Speech provider returned invalid WAV data") from exc
 
-    if frame_rate <= 0 or frame_count <= 0:
-        raise ValueError("Speech provider returned an empty or invalid WAV file")
+    frame_size = channel_count * sample_width
+    if not frame_data or len(frame_data) % frame_size != 0:
+        raise ValueError("Speech provider returned incomplete WAV frame data")
 
-    return frame_count / frame_rate
+    actual_frame_count = len(frame_data) // frame_size
+    return actual_frame_count / frame_rate
