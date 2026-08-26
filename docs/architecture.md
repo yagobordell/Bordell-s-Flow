@@ -23,7 +23,7 @@ workflow.
 Autonomous agents are reserved for later verification stages, where a verifier can inspect an
 artifact and decide whether a specific step must be regenerated.
 
-## Narrative and visual hierarchy
+## Narrative, visual and temporal hierarchy
 
 ```text
 SourceScript
@@ -35,6 +35,12 @@ SourceScript
 ContinuityEntity[]
   -> VisualReference[]
       -> ReferenceAsset[]
+
+SourceScript.text
+  -> NarrationAudio
+      -> NarrationWord[]
+          -> BeatTiming[]
+              -> ShotTiming[]
 ```
 
 Definitions:
@@ -45,8 +51,12 @@ Definitions:
 - **Shot**: minimal audiovisual unit planned from consecutive beats inside one scene.
 - **VisualReference**: provider-neutral canonical prompt bound to one continuity entity ID.
 - **ReferenceAsset**: persisted image URI bound to the same canonical entity ID.
+- **NarrationAudio**: canonical narration URI plus measured playback duration.
+- **NarrationWord**: recognized word and timestamps used only as timing evidence.
+- **BeatTiming**: canonical narration interval assigned to one beat.
+- **ShotTiming**: deterministic projection of the beat timeline onto one existing shot.
 
-The planning and reference contracts remain intentionally small:
+The contracts remain intentionally small:
 
 ```text
 NarrativeBlock   = { id, text }
@@ -57,10 +67,14 @@ BlockContinuity  = { block_id, entity_ids }
 Shot             = { id, scene_id, beat_ids, entity_ids, action }
 VisualReference  = { entity_id, prompt }
 ReferenceAsset   = { entity_id, uri }
+NarrationAudio   = { uri, duration_seconds }
+NarrationWord    = { id, text, start_seconds, end_seconds }
+BeatTiming       = { beat_id, start_word_id, end_word_id, start_seconds, end_seconds }
+ShotTiming       = { shot_id, start_seconds, end_seconds }
 ```
 
-Camera, lighting, duration, transitions and per-shot generation prompts remain outside these
-contracts.
+Camera, lighting, transitions and per-shot generation prompts remain outside the closed narrative
+contracts. Timing is stored in parallel artifacts instead of mutating `Beat` or `Shot`.
 
 ## Continuity registry
 
@@ -175,6 +189,86 @@ Provider calls run concurrently. Binary image payloads remain in memory until al
 succeeded. Only then does the application write deterministic files and persist `ReferenceAsset[]`.
 This prevents a failed provider call from leaving a partially committed local batch.
 
+### Single canonical narration
+
+Phase 5 deliberately generates one continuous narration instead of TTS per shot:
+
+```text
+SourceScript.text
+      ↓
+SpeechProvider
+      ↓
+GeneratedSpeech bytes
+      ↓
+validate WAV + measure real PCM duration
+      ↓
+NarrationAudio
+```
+
+This preserves prosody and prevents the still-evolving visual plan from forcing artificial audio
+cuts. The workflow validates the WAV before persistence and measures duration from the PCM frames
+that are actually present, rather than trusting a possibly streaming/sentinel data-size header.
+
+### Word-level timing evidence
+
+```text
+SourceScript.text + narration.wav
+              ↓
+TranscriptionProvider
+              ↓
+NarrationWord[]
+```
+
+`NarrationWord.text` is not canonical narrative text. It is recognized evidence used to attach time
+to the immutable source script. Small transcription artifacts are therefore preserved rather than
+silently rewriting the source.
+
+Timestamp validation allows point-like words where `start_seconds == end_seconds`, because real
+Whisper output can quantize some words to a zero-duration point. The global sequence must still be
+non-decreasing and remain inside the measured narration duration.
+
+### Model-owned beat boundaries, Python-owned time
+
+`BeatTimingBot` follows the same boundary pattern used earlier in narrative segmentation:
+
+```text
+SourceScript + Beat[] + NarrationWord[]
+                 ↓
+BeatTimingBot
+                 ↓
+beat_end_word_ids[]
+                 ↓
+Python reconstruction
+                 ↓
+BeatTiming[]
+```
+
+The model decides only which recognized word ends each ordered beat. It never generates timestamps.
+Python reconstructs consecutive word ranges and the real timeline.
+
+For non-final beats, the interval ends at the start of the next beat's first word. This assigns the
+inter-beat pause to the previous visual state and makes the next visual change coincide with the
+start of the next spoken idea. The final beat ends at `NarrationAudio.duration_seconds`.
+
+### Deterministic shot timing
+
+No model is required after beat timing:
+
+```text
+Shot.beat_ids + BeatTiming[]
+            ↓
+Python
+            ↓
+ShotTiming[]
+```
+
+A shot starts at its first beat's `start_seconds` and ends at its last beat's `end_seconds`. The
+workflow validates exact beat coverage, ordering and contiguous timelines before persisting the
+result.
+
+This means the pipeline does not assume a fixed number of shots. A later regeneration can change
+shot grouping while temporal projection remains deterministic as long as beat coverage is valid.
+
 ## Phase 4 visual reference boundary
 
 `VisualReferenceBot` does **not** generate an entire image prompt freely. The model returns only a
@@ -207,45 +301,12 @@ This rule was added after a real validation where `Japan` initially drifted towa
 country description. With contextual input, the same canonical location produced a coherent
 feudal-era Japanese castle-town environment instead.
 
-## Image provider boundary
+## Media provider boundaries
 
-Image generation is separated from prompt design.
+### Structured text
 
-Provider-neutral contract:
-
-```text
-ImageProvider.generate_image(...)
-  -> GeneratedImage
-       content     # bytes, ephemeral
-       media_type
-       extension
-```
-
-The application domain does not persist provider response objects or base64 payloads.
-
-The first implementation is `OpenAIImageProvider`. Model, size and quality are runtime concerns,
-not fields of `ReferenceAsset`.
-
-Persisted application contract:
-
-```text
-ReferenceAsset = { entity_id, uri }
-```
-
-The local implementation uses deterministic filenames such as:
-
-```text
-reference_assets/group_001.png
-reference_assets/location_001.png
-```
-
-This keeps canonical identity stable while allowing local storage to be replaced by an object-store
-URI later without changing the entity relationship.
-
-## Provider boundaries
-
-The original `StructuredTextProvider` remains for independent one-shot transformations. Phase 3
-adds `StatefulStructuredTextProvider`, whose result contains:
+`StructuredTextProvider` handles independent Structured Output transformations. Phase 3 adds
+`StatefulStructuredTextProvider`, whose result contains:
 
 ```text
 StatefulStructuredResult
@@ -256,9 +317,46 @@ StatefulStructuredResult
 `OpenAIProvider` implements both text contracts. Stable instructions are sent on every stateful
 request. The application remains the source of truth for IDs, ordering and relationships.
 
-Phase 4 adds a separate `ImageProvider`. This is intentionally not folded into the text-provider
-interface because image generation has a different return type, persistence lifecycle and runtime
-configuration.
+### Images
+
+Image generation is separated from prompt design:
+
+```text
+ImageProvider.generate_image(...)
+  -> GeneratedImage
+       content     # bytes, ephemeral
+       media_type
+       extension
+```
+
+The application domain does not persist provider response objects or base64 payloads. The first
+implementation is `OpenAIImageProvider`. Model, size and quality are runtime concerns, not fields of
+`ReferenceAsset`.
+
+Persisted application contract:
+
+```text
+ReferenceAsset = { entity_id, uri }
+```
+
+### Speech
+
+```text
+SpeechProvider.generate_speech(...)
+  -> GeneratedSpeech
+       content     # bytes, ephemeral
+       media_type
+       extension
+```
+
+The first implementation is `OpenAISpeechProvider`. Voice, model, speed and speech instructions are
+runtime generation parameters and are not duplicated in `NarrationAudio`.
+
+### Transcription / alignment
+
+`TranscriptionProvider` exposes word-level timing evidence independently of the speech provider.
+The current OpenAI implementation uses the provider path that exposes word timestamps. The domain
+stores only normalized `NarrationWord[]`, not raw provider response objects.
 
 ## Phase 4 artifacts
 
@@ -266,12 +364,6 @@ Prompt design:
 
 ```bash
 python scripts/run_phase4.py
-```
-
-Produces:
-
-```text
-data/output/phase4/visual_references.json
 ```
 
 Reference-image generation:
@@ -304,8 +396,41 @@ The samurai production example validated both halves of Phase 4:
 - `reference_assets.json` preserved all 3 canonical IDs with deterministic relative URIs.
 - Local `pytest` and Ruff validation passed before the real generation run.
 
-These results are sufficient to close Phase 4. Storyboard grids remain an optional experiment and
-are not required by the canonical reference contract.
+## Phase 5 artifacts
+
+```bash
+python scripts/run_phase5_audio.py
+python scripts/run_phase5_alignment.py --language es
+python scripts/run_phase5_beat_timing.py
+python scripts/run_phase5_shot_timing.py
+```
+
+Produces:
+
+```text
+data/output/phase5/
+├── narration.wav
+├── narration.json
+├── narration_words.json
+├── beat_timings.json
+└── shot_timings.json
+```
+
+## Real Phase 5 validation
+
+The same samurai production example validated the complete temporal chain:
+
+- canonical WAV narration measured at **45.0 seconds**;
+- **105** recognized timing words, beginning at `0.0` and ending at `44.58` seconds;
+- real provider output included several point-like word timestamps, validating the relaxed
+  `start == end` rule;
+- **11** beat intervals covered the entire `0.0–45.0` second timeline without gaps or overlaps;
+- the shot regeneration used for this run contained **8** shots;
+- **8** deterministic shot intervals covered the same `0.0–45.0` timeline exactly;
+- the historical Phase 3 run had produced 7 shots, demonstrating that downstream timing does not
+  depend on hardcoded shot counts.
+
+These results are sufficient to close Phase 5.
 
 ## Phase 1 compatibility
 
@@ -318,6 +443,7 @@ The Phase 1 flow is not the long-term production architecture.
 ## Planned media stack
 
 - **LLM orchestration:** OpenAI Responses API + Structured Outputs.
+- **Storyboard planning:** provider-neutral shot keyframes before GPU video generation.
 - **GPU inference:** Docker containers on Salad.
 - **Video model:** LTX-2.5 first; benchmark hardware/quantization before fixing the worker shape.
 - **Object storage:** Cloudflare R2.
@@ -338,16 +464,20 @@ Completed:
 6. `VisualReferenceBot`: contextual parallel `ContinuityEntity[] -> VisualReference[]`
 7. `ImageProvider` + `OpenAIImageProvider`: `VisualReference[] -> GeneratedImage[]`
 8. Reference asset workflow: `GeneratedImage[] -> ReferenceAsset[] + PNG files`
+9. `SpeechProvider` + narration workflow: `SourceScript -> NarrationAudio + WAV`
+10. `TranscriptionProvider`: `NarrationAudio -> NarrationWord[]`
+11. `BeatTimingBot` + reconstruction: `Beat[] + NarrationWord[] -> BeatTiming[]`
+12. Deterministic timing projection: `Shot[] + BeatTiming[] -> ShotTiming[]`
 
 Real Phase 3 validation covered both stateful patterns. Real Phase 4 validation covered contextual
-prompt design and provider-backed reference-image generation.
+prompt design and provider-backed reference-image generation. Real Phase 5 validation covered the
+complete 45-second audio-to-shot timeline.
 
 ## Next implementation step
 
-**Phase 5 — Audio and timing.**
+**Phase 6 — Storyboard and per-shot visual planning.**
 
-The next formal stage should introduce TTS, measured audio durations and alignment/caption timing
-without expanding the already-closed visual-reference contracts.
-
-Storyboard grids remain optional. They should only be introduced if a later benchmark shows that
-they improve downstream video consistency enough to justify the extra generation step.
+The next stage should generate a provider-neutral keyframe plan for each shot using the existing
+`Shot`, canonical continuity entities/references and measured `ShotTiming` as context. The first
+increment should persist prompts only. Image generation and scene grids should follow only after the
+prompts have been inspected against the real samurai example.
