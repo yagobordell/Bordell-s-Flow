@@ -137,6 +137,13 @@ class StoryboardFrame(BaseModel):
     prompt: str = Field(min_length=1)
 
 
+class StoryboardKeyframe(BaseModel):
+    """Persisted storyboard still-image asset bound to one canonical shot."""
+
+    shot_id: int = Field(ge=1)
+    uri: str = Field(min_length=1)
+
+
 class StoryboardScene(BaseModel):
     """Legacy rich scene emitted by the experimental Phase 1 DirectorAgent."""
 

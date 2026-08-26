@@ -5,7 +5,9 @@ from typing import TYPE_CHECKING, Any
 from ai_video_factory.providers.images import (
     GeneratedImage,
     ImageFormat,
+    ImageInputFidelity,
     ImageQuality,
+    ImageReferenceInput,
 )
 
 if TYPE_CHECKING:
@@ -18,9 +20,15 @@ _MEDIA_TYPES: dict[ImageFormat, str] = {
     "webp": "image/webp",
 }
 
+_EXTENSION_BY_MEDIA_TYPE = {
+    "image/png": "png",
+    "image/jpeg": "jpeg",
+    "image/webp": "webp",
+}
+
 
 class OpenAIImageProvider:
-    """OpenAI implementation of the provider-neutral image generation contract."""
+    """OpenAI implementation of provider-neutral image generation contracts."""
 
     def __init__(
         self,
@@ -52,25 +60,80 @@ class OpenAIImageProvider:
             quality=quality,
             output_format=output_format,
         )
+        return _decode_response_image(response, output_format, operation="generation")
 
-        data = response.data
-        if not data or len(data) != 1:
-            raise RuntimeError("OpenAI image generation did not return exactly one image")
+    async def generate_image_with_references(
+        self,
+        *,
+        prompt: str,
+        references: list[ImageReferenceInput],
+        model: str,
+        size: str,
+        quality: ImageQuality,
+        output_format: ImageFormat,
+        input_fidelity: ImageInputFidelity,
+    ) -> GeneratedImage:
+        if not references:
+            return await self.generate_image(
+                prompt=prompt,
+                model=model,
+                size=size,
+                quality=quality,
+                output_format=output_format,
+            )
 
-        encoded = getattr(data[0], "b64_json", None)
-        if not isinstance(encoded, str) or not encoded:
-            raise RuntimeError("OpenAI image generation returned no base64 image payload")
+        image_files = []
+        for index, reference in enumerate(references, start=1):
+            extension = _EXTENSION_BY_MEDIA_TYPE.get(reference.media_type)
+            if extension is None:
+                raise ValueError(
+                    f"Unsupported image reference media type: {reference.media_type}"
+                )
+            image_files.append(
+                (
+                    f"reference_{index:03d}.{extension}",
+                    reference.content,
+                    reference.media_type,
+                )
+            )
 
-        try:
-            content = base64.b64decode(encoded, validate=True)
-        except (binascii.Error, ValueError) as exc:
-            raise RuntimeError("OpenAI image generation returned invalid base64 data") from exc
-
-        if not content:
-            raise RuntimeError("OpenAI image generation returned an empty image payload")
-
-        return GeneratedImage(
-            content=content,
-            media_type=_MEDIA_TYPES[output_format],
-            extension=output_format,
+        response = await self._client.images.edit(
+            image=image_files,
+            model=model,
+            prompt=prompt,
+            n=1,
+            size=size,
+            quality=quality,
+            output_format=output_format,
+            input_fidelity=input_fidelity,
         )
+        return _decode_response_image(response, output_format, operation="edit")
+
+
+def _decode_response_image(
+    response: Any,
+    output_format: ImageFormat,
+    *,
+    operation: str,
+) -> GeneratedImage:
+    data = response.data
+    if not data or len(data) != 1:
+        raise RuntimeError(f"OpenAI image {operation} did not return exactly one image")
+
+    encoded = getattr(data[0], "b64_json", None)
+    if not isinstance(encoded, str) or not encoded:
+        raise RuntimeError(f"OpenAI image {operation} returned no base64 image payload")
+
+    try:
+        content = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise RuntimeError(f"OpenAI image {operation} returned invalid base64 data") from exc
+
+    if not content:
+        raise RuntimeError(f"OpenAI image {operation} returned an empty image payload")
+
+    return GeneratedImage(
+        content=content,
+        media_type=_MEDIA_TYPES[output_format],
+        extension=output_format,
+    )
