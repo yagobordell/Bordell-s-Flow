@@ -10,6 +10,7 @@ from .models import (
     SourceScript,
     StoryboardScene,
     VideoPlan,
+    VisualReference,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "SourceScript",
     "StoryboardScene",
     "VideoPlan",
+    "VisualReference",
 ]
