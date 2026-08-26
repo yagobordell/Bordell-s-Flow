@@ -1,14 +1,11 @@
 from dataclasses import dataclass
-from typing import Generic, Protocol, TypeVar
+from typing import Protocol
 
 from pydantic import BaseModel
 
 
-StructuredOutputT = TypeVar("StructuredOutputT", bound=BaseModel)
-
-
 @dataclass(frozen=True)
-class StatefulStructuredResult(Generic[StructuredOutputT]):
+class StatefulStructuredResult[StructuredOutputT: BaseModel]:
     """Validated structured output together with the response state identifier."""
 
     output: StructuredOutputT
@@ -18,7 +15,7 @@ class StatefulStructuredResult(Generic[StructuredOutputT]):
 class StructuredTextProvider(Protocol):
     """Provider contract for LLM calls that must return validated structured data."""
 
-    async def generate_structured(
+    async def generate_structured[StructuredOutputT: BaseModel](
         self,
         *,
         model: str,
@@ -33,7 +30,7 @@ class StructuredTextProvider(Protocol):
 class StatefulStructuredTextProvider(StructuredTextProvider, Protocol):
     """Structured provider that can continue from a previous model response."""
 
-    async def generate_structured_stateful(
+    async def generate_structured_stateful[StructuredOutputT: BaseModel](
         self,
         *,
         model: str,
