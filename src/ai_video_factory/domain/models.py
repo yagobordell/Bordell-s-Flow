@@ -89,6 +89,13 @@ class VisualReference(BaseModel):
     prompt: str = Field(min_length=1)
 
 
+class ReferenceAsset(BaseModel):
+    """Persisted reference-image asset bound to one canonical continuity entity."""
+
+    entity_id: str = Field(pattern=r"^(character|group|location|object)_\d{3,}$")
+    uri: str = Field(min_length=1)
+
+
 class StoryboardScene(BaseModel):
     """Legacy rich scene emitted by the experimental Phase 1 DirectorAgent."""
 
