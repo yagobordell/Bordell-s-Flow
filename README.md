@@ -14,9 +14,9 @@ Objetivos principales:
 
 ## Estado
 
-**Fase 3 — Continuidad y shots: completada.** ✅
+**Fase 4 — Referencias visuales: en desarrollo.** 🚧
 
-Siguiente etapa: **Fase 4 — Referencias visuales**.
+Subfase actual: **prompts de referencia visual canónicos implementados; generación de assets pendiente**.
 
 La Fase 1 queda conservada como experimento funcional. El pipeline de producción definitivo
 empieza desde un **guion ya terminado**, no desde un tema.
@@ -63,10 +63,14 @@ empieza desde un **guion ya terminado**, no desde un tema.
    - Cobertura exacta y ordenada de beats en los shots.
    - Validación real multi-turn de continuidad y validación real de shot planning.
 
-6. **Fase 4 — Referencias visuales**
-   - Referencias consistentes de personajes y escenarios.
-   - Plantillas visuales fijas.
-   - Storyboard grids de hasta 3x3 cuando aporten valor.
+6. **Fase 4 — Referencias visuales** 🚧
+   - Contrato mínimo `VisualReference = { entity_id, prompt }`.
+   - `VisualReferenceBot`: diseño visual canónico por entidad.
+   - Plantillas fijas controladas por Python para `character`, `group`, `location` y `object`.
+   - Fan-out/fan-in paralelo para entidades independientes.
+   - Prompts provider-neutral e inspeccionables antes de generar imágenes.
+   - Generación de assets de referencia pendiente.
+   - Storyboard grids de hasta 3x3 pendientes y solo cuando aporten valor.
 
 7. **Fase 5 — Audio y timing**
    - TTS.
@@ -157,7 +161,7 @@ SourceScript
     text
 ```
 
-La jerarquía narrativa es:
+La jerarquía de planificación es:
 
 ```text
 SourceScript
@@ -169,9 +173,13 @@ Beat[]
 Scene[]
   ↓
 Shot[]
+
+ContinuityEntity[]
+  ↓
+VisualReference[]
 ```
 
-Los contratos de planificación se mantienen deliberadamente pequeños:
+Los contratos se mantienen deliberadamente pequeños:
 
 ```text
 NarrativeBlock   = { id, text }
@@ -180,6 +188,7 @@ Scene            = { id, beat_ids }
 ContinuityEntity = { id, kind, name, description }
 BlockContinuity  = { block_id, entity_ids }
 Shot             = { id, scene_id, beat_ids, entity_ids, action }
+VisualReference  = { entity_id, prompt }
 ```
 
 El generador de guion de la Fase 1 sigue disponible como utilidad opcional:
@@ -296,6 +305,38 @@ fuera del contrato.
 Validación real completada con el guion de samuráis de la Fase 2: **3 escenas -> 7 shots**, con los
 beats **1–11 cubiertos exactamente una vez y en orden**. Los shots combinaron beats consecutivos
 cuando formaban una misma acción visual, evitando una fragmentación artificial de un shot por beat.
+
+## Fase 4 — Referencias visuales
+
+La primera subfase consume el registro canónico de entidades de la Fase 3:
+
+```bash
+python scripts/run_phase4.py
+```
+
+Se puede elegir un estilo visual compartido sin modificar los contratos narrativos:
+
+```bash
+python scripts/run_phase4.py --style "cinematic documentary"
+```
+
+Genera:
+
+```text
+data/output/phase4/visual_references.json
+```
+
+Cada referencia conserva el mismo `entity_id` de continuidad y añade únicamente un `prompt`
+provider-neutral. `VisualReferenceBot` no escribe libremente el prompt completo: genera una
+descripción visual canónica y Python la inserta en una plantilla fija distinta para personajes,
+grupos, localizaciones y objetos.
+
+Las entidades se procesan en **paralelo** porque sus identidades ya quedaron resueltas en la Fase 3.
+El workflow conserva el orden de entrada y valida que exista exactamente una referencia por cada ID.
+
+Esta subfase produce prompts, no imágenes. La elección e integración del proveedor de generación de
+assets se mantiene separada para que podamos inspeccionar y validar primero las identidades visuales
+sin acoplar el dominio a una API concreta.
 
 La prueba histórica de la Fase 1 sigue disponible con:
 
