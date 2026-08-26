@@ -23,7 +23,7 @@ workflow.
 Autonomous agents are reserved for later verification stages, where a verifier can inspect an
 artifact and decide whether a specific step must be regenerated.
 
-## Narrative hierarchy
+## Narrative and visual hierarchy
 
 ```text
 SourceScript
@@ -31,6 +31,9 @@ SourceScript
       -> Beat[]
           -> Scene[]
               -> Shot[]
+
+ContinuityEntity[]
+  -> VisualReference[]
 ```
 
 Definitions:
@@ -39,6 +42,7 @@ Definitions:
 - **Beat**: one visualizable action, change or idea belonging to one block.
 - **Scene**: ordered grouping of beat IDs.
 - **Shot**: minimal audiovisual unit planned from consecutive beats inside one scene.
+- **VisualReference**: provider-neutral canonical prompt bound to one continuity entity ID.
 
 The planning contracts remain intentionally small:
 
@@ -49,9 +53,11 @@ Scene            = { id, beat_ids }
 ContinuityEntity = { id, kind, name, description }
 BlockContinuity  = { block_id, entity_ids }
 Shot             = { id, scene_id, beat_ids, entity_ids, action }
+VisualReference  = { entity_id, prompt }
 ```
 
-Camera, lighting, duration, transitions and generation prompts remain outside these contracts.
+Camera, lighting, duration, transitions and per-shot generation prompts remain outside these
+contracts.
 
 ## Continuity registry
 
@@ -81,7 +87,7 @@ merely because they appeared earlier.
 
 ## Orchestration patterns
 
-### Parallel fan-out / fan-in
+### Parallel fan-out / fan-in: beat extraction
 
 Independent narrative blocks are processed concurrently during beat extraction:
 
@@ -129,17 +135,56 @@ The continuity state chain is not reused by the shot planner. Canonical continui
 stages through application-owned entity IDs and persisted artifacts. Provider-managed state is used
 only for semantic context within one bot's serial process.
 
-For each scene, Python resolves:
-
-1. the scene's canonical beat objects;
-2. the narrative blocks referenced by those beats;
-3. the union of continuity entities available to those blocks.
-
-The model then groups consecutive beats into visual shots, selects only relevant canonical entity
-IDs and describes the visual action. Python validates that all scene beats appear exactly once and
-in order and that no unknown entity is referenced.
+For each scene, Python resolves the canonical beats and the union of continuity entities available
+to the blocks represented by those beats. The model groups consecutive beats into shots and Python
+validates exact beat coverage, ordering and entity references.
 
 Shot IDs are assigned globally and deterministically by Python after each model response.
+
+### Parallel fan-out / fan-in: visual references
+
+Once continuity identities are resolved, each entity can be designed independently:
+
+```text
+entity 1 -> VisualReferenceBot --\
+entity 2 -> VisualReferenceBot ----> VisualReference[]
+entity N -> VisualReferenceBot --/
+```
+
+This stage is stateless and uses `asyncio.gather`. The workflow preserves input order and validates
+that exactly one reference is returned for every canonical `entity_id`.
+
+## Phase 4 visual reference boundary
+
+`VisualReferenceBot` does **not** generate an entire image prompt freely. The model returns only a
+stable English visual description for one entity. Python then applies a fixed template selected by
+entity kind.
+
+This division keeps high-level visual reasoning in the model while application-owned rules control
+the reference format. Current templates cover:
+
+```text
+character -> neutral full-body identity reference
+group     -> representative shared-appearance reference
+location  -> permanent architecture/material/layout reference
+object    -> isolated tangible-object reference
+```
+
+All templates explicitly avoid text, labels, watermarks and temporary shot-specific action. A
+shared `visual_style` is supplied to the bot at runtime rather than added to the continuity schema.
+
+The final Phase 4 contract is intentionally provider-neutral:
+
+```text
+VisualReference = { entity_id, prompt }
+```
+
+No image URL, file path, seed, model name or provider-specific parameter belongs in this contract.
+Those fields become relevant only when an image-generation provider is introduced.
+
+The bot may concretize moderate visual details when the narrative identity is underspecified because
+the purpose of this stage is to lock a reusable appearance once. It must not add narrative facts,
+relationships or unsupported written symbols.
 
 ## Provider boundaries
 
@@ -152,8 +197,8 @@ StatefulStructuredResult
   response_id  -> provider state identifier for the next turn
 ```
 
-`OpenAIProvider` implements both contracts. This lets Phase 1 and Phase 2 remain stateless while
-continuity and shot planning use serial state.
+`OpenAIProvider` implements both contracts. Phase 4 reference design returns to the stateless
+`StructuredTextProvider` because canonical entities are independent inputs.
 
 Stable instructions are sent on every stateful request. The application remains the source of
 truth for IDs, ordering and relationships.
@@ -187,22 +232,20 @@ Completed:
 4. `ContinuityBot`: serial `NarrativeBlock[] -> ContinuityEntity[] + BlockContinuity[]`
 5. `ShotPlannerBot`: serial `Scene[] -> Shot[]`
 
-Real validation covered both stateful patterns. A three-block continuity example retained stable
-entity IDs across turns. The samurai production example generated 7 shots from 3 scenes while
+Phase 4 in progress:
+
+6. `VisualReferenceBot`: parallel `ContinuityEntity[] -> VisualReference[]`
+
+Real Phase 3 validation covered both stateful patterns. A three-block continuity example retained
+stable entity IDs across turns. The samurai production example generated 7 shots from 3 scenes while
 covering beats 1–11 exactly once and in order.
 
-## Next implementation step
+## Next Phase 4 increment
 
-Phase 4 adds **visual references** on top of canonical continuity IDs rather than changing the
-narrative contracts.
+Validate `visual_references.json` with a real OpenAI run. After the reference prompts are judged
+stable and useful, introduce an image-generation provider abstraction and persist generated
+reference assets separately from the provider-neutral `VisualReference` contract.
 
-Likely first increment:
-
-```text
-ContinuityEntity[]
-    -> CharacterReferenceBot / LocationReferenceBot
-    -> reference prompts / reference assets
-```
-
-Character and location reference contracts should remain minimal. Camera, per-shot generation
-prompts and storyboard-grid strategy should be added only when required by the following stage.
+Storyboard grids remain optional. They should be introduced only after single-entity reference
+assets are working and only if they improve downstream video consistency enough to justify the
+extra generation step.
