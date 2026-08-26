@@ -216,7 +216,9 @@ def _validate_inputs(
         if not encountered_scene_ids or encountered_scene_ids[-1] != shot.scene_id:
             encountered_scene_ids.append(shot.scene_id)
     if encountered_scene_ids != scene_ids:
-        raise ValueError("Storyboard shots must preserve scene order and remain contiguous by scene")
+        raise ValueError(
+            "Storyboard shots must preserve scene order and remain contiguous by scene"
+        )
 
 
 def _validate_layout(
