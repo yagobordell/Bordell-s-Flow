@@ -4,9 +4,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
+
 from ai_video_factory.bots import VisualReferenceBot
 from ai_video_factory.config import settings
-from ai_video_factory.domain import ContinuityEntity
+from ai_video_factory.domain import BlockContinuity, ContinuityEntity, NarrativeBlock
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.workflows.visual_references import build_visual_references
 
@@ -15,7 +17,7 @@ DEFAULT_VISUAL_STYLE = "cinematic documentary"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build canonical visual reference prompts from Phase 3 continuity entities."
+        description="Build canonical visual reference prompts from continuity entities and context."
     )
     parser.add_argument(
         "entities_file",
@@ -23,6 +25,18 @@ def parse_args() -> argparse.Namespace:
         nargs="?",
         default=settings.output_dir / "phase3" / "entities.json",
         help="Phase 3 entities.json file.",
+    )
+    parser.add_argument(
+        "--blocks",
+        type=Path,
+        default=settings.output_dir / "phase2" / "narrative_blocks.json",
+        help="Phase 2 narrative_blocks.json file used as visual context.",
+    )
+    parser.add_argument(
+        "--continuity",
+        type=Path,
+        default=settings.output_dir / "phase3" / "block_continuity.json",
+        help="Phase 3 block_continuity.json file used to bind entities to narrative context.",
     )
     parser.add_argument(
         "--style",
@@ -43,18 +57,17 @@ async def main() -> None:
 
     if not settings.openai_api_key:
         raise SystemExit("OPENAI_API_KEY is missing. Add it to your local .env file.")
-    if not args.entities_file.is_file():
-        raise SystemExit(f"Continuity entities file not found: {args.entities_file}")
 
-    raw_entities: Any = json.loads(args.entities_file.read_text(encoding="utf-8"))
-    if not isinstance(raw_entities, list):
-        raise SystemExit("Continuity entities file must contain a JSON array.")
+    entities = _read_models(args.entities_file, ContinuityEntity)
+    blocks = _read_models(args.blocks, NarrativeBlock)
+    continuity = _read_models(args.continuity, BlockContinuity)
 
-    entities = [ContinuityEntity.model_validate(item) for item in raw_entities]
     provider = OpenAIProvider(api_key=settings.openai_api_key)
     reference_bot = VisualReferenceBot(provider=provider, model=settings.openai_model)
     references = await build_visual_references(
         entities,
+        narrative_blocks=blocks,
+        block_continuity=continuity,
         reference_bot=reference_bot,
         visual_style=args.style,
     )
@@ -67,6 +80,17 @@ async def main() -> None:
     )
 
     print(f"Phase 4 visual references complete. Artifact written to: {args.output.resolve()}")
+
+
+def _read_models[T: BaseModel](path: Path, model_type: type[T]) -> list[T]:
+    if not path.is_file():
+        raise SystemExit(f"Required JSON file not found: {path}")
+
+    raw: Any = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise SystemExit(f"JSON file must contain an array: {path}")
+
+    return [model_type.model_validate(item) for item in raw]
 
 
 if __name__ == "__main__":
