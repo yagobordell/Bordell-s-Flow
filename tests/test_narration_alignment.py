@@ -104,6 +104,49 @@ def test_alignment_preserves_source_as_prompt_and_assigns_word_ids() -> None:
     ]
 
 
+def test_alignment_accepts_zero_duration_word_timestamp() -> None:
+    provider = RecordingTranscriptionProvider(
+        [
+            TranscribedWord(text="Japón", start_seconds=0.0, end_seconds=0.0),
+            TranscribedWord(text="feudal", start_seconds=0.2, end_seconds=0.8),
+        ]
+    )
+
+    words = asyncio.run(
+        align_narration_words(
+            SourceScript(text="Japón feudal"),
+            NarrationAudio(uri="narration.wav", duration_seconds=1.0),
+            b"audio",
+            transcription_provider=provider,  # type: ignore[arg-type]
+            model="whisper-1",
+            language="es",
+        )
+    )
+
+    assert [word.model_dump() for word in words] == [
+        {"id": 1, "text": "Japón", "start_seconds": 0.0, "end_seconds": 0.0},
+        {"id": 2, "text": "feudal", "start_seconds": 0.2, "end_seconds": 0.8},
+    ]
+
+
+def test_alignment_rejects_end_before_start_with_diagnostics() -> None:
+    provider = RecordingTranscriptionProvider(
+        [TranscribedWord(text="error", start_seconds=1.0, end_seconds=0.9)]
+    )
+
+    with pytest.raises(ValueError, match=r"word_id=1.*text='error'.*start=1.0.*end=0.9"):
+        asyncio.run(
+            align_narration_words(
+                SourceScript(text="error"),
+                NarrationAudio(uri="narration.wav", duration_seconds=2.0),
+                b"audio",
+                transcription_provider=provider,  # type: ignore[arg-type]
+                model="whisper-1",
+                language=None,
+            )
+        )
+
+
 def test_alignment_rejects_words_beyond_measured_narration_duration() -> None:
     provider = RecordingTranscriptionProvider(
         [TranscribedWord(text="fin", start_seconds=1.8, end_seconds=2.7)]

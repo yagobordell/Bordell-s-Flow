@@ -40,10 +40,19 @@ async def align_narration_words(
         text = " ".join(word.text.split())
         if not text:
             raise ValueError("Transcription provider returned an empty narration word")
-        if word.start_seconds < 0 or word.end_seconds <= word.start_seconds:
-            raise ValueError("Transcription provider returned invalid narration word timestamps")
+        if word.start_seconds < 0 or word.end_seconds < word.start_seconds:
+            raise ValueError(
+                "Transcription provider returned invalid narration word timestamps: "
+                f"word_id={word_id}, text={text!r}, "
+                f"start={word.start_seconds}, end={word.end_seconds}"
+            )
         if word.start_seconds < previous_start or word.end_seconds < previous_end:
-            raise ValueError("Narration word timestamps must be ordered")
+            raise ValueError(
+                "Narration word timestamps must be ordered: "
+                f"word_id={word_id}, text={text!r}, "
+                f"start={word.start_seconds}, end={word.end_seconds}, "
+                f"previous_start={previous_start}, previous_end={previous_end}"
+            )
 
         aligned.append(
             NarrationWord(
@@ -57,6 +66,10 @@ async def align_narration_words(
         previous_end = word.end_seconds
 
     if aligned[-1].end_seconds > narration.duration_seconds + _TIMESTAMP_TOLERANCE_SECONDS:
-        raise ValueError("Narration word timestamps exceed measured narration duration")
+        raise ValueError(
+            "Narration word timestamps exceed measured narration duration: "
+            f"last_end={aligned[-1].end_seconds}, "
+            f"duration={narration.duration_seconds}"
+        )
 
     return aligned
