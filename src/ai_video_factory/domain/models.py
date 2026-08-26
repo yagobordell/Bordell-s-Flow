@@ -82,6 +82,13 @@ class Shot(BaseModel):
     action: str = Field(min_length=1)
 
 
+class VisualReference(BaseModel):
+    """Canonical provider-neutral visual reference prompt for one continuity entity."""
+
+    entity_id: str = Field(pattern=r"^(character|group|location|object)_\d{3,}$")
+    prompt: str = Field(min_length=1)
+
+
 class StoryboardScene(BaseModel):
     """Legacy rich scene emitted by the experimental Phase 1 DirectorAgent."""
 

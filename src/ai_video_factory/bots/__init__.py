@@ -9,6 +9,7 @@ from .continuity import ContinuityBot
 from .narrative_blocks import NarrativeBlockBot
 from .scenes import ScenePlannerBot
 from .shots import ShotPlannerBot
+from .visual_references import VisualReferenceBot
 
 __all__ = [
     "BeatExtractorBot",
@@ -16,4 +17,5 @@ __all__ = [
     "NarrativeBlockBot",
     "ScenePlannerBot",
     "ShotPlannerBot",
+    "VisualReferenceBot",
 ]
