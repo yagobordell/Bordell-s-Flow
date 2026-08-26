@@ -130,6 +130,13 @@ class ShotTiming(BaseModel):
     end_seconds: float = Field(gt=0)
 
 
+class StoryboardFrame(BaseModel):
+    """Provider-neutral still-image prompt for one canonical planned shot."""
+
+    shot_id: int = Field(ge=1)
+    prompt: str = Field(min_length=1)
+
+
 class StoryboardScene(BaseModel):
     """Legacy rich scene emitted by the experimental Phase 1 DirectorAgent."""
 
