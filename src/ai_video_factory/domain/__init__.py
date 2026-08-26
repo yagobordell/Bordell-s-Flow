@@ -1,5 +1,6 @@
 from .models import (
     Beat,
+    BeatTiming,
     BlockContinuity,
     ContinuityEntity,
     NarrationAudio,
@@ -18,6 +19,7 @@ from .models import (
 
 __all__ = [
     "Beat",
+    "BeatTiming",
     "BlockContinuity",
     "ContinuityEntity",
     "NarrationAudio",
