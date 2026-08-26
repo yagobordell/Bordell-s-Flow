@@ -2,7 +2,7 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -11,9 +11,6 @@ from ai_video_factory.config import settings
 from ai_video_factory.domain import Beat, BlockContinuity, ContinuityEntity, Scene
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.workflows.shot_planning import plan_shots
-
-
-ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,7 +81,7 @@ async def main() -> None:
     print(f"Phase 3 shot planning complete. Artifact written to: {args.output.resolve()}")
 
 
-def _read_models(path: Path, model_type: type[ModelT]) -> list[ModelT]:
+def _read_models[ModelT: BaseModel](path: Path, model_type: type[ModelT]) -> list[ModelT]:
     if not path.is_file():
         raise SystemExit(f"Required JSON file not found: {path}")
 
