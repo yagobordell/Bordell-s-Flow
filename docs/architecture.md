@@ -100,6 +100,10 @@ Definitions:
 - **StoryboardFrame**: provider-neutral still-image prompt for one canonical shot.
 - **StoryboardKeyframe**: persisted still-image URI bound to one canonical shot.
 - **StoryboardGrid**: persisted scene-level review grid URI.
+- **GPUDeviceProfile**: immutable GPU identity and total VRAM observed before a benchmark.
+- **LTXBenchmarkProfile**: one reproducible model, pipeline, shape and runtime configuration.
+- **LTXBenchmarkSample**: one measured run with duration, peak VRAM and output identity.
+- **LTXBenchmarkReport**: hardware, sanitized command, samples and aggregate benchmark evidence.
 
 The contracts remain intentionally small:
 
@@ -119,6 +123,10 @@ ShotTiming         = { shot_id, start_seconds, end_seconds }
 StoryboardFrame    = { shot_id, prompt }
 StoryboardKeyframe = { shot_id, uri }
 StoryboardGrid     = { scene_id, uri }
+GPUDeviceProfile    = { index, name, memory_total_mib }
+LTXBenchmarkProfile = { label, ltx_source, pipeline, quantization, offload, dimensions, runs }
+LTXBenchmarkSample  = { run_index, duration_seconds, peak_gpu_memory_mib, output metadata }
+LTXBenchmarkReport  = { profile, command, devices, samples, aggregate metrics }
 ```
 
 Provider parameters such as model, quality, resolution, speech voice or image-edit options are not
@@ -432,6 +440,58 @@ do not modify the canonical keyframe files.
 All grids are composed in memory before persistence so invalid input does not leave a partial
 scene-grid batch.
 
+## Phase 7 GPU infrastructure
+
+### 7.1 Benchmark before worker shape
+
+Phase 7 begins with measurement rather than a hardcoded Salad GPU profile. The benchmark accepts an
+auditable LTX-2.5 command template and runs it directly without a shell:
+
+```text
+LTXBenchmarkProfile + command template
+                   ↓
+             warmup runs
+                   ↓
+ measured runs + nvidia-smi sampling
+                   ↓
+ validate MP4 + SHA-256
+                   ↓
+          LTXBenchmarkReport
+```
+
+Python owns the run count, output placeholder, timing, validation, hashing, aggregation and
+persistence. LTX owns inference. `nvidia-smi` is an evidence provider only; its peak value covers
+total memory used on each visible GPU, so benchmark nodes must not run unrelated workloads.
+
+The report stores the complete command needed for audit, but common inline token, API-key, password
+and object-storage credential forms are redacted first. Output files are removed before every run,
+so a successful process cannot accidentally validate a stale artifact.
+
+Warmups are deliberately excluded from aggregate timings. Measured samples retain their individual
+duration, peak memory, size and SHA-256 so later hardware selection does not depend only on one
+average.
+
+This first increment does not choose the final GPU, quantization or offload mode. Those choices must
+come from real reports collected with the same prompt, keyframe, seed, resolution, frame count and
+FPS. It also does not install LTX or its roughly model-sized checkpoint set inside the application
+package; the harness runs in the target LTX environment.
+
+### Planned 7.2 worker boundary
+
+After comparing real benchmark reports, the infrastructure continues with a stateless HTTP worker
+compatible with Salad Job Queue:
+
+```text
+orchestrator -> Salad queue -> Docker worker
+                                  /      \
+                              R2 input  R2 output
+                                  \      /
+                              Postgres job state
+```
+
+The queue may redeliver work after interruption. Deterministic object keys, external state and
+reconciliation must therefore make every job idempotent.
+
 ## Media provider boundaries
 
 ### Structured text
@@ -551,6 +611,16 @@ data/output/phase6/
     └── scene_003.png
 ```
 
+### Phase 7
+
+```text
+data/output/phase7/
+└── ltx_benchmark.json
+```
+
+The filename may be changed per hardware/profile case. Generated benchmark MP4 files are temporary
+and remain under `data/tmp/phase7/` by default.
+
 ## Real validation summary
 
 ### Phase 3
@@ -633,36 +703,17 @@ Completed:
 12. Storyboard prompting: `Shot[] + ShotTiming[] + VisualReference[] -> StoryboardFrame[]`
 13. Keyframe generation: `StoryboardFrame[] + ReferenceAsset[] -> StoryboardKeyframe[]`
 14. Scene grids: `Scene[] + Shot[] + StoryboardKeyframe[] -> StoryboardGrid[]`
+15. Reproducible LTX benchmark: command + NVIDIA telemetry -> `LTXBenchmarkReport`
 
 ## Next implementation step
 
-**Phase 7 — GPU infrastructure.**
+**Phase 7.2 — remote stateless GPU worker.**
 
-The next stage moves from planning assets to remote video-generation execution. The intended
-architecture is container-first and externally persisted:
+The reproducible LTX-2.5 benchmark harness is implemented. It must now be executed on real candidate
+hardware and the resulting reports reviewed before selecting a GPU profile, quantization or offload
+mode.
 
-```text
-                 Supabase/Postgres
-                        |
-                   job metadata
-                        |
-                        v
-                   orchestrator
-                        |
-                        v
-                  Salad job queue
-                        |
-                        v
-              stateless Docker worker
-                 /                  \
-                v                    v
-             R2 GET                R2 PUT
-         inputs/references       generated clip
-```
-
-Workers should assume interruption and restart. Inputs and outputs live outside the container,
-operations are idempotent, and the worker returns metadata rather than transporting large video
-bytes through the orchestrator.
-
-Before fixing a GPU profile or model quantization, LTX-2.5 must be benchmarked on real target
-hardware.
+Once that evidence exists, the next code increment will expose the inference boundary as a
+containerized HTTP worker for Salad Job Queue, use deterministic R2 input/output keys and reconcile
+idempotent job state through Supabase/Postgres. Workers must assume interruption and redelivery, and
+must return metadata rather than transporting large video bytes through the orchestrator.

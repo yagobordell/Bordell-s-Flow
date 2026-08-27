@@ -1,3 +1,11 @@
+from .gpu import (
+    GPUDeviceProfile,
+    GPUOffload,
+    GPUQuantization,
+    LTXBenchmarkProfile,
+    LTXBenchmarkReport,
+    LTXBenchmarkSample,
+)
 from .models import (
     Beat,
     BeatTiming,
@@ -26,6 +34,12 @@ __all__ = [
     "BeatTiming",
     "BlockContinuity",
     "ContinuityEntity",
+    "GPUDeviceProfile",
+    "GPUOffload",
+    "GPUQuantization",
+    "LTXBenchmarkProfile",
+    "LTXBenchmarkReport",
+    "LTXBenchmarkSample",
     "NarrationAudio",
     "NarrationWord",
     "NarrativeBlock",
