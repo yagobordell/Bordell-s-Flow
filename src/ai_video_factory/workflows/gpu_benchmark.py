@@ -252,7 +252,7 @@ def benchmark_ltx_command(
         median_duration_seconds=statistics.median(durations),
         min_duration_seconds=min(durations),
         max_duration_seconds=max(durations),
-        mean_generated_frames_per_second=profile.num_frames / mean_duration,
+        mean_end_to_end_frames_per_second=profile.num_frames / mean_duration,
         max_peak_gpu_memory_mib=[
             max(sample.peak_gpu_memory_mib[index] for sample in samples)
             for index in range(len(devices))
