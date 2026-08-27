@@ -4,9 +4,9 @@ import hashlib
 import json
 import re
 from pathlib import PurePosixPath
-from typing import Any, Literal, Self
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$")
 _TASK_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{1,127}$")
@@ -75,7 +75,7 @@ class GPUJobRequest(BaseModel):
     task: str = Field(min_length=2, max_length=128)
     inputs: list[ObjectInput] = Field(min_length=1, max_length=16)
     output: ObjectOutput
-    parameters: dict[str, Any] = Field(default_factory=dict)
+    parameters: dict[str, JsonValue] = Field(default_factory=dict)
 
     @field_validator("job_id")
     @classmethod
