@@ -9,10 +9,11 @@ media providers, GPU remota y composición programática.
 
 ## Estado
 
-**Fase 7 — Infraestructura GPU: en curso.** 🟡
+**Fase 7 — Infraestructura GPU: implementación completa; validación cloud pendiente.** 🟡
 
 Última fase cerrada: **Fase 6 — Storyboard y planificación visual por shot**. ✅
-La entrega 7.1 implementa el benchmark reproducible; falta ejecutarlo en hardware GPU real.
+Las entregas 7.1 y 7.2 están implementadas. Falta ejecutar la matriz en GPU real y validar el
+despliegue con las cuentas de R2, Supabase y Salad antes de cerrar operativamente la fase.
 
 La Fase 1 queda conservada como experimento funcional. El pipeline de producción definitivo
 empieza desde un **guion ya terminado**, no desde un tema.
@@ -83,11 +84,11 @@ empieza desde un **guion ya terminado**, no desde un tema.
 
 9. **Fase 7 — Infraestructura GPU** 🟡
    - Benchmark reproducible de LTX-2.5 implementado; ejecución real pendiente.
-   - Docker.
-   - Salad.
-   - Cloudflare R2.
-   - Supabase/Postgres.
-   - Workers stateless e idempotentes.
+   - Worker HTTP stateless e idempotente con contratos versionados.
+   - Cloudflare R2 para inputs/outputs con SHA-256 y reconciliación.
+   - Supabase/Postgres para estado transaccional, leases y reintentos.
+   - Docker con Salad Job Queue Worker `v0.7.0` fijado por checksum.
+   - Queue, autoscaling, readiness, manifiestos y smoke test end-to-end.
    - Hardware y cuantización se fijarán únicamente después del benchmark real.
 
 10. **Fase 8 — Generación de vídeo**
@@ -131,7 +132,13 @@ Para fases posteriores:
 Con `uv`:
 
 ```bash
-uv sync --dev
+uv sync --extra dev
+```
+
+Para trabajar con la infraestructura de Fase 7:
+
+```bash
+uv sync --extra dev --extra gpu
 ```
 
 O con `pip`:
@@ -518,21 +525,37 @@ data/output/phase7/
 La guía y la matriz inicial de perfiles están en
 [`docs/phase7-benchmark.md`](docs/phase7-benchmark.md).
 
-La implementación de 7.1 está completa, pero la fase sigue abierta hasta ejecutar el benchmark en
-hardware real y usar sus resultados para construir el worker Docker stateless, integrar Salad Job
-Queue, Cloudflare R2 y Supabase/Postgres:
+### 7.2 Worker remoto idempotente
+
+La infraestructura desplegable está implementada:
 
 ```text
 orchestrator
     ↓
-Salad job queue
+Salad Job Queue
     ↓
-stateless Docker GPU worker
+Docker + Salad worker v0.7.0
+    ↓
+HTTP POST /jobs
     ↙                 ↘
 R2 GET inputs      R2 PUT outputs
-    ↓
-Supabase/Postgres job state
+    ↘                 ↙
+Supabase/Postgres leases + state
 ```
+
+El payload incluye un `job_id` de aplicación, claves R2 deterministas y SHA-256 opcionales para
+inputs. Postgres une de forma inmutable el ID al fingerprint del request. Un heartbeat renueva el
+lease durante trabajos largos. Si un nodo cae después del upload pero antes del commit, el siguiente
+intento reconcilia los metadatos de R2 y no repite el trabajo.
+
+`infrastructure.copy` valida el recorrido completo sin pagar GPU. El runner LTX real sigue
+perteneciendo a Fase 8 y se registrará en el mismo boundary después de elegir hardware con evidencia.
+
+Guía completa, comandos y criterios de cierre:
+[`docs/phase7-deployment.md`](docs/phase7-deployment.md).
+
+La implementación está completa, pero la fase permanece abierta hasta ejecutar la matriz real,
+publicar la imagen y conservar un smoke test exitoso en las cuentas de R2, Supabase y Salad.
 
 ## Compatibilidad de Fase 1
 

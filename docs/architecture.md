@@ -476,21 +476,35 @@ come from real reports collected with the same prompt, keyframe, seed, resolutio
 FPS. It also does not install LTX or its roughly model-sized checkpoint set inside the application
 package; the harness runs in the target LTX environment.
 
-### Planned 7.2 worker boundary
+### 7.2 implemented worker boundary
 
-After comparing real benchmark reports, the infrastructure continues with a stateless HTTP worker
-compatible with Salad Job Queue:
+The worker is a versioned HTTP boundary compatible with Salad Job Queue:
 
 ```text
-orchestrator -> Salad queue -> Docker worker
-                                  /      \
-                              R2 input  R2 output
-                                  \      /
-                              Postgres job state
+Salad input -> GPUJobRequest -> transactional claim + lease
+                                  /                 \
+                         R2 inputs            task runner
+                                                   |
+                                            R2 deterministic output
+                                                   |
+                                         Postgres success commit
 ```
 
-The queue may redeliver work after interruption. Deterministic object keys, external state and
-reconciliation must therefore make every job idempotent.
+`GPUJobRequest` owns the application `job_id`; Salad's `Salad-Job-Id` remains a transport ID.
+Canonical JSON produces an immutable request SHA-256. Reusing one application ID with a different
+request is a conflict.
+
+The output key must be scoped below `jobs/<job_id>/`. R2 metadata stores the job, request and
+artifact hashes. A completed Postgres row is replayed. If R2 contains the matching artifact but
+Postgres does not yet contain the success commit, the worker reconciles it without executing the
+task again. Foreign output metadata is never overwritten.
+
+Postgres owns atomic claims, attempt counts and expiring leases. A background heartbeat renews the
+lease and the worker performs a synchronous renewal immediately before upload. Losing ownership
+prevents the artifact commit.
+
+Phase 7 registers only `infrastructure.copy`, a deterministic smoke task. Phase 8 will register the
+direct Python/PyTorch LTX runner without changing storage, lease or HTTP semantics.
 
 ## Media provider boundaries
 
@@ -704,16 +718,21 @@ Completed:
 13. Keyframe generation: `StoryboardFrame[] + ReferenceAsset[] -> StoryboardKeyframe[]`
 14. Scene grids: `Scene[] + Shot[] + StoryboardKeyframe[] -> StoryboardGrid[]`
 15. Reproducible LTX benchmark: command + NVIDIA telemetry -> `LTXBenchmarkReport`
+16. Versioned HTTP worker: `GPUJobRequest -> GPUJobResponse`
+17. Cloudflare R2 adapter: streamed local files + object metadata reconciliation
+18. Supabase/Postgres adapter: atomic claims, leases, retries and completed results
+19. Salad Docker image: official queue worker v0.7.0 verified by SHA-256
+20. Deployment renderer and end-to-end Salad/R2/Postgres smoke verifier
 
-## Next implementation step
+## Next validation step
 
-**Phase 7.2 — remote stateless GPU worker.**
+**Operational close of Phase 7, then Phase 8 video generation.**
 
-The reproducible LTX-2.5 benchmark harness is implemented. It must now be executed on real candidate
-hardware and the resulting reports reviewed before selecting a GPU profile, quantization or offload
-mode.
+The code boundary is complete. Run the benchmark matrix on real candidate hardware, choose a GPU
+profile from the resulting evidence, publish the immutable container image, apply the Postgres
+migration and execute the Salad/R2/Postgres smoke test documented in
+`docs/phase7-deployment.md`.
 
-Once that evidence exists, the next code increment will expose the inference boundary as a
-containerized HTTP worker for Salad Job Queue, use deterministic R2 input/output keys and reconcile
-idempotent job state through Supabase/Postgres. Workers must assume interruption and redelivery, and
-must return metadata rather than transporting large video bytes through the orchestrator.
+After that evidence is retained, Phase 8 adds the direct LTX-2.5 Python/PyTorch task runner to the
+existing registry. It should return R2 metadata through the same idempotent job contract rather than
+transporting video bytes through the orchestrator.
