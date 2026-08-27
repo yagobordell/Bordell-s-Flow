@@ -15,6 +15,11 @@ evidencia comparable de tiempo de generación y pico de VRAM sobre hardware real
 - persiste media, mediana, mínimo, máximo, throughput y pico de VRAM por GPU;
 - redacta tokens y claves comunes antes de guardar el comando en el informe.
 
+Cada warmup y cada run medido arranca un proceso nuevo. El tiempo y el throughput son end-to-end:
+incluyen carga de modelos, inicialización, inferencia y encode. Esto mide el coste de recuperación de
+un worker interrumpible. Cuando exista el worker persistente, se añadirá una medición separada con
+el modelo ya residente para estimar throughput sostenido.
+
 El script no instala LTX-2.5 ni descarga pesos. Debe ejecutarse dentro de un entorno GPU donde el
 repositorio oficial de [LTX-2](https://github.com/Lightricks/LTX-2) y los checkpoints estén ya
 disponibles. El ref por defecto queda registrado como
@@ -81,7 +86,8 @@ Cada caso genera un `LTXBenchmarkReport` JSON en `data/output/phase7/`. El MP4 t
 
 El pico de VRAM representa la memoria total usada que reporta `nvidia-smi` para cada GPU visible,
 no únicamente memoria atribuida al proceso. Ejecuta los casos en nodos sin otra carga para obtener
-comparaciones válidas.
+comparaciones válidas. Los warmups pueden preparar cachés del host, pero no mantienen los pesos en
+VRAM porque cada invocación es un proceso independiente.
 
 La fase continúa después del benchmark con:
 
