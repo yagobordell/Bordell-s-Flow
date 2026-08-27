@@ -48,6 +48,7 @@ def _salad_request(
             "Salad-Api-Key": api_key,
             "Accept": "application/json",
             "Content-Type": "application/json",
+            "User-Agent": "ai-video-factory-phase7/0.1",
         },
     )
     try:
