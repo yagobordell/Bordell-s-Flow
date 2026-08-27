@@ -35,17 +35,19 @@ class GPUWorkerSettings(BaseSettings):
         if self.gpu_worker_heartbeat_seconds >= self.gpu_worker_lease_seconds:
             raise ValueError("GPU_WORKER_HEARTBEAT_SECONDS must be shorter than the lease")
         if self.gpu_worker_mode == "production":
-            missing = [
-                name
-                for name in (
-                    "postgres_dsn",
-                    "r2_endpoint_url",
-                    "r2_bucket",
-                    "r2_access_key_id",
-                    "r2_secret_access_key",
-                )
-                if getattr(self, name) is None
-            ]
+            missing = []
+            for name in (
+                "postgres_dsn",
+                "r2_endpoint_url",
+                "r2_bucket",
+                "r2_access_key_id",
+                "r2_secret_access_key",
+            ):
+                value = getattr(self, name)
+                if isinstance(value, SecretStr):
+                    value = value.get_secret_value()
+                if value is None or not str(value).strip():
+                    missing.append(name)
             if missing:
                 raise ValueError(
                     "production GPU worker configuration is missing: " + ", ".join(missing)
