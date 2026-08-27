@@ -53,5 +53,5 @@ class LTXBenchmarkReport(BaseModel):
     median_duration_seconds: float = Field(gt=0)
     min_duration_seconds: float = Field(gt=0)
     max_duration_seconds: float = Field(gt=0)
-    mean_generated_frames_per_second: float = Field(gt=0)
+    mean_end_to_end_frames_per_second: float = Field(gt=0)
     max_peak_gpu_memory_mib: list[int] = Field(min_length=1)
