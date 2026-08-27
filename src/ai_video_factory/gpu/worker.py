@@ -207,7 +207,12 @@ class GPUWorker:
         for index, item in enumerate(request.inputs):
             suffix = Path(item.key).suffix
             destination = input_dir / f"{index:02d}-{item.name}{suffix}"
-            self.storage.download(item.key, destination)
+            stored = self.storage.download(item.key, destination)
+            if item.content_type is not None and stored.content_type != item.content_type:
+                raise InputIntegrityError(
+                    f"content type mismatch for input {item.name!r}: "
+                    f"expected {item.content_type}, got {stored.content_type}"
+                )
             if item.sha256 is not None:
                 actual = sha256_file(destination)
                 if actual != item.sha256:
@@ -260,6 +265,8 @@ class GPUWorker:
             raise RuntimeError("uploaded output metadata does not match its local digest")
         if stored.size_bytes < 1:
             raise RuntimeError("uploaded output is empty")
+        if stored.content_type != request.output.content_type:
+            raise RuntimeError("uploaded output content type does not match the job contract")
         return OutputArtifact(
             key=stored.key,
             content_type=stored.content_type,
