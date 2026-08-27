@@ -20,6 +20,19 @@ def test_production_settings_require_cloud_secrets() -> None:
         GPUWorkerSettings(_env_file=None, gpu_worker_mode="production")
 
 
+def test_production_settings_reject_blank_cloud_secrets() -> None:
+    with pytest.raises(ValidationError, match="postgres_dsn"):
+        GPUWorkerSettings(
+            _env_file=None,
+            gpu_worker_mode="production",
+            postgres_dsn="",
+            r2_endpoint_url="",
+            r2_bucket="",
+            r2_access_key_id="",
+            r2_secret_access_key="",
+        )
+
+
 def test_heartbeat_must_be_shorter_than_lease() -> None:
     with pytest.raises(ValidationError, match="must be shorter"):
         GPUWorkerSettings(
