@@ -9,9 +9,10 @@ media providers, GPU remota y composición programática.
 
 ## Estado
 
-**Fase 6 — Storyboard y planificación visual por shot: completada.** ✅
+**Fase 7 — Infraestructura GPU: en curso.** 🟡
 
-Siguiente fase formal: **Fase 7 — Infraestructura GPU**.
+Última fase cerrada: **Fase 6 — Storyboard y planificación visual por shot**. ✅
+La entrega 7.1 implementa el benchmark reproducible; falta ejecutarlo en hardware GPU real.
 
 La Fase 1 queda conservada como experimento funcional. El pipeline de producción definitivo
 empieza desde un **guion ya terminado**, no desde un tema.
