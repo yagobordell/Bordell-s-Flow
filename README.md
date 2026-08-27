@@ -80,13 +80,14 @@ empieza desde un **guion ya terminado**, no desde un tema.
    - Grids por escena compuestos localmente con Pillow, sin IA.
    - Validación real de 8 keyframes y 3 grids con el ejemplo de samuráis.
 
-9. **Fase 7 — Infraestructura GPU**
+9. **Fase 7 — Infraestructura GPU** 🟡
+   - Benchmark reproducible de LTX-2.5 implementado; ejecución real pendiente.
    - Docker.
    - Salad.
    - Cloudflare R2.
    - Supabase/Postgres.
    - Workers stateless e idempotentes.
-   - Benchmark de LTX-2.5 antes de fijar hardware y cuantización.
+   - Hardware y cuantización se fijarán únicamente después del benchmark real.
 
 10. **Fase 8 — Generación de vídeo**
     - LTX-2.5 ejecutado directamente desde Python/PyTorch.
@@ -111,6 +112,11 @@ La arquitectura detallada está en [`docs/architecture.md`](docs/architecture.md
 - Cuenta/API de OpenAI para las fases que usan modelos hospedados.
 
 La Fase 6.3 añade Pillow como dependencia de runtime para componer storyboard grids localmente.
+
+Para la Fase 7.1:
+
+- Entorno Linux con GPU NVIDIA y `nvidia-smi`.
+- Instalación oficial de LTX-2.5 y sus checkpoints en el nodo de benchmark.
 
 Para fases posteriores:
 
@@ -241,6 +247,15 @@ StoryboardGrid    = { scene_id, uri }
 
 Los parámetros de provider, modelo, calidad, resolución y composición no se duplican en los
 contratos persistidos salvo que sean necesarios para el siguiente stage.
+
+La Fase 7.1 añade contratos de evidencia de infraestructura separados del dominio audiovisual:
+
+```text
+GPUDeviceProfile    = { index, name, memory_total_mib }
+LTXBenchmarkProfile = { label, ltx_source, pipeline, quantization, offload, dimensions, runs }
+LTXBenchmarkSample  = { run_index, duration_seconds, peak_gpu_memory_mib, output metadata }
+LTXBenchmarkReport  = { profile, command, devices, samples, aggregate metrics }
+```
 
 ## Fase 2 — Narrative planning
 
@@ -465,14 +480,51 @@ Validación real con el guion de samuráis:
 
 Con esta validación, **Fase 6 queda cerrada**.
 
-## Siguiente etapa: Fase 7
+## Fase 7 — Infraestructura GPU
 
-La siguiente fase formaliza la ejecución remota de modelos de vídeo:
+### 7.1 Benchmark reproducible de LTX-2.5
+
+La primera entrega ya implementa el harness que debe ejecutarse sobre cada GPU candidata antes de
+fijar el worker de Salad:
+
+```bash
+python scripts/run_phase7_benchmark.py \
+  --label l40s-distilled-fp8-cpu \
+  --pipeline distilled \
+  --quantization fp8-cast \
+  --offload cpu \
+  --width 768 \
+  --height 1280 \
+  --num-frames 121 \
+  --fps 24 \
+  --warmup-runs 1 \
+  --measured-runs 3 \
+  -- \
+  python -m ltx_pipelines.distilled ... --output-path '{output}'
+```
+
+El workflow separa warmups, muestrea VRAM con `nvidia-smi`, valida cada MP4 y persiste hashes,
+tiempos, throughput y pico de memoria por GPU. El comando se ejecuta sin shell y sus credenciales
+comunes se redactan antes de escribir el informe.
+
+Salida:
+
+```text
+data/output/phase7/
+└── ltx_benchmark.json
+```
+
+La guía y la matriz inicial de perfiles están en
+[`docs/phase7-benchmark.md`](docs/phase7-benchmark.md).
+
+La implementación de 7.1 está completa, pero la fase sigue abierta hasta ejecutar el benchmark en
+hardware real y usar sus resultados para construir el worker Docker stateless, integrar Salad Job
+Queue, Cloudflare R2 y Supabase/Postgres:
 
 ```text
 orchestrator
     ↓
-job queue
+Salad job queue
     ↓
 stateless Docker GPU worker
     ↙                 ↘
@@ -480,9 +532,6 @@ R2 GET inputs      R2 PUT outputs
     ↓
 Supabase/Postgres job state
 ```
-
-Antes de fijar una GPU o cuantización concreta se hará un benchmark real de LTX-2.5. La
-infraestructura deberá asumir workers interrumpibles, persistencia externa e idempotencia.
 
 ## Compatibilidad de Fase 1
 
