@@ -94,7 +94,7 @@ def test_benchmark_excludes_warmups_and_calculates_summary() -> None:
     assert report.median_duration_seconds == 12.0
     assert report.min_duration_seconds == 10.0
     assert report.max_duration_seconds == 14.0
-    assert report.mean_generated_frames_per_second == pytest.approx(121 / 12)
+    assert report.mean_end_to_end_frames_per_second == pytest.approx(121 / 12)
     assert report.max_peak_gpu_memory_mib == [2500]
 
 
