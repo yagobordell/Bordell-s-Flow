@@ -132,7 +132,13 @@ Para fases posteriores:
 Con `uv`:
 
 ```bash
-uv sync --dev
+uv sync --extra dev
+```
+
+Para trabajar con la infraestructura de Fase 7:
+
+```bash
+uv sync --extra dev --extra gpu
 ```
 
 O con `pip`:
