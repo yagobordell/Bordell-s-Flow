@@ -1,98 +1,175 @@
-# Fase 7.1 — Benchmark reproducible de LTX-2.5
+# Fase 7.1 — matriz reproducible de LTX-2.5
 
-La Fase 7 no debe fijar todavía una GPU de Salad ni una cuantización. La primera entrega captura
-evidencia comparable de tiempo de generación y pico de VRAM sobre hardware real.
+Estado: **implementada; ejecución real pendiente**. La Fase 7 no se cierra hasta obtener los JSON
+de hardware real y registrar la selección provisional de GPU, cuantización y offload.
 
-## Qué implementa
+## Dónde se ejecuta
 
-`scripts/run_phase7_benchmark.py` ejecuta un comando de LTX-2.5 sin pasar por un shell:
+El benchmark se ejecuta en cada máquina GPU candidata, no en el portátil si este no dispone de la
+GPU y VRAM que se quieren medir. Puede ser una instancia temporal de Salad, otro proveedor GPU o
+una máquina local NVIDIA. En todos los casos deben mantenerse idénticos:
 
-- separa warmups de runs medidos;
-- identifica todas las GPU visibles mediante `nvidia-smi`;
-- muestrea memoria usada mientras vive el proceso;
-- exige que cada run produzca un archivo no vacío;
-- calcula tamaño y SHA-256 del output;
-- persiste media, mediana, mínimo, máximo, throughput y pico de VRAM por GPU;
-- redacta tokens y claves comunes antes de guardar el comando en el informe.
+- commit de LTX-2 y checkpoints;
+- prompt, keyframe, resolución, frames, FPS y seed;
+- versiones de CUDA/PyTorch;
+- warmups y runs medidos;
+- ausencia de otros procesos que consuman GPU.
 
-Cada warmup y cada run medido arranca un proceso nuevo. El tiempo y el throughput son end-to-end:
-incluyen carga de modelos, inicialización, inferencia y encode. Esto mide el coste de recuperación de
-un worker interrumpible. Cuando exista el worker persistente, se añadirá una medición separada con
-el modelo ya residente para estimar throughput sostenido.
+El worker de infraestructura `ai-video-factory:phase7` no contiene LTX ni sus pesos. No debe usarse
+para esta matriz. El benchmark necesita un entorno GPU separado con LTX-2.5 instalado.
 
-El script no instala LTX-2.5 ni descarga pesos. Debe ejecutarse dentro de un entorno GPU donde el
-repositorio oficial de [LTX-2](https://github.com/Lightricks/LTX-2) y los checkpoints estén ya
-disponibles. El ref por defecto queda registrado como
-`Lightricks/LTX-2@a95ab856bf29407b6b066ede0abe1846050db56c` para que el primer benchmark sea
-reproducible.
+## Preparar LTX-2.5
 
-## Ejemplo
-
-El comando real se pasa después de `--` y debe contener exactamente un placeholder literal
-`{output}`. Este ejemplo usa el pipeline distilled con el primer keyframe como condicionamiento:
+En la máquina GPU, instala `git`, Python 3.12, `uv`, Git LFS si lo exige el entorno, CUDA compatible
+y los drivers NVIDIA. Después:
 
 ```bash
-python scripts/run_phase7_benchmark.py \
-  --label l40s-distilled-fp8-cpu \
-  --pipeline distilled \
-  --quantization fp8-cast \
-  --offload cpu \
-  --width 768 \
-  --height 1280 \
-  --num-frames 121 \
-  --fps 24 \
-  --warmup-runs 1 \
-  --measured-runs 3 \
-  --report data/output/phase7/l40s-distilled-fp8-cpu.json \
-  -- \
-  python -m ltx_pipelines.distilled \
-  --transformer-path models/ltx-2.5/diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors \
-  --text-encoder-path models/ltx-2.5/text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors \
-  --video-vae-path models/ltx-2.5/vae/ltx-2.5-video-vae-bf16.safetensors \
-  --audio-vae-path models/ltx-2.5/vae/ltx-2.5-audio-vae-bf16.safetensors \
-  --spatial-upsampler-path models/ltx-2.5/latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors \
-  --prompt "A cinematic historical shot with deliberate subject motion and a slow camera push." \
-  --image data/output/phase6/storyboard_keyframes/shot_001.png 0 1.0 \
-  --width 768 \
-  --height 1280 \
-  --num-frames 121 \
-  --frame-rate 24 \
-  --seed 42 \
-  --quantization fp8-cast \
-  --offload cpu \
-  --output-path '{output}'
+git clone https://github.com/Lightricks/LTX-2.git
+cd LTX-2
+git checkout a95ab856bf29407b6b066ede0abe1846050db56c
+uv sync --extra natten
 ```
 
-Los campos declarados antes de `--` describen el caso. El comando posterior es la fuente auditable
-de cómo se ejecutó. Ambos deben representar la misma configuración.
+Acepta previamente las condiciones del modelo en Hugging Face y autentica un token de lectura.
+La descarga siguiente ronda los 66 GiB:
 
-## Matriz inicial
+```bash
+hf auth login
+hf download Lightricks/LTX-2.5 \
+  diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors \
+  text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors \
+  vae/ltx-2.5-video-vae-bf16.safetensors \
+  vae/ltx-2.5-audio-vae-bf16.safetensors \
+  latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors \
+  --local-dir models/ltx-2.5
+```
 
-Mantén constantes prompt, keyframe, resolución, frames, FPS y seed. Compara como mínimo:
+Instala el proyecto AI Video Factory en el entorno creado por LTX. En PowerShell, desde la carpeta
+`LTX-2`, sustituye la ruta por la ubicación real del repositorio:
+
+```powershell
+$Factory = "C:\Users\User\Downloads\ai-video-factory"
+uv pip install --python ".venv\Scripts\python.exe" -e $Factory
+& ".venv\Scripts\python.exe" -c "import ai_video_factory; print('AI Video Factory: OK')"
+nvidia-smi
+```
+
+En Linux usa `.venv/bin/python` en lugar de `.venv\Scripts\python.exe`.
+
+## Qué mide
+
+`scripts/run_phase7_benchmark_matrix.py`:
+
+- identifica todas las GPU visibles mediante `nvidia-smi`;
+- ejecuta un warmup separado y tres procesos medidos por caso;
+- muestrea el pico de VRAM mientras vive cada proceso;
+- exige un MP4 no vacío y registra tamaño y SHA-256;
+- calcula media, mediana, mínimo, máximo y FPS end-to-end;
+- escribe un informe por caso y un `matrix.json` por hardware.
+
+Cada proceso incluye carga de pesos, inferencia y encode. Es la medida correcta para un worker
+interrumpible que puede arrancar en frío; no representa throughput con un modelo residente.
+
+## Ejecutar la matriz canónica
+
+Desde la carpeta `LTX-2`, con el keyframe copiado a una ruta accesible, ejecuta este bloque en
+PowerShell. Las llaves de los tres placeholders deben llegar literalmente al script:
+
+```powershell
+$Factory = "C:\Users\User\Downloads\ai-video-factory"
+$Python = ".venv\Scripts\python.exe"
+$Hardware = "rtx4090" # usa l40s, rtx4090 o rtx5090 según la máquina
+
+& $Python "$Factory\scripts\run_phase7_benchmark_matrix.py" `
+  --hardware-label $Hardware `
+  --pipeline distilled `
+  --prompt "A cinematic historical shot with deliberate subject motion and a slow camera push." `
+  --conditioning-image "$Factory\data\output\phase6\storyboard_keyframes\shot_001.png" `
+  --seed 42 `
+  --width 768 `
+  --height 1280 `
+  --num-frames 121 `
+  --fps 24 `
+  --warmup-runs 1 `
+  --measured-runs 3 `
+  --output-dir "$Factory\data\output\phase7\benchmarks" `
+  --temp-dir "$Factory\data\tmp\phase7\benchmarks" `
+  -- `
+  $Python -m ltx_pipelines.distilled `
+  --transformer-path models/ltx-2.5/diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors `
+  --text-encoder-path models/ltx-2.5/text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors `
+  --video-vae-path models/ltx-2.5/vae/ltx-2.5-video-vae-bf16.safetensors `
+  --audio-vae-path models/ltx-2.5/vae/ltx-2.5-audio-vae-bf16.safetensors `
+  --spatial-upsampler-path models/ltx-2.5/latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors `
+  --prompt "{prompt}" `
+  --image "{conditioning_image}" 0 1.0 `
+  --width 768 `
+  --height 1280 `
+  --num-frames 121 `
+  --frame-rate 24 `
+  --seed "{seed}" `
+  "{quantization_args}" `
+  "{offload_args}" `
+  --output-path "{output}"
+```
+
+Los placeholders de prompt, imagen y seed obligan a que todos los casos usen la entrada declarada;
+sus hashes quedan en `matrix.json`. Los placeholders `quantization_args` y `offload_args` ocupan un
+argumento completo. Para el caso
+BF16/none el runner los elimina; para los demás los expande a `--quantization <valor>` y
+`--offload <valor>`. Esto evita pasar valores ficticios a la CLI de LTX.
+
+Por defecto se ejecutan estos tres casos:
 
 | Caso | Quantization | Offload | Objetivo |
 |---|---|---|---|
-| `distilled-bf16-none` | `bf16` | `none` | Calidad y velocidad base si cabe en VRAM |
-| `distilled-fp8-none` | `fp8-cast` | `none` | Ahorro de VRAM sin transferencia a CPU |
-| `distilled-fp8-cpu` | `fp8-cast` | `cpu` | Perfil de menor VRAM con penalización de tiempo |
+| `distilled-bf16-none` | `bf16` | `none` | Base de calidad y velocidad si cabe en VRAM |
+| `distilled-fp8-none` | `fp8-cast` | `none` | Reducir VRAM sin transferencias a CPU |
+| `distilled-fp8-cpu` | `fp8-cast` | `cpu` | Reducir VRAM aceptando penalización de tiempo |
 
-No compares configuraciones con outputs narrativamente distintos. El benchmark decide capacidad y
-coste; la revisión visual del clip sigue siendo necesaria antes de elegir el perfil final.
+Se puede añadir o reemplazar la matriz con `--case LABEL:QUANTIZATION:OFFLOAD`. No cambies el
+workload entre GPUs. Si `bf16` no cabe, conserva el error/log como evidencia y ejecuta los casos que
+sí sean viables; no presentes un caso fallido como una medición.
 
-## Artefacto
+## Artefactos esperados
 
-Cada caso genera un `LTXBenchmarkReport` JSON en `data/output/phase7/`. El MP4 temporal queda en
-`data/tmp/phase7/` salvo que se indique otra ruta.
+Cada máquina genera:
 
-El pico de VRAM representa la memoria total usada que reporta `nvidia-smi` para cada GPU visible,
-no únicamente memoria atribuida al proceso. Ejecuta los casos en nodos sin otra carga para obtener
-comparaciones válidas. Los warmups pueden preparar cachés del host, pero no mantienen los pesos en
-VRAM porque cada invocación es un proceso independiente.
+```text
+data/output/phase7/benchmarks/<hardware>/
+├── distilled-bf16-none.json
+├── distilled-fp8-none.json
+├── distilled-fp8-cpu.json
+└── matrix.json
+```
 
-La fase continúa después del benchmark con:
+Los MP4 de cada run son temporales y se guardan bajo `data/tmp/phase7/benchmarks/<hardware>/`.
+Revísalos visualmente: el caso más rápido no es automáticamente el perfil elegido.
 
-1. selección provisional de GPU y cuantización basada en los informes reales;
-2. worker HTTP stateless compatible con Salad Job Queue;
-3. inputs y outputs externos en Cloudflare R2;
-4. estado de jobs idempotente en Supabase/Postgres;
-5. pruebas de interrupción, retry y reconciliación.
+## Unir las matrices
+
+Copia las carpetas de las máquinas GPU al mismo checkout y ejecuta desde la raíz de AI Video
+Factory:
+
+```powershell
+python scripts/summarize_phase7_benchmarks.py `
+  data/output/phase7/benchmarks/l40s/matrix.json `
+  data/output/phase7/benchmarks/rtx4090/matrix.json `
+  data/output/phase7/benchmarks/rtx5090/matrix.json `
+  --output data/output/phase7/benchmarks/comparison.json
+```
+
+El resumen rechaza matrices con workloads distintos, registra el SHA-256 de cada matriz fuente y
+señala el caso más rápido. La decisión final debe añadir disponibilidad y coste por clip, y confirmar
+calidad visual.
+
+## Criterio de cierre de 7.1
+
+- `matrix.json` real de cada hardware candidato viable;
+- `comparison.json` generado sin incompatibilidades;
+- clips revisados visualmente;
+- GPU, cuantización y offload provisionales registrados en README y arquitectura;
+- cualquier candidato omitido justificado por disponibilidad o incapacidad demostrada.
+
+Referencias: [instalación oficial de LTX-2](https://github.com/Lightricks/LTX-2/blob/main/packages/ltx-pipelines/docs/installation.md)
+y [repositorio oficial](https://github.com/Lightricks/LTX-2).

@@ -1,378 +1,378 @@
-# Fase 7 — Guía de despliegue GPU
+# Fase 7.2 — despliegue y validación en Salad
 
-Esta guía lleva la infraestructura desde un checkout limpio hasta una prueba completa:
+Estado: **infraestructura validada en cloud; replay y despliegue por digest pendientes**. Esta guía
+parte del checkout de AI Video Factory y usa PowerShell 7 en Windows. Los comandos deben ejecutarse
+desde la raíz del repositorio, salvo que se indique otra cosa.
 
-```text
-cliente -> Salad Job Queue -> worker HTTP -> R2
-                                  |
-                                  +-> Supabase/Postgres
+## Resultado ya validado
+
+El 27 de agosto de 2026 se completó un smoke real de `infrastructure.copy`:
+
+| Evidencia | Valor |
+|---|---|
+| Queue | `ai-video-factory-jobs` |
+| Container Group | `ai-video-factory-worker` |
+| Application job | `phase7-smoke-a1d3883364d8` |
+| Salad job | `5e5e0230-bd62-4105-819e-df004a4d1dcf` |
+| Estado | `succeeded` |
+| Intentos | `1` |
+| SHA-256 input/output | `0b7da0548cee3474b5ae86ed25eaaff071c7da52d3fc9d07977038a1b600d1a9` |
+| Output R2 | `jobs/phase7-smoke-a1d3883364d8/output.txt` |
+
+Esto demuestra Queue → worker HTTP → Supabase/Postgres → R2 → Queue. No demuestra aún replay
+cloud (`replayed` fue `false`) ni que el grupo esté fijado a un digest de registro.
+
+## 1. Dónde hacer cada cosa
+
+| Acción | Lugar |
+|---|---|
+| Docker, scripts Python, API de Salad y Git | PowerShell, raíz de `ai-video-factory` |
+| Crear API key, consultar créditos, System Events y logs | Portal de Salad |
+| Crear bucket y credenciales S3 | Panel de Cloudflare R2 |
+| Obtener DSN y ejecutar migración | Panel de Supabase y PowerShell |
+| Benchmark LTX real | Máquina/instancia GPU preparada; ver `phase7-benchmark.md` |
+
+No pegues secretos en Git, documentación, capturas o JSON que vayas a compartir.
+
+## 2. Preparar el checkout de Windows
+
+```powershell
+cd C:\Users\User\Downloads\ai-video-factory
+git pull --ff-only
+git status
+python -m pip install -e ".[gpu,dev]"
 ```
 
-La Fase 7 implementa el transporte, la persistencia, la idempotencia, los leases y la
-reconciliación. El task incluido, `infrastructure.copy`, es una prueba determinista del recorrido
-completo. La inferencia LTX-2.5 se registra como un nuevo task en la Fase 8; no se finge una
-selección de GPU antes de medir la matriz real.
+`.gitattributes` fuerza LF para `*.sh` y evita `/usr/bin/env: 'bash\r'`. Si el repositorio existía
+antes de esa regla, renormaliza una vez y revisa el diff antes de confirmar cambios:
 
-## 1. Requisitos
-
-- Python 3.12 y `uv` o `pip`.
-- Docker con BuildKit.
-- `curl`, `psql` y, opcionalmente, `jq`.
-- Una cuenta de [Cloudflare R2](https://developers.cloudflare.com/r2/).
-- Un proyecto de [Supabase](https://supabase.com/docs/guides/database/connecting-to-postgres).
-- Una organización, proyecto y API key de
-  [SaladCloud](https://docs.salad.com/reference/saladcloud-api/using-the-api).
-- Un registro de contenedores accesible por Salad, por ejemplo Docker Hub o GHCR.
-
-Instala el proyecto:
-
-```bash
-uv sync --extra dev --extra gpu
+```powershell
+git add --renormalize .
+git diff --cached --check
+git diff --cached
 ```
 
-Alternativa con `pip`:
+## 3. Variables de entorno
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e '.[dev,gpu]'
+Define las variables en la sesión actual. Usa valores reales y no los guardes en el historial que
+vayas a publicar:
+
+```powershell
+$env:SALAD_API_KEY = "..."
+$env:SALAD_ORGANIZATION = "yagobordellorg"
+$env:SALAD_PROJECT = "aivideofactory"
+$env:SALAD_QUEUE_NAME = "ai-video-factory-jobs"
+$env:SALAD_PRIORITY = "high"
+
+$env:POSTGRES_DSN = "postgresql://..."
+$env:R2_ENDPOINT_URL = "https://<account-id>.r2.cloudflarestorage.com"
+$env:R2_BUCKET = "ai-video-factory"
+$env:R2_ACCESS_KEY_ID = "..."
+$env:R2_SECRET_ACCESS_KEY = "..."
 ```
 
-Comprueba la base antes de continuar:
+Para Supabase en una red IPv4, usa primero el **Session pooler** en puerto `5432`. La conexión
+directa puede resolver solo a IPv6. Comprueba el DSN:
 
-```bash
-python -m ruff check .
-python -m pytest
+```powershell
+python -c "import os, psycopg; c=psycopg.connect(os.environ['POSTGRES_DSN'], connect_timeout=10); print(c.execute('SELECT 1').fetchone()); c.close(); print('Supabase/Postgres: OK')"
 ```
 
-## 2. Ejecutar primero la matriz de benchmark
+Aplica la migración una sola vez contra esa base con `psql`, o pega el mismo archivo en el SQL
+Editor de Supabase:
 
-Ejecuta los perfiles documentados en
-[`phase7-benchmark.md`](phase7-benchmark.md) sobre hardware GPU real. Mantén idénticos el prompt,
-keyframe, seed, resolución, frames y FPS. Cada caso debe producir su propio informe:
-
-```text
-data/output/phase7/
-├── l40s-distilled-fp8-cpu.json
-├── rtx4090-distilled-fp8-cpu.json
-└── rtx5090-distilled-fp8-cpu.json
+```powershell
+psql $env:POSTGRES_DSN -f "infra/sql/001_gpu_jobs.sql"
 ```
 
-No pases `--gpu-class` al renderizador de Salad para la prueba de infraestructura CPU. Para el
-worker LTX de Fase 8, usa únicamente la clase que cumpla VRAM, tiempo por shot y coste según esos
-JSON. El benchmark y el worker de infraestructura son independientes: no es necesario pagar una
-GPU para probar R2, Postgres y la cola.
+Si la red local permite R2, compruébalo:
 
-## 3. Preparar Cloudflare R2
-
-En Cloudflare:
-
-1. Crea un bucket, por ejemplo `ai-video-factory`.
-2. Crea un API token S3 limitado a ese bucket con lectura y escritura de objetos.
-3. Copia el Access Key ID, Secret Access Key y Account ID.
-4. Construye el endpoint S3 como indica la
-   [documentación oficial de boto3 para R2](https://developers.cloudflare.com/r2/examples/aws/boto3/):
-   `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` y región `auto`.
-
-Copia el ejemplo de entorno y rellena los valores reales solo en `.env`:
-
-```bash
-cp .env.example .env
+```powershell
+python -c "import os; from ai_video_factory.gpu.storage import R2ObjectStorage; s=R2ObjectStorage.create(endpoint_url=os.environ['R2_ENDPOINT_URL'], bucket=os.environ['R2_BUCKET'], access_key_id=os.environ['R2_ACCESS_KEY_ID'], secret_access_key=os.environ['R2_SECRET_ACCESS_KEY']); s.ping(); print('Cloudflare R2: OK')"
 ```
 
-```dotenv
-R2_ENDPOINT_URL=https://ACCOUNT_ID.r2.cloudflarestorage.com
-R2_BUCKET=ai-video-factory
-R2_ACCESS_KEY_ID=...
-R2_SECRET_ACCESS_KEY=...
-```
+Un timeout TCP a `*.r2.cloudflarestorage.com:443` es un bloqueo de red local, router, ISP, VPN o
+firewall; no es un error de credenciales. El smoke ya demostró que el worker de Salad sí alcanza R2.
 
-Nunca subas `.env`. El worker intercambia solo claves y metadatos con la cola; los binarios se
-descargan y suben directamente a R2. `boto3.upload_file` activa multipart automáticamente cuando
-corresponde.
+## 4. Construir, probar y publicar la imagen
 
-## 4. Preparar Supabase/Postgres
+```powershell
+$ImageTag = "yagobordell/ai-video-factory:phase7"
 
-En el panel de Supabase, abre **Connect** y copia una URI Postgres:
-
-- usa **Direct connection** para un contenedor persistente si el nodo dispone de IPv6;
-- usa **Session pooler**, puerto 5432, si necesitas IPv4;
-- Transaction pooler, puerto 6543, también funciona porque el adapter desactiva prepared
-  statements, pero no es la primera opción para este worker persistente.
-
-Codifica caracteres especiales de la contraseña en la URI y exige TLS:
-
-```dotenv
-POSTGRES_DSN=postgresql://.../postgres?sslmode=require
-```
-
-Aplica la migración una sola vez:
-
-```bash
-set -a
-. ./.env
-set +a
-psql "$POSTGRES_DSN" -v ON_ERROR_STOP=1 -f infra/sql/001_gpu_jobs.sql
-```
-
-También puedes pegar `infra/sql/001_gpu_jobs.sql` en el SQL Editor de Supabase. La tabla vive en el
-schema privado `gpu`, no en la API pública de datos.
-
-Verificación:
-
-```bash
-psql "$POSTGRES_DSN" -c '\d+ gpu.jobs'
-```
-
-## 5. Probar la API local sin servicios externos
-
-Esta prueba usa filesystem + estado en memoria y no inicia el binario de Salad:
-
-```bash
-mkdir -p data/phase7-local/inputs
-printf 'phase-7-local-smoke\n' > data/phase7-local/inputs/smoke.txt
-INPUT_SHA="$(sha256sum data/phase7-local/inputs/smoke.txt | cut -d' ' -f1)"
-
-GPU_WORKER_MODE=local \
-LOCAL_OBJECT_ROOT=data/phase7-local \
-uvicorn ai_video_factory.gpu.runtime:app --host 127.0.0.1 --port 8080
-```
-
-En otra terminal:
-
-```bash
-curl --fail-with-body --silent --show-error \
-  -X POST http://127.0.0.1:8080/jobs \
-  -H 'Content-Type: application/json' \
-  -d "{
-    \"schema_version\": \"1\",
-    \"job_id\": \"local-smoke-001\",
-    \"task\": \"infrastructure.copy\",
-    \"inputs\": [{
-      \"name\": \"source\",
-      \"key\": \"inputs/smoke.txt\",
-      \"sha256\": \"$INPUT_SHA\"
-    }],
-    \"output\": {
-      \"key\": \"jobs/local-smoke-001/output.txt\",
-      \"content_type\": \"text/plain\"
-    },
-    \"parameters\": {}
-  }"
-
-cmp \
-  data/phase7-local/inputs/smoke.txt \
-  data/phase7-local/jobs/local-smoke-001/output.txt
-```
-
-Repite el mismo `curl`: debe devolver `"replayed": true` sin volver a ejecutar el task. Cambiar el
-payload conservando `job_id=local-smoke-001` debe devolver HTTP 409.
-
-## 6. Construir y probar Docker
-
-El Dockerfile fija el Salad Job Queue Worker oficial `v0.7.0` y verifica su SHA-256 durante el
-build. El binario solo puede conectarse a la cola dentro de un nodo Salad, por lo que localmente se
-desactiva.
-
-```bash
-export IMAGE="docker.io/TU_USUARIO/ai-video-factory:phase7-$(git rev-parse --short HEAD)"
-
-docker build \
-  --file docker/phase7-worker/Dockerfile \
-  --tag "$IMAGE" \
+docker build `
+  --file docker/phase7-worker/Dockerfile `
+  --tag $ImageTag `
   .
+
+docker run --rm `
+  --name ai-video-factory-phase7 `
+  --publish 8080:8080 `
+  --env GPU_WORKER_MODE=local `
+  --env SALAD_QUEUE_ENABLED=false `
+  --env LOCAL_OBJECT_ROOT=/app/data/phase7-local `
+  --volume "${PWD}/data/phase7-local:/app/data/phase7-local" `
+  $ImageTag
 ```
 
-Prueba el contenedor en modo local:
+En otra consola, `Invoke-RestMethod http://localhost:8080/ready` debe devolver `ready = true`.
+Después publica y resuelve el digest del manifiesto:
 
-```bash
-docker run --rm \
-  --name ai-video-factory-phase7 \
-  --publish 8080:8080 \
-  --user "$(id -u):$(id -g)" \
-  --env GPU_WORKER_MODE=local \
-  --env SALAD_QUEUE_ENABLED=false \
-  --env LOCAL_OBJECT_ROOT=/app/data/phase7-local \
-  --volume "$PWD/data/phase7-local:/app/data/phase7-local" \
-  "$IMAGE"
-```
-
-Comprueba `http://127.0.0.1:8080/health` y `/ready`, y repite el `curl` anterior. Después publica la
-imagen:
-
-```bash
+```powershell
 docker login
-docker push "$IMAGE"
+docker push $ImageTag
+
+$inspect = docker buildx imagetools inspect $ImageTag
+$match = $inspect | Select-String -Pattern '^Digest:\s+(sha256:[0-9a-f]{64})$'
+if (-not $match) { throw "No se pudo resolver el digest publicado" }
+$Digest = $match.Matches[0].Groups[1].Value
+$Image = "docker.io/yagobordell/ai-video-factory@$Digest"
+Write-Host "Imagen inmutable: $Image"
 ```
 
-Usa una etiqueta inmutable o digest. No despliegues `latest`.
+No uses el hash interno que muestra Salad como sustituto del digest del registro. La referencia que
+se despliega debe contener literalmente `@sha256:`.
 
-## 7. Crear la cola y el Container Group de Salad
+## 5. Generar los JSON de Salad
 
-Completa en `.env`:
+El render falla por defecto si recibe una etiqueta mutable. También genera el campo requerido
+`readiness_probe.http.headers = []`.
 
-```dotenv
-SALAD_API_KEY=...
-SALAD_ORGANIZATION=mi-organizacion
-SALAD_PROJECT=mi-proyecto
-SALAD_QUEUE_NAME=ai-video-factory-jobs
-SALAD_LOG_LEVEL=info
-```
-
-Carga el entorno:
-
-```bash
-set -a
-. ./.env
-set +a
-```
-
-Renderiza los JSON. Para validar únicamente la Fase 7, no asignes GPU:
-
-```bash
-python scripts/render_phase7_salad.py \
-  --image "$IMAGE" \
-  --queue-name "$SALAD_QUEUE_NAME" \
-  --cpu 4 \
-  --memory-mb 8192 \
+```powershell
+python scripts/render_phase7_salad.py `
+  --image $Image `
+  --queue-name $env:SALAD_QUEUE_NAME `
+  --cpu 4 `
+  --memory-mb 8192 `
+  --replicas 0 `
+  --min-replicas 0 `
   --max-replicas 1
 ```
 
-Para el futuro worker LTX, añade la clase elegida por el benchmark y ajusta CPU/RAM:
+Se crean:
 
-```bash
-python scripts/render_phase7_salad.py \
-  --image "$IMAGE" \
-  --queue-name "$SALAD_QUEUE_NAME" \
-  --gpu-class "$SALAD_GPU_CLASS" \
-  --cpu 8 \
-  --memory-mb 32768 \
-  --max-replicas 1
+- `data/output/phase7/salad/queue.json`;
+- `data/output/phase7/salad/container-group.json`.
+
+El segundo contiene secretos, tiene permisos restrictivos donde el sistema lo permite y está bajo
+una ruta ignorada por Git. No lo confirmes ni lo compartas.
+
+## 6. Crear o actualizar recursos por API
+
+```powershell
+$base = "https://api.salad.com/api/public/organizations/$env:SALAD_ORGANIZATION/projects/$env:SALAD_PROJECT"
+$headers = @{
+  "Salad-Api-Key" = $env:SALAD_API_KEY
+  "Accept" = "application/json"
+}
 ```
 
-Los archivos generados son:
+Salad puede no mostrar Job Queues en el portal. La API es la fuente de verdad. Lista como máximo
+25 elementos por página:
 
-```text
-data/output/phase7/salad/
-├── queue.json
-└── container-group.json
+```powershell
+$queues = Invoke-RestMethod `
+  -Uri "$base/queues?page=1&page_size=25" `
+  -Headers $headers
+$queues.items | Select-Object name, display_name | Format-Table
 ```
 
-`container-group.json` contiene secretos, se crea con permisos 0600 y está bajo `data/output/`, que
-Git ignora. Revísalo sin copiarlo a tickets o logs.
+Si `ai-video-factory-jobs` no existe, créala una vez:
 
-Crea la cola con la API oficial:
-
-```bash
-curl --fail-with-body --silent --show-error \
-  -X POST \
-  "https://api.salad.com/api/public/organizations/$SALAD_ORGANIZATION/projects/$SALAD_PROJECT/queues" \
-  -H "Salad-Api-Key: $SALAD_API_KEY" \
-  -H 'Content-Type: application/json' \
-  --data-binary @data/output/phase7/salad/queue.json
+```powershell
+$queueBody = Get-Content "data/output/phase7/salad/queue.json" -Raw
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$base/queues" `
+  -Headers $headers `
+  -ContentType "application/json" `
+  -Body $queueBody
 ```
 
-Crea el Container Group:
+Para el Container Group, evita duplicados por `name`. Si no existe:
 
-```bash
-curl --fail-with-body --silent --show-error \
-  -X POST \
-  "https://api.salad.com/api/public/organizations/$SALAD_ORGANIZATION/projects/$SALAD_PROJECT/containers" \
-  -H "Salad-Api-Key: $SALAD_API_KEY" \
-  -H 'Content-Type: application/json' \
-  --data-binary @data/output/phase7/salad/container-group.json
+```powershell
+$groups = Invoke-RestMethod -Uri "$base/containers" -Headers $headers
+$existing = $groups.items | Where-Object name -eq "ai-video-factory-worker"
+
+if (-not $existing) {
+  $body = Get-Content "data/output/phase7/salad/container-group.json" -Raw
+  Invoke-RestMethod `
+    -Method Post `
+    -Uri "$base/containers" `
+    -Headers $headers `
+    -ContentType "application/json" `
+    -Body $body
+}
 ```
 
-Si ya existen, no repitas los POST: inspecciona los recursos y usa los endpoints PATCH oficiales.
-La configuración conecta la cola a `POST /jobs` en el puerto 8080, usa `/ready`, reinicio `always`
-y escala de 0 a 1. El Container Gateway no es necesario.
+Si ya existe, actualiza únicamente el contenedor y la readiness probe desde el JSON recién
+generado. El objeto `container` contiene todas las variables, incluidas las secretas, para evitar
+borrarlas accidentalmente al reemplazar ese objeto anidado:
 
-Referencias oficiales:
+```powershell
+$desired = Get-Content "data/output/phase7/salad/container-group.json" -Raw |
+  ConvertFrom-Json
+$patchBody = @{
+  container = $desired.container
+  readiness_probe = $desired.readiness_probe
+} | ConvertTo-Json -Depth 30
 
-- [Crear una Queue](https://docs.salad.com/reference/saladcloud-api/queues/create-queue)
-- [Crear un Container Group](https://docs.salad.com/reference/saladcloud-api/container-groups/create-container-group)
-- [Autoscaling con Job Queues](https://docs.salad.com/container-engine/how-to-guides/autoscaling/enable-autoscaling)
-- [Salad Job Queue Worker](https://github.com/SaladTechnologies/salad-cloud-job-queue-worker/releases/tag/v0.7.0)
+Invoke-RestMethod `
+  -Method Patch `
+  -Uri "$base/containers/ai-video-factory-worker" `
+  -Headers $headers `
+  -ContentType "application/merge-patch+json" `
+  -Body $patchBody
+```
 
-## 8. Ejecutar la prueba completa Salad -> R2 -> Postgres
+Comprueba que `container.image` contiene el digest y que `pending_change` termina en `false`:
 
-El script crea un input temporal, lo sube a R2, envía un job, espera el estado terminal, descarga el
-output y compara los bytes:
+```powershell
+$group = Invoke-RestMethod `
+  -Uri "$base/containers/ai-video-factory-worker" `
+  -Headers $headers
+$group | Select-Object version, pending_change, replicas, priority
+$group.container | Select-Object image, hash
+```
 
-```bash
-python scripts/submit_phase7_smoke.py \
-  --queue-name "$SALAD_QUEUE_NAME" \
+## 7. Arrancar y observar el worker
+
+Si el grupo fue detenido manualmente, arráncalo antes de enviar el replay:
+
+```powershell
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$base/containers/ai-video-factory-worker/start" `
+  -Headers $headers
+```
+
+El autoscaler puede mantener `0/0` hasta que haya un job. Para inspeccionar instancias:
+
+```powershell
+$result = Invoke-RestMethod `
+  -Uri "$base/containers/ai-video-factory-worker/instances" `
+  -Headers $headers
+$result.instances |
+  Select-Object id, state, ready, started, pulling_progress, update_time |
+  Format-Table
+```
+
+Una instancia válida termina en `state=running` y `ready=True`. `downloading` puede tardar por la
+imagen; `running` con `ready=False` exige revisar logs y `/ready`.
+
+## 8. Smoke inicial
+
+Para una instalación nueva:
+
+```powershell
+python scripts/submit_phase7_smoke.py `
+  --queue-name $env:SALAD_QUEUE_NAME `
   --timeout-seconds 1800
 ```
 
-Éxito esperado:
+El script sube un input a R2, crea el job, espera el resultado, descarga el output y verifica su
+SHA-256. El checkout ya validado puede reutilizar su request guardado; no necesita repetir este paso
+para demostrar replay.
 
-```text
-Phase 7 end-to-end smoke test: OK
+## 9. Replay e idempotencia
+
+Resubmite exactamente el request original. Este script solo necesita la API de Salad localmente; el
+timeout local hacia R2 no lo bloquea:
+
+```powershell
+python scripts/replay_phase7_smoke.py `
+  "data/output/phase7/salad/job-request-phase7-smoke-a1d3883364d8.json" `
+  --queue-name $env:SALAD_QUEUE_NAME `
+  --expected-attempt-count 1 `
+  --timeout-seconds 1800
 ```
 
-También quedan dos JSON auditables:
+El cierre exige:
 
-```text
-data/output/phase7/salad/job-request-<job_id>.json
-data/output/phase7/salad/queue-response-<job_id>.json
+- Queue job `succeeded`;
+- `output.replayed = true`;
+- `attempt_count = 1`;
+- mismo `job_id`, output key y SHA-256;
+- nuevo `queue-replay-result-*.json` guardado localmente.
+
+Si devuelve `replayed=false` o `attempt_count=2`, no cierres la fase: el mismo trabajo se volvió a
+ejecutar en lugar de reconciliarse.
+
+## 10. Consultar jobs
+
+```powershell
+$jobs = Invoke-RestMethod `
+  -Uri "$base/queues/$env:SALAD_QUEUE_NAME/jobs?page=1&page_size=25" `
+  -Headers $headers
+$jobs.items |
+  Select-Object id, status, create_time, update_time |
+  Format-Table
 ```
 
-Consulta el estado directamente:
+Un job concreto:
 
-```bash
-curl --fail-with-body --silent --show-error \
-  "https://api.salad.com/api/public/organizations/$SALAD_ORGANIZATION/projects/$SALAD_PROJECT/queues/$SALAD_QUEUE_NAME/jobs/$SALAD_JOB_ID" \
-  -H "Salad-Api-Key: $SALAD_API_KEY"
+```powershell
+$job = Invoke-RestMethod `
+  -Uri "$base/queues/$env:SALAD_QUEUE_NAME/jobs/<SALAD_JOB_ID>" `
+  -Headers $headers
+$job | Select-Object id, status, create_time, update_time | Format-List
+$job.output | ConvertTo-Json -Depth 30
 ```
 
-## 9. Verificar idempotencia y recuperación
+## 11. Detener coste al terminar
 
-La garantía se apoya en tres elementos:
+Tras guardar la evidencia, deja el autoscaler en cero y detén el grupo:
 
-1. `job_id` queda unido de forma inmutable al SHA-256 canónico del request.
-2. El output debe vivir bajo `jobs/<job_id>/` y lleva metadatos `job-id`, `request-sha256` y
-   `artifact-sha256`.
-3. Postgres asigna un lease temporal; otro worker solo puede reclamarlo cuando vence.
+```powershell
+$scaleDownBody = @{
+  replicas = 0
+  queue_autoscaler = @{
+    min_replicas = 0
+    max_replicas = 1
+    desired_queue_length = 1
+    polling_period = 30
+  }
+} | ConvertTo-Json -Depth 10
 
-Si el upload a R2 termina pero el nodo cae antes del commit de Postgres, el siguiente intento
-reconcilia el objeto y marca el job como `succeeded` sin regenerarlo. Si la clave ya existe con otros
-metadatos, el worker no la sobrescribe.
+Invoke-RestMethod `
+  -Method Patch `
+  -Uri "$base/containers/ai-video-factory-worker" `
+  -Headers $headers `
+  -ContentType "application/merge-patch+json" `
+  -Body $scaleDownBody
 
-Consulta operaciones recientes:
-
-```sql
-SELECT
-    job_id,
-    status,
-    attempt_count,
-    lease_owner,
-    lease_expires_at,
-    output_key,
-    last_error,
-    updated_at
-FROM gpu.jobs
-ORDER BY updated_at DESC
-LIMIT 50;
+Invoke-RestMethod `
+  -Method Post `
+  -Uri "$base/containers/ai-video-factory-worker/stop" `
+  -Headers $headers
 ```
 
-Los errores HTTP 503/500 son reintentables. Los conflictos 409 y payloads inválidos 422 son
-terminales: el worker oficial de Salad `v0.7.0` no los reintenta, por lo que debes inspeccionar el
-JSON de output del job además de su estado de cola.
+Verifica `replicas=0`, `pending_change=False` y ninguna instancia activa.
 
-## 10. Criterio de cierre de Fase 7
+## 12. Diagnóstico rápido
 
-La implementación queda lista cuando pasan Ruff y pytest. La validación operativa queda cerrada
-cuando conservas evidencia de:
+| Síntoma | Causa/acción |
+|---|---|
+| `bash\r: No such file` | Checkout CRLF; conserva `.gitattributes` y reconstruye la imagen |
+| HTTP 403 Cloudflare 1010 | Usa el `User-Agent` actual del script; no reintentes una versión antigua |
+| HTTP 400 `no_credits_available` | Añade créditos/entitlement en Salad |
+| HTTP 400 `ReadinessProbe.Http.Headers` | Regenera JSON; ahora incluye `headers: []` |
+| `pageSize must be between 1 and 25` | Usa `page_size=25` como máximo |
+| `deploying`, 0 instancias | Puede ser autoscaler a cero; envía job o sube temporalmente replicas |
+| Trouble allocating workload | Prioridad alta, menos recursos o más clases GPU; revisa System Events |
+| `downloading` prolongado | Espera y observa progreso; revisa tamaño/registro si no avanza |
+| `running`, `ready=False` | Revisa logs, variables, Supabase/R2 y respuesta de `/ready` |
+| R2 timeout solo en el PC | Prueba otra red/VPN/firewall; el replay no requiere acceso R2 local |
 
-- los informes reales de la matriz de benchmark;
-- migración `gpu.jobs` aplicada;
-- imagen Docker publicada por digest;
-- Queue y Container Group activos;
-- smoke test completo en estado `succeeded`;
-- fila Postgres y objeto R2 con SHA-256 coincidente;
-- repetición/reconciliación sin duplicar trabajo.
+La referencia operativa de Salad confirma que la prioridad pertenece a `container.priority` y que
+el handler HTTP de readiness requiere `headers`: [Deploy or Update a Container Group](https://docs.salad.com/agents/container-engine/deploy-or-update-container-group).
 
-No marques como terminada la selección de hardware hasta medirla. No añadas checkpoints LTX ni
-credenciales a la imagen. Rota las credenciales usadas durante pruebas antes de producción y limita
-`max_replicas` según presupuesto.
+## Criterio de cierre de 7.2
+
+- migración de jobs aplicada y `SELECT 1` correcto;
+- imagen publicada y desplegada como `repository@sha256:...`;
+- Queue y Container Group verificados por API;
+- instancia `running/ready` con la versión actual durante la prueba;
+- smoke real `succeeded`, con fila Postgres y objeto R2 coherentes;
+- replay real `succeeded`, `replayed=true` y sin incrementar `attempt_count`;
+- recursos escalados de nuevo a cero y secretos fuera de Git.

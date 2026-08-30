@@ -3,8 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
+
+IMMUTABLE_IMAGE_PATTERN = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
 
 REQUIRED_PRODUCTION_ENV = (
     "POSTGRES_DSN",
@@ -13,6 +16,10 @@ REQUIRED_PRODUCTION_ENV = (
     "R2_ACCESS_KEY_ID",
     "R2_SECRET_ACCESS_KEY",
 )
+
+
+def _is_immutable_image_reference(image: str) -> bool:
+    return IMMUTABLE_IMAGE_PATTERN.fullmatch(image) is not None
 
 
 def _required_environment() -> dict[str, str]:
@@ -36,7 +43,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Render Salad queue and container-group JSON for the Phase 7 worker."
     )
-    parser.add_argument("--image", required=True, help="Immutable registry image reference")
+    parser.add_argument("--image", required=True, help="Registry image pinned by sha256 digest")
+    parser.add_argument(
+        "--allow-mutable-image",
+        action="store_true",
+        help="Allow a mutable image tag for temporary debugging only.",
+    )
     parser.add_argument("--queue-name", default="ai-video-factory-jobs")
     parser.add_argument("--container-name", default="ai-video-factory-worker")
     parser.add_argument("--display-name", default="AI Video Factory Worker")
@@ -50,6 +62,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--polling-period", type=int, default=30)
     parser.add_argument("--output-dir", type=Path, default=Path("data/output/phase7/salad"))
     args = parser.parse_args()
+    if not args.allow_mutable_image and not _is_immutable_image_reference(args.image):
+        parser.error(
+            "--image must use <registry>/<repository>@sha256:<64 hex>; "
+            "use --allow-mutable-image only for temporary debugging"
+        )
     if args.cpu < 1 or args.memory_mb < 1024:
         parser.error("--cpu must be >= 1 and --memory-mb must be >= 1024")
     if not 0 <= args.min_replicas <= args.max_replicas <= 500:
@@ -93,7 +110,7 @@ def main() -> None:
             "priority": os.getenv("SALAD_PRIORITY", "batch"),
         },
         "readiness_probe": {
-            "http": {"path": "/ready", "port": 8080, "scheme": "http"},
+            "http": {"headers": [], "path": "/ready", "port": 8080, "scheme": "http"},
             "initial_delay_seconds": 5,
             "period_seconds": 10,
             "failure_threshold": 6,
