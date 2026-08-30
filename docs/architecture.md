@@ -515,14 +515,13 @@ direct Python/PyTorch LTX runner without changing storage, lease or HTTP semanti
 ### 7.3 operational validation and closure
 
 The cloud smoke completed on 27 August 2026 with one attempt and identical input/output SHA-256.
-That proves the transport and persistence path, but a first execution is not replay evidence.
-`replay_phase7_smoke.py` therefore resubmits the exact saved request and requires
-`replayed=true`, the same artifact identity and an unchanged attempt count.
+On 30 August, Salad job `8e3a92fa-19fe-49f8-a443-04b5c1369a9b` replayed the exact saved request:
+it returned `replayed=true`, the same artifact identity and an unchanged attempt count of one.
 
-Deployment manifests include the HTTP probe's required empty `headers` list. The renderer requires
-a registry reference pinned as `repository@sha256:<digest>` by default; mutable tags are available
-only through an explicit debugging override. Operational closure requires both facts to be observed
-in Salad, not merely present in generated JSON.
+Container Group version 4 ran the registry-pinned image
+`docker.io/yagobordell/ai-video-factory@sha256:82c93a035dbd25f1fc11e80df8b559f18f3f6cf7edf3b4b9d7332f440cb352cc`
+with the valid HTTP readiness probe. It was returned to zero replicas with no pending change after
+the test. This evidence closes Phase 7.2.
 
 ## Media provider boundaries
 
@@ -746,12 +745,11 @@ Completed:
 
 **Operational close of Phase 7, then Phase 8 video generation.**
 
-The infrastructure smoke is retained and succeeded. The remaining closure sequence is: run the
-LTX-2.5 matrix on real candidate hardware, generate the cross-hardware comparison, select the
-provisional GPU profile, redeploy the worker by registry digest, and run the saved request through
-the replay verifier. The exact commands and evidence rules are documented in
-`docs/phase7-benchmark.md` and `docs/phase7-deployment.md`.
+Phase 7.2 is operationally closed. The remaining closure sequence is limited to running the
+LTX-2.5 matrix on real candidate hardware, generating the cross-hardware comparison and selecting
+the provisional GPU profile. The exact commands and evidence rules are documented in
+`docs/phase7-benchmark.md`.
 
-Only after those gates pass should the README mark Phase 7 complete. Phase 8 then adds the direct
+Only after the benchmark gate passes should the README mark Phase 7 complete. Phase 8 then adds the direct
 LTX-2.5 Python/PyTorch task runner to the existing registry and returns R2 metadata through the same
 idempotent contract rather than transporting video bytes through the orchestrator.

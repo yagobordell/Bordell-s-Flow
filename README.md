@@ -9,12 +9,12 @@ media providers, GPU remota y composición programática.
 
 ## Estado
 
-**Fase 7 — Infraestructura GPU: cloud validado; cierre de benchmark y replay pendiente.** 🟡
+**Fase 7 — Infraestructura GPU: Fase 7.2 cerrada; benchmark real pendiente.** 🟡
 
 Última fase cerrada: **Fase 6 — Storyboard y planificación visual por shot**. ✅
-El smoke real Queue → worker → Supabase → R2 terminó correctamente. La fase sigue abierta hasta
-ejecutar la matriz LTX-2.5 en hardware real, desplegar por digest y demostrar replay idempotente sin
-un segundo intento.
+El smoke y su replay real validaron Queue → worker → Supabase → R2 con una imagen fijada por digest,
+`replayed=true` y un único intento. La Fase 7 sigue abierta únicamente hasta ejecutar la matriz
+LTX-2.5 en hardware real y registrar el perfil seleccionado.
 
 La Fase 1 queda conservada como experimento funcional. El pipeline de producción definitivo
 empieza desde un **guion ya terminado**, no desde un tema.
@@ -89,8 +89,8 @@ empieza desde un **guion ya terminado**, no desde un tema.
    - Cloudflare R2 para inputs/outputs con SHA-256 y reconciliación.
    - Supabase/Postgres para estado transaccional, leases y reintentos.
    - Docker con Salad Job Queue Worker `v0.7.0` fijado por checksum.
-   - Smoke cloud end-to-end completado en Salad; replay cloud pendiente.
-   - Manifiesto con readiness válido y exigencia de imagen `@sha256:`.
+   - Smoke y replay cloud completados en Salad con un único intento.
+   - Imagen desplegada por `@sha256:` y manifiesto de readiness validado.
    - Hardware y cuantización se fijarán únicamente después del benchmark real.
 
 10. **Fase 8 — Generación de vídeo**
@@ -548,14 +548,14 @@ El payload incluye un `job_id` de aplicación, claves R2 deterministas y SHA-256
 forma inmutable el ID al fingerprint del request. Un heartbeat renueva el lease y el worker
 reconcilia el objeto R2 si un nodo cae entre upload y commit.
 
-El smoke real de `infrastructure.copy` ya validó Salad Queue → worker → Supabase → R2 con estado
-`succeeded`, un intento y SHA-256 idéntico. El nuevo
-`scripts/replay_phase7_smoke.py` resubmite exactamente el request guardado y exige
-`replayed=true`, el mismo artefacto y `attempt_count=1`.
+El smoke real de `infrastructure.copy` y su replay ya validaron Salad Queue → worker → Supabase →
+R2. El replay `8e3a92fa-19fe-49f8-a443-04b5c1369a9b` terminó en `succeeded`, devolvió el mismo
+SHA-256, `replayed=true` y mantuvo `attempt_count=1`.
 
-El generador de Container Group incluye `readiness_probe.http.headers=[]` y rechaza etiquetas
-mutables salvo un override explícito de depuración. La imagen de cierre debe desplegarse como
-`repository@sha256:<digest>`.
+El Container Group versión 4 ejecutó la imagen
+`docker.io/yagobordell/ai-video-factory@sha256:82c93a035dbd25f1fc11e80df8b559f18f3f6cf7edf3b4b9d7332f440cb352cc`.
+La readiness probe fue válida y, tras la prueba, el grupo quedó con cero réplicas y sin cambios
+pendientes. Con esta evidencia, la Fase 7.2 queda cerrada.
 
 La ejecución LTX de producción pertenece a Fase 8; la medición real de LTX que decide el hardware
 pertenece a esta Fase 7.
@@ -565,8 +565,8 @@ Guías completas:
 - [Benchmark y matriz](docs/phase7-benchmark.md)
 - [Salad, Docker, Supabase, R2, replay y diagnóstico](docs/phase7-deployment.md)
 
-La implementación del camino de cierre está completa, pero la fase permanece abierta hasta adjuntar
-la matriz real, desplegar el digest y conservar un replay cloud exitoso.
+La infraestructura cloud de Fase 7.2 está cerrada. La Fase 7 global permanece abierta únicamente
+hasta adjuntar la matriz LTX-2.5 real y registrar GPU, cuantización y offload seleccionados.
 
 ## Compatibilidad de Fase 1
 

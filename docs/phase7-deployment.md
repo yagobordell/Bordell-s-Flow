@@ -1,6 +1,6 @@
 # Fase 7.2 — despliegue y validación en Salad
 
-Estado: **infraestructura validada en cloud; replay y despliegue por digest pendientes**. Esta guía
+Estado: **Fase 7.2 completada y validada en cloud**. Esta guía
 parte del checkout de AI Video Factory y usa PowerShell 7 en Windows. Los comandos deben ejecutarse
 desde la raíz del repositorio, salvo que se indique otra cosa.
 
@@ -19,8 +19,21 @@ El 27 de agosto de 2026 se completó un smoke real de `infrastructure.copy`:
 | SHA-256 input/output | `0b7da0548cee3474b5ae86ed25eaaff071c7da52d3fc9d07977038a1b600d1a9` |
 | Output R2 | `jobs/phase7-smoke-a1d3883364d8/output.txt` |
 
-Esto demuestra Queue → worker HTTP → Supabase/Postgres → R2 → Queue. No demuestra aún replay
-cloud (`replayed` fue `false`) ni que el grupo esté fijado a un digest de registro.
+El 30 de agosto de 2026 se completó el cierre operativo:
+
+| Evidencia de cierre | Valor |
+|---|---|
+| Salad replay job | `8e3a92fa-19fe-49f8-a443-04b5c1369a9b` |
+| Queue/worker status | `succeeded` / `succeeded` |
+| Replay | `true` |
+| Attempt count | `1` |
+| Container Group version | `4` |
+| Imagen desplegada | `docker.io/yagobordell/ai-video-factory@sha256:82c93a035dbd25f1fc11e80df8b559f18f3f6cf7edf3b4b9d7332f440cb352cc` |
+| Estado final | `replicas=0`, `pending_change=false` |
+
+El replay devolvió el mismo application job, output key y SHA-256 que la primera ejecución. Esto
+demuestra Queue → worker HTTP → Supabase/Postgres → R2 → Queue, despliegue inmutable e idempotencia
+cloud sin repetir el trabajo.
 
 ## 1. Dónde hacer cada cosa
 
@@ -369,10 +382,12 @@ el handler HTTP de readiness requiere `headers`: [Deploy or Update a Container G
 
 ## Criterio de cierre de 7.2
 
-- migración de jobs aplicada y `SELECT 1` correcto;
-- imagen publicada y desplegada como `repository@sha256:...`;
-- Queue y Container Group verificados por API;
-- instancia `running/ready` con la versión actual durante la prueba;
-- smoke real `succeeded`, con fila Postgres y objeto R2 coherentes;
-- replay real `succeeded`, `replayed=true` y sin incrementar `attempt_count`;
-- recursos escalados de nuevo a cero y secretos fuera de Git.
+- [x] migración de jobs aplicada y `SELECT 1` correcto;
+- [x] imagen publicada y desplegada como `repository@sha256:...`;
+- [x] Queue y Container Group verificados por API;
+- [x] instancia `running/ready` con la versión actual durante la prueba;
+- [x] smoke real `succeeded`, con fila Postgres y objeto R2 coherentes;
+- [x] replay real `succeeded`, `replayed=true` y sin incrementar `attempt_count`;
+- [x] recursos escalados de nuevo a cero y secretos fuera de Git.
+
+**Resultado: Fase 7.2 cerrada el 30 de agosto de 2026.**
