@@ -476,6 +476,12 @@ come from real reports collected with the same prompt, keyframe, seed, resolutio
 FPS. It also does not install LTX or its roughly model-sized checkpoint set inside the application
 package; the harness runs in the target LTX environment.
 
+`run_phase7_benchmark_matrix.py` expands the canonical bf16/fp8/offload cases on one hardware
+target and writes one report per case plus a local matrix. `summarize_phase7_benchmarks.py` then
+compares matrices from different GPUs, rejects workload drift and records the SHA-256 of every
+source matrix. It identifies the fastest measured case but intentionally does not replace the
+required visual-quality, availability and cost decision.
+
 ### 7.2 implemented worker boundary
 
 The worker is a versioned HTTP boundary compatible with Salad Job Queue:
@@ -505,6 +511,17 @@ prevents the artifact commit.
 
 Phase 7 registers only `infrastructure.copy`, a deterministic smoke task. Phase 8 will register the
 direct Python/PyTorch LTX runner without changing storage, lease or HTTP semantics.
+
+### 7.3 operational validation and closure
+
+The cloud smoke completed on 27 August 2026 with one attempt and identical input/output SHA-256.
+On 30 August, Salad job `8e3a92fa-19fe-49f8-a443-04b5c1369a9b` replayed the exact saved request:
+it returned `replayed=true`, the same artifact identity and an unchanged attempt count of one.
+
+Container Group version 4 ran the registry-pinned image
+`docker.io/yagobordell/ai-video-factory@sha256:82c93a035dbd25f1fc11e80df8b559f18f3f6cf7edf3b4b9d7332f440cb352cc`
+with the valid HTTP readiness probe. It was returned to zero replicas with no pending change after
+the test. This evidence closes Phase 7.2.
 
 ## Media provider boundaries
 
@@ -717,22 +734,22 @@ Completed:
 12. Storyboard prompting: `Shot[] + ShotTiming[] + VisualReference[] -> StoryboardFrame[]`
 13. Keyframe generation: `StoryboardFrame[] + ReferenceAsset[] -> StoryboardKeyframe[]`
 14. Scene grids: `Scene[] + Shot[] + StoryboardKeyframe[] -> StoryboardGrid[]`
-15. Reproducible LTX benchmark: command + NVIDIA telemetry -> `LTXBenchmarkReport`
+15. Reproducible LTX matrix and multi-hardware comparison -> reports + auditable JSON
 16. Versioned HTTP worker: `GPUJobRequest -> GPUJobResponse`
 17. Cloudflare R2 adapter: streamed local files + object metadata reconciliation
 18. Supabase/Postgres adapter: atomic claims, leases, retries and completed results
 19. Salad Docker image: official queue worker v0.7.0 verified by SHA-256
-20. Deployment renderer and end-to-end Salad/R2/Postgres smoke verifier
+20. Digest-pinned deployment renderer, smoke verifier and replay/idempotency verifier
 
 ## Next validation step
 
 **Operational close of Phase 7, then Phase 8 video generation.**
 
-The code boundary is complete. Run the benchmark matrix on real candidate hardware, choose a GPU
-profile from the resulting evidence, publish the immutable container image, apply the Postgres
-migration and execute the Salad/R2/Postgres smoke test documented in
-`docs/phase7-deployment.md`.
+Phase 7.2 is operationally closed. The remaining closure sequence is limited to running the
+LTX-2.5 matrix on real candidate hardware, generating the cross-hardware comparison and selecting
+the provisional GPU profile. The exact commands and evidence rules are documented in
+`docs/phase7-benchmark.md`.
 
-After that evidence is retained, Phase 8 adds the direct LTX-2.5 Python/PyTorch task runner to the
-existing registry. It should return R2 metadata through the same idempotent job contract rather than
-transporting video bytes through the orchestrator.
+Only after the benchmark gate passes should the README mark Phase 7 complete. Phase 8 then adds the direct
+LTX-2.5 Python/PyTorch task runner to the existing registry and returns R2 metadata through the same
+idempotent contract rather than transporting video bytes through the orchestrator.

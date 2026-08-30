@@ -9,11 +9,12 @@ media providers, GPU remota y composición programática.
 
 ## Estado
 
-**Fase 7 — Infraestructura GPU: implementación completa; validación cloud pendiente.** 🟡
+**Fase 7 — Infraestructura GPU: Fase 7.2 cerrada; benchmark real pendiente.** 🟡
 
 Última fase cerrada: **Fase 6 — Storyboard y planificación visual por shot**. ✅
-Las entregas 7.1 y 7.2 están implementadas. Falta ejecutar la matriz en GPU real y validar el
-despliegue con las cuentas de R2, Supabase y Salad antes de cerrar operativamente la fase.
+El smoke y su replay real validaron Queue → worker → Supabase → R2 con una imagen fijada por digest,
+`replayed=true` y un único intento. La Fase 7 sigue abierta únicamente hasta ejecutar la matriz
+LTX-2.5 en hardware real y registrar el perfil seleccionado.
 
 La Fase 1 queda conservada como experimento funcional. El pipeline de producción definitivo
 empieza desde un **guion ya terminado**, no desde un tema.
@@ -83,12 +84,13 @@ empieza desde un **guion ya terminado**, no desde un tema.
    - Validación real de 8 keyframes y 3 grids con el ejemplo de samuráis.
 
 9. **Fase 7 — Infraestructura GPU** 🟡
-   - Benchmark reproducible de LTX-2.5 implementado; ejecución real pendiente.
+   - Runner de matriz LTX-2.5 y comparador multi-hardware implementados; medición real pendiente.
    - Worker HTTP stateless e idempotente con contratos versionados.
    - Cloudflare R2 para inputs/outputs con SHA-256 y reconciliación.
    - Supabase/Postgres para estado transaccional, leases y reintentos.
    - Docker con Salad Job Queue Worker `v0.7.0` fijado por checksum.
-   - Queue, autoscaling, readiness, manifiestos y smoke test end-to-end.
+   - Smoke y replay cloud completados en Salad con un único intento.
+   - Imagen desplegada por `@sha256:` y manifiesto de readiness validado.
    - Hardware y cuantización se fijarán únicamente después del benchmark real.
 
 10. **Fase 8 — Generación de vídeo**
@@ -490,44 +492,43 @@ Con esta validación, **Fase 6 queda cerrada**.
 
 ## Fase 7 — Infraestructura GPU
 
-### 7.1 Benchmark reproducible de LTX-2.5
+### 7.1 Matriz reproducible de LTX-2.5
 
-La primera entrega ya implementa el harness que debe ejecutarse sobre cada GPU candidata antes de
-fijar el worker de Salad:
+La matriz canónica se ejecuta sobre cada GPU candidata con tres perfiles constantes:
 
-```bash
-python scripts/run_phase7_benchmark.py \
-  --label l40s-distilled-fp8-cpu \
-  --pipeline distilled \
-  --quantization fp8-cast \
-  --offload cpu \
-  --width 768 \
-  --height 1280 \
-  --num-frames 121 \
-  --fps 24 \
-  --warmup-runs 1 \
-  --measured-runs 3 \
-  -- \
-  python -m ltx_pipelines.distilled ... --output-path '{output}'
+```powershell
+python scripts/run_phase7_benchmark_matrix.py `
+  --hardware-label rtx4090 `
+  --prompt "A cinematic historical shot with deliberate subject motion." `
+  --conditioning-image data/output/phase6/storyboard_keyframes/shot_001.png `
+  --seed 42 `
+  --width 768 --height 1280 --num-frames 121 --fps 24 `
+  --warmup-runs 1 --measured-runs 3 `
+  -- `
+  python -m ltx_pipelines.distilled ... `
+  --prompt "{prompt}" --image "{conditioning_image}" 0 1.0 --seed "{seed}" `
+  "{quantization_args}" `
+  "{offload_args}" `
+  --output-path "{output}"
 ```
 
-El workflow separa warmups, muestrea VRAM con `nvidia-smi`, valida cada MP4 y persiste hashes,
-tiempos, throughput y pico de memoria por GPU. El comando se ejecuta sin shell y sus credenciales
-comunes se redactan antes de escribir el informe.
+El runner separa warmups, mide VRAM con `nvidia-smi`, valida cada MP4 y persiste hashes, tiempos,
+throughput y pico de memoria. Genera un JSON por caso y un `matrix.json` por hardware. Después:
 
-Salida:
-
-```text
-data/output/phase7/
-└── ltx_benchmark.json
+```powershell
+python scripts/summarize_phase7_benchmarks.py `
+  data/output/phase7/benchmarks/l40s/matrix.json `
+  data/output/phase7/benchmarks/rtx4090/matrix.json `
+  data/output/phase7/benchmarks/rtx5090/matrix.json
 ```
 
-La guía y la matriz inicial de perfiles están en
+El comparador rechaza workloads distintos y registra el SHA-256 de cada matriz fuente. La guía de
+instalación de LTX, descarga de checkpoints y comandos completos está en
 [`docs/phase7-benchmark.md`](docs/phase7-benchmark.md).
 
 ### 7.2 Worker remoto idempotente
 
-La infraestructura desplegable está implementada:
+La infraestructura desplegable mantiene este boundary:
 
 ```text
 orchestrator
@@ -543,19 +544,29 @@ R2 GET inputs      R2 PUT outputs
 Supabase/Postgres leases + state
 ```
 
-El payload incluye un `job_id` de aplicación, claves R2 deterministas y SHA-256 opcionales para
-inputs. Postgres une de forma inmutable el ID al fingerprint del request. Un heartbeat renueva el
-lease durante trabajos largos. Si un nodo cae después del upload pero antes del commit, el siguiente
-intento reconcilia los metadatos de R2 y no repite el trabajo.
+El payload incluye un `job_id` de aplicación, claves R2 deterministas y SHA-256. Postgres une de
+forma inmutable el ID al fingerprint del request. Un heartbeat renueva el lease y el worker
+reconcilia el objeto R2 si un nodo cae entre upload y commit.
 
-`infrastructure.copy` valida el recorrido completo sin pagar GPU. El runner LTX real sigue
-perteneciendo a Fase 8 y se registrará en el mismo boundary después de elegir hardware con evidencia.
+El smoke real de `infrastructure.copy` y su replay ya validaron Salad Queue → worker → Supabase →
+R2. El replay `8e3a92fa-19fe-49f8-a443-04b5c1369a9b` terminó en `succeeded`, devolvió el mismo
+SHA-256, `replayed=true` y mantuvo `attempt_count=1`.
 
-Guía completa, comandos y criterios de cierre:
-[`docs/phase7-deployment.md`](docs/phase7-deployment.md).
+El Container Group versión 4 ejecutó la imagen
+`docker.io/yagobordell/ai-video-factory@sha256:82c93a035dbd25f1fc11e80df8b559f18f3f6cf7edf3b4b9d7332f440cb352cc`.
+La readiness probe fue válida y, tras la prueba, el grupo quedó con cero réplicas y sin cambios
+pendientes. Con esta evidencia, la Fase 7.2 queda cerrada.
 
-La implementación está completa, pero la fase permanece abierta hasta ejecutar la matriz real,
-publicar la imagen y conservar un smoke test exitoso en las cuentas de R2, Supabase y Salad.
+La ejecución LTX de producción pertenece a Fase 8; la medición real de LTX que decide el hardware
+pertenece a esta Fase 7.
+
+Guías completas:
+
+- [Benchmark y matriz](docs/phase7-benchmark.md)
+- [Salad, Docker, Supabase, R2, replay y diagnóstico](docs/phase7-deployment.md)
+
+La infraestructura cloud de Fase 7.2 está cerrada. La Fase 7 global permanece abierta únicamente
+hasta adjuntar la matriz LTX-2.5 real y registrar GPU, cuantización y offload seleccionados.
 
 ## Compatibilidad de Fase 1
 
