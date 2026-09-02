@@ -7,7 +7,6 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-
 PUBLIC_ROOT = Path(
     os.environ.get("BENCHMARK_PUBLIC_ROOT", "/workspace/public")
 ).resolve()
