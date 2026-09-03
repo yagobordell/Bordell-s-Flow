@@ -90,7 +90,9 @@ function Get-ContainerInstances {
 function Get-CurrentInstance {
     param(
         [Parameter(Mandatory)][object]$Group,
-        [Parameter(Mandatory)][object[]]$Instances
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]]$Instances
     )
 
     if ($Instances.Count -eq 0) {
