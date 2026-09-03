@@ -172,7 +172,7 @@ write_status "running" "Running the canonical RTX 5090 benchmark case."
     --output-path '{output}' \
     2>&1 | tee -a "${LOG_PATH}"
 
-write_status "succeeded" "Benchmark completed; results are ready to download."
+write_status "uploading_results" "Benchmark completed; persisting result artifacts."
 echo "BENCHMARK_SUCCEEDED" | tee -a "${LOG_PATH}"
 
 if [[ -n "${R2_ENDPOINT_URL:-}" \
@@ -189,6 +189,8 @@ if [[ -n "${R2_ENDPOINT_URL:-}" \
 else
     echo "R2_UPLOAD_SKIPPED missing_configuration=true" | tee -a "${LOG_PATH}"
 fi
+
+write_status "succeeded" "Benchmark completed; results are ready to download."
 
 trap - ERR
 wait "${SERVER_PID}"

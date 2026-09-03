@@ -20,6 +20,10 @@ $script:ExpectedImage = (
     "docker.io/yagobordell/ai-video-factory-benchmark:" +
     "phase7-ltx25-torch211-cu128-natten0216-v9-salad"
 )
+$script:RecoveryImage = (
+    "docker.io/yagobordell/ai-video-factory-benchmark:" +
+    "phase7-ltx25-torch211-cu128-natten0216-v8-salad"
+)
 $script:BadMachineIds = @(
     "8e9fc285-4a97-145d-b192-faed64f70e29"
 )
@@ -481,14 +485,14 @@ function Restore-CanonicalKeyframe {
     }
 
     Write-Host "Descargando la imagen de recuperación; puede tardar varios minutos..." -ForegroundColor Cyan
-    & docker pull $script:ExpectedImage
+    & docker pull $script:RecoveryImage
     if ($LASTEXITCODE -ne 0) {
         throw "docker pull falló. Inicia Docker Desktop y ejecuta docker login si el repositorio es privado."
     }
 
     $Created = $false
     try {
-        & docker create --name $RecoveryContainer $script:ExpectedImage | Out-Null
+        & docker create --name $RecoveryContainer $script:RecoveryImage | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw "docker create falló."
         }
