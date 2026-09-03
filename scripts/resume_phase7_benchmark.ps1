@@ -388,7 +388,7 @@ function Save-Phase7Benchmark {
         @{ Remote = "results/benchmark.log"; Local = "benchmark.log"; Optional = $false }
         @{ Remote = "results/rtx5090/matrix.json"; Local = "matrix.json"; Optional = $false }
         @{ Remote = "results/rtx5090/distilled-fp8-cpu.json"; Local = "distilled-fp8-cpu.json"; Optional = $false }
-        @{ Remote = "results/rtx5090/distilled-fp8-cpu.mp4"; Local = "distilled-fp8-cpu.mp4"; Optional = $true }
+        @{ Remote = "results/videos/rtx5090/distilled-fp8-cpu.mp4"; Local = "distilled-fp8-cpu.mp4"; Optional = $false }
     )
 
     foreach ($Download in $Downloads) {
