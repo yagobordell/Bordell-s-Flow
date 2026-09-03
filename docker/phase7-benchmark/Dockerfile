@@ -59,6 +59,7 @@ RUN python3 -m pip install \
         --constraint /opt/torch-constraints.txt \
         --extra-index-url https://download.pytorch.org/whl/cu128 \
         --editable /opt/factory \
+        "boto3>=1.35,<2" \
         "huggingface-hub[cli]"
 
 RUN mkdir -p /opt/ltx/.venv/bin \

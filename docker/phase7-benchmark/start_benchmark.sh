@@ -175,5 +175,20 @@ write_status "running" "Running the canonical RTX 5090 benchmark case."
 write_status "succeeded" "Benchmark completed; results are ready to download."
 echo "BENCHMARK_SUCCEEDED" | tee -a "${LOG_PATH}"
 
+if [[ -n "${R2_ENDPOINT_URL:-}" \
+    && -n "${R2_BUCKET:-}" \
+    && -n "${R2_ACCESS_KEY_ID:-}" \
+    && -n "${R2_SECRET_ACCESS_KEY:-}" ]]; then
+    if "${PYTHON}" "${FACTORY}/scripts/upload_phase7_benchmark_results.py" \
+        --results-root "${RESULTS_ROOT}" \
+        2>&1 | tee -a "${LOG_PATH}"; then
+        echo "R2_UPLOAD_SUCCEEDED" | tee -a "${LOG_PATH}"
+    else
+        echo "R2_UPLOAD_FAILED local_results_remain_available=true" | tee -a "${LOG_PATH}"
+    fi
+else
+    echo "R2_UPLOAD_SKIPPED missing_configuration=true" | tee -a "${LOG_PATH}"
+fi
+
 trap - ERR
 wait "${SERVER_PID}"
