@@ -471,10 +471,12 @@ Warmups are deliberately excluded from aggregate timings. Measured samples retai
 duration, peak memory, size and SHA-256 so later hardware selection does not depend only on one
 average.
 
-This first increment does not choose the final GPU, quantization or offload mode. Those choices must
-come from real reports collected with the same prompt, keyframe, seed, resolution, frame count and
-FPS. It also does not install LTX or its roughly model-sized checkpoint set inside the application
-package; the harness runs in the target LTX environment.
+The validated Phase 7 baseline is an RTX 5090 using `fp8-cast` with CPU offload. A real matrix with
+one warmup and three measured runs produced a 194.93-second mean, 0.621 end-to-end FPS and a
+24,513 MiB peak for 121 frames at 768x1280. This is a provisional production starting point rather
+than a permanent hardware lock; future matrices may replace it without changing the worker
+boundary. LTX and its model-sized checkpoint set remain outside the application package and are
+loaded in the target GPU environment.
 
 `run_phase7_benchmark_matrix.py` expands the canonical bf16/fp8/offload cases on one hardware
 target and writes one report per case plus a local matrix. `summarize_phase7_benchmarks.py` then
@@ -515,13 +517,15 @@ direct Python/PyTorch LTX runner without changing storage, lease or HTTP semanti
 ### 7.3 operational validation and closure
 
 The cloud smoke completed on 27 August 2026 with one attempt and identical input/output SHA-256.
-On 30 August, Salad job `8e3a92fa-19fe-49f8-a443-04b5c1369a9b` replayed the exact saved request:
-it returned `replayed=true`, the same artifact identity and an unchanged attempt count of one.
+`replay_phase7_smoke.py` then resubmitted the exact saved request and returned `replayed=true`, the
+same artifact identity and the unchanged attempt count. The production worker image was observed
+by registry digest, and the worker group was returned to zero replicas.
 
-Container Group version 4 ran the registry-pinned image
-`docker.io/yagobordell/ai-video-factory@sha256:82c93a035dbd25f1fc11e80df8b559f18f3f6cf7edf3b4b9d7332f440cb352cc`
-with the valid HTTP readiness probe. It was returned to zero replicas with no pending change after
-the test. This evidence closes Phase 7.2.
+Deployment manifests include the HTTP probe's required empty `headers` list. The renderer requires
+a registry reference pinned as `repository@sha256:<digest>` by default; mutable tags are available
+only through an explicit debugging override. Both facts were observed in Salad. The later LTX-2.5
+benchmark also completed on real RTX 5090 hardware, its JSON and MP4 passed validation, and its
+group was stopped. Phase 7 is closed; the evidence inventory is in `docs/phase7-closure.md`.
 
 ## Media provider boundaries
 
@@ -709,7 +713,7 @@ The Phase 1 flow is not the long-term production architecture.
 - **LLM orchestration:** OpenAI Responses API + Structured Outputs.
 - **Storyboard planning:** completed provider-neutral keyframe pipeline from Phase 6.
 - **GPU inference:** Docker containers on Salad.
-- **Video model:** LTX-2.5 first; benchmark hardware/quantization before fixing worker shape.
+- **Video model:** LTX-2.5 with the validated RTX 5090 / `fp8-cast` / CPU-offload baseline.
 - **Object storage:** Cloudflare R2.
 - **Job/application state:** Supabase/Postgres.
 - **Composition:** Remotion for timeline, transitions, captions and motion graphics.
@@ -743,13 +747,11 @@ Completed:
 
 ## Next validation step
 
-**Operational close of Phase 7, then Phase 8 video generation.**
+**Phase 8 — direct LTX-2.5 video generation.**
 
-Phase 7.2 is operationally closed. The remaining closure sequence is limited to running the
-LTX-2.5 matrix on real candidate hardware, generating the cross-hardware comparison and selecting
-the provisional GPU profile. The exact commands and evidence rules are documented in
-`docs/phase7-benchmark.md`.
-
-Only after the benchmark gate passes should the README mark Phase 7 complete. Phase 8 then adds the direct
+Phase 7 is closed: infrastructure smoke, idempotent replay, digest-pinned worker deployment, real
+RTX 5090 benchmark, artifact validation and scale-down all passed. Phase 8 now adds the direct
 LTX-2.5 Python/PyTorch task runner to the existing registry and returns R2 metadata through the same
-idempotent contract rather than transporting video bytes through the orchestrator.
+idempotent contract rather than transporting video bytes through the orchestrator. A future
+multi-hardware benchmark can refine the provisional baseline without reopening the infrastructure
+contract.

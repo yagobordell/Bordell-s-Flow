@@ -9,12 +9,11 @@ media providers, GPU remota y composición programática.
 
 ## Estado
 
-**Fase 7 — Infraestructura GPU: Fase 7.2 cerrada; benchmark real pendiente.** 🟡
+**Fase 7 — Infraestructura GPU y benchmark LTX-2.5.** ✅
 
-Última fase cerrada: **Fase 6 — Storyboard y planificación visual por shot**. ✅
-El smoke y su replay real validaron Queue → worker → Supabase → R2 con una imagen fijada por digest,
-`replayed=true` y un único intento. La Fase 7 sigue abierta únicamente hasta ejecutar la matriz
-LTX-2.5 en hardware real y registrar el perfil seleccionado.
+Última fase cerrada: **Fase 7 — Infraestructura GPU**. El smoke y su replay idempotente validaron
+Queue → worker → Supabase → R2. El benchmark real de LTX-2.5 terminó en una RTX 5090 y dejó como
+baseline provisional `fp8-cast` con offload a CPU. El siguiente trabajo es la Fase 8.
 
 La Fase 1 queda conservada como experimento funcional. El pipeline de producción definitivo
 empieza desde un **guion ya terminado**, no desde un tema.
@@ -83,15 +82,15 @@ empieza desde un **guion ya terminado**, no desde un tema.
    - Grids por escena compuestos localmente con Pillow, sin IA.
    - Validación real de 8 keyframes y 3 grids con el ejemplo de samuráis.
 
-9. **Fase 7 — Infraestructura GPU** 🟡
-   - Runner de matriz LTX-2.5 y comparador multi-hardware implementados; medición real pendiente.
+9. **Fase 7 — Infraestructura GPU** ✅
+   - Runner reproducible y benchmark real de LTX-2.5 completado en RTX 5090.
    - Worker HTTP stateless e idempotente con contratos versionados.
    - Cloudflare R2 para inputs/outputs con SHA-256 y reconciliación.
    - Supabase/Postgres para estado transaccional, leases y reintentos.
    - Docker con Salad Job Queue Worker `v0.7.0` fijado por checksum.
-   - Smoke y replay cloud completados en Salad con un único intento.
-   - Imagen desplegada por `@sha256:` y manifiesto de readiness validado.
-   - Hardware y cuantización se fijarán únicamente después del benchmark real.
+   - Smoke cloud y replay idempotente completados en Salad con un único intento.
+   - Manifiesto con readiness válido y exigencia de imagen `@sha256:`.
+   - Baseline provisional: RTX 5090, `fp8-cast`, offload a CPU, 24.5 GiB de pico de VRAM.
 
 10. **Fase 8 — Generación de vídeo**
     - LTX-2.5 ejecutado directamente desde Python/PyTorch.
@@ -526,6 +525,10 @@ El comparador rechaza workloads distintos y registra el SHA-256 de cada matriz f
 instalación de LTX, descarga de checkpoints y comandos completos está en
 [`docs/phase7-benchmark.md`](docs/phase7-benchmark.md).
 
+La ejecución real de cierre produjo tres muestras válidas en RTX 5090: media de **194.93 s** por
+clip, **0.621 FPS end-to-end** y **24,513 MiB** de pico de VRAM para 121 frames a 768×1280. La
+evidencia completa y sus hashes están en [`docs/phase7-closure.md`](docs/phase7-closure.md).
+
 ### 7.2 Worker remoto idempotente
 
 La infraestructura desplegable mantiene este boundary:
@@ -548,14 +551,13 @@ El payload incluye un `job_id` de aplicación, claves R2 deterministas y SHA-256
 forma inmutable el ID al fingerprint del request. Un heartbeat renueva el lease y el worker
 reconcilia el objeto R2 si un nodo cae entre upload y commit.
 
-El smoke real de `infrastructure.copy` y su replay ya validaron Salad Queue → worker → Supabase →
-R2. El replay `8e3a92fa-19fe-49f8-a443-04b5c1369a9b` terminó en `succeeded`, devolvió el mismo
-SHA-256, `replayed=true` y mantuvo `attempt_count=1`.
+El smoke real de `infrastructure.copy` validó Salad Queue → worker → Supabase → R2 con estado
+`succeeded`, un intento y SHA-256 idéntico. `scripts/replay_phase7_smoke.py` resubmitió el mismo
+request y confirmó `replayed=true`, el mismo artefacto y `attempt_count=1`.
 
-El Container Group versión 4 ejecutó la imagen
-`docker.io/yagobordell/ai-video-factory@sha256:82c93a035dbd25f1fc11e80df8b559f18f3f6cf7edf3b4b9d7332f440cb352cc`.
-La readiness probe fue válida y, tras la prueba, el grupo quedó con cero réplicas y sin cambios
-pendientes. Con esta evidencia, la Fase 7.2 queda cerrada.
+El generador de Container Group incluye `readiness_probe.http.headers=[]` y rechaza etiquetas
+mutables salvo un override explícito de depuración. La imagen de cierre debe desplegarse como
+`repository@sha256:<digest>`.
 
 La ejecución LTX de producción pertenece a Fase 8; la medición real de LTX que decide el hardware
 pertenece a esta Fase 7.
@@ -565,8 +567,9 @@ Guías completas:
 - [Benchmark y matriz](docs/phase7-benchmark.md)
 - [Salad, Docker, Supabase, R2, replay y diagnóstico](docs/phase7-deployment.md)
 
-La infraestructura cloud de Fase 7.2 está cerrada. La Fase 7 global permanece abierta únicamente
-hasta adjuntar la matriz LTX-2.5 real y registrar GPU, cuantización y offload seleccionados.
+La Fase 7 queda cerrada con benchmark real, replay idempotente, artefactos verificados y los dos
+Container Groups detenidos. La Fase 8 reutiliza este boundary para registrar el runner LTX-2.5 de
+producción.
 
 ## Compatibilidad de Fase 1
 

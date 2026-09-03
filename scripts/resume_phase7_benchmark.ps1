@@ -15,10 +15,10 @@ $ErrorActionPreference = "Stop"
 $script:Organization = "yagobordellorg"
 $script:Project = "aivideofactory"
 $script:GroupName = "ai-video-factory-bench-rtx5090"
-$script:MinimumVersion = 11
+$script:MinimumVersion = 10
 $script:ExpectedImage = (
     "docker.io/yagobordell/ai-video-factory-benchmark:" +
-    "phase7-ltx25-torch211-cu128-natten0216-v9-salad"
+    "phase7-ltx25-torch211-cu128-natten0216-v8-salad"
 )
 $script:RecoveryImage = (
     "docker.io/yagobordell/ai-video-factory-benchmark:" +

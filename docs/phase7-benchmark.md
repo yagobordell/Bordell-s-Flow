@@ -1,13 +1,15 @@
 # Fase 7.1 — matriz reproducible de LTX-2.5
 
-Estado: **implementada; ejecución real pendiente**. La Fase 7 no se cierra hasta obtener los JSON
-de hardware real y registrar la selección provisional de GPU, cuantización y offload.
+Estado: **completada y validada en hardware real**. El 3 de septiembre de 2026 UTC se obtuvieron
+los JSON y el MP4 canónicos en una RTX 5090. El baseline provisional queda fijado en `fp8-cast`
+con offload a CPU; los valores y hashes auditables están en
+[`phase7-closure.md`](phase7-closure.md).
 
 ## Dónde se ejecuta
 
-El benchmark se ejecuta en cada máquina GPU candidata, no en el portátil si este no dispone de la
+El benchmark se ejecuta en la máquina GPU candidata, no en el portátil si este no dispone de la
 GPU y VRAM que se quieren medir. Puede ser una instancia temporal de Salad, otro proveedor GPU o
-una máquina local NVIDIA. En todos los casos deben mantenerse idénticos:
+una máquina local NVIDIA. Si se comparan más GPUs en el futuro deben mantenerse idénticos:
 
 - commit de LTX-2 y checkpoints;
 - prompt, keyframe, resolución, frames, FPS y seed;
@@ -146,6 +148,10 @@ data/output/phase7/benchmarks/<hardware>/
 Los MP4 de cada run son temporales y se guardan bajo `data/tmp/phase7/benchmarks/<hardware>/`.
 Revísalos visualmente: el caso más rápido no es automáticamente el perfil elegido.
 
+La ejecución cloud de cierre publicó además el último MP4 medido junto a los JSON bajo
+`data/output/phase7/benchmarks/rtx5090-cloud/`. Estos outputs están ignorados por Git; conserva una
+copia externa si necesitas retener el binario y usa los hashes documentados para comprobarla.
+
 ## Unir las matrices
 
 Copia las carpetas de las máquinas GPU al mismo checkout y ejecuta desde la raíz de AI Video
@@ -163,13 +169,17 @@ El resumen rechaza matrices con workloads distintos, registra el SHA-256 de cada
 señala el caso más rápido. La decisión final debe añadir disponibilidad y coste por clip, y confirmar
 calidad visual.
 
-## Criterio de cierre de 7.1
+## Cierre de 7.1
 
-- `matrix.json` real de cada hardware candidato viable;
-- `comparison.json` generado sin incompatibilidades;
-- clips revisados visualmente;
-- GPU, cuantización y offload provisionales registrados en README y arquitectura;
-- cualquier candidato omitido justificado por disponibilidad o incapacidad demostrada.
+Se acepta RTX 5090 como único candidato viable de esta primera línea base: el objetivo de Fase 7 es
+demostrar una configuración real utilizable, no financiar una comparativa exhaustiva. La
+comparación multi-hardware sigue disponible como optimización posterior y no bloquea la Fase 8.
+
+- `matrix.json` y `distilled-fp8-cpu.json` reales y válidos;
+- 1 warmup y 3 runs medidos, todos con MP4 válido;
+- clip final revisado visual y técnicamente;
+- RTX 5090, `fp8-cast` y offload a CPU registrados como baseline provisional;
+- grupo de benchmark detenido después de descargar los artefactos.
 
 Referencias: [instalación oficial de LTX-2](https://github.com/Lightricks/LTX-2/blob/main/packages/ltx-pipelines/docs/installation.md)
 y [repositorio oficial](https://github.com/Lightricks/LTX-2).

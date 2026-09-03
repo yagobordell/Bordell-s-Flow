@@ -1,8 +1,8 @@
 # Fase 7.2 — despliegue y validación en Salad
 
-Estado: **Fase 7.2 completada y validada en cloud**. Esta guía
-parte del checkout de AI Video Factory y usa PowerShell 7 en Windows. Los comandos deben ejecutarse
-desde la raíz del repositorio, salvo que se indique otra cosa.
+Estado: **completada y validada en cloud**. Esta guía conserva el procedimiento reproducible para
+futuras publicaciones. Parte del checkout de AI Video Factory y usa PowerShell 7 en Windows. Los
+comandos deben ejecutarse desde la raíz del repositorio, salvo que se indique otra cosa.
 
 ## Resultado ya validado
 
@@ -19,21 +19,19 @@ El 27 de agosto de 2026 se completó un smoke real de `infrastructure.copy`:
 | SHA-256 input/output | `0b7da0548cee3474b5ae86ed25eaaff071c7da52d3fc9d07977038a1b600d1a9` |
 | Output R2 | `jobs/phase7-smoke-a1d3883364d8/output.txt` |
 
-El 30 de agosto de 2026 se completó el cierre operativo:
+El replay posterior del mismo request también terminó correctamente:
 
-| Evidencia de cierre | Valor |
+| Evidencia | Valor |
 |---|---|
 | Salad replay job | `8e3a92fa-19fe-49f8-a443-04b5c1369a9b` |
-| Queue/worker status | `succeeded` / `succeeded` |
-| Replay | `true` |
-| Attempt count | `1` |
-| Container Group version | `4` |
-| Imagen desplegada | `docker.io/yagobordell/ai-video-factory@sha256:82c93a035dbd25f1fc11e80df8b559f18f3f6cf7edf3b4b9d7332f440cb352cc` |
-| Estado final | `replicas=0`, `pending_change=false` |
+| Estado | `succeeded` |
+| `replayed` | `true` |
+| Intentos | `1` |
+| Output y SHA-256 | idénticos al smoke original |
+| Imagen worker | `docker.io/yagobordell/ai-video-factory@sha256:82c93a035dbd25f1fc11e80df8b559f18f3f6cf7edf3b4b9d7332f440cb352cc` |
 
-El replay devolvió el mismo application job, output key y SHA-256 que la primera ejecución. Esto
-demuestra Queue → worker HTTP → Supabase/Postgres → R2 → Queue, despliegue inmutable e idempotencia
-cloud sin repetir el trabajo.
+Esto demuestra Queue → worker HTTP → Supabase/Postgres → R2 → Queue y replay idempotente sin
+volver a ejecutar el trabajo. El grupo se escaló a cero y se detuvo al terminar.
 
 ## 1. Dónde hacer cada cosa
 
@@ -380,14 +378,15 @@ Verifica `replicas=0`, `pending_change=False` y ninguna instancia activa.
 La referencia operativa de Salad confirma que la prioridad pertenece a `container.priority` y que
 el handler HTTP de readiness requiere `headers`: [Deploy or Update a Container Group](https://docs.salad.com/agents/container-engine/deploy-or-update-container-group).
 
-## Criterio de cierre de 7.2
+## Cierre de 7.2
 
-- [x] migración de jobs aplicada y `SELECT 1` correcto;
-- [x] imagen publicada y desplegada como `repository@sha256:...`;
-- [x] Queue y Container Group verificados por API;
-- [x] instancia `running/ready` con la versión actual durante la prueba;
-- [x] smoke real `succeeded`, con fila Postgres y objeto R2 coherentes;
-- [x] replay real `succeeded`, `replayed=true` y sin incrementar `attempt_count`;
-- [x] recursos escalados de nuevo a cero y secretos fuera de Git.
+- migración de jobs aplicada y `SELECT 1` correcto;
+- imagen publicada y desplegada como `repository@sha256:...`;
+- Queue y Container Group verificados por API;
+- instancia `running/ready` con la versión actual durante la prueba;
+- smoke real `succeeded`, con fila Postgres y objeto R2 coherentes;
+- replay real `succeeded`, `replayed=true` y sin incrementar `attempt_count`;
+- recursos escalados de nuevo a cero y secretos fuera de Git.
 
-**Resultado: Fase 7.2 cerrada el 30 de agosto de 2026.**
+Todos los puntos anteriores quedaron comprobados. Los identificadores, hashes y decisiones de
+cierre se consolidan en [`phase7-closure.md`](phase7-closure.md).

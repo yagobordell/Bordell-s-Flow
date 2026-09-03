@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "captured_at": "2026-09-02T00:20:03Z",
+  "captured_at": "2026-09-03T22:39:23.566706Z",
   "salad": {
     "organization": "yagobordellorg",
     "project": "aivideofactory",
@@ -21,14 +21,20 @@
     ]
   },
   "benchmark": {
+    "status": "succeeded",
     "hardware": "rtx5090",
     "case": "distilled-fp8-cpu",
     "quantization": "fp8-cast",
     "offload": "cpu",
     "warmup_runs": 1,
     "measured_runs": 3,
-    "prompt": "A cinematic historical shot with deliberate subject motion and a slow camera push."
+    "prompt": "A cinematic historical shot with deliberate subject motion and a slow camera push.",
+    "mean_duration_seconds": 194.93369755833342,
+    "median_duration_seconds": 195.1352032159998,
+    "mean_end_to_end_frames_per_second": 0.6207238744024288,
+    "peak_gpu_memory_mib": 24513,
+    "output_sha256": "6121925f18ee134278fc2fb1069b334d0779aaf6a3d1d763cafbcfa6cce62b0c"
   },
-  "next_action": "Start, monitor, download and stop the prepared container group.",
+  "next_action": "Begin Phase 8 using the validated RTX 5090 fp8-cast/cpu baseline; do not rerun Phase 7 unless the workload or hardware decision changes.",
   "secrets_included": false
 }
