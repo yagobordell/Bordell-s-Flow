@@ -267,8 +267,14 @@ function Get-BenchmarkStatus {
     param([Parameter(Mandatory)][string]$BaseUrl)
 
     try {
+        $CacheBuster = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $StatusUrl = "$BaseUrl/results/status.json?cb=$CacheBuster"
         return Invoke-RestMethod `
-            -Uri "$BaseUrl/results/status.json" `
+            -Uri $StatusUrl `
+            -Headers @{
+                "Cache-Control" = "no-cache"
+                "Pragma"        = "no-cache"
+            } `
             -TimeoutSec 20
     }
     catch {
@@ -347,8 +353,14 @@ function Save-RemoteFile {
 
     $TemporaryPath = "$LocalPath.download"
     try {
+        $CacheBuster = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $DownloadUrl = "$BaseUrl/$RemotePath`?cb=$CacheBuster"
         Invoke-WebRequest `
-            -Uri "$BaseUrl/$RemotePath" `
+            -Uri $DownloadUrl `
+            -Headers @{
+                "Cache-Control" = "no-cache"
+                "Pragma"        = "no-cache"
+            } `
             -OutFile $TemporaryPath `
             -UseBasicParsing `
             -TimeoutSec 300
