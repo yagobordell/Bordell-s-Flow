@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-
 ARTIFACTS = (
     ("status.json", "application/json"),
     ("benchmark.log", "text/plain"),
