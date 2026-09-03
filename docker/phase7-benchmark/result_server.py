@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -36,8 +37,17 @@ class ResultHandler(SimpleHTTPRequestHandler):
         )
 
 
-class ResultHTTPServer(ThreadingHTTPServer):
+class DualStackHTTPServer(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
     allow_reuse_address = True
+
+    def server_bind(self) -> None:
+        self.socket.setsockopt(
+            socket.IPPROTO_IPV6,
+            socket.IPV6_V6ONLY,
+            0,
+        )
+        super().server_bind()
 
 
 def main() -> None:
@@ -47,9 +57,9 @@ def main() -> None:
         ResultHandler,
         directory=str(PUBLIC_ROOT),
     )
-    server = ResultHTTPServer(("0.0.0.0", PORT), handler)
+    server = DualStackHTTPServer(("::", PORT), handler)
     print(
-        f"result-server listening=0.0.0.0:{PORT} root={PUBLIC_ROOT}",
+        f"result-server listening=[::]:{PORT} root={PUBLIC_ROOT}",
         flush=True,
     )
     server.serve_forever()
