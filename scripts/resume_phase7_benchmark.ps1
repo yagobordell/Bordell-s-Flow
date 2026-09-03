@@ -375,7 +375,7 @@ function Save-RemoteFile {
     catch {
         Remove-Item -LiteralPath $TemporaryPath -Force -ErrorAction SilentlyContinue
         if ($Optional) {
-            Write-Warning "No disponible: $RemotePath"
+            Write-Warning "No disponible: $RemotePath. $($_.Exception.Message)"
             return
         }
         throw
@@ -389,15 +389,18 @@ function Save-Phase7Benchmark {
     $Status = Get-BenchmarkStatus -BaseUrl $BaseUrl
     $BenchmarkState = [string](Get-OptionalProperty $Status "status" "no-disponible")
     if ($BenchmarkState -ne "succeeded") {
-        throw "El resultado todavía no está listo: $BenchmarkState"
+        Write-Warning (
+            "El indicador devuelve '$BenchmarkState'. Se intentará la descarga directa; " +
+            "los artefactos obligatorios decidirán si el benchmark está completo."
+        )
     }
 
     $Root = [IO.Path]::GetFullPath($OutputDirectory)
     New-Item -ItemType Directory -Path $Root -Force | Out-Null
 
     $Downloads = @(
-        @{ Remote = "results/status.json"; Local = "status.json"; Optional = $false }
-        @{ Remote = "results/benchmark.log"; Local = "benchmark.log"; Optional = $false }
+        @{ Remote = "results/status.json"; Local = "status.json"; Optional = $true }
+        @{ Remote = "results/benchmark.log"; Local = "benchmark.log"; Optional = $true }
         @{ Remote = "results/rtx5090/matrix.json"; Local = "matrix.json"; Optional = $false }
         @{ Remote = "results/rtx5090/distilled-fp8-cpu.json"; Local = "distilled-fp8-cpu.json"; Optional = $false }
         @{ Remote = "results/videos/rtx5090/distilled-fp8-cpu.mp4"; Local = "distilled-fp8-cpu.mp4"; Optional = $false }
