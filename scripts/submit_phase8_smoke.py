@@ -6,7 +6,6 @@ import json
 import os
 import shutil
 import subprocess
-import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -90,9 +89,10 @@ def _read_models[ModelT](path: Path, model_type: type[ModelT]) -> list[ModelT]:
 def _one_by_id[ModelT](items: list[ModelT], identifier: int, attribute: str) -> ModelT:
     matches = [item for item in items if getattr(item, attribute) == identifier]
     if len(matches) != 1:
+        item_name = type(items[0]).__name__ if items else "item"
         raise SystemExit(
-            f"Expected exactly one {type(items[0]).__name__ if items else 'item'} "
-            f"with {attribute}={identifier}; found {len(matches)}"
+            f"Expected exactly one {item_name} with {attribute}={identifier}; "
+            f"found {len(matches)}"
         )
     return matches[0]
 
@@ -319,7 +319,9 @@ def main() -> None:
     artifact = output.get("output", {})
     if artifact.get("key") != output_key:
         raise RuntimeError(f"worker returned an unexpected output key: {artifact}")
-    if artifact.get("content_type") != "video/mp4" or int(artifact.get("size_bytes", 0)) <= 0:
+    invalid_content_type = artifact.get("content_type") != "video/mp4"
+    invalid_size = int(artifact.get("size_bytes", 0)) <= 0
+    if invalid_content_type or invalid_size:
         raise RuntimeError(f"worker returned invalid MP4 metadata: {artifact}")
 
     destination = args.output_dir / f"shot_{args.shot_id:03d}.mp4"
@@ -335,8 +337,12 @@ def main() -> None:
     if probe is not None:
         probe_path = args.output_dir / f"shot_{args.shot_id:03d}-ffprobe.json"
         probe_path.write_text(json.dumps(probe, indent=2) + "\n", encoding="utf-8")
-        video_streams = [item for item in probe.get("streams", []) if item.get("codec_type") == "video"]
-        audio_streams = [item for item in probe.get("streams", []) if item.get("codec_type") == "audio"]
+        video_streams = [
+            item for item in probe.get("streams", []) if item.get("codec_type") == "video"
+        ]
+        audio_streams = [
+            item for item in probe.get("streams", []) if item.get("codec_type") == "audio"
+        ]
         if len(video_streams) != 1:
             raise RuntimeError(f"expected exactly one video stream, got {len(video_streams)}")
         if audio_streams:
