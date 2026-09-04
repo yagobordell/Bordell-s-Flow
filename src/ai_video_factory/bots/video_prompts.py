@@ -16,7 +16,7 @@ Reglas estrictas:
 - Trata el storyboard como el estado visual inicial canónico. Conserva identidad, vestuario,
   entorno, objetos y relaciones espaciales que sigan siendo relevantes para el shot.
 - Haz que `SHOT.action` ocurra de forma visible durante el clip. El movimiento debe aportar cambio
-  narrativo y no limitarse a micro-movimientos genéricos si la acción exige una transformación clara.
+  narrativo sin limitarse a micro-movimientos genéricos si la acción exige una transformación clara.
 - Describe solo movimiento útil: movimiento del sujeto, del entorno y de cámara cuando ayude a
   expresar la acción. No es obligatorio usar los tres tipos.
 - La duración real limita la complejidad. Un shot corto debe tener una acción simple y legible; no
