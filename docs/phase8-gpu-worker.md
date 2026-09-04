@@ -99,32 +99,42 @@ más eficiente es una optimización posterior y no altera los contratos de Fase 
 
 ## Warmup y readiness
 
-El orden de arranque es deliberado:
+El HTTP de salud se desacopla del bootstrap pesado. El orden de arranque es:
 
 ```text
 container start
-  -> download/checkpoints
   -> start FastAPI
-  -> lifespan: worker.prepare()
+  -> /health = 200
+  -> background worker.prepare() retries while model files are absent
+  -> phase8-download-models
   -> CUDA + model validation
   -> construct DistilledPipeline
   -> /ready = 200
   -> start salad-http-job-queue-worker
 ```
 
+Así el Startup probe solo comprueba que el proceso HTTP está vivo; no necesita cubrir la descarga de
+checkpoints ni la construcción del pipeline. El runtime de Phase 8 se prepara en background y
+`FileNotFoundError` se interpreta como un estado transitorio mientras los checkpoints se descargan.
+Cualquier otro error de preparación se conserva como fallo y mantiene `/ready` en 503.
+
 La Queue no empieza a consumir trabajos hasta que el pipeline está construido y residente. Así la
-carga fría no consume el lease de un job ya reclamado.
+carga fría no consume el lease de un job ya reclamado. El endpoint `/jobs` también rechaza con 503
+si la preparación todavía no ha terminado, como segunda barrera defensiva.
 
 `/ready` comprueba en cada llamada:
 
+- preparación del runtime completada sin error;
 - Postgres;
 - R2;
 - presencia de los cinco modelos;
 - CUDA disponible;
 - pipeline ya preparado.
 
-La configuración Salad usa Startup, Readiness y Liveness probes. El Startup probe dispone de un
-margen amplio para download y warmup. Readiness es más estricta una vez completado el startup.
+La configuración Salad usa Startup, Readiness y Liveness probes. El Startup probe usa `/health`
+con `period_seconds=15` y `failure_threshold=20`; Readiness permanece en 503 durante todo el
+bootstrap pesado y Liveness continúa comprobando `/health` sin confundir un cold-start largo con un
+proceso muerto.
 
 ## Pipeline residente
 
@@ -198,7 +208,7 @@ La subfase no se considera cerrada hasta reunir evidencia cloud de:
 - Container Group actualizado por digest inmutable;
 - instancia sobre la clase RTX 5090 validada;
 - bootstrap correcto de los cinco checkpoints;
-- `/ready` solo después de pipeline residente;
+- `/health` disponible durante bootstrap y `/ready` solo después de pipeline residente;
 - una generación real de shot 1 mediante Queue -> worker -> Postgres/R2;
 - MP4 H.264 no vacío, sin audio, descargado y verificado por SHA-256;
 - replay del mismo request sin reinferencia y sin incrementar `attempt_count`;
