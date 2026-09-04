@@ -22,8 +22,13 @@ logger = logging.getLogger(__name__)
 def create_app(worker: GPUWorker) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        yield
-        worker.close()
+        logger.info("preparing GPU worker runtime")
+        worker.prepare()
+        logger.info("GPU worker runtime prepared")
+        try:
+            yield
+        finally:
+            worker.close()
 
     app = FastAPI(title="AI Video Factory GPU Worker", version="1.0", lifespan=lifespan)
 
