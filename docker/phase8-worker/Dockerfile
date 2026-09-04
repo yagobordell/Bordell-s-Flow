@@ -13,7 +13,7 @@ RUN apt-get update \
         salad-http-job-queue-worker \
     && chmod 0755 /usr/local/bin/salad-http-job-queue-worker
 
-FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel
+FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -119,7 +119,7 @@ RUN python3 -c \
 USER worker
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30m --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=3)"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5m --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
 
 ENTRYPOINT ["phase8-entrypoint"]
