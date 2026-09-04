@@ -23,6 +23,14 @@ from ai_video_factory.gpu.tasks import CopyTaskRunner, TaskRunnerRegistry
 class FakeBackend:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.prepare_calls = 0
+        self.ready_calls = 0
+
+    def prepare(self) -> None:
+        self.prepare_calls += 1
+
+    def ready(self) -> None:
+        self.ready_calls += 1
 
     def generate(
         self,
@@ -115,6 +123,17 @@ def test_ltx_parameters_enforce_generation_profile_and_shape() -> None:
         LTXVideoParameters.model_validate(parameters(steps=20))
 
 
+def test_task_runner_lifecycle_delegates_to_backend() -> None:
+    backend = FakeBackend()
+    runner = LTXVideoTaskRunner(backend=backend)
+
+    runner.prepare()
+    runner.ready()
+
+    assert backend.prepare_calls == 1
+    assert backend.ready_calls == 1
+
+
 def test_task_runner_generates_one_silent_ready_mp4_contract(tmp_path: Path) -> None:
     backend = FakeBackend()
     runner = LTXVideoTaskRunner(backend=backend)
@@ -158,12 +177,18 @@ def test_task_runner_rejects_wrong_input_or_output_contract(tmp_path: Path) -> N
     assert backend.calls == []
 
 
-def test_phase8_registry_keeps_infrastructure_smoke_and_adds_video_runner() -> None:
-    video_runner = LTXVideoTaskRunner(backend=FakeBackend())
+def test_phase8_registry_keeps_smoke_and_runs_lifecycle_hooks() -> None:
+    backend = FakeBackend()
+    video_runner = LTXVideoTaskRunner(backend=backend)
     registry = TaskRunnerRegistry.phase8(video_runner)
+
+    registry.prepare()
+    registry.ready()
 
     assert isinstance(registry.get("infrastructure.copy"), CopyTaskRunner)
     assert registry.get("video.ltx25.generate") is video_runner
+    assert backend.prepare_calls == 1
+    assert backend.ready_calls == 1
 
 
 def _seed_model_files(root: Path) -> None:
@@ -172,7 +197,7 @@ def _seed_model_files(root: Path) -> None:
         path.write_bytes(b"model")
 
 
-def test_direct_backend_caches_pipeline_and_discards_generated_audio(
+def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -214,7 +239,14 @@ def test_direct_backend_caches_pipeline_and_discards_generated_audio(
     class FakeOffloadMode:
         CPU = "cpu"
 
+    class FakeCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
     class FakeTorch:
+        cuda = FakeCuda()
+
         @staticmethod
         def device(value: str) -> str:
             return f"device:{value}"
@@ -240,6 +272,10 @@ def test_direct_backend_caches_pipeline_and_discards_generated_audio(
     monkeypatch.setattr(ltx_video, "_load_ltx_bindings", lambda: bindings)
 
     backend = DirectLTX25Backend(model_root=model_root)
+    backend.prepare()
+    backend.ready()
+    backend.prepare()
+
     validated = LTXVideoParameters.model_validate(parameters())
     backend.generate(
         keyframe_path=keyframe,
@@ -262,3 +298,26 @@ def test_direct_backend_caches_pipeline_and_discards_generated_audio(
     assert state["conditionings"][0]["strength"] == 1.0
     assert len(state["encodes"]) == 2
     assert all(call["audio"] is None for call in state["encodes"])
+
+
+def test_direct_backend_rejects_missing_cuda_before_pipeline_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_root = tmp_path / "models"
+    _seed_model_files(model_root)
+
+    class FakeCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return False
+
+    class FakeTorch:
+        cuda = FakeCuda()
+
+    bindings = SimpleNamespace(torch=FakeTorch)
+    monkeypatch.setattr(ltx_video, "_load_ltx_bindings", lambda: bindings)
+
+    backend = DirectLTX25Backend(model_root=model_root)
+    with pytest.raises(RuntimeError, match="CUDA is not available"):
+        backend.prepare()
