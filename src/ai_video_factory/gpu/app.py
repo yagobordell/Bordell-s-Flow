@@ -28,7 +28,7 @@ def create_app(
 ) -> FastAPI:
     preparation_complete = threading.Event()
     preparation_stop = threading.Event()
-    preparation_error: BaseException | None = None
+    preparation_error: Exception | None = None
 
     def prepare_worker() -> None:
         nonlocal preparation_error
@@ -41,7 +41,7 @@ def create_app(
                 if preparation_stop.wait(prepare_retry_seconds):
                     return
                 continue
-            except BaseException as exc:
+            except Exception as exc:
                 preparation_error = exc
                 preparation_complete.set()
                 logger.exception("GPU worker runtime preparation failed")
