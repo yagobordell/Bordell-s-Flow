@@ -1,7 +1,6 @@
 # Fase 8.1 — planificación temporal de vídeo
 
-Estado: **implementada en código; pendiente de validación real con OpenAI antes del cierre de la
-subfase**.
+Estado: **cerrada y validada con los 8 shots reales del ejemplo de samuráis**.
 
 ## Objetivo
 
@@ -100,11 +99,16 @@ python scripts/run_phase8_video_prompts.py \
 
 ## Gate de cierre de 8.1
 
-Antes de considerar esta subfase cerrada:
+La validación real de 2026-09-04 confirmó:
 
-- `pytest` y Ruff deben pasar en CI;
-- debe ejecutarse el workflow con los shots reales del ejemplo de samuráis;
-- debe comprobarse que existe exactamente un `VideoPrompt` por shot y en el mismo orden;
-- debe revisarse manualmente que los prompts describen movimiento coherente con la acción y la
-  duración, sin convertir el clip en montaje ni introducir audio narrativo;
-- los resultados reales deben documentarse antes de empezar la integración GPU de Fase 8.2.
+- Ruff y pytest aprobados en CI;
+- ejecución correcta con los 8 shots reales del ejemplo de samuráis;
+- exactamente un `VideoPrompt` por shot y IDs `[1, 2, 3, 4, 5, 6, 7, 8]`;
+- movimiento coherente con las duraciones reales;
+- grounding de los elementos revisados contra `StoryboardFrame`;
+- ausencia de mojibake en el JSON UTF-8 persistido;
+- ausencia de cortes, montaje, audio narrativo o parámetros específicos de LTX-2.5.
+
+Los detalles y evidencias de la validación están en `docs/phase8.1-validation-results.md`.
+
+**Fase 8.1 cerrada. El siguiente paso es Fase 8.2: adaptador directo LTX-2.5/PyTorch y contrato de generación GPU.**
