@@ -46,6 +46,18 @@ class TaskRunnerRegistry:
         except KeyError as exc:
             raise UnsupportedTaskError(f"unsupported task: {task_name}") from exc
 
+    def prepare(self) -> None:
+        for runner in self._runners.values():
+            prepare = getattr(runner, "prepare", None)
+            if prepare is not None:
+                prepare()
+
+    def ready(self) -> None:
+        for runner in self._runners.values():
+            ready = getattr(runner, "ready", None)
+            if ready is not None:
+                ready()
+
     @classmethod
     def phase7(cls) -> TaskRunnerRegistry:
         return cls([CopyTaskRunner()])

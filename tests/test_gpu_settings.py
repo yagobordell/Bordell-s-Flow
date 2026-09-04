@@ -13,6 +13,21 @@ def test_local_settings_do_not_require_cloud_secrets() -> None:
     )
 
     assert settings.gpu_worker_mode == "local"
+    assert settings.gpu_worker_runtime == "phase7"
+
+
+def test_phase8_runtime_defaults_to_validated_model_location_and_cuda() -> None:
+    settings = GPUWorkerSettings(
+        _env_file=None,
+        gpu_worker_mode="local",
+        gpu_worker_runtime="phase8",
+        gpu_worker_lease_seconds=60,
+        gpu_worker_heartbeat_seconds=10,
+    )
+
+    assert settings.gpu_worker_runtime == "phase8"
+    assert settings.ltx_model_root.as_posix() == "/workspace/models/ltx-2.5"
+    assert settings.ltx_device == "cuda"
 
 
 def test_production_settings_require_cloud_secrets() -> None:
@@ -40,4 +55,13 @@ def test_heartbeat_must_be_shorter_than_lease() -> None:
             gpu_worker_mode="local",
             gpu_worker_lease_seconds=30,
             gpu_worker_heartbeat_seconds=30,
+        )
+
+
+def test_ltx_device_must_be_non_empty() -> None:
+    with pytest.raises(ValidationError, match="LTX_DEVICE must be non-empty"):
+        GPUWorkerSettings(
+            _env_file=None,
+            gpu_worker_mode="local",
+            ltx_device="   ",
         )

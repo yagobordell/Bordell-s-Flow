@@ -110,6 +110,10 @@ class LTXModelFiles:
 
 
 class LTXVideoBackend(Protocol):
+    def prepare(self) -> None: ...
+
+    def ready(self) -> None: ...
+
     def generate(
         self,
         *,
@@ -165,11 +169,29 @@ class DirectLTX25Backend:
         self._model_files = LTXModelFiles.from_root(model_root)
         self._device = device
         self._pipeline: Any | None = None
+        self._bindings: _LTXBindings | None = None
         self._lock = threading.Lock()
 
     @property
     def pipeline_loaded(self) -> bool:
         return self._pipeline is not None
+
+    def prepare(self) -> None:
+        """Load and retain the validated LTX pipeline before queue traffic is accepted."""
+
+        with self._lock:
+            bindings = self._get_bindings()
+            self._validate_runtime(bindings)
+            self._get_or_build_pipeline(bindings)
+
+    def ready(self) -> None:
+        """Verify the warmed runtime remains usable without rebuilding the pipeline."""
+
+        with self._lock:
+            bindings = self._get_bindings()
+            self._validate_runtime(bindings)
+            if self._pipeline is None:
+                raise RuntimeError("LTX-2.5 pipeline has not been prepared")
 
     def generate(
         self,
@@ -182,7 +204,8 @@ class DirectLTX25Backend:
             raise FileNotFoundError(f"LTX keyframe input does not exist: {keyframe_path}")
 
         with self._lock:
-            bindings = _load_ltx_bindings()
+            bindings = self._get_bindings()
+            self._validate_runtime(bindings)
             pipeline = self._get_or_build_pipeline(bindings)
             conditioning = bindings.image_conditioning_input(
                 path=str(keyframe_path.resolve()),
@@ -212,11 +235,20 @@ class DirectLTX25Backend:
                 ),
             )
 
+    def _get_bindings(self) -> _LTXBindings:
+        if self._bindings is None:
+            self._bindings = _load_ltx_bindings()
+        return self._bindings
+
+    def _validate_runtime(self, bindings: _LTXBindings) -> None:
+        self._model_files.validate()
+        if self._device.startswith("cuda") and not bindings.torch.cuda.is_available():
+            raise RuntimeError("CUDA is not available for the LTX-2.5 production runtime")
+
     def _get_or_build_pipeline(self, bindings: _LTXBindings) -> Any:
         if self._pipeline is not None:
             return self._pipeline
 
-        self._model_files.validate()
         model_paths = bindings.model_paths.from_split(
             transformer_path=str(self._model_files.transformer),
             text_encoder_path=str(self._model_files.text_encoder),
@@ -244,6 +276,12 @@ class LTXVideoTaskRunner:
 
     def __init__(self, *, backend: LTXVideoBackend) -> None:
         self._backend = backend
+
+    def prepare(self) -> None:
+        self._backend.prepare()
+
+    def ready(self) -> None:
+        self._backend.ready()
 
     def run(
         self,

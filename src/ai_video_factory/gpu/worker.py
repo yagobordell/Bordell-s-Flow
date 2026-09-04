@@ -101,6 +101,11 @@ class GPUWorker:
         self.lease_seconds = lease_seconds
         self.heartbeat_seconds = heartbeat_seconds
 
+    def prepare(self) -> None:
+        """Warm task runtimes before the worker is exposed to the queue."""
+
+        self.runners.prepare()
+
     def process(
         self,
         request: GPUJobRequest,
@@ -294,6 +299,7 @@ class GPUWorker:
     def ready(self) -> None:
         self.repository.ping()
         self.storage.ping()
+        self.runners.ready()
 
     def close(self) -> None:
         self.repository.close()
