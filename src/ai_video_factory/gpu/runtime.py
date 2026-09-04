@@ -56,4 +56,7 @@ def build_worker(settings: GPUWorkerSettings) -> GPUWorker:
 
 runtime_settings = GPUWorkerSettings()
 logging.basicConfig(level=logging.INFO)
-app = create_app(build_worker(runtime_settings))
+app = create_app(
+    build_worker(runtime_settings),
+    prepare_in_background=runtime_settings.gpu_worker_runtime == "phase8",
+)
