@@ -1,3 +1,5 @@
+import threading
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -52,3 +54,54 @@ def test_http_worker_health_readiness_and_job(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "succeeded"
     assert response.json()["output"]["sha256"] == digest
+
+
+class _RetryingPrepareWorker:
+    def __init__(self) -> None:
+        self.model_available = threading.Event()
+        self.prepare_calls = 0
+        self.ready_calls = 0
+        self.closed = False
+
+    def prepare(self) -> None:
+        self.prepare_calls += 1
+        if not self.model_available.is_set():
+            raise FileNotFoundError("models are still downloading")
+
+    def ready(self) -> None:
+        self.ready_calls += 1
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_background_prepare_serves_health_while_models_are_missing() -> None:
+    worker = _RetryingPrepareWorker()
+
+    with TestClient(
+        create_app(
+            worker,  # type: ignore[arg-type]
+            prepare_in_background=True,
+            prepare_retry_seconds=0.01,
+        )
+    ) as client:
+        deadline = time.monotonic() + 1
+        while worker.prepare_calls == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        assert worker.prepare_calls >= 1
+        assert client.get("/health").json() == {"status": "ok"}
+        assert client.get("/ready").status_code == 503
+
+        worker.model_available.set()
+        response = client.get("/ready")
+        deadline = time.monotonic() + 1
+        while response.status_code != 200 and time.monotonic() < deadline:
+            time.sleep(0.01)
+            response = client.get("/ready")
+
+        assert response.json() == {"status": "ready"}
+        assert worker.prepare_calls >= 2
+        assert worker.ready_calls >= 1
+
+    assert worker.closed is True
