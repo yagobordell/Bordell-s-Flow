@@ -11,6 +11,7 @@ from .narrative_blocks import NarrativeBlockBot
 from .scenes import ScenePlannerBot
 from .shots import ShotPlannerBot
 from .storyboard_frames import StoryboardFrameBot
+from .video_prompts import VideoPromptBot
 from .visual_references import VisualReferenceBot
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "ScenePlannerBot",
     "ShotPlannerBot",
     "StoryboardFrameBot",
+    "VideoPromptBot",
     "VisualReferenceBot",
 ]
