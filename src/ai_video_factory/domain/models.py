@@ -151,6 +151,13 @@ class StoryboardGrid(BaseModel):
     uri: str = Field(min_length=1)
 
 
+class VideoPrompt(BaseModel):
+    """Provider-neutral temporal motion prompt for one canonical planned shot."""
+
+    shot_id: int = Field(ge=1)
+    prompt: str = Field(min_length=1)
+
+
 class StoryboardScene(BaseModel):
     """Legacy rich scene emitted by the experimental Phase 1 DirectorAgent."""
 
