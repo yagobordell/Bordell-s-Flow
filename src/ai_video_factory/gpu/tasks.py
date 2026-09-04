@@ -49,3 +49,7 @@ class TaskRunnerRegistry:
     @classmethod
     def phase7(cls) -> TaskRunnerRegistry:
         return cls([CopyTaskRunner()])
+
+    @classmethod
+    def phase8(cls, video_runner: TaskRunner) -> TaskRunnerRegistry:
+        return cls([CopyTaskRunner(), video_runner])

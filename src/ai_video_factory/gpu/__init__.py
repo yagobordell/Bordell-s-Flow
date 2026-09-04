@@ -1,4 +1,4 @@
-"""Remote GPU worker infrastructure for Phase 7."""
+"""Remote GPU infrastructure and video-generation task adapters."""
 
 from .contracts import GPUJobRequest, GPUJobResponse, ObjectInput, ObjectOutput, OutputArtifact
 from .errors import (
@@ -10,9 +10,19 @@ from .errors import (
     OutputConflictError,
     UnsupportedTaskError,
 )
+from .ltx_video import (
+    LTX_GENERATION_PROFILE,
+    LTX_VIDEO_TASK,
+    DirectLTX25Backend,
+    LTXModelFiles,
+    LTXVideoParameters,
+    LTXVideoTaskRunner,
+    ltx_num_frames_for_duration,
+)
 from .worker import GPUWorker
 
 __all__ = [
+    "DirectLTX25Backend",
     "GPUJobRequest",
     "GPUJobResponse",
     "GPUWorker",
@@ -20,10 +30,16 @@ __all__ = [
     "JobBusyError",
     "JobConflictError",
     "JobExecutionError",
+    "LTX_GENERATION_PROFILE",
+    "LTX_VIDEO_TASK",
+    "LTXModelFiles",
+    "LTXVideoParameters",
+    "LTXVideoTaskRunner",
     "LeaseLostError",
     "ObjectInput",
     "ObjectOutput",
     "OutputArtifact",
     "OutputConflictError",
     "UnsupportedTaskError",
+    "ltx_num_frames_for_duration",
 ]
