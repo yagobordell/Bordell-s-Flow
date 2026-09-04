@@ -1,6 +1,6 @@
 # Fase 8.2 — adaptador directo LTX-2.5
 
-Estado: **implementada en código; pendiente de CI y validación dentro del runtime GPU de Fase 8.3**.
+Estado: **cerrada en código y CI; la inferencia GPU real se valida al activar el runtime en Fase 8.3**.
 
 ## Objetivo
 
@@ -155,14 +155,21 @@ Fase 8.3 debe:
 6. validar una inferencia real y después varias inferencias secuenciales sin crecimiento anómalo de
    VRAM.
 
-## Gate de cierre de 8.2
+## Cierre de 8.2
 
-Antes de cerrar esta subfase:
+La validación de 2026-09-04 confirmó:
 
-- Ruff debe pasar;
-- toda la suite pytest debe pasar sin requerir Torch/LTX en CI;
-- tests de parámetros y `8k + 1` deben pasar;
-- tests del task contract deben pasar;
-- debe demostrarse por test que el pipeline se reutiliza;
-- debe demostrarse por test que el encode descarta el audio generado;
-- `runtime.py` debe seguir sin activar todavía el task GPU real.
+- Ruff aprobado en CI;
+- suite pytest completa aprobada sin requerir Torch/LTX en el entorno normal;
+- cálculo de frames probado contra la rejilla temporal `8k + 1`;
+- contrato `video.ltx25.generate` validado por tests;
+- reutilización de una sola instancia de pipeline en generaciones consecutivas;
+- encoding del artefacto con `audio=None`;
+- carga lazy de dependencias Torch/LTX;
+- `gpu/runtime.py` permanece sin activar todavía el task GPU real.
+
+La inferencia real sobre RTX 5090 no se repite dentro de esta subfase: el adaptador reutiliza la
+baseline ya medida en Fase 7 y su primera ejecución end-to-end pertenece al gate de Fase 8.3, cuando
+exista la imagen de worker GPU de producción.
+
+**Fase 8.2 cerrada. El siguiente paso es Fase 8.3: worker GPU de producción con LTX-2.5 residente.**
