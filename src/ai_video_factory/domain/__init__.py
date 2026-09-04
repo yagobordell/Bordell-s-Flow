@@ -26,6 +26,7 @@ from .models import (
     StoryboardKeyframe,
     StoryboardScene,
     VideoPlan,
+    VideoPrompt,
     VisualReference,
 )
 
@@ -55,5 +56,6 @@ __all__ = [
     "StoryboardKeyframe",
     "StoryboardScene",
     "VideoPlan",
+    "VideoPrompt",
     "VisualReference",
 ]
