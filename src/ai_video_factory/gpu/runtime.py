@@ -3,11 +3,23 @@ from __future__ import annotations
 import logging
 
 from .app import create_app
+from .ltx_video import DirectLTX25Backend, LTXVideoTaskRunner
 from .repository import InMemoryJobRepository, PostgresJobRepository
 from .settings import GPUWorkerSettings
 from .storage import LocalObjectStorage, R2ObjectStorage
 from .tasks import TaskRunnerRegistry
 from .worker import GPUWorker
+
+
+def _build_runners(settings: GPUWorkerSettings) -> TaskRunnerRegistry:
+    if settings.gpu_worker_runtime == "phase7":
+        return TaskRunnerRegistry.phase7()
+
+    backend = DirectLTX25Backend(
+        model_root=settings.ltx_model_root,
+        device=settings.ltx_device,
+    )
+    return TaskRunnerRegistry.phase8(LTXVideoTaskRunner(backend=backend))
 
 
 def build_worker(settings: GPUWorkerSettings) -> GPUWorker:
@@ -34,7 +46,7 @@ def build_worker(settings: GPUWorkerSettings) -> GPUWorker:
     return GPUWorker(
         storage=storage,
         repository=repository,
-        runners=TaskRunnerRegistry.phase7(),
+        runners=_build_runners(settings),
         worker_id=settings.gpu_worker_id,
         temp_dir=settings.gpu_worker_temp_dir,
         lease_seconds=settings.gpu_worker_lease_seconds,
