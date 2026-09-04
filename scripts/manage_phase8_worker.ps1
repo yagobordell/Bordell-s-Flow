@@ -288,8 +288,8 @@ switch ($Action) {
             startup_probe = @{
                 http = @{headers = @(); path = "/health"; port = 8080; scheme = "http"}
                 initial_delay_seconds = 0
-                period_seconds = 15
-                failure_threshold = 240
+                period_seconds = 180
+                failure_threshold = 20
                 success_threshold = 1
                 timeout_seconds = 5
             }
