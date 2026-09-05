@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import threading
 from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -162,6 +163,13 @@ def _load_ltx_bindings() -> _LTXBindings:
     )
 
 
+def _torch_inference_context(torch_module: Any) -> Any:
+    inference_mode = getattr(torch_module, "inference_mode", None)
+    if inference_mode is None:
+        return nullcontext()
+    return inference_mode()
+
+
 class DirectLTX25Backend:
     """Resident, serialized direct-Python adapter around the validated LTX-2.5 pipeline."""
 
@@ -182,7 +190,8 @@ class DirectLTX25Backend:
         with self._lock:
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
-            self._get_or_build_pipeline(bindings)
+            with _torch_inference_context(bindings.torch):
+                self._get_or_build_pipeline(bindings)
 
     def ready(self) -> None:
         """Verify the warmed runtime remains usable without rebuilding the pipeline."""
@@ -206,34 +215,35 @@ class DirectLTX25Backend:
         with self._lock:
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
-            pipeline = self._get_or_build_pipeline(bindings)
-            conditioning = bindings.image_conditioning_input(
-                path=str(keyframe_path.resolve()),
-                frame_idx=0,
-                strength=1.0,
-                crf=None,
-            )
-            result = pipeline(
-                prompt=parameters.prompt,
-                seed=parameters.seed,
-                height=parameters.height,
-                width=parameters.width,
-                frame_rate=float(parameters.fps),
-                images=[conditioning],
-                num_frames=parameters.num_frames,
-            )
+            with _torch_inference_context(bindings.torch):
+                pipeline = self._get_or_build_pipeline(bindings)
+                conditioning = bindings.image_conditioning_input(
+                    path=str(keyframe_path.resolve()),
+                    frame_idx=0,
+                    strength=1.0,
+                    crf=None,
+                )
+                result = pipeline(
+                    prompt=parameters.prompt,
+                    seed=parameters.seed,
+                    height=parameters.height,
+                    width=parameters.width,
+                    frame_rate=float(parameters.fps),
+                    images=[conditioning],
+                    num_frames=parameters.num_frames,
+                )
 
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            bindings.encode_video(
-                video=result.video,
-                fps=parameters.fps,
-                audio=None,
-                output_path=str(output_path),
-                video_chunks_number=bindings.get_video_chunks_number(
-                    result.num_frames,
-                    result.tiling_config,
-                ),
-            )
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                bindings.encode_video(
+                    video=result.video,
+                    fps=parameters.fps,
+                    audio=None,
+                    output_path=str(output_path),
+                    video_chunks_number=bindings.get_video_chunks_number(
+                        result.num_frames,
+                        result.tiling_config,
+                    ),
+                )
 
     def _get_bindings(self) -> _LTXBindings:
         if self._bindings is None:
