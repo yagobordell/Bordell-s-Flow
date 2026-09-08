@@ -29,6 +29,7 @@ from .models import (
     VideoPrompt,
     VisualReference,
 )
+from .video import VideoClip
 
 __all__ = [
     "Beat",
@@ -55,6 +56,7 @@ __all__ = [
     "StoryboardGrid",
     "StoryboardKeyframe",
     "StoryboardScene",
+    "VideoClip",
     "VideoPlan",
     "VideoPrompt",
     "VisualReference",
