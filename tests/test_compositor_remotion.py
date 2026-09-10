@@ -5,6 +5,7 @@ import pytest
 from ai_video_factory.compositor import CaptionCue, CaptionWord, CompositionPlan, CompositionShot
 from ai_video_factory.compositor.media import MediaProbe
 from ai_video_factory.compositor.remotion import (
+    RemotionVisualProfile,
     normalize_caption_display_text,
     prepare_remotion_props,
     validate_remotion_visual,
@@ -68,6 +69,7 @@ def test_prepare_remotion_props_stages_media_and_normalizes_daggers(tmp_path: Pa
 
     props = prepare_remotion_props(plan, public_dir=public_dir)
 
+    assert props.schema_version == "2"
     assert [shot.src for shot in props.shots] == [
         "/media/shot_001.mp4",
         "/media/shot_002.mp4",
@@ -96,6 +98,51 @@ def test_prepare_remotion_props_stages_media_and_normalizes_daggers(tmp_path: Pa
         },
     ]
     assert plan.captions[0].text == "significa †el que sirve†"
+
+
+def test_prepare_remotion_props_includes_default_visual_profile(tmp_path: Path) -> None:
+    props = prepare_remotion_props(_plan(tmp_path), public_dir=tmp_path / "public")
+
+    assert props.visual_profile == RemotionVisualProfile(
+        transition_frames=6,
+        transition_floor_opacity=0.72,
+        transition_scale=1.015,
+        caption_motion_frames=4,
+        boundary_accent_frames=5,
+        show_progress_bar=True,
+    )
+
+
+def test_prepare_remotion_props_accepts_custom_visual_profile(tmp_path: Path) -> None:
+    profile = RemotionVisualProfile(
+        transition_frames=4,
+        transition_floor_opacity=0.8,
+        transition_scale=1.01,
+        caption_motion_frames=3,
+        boundary_accent_frames=2,
+        show_progress_bar=False,
+    )
+
+    props = prepare_remotion_props(
+        _plan(tmp_path),
+        public_dir=tmp_path / "public",
+        visual_profile=profile,
+    )
+
+    assert props.visual_profile == profile
+    assert [(shot.start_frame, shot.end_frame) for shot in props.shots] == [(0, 24), (24, 48)]
+    assert props.total_frames == 48
+
+
+def test_visual_profile_rejects_transition_window_that_cannot_fit(tmp_path: Path) -> None:
+    profile = RemotionVisualProfile(transition_frames=13)
+
+    with pytest.raises(ValueError, match="transition windows"):
+        prepare_remotion_props(
+            _plan(tmp_path),
+            public_dir=tmp_path / "public",
+            visual_profile=profile,
+        )
 
 
 def test_prepare_remotion_props_removes_stale_staged_clip(tmp_path: Path) -> None:
