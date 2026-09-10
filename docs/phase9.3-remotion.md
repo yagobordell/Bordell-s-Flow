@@ -1,7 +1,6 @@
 # Phase 9.3 — Remotion visual renderer
 
-Status: technically validated against the canonical local eight-shot composition; visual inspection
-remains before formal closure.
+Status: closed and validated against the canonical local eight-shot composition.
 
 Phase 9.3 is the first real visual render in Phase 9. It consumes the closed
 `composition_plan.json` from Phase 9.2 and produces a silent H.264 MP4. It does not decide semantic
@@ -101,9 +100,9 @@ Each `CaptionCue` becomes a `Sequence` with its existing `start_frame` and `end_
 word frame intervals are retained. Inside the caption sequence, the active word is derived from the
 sequence-local frame and highlighted visually; no timestamp reconstruction occurs in TypeScript.
 
-The initial style is deliberately simple and readable for 9:16 output: centered lower-safe-area
-caption card, high-contrast text and active-word emphasis. Styling can be refined after the first real
-render without touching timing contracts.
+The initial style is deliberately simple and readable for the vertical 768x1280 output: centered
+lower-safe-area caption card, high-contrast text and active-word emphasis. Styling can be refined in
+later presentation work without touching timing contracts.
 
 `@remotion/media` expects video fitting to use the dedicated `objectFit` prop. The canonical component
 therefore uses `objectFit="cover"` directly on `<Video>` rather than putting `objectFit` inside its
@@ -127,7 +126,7 @@ Narration muxing remains outside Phase 9.3.
 
 ## Canonical local validation
 
-The first complete local Remotion render succeeded against the real eight-shot composition:
+The complete local Remotion render succeeded against the real eight-shot composition:
 
 ```text
 shots=8
@@ -147,7 +146,26 @@ produced `data/output/phase9/visual.mp4`. The Python post-render probe accepted 
 
 The first render also emitted a non-fatal `@remotion/media` warning asking for the dedicated
 `objectFit` prop. The renderer was updated immediately afterward so subsequent renders use
-`objectFit="cover"` directly and should not emit that warning.
+`objectFit="cover"` directly and do not depend on that deprecated styling path.
+
+### Visual inspection
+
+The uploaded canonical `visual.mp4` was reviewed across representative frames and immediately around
+every canonical shot boundary:
+
+```text
+84, 261, 383, 450, 683, 841, 1018
+```
+
+The review confirmed clean hard cuts with no visible gap/intermediate black frame. A full-frame black
+interval scan also found no black segment. Caption cards remain inside the frame, multi-line cues are
+readable, and sampled cue sequences show the active highlight advancing word by word without a visual
+overlap. The presentation-normalized region visibly renders `el` and `sirve` without the U+2020
+dagger artifacts.
+
+Because the Phase 9.3 artifact is intentionally silent, perceptual audio/lip synchronization is not a
+Phase 9.3 validation criterion; frame synchronization is inherited from the validated caption timing
+plan. Narration is added in a later mux stage.
 
 ## Commands
 
@@ -185,18 +203,17 @@ Pop-Location
 
 ## Closure criteria
 
-Phase 9.3 closure status after the canonical local render:
+All Phase 9.3 closure criteria are confirmed:
 
-1. eight staged source clips preserve the eight canonical shot intervals — confirmed;
-2. all 29 caption cues and 105 words are present in renderer props — confirmed;
-3. exactly the two known dagger artifacts are normalized for presentation — confirmed;
-4. the canonical Phase 9.2 composition plan remains unchanged — confirmed by the read-only renderer
-   preparation path;
-5. Remotion produces one H.264 768x1280 video at 24 fps — confirmed;
-6. the output contains exactly 1080 frames and no audio stream — confirmed;
-7. visual inspection confirms hard cuts, readable captions and active-word timing — pending;
-8. Python Ruff and pytest pass — confirmed in CI;
-9. Remotion TypeScript typecheck passes in CI — confirmed.
+1. eight staged source clips preserve the eight canonical shot intervals;
+2. all 29 caption cues and 105 words are present in renderer props;
+3. exactly the two known dagger artifacts are normalized for presentation;
+4. the canonical Phase 9.2 composition plan remains unchanged;
+5. Remotion produces one H.264 768x1280 video at 24 fps;
+6. the output contains exactly 1080 frames and no audio stream;
+7. visual inspection confirms clean hard cuts, readable captions and ordered active-word highlighting;
+8. Python Ruff and pytest pass in CI;
+9. Remotion TypeScript typecheck passes in CI.
 
-Phase 9.3 is technically validated but remains open until the rendered MP4 is visually reviewed.
-Transitions, motion graphics and final narration muxing remain outside Phase 9.3.
+Phase 9.3 is therefore closed. Transitions, motion graphics and final narration muxing remain outside
+Phase 9.3.
