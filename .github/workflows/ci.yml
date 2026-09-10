@@ -32,3 +32,25 @@ jobs:
 
       - name: Pytest
         run: python -m pytest
+
+      - name: PowerShell syntax
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $Failed = $false
+          Get-ChildItem scripts -Recurse -Filter *.ps1 | ForEach-Object {
+              $Tokens = $null
+              $Errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                  $_.FullName,
+                  [ref]$Tokens,
+                  [ref]$Errors
+              ) | Out-Null
+              if ($Errors.Count -gt 0) {
+                  Write-Error "PowerShell parse errors in $($_.FullName): $($Errors -join '; ')"
+                  $Failed = $true
+              }
+          }
+          if ($Failed) {
+              exit 1
+          }
