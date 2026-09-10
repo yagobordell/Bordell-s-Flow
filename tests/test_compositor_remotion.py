@@ -3,12 +3,12 @@ from pathlib import Path
 import pytest
 
 from ai_video_factory.compositor import CaptionCue, CaptionWord, CompositionPlan, CompositionShot
+from ai_video_factory.compositor.media import MediaProbe
 from ai_video_factory.compositor.remotion import (
     normalize_caption_display_text,
     prepare_remotion_props,
     validate_remotion_visual,
 )
-from ai_video_factory.compositor.media import MediaProbe
 
 
 def _plan(tmp_path: Path) -> CompositionPlan:
