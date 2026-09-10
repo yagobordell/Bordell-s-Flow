@@ -64,12 +64,25 @@ class PresentationNormalization(BaseModel):
     rule: Literal["remove_unicode_dagger_u2020"] = _DAGGER_RULE
 
 
+class RemotionVisualProfile(BaseModel):
+    """Renderer-only Phase 9.4 motion settings that cannot change canonical timing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    transition_frames: int = Field(default=6, ge=0)
+    transition_floor_opacity: float = Field(default=0.72, ge=0.0, le=1.0)
+    transition_scale: float = Field(default=1.015, ge=1.0, le=1.1)
+    caption_motion_frames: int = Field(default=4, ge=0)
+    boundary_accent_frames: int = Field(default=5, ge=0)
+    show_progress_bar: bool = True
+
+
 class RemotionRenderProps(BaseModel):
     """Renderer-only props contract generated from a validated composition plan."""
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["2"] = "2"
     width: int = Field(gt=0)
     height: int = Field(gt=0)
     fps: int = Field(gt=0)
@@ -77,6 +90,7 @@ class RemotionRenderProps(BaseModel):
     shots: list[RemotionShot] = Field(min_length=1)
     captions: list[RemotionCaptionCue] = Field(default_factory=list)
     presentation_normalizations: list[PresentationNormalization] = Field(default_factory=list)
+    visual_profile: RemotionVisualProfile = Field(default_factory=RemotionVisualProfile)
 
     @model_validator(mode="after")
     def validate_timeline(self) -> RemotionRenderProps:
@@ -91,6 +105,10 @@ class RemotionRenderProps(BaseModel):
                 raise ValueError("Remotion shot duration must match its frame interval")
             if not shot.src.startswith("/media/"):
                 raise ValueError("Remotion shot sources must resolve below /media/")
+            if self.visual_profile.transition_frames * 2 > shot.duration_frames:
+                raise ValueError("Visual transition windows must fit inside every shot")
+            if self.visual_profile.boundary_accent_frames > shot.duration_frames:
+                raise ValueError("Boundary accent window must fit inside every shot")
 
         for previous, current in zip(self.shots, self.shots[1:], strict=False):
             if previous.end_frame != current.start_frame:
@@ -107,6 +125,7 @@ def prepare_remotion_props(
     plan: CompositionPlan,
     *,
     public_dir: Path,
+    visual_profile: RemotionVisualProfile | None = None,
 ) -> RemotionRenderProps:
     """Stage local shot media and build deterministic presentation-ready Remotion props."""
 
@@ -153,6 +172,7 @@ def prepare_remotion_props(
         shots=shots,
         captions=captions,
         presentation_normalizations=normalizations,
+        visual_profile=visual_profile or RemotionVisualProfile(),
     )
 
 
@@ -171,7 +191,7 @@ def validate_remotion_visual(
     *,
     probe: ProbeVideo = probe_video,
 ) -> MediaProbe:
-    """Validate the silent Remotion render before later narration muxing."""
+    """Validate a silent Remotion render before later narration muxing."""
 
     resolved = path.resolve()
     if not resolved.is_file():
@@ -186,11 +206,9 @@ def validate_remotion_visual(
             f"expected={props.width}x{props.height}, found={media.width}x{media.height}"
         )
     if not isclose(media.fps, float(props.fps), rel_tol=0.0, abs_tol=1e-6):
-        raise ValueError(
-            f"Remotion render must be {props.fps} fps, found {media.fps:g}"
-        )
+        raise ValueError(f"Remotion render must be {props.fps} fps, found {media.fps:g}")
     if media.audio_stream_count != 0:
-        raise ValueError("Phase 9.3 Remotion render must remain silent")
+        raise ValueError("Phase 9 Remotion visual render must remain silent")
 
     frame_count = media.frame_count
     if frame_count is None:
@@ -318,9 +336,7 @@ def _validate_normalizations(
     if len({item.word_id for item in normalizations}) != len(normalizations):
         raise ValueError("Presentation normalizations must reference unique word IDs")
 
-    display_words = {
-        word.word_id: word.text for caption in captions for word in caption.words
-    }
+    display_words = {word.word_id: word.text for caption in captions for word in caption.words}
     for item in normalizations:
         if item.source_text == item.display_text:
             raise ValueError("Presentation normalization must change display text")
