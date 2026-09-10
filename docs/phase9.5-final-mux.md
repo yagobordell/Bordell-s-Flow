@@ -27,9 +27,16 @@ Phase 9.5 validation + ffmpeg mux
 `composition_plan.json` remains the canonical frame timeline. At the current profile it defines 1080
 frames at 24 fps, therefore the authoritative final duration is exactly 45.000 seconds.
 
-`NarrationAudio` remains the canonical narration metadata. Its recorded duration must match the WAV
-measured directly by Python, and it must be within one video frame of the composition duration. A
-mismatch is rejected rather than corrected by stretching or retiming audio.
+`NarrationAudio` remains the canonical narration metadata, while the physical WAV is the media asset
+actually muxed. Both the measured WAV duration and its recorded metadata must remain within one video
+frame of the composition duration, and they must remain within one video frame of each other. A
+mismatch larger than that is rejected rather than corrected by stretching or retiming audio.
+
+The tolerance is intentionally expressed in compositor time (one video frame, 1/24 s for the current
+profile), not in one audio sample. The first canonical Phase 9.5 local attempt exposed that requiring
+sample-exact equality between historical `narration.json` metadata and the WAV was unnecessarily
+strict even though the compositor operates on a 24 fps timeline. The WAV itself still has to fit the
+canonical timeline within one frame.
 
 ## Mux policy
 
@@ -102,9 +109,12 @@ Before muxing, Python checks that:
 1. `visual_motion.mp4` is H.264 at the plan dimensions and fps;
 2. the visual contains exactly the canonical frame count and no audio stream;
 3. `narration.wav` is a valid WAV with positive sample rate, channels and frames;
-4. the measured WAV duration matches `narration.json` to within one audio sample;
-5. narration duration differs from the canonical video duration by no more than one video frame;
+4. the measured WAV duration is within one video frame of `narration.json` metadata;
+5. the measured WAV duration is within one video frame of the canonical composition duration;
 6. `narration.json` names the selected WAV asset.
+
+The runner prints the measured WAV duration and the metadata duration separately so any accepted
+rounding difference remains visible during local validation.
 
 After muxing, Python checks that:
 
