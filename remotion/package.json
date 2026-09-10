@@ -5,7 +5,8 @@
   "scripts": {
     "studio": "remotion studio src/index.ts",
     "typecheck": "tsc --noEmit",
-    "render:phase9": "remotion render src/index.ts Phase9Visual"
+    "render:phase9": "remotion render src/index.ts Phase9Visual",
+    "render:phase9-motion": "remotion render src/index.ts Phase9Motion"
   },
   "engines": {
     "node": ">=20"
