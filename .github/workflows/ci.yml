@@ -54,3 +54,22 @@ jobs:
           if ($Failed) {
               exit 1
           }
+
+  remotion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Remotion project
+        run: npm install --prefix remotion --no-audit --no-fund
+
+      - name: TypeScript
+        run: npm --prefix remotion run typecheck
