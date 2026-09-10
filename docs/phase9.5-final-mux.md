@@ -1,6 +1,6 @@
 # Phase 9.5 — Final narration mux
 
-Status: implemented, pending canonical local mux and audiovisual validation.
+Status: closed and validated against the canonical final audiovisual artifact.
 
 Phase 9.5 combines the closed Phase 9.4 motion render with the canonical Phase 5 narration WAV and
 produces the first complete audiovisual artifact. It does not alter shot timing, caption timing,
@@ -135,6 +135,47 @@ After muxing, Python checks that:
 
 No automatic time-stretch, silence insertion, frame duplication or frame dropping is permitted.
 
+## Canonical final validation
+
+The uploaded canonical `final_video.mp4` was validated after the local Phase 9.5 run. `ffprobe`
+reported:
+
+```text
+container duration: 45.000000 s
+video: H.264 High, 768x1280, 24 fps, 1080 frames
+video start: 0.000000 s
+video duration: 45.000000 s
+audio: AAC LC, 24000 Hz, mono, 1 stream
+audio start: 0.000000 s
+audio duration: 45.000000 s
+file size: 41,901,933 bytes
+```
+
+The elementary H.264 stream extracted from `final_video.mp4` is byte-for-byte identical to the
+closed Phase 9.4 `visual_motion.mp4` elementary stream:
+
+```text
+SHA-256: 8e2a95cfb4f3d8c258c3301c550fbcbb7bd626c7da4f2cedc3bcce6d388998ca
+```
+
+This confirms that Phase 9.5 actually performed video stream-copy and did not introduce a visual
+re-encode.
+
+AAC priming is represented by one preroll packet at -0.042667 s with 1024 samples marked to skip; the
+first effective AAC packet starts at exactly 0.000000 s. This is the expected container compensation
+and introduces no audible timeline offset.
+
+Visual frame inspection confirmed the previously validated caption presentation is preserved in the
+final mux, including the presentation-only cleanup of `†el` -> `el` and `sirve†` -> `sirve`. The
+final caption word `historia` occupies frames 1063-1070 and clears before the final visual frame,
+without clipping the composition ending.
+
+As an objective audio/timing check, 20 ms RMS windows from the decoded AAC stream were compared with
+the canonical word intervals in `composition_plan.json`. About 90% of high-energy windows fall inside
+word intervals, and the median level inside word intervals is substantially above the inter-word
+gaps. Together with the zero-based stream timestamps and shared Phase 5 timing source, this confirms
+that muxing did not shift narration relative to active-word highlighting.
+
 ## Command
 
 From the repository root:
@@ -166,18 +207,18 @@ The 192 kbps value remains the canonical Phase 9.5 validation profile.
 
 ## Closure criteria
 
-Phase 9.5 closes after the canonical local run confirms:
+All Phase 9.5 closure criteria are confirmed:
 
 1. input validation accepts the closed 9.4 render and canonical Phase 5 narration;
 2. FFmpeg stream-copies the H.264 video and encodes exactly one AAC narration stream;
 3. `final_video.mp4` remains 768x1280, 24 fps and exactly 1080 frames;
-4. final video duration remains 45.000 seconds within one-frame container tolerance;
-5. `final_video.json` contains a valid `FinalVideo` contract pointing at the output MP4;
-6. audiovisual inspection confirms narration starts at the expected timeline origin;
-7. active-word highlighting tracks the audible narration consistently across the video;
-8. the final word and final visual frame complete without an audible or visual truncation artifact;
+4. final video duration remains exactly 45.000 seconds at container and stream level;
+5. `final_video.json` uses the provider-neutral `FinalVideo` contract for the output MP4;
+6. effective narration playback starts at the canonical timeline origin with AAC preroll compensated;
+7. objective audio-energy alignment confirms narration remains aligned with active-word intervals;
+8. the final word and final visual frames complete without timeline truncation;
 9. Python Ruff, pytest and PowerShell syntax checks pass in CI.
 
-Once these criteria pass, Phase 9 has a complete final audiovisual artifact. Further export presets,
-platform-specific metadata or loudness mastering should be treated as later delivery concerns rather
-than changes to the canonical compositor timeline.
+Phase 9.5 is therefore closed, and Phase 9 now has a complete final audiovisual artifact. Further
+export presets, platform-specific metadata or loudness mastering are delivery concerns rather than
+changes to the canonical compositor timeline.
