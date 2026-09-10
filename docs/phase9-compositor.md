@@ -236,3 +236,42 @@ All Phase 9.2 closure criteria are confirmed:
 
 Phase 9.2 is therefore closed. Remotion rendering, visual caption styling, transitions and final
 narration muxing remain outside Phase 9.2.
+
+## Phase 9 final status
+
+Phase 9 is now closed end-to-end. The later compositor subphases are documented separately:
+
+```text
+9.1  media probe + frame-exact timeline       CLOSED
+9.2  deterministic captions                   CLOSED
+9.3  Remotion visual renderer                 CLOSED
+9.4  transitions + motion overlays            CLOSED
+9.5  final narration mux                      CLOSED
+```
+
+The canonical final artifact is `data/output/phase9/final_video.mp4` with the provider-neutral
+`FinalVideo` metadata artifact at `data/output/phase9/final_video.json`.
+
+The final validated media contract is:
+
+```text
+H.264 768x1280 @ 24 fps
+1080 frames
+45.000 seconds
+1 AAC mono narration stream @ 24 kHz
+```
+
+Phase 9.5 stream-copies the accepted Phase 9.4 H.264 bitstream, so the final mux cannot change the
+closed visual timeline. The elementary video stream SHA-256 is identical before and after muxing:
+
+```text
+8e2a95cfb4f3d8c258c3301c550fbcbb7bd626c7da4f2cedc3bcce6d388998ca
+```
+
+Audio begins at the canonical zero origin after normal AAC priming compensation and ends at the
+45-second composition boundary. Objective waveform-to-word interval validation confirms that muxing
+introduces no narration/highlight offset. The final render also preserves the presentation-only
+caption cleanup introduced in Phase 9.3 without mutating Phase 9.2 canonical transcription text.
+
+Phase 9 therefore hands downstream delivery stages a finished audiovisual asset without exposing
+Remotion, FFmpeg, Salad, LTX or GPU transport details in the `FinalVideo` domain contract.
