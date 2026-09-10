@@ -19,7 +19,7 @@ class CompositionShot(BaseModel):
     source_frame_count: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
-    def validate_interval(self) -> "CompositionShot":
+    def validate_interval(self) -> CompositionShot:
         if self.end_frame <= self.start_frame:
             raise ValueError("Composition shot end_frame must be greater than start_frame")
         if self.duration_frames != self.end_frame - self.start_frame:
@@ -40,7 +40,7 @@ class CompositionPlan(BaseModel):
     shots: list[CompositionShot] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def validate_timeline(self) -> "CompositionPlan":
+    def validate_timeline(self) -> CompositionPlan:
         shot_ids = [shot.shot_id for shot in self.shots]
         if shot_ids != list(range(1, len(self.shots) + 1)):
             raise ValueError("Composition shots must have consecutive IDs starting at 1")
