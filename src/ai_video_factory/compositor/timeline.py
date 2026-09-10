@@ -33,8 +33,8 @@ def quantize_shot_timings(
 
     intervals: list[FrameInterval] = []
     for timing in timings:
-        start_frame = _seconds_to_frame(timing.start_seconds, fps)
-        end_frame = _seconds_to_frame(timing.end_seconds, fps)
+        start_frame = seconds_to_frame(timing.start_seconds, fps)
+        end_frame = seconds_to_frame(timing.end_seconds, fps)
         if end_frame <= start_frame:
             raise ValueError(
                 "Shot timing collapses to a non-positive frame interval: "
@@ -55,7 +55,13 @@ def quantize_shot_timings(
     return intervals
 
 
-def _seconds_to_frame(seconds: float, fps: int) -> int:
+def seconds_to_frame(seconds: float, fps: int) -> int:
+    """Map an absolute timestamp to a frame boundary using decimal round-half-up."""
+
+    if seconds < 0:
+        raise ValueError("Frame timestamp must be >= 0")
+    if fps <= 0:
+        raise ValueError("Composition fps must be positive")
     frames = Decimal(str(seconds)) * Decimal(fps)
     return int(frames.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
