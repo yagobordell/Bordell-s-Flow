@@ -17,10 +17,10 @@ export const Phase9Visual = ({shots, captions}: RemotionRenderProps) => {
           <Video
             src={staticFile(shot.src.replace(/^\//, ""))}
             muted
+            objectFit="cover"
             style={{
               width: "100%",
               height: "100%",
-              objectFit: "cover",
             }}
           />
         </Sequence>
