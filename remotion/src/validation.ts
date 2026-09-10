@@ -3,8 +3,11 @@ import type {RemotionRenderProps} from "./types";
 const isPositiveInteger = (value: number): boolean =>
   Number.isInteger(value) && value > 0;
 
+const isNonNegativeInteger = (value: number): boolean =>
+  Number.isInteger(value) && value >= 0;
+
 export const validateRenderProps = (props: RemotionRenderProps): void => {
-  if (props.schema_version !== "1") {
+  if (props.schema_version !== "2") {
     throw new Error(`Unsupported Remotion props schema: ${props.schema_version}`);
   }
   if (
@@ -14,6 +17,27 @@ export const validateRenderProps = (props: RemotionRenderProps): void => {
     !isPositiveInteger(props.total_frames)
   ) {
     throw new Error("Remotion dimensions, fps and total_frames must be positive integers");
+  }
+
+  const profile = props.visual_profile;
+  if (
+    !isNonNegativeInteger(profile.transition_frames) ||
+    !isNonNegativeInteger(profile.caption_motion_frames) ||
+    !isNonNegativeInteger(profile.boundary_accent_frames)
+  ) {
+    throw new Error("Phase 9.4 visual frame windows must be non-negative integers");
+  }
+  if (
+    profile.transition_floor_opacity < 0 ||
+    profile.transition_floor_opacity > 1
+  ) {
+    throw new Error("Phase 9.4 transition floor opacity must be between 0 and 1");
+  }
+  if (profile.transition_scale < 1 || profile.transition_scale > 1.1) {
+    throw new Error("Phase 9.4 transition scale must be between 1 and 1.1");
+  }
+  if (typeof profile.show_progress_bar !== "boolean") {
+    throw new Error("Phase 9.4 progress bar flag must be boolean");
   }
 
   if (props.shots.length === 0) {
@@ -39,6 +63,12 @@ export const validateRenderProps = (props: RemotionRenderProps): void => {
     }
     if (!shot.src.startsWith("/media/")) {
       throw new Error(`Shot ${shot.shot_id} source must be staged below /media/`);
+    }
+    if (profile.transition_frames * 2 > shot.duration_frames) {
+      throw new Error(`Shot ${shot.shot_id} is too short for the visual transition window`);
+    }
+    if (profile.boundary_accent_frames > shot.duration_frames) {
+      throw new Error(`Shot ${shot.shot_id} is too short for the boundary accent window`);
     }
     if (index === 0 && shot.start_frame !== 0) {
       throw new Error("Remotion shot timeline must start at frame 0");
