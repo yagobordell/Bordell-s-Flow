@@ -107,10 +107,15 @@ class CompositionPlan(BaseModel):
 
             word_ids = [word_id for caption in self.captions for word_id in caption.word_ids]
             if word_ids != list(range(1, len(word_ids) + 1)):
-                raise ValueError("Caption cues must cover consecutive narration word IDs exactly once")
+                raise ValueError(
+                    "Caption cues must cover consecutive narration word IDs exactly once"
+                )
 
             for caption in self.captions:
-                if caption.start_frame >= self.total_frames or caption.end_frame > self.total_frames:
+                if (
+                    caption.start_frame >= self.total_frames
+                    or caption.end_frame > self.total_frames
+                ):
                     raise ValueError("Caption cues must remain inside the composition timeline")
 
             for previous, current in zip(self.captions, self.captions[1:], strict=False):
