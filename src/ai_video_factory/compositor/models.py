@@ -68,6 +68,10 @@ class CaptionCue(BaseModel):
             raise ValueError("Caption cue start_frame must match its first word")
         if self.end_frame != self.words[-1].end_frame:
             raise ValueError("Caption cue end_frame must match its final word")
+
+        for previous, current in zip(self.words, self.words[1:], strict=False):
+            if current.start_frame < previous.end_frame:
+                raise ValueError("Caption words must not overlap")
         return self
 
 
@@ -119,7 +123,7 @@ class CompositionPlan(BaseModel):
                     raise ValueError("Caption cues must remain inside the composition timeline")
 
             for previous, current in zip(self.captions, self.captions[1:], strict=False):
-                if current.start_frame < previous.start_frame:
-                    raise ValueError("Caption cues must preserve narration order")
+                if current.start_frame < previous.end_frame:
+                    raise ValueError("Caption cues must preserve order without overlaps")
 
         return self
