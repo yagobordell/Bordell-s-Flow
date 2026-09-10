@@ -9,14 +9,35 @@ procesamiento stateful, media providers, GPU remota y composición programática
 
 ## Estado
 
-**Fase 8 — Generación de vídeo con LTX-2.5.** ✅
+**Fase 9 — Compositor.** ✅
 
-Última fase cerrada: **Fase 8 — Generación de vídeo**. El pipeline ya transforma los keyframes y
-prompts de movimiento de cada shot en clips MP4 reales mediante LTX-2.5 ejecutado directamente desde
-Python/PyTorch sobre un worker RTX 5090 en Salad. La corrida canónica de 8 shots validó fanout,
-resume, replay idempotente, verificación SHA-256 y fan-in a `VideoClip[]`.
+Última fase cerrada: **Fase 9 — Compositor**. El pipeline ya transforma los ocho clips H.264 generados
+en Fase 8, la timeline canónica de Fase 5 y los timings por palabra en un vídeo audiovisual final de
+45 segundos con captions, resaltado de palabra activa, transiciones, motion overlays y narración AAC.
 
-Siguiente fase: **Fase 9 — Compositor**.
+La corrida canónica validada produce:
+
+```text
+768x1280
+24 fps
+1080 frames
+45.000 s
+H.264 + AAC mono 24 kHz
+```
+
+El artefacto audiovisual final es:
+
+```text
+data/output/phase9/final_video.mp4
+```
+
+con contrato downstream:
+
+```text
+FinalVideo = { uri, duration_seconds }
+```
+
+Siguiente fase: **Fase 10 — Agentes de verificación**.
 
 La Fase 1 se conserva como experimento funcional. El pipeline de producción definitivo empieza desde
 un **guion ya terminado**, no desde un tema.
@@ -63,16 +84,21 @@ un **guion ya terminado**, no desde un tema.
     - 8 clips H.264 reales validados a 768×1280, 24 fps.
     - Fan-in canónico a `VideoClip[]` con tamaño y SHA-256 verificados.
 
-11. **Fase 9 — Compositor**
-    - Remotion para timeline, transiciones, captions, overlays y motion graphics.
-    - FFmpeg/ffprobe para probing, transcoding, audio y muxing final.
+11. **Fase 9 — Compositor** ✅
+    - Timeline frame-exact derivada de `ShotTiming[]` sin drift acumulado.
+    - Captions deterministas desde `NarrationWord[]`, sin IA adicional.
+    - Remotion aislado para render visual, captions y motion overlays.
+    - Transiciones que preservan los límites canónicos de los 8 shots.
+    - FFmpeg/ffprobe para probing y mux final sin recodificar el vídeo aceptado.
+    - `FinalVideo` validado a 1080 frames, 45.000 s, H.264 + AAC.
 
 12. **Fase 10 — Agentes de verificación**
     - Consistencia narrativa y visual.
     - Verificación técnica y regeneración selectiva.
 
 La arquitectura detallada está en [`docs/architecture.md`](docs/architecture.md).
-El cierre técnico completo de Fase 8 está en [`docs/phase8-closure.md`](docs/phase8-closure.md).
+El cierre técnico de Fase 8 está en [`docs/phase8-closure.md`](docs/phase8-closure.md).
+El cierre formal de Fase 9 está en [`docs/phase9-closure.md`](docs/phase9-closure.md).
 
 ## Requisitos
 
@@ -80,10 +106,10 @@ El cierre técnico completo de Fase 8 está en [`docs/phase8-closure.md`](docs/p
 - Git
 - Cuenta/API de OpenAI para las fases que usan modelos hospedados.
 - Pillow para composición local de storyboard grids.
-- FFmpeg/ffprobe para validación de media y, desde Fase 9, composición/muxing.
+- FFmpeg/ffprobe para validación de media y mux final.
+- Node.js 22+ para el renderer aislado de Remotion.
 - Docker para los workers GPU.
 - Acceso a Salad, Cloudflare R2 y Supabase/Postgres para la ruta cloud.
-- Node.js será necesario en Fase 9 para Remotion.
 
 Instalación local con `uv`:
 
@@ -103,6 +129,14 @@ En Windows PowerShell:
 python -m pip install -e ".[dev]"
 python -m pytest
 python -m ruff check .
+```
+
+Instalación del renderer Remotion en Windows PowerShell:
+
+```powershell
+Push-Location .\remotion
+npm.cmd install
+Pop-Location
 ```
 
 ## Seguridad y datos locales
@@ -194,12 +228,28 @@ StoryboardKeyframe[] + Shot[] + ShotTiming[]
                     VideoClip[]
 ```
 
-Handoff previsto a Fase 9:
+Composición final:
 
 ```text
-VideoClip[] + ShotTiming[] + NarrationAudio + NarrationWord[]
-                              ↓
-                       compositor final
+VideoClip[] + ShotTiming[] + NarrationWord[]
+                    ↓
+          composition_plan.json
+                    ↓
+        Remotion visual renderer
+                    ↓
+             visual_motion.mp4
+                    ↓
+NarrationAudio + FFmpeg final mux
+                    ↓
+                FinalVideo
+```
+
+Handoff actual a Fase 10:
+
+```text
+FinalVideo
+  uri
+  duration_seconds
 ```
 
 ## Contratos canónicos
@@ -224,10 +274,11 @@ StoryboardKeyframe = { shot_id, uri }
 StoryboardGrid     = { scene_id, uri }
 VideoPrompt        = { shot_id, prompt }
 VideoClip          = { shot_id, uri }
+FinalVideo         = { uri, duration_seconds }
 ```
 
-Queue IDs, hashes, retries, provider parameters y respuestas de GPU pertenecen al estado operativo,
-no al contrato audiovisual final.
+Queue IDs, hashes, retries, provider parameters, Remotion props y respuestas de GPU pertenecen al
+estado operativo o de render, no al contrato audiovisual final.
 
 ## Fases 2–6
 
@@ -398,6 +449,81 @@ Documentación:
 - [`docs/phase8-closure.md`](docs/phase8-closure.md)
 
 Con esta validación, **Fase 8 queda cerrada**.
+
+## Fase 9 — Compositor
+
+Phase 9 mantiene `ShotTiming` como fuente de verdad y convierte toda la composición a una timeline
+frame-exact de 1080 frames a 24 fps.
+
+### 9.1 Timeline y media probe
+
+`ffprobe` valida cada clip de Fase 8 y Python cuantiza límites absolutos a frames sin redondear
+duraciones de shots de forma independiente.
+
+Intervalos canónicos:
+
+```text
+shot 1:    0 ->   84
+shot 2:   84 ->  261
+shot 3:  261 ->  383
+shot 4:  383 ->  450
+shot 5:  450 ->  683
+shot 6:  683 ->  841
+shot 7:  841 -> 1018
+shot 8: 1018 -> 1080
+```
+
+### 9.2 Captions deterministas
+
+`NarrationWord[]` se convierte en 29 cues y 105 palabras renderizables sin llamadas de IA. Los IDs,
+el orden y la evidencia temporal canónica se preservan.
+
+### 9.3–9.4 Renderer visual
+
+Remotion vive en un proyecto Node/TypeScript aislado. `Phase9Visual` conserva el baseline hard-cut y
+`Phase9Motion` añade transiciones internas a cada shot, motion de captions, acentos de corte y barra
+de progreso sin mover los límites canónicos.
+
+Los artefactos de transcripción `†el` y `sirve†` se normalizan sólo para presentación como `el` y
+`sirve`; la transcripción canónica no se muta.
+
+### 9.5 Mux final
+
+FFmpeg combina `visual_motion.mp4` con el WAV de narración. El vídeo se mantiene con `-c:v copy` y
+sólo el audio se codifica a AAC.
+
+La validación demostró que el elementary stream H.264 antes y después del mux tiene el mismo SHA-256,
+por lo que no existe una nueva generación de vídeo en el paso final.
+
+Reproducción del compositor completo:
+
+```powershell
+python scripts/run_phase9_compositor.py
+python scripts/run_phase9_remotion.py
+python scripts/run_phase9_motion.py
+python scripts/run_phase9_final.py
+```
+
+Salida final:
+
+```text
+data/output/phase9/
+├── composition_plan.json
+├── visual.mp4
+├── visual_motion.mp4
+├── final_video.mp4
+└── final_video.json
+```
+
+Documentación:
+
+- [`docs/phase9-compositor.md`](docs/phase9-compositor.md)
+- [`docs/phase9.3-remotion.md`](docs/phase9.3-remotion.md)
+- [`docs/phase9.4-motion.md`](docs/phase9.4-motion.md)
+- [`docs/phase9.5-final-mux.md`](docs/phase9.5-final-mux.md)
+- [`docs/phase9-closure.md`](docs/phase9-closure.md)
+
+Con la validación audiovisual y técnica del artefacto final, **Fase 9 queda formalmente cerrada**.
 
 ## Compatibilidad de Fase 1
 
