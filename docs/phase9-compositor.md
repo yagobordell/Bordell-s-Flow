@@ -1,5 +1,9 @@
 # Phase 9 — Compositor
 
+Status: **CLOSED**
+
+Formal closure record: [`phase9-closure.md`](phase9-closure.md).
+
 Phase 9 turns the canonical silent shot clips and narration timeline into a final audiovisual
 composition. The compositor is deliberately isolated from Phase 8 GPU transport and LTX internals.
 
@@ -183,7 +187,7 @@ captions[]:
 ```
 
 Caption words are positive-duration, ordered and non-overlapping. Caption cues are also ordered and
-non-overlapping. Keeping individual frame-quantized words inside each cue allows the future Remotion
+non-overlapping. Keeping individual frame-quantized words inside each cue allows the Remotion
 renderer to highlight the active spoken word without reading Phase 5 artifacts again.
 
 `CaptionCue` and `CaptionWord` are compositor-internal models. They are not promoted to canonical
@@ -217,8 +221,7 @@ Caption grouping can be tuned for experiments with:
 --caption-pause-threshold-seconds
 ```
 
-The default profile should remain the canonical profile until visual validation in the Remotion
-stage gives a concrete reason to change it.
+The default profile is the closed canonical profile validated by the later Remotion stages.
 
 ## Phase 9.2 closure criteria
 
@@ -234,12 +237,11 @@ All Phase 9.2 closure criteria are confirmed:
 8. `python -m ruff check .` passes in CI;
 9. `python -m pytest` passes in CI.
 
-Phase 9.2 is therefore closed. Remotion rendering, visual caption styling, transitions and final
-narration muxing remain outside Phase 9.2.
+Phase 9.2 is therefore closed.
 
 ## Phase 9 final status
 
-Phase 9 is now closed end-to-end. The later compositor subphases are documented separately:
+Phase 9 is closed end-to-end. The later compositor subphases are documented separately:
 
 ```text
 9.1  media probe + frame-exact timeline       CLOSED
@@ -248,6 +250,13 @@ Phase 9 is now closed end-to-end. The later compositor subphases are documented 
 9.4  transitions + motion overlays            CLOSED
 9.5  final narration mux                      CLOSED
 ```
+
+Detailed records:
+
+- [`phase9.3-remotion.md`](phase9.3-remotion.md)
+- [`phase9.4-motion.md`](phase9.4-motion.md)
+- [`phase9.5-final-mux.md`](phase9.5-final-mux.md)
+- [`phase9-closure.md`](phase9-closure.md)
 
 The canonical final artifact is `data/output/phase9/final_video.mp4` with the provider-neutral
 `FinalVideo` metadata artifact at `data/output/phase9/final_video.json`.
@@ -273,5 +282,6 @@ Audio begins at the canonical zero origin after normal AAC priming compensation 
 introduces no narration/highlight offset. The final render also preserves the presentation-only
 caption cleanup introduced in Phase 9.3 without mutating Phase 9.2 canonical transcription text.
 
-Phase 9 therefore hands downstream delivery stages a finished audiovisual asset without exposing
-Remotion, FFmpeg, Salad, LTX or GPU transport details in the `FinalVideo` domain contract.
+Phase 9 therefore hands downstream delivery or verification stages a finished audiovisual asset
+without exposing Remotion, FFmpeg, Salad, LTX or GPU transport details in the `FinalVideo` domain
+contract.
