@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from ai_video_factory.compositor import MediaProbe, build_composition_plan
-from ai_video_factory.domain import ShotTiming, VideoClip
+from ai_video_factory.domain import NarrationWord, ShotTiming, VideoClip
 
 
 def _probe(
@@ -57,6 +57,33 @@ def test_builds_frame_exact_plan_from_phase8_clips(tmp_path: Path) -> None:
     assert [(shot.start_frame, shot.end_frame) for shot in plan.shots] == [(0, 2), (2, 3)]
     assert [shot.duration_frames for shot in plan.shots] == [2, 1]
     assert plan.shots[0].uri == (media_dir / "shot_001.mp4").resolve().as_posix()
+    assert plan.captions == []
+
+
+def test_builds_caption_track_on_same_frame_timeline(tmp_path: Path) -> None:
+    clip_path = tmp_path / "shot_001.mp4"
+    clip_path.touch()
+    clips = [VideoClip(shot_id=1, uri="shot_001.mp4")]
+    timings = [ShotTiming(shot_id=1, start_seconds=0.0, end_seconds=1.0)]
+    words = [
+        NarrationWord(id=1, text="Hola", start_seconds=0.0, end_seconds=0.25),
+        NarrationWord(id=2, text="mundo", start_seconds=0.3, end_seconds=0.6),
+    ]
+
+    plan = build_composition_plan(
+        clips,
+        timings,
+        clip_base_dir=tmp_path,
+        words=words,
+        probe=_probe(),
+    )
+
+    assert plan.total_frames == 24
+    assert len(plan.captions) == 1
+    assert plan.captions[0].text == "Hola mundo"
+    assert plan.captions[0].word_ids == [1, 2]
+    assert plan.captions[0].start_frame == 0
+    assert plan.captions[0].end_frame == 14
 
 
 def test_rejects_source_clip_that_is_shorter_than_required(tmp_path: Path) -> None:
