@@ -61,10 +61,9 @@ down or silently padded.
 
 ## Phase 9.2 — Deterministic caption track
 
-Status: refined implementation validated against the canonical 105-word narration. One unchanged
-local replay remains to confirm identical JSON before formal closure.
+Status: closed and validated against the canonical 105-word narration.
 
-The refined canonical local run produced:
+The final canonical local run produced:
 
 ```text
 shots=8
@@ -74,6 +73,15 @@ fps=24
 captions=29
 words=105
 ```
+
+An unchanged replay produced the same SHA-256 for `composition_plan.json` before and after execution:
+
+```text
+8E615B10C6C0A9ACAB2B6C1681962D76D1A7946DC67733D94F363C3DD600424F
+```
+
+This confirms deterministic byte-for-byte regeneration for the validated canonical inputs and
+current compositor implementation.
 
 The refined output confirms:
 
@@ -214,17 +222,17 @@ stage gives a concrete reason to change it.
 
 ## Phase 9.2 closure criteria
 
-Phase 9.2 can be closed after all of the following are confirmed:
+All Phase 9.2 closure criteria are confirmed:
 
-1. all 105 canonical `NarrationWord` IDs appear in captions exactly once and in order — confirmed;
-2. every caption word has a positive visible frame interval inside 1080 frames — confirmed;
-3. neither caption words nor adjacent cues overlap after frame quantization — confirmed;
-4. no avoidable singleton cue is created solely by a soft grouping limit — confirmed;
-5. caption planning leaves the eight shot intervals and `total_frames` unchanged — confirmed;
-6. cue grouping uses only deterministic timing/text rules and makes no provider call — confirmed;
-7. a second invocation with identical inputs produces identical caption JSON — pending local replay;
-8. `python -m ruff check .` passes — confirmed by CI;
-9. `python -m pytest` passes — confirmed by CI.
+1. all 105 canonical `NarrationWord` IDs appear in captions exactly once and in order;
+2. every caption word has a positive visible frame interval inside 1080 frames;
+3. neither caption words nor adjacent cues overlap after frame quantization;
+4. no avoidable singleton cue is created solely by a soft grouping limit;
+5. caption planning leaves the eight shot intervals and `total_frames` unchanged;
+6. cue grouping uses only deterministic timing/text rules and makes no provider call;
+7. a second invocation with identical inputs produces identical caption JSON;
+8. `python -m ruff check .` passes in CI;
+9. `python -m pytest` passes in CI.
 
-Remotion rendering, visual caption styling, transitions and final narration muxing remain outside
-Phase 9.2.
+Phase 9.2 is therefore closed. Remotion rendering, visual caption styling, transitions and final
+narration muxing remain outside Phase 9.2.
