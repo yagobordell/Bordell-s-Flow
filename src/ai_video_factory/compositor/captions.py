@@ -32,28 +32,23 @@ def build_caption_cues(
     )
     _validate_words(words, fps=fps, total_frames=total_frames)
 
-    caption_words = [
-        _quantize_word(word, fps=fps, total_frames=total_frames) for word in words
-    ]
+    caption_words = _quantize_words(words, fps=fps, total_frames=total_frames)
     groups: list[list[CaptionWord]] = []
-    current: list[CaptionWord] = []
 
-    for source_word, caption_word in zip(words, caption_words, strict=True):
-        if current and _should_start_new_cue(
-            current,
-            source_word,
-            words=words,
-            max_words=max_words,
-            max_chars=max_chars,
-            max_duration_seconds=max_duration_seconds,
-            pause_threshold_seconds=pause_threshold_seconds,
-        ):
-            groups.append(current)
-            current = []
-        current.append(caption_word)
-
-    if current:
-        groups.append(current)
+    for source_segment, caption_segment in _split_segments(
+        words,
+        caption_words,
+        pause_threshold_seconds=pause_threshold_seconds,
+    ):
+        groups.extend(
+            _partition_segment(
+                source_segment,
+                caption_segment,
+                max_words=max_words,
+                max_chars=max_chars,
+                max_duration_seconds=max_duration_seconds,
+            )
+        )
 
     return [
         CaptionCue(
@@ -68,30 +63,125 @@ def build_caption_cues(
     ]
 
 
-def _should_start_new_cue(
-    current: list[CaptionWord],
-    next_source_word: NarrationWord,
+def _split_segments(
+    source_words: list[NarrationWord],
+    caption_words: list[CaptionWord],
     *,
-    words: list[NarrationWord],
+    pause_threshold_seconds: float,
+) -> list[tuple[list[NarrationWord], list[CaptionWord]]]:
+    segments: list[tuple[list[NarrationWord], list[CaptionWord]]] = []
+    start = 0
+
+    for index, (current, following) in enumerate(
+        zip(source_words, source_words[1:], strict=False)
+    ):
+        pause_seconds = following.start_seconds - current.end_seconds
+        if _ends_sentence(current.text) or pause_seconds > pause_threshold_seconds:
+            end = index + 1
+            segments.append((source_words[start:end], caption_words[start:end]))
+            start = end
+
+    segments.append((source_words[start:], caption_words[start:]))
+    return segments
+
+
+def _partition_segment(
+    source_words: list[NarrationWord],
+    caption_words: list[CaptionWord],
+    *,
     max_words: int,
     max_chars: int,
     max_duration_seconds: float,
-    pause_threshold_seconds: float,
+) -> list[list[CaptionWord]]:
+    count = len(source_words)
+    target_words = min(4, max_words)
+    best: list[list[tuple[int, int]] | None] = [None] * (count + 1)
+    best[count] = []
+
+    for start in range(count - 1, -1, -1):
+        best_partition: list[tuple[int, int]] | None = None
+        best_score: tuple[int, int, int, tuple[int, ...]] | None = None
+
+        for end in range(start + 1, min(count, start + max_words) + 1):
+            if not _cue_fits(
+                source_words[start:end],
+                max_chars=max_chars,
+                max_duration_seconds=max_duration_seconds,
+            ):
+                continue
+            remainder = best[end]
+            if remainder is None:
+                continue
+
+            candidate = [(start, end), *remainder]
+            score = _partition_score(candidate, target_words=target_words, segment_size=count)
+            if best_score is None or score < best_score:
+                best_partition = candidate
+                best_score = score
+
+        best[start] = best_partition
+
+    partition = best[0]
+    if partition is None:  # pragma: no cover - single words always remain feasible
+        raise RuntimeError("Caption segment could not be partitioned")
+    return [caption_words[start:end] for start, end in partition]
+
+
+def _cue_fits(
+    words: list[NarrationWord],
+    *,
+    max_chars: int,
+    max_duration_seconds: float,
 ) -> bool:
-    previous_source = words[current[-1].word_id - 1]
-    first_source = words[current[0].word_id - 1]
-
-    if _ends_sentence(previous_source.text):
-        return True
-    if next_source_word.start_seconds - previous_source.end_seconds > pause_threshold_seconds:
-        return True
-    if len(current) >= max_words:
+    if len(words) == 1:
         return True
 
-    candidate_text = " ".join([*(word.text for word in current), next_source_word.text])
-    if len(candidate_text) > max_chars:
-        return True
-    return next_source_word.end_seconds - first_source.start_seconds > max_duration_seconds
+    text = " ".join(word.text for word in words)
+    duration_seconds = words[-1].end_seconds - words[0].start_seconds
+    return len(text) <= max_chars and duration_seconds <= max_duration_seconds
+
+
+def _partition_score(
+    groups: list[tuple[int, int]],
+    *,
+    target_words: int,
+    segment_size: int,
+) -> tuple[int, int, int, tuple[int, ...]]:
+    lengths = [end - start for start, end in groups]
+    singleton_count = sum(length == 1 for length in lengths) if segment_size > 1 else 0
+    balance_penalty = sum((length - target_words) ** 2 for length in lengths)
+    prefer_longer_early = tuple(-length for length in lengths)
+    return len(groups), singleton_count, balance_penalty, prefer_longer_early
+
+
+def _quantize_words(
+    words: list[NarrationWord],
+    *,
+    fps: int,
+    total_frames: int,
+) -> list[CaptionWord]:
+    raw_words = [_quantize_word(word, fps=fps, total_frames=total_frames) for word in words]
+    normalized: list[CaptionWord] = []
+    previous_end = 0
+
+    for raw in raw_words:
+        start_frame = max(raw.start_frame, previous_end)
+        if start_frame >= total_frames:
+            raise ValueError(
+                f"Narration word {raw.word_id} cannot receive a non-overlapping visible frame"
+            )
+        end_frame = min(max(raw.end_frame, start_frame + 1), total_frames)
+        normalized.append(
+            CaptionWord(
+                word_id=raw.word_id,
+                text=raw.text,
+                start_frame=start_frame,
+                end_frame=end_frame,
+            )
+        )
+        previous_end = end_frame
+
+    return normalized
 
 
 def _quantize_word(
