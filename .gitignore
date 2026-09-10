@@ -29,6 +29,13 @@ data/tmp/*
 !data/output/.gitkeep
 !data/tmp/.gitkeep
 
+# Remotion / Node
+remotion/node_modules/
+remotion/.cache/
+remotion/out/
+remotion/public/media/*
+!remotion/public/media/.gitkeep
+
 # Model caches / large artifacts
 models/
 .cache/
