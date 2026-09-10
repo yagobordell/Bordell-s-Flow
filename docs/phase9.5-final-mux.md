@@ -38,6 +38,13 @@ sample-exact equality between historical `narration.json` metadata and the WAV w
 strict even though the compositor operates on a 24 fps timeline. The WAV itself still has to fit the
 canonical timeline within one frame.
 
+A second local attempt exposed an additional WAV-container detail from the Phase 5 speech response:
+the streaming WAV can use `0xFFFFFFFF` as the `data` chunk size sentinel while the physical file is
+much shorter. Python's `wave.getnframes()` then reports 2,147,483,647 frames for 16-bit mono PCM, which
+at 24 kHz looks like 89,478.485 seconds. Phase 9.5 therefore follows the same rule already used by the
+Phase 5 generator: it reads the PCM frames actually present in the file and derives duration from the
+bytes read, never from the placeholder frame count in the streaming header.
+
 ## Mux policy
 
 The Phase 9.4 H.264 video is already the accepted visual master. Phase 9.5 therefore stream-copies it
@@ -108,10 +115,11 @@ Before muxing, Python checks that:
 
 1. `visual_motion.mp4` is H.264 at the plan dimensions and fps;
 2. the visual contains exactly the canonical frame count and no audio stream;
-3. `narration.wav` is a valid WAV with positive sample rate, channels and frames;
-4. the measured WAV duration is within one video frame of `narration.json` metadata;
-5. the measured WAV duration is within one video frame of the canonical composition duration;
-6. `narration.json` names the selected WAV asset.
+3. `narration.wav` is a valid WAV with positive sample rate, channels and actual PCM frames;
+4. WAV duration is measured from PCM frames actually read, not from a streaming size sentinel;
+5. the measured WAV duration is within one video frame of `narration.json` metadata;
+6. the measured WAV duration is within one video frame of the canonical composition duration;
+7. `narration.json` names the selected WAV asset.
 
 The runner prints the measured WAV duration and the metadata duration separately so any accepted
 rounding difference remains visible during local validation.
