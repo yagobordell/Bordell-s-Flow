@@ -1,6 +1,6 @@
 # Phase 9.4 — Boundary-preserving transitions and motion overlays
 
-Status: implemented, CI-validated, pending canonical local render and visual validation.
+Status: closed after canonical local render, media validation and visual inspection.
 
 Phase 9.4 adds visual polish on top of the closed Phase 9.3 renderer without changing the canonical
 Phase 9 timeline. It consumes the same closed `composition_plan.json`; no semantic or timing decision
@@ -89,7 +89,7 @@ data/output/phase9/remotion_props_9_4.json
 data/output/phase9/visual_motion.mp4
 ```
 
-The expected media contract remains exactly:
+The media contract remains exactly:
 
 ```text
 codec:        H.264
@@ -102,10 +102,38 @@ audio:        none
 
 Narration muxing remains outside Phase 9.4.
 
+## Canonical local validation
+
+The real `visual_motion.mp4` was rendered and then independently probed during final review:
+
+```text
+codec:          h264
+resolution:     768x1280
+fps:            24
+frames:         1080
+duration:       45.000 s
+audio streams:  0
+file size:      41,311,989 bytes
+```
+
+Frame-by-frame boundary inspection covered all seven canonical internal cuts at frames 84, 261, 383,
+450, 683, 841 and 1018, including the six-frame transition windows on both sides. The outgoing shot
+remains present through its final canonical frame and the incoming shot begins on the exact next
+canonical boundary; no black gap, cross-shot blend or accidental overlap was observed.
+
+Comparison against the closed Phase 9.3 `visual.mp4` confirmed that the motion layer changes only
+presentation. The opacity dip reaches the configured floor near the boundary and recovers inside the
+new shot, while the scale change remains visually subtle. The short boundary accent does not obscure
+subjects, and the progress bar stays in the upper safe area without colliding with captions.
+
+Caption cards remain readable during their four-frame motion window, active-word highlighting remains
+clear, and the presentation cleanup still shows `el` and `sirve` without U+2020 dagger artifacts.
+Because Phase 9.4 remains intentionally silent, perceptual voice synchronization is deferred to the
+later narration-mux validation; caption and word frame intervals themselves are unchanged.
+
 ## Command
 
-After pulling the implementation, no new npm package is required beyond the already installed
-Phase 9.3 renderer dependencies:
+No new npm package is required beyond the already installed Phase 9.3 renderer dependencies:
 
 ```powershell
 python scripts/run_phase9_motion.py
@@ -117,7 +145,7 @@ The motion profile can be inspected without rendering:
 python scripts/run_phase9_motion.py --prepare-only
 ```
 
-Experimental renderer-only tuning is available through:
+Experimental renderer-only tuning remains available through:
 
 ```text
 --transition-frames
@@ -128,40 +156,35 @@ Experimental renderer-only tuning is available through:
 --no-progress-bar
 ```
 
-The defaults remain the canonical Phase 9.4 validation profile until visual review gives a concrete
-reason to change them.
+The documented defaults are the accepted Phase 9.4 baseline.
 
 ## CI validation
 
 The implementation passed the repository CI after the full Phase 9.4 code and documentation landed:
 
 ```text
-workflow run: 34488188456
-Python install:      success
-Ruff:                success
-Pytest:              success
-PowerShell syntax:   success
-Node 22 install:     success
-Remotion npm install: success
-TypeScript:          success
+workflow run:          34488188456
+Python install:        success
+Ruff:                  success
+Pytest:                success
+PowerShell syntax:     success
+Node 22 install:       success
+Remotion npm install:  success
+TypeScript:            success
 ```
-
-The CI validates the renderer props schema, motion-profile invariants and TypeScript integration. It
-does not render the private local Phase 8 MP4 artifacts, so the real 1080-frame render remains the
-final acceptance step.
 
 ## Closure criteria
 
-Phase 9.4 closes after the canonical local run confirms:
+All Phase 9.4 closure criteria are confirmed:
 
-1. `remotion_props_9_4.json` contains the eight unchanged canonical shot intervals;
+1. `remotion_props_9_4.json` preserves the eight canonical shot intervals;
 2. all 29 captions and 105 words remain present with unchanged frame intervals;
-3. the motion profile is exactly the documented default profile;
+3. the motion profile matches the documented default profile;
 4. `visual_motion.mp4` is H.264, 768x1280, 24 fps, 1080 frames and contains no audio;
 5. visual inspection confirms no black gaps or accidental shot overlap at the seven boundaries;
-6. the entry/exit dip and scale remain subtle rather than obscuring generated video content;
+6. the entry/exit dip and scale remain subtle enough to preserve generated video content;
 7. the boundary accent and progress bar remain inside safe areas and do not interfere with captions;
 8. caption cue motion remains readable and active-word highlighting remains clear;
-9. Python Ruff/pytest and Remotion TypeScript validation pass in CI — confirmed.
+9. Python Ruff/pytest and Remotion TypeScript validation pass in CI.
 
-Final narration muxing remains a later Phase 9 subphase.
+Phase 9.4 is therefore closed. Final narration muxing remains a later Phase 9 subphase.
