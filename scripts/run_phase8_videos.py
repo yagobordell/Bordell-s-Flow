@@ -4,7 +4,6 @@ import argparse
 import json
 import os
 import threading
-import time
 from pathlib import Path
 
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
