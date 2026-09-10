@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import shutil
@@ -14,6 +13,7 @@ from typing import Any
 
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
 from ai_video_factory.gpu.contracts import GPUJobRequest, ObjectInput, ObjectOutput
+from ai_video_factory.gpu.ltx_jobs import ltx_video_application_job_id
 from ai_video_factory.gpu.ltx_video import (
     LTX_GENERATION_PROFILE,
     LTX_VIDEO_TASK,
@@ -95,33 +95,6 @@ def _one_by_id[ModelT](items: list[ModelT], identifier: int, attribute: str) -> 
             f"found {len(matches)}"
         )
     return matches[0]
-
-
-def _job_id(
-    *,
-    shot_id: int,
-    prompt: str,
-    keyframe_sha256: str,
-    seed: int,
-    width: int,
-    height: int,
-    fps: int,
-    num_frames: int,
-) -> str:
-    plan = {
-        "shot_id": shot_id,
-        "generation_profile": LTX_GENERATION_PROFILE,
-        "prompt": prompt,
-        "keyframe_sha256": keyframe_sha256,
-        "seed": seed,
-        "width": width,
-        "height": height,
-        "fps": fps,
-        "num_frames": num_frames,
-    }
-    canonical = json.dumps(plan, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    digest = hashlib.sha256(canonical).hexdigest()
-    return f"phase8-shot-{shot_id:03d}-{digest[:12]}"
 
 
 def _ffprobe(path: Path) -> dict[str, Any] | None:
@@ -207,7 +180,7 @@ def main() -> None:
     num_frames = ltx_num_frames_for_duration(duration_seconds, fps=args.fps)
     seed = args.seed if args.seed is not None else 42 + args.shot_id
     keyframe_sha256 = sha256_file(keyframe_path)
-    job_id = _job_id(
+    job_id = ltx_video_application_job_id(
         shot_id=args.shot_id,
         prompt=prompt.prompt,
         keyframe_sha256=keyframe_sha256,
