@@ -1,14 +1,11 @@
 # Fase 8.3 — worker GPU de producción
 
-Estado: **implementada en código; pendiente de validación cloud en RTX 5090 antes del cierre**.
+Estado: **cerrada y validada en cloud sobre RTX 5090**.
 
 ## Objetivo
 
-La Fase 8.2 incorporó el adaptador directo `LTXVideoTaskRunner -> DirectLTX25Backend ->
-DistilledPipeline`. La Fase 8.3 lo conecta al worker idempotente validado en Fase 7 y construye una
-imagen de producción capaz de ejecutar `video.ltx25.generate` en SaladCloud.
-
-La ruta completa queda:
+La Fase 8.3 conecta el adapter directo de Fase 8.2 al worker idempotente validado en Fase 7 y lo
+ejecuta como runtime de producción dentro de Salad Job Queue.
 
 ```text
 Salad Job Queue
@@ -31,123 +28,122 @@ GPUWorker
             R2
 ```
 
-Los bytes del vídeo no atraviesan el orquestador. Queue recibe únicamente metadata y el MP4
-termina bajo `jobs/<job_id>/...` en R2.
+Los bytes del vídeo no atraviesan el orquestador. Queue transporta el request y metadata; el MP4
+termina bajo `jobs/<application_job_id>/...` en R2.
 
-## Selección de runtime
-
-`GPU_WORKER_RUNTIME` separa los dos modos:
-
-```text
-phase7 -> infrastructure.copy
-phase8 -> infrastructure.copy + video.ltx25.generate
-```
-
-El valor por defecto permanece `phase7`, de modo que entornos locales y tests no necesitan Torch,
-CUDA ni LTX. La imagen `docker/phase8-worker/Dockerfile` fija `GPU_WORKER_RUNTIME=phase8`.
-
-## Runtime GPU fijado
+## Runtime GPU
 
 La imagen conserva la baseline validada en Fase 7:
 
-- `pytorch/pytorch:2.11.0-cuda12.8-cudnn9-devel`;
-- Torch `2.11.0`, torchvision `0.26.0`, torchaudio `2.11.0`;
+- PyTorch 2.11.0 + CUDA 12.8;
 - Lightricks/LTX-2 commit `a95ab856bf29407b6b066ede0abe1846050db56c`;
-- NATTEN `0.21.6+torch2110cu128`;
+- NATTEN 0.21.6;
 - LTX-2.5 distilled;
 - `fp8-cast`;
 - CPU offload;
-- CUDA;
-- first-frame conditioning, frame 0, strength `1.0`;
+- conditioning por primer frame;
 - MP4 SDR H.264 sin audio.
 
-El worker de Salad HTTP Job Queue sigue fijado en `v0.7.0` y validado por SHA-256, igual que en la
-Fase 7.
-
-## Recursos cloud
-
-La configuración de validación reutiliza la clase de RTX 5090 ya comprobada:
+El task registrado es:
 
 ```text
-GPU class: 851399fb-7329-4195-a042-d6514b28cf33
-CPU:       8
-RAM:       61,440 MiB
-SHM:       8,192 MiB
-Storage:   137,438,953,472 bytes
+video.ltx25.generate
 ```
 
-El grupo sigue siendo `ai-video-factory-worker` y la Queue `ai-video-factory-jobs`.
+Perfil:
 
-El lease de aplicación se amplía a 900 segundos para cubrir clips más largos que el benchmark de
-121 frames. El heartbeat permanece en 30 segundos.
+```text
+ltx25-distilled-a95ab856-fp8cpu-v1
+```
+
+## Recursos cloud validados
+
+```text
+Group:       ai-video-factory-worker
+Queue:       ai-video-factory-jobs
+GPU class:   851399fb-7329-4195-a042-d6514b28cf33  # RTX 5090
+CPU:         8
+RAM:         61,440 MiB
+SHM:         8,192 MiB
+Storage:     137,438,953,472 bytes
+Priority:    medium
+Autoscaler:  min=0, max=1
+```
+
+La imagen usada durante el cierre real fue:
+
+```text
+docker.io/yagobordell/ai-video-factory@sha256:4577972ab55ecb8fdf305e87d3851b4db6d70b239ed3f61094142a7d7b8d0141
+```
+
+La configuración live exitosa alcanzó la versión 11 del Container Group.
 
 ## Bootstrap de modelos
 
-La imagen no contiene los aproximadamente 66 GiB de checkpoints. Al iniciar una instancia,
-`phase8-download-models` descarga secuencialmente los cinco archivos de `Lightricks/LTX-2.5` a:
+La imagen no incorpora los checkpoints grandes. `docker/phase8-worker/download_models.sh` descarga
+secuencialmente los cinco ficheros a `/workspace/models/ltx-2.5`:
 
 ```text
-/workspace/models/ltx-2.5
+diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors
+text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors
+vae/ltx-2.5-video-vae-bf16.safetensors
+vae/ltx-2.5-audio-vae-bf16.safetensors
+latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors
 ```
 
-Cada archivo existente y no vacío se reutiliza dentro de la vida de la instancia. Después del
-download se vuelve a comprobar que los cinco ficheros existen y tienen tamaño positivo.
+`HF_TOKEN` se suministra únicamente como secreto de entorno. `manage_phase8_worker.ps1 -Action
+Prepare` lo obtiene del proceso o mediante `Read-Host -AsSecureString`; nunca se versiona.
 
-El filesystem de una instancia Salad es efímero. Por tanto esta política es reproducible pero no
-asume persistencia entre reallocations. Reducir ese cold-start mediante una distribución de pesos
-más eficiente es una optimización posterior y no altera los contratos de Fase 8.
+El filesystem de una instancia Salad es efímero. Los modelos se reutilizan durante la vida de la
+instancia, pero una nueva allocation puede repetir el cold start.
 
-## Warmup y readiness
+## Health, readiness y liveness
 
-El HTTP de salud se desacopla del bootstrap pesado. El orden de arranque es:
+El HTTP de salud se desacopla del bootstrap pesado:
 
 ```text
 container start
-  -> start FastAPI
+  -> FastAPI
   -> /health = 200
-  -> background worker.prepare() retries while model files are absent
-  -> phase8-download-models
-  -> CUDA + model validation
-  -> construct DistilledPipeline
+  -> download checkpoints
+  -> worker.prepare()
+  -> construct resident DistilledPipeline
   -> /ready = 200
-  -> start salad-http-job-queue-worker
+  -> queue traffic
 ```
 
-Así el Startup probe solo comprueba que el proceso HTTP está vivo; no necesita cubrir la descarga de
-checkpoints ni la construcción del pipeline. El runtime de Phase 8 se prepara en background y
-`FileNotFoundError` se interpreta como un estado transitorio mientras los checkpoints se descargan.
-Cualquier otro error de preparación se conserva como fallo y mantiene `/ready` en 503.
+`/health` prueba que el proceso está vivo. `/ready` permanece 503 hasta que runtime, Postgres, R2,
+modelos, CUDA y pipeline residente están listos.
 
-La Queue no empieza a consumir trabajos hasta que el pipeline está construido y residente. Así la
-carga fría no consume el lease de un job ya reclamado. El endpoint `/jobs` también rechaza con 503
-si la preparación todavía no ha terminado, como segunda barrera defensiva.
+La validación real mostró que el liveness inicial era demasiado agresivo. Durante construcción del
+pipeline/inferencia, la configuración antigua:
 
-`/ready` comprueba en cada llamada:
+```text
+timeout_seconds=5
+failure_threshold=3
+```
 
-- preparación del runtime completada sin error;
-- Postgres;
-- R2;
-- presencia de los cinco modelos;
-- CUDA disponible;
-- pipeline ya preparado.
+podía matar una instancia saludable. El cierre de Fase 8 usa y versiona:
 
-La configuración Salad usa Startup, Readiness y Liveness probes. El Startup probe usa `/health`
-con `period_seconds=15` y `failure_threshold=20`; Readiness permanece en 503 durante todo el
-bootstrap pesado y Liveness continúa comprobando `/health` sin confundir un cold-start largo con un
-proceso muerto.
+```text
+path=/health
+period_seconds=30
+timeout_seconds=10
+failure_threshold=20
+success_threshold=1
+```
+
+Con esa configuración, la misma instancia permaneció viva durante inferencias reales consecutivas.
 
 ## Pipeline residente
 
-`DirectLTX25Backend.prepare()` construye una sola instancia de `DistilledPipeline`. El backend
-conserva tanto los bindings LTX como el pipeline y serializa `prepare`, `ready` e inferencia con un
-lock.
+`DirectLTX25Backend.prepare()` construye una única `DistilledPipeline`. El backend conserva bindings
+y pipeline y serializa `prepare`, `ready` e inferencia con un lock.
 
-Esto evita cargar y cuantizar los modelos para cada shot. Un proceso ejecuta una única inferencia a
-la vez, coherente con la baseline RTX 5090 de 32 GiB.
+Esto amortiza descarga/carga/cuantización durante un batch. El worker validado procesa una inferencia
+a la vez, coherente con el perfil RTX 5090 de 32 GiB.
 
-## Imagen y gestión del Container Group
-
-La utilidad operativa es:
+## Gestión del Container Group
 
 ```powershell
 .\scripts\manage_phase8_worker.ps1 -Action Status
@@ -156,65 +152,52 @@ La utilidad operativa es:
 .\scripts\manage_phase8_worker.ps1 -Action Start
 ```
 
-`Prepare`:
+`Prepare` solo se usa para una actualización intencional de imagen/configuración y exige el grupo
+detenido. Construye/publica la imagen, resuelve el digest, aplica recursos/secretos/probes/Queue y
+verifica que Salad activó `priority=medium` y el liveness validado. El grupo permanece detenido al
+terminar.
 
-1. exige que el grupo esté detenido;
-2. construye y publica `docker/phase8-worker/Dockerfile` para `linux/amd64`;
-3. resuelve el digest publicado y configura Salad con la referencia inmutable;
-4. aplica recursos, secretos, probes, Queue y autoscaler;
-5. deja el grupo detenido y con cero réplicas.
-
-Nunca se deben compartir ni versionar los valores de `POSTGRES_DSN`, `SALAD_API_KEY` o credenciales
-R2.
-
-## Smoke real
-
-`scripts/submit_phase8_smoke.py` toma los artefactos canónicos existentes:
-
-```text
-data/output/phase6/storyboard_keyframes.json
-data/output/phase8/video_prompts.json
-data/output/phase5/shot_timings.json
-```
-
-Para un shot:
-
-1. localiza el PNG canónico;
-2. calcula SHA-256;
-3. calcula `num_frames` con la rejilla `8k + 1`;
-4. construye un `job_id` determinista a partir del plan completo;
-5. sube el keyframe a R2;
-6. envía `video.ltx25.generate` a Salad Job Queue;
-7. espera el resultado;
-8. descarga el MP4 desde R2;
-9. verifica su SHA-256;
-10. si `ffprobe` está disponible, exige un stream de vídeo y cero streams de audio.
-
-Ejemplo:
+Para un batch normal se usa el grupo ya preparado:
 
 ```powershell
-python scripts\submit_phase8_smoke.py --shot-id 1
+.\scripts\start_phase8_autoscaled.ps1
 ```
 
-Ejecutar exactamente el mismo comando otra vez produce el mismo application `job_id` y permite
-validar replay idempotente. Si la instancia sigue viva, el replay no vuelve a ejecutar LTX.
+Con `min_replicas=0`, la demanda de Queue crea la réplica GPU.
 
-## Gate de cierre de Fase 8.3
+## Smoke real y replay
 
-La subfase no se considera cerrada hasta reunir evidencia cloud de:
+`scripts/submit_phase8_smoke.py` construye el mismo application job ID canónico que el workflow de
+Fase 8.4 mediante `ltx_video_application_job_id()`. Así el smoke y la orquestación completa no pueden
+derivar en algoritmos de identidad distintos.
 
-- Ruff y pytest en verde;
-- build/push de la imagen GPU;
-- Container Group actualizado por digest inmutable;
-- instancia sobre la clase RTX 5090 validada;
-- bootstrap correcto de los cinco checkpoints;
-- `/health` disponible durante bootstrap y `/ready` solo después de pipeline residente;
-- una generación real de shot 1 mediante Queue -> worker -> Postgres/R2;
-- MP4 H.264 no vacío, sin audio, descargado y verificado por SHA-256;
-- replay del mismo request sin reinferencia y sin incrementar `attempt_count`;
-- una generación del shot real más largo (shot 5, 233 frames) sin OOM;
-- al menos dos inferencias reales consecutivas sobre la misma instancia sin error de runtime;
-- Container Group detenido al terminar la validación.
+La validación real demostró:
 
-La medición fina de fan-out, reanudación del vídeo completo y reconstrucción `VideoClip[]` pertenece a
-Fase 8.4.
+1. shot 1 generado realmente mediante Queue -> worker -> Postgres/R2;
+2. H.264 768x1280 a 24 fps, sin audio, descargado y validado por SHA-256;
+3. replay exacto del mismo request con `replayed=true` y sin reinferencia;
+4. shot 8 y shot 5 ejecutados después sobre la misma instancia caliente;
+5. shot 5 completó 233 frames sin OOM;
+6. el runtime permaneció estable durante varias inferencias consecutivas;
+7. el grupo se devolvió a `stopped` al cerrar la prueba.
+
+Los application job IDs validados y posteriormente reutilizados como replay en Fase 8.4 fueron:
+
+```text
+phase8-shot-001-7ed73f1ff682
+phase8-shot-005-69262d45109b
+phase8-shot-008-a617c67ccd15
+```
+
+## Cierre
+
+Fase 8.3 queda cerrada. Fase 8.4 reutilizó exactamente este worker para fanout de los 8 shots y
+confirmó que los tres application jobs anteriores replayaban mientras los otros cinco realizaban
+inferencia real.
+
+Ver también:
+
+- [`phase8-ltx-adapter.md`](phase8-ltx-adapter.md)
+- [`phase8-video-generation.md`](phase8-video-generation.md)
+- [`phase8.4-validation-results.md`](phase8.4-validation-results.md)
+- [`phase8-closure.md`](phase8-closure.md)
