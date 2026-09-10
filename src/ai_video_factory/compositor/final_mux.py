@@ -193,7 +193,9 @@ def validate_final_mux_inputs(
     if abs(wav.duration_seconds - narration.duration_seconds) > metadata_tolerance:
         raise ValueError("Narration WAV duration does not match NarrationAudio metadata")
     if abs(narration.duration_seconds - canonical_duration) > 1 / plan.fps:
-        raise ValueError("Narration duration differs from the canonical composition by over one frame")
+        raise ValueError(
+            "Narration duration differs from the canonical composition by over one frame"
+        )
 
     return FinalMuxInputs(
         canonical_duration_seconds=canonical_duration,
@@ -309,7 +311,9 @@ def validate_final_mux_output(
         raise ValueError(f"Final audio must use AAC, found {audio.codec_name}")
     if audio.duration_seconds is not None:
         if abs(audio.duration_seconds - canonical_duration) > 2 / plan.fps:
-            raise ValueError("Final AAC stream duration differs too much from the canonical timeline")
+            raise ValueError(
+                "Final AAC stream duration differs too much from the canonical timeline"
+            )
 
     return FinalMuxResult(
         canonical_duration_seconds=canonical_duration,
