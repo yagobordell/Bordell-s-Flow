@@ -13,7 +13,7 @@ def _word(word_id: int, text: str, start: float, end: float) -> NarrationWord:
     )
 
 
-def test_groups_words_and_preserves_frame_exact_word_timing() -> None:
+def test_balances_soft_splits_instead_of_creating_orphan_words() -> None:
     words = [
         _word(1, "Japón", 0.00, 0.20),
         _word(2, "fue", 0.22, 0.40),
@@ -25,16 +25,14 @@ def test_groups_words_and_preserves_frame_exact_word_timing() -> None:
 
     cues = build_caption_cues(words, fps=24, total_frames=48)
 
-    assert [cue.text for cue in cues] == ["Japón fue gobernado por guerreros", "durante"]
-    assert cues[0].word_ids == [1, 2, 3, 4, 5]
+    assert [cue.text for cue in cues] == ["Japón fue gobernado", "por guerreros durante"]
+    assert [cue.word_ids for cue in cues] == [[1, 2, 3], [4, 5, 6]]
     assert [(word.start_frame, word.end_frame) for word in cues[0].words] == [
         (0, 5),
         (5, 10),
         (10, 19),
-        (20, 23),
-        (23, 30),
     ]
-    assert cues[1].start_frame == 30
+    assert cues[1].start_frame == 20
     assert cues[1].end_frame == 37
 
 
@@ -72,6 +70,26 @@ def test_starts_new_cue_before_character_limit_is_exceeded() -> None:
     cues = build_caption_cues(words, fps=24, total_frames=48, max_chars=25)
 
     assert [cue.word_ids for cue in cues] == [[1, 2], [3]]
+
+
+def test_normalizes_frame_overlap_between_words_and_cues() -> None:
+    words = [
+        _word(1, "uno", 0.0, 0.5),
+        _word(2, "dos", 0.45, 0.8),
+    ]
+
+    cues = build_caption_cues(
+        words,
+        fps=24,
+        total_frames=24,
+        max_words=1,
+    )
+
+    assert cues[0].words[0].start_frame == 0
+    assert cues[0].words[0].end_frame == 12
+    assert cues[1].words[0].start_frame == 12
+    assert cues[1].words[0].end_frame == 19
+    assert cues[0].end_frame == cues[1].start_frame
 
 
 def test_zero_duration_word_receives_one_visible_frame() -> None:
