@@ -28,8 +28,17 @@ export type PresentationNormalization = {
   rule: "remove_unicode_dagger_u2020";
 };
 
+export type RemotionVisualProfile = {
+  transition_frames: number;
+  transition_floor_opacity: number;
+  transition_scale: number;
+  caption_motion_frames: number;
+  boundary_accent_frames: number;
+  show_progress_bar: boolean;
+};
+
 export type RemotionRenderProps = {
-  schema_version: "1";
+  schema_version: "2";
   width: number;
   height: number;
   fps: number;
@@ -37,4 +46,5 @@ export type RemotionRenderProps = {
   shots: RemotionShot[];
   captions: RemotionCaptionCue[];
   presentation_normalizations: PresentationNormalization[];
+  visual_profile: RemotionVisualProfile;
 };
