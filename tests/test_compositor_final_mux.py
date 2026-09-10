@@ -1,3 +1,4 @@
+import struct
 import wave
 from pathlib import Path
 
@@ -47,6 +48,30 @@ def _write_wav(path: Path, *, duration_seconds: float = 2.0) -> None:
         wav_file.writeframes(b"\x00\x00" * frame_count)
 
 
+def _write_streaming_wav(path: Path, *, duration_seconds: float = 2.0) -> None:
+    sample_rate = 24000
+    channels = 1
+    sample_width = 2
+    frame_count = round(duration_seconds * sample_rate)
+    block_align = channels * sample_width
+    byte_rate = sample_rate * block_align
+    pcm = b"\x00\x00" * frame_count
+
+    riff_header = b"RIFF" + struct.pack("<I", 0xFFFFFFFF) + b"WAVE"
+    fmt_chunk = b"fmt " + struct.pack(
+        "<IHHIIHH",
+        16,
+        1,
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        sample_width * 8,
+    )
+    data_chunk = b"data" + struct.pack("<I", 0xFFFFFFFF) + pcm
+    path.write_bytes(riff_header + fmt_chunk + data_chunk)
+
+
 def _video_probe(*, audio_stream_count: int = 0, frame_count: int = 48) -> MediaProbe:
     return MediaProbe(
         codec_name="h264",
@@ -68,6 +93,22 @@ def test_probe_wav_measures_canonical_audio(tmp_path: Path) -> None:
     assert measured.sample_rate == 24000
     assert measured.channels == 1
     assert measured.sample_width_bytes == 2
+    assert measured.frame_count == 48000
+    assert measured.duration_seconds == pytest.approx(2.0)
+
+
+def test_probe_wav_uses_actual_frames_when_streaming_header_has_sentinel_size(
+    tmp_path: Path,
+) -> None:
+    audio = tmp_path / "narration.wav"
+    _write_streaming_wav(audio)
+
+    with wave.open(str(audio), "rb") as wav_file:
+        assert wav_file.getnframes() == 2_147_483_647
+
+    measured = probe_wav(audio)
+
+    assert measured.sample_rate == 24000
     assert measured.frame_count == 48000
     assert measured.duration_seconds == pytest.approx(2.0)
 
