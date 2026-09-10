@@ -62,7 +62,8 @@ def main() -> None:
     print(
         "Phase 9.5 inputs: "
         f"frames={plan.total_frames} duration={inputs.canonical_duration_seconds:.3f}s "
-        f"fps={plan.fps} narration={inputs.narration.duration_seconds:.3f}s"
+        f"fps={plan.fps} narration_wav={inputs.narration.duration_seconds:.6f}s "
+        f"narration_metadata={narration.duration_seconds:.6f}s"
     )
     print(
         "audio_input="
