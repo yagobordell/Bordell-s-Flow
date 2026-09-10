@@ -62,7 +62,7 @@ class FinalMuxResult(BaseModel):
 
 
 def probe_wav(path: Path) -> WavProbe:
-    """Measure the canonical narration WAV without decoding or changing it."""
+    """Measure the canonical narration WAV from the PCM frames actually present."""
 
     resolved = path.resolve()
     if not resolved.is_file():
@@ -73,19 +73,31 @@ def probe_wav(path: Path) -> WavProbe:
             sample_rate = wav_file.getframerate()
             channels = wav_file.getnchannels()
             sample_width = wav_file.getsampwidth()
-            frame_count = wav_file.getnframes()
+            declared_frame_count = wav_file.getnframes()
+
+            if (
+                sample_rate <= 0
+                or channels <= 0
+                or sample_width <= 0
+                or declared_frame_count <= 0
+            ):
+                raise ValueError(f"Narration WAV has invalid stream properties: {resolved}")
+
+            frame_data = wav_file.readframes(declared_frame_count)
     except (EOFError, wave.Error) as exc:
         raise ValueError(f"Narration WAV is invalid: {resolved}") from exc
 
-    if sample_rate <= 0 or channels <= 0 or sample_width <= 0 or frame_count <= 0:
-        raise ValueError(f"Narration WAV has invalid stream properties: {resolved}")
+    frame_size = channels * sample_width
+    if not frame_data or len(frame_data) % frame_size != 0:
+        raise ValueError(f"Narration WAV contains incomplete PCM frames: {resolved}")
 
+    actual_frame_count = len(frame_data) // frame_size
     return WavProbe(
         sample_rate=sample_rate,
         channels=channels,
         sample_width_bytes=sample_width,
-        frame_count=frame_count,
-        duration_seconds=frame_count / sample_rate,
+        frame_count=actual_frame_count,
+        duration_seconds=actual_frame_count / sample_rate,
     )
 
 
