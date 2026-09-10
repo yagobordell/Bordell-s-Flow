@@ -1,5 +1,7 @@
 # Phase 8.4 — Video fanout, resume and idempotence
 
+Estado: **cerrada y validada en cloud con el ejemplo canónico de 8 shots**.
+
 Phase 8.4 moves video generation from the single-shot cloud smoke used in Phase 8.3 to the
 production orchestration shape for a complete storyboard.
 
@@ -53,7 +55,8 @@ Each shot derives its application job ID from:
 - fps;
 - LTX-valid frame count.
 
-The naming algorithm is the same one used by the Phase 8.3 smoke:
+The naming algorithm is shared by the Phase 8.3 smoke and Phase 8.4 workflow through
+`ltx_video_application_job_id()`:
 
 ```text
 phase8-shot-<shot_id>-<plan_hash_prefix>
@@ -96,19 +99,44 @@ multiple clips sequentially without scaling to zero between individual submissio
 
 Every manifest mutation is written atomically using a temporary file plus `os.replace()`.
 
-On restart:
-
 | Manifest state | Resume behavior |
 | --- | --- |
 | `unsubmitted` | submit it |
 | `pending` / `running` | query and continue the existing transport |
 | `succeeded` + validated response | do not submit or query again |
-| `failed` / `cancelled` | submit a new transport with the same application job ID |
+| `failed` / `cancelled` | submit a new transport with the same application job ID on the next explicit rerun |
 
 A terminal failure reached during the current polling loop is persisted and reported. It is not
-silently resubmitted forever. Re-running the command performs the explicit resume/retry step.
-`--no-retry-terminal` can be used when an operator wants to inspect failures without resubmitting
-them.
+silently resubmitted forever. `--no-retry-terminal` lets an operator inspect recorded failures
+without resubmitting them.
+
+The manifest closes the normal local-process restart path. A process that starts with persisted
+`pending`/`running` transport IDs resumes those exact Salad transports.
+
+There remains an unavoidable narrow crash window between Salad accepting a POST and local manifest
+persistence. If the client process dies in that interval, a later rerun may create a second transport
+for the same deterministic application job. Worker-level Postgres/R2 idempotence still prevents a
+second logical inference/foreign overwrite for an already completed application request.
+
+## Progress output
+
+`run_phase8_videos.py` watches the atomic manifest locally while `run_video_generation()` performs
+queue polling. When a shot changes state it prints the complete current status table, for example:
+
+```text
+progress:
+  shot=1 status=succeeded submissions=1 transport_job_id=...
+  shot=2 status=running submissions=1 transport_job_id=...
+  shot=3 status=pending submissions=1 transport_job_id=...
+```
+
+This watcher is read-only and performs no additional Salad API requests. Use:
+
+```powershell
+python scripts\run_phase8_videos.py --progress-seconds 0
+```
+
+to disable progress output.
 
 ## Fan-in and artifact verification
 
@@ -125,7 +153,7 @@ Phase 9 therefore consumes local canonical clip URIs and does not need Salad tra
 
 ## Commands
 
-Required process environment variables are the same as the Phase 8.3 smoke:
+Required process environment variables:
 
 ```text
 SALAD_API_KEY
@@ -142,7 +170,7 @@ Do not store secrets in versioned files.
 
 ### Submit the complete fanout without waiting
 
-This is useful while the Salad worker group is stopped:
+With the worker group stopped:
 
 ```powershell
 python scripts\run_phase8_videos.py --submit-only
@@ -151,9 +179,15 @@ python scripts\run_phase8_videos.py --submit-only
 The command uploads missing content-addressed keyframes, submits every unresolved shot and writes
 `video_generation_manifest.json`.
 
-Enable the autoscaled worker separately. Queue demand will create the GPU replica.
+### Enable the existing autoscaled worker
 
-### Resume and wait for fan-in
+```powershell
+.\scripts\start_phase8_autoscaled.ps1
+```
+
+With `min_replicas=0`, queue demand creates the GPU replica.
+
+### Resume and fan in
 
 ```powershell
 python scripts\run_phase8_videos.py
@@ -162,7 +196,13 @@ python scripts\run_phase8_videos.py
 The same command is safe to rerun after a local timeout, terminal transport failure or process
 interruption. It resumes from the manifest instead of starting a new logical run.
 
-The default full-run timeout is six hours and can be changed with `--timeout-seconds`.
+### Stop the group
+
+```powershell
+.\scripts\manage_phase8_worker.ps1 -Action Stop
+```
+
+`Prepare` is reserved for an intentional image/configuration upgrade and is not part of each batch.
 
 ## Unit validation
 
@@ -178,20 +218,59 @@ The default full-run timeout is six hours and can be changed with `--timeout-sec
 - rejection of a changed plan against an existing manifest;
 - local clip SHA/size verification during fan-in.
 
-## Cloud validation gate
+## Real cloud validation
 
-Phase 8.4 code is complete when CI passes. Its real-cloud closure should then prove, using the
-8-shot canonical example:
+The Phase 8.4 closure run used:
 
-1. all eight deterministic jobs are represented in one manifest;
-2. `--submit-only` creates queue fanout before the worker starts;
-3. previously successful Phase 8.3 application jobs replay instead of reinferring;
-4. the remaining shots complete through the same worker contract;
-5. interrupting/restarting the local orchestrator preserves existing transport IDs;
-6. a second completed invocation performs zero new submissions;
-7. all eight R2 artifacts download with matching SHA-256;
-8. `video_clips.json` contains shots 1..8 exactly once and in order;
-9. the Salad group returns to zero replicas/stopped after validation.
+```text
+run_fingerprint=c90751bedd2dc65dac7ca7fba927b706ad514e1f72a91edc913c96465541e361
+```
 
-That cloud exercise is the handoff from Phase 8.4 implementation to final Phase 8
-validation/closure.
+`--submit-only` created all eight transports while the worker was stopped. After enabling the group,
+one warmed RTX 5090 instance consumed the queue.
+
+All eight jobs reached `succeeded` with `submission_count=1`.
+
+Previously completed Phase 8.3 application jobs replayed:
+
+```text
+shot 1 -> phase8-shot-001-7ed73f1ff682 -> replayed=true
+shot 5 -> phase8-shot-005-69262d45109b -> replayed=true
+shot 8 -> phase8-shot-008-a617c67ccd15 -> replayed=true
+```
+
+Shots 2, 3, 4, 6 and 7 performed new real inference.
+
+The final clips contained the expected frame counts:
+
+```text
+shot 1:  89
+shot 2: 185
+shot 3: 129
+shot 4:  73
+shot 5: 233
+shot 6: 161
+shot 7: 185
+shot 8:  65
+```
+
+Every local MP4 matched the worker size/SHA-256 metadata and passed ffprobe validation for H.264,
+768x1280, 24 fps and zero audio streams.
+
+A second completed invocation created:
+
+```text
+new submissions:   0
+new transports:    0
+```
+
+and preserved the exact manifest SHA-256:
+
+```text
+73bb97a822e7c9e4bfe6e4ac79abf94a19424edab7c52d3675ce47e7a859609f
+```
+
+The Salad worker group was returned to `stopped` with zero replicas.
+
+Detailed results are in [`phase8.4-validation-results.md`](phase8.4-validation-results.md). The final
+Phase 8 architectural/operational closure is in [`phase8-closure.md`](phase8-closure.md).

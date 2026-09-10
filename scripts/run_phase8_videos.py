@@ -3,12 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import threading
 from pathlib import Path
 
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
 from ai_video_factory.gpu.storage import R2ObjectStorage
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workflows.video_generation import (
+    VideoGenerationManifest,
     build_video_generation_plan,
     run_video_generation,
 )
@@ -43,6 +45,52 @@ def _read_models[ModelT](path: Path, model_type: type[ModelT]) -> list[ModelT]:
 def _write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+
+
+def _manifest_progress_signature(
+    manifest: VideoGenerationManifest,
+) -> tuple[tuple[int, str, int, str | None], ...]:
+    return tuple(
+        (
+            state.shot_id,
+            state.transport_status,
+            state.submission_count,
+            state.transport_job_id,
+        )
+        for state in manifest.jobs
+    )
+
+
+def _watch_manifest(
+    path: Path,
+    stop: threading.Event,
+    *,
+    interval_seconds: float,
+) -> None:
+    previous: tuple[tuple[int, str, int, str | None], ...] | None = None
+
+    while not stop.is_set():
+        if path.is_file():
+            try:
+                manifest = VideoGenerationManifest.model_validate_json(
+                    path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                manifest = None
+
+            if manifest is not None:
+                signature = _manifest_progress_signature(manifest)
+                if signature != previous:
+                    print("progress:", flush=True)
+                    for shot_id, status, submissions, transport_job_id in signature:
+                        print(
+                            f"  shot={shot_id} status={status} submissions={submissions} "
+                            f"transport_job_id={transport_job_id}",
+                            flush=True,
+                        )
+                    previous = signature
+
+        stop.wait(interval_seconds)
 
 
 def parse_args() -> argparse.Namespace:
@@ -89,11 +137,20 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument("--timeout-seconds", type=float, default=21600.0)
+    parser.add_argument(
+        "--progress-seconds",
+        type=float,
+        default=5.0,
+        help="Local manifest refresh interval while waiting; use 0 to disable progress output.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.progress_seconds < 0:
+        raise SystemExit("--progress-seconds must be >= 0")
+
     environment = _environment()
 
     keyframes = _read_models(args.keyframes, StoryboardKeyframe)
@@ -126,17 +183,35 @@ def main() -> None:
 
     manifest_path = args.output_dir / "video_generation_manifest.json"
     clips_dir = args.output_dir / "video_clips"
-    manifest, clips = run_video_generation(
-        plan,
-        queue=queue,
-        storage=storage,
-        manifest_path=manifest_path,
-        clips_dir=clips_dir,
-        wait=not args.submit_only,
-        retry_terminal=not args.no_retry_terminal,
-        poll_seconds=args.poll_seconds,
-        timeout_seconds=args.timeout_seconds,
-    )
+
+    stop_progress = threading.Event()
+    progress_thread: threading.Thread | None = None
+    if not args.submit_only and args.progress_seconds > 0:
+        progress_thread = threading.Thread(
+            target=_watch_manifest,
+            args=(manifest_path, stop_progress),
+            kwargs={"interval_seconds": args.progress_seconds},
+            daemon=True,
+            name="phase8-manifest-progress",
+        )
+        progress_thread.start()
+
+    try:
+        manifest, clips = run_video_generation(
+            plan,
+            queue=queue,
+            storage=storage,
+            manifest_path=manifest_path,
+            clips_dir=clips_dir,
+            wait=not args.submit_only,
+            retry_terminal=not args.no_retry_terminal,
+            poll_seconds=args.poll_seconds,
+            timeout_seconds=args.timeout_seconds,
+        )
+    finally:
+        if progress_thread is not None:
+            stop_progress.set()
+            progress_thread.join(timeout=max(1.0, args.progress_seconds + 1.0))
 
     print(f"run_fingerprint={manifest.run_fingerprint}")
     for state in manifest.jobs:

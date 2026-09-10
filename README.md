@@ -3,151 +3,98 @@
 Pipeline educativo para generar vídeos cortos verticales a partir de un guion mediante bots
 estructurados, providers desacoplados y workflows reproducibles.
 
-El objetivo principal no es únicamente producir un vídeo, sino aprender una arquitectura de
-producción con contratos pequeños, artefactos persistidos, fan-out/fan-in, procesamiento stateful,
-media providers, GPU remota y composición programática.
+El objetivo no es únicamente producir un vídeo: el proyecto sirve para construir y validar una
+arquitectura de producción con contratos pequeños, artefactos persistidos, fan-out/fan-in,
+procesamiento stateful, media providers, GPU remota y composición programática.
 
 ## Estado
 
-**Fase 7 — Infraestructura GPU y benchmark LTX-2.5.** ✅
+**Fase 8 — Generación de vídeo con LTX-2.5.** ✅
 
-Última fase cerrada: **Fase 7 — Infraestructura GPU**. El smoke y su replay idempotente validaron
-Queue → worker → Supabase → R2. El benchmark real de LTX-2.5 terminó en una RTX 5090 y dejó como
-baseline provisional `fp8-cast` con offload a CPU. El siguiente trabajo es la Fase 8.
+Última fase cerrada: **Fase 8 — Generación de vídeo**. El pipeline ya transforma los keyframes y
+prompts de movimiento de cada shot en clips MP4 reales mediante LTX-2.5 ejecutado directamente desde
+Python/PyTorch sobre un worker RTX 5090 en Salad. La corrida canónica de 8 shots validó fanout,
+resume, replay idempotente, verificación SHA-256 y fan-in a `VideoClip[]`.
 
-La Fase 1 queda conservada como experimento funcional. El pipeline de producción definitivo
-empieza desde un **guion ya terminado**, no desde un tema.
+Siguiente fase: **Fase 9 — Compositor**.
+
+La Fase 1 se conserva como experimento funcional. El pipeline de producción definitivo empieza desde
+un **guion ya terminado**, no desde un tema.
 
 ## Roadmap
 
 1. **Fase 0 — Base del proyecto** ✅
-   - Estructura Python.
-   - Configuración mediante variables de entorno.
-   - Contratos Pydantic.
-   - Tests y Ruff.
-   - Git.
+   - Estructura Python, configuración, contratos Pydantic, tests, Ruff y Git.
 
 2. **Fase 1 — OpenAI + Structured Outputs** ✅
-   - Guionista experimental.
-   - Director experimental.
-   - Provider desacoplado.
-   - Workflow ejecutable con salida JSON.
+   - Guionista y director experimentales.
 
 3. **Fase 1.5 — Refactor de arquitectura** ✅
-   - El guion pasa a ser la entrada canónica de producción.
-   - Bots acotados en lugar de agentes autónomos.
-   - Contratos mínimos: `NarrativeBlock`, `Beat` y `Scene`.
-   - El Director antiguo se mantiene solo como compatibilidad/experimento.
+   - El guion final pasa a ser la entrada canónica.
+   - Bots acotados y contratos narrativos mínimos.
 
 4. **Fase 2 — Narrative planning** ✅
-   - `NarrativeBlockBot`: guion -> bloques narrativos.
-   - `BeatExtractorBot`: bloques -> beats, en paralelo.
-   - `ScenePlannerBot`: beats -> escenas.
-   - IDs asignados por Python.
-   - El modelo decide fronteras; Python reconstruye estructura canónica.
-   - Validaciones contra pérdida, duplicación o reordenación.
+   - `NarrativeBlockBot`, `BeatExtractorBot` y `ScenePlannerBot`.
+   - IDs y reconstrucción estructural controlados por Python.
 
 5. **Fase 3 — Continuidad y shots** ✅
-   - Provider stateful basado en `previous_response_id`.
-   - `ContinuityBot`: procesamiento serial bloque a bloque.
-   - Registro canónico de personajes, grupos, lugares y objetos físicos.
-   - IDs de entidad asignados por Python.
-   - `ShotPlannerBot`: planificación serial escena a escena.
-   - Cobertura exacta y ordenada de beats en los shots.
+   - `ContinuityBot` stateful y `ShotPlannerBot` serial por escena.
+   - Registro canónico de entidades físicas y cobertura exacta de beats.
 
 6. **Fase 4 — Referencias visuales** ✅
-   - `VisualReference = { entity_id, prompt }`.
-   - `VisualReferenceBot`: diseño visual canónico por entidad.
-   - Contexto derivado de narrativa + continuidad.
-   - `ImageProvider` desacoplado del dominio.
-   - `ReferenceAsset = { entity_id, uri }`.
-   - Assets PNG con nombres deterministas.
+   - `VisualReferenceBot`, `ReferenceAsset[]` y generación condicionada por identidad.
 
 7. **Fase 5 — Audio y timing** ✅
-   - Narración TTS continua desde `SourceScript.text`.
-   - WAV validado y duración medida desde PCM real.
-   - Alignment por palabra.
-   - `BeatTimingBot`: modelo decide fronteras de palabra.
-   - `BeatTiming[]` reconstruido por Python.
-   - `ShotTiming[]` derivado sin LLM.
-   - Timeline continua de principio a fin.
+   - Narración TTS continua, alignment por palabra, `BeatTiming[]` y `ShotTiming[]`.
 
 8. **Fase 6 — Storyboard y planificación visual por shot** ✅
-   - `StoryboardFrame = { shot_id, prompt }`.
-   - Prompts seriales por escena usando acción, referencias y duración real.
-   - `StoryboardKeyframe = { shot_id, uri }`.
-   - Generación vertical condicionada por referencias visuales canónicas.
-   - Un keyframe independiente por shot para evitar propagación de errores.
-   - `StoryboardGrid = { scene_id, uri }`.
-   - Grids por escena compuestos localmente con Pillow, sin IA.
-   - Validación real de 8 keyframes y 3 grids con el ejemplo de samuráis.
+   - `StoryboardFrame[]`, keyframes independientes y grids deterministas por escena.
 
 9. **Fase 7 — Infraestructura GPU** ✅
-   - Runner reproducible y benchmark real de LTX-2.5 completado en RTX 5090.
-   - Worker HTTP stateless e idempotente con contratos versionados.
-   - Cloudflare R2 para inputs/outputs con SHA-256 y reconciliación.
-   - Supabase/Postgres para estado transaccional, leases y reintentos.
-   - Docker con Salad Job Queue Worker `v0.7.0` fijado por checksum.
-   - Smoke cloud y replay idempotente completados en Salad con un único intento.
-   - Manifiesto con readiness válido y exigencia de imagen `@sha256:`.
-   - Baseline provisional: RTX 5090, `fp8-cast`, offload a CPU, 24.5 GiB de pico de VRAM.
+   - Benchmark real LTX-2.5 en RTX 5090.
+   - Worker HTTP idempotente, Cloudflare R2, Supabase/Postgres y Salad Job Queue.
+   - Imagen digest-pinned y baseline `fp8-cast` + CPU offload.
 
-10. **Fase 8 — Generación de vídeo**
-    - LTX-2.5 ejecutado directamente desde Python/PyTorch.
-    - Jobs reanudables e idempotentes.
-    - Sin dependencia de ComfyUI.
+10. **Fase 8 — Generación de vídeo** ✅
+    - Motion prompts separados de la composición estática.
+    - Adapter directo LTX-2.5 Python/PyTorch; sin ComfyUI.
+    - Worker GPU real con runtime residente.
+    - Fanout completo, resume desde manifiesto y replay idempotente.
+    - 8 clips H.264 reales validados a 768×1280, 24 fps.
+    - Fan-in canónico a `VideoClip[]` con tamaño y SHA-256 verificados.
 
 11. **Fase 9 — Compositor**
     - Remotion para timeline, transiciones, captions, overlays y motion graphics.
-    - FFmpeg/ffprobe para codecs, audio, probing, transcoding y muxing.
+    - FFmpeg/ffprobe para probing, transcoding, audio y muxing final.
 
 12. **Fase 10 — Agentes de verificación**
     - Consistencia narrativa y visual.
-    - Verificación técnica.
-    - Regeneración selectiva.
+    - Verificación técnica y regeneración selectiva.
 
 La arquitectura detallada está en [`docs/architecture.md`](docs/architecture.md).
+El cierre técnico completo de Fase 8 está en [`docs/phase8-closure.md`](docs/phase8-closure.md).
 
 ## Requisitos
 
 - Python 3.12+
 - Git
 - Cuenta/API de OpenAI para las fases que usan modelos hospedados.
+- Pillow para composición local de storyboard grids.
+- FFmpeg/ffprobe para validación de media y, desde Fase 9, composición/muxing.
+- Docker para los workers GPU.
+- Acceso a Salad, Cloudflare R2 y Supabase/Postgres para la ruta cloud.
+- Node.js será necesario en Fase 9 para Remotion.
 
-La Fase 6.3 añade Pillow como dependencia de runtime para componer storyboard grids localmente.
-
-Para la Fase 7.1:
-
-- Entorno Linux con GPU NVIDIA y `nvidia-smi`.
-- Instalación oficial de LTX-2.5 y sus checkpoints en el nodo de benchmark.
-
-Para fases posteriores:
-
-- FFmpeg.
-- Node.js para Remotion.
-- Docker.
-- Acceso a GPU remota.
-
-## Instalación local
-
-Con `uv`:
+Instalación local con `uv`:
 
 ```bash
 uv sync --extra dev
 ```
 
-Para trabajar con la infraestructura de Fase 7:
+Para infraestructura GPU:
 
 ```bash
 uv sync --extra dev --extra gpu
-```
-
-O con `pip`:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
 ```
 
 En Windows PowerShell:
@@ -158,16 +105,15 @@ python -m pytest
 python -m ruff check .
 ```
 
-Copia `.env.example` a `.env` y añade ahí tus claves reales.
-
 ## Seguridad y datos locales
 
 - Nunca subas `.env` al repositorio.
-- `.env` y `.env.*` están ignorados por Git.
-- Solo `.env.example` se versiona y debe contener valores vacíos o de ejemplo.
-- Las claves reales deben permanecer únicamente en local o en un gestor de secretos.
-- Los guiones colocados en `data/input/` se ignoran y no se versionan.
-- Los artefactos de `data/output/` y `data/tmp/` tampoco se versionan.
+- `.env` y `.env.*` están ignorados; solo `.env.example` se versiona.
+- Claves de Salad, R2, Postgres, Hugging Face y OpenAI deben vivir únicamente en entorno local o
+  gestores de secretos.
+- Los guiones de `data/input/` y artefactos de `data/output/`/`data/tmp/` no se versionan.
+- Los scripts PowerShell piden secretos mediante `Read-Host -AsSecureString` cuando no existen ya en
+  el entorno del proceso.
 
 ## Pipeline de producción
 
@@ -178,7 +124,7 @@ SourceScript
   text
 ```
 
-Jerarquía narrativa:
+Planificación narrativa:
 
 ```text
 SourceScript
@@ -216,7 +162,7 @@ BeatTiming[]
 ShotTiming[]
 ```
 
-Storyboard implementado:
+Storyboard:
 
 ```text
 Shot[] + ShotTiming[] + VisualReference[]
@@ -232,55 +178,66 @@ Scene[] + Shot[] + StoryboardKeyframe[]
             StoryboardGrid[]
 ```
 
+Vídeo generado:
+
+```text
+StoryboardKeyframe[] + Shot[] + ShotTiming[]
+                         ↓
+                    VideoPrompt[]
+                         ↓
+       deterministic GPUJobRequest[]
+                         ↓
+             Salad Job Queue + R2
+                         ↓
+            direct LTX-2.5 worker
+                         ↓
+                    VideoClip[]
+```
+
+Handoff previsto a Fase 9:
+
+```text
+VideoClip[] + ShotTiming[] + NarrationAudio + NarrationWord[]
+                              ↓
+                       compositor final
+```
+
 ## Contratos canónicos
 
-Los contratos se mantienen deliberadamente pequeños:
+Los contratos de dominio se mantienen deliberadamente pequeños:
 
 ```text
-NarrativeBlock    = { id, text }
-Beat              = { id, block_id, action }
-Scene             = { id, beat_ids }
-ContinuityEntity  = { id, kind, name, description }
-BlockContinuity   = { block_id, entity_ids }
-Shot              = { id, scene_id, beat_ids, entity_ids, action }
-VisualReference   = { entity_id, prompt }
-ReferenceAsset    = { entity_id, uri }
-NarrationAudio    = { uri, duration_seconds }
-NarrationWord     = { id, text, start_seconds, end_seconds }
-BeatTiming        = { beat_id, start_word_id, end_word_id, start_seconds, end_seconds }
-ShotTiming        = { shot_id, start_seconds, end_seconds }
-StoryboardFrame   = { shot_id, prompt }
+NarrativeBlock     = { id, text }
+Beat               = { id, block_id, action }
+Scene              = { id, beat_ids }
+ContinuityEntity   = { id, kind, name, description }
+BlockContinuity    = { block_id, entity_ids }
+Shot               = { id, scene_id, beat_ids, entity_ids, action }
+VisualReference    = { entity_id, prompt }
+ReferenceAsset     = { entity_id, uri }
+NarrationAudio     = { uri, duration_seconds }
+NarrationWord      = { id, text, start_seconds, end_seconds }
+BeatTiming         = { beat_id, start_word_id, end_word_id, start_seconds, end_seconds }
+ShotTiming         = { shot_id, start_seconds, end_seconds }
+StoryboardFrame    = { shot_id, prompt }
 StoryboardKeyframe = { shot_id, uri }
-StoryboardGrid    = { scene_id, uri }
+StoryboardGrid     = { scene_id, uri }
+VideoPrompt        = { shot_id, prompt }
+VideoClip          = { shot_id, uri }
 ```
 
-Los parámetros de provider, modelo, calidad, resolución y composición no se duplican en los
-contratos persistidos salvo que sean necesarios para el siguiente stage.
+Queue IDs, hashes, retries, provider parameters y respuestas de GPU pertenecen al estado operativo,
+no al contrato audiovisual final.
 
-La Fase 7.1 añade contratos de evidencia de infraestructura separados del dominio audiovisual:
+## Fases 2–6
 
-```text
-GPUDeviceProfile    = { index, name, memory_total_mib }
-LTXBenchmarkProfile = { label, ltx_source, pipeline, quantization, offload, dimensions, runs }
-LTXBenchmarkSample  = { run_index, duration_seconds, peak_gpu_memory_mib, output metadata }
-LTXBenchmarkReport  = { profile, command, devices, samples, aggregate metrics }
-```
-
-## Fase 2 — Narrative planning
-
-Guarda un guion final en un archivo local, por ejemplo:
-
-```text
-data/input/script.txt
-```
-
-Ejecuta:
+### Fase 2 — Narrative planning
 
 ```bash
 python scripts/run_phase2.py data/input/script.txt
 ```
 
-Salida:
+Salida principal:
 
 ```text
 data/output/phase2/
@@ -290,23 +247,10 @@ data/output/phase2/
 └── scenes.json
 ```
 
-`NarrativeBlockBot` decide fronteras y Python reconstruye texto inmutable. `BeatExtractorBot` se
-ejecuta en paralelo. `ScenePlannerBot` agrupa beats consecutivos después de que Python haya
-restaurado IDs globales deterministas.
-
-Validación real: 1 bloque narrativo, 11 beats y 3 escenas contiguas.
-
-## Fase 3 — Continuidad y shots
-
-Continuidad:
+### Fase 3 — Continuidad y shots
 
 ```bash
 python scripts/run_phase3.py
-```
-
-Shots:
-
-```bash
 python scripts/run_phase3_shots.py
 ```
 
@@ -319,42 +263,14 @@ data/output/phase3/
 └── shots.json
 ```
 
-`ContinuityBot` y `ShotPlannerBot` usan cadenas stateful separadas. La continuidad entre stages se
-transfiere mediante IDs y JSON canónicos, no mediante memoria oculta compartida.
-
-La validación histórica de Fase 3 produjo 7 shots; una regeneración posterior produjo 8. Los stages
-downstream no dependen de una cantidad fija de shots.
-
-## Fase 4 — Referencias visuales
-
-Prompts canónicos:
+### Fase 4 — Referencias visuales
 
 ```bash
 python scripts/run_phase4.py
-```
-
-Assets:
-
-```bash
 python scripts/run_phase4_assets.py --quality medium
 ```
 
-Salida:
-
-```text
-data/output/phase4/
-├── visual_references.json
-├── reference_assets.json
-└── reference_assets/
-    ├── group_001.png
-    ├── group_002.png
-    └── location_001.png
-```
-
-La validación real produjo tres referencias reutilizables y tres PNG coherentes con el Japón
-feudal del ejemplo.
-
-## Fase 5 — Audio y timing
+### Fase 5 — Audio y timing
 
 ```bash
 python scripts/run_phase5_audio.py
@@ -363,221 +279,133 @@ python scripts/run_phase5_beat_timing.py
 python scripts/run_phase5_shot_timing.py
 ```
 
-Salida:
+La validación real produjo narración canónica de 45.0 s, 105 palabras alineadas, 11 beats y 8 shots
+cubriendo la timeline completa sin huecos ni solapes.
 
-```text
-data/output/phase5/
-├── narration.wav
-├── narration.json
-├── narration_words.json
-├── beat_timings.json
-└── shot_timings.json
-```
-
-Validación real:
-
-- WAV canónico de **45.0 s**.
-- **105** palabras alineadas.
-- **11** beats temporizados cubriendo `0.0–45.0 s`.
-- **8** shots temporizados cubriendo `0.0–45.0 s` sin huecos ni solapes.
-
-## Fase 6 — Storyboard y planificación visual
-
-### 6.1 Prompts de storyboard
+### Fase 6 — Storyboard
 
 ```bash
 python scripts/run_phase6_storyboard.py
-```
-
-Inputs principales:
-
-```text
-Shot[]
-ShotTiming[]
-VisualReference[]
-```
-
-`StoryboardFrameBot` procesa los shots en orden dentro de cada escena. Recibe duración real y las
-referencias canónicas de las entidades del shot. El prompt anterior se usa únicamente como contexto
-de continuidad dentro de la misma escena; al cambiar de escena se reinicia.
-
-El modelo decide composición estática, pero el output persistido sigue siendo mínimo:
-
-```text
-StoryboardFrame = { shot_id, prompt }
-```
-
-Las instrucciones obligan a representar el núcleo de `Shot.action`, evitan que continuidad se
-convierta en repetición y traducen ideas abstractas como legado o memoria a evidencia visual
-concreta.
-
-### 6.2 Keyframes reales
-
-```bash
 python scripts/run_phase6_keyframes.py
-```
-
-Por defecto se generan PNG verticales de `1024x1536`.
-
-Cada shot recibe únicamente los `ReferenceAsset` correspondientes a sus `entity_ids`. Cuando hay
-referencias, `OpenAIImageProvider` usa generación condicionada por imágenes; cuando no las hay,
-recurre a generación desde texto.
-
-Los keyframes se generan de forma independiente y concurrente. No se encadena el frame anterior
-como imagen de entrada para evitar propagar errores visuales entre shots.
-
-Persistencia:
-
-```text
-StoryboardKeyframe = { shot_id, uri }
-```
-
-Salida:
-
-```text
-data/output/phase6/
-├── storyboard_frames.json
-├── storyboard_keyframes.json
-└── storyboard_keyframes/
-    ├── shot_001.png
-    ├── shot_002.png
-    ├── ...
-    └── shot_008.png
-```
-
-### 6.3 Storyboard grids por escena
-
-```bash
 python scripts/run_phase6_storyboard_grids.py
 ```
 
-Esta etapa **no usa IA ni API externa**. Pillow agrupa los keyframes por `Shot.scene_id`, conserva
-el orden, mantiene el aspect ratio y compone hojas de contacto adaptativas de hasta tres columnas.
-
-Persistencia:
-
-```text
-StoryboardGrid = { scene_id, uri }
-```
-
-Salida completa de Fase 6:
-
-```text
-data/output/phase6/
-├── storyboard_frames.json
-├── storyboard_keyframes.json
-├── storyboard_keyframes/
-│   ├── shot_001.png
-│   ├── ...
-│   └── shot_008.png
-├── storyboard_grids.json
-└── storyboard_grids/
-    ├── scene_001.png
-    ├── scene_002.png
-    └── scene_003.png
-```
-
-Validación real con el guion de samuráis:
-
-- **8** `StoryboardFrame` revisados semánticamente.
-- **8** keyframes verticales de `1024x1536` generados con referencias canónicas.
-- Identidad visual consistente sin forzar la misma composición en todos los shots.
-- El shot final traduce el legado a armadura, katana y representación pictórica en vez de repetir
-  una pose de guerreros vivos.
-- **3** grids deterministas: escena 1 con shots 1–4, escena 2 con shots 5–6 y escena 3 con shots 7–8.
-- Grids sin recorte de keyframes, con orden y etiquetas verificables.
-
-Con esta validación, **Fase 6 queda cerrada**.
+La validación real produjo 8 keyframes verticales y 3 grids de escena.
 
 ## Fase 7 — Infraestructura GPU
 
-### 7.1 Matriz reproducible de LTX-2.5
-
-La matriz canónica se ejecuta sobre cada GPU candidata con tres perfiles constantes:
-
-```powershell
-python scripts/run_phase7_benchmark_matrix.py `
-  --hardware-label rtx4090 `
-  --prompt "A cinematic historical shot with deliberate subject motion." `
-  --conditioning-image data/output/phase6/storyboard_keyframes/shot_001.png `
-  --seed 42 `
-  --width 768 --height 1280 --num-frames 121 --fps 24 `
-  --warmup-runs 1 --measured-runs 3 `
-  -- `
-  python -m ltx_pipelines.distilled ... `
-  --prompt "{prompt}" --image "{conditioning_image}" 0 1.0 --seed "{seed}" `
-  "{quantization_args}" `
-  "{offload_args}" `
-  --output-path "{output}"
-```
-
-El runner separa warmups, mide VRAM con `nvidia-smi`, valida cada MP4 y persiste hashes, tiempos,
-throughput y pico de memoria. Genera un JSON por caso y un `matrix.json` por hardware. Después:
-
-```powershell
-python scripts/summarize_phase7_benchmarks.py `
-  data/output/phase7/benchmarks/l40s/matrix.json `
-  data/output/phase7/benchmarks/rtx4090/matrix.json `
-  data/output/phase7/benchmarks/rtx5090/matrix.json
-```
-
-El comparador rechaza workloads distintos y registra el SHA-256 de cada matriz fuente. La guía de
-instalación de LTX, descarga de checkpoints y comandos completos está en
-[`docs/phase7-benchmark.md`](docs/phase7-benchmark.md).
-
-La ejecución real de cierre produjo tres muestras válidas en RTX 5090: media de **194.93 s** por
-clip, **0.621 FPS end-to-end** y **24,513 MiB** de pico de VRAM para 121 frames a 768×1280. La
-evidencia completa y sus hashes están en [`docs/phase7-closure.md`](docs/phase7-closure.md).
-
-### 7.2 Worker remoto idempotente
-
-La infraestructura desplegable mantiene este boundary:
+La infraestructura cloud conserva este boundary:
 
 ```text
 orchestrator
     ↓
 Salad Job Queue
     ↓
-Docker + Salad worker v0.7.0
-    ↓
-HTTP POST /jobs
+Docker worker
     ↙                 ↘
-R2 GET inputs      R2 PUT outputs
-    ↘                 ↙
-Supabase/Postgres leases + state
+R2 inputs/outputs   Supabase/Postgres leases + state
 ```
 
-El payload incluye un `job_id` de aplicación, claves R2 deterministas y SHA-256. Postgres une de
-forma inmutable el ID al fingerprint del request. Un heartbeat renueva el lease y el worker
-reconcilia el objeto R2 si un nodo cae entre upload y commit.
+El benchmark real de cierre en RTX 5090 obtuvo una media de **194.93 s** para 121 frames a
+768×1280, con **24,513 MiB** de pico de VRAM usando `fp8-cast` + CPU offload.
 
-El smoke real de `infrastructure.copy` validó Salad Queue → worker → Supabase → R2 con estado
-`succeeded`, un intento y SHA-256 idéntico. `scripts/replay_phase7_smoke.py` resubmitió el mismo
-request y confirmó `replayed=true`, el mismo artefacto y `attempt_count=1`.
+Documentación:
 
-El generador de Container Group incluye `readiness_probe.http.headers=[]` y rechaza etiquetas
-mutables salvo un override explícito de depuración. La imagen de cierre debe desplegarse como
-`repository@sha256:<digest>`.
+- [`docs/phase7-benchmark.md`](docs/phase7-benchmark.md)
+- [`docs/phase7-deployment.md`](docs/phase7-deployment.md)
+- [`docs/phase7-closure.md`](docs/phase7-closure.md)
 
-La ejecución LTX de producción pertenece a Fase 8; la medición real de LTX que decide el hardware
-pertenece a esta Fase 7.
+## Fase 8 — Generación de vídeo
 
-Guías completas:
+### 8.1 Motion prompts
 
-- [Benchmark y matriz](docs/phase7-benchmark.md)
-- [Salad, Docker, Supabase, R2, replay y diagnóstico](docs/phase7-deployment.md)
+`VideoPromptBot` transforma `Shot[]`, `ShotTiming[]` y contexto visual en una instrucción de movimiento
+por shot sin modificar el keyframe canónico.
 
-La Fase 7 queda cerrada con benchmark real, replay idempotente, artefactos verificados y los dos
-Container Groups detenidos. La Fase 8 reutiliza este boundary para registrar el runner LTX-2.5 de
-producción.
+```text
+VideoPrompt = { shot_id, prompt }
+```
+
+### 8.2 Adapter directo LTX-2.5
+
+El task de producción es:
+
+```text
+video.ltx25.generate
+```
+
+Perfil validado:
+
+```text
+ltx25-distilled-a95ab856-fp8cpu-v1
+```
+
+Las duraciones de `ShotTiming` se redondean al siguiente frame count válido de LTX (`8k + 1`) sin
+cambiar la timeline canónica.
+
+### 8.3 Worker GPU real
+
+El worker conserva el contrato de Fase 7 y añade LTX como task real. El pipeline se carga una vez y
+permanece residente mientras la réplica consume jobs secuencialmente.
+
+La validación real demostró inferencia, replay idempotente y varios clips generados sobre la misma
+instancia caliente.
+
+### 8.4 Fanout, resume y fan-in
+
+```powershell
+# Con el worker detenido: fanout completo.
+python scripts\run_phase8_videos.py --submit-only
+
+# Habilitar grupo autoscalado existente.
+.\scripts\start_phase8_autoscaled.ps1
+
+# Resume/poll/fan-in. Muestra cambios de estado del manifiesto en vivo.
+python scripts\run_phase8_videos.py
+
+# Apagar tras completar el batch.
+.\scripts\manage_phase8_worker.ps1 -Action Stop
+```
+
+Un manifiesto atómico conserva application job ID, request SHA, transport ID, estado, número de
+submissions y respuesta validada. Un rerun de un manifest completo no consulta ni resubmite los
+jobs ya exitosos.
+
+La corrida real de cierre produjo 8 clips H.264 a 768×1280 y 24 fps. Los shots 1, 5 y 8 fueron
+replays de jobs previos; los demás realizaron inferencia nueva. Una segunda ejecución terminó con
+cero nuevas submissions y cero transport IDs nuevos.
+
+Salida canónica:
+
+```text
+data/output/phase8/
+├── video_prompts.json
+├── video_generation_manifest.json
+├── video_clips.json
+└── video_clips/
+    ├── shot_001.mp4
+    ├── ...
+    └── shot_008.mp4
+```
+
+Documentación:
+
+- [`docs/phase8-video-prompts.md`](docs/phase8-video-prompts.md)
+- [`docs/phase8-ltx-adapter.md`](docs/phase8-ltx-adapter.md)
+- [`docs/phase8-gpu-worker.md`](docs/phase8-gpu-worker.md)
+- [`docs/phase8-video-generation.md`](docs/phase8-video-generation.md)
+- [`docs/phase8.4-validation-results.md`](docs/phase8.4-validation-results.md)
+- [`docs/phase8-closure.md`](docs/phase8-closure.md)
+
+Con esta validación, **Fase 8 queda cerrada**.
 
 ## Compatibilidad de Fase 1
 
-La prueba histórica de Fase 1 sigue disponible:
+La prueba histórica sigue disponible:
 
 ```bash
 python scripts/run_phase1.py "La historia de los samuráis"
 ```
 
-`DirectorAgent` y `StoryboardScene` permanecen como experimento/regresión y no forman parte del
-pipeline de producción actual.
+`DirectorAgent` y `StoryboardScene` permanecen únicamente como experimento/regresión y no forman
+parte del pipeline de producción actual.

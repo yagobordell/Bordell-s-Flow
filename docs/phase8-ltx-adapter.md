@@ -1,6 +1,6 @@
 # Fase 8.2 — adaptador directo LTX-2.5
 
-Estado: **cerrada en código y CI; la inferencia GPU real se valida al activar el runtime en Fase 8.3**.
+Estado: **cerrada; el adapter quedó validado posteriormente con inferencia GPU real en Fases 8.3 y 8.4**.
 
 ## Objetivo
 
@@ -139,25 +139,27 @@ El adaptador llama a `encode_video(..., audio=None, ...)`, por lo que el artefac
 MP4 deliberadamente sin pista de audio. `data/output/phase5/narration.wav` sigue siendo la fuente
 canónica y se muxeará en la fase de composición.
 
-## Separación con Fase 8.3
+## Relación con Fases 8.3 y 8.4
 
-Esta subfase no modifica todavía `gpu/runtime.py` ni la imagen de producción. El runtime actual
-sigue registrando `TaskRunnerRegistry.phase7()`.
+8.2 cerró primero el contrato y la implementación del adapter sin activar todavía el runtime GPU de
+producción. Fase 8.3 añadió la imagen de worker real, descarga de checkpoints, readiness y registro de
+`LTXVideoTaskRunner` mediante `TaskRunnerRegistry.phase8(...)`.
 
-Fase 8.3 debe:
+La validación cloud posterior confirmó:
 
-1. construir una imagen GPU que combine el worker idempotente de Fase 7 con el runtime Torch/LTX
-   validado por el benchmark;
-2. resolver/download de checkpoints en el container;
-3. instanciar `DirectLTX25Backend` con el `model_root` real;
-4. registrar `LTXVideoTaskRunner` mediante `TaskRunnerRegistry.phase8(...)`;
-5. ampliar readiness para CUDA, modelos y pipeline;
-6. validar una inferencia real y después varias inferencias secuenciales sin crecimiento anómalo de
-   VRAM.
+1. construcción correcta de la imagen GPU con el runtime Torch/LTX;
+2. descarga y validación de los cinco checkpoints;
+3. preparación de `DirectLTX25Backend` con el `model_root` real;
+4. registro efectivo de `video.ltx25.generate` en el worker de producción;
+5. readiness únicamente tras CUDA, modelos, storage/state y pipeline residente;
+6. inferencia real en RTX 5090;
+7. varias inferencias secuenciales sobre la misma instancia caliente;
+8. replay idempotente de application jobs ya completados;
+9. reutilización del mismo adapter en el fanout completo de 8 shots de Fase 8.4.
 
 ## Cierre de 8.2
 
-La validación de 2026-09-04 confirmó:
+La validación inicial de 2026-09-04 confirmó:
 
 - Ruff aprobado en CI;
 - suite pytest completa aprobada sin requerir Torch/LTX en el entorno normal;
@@ -165,11 +167,10 @@ La validación de 2026-09-04 confirmó:
 - contrato `video.ltx25.generate` validado por tests;
 - reutilización de una sola instancia de pipeline en generaciones consecutivas;
 - encoding del artefacto con `audio=None`;
-- carga lazy de dependencias Torch/LTX;
-- `gpu/runtime.py` permanece sin activar todavía el task GPU real.
+- carga lazy de dependencias Torch/LTX.
 
-La inferencia real sobre RTX 5090 no se repite dentro de esta subfase: el adaptador reutiliza la
-baseline ya medida en Fase 7 y su primera ejecución end-to-end pertenece al gate de Fase 8.3, cuando
-exista la imagen de worker GPU de producción.
+La validación real sobre RTX 5090 se completó posteriormente en Fase 8.3 y quedó reutilizada a escala
+de storyboard completo en Fase 8.4. Por tanto ya no existe ningún gate GPU pendiente para esta
+subfase.
 
-**Fase 8.2 cerrada. El siguiente paso es Fase 8.3: worker GPU de producción con LTX-2.5 residente.**
+**Fase 8.2 cerrada y validada dentro del cierre global de Fase 8.**

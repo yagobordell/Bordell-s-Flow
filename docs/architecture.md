@@ -1,757 +1,597 @@
-# Production Architecture
+# AI Video Factory — Architecture
 
-## Core decision
+This document describes the production architecture after closure of Phase 8. Historical Phase 1
+agents remain in the repository as experiments/regression fixtures; the production pipeline starts
+from a completed source script.
 
-The production pipeline starts from a **finished script**. Script generation is optional and lives
-outside the core production flow.
+## Architectural principles
 
-```text
-Optional topic -> ScriptWriterAgent -> generated Script
-                                  \
-                                   -> SourceScript -> production pipeline
-User-written script ---------------/
-```
+The project follows a small set of explicit rules:
 
-`SourceScript` is deliberately minimal and contains only the script text.
+1. **Canonical domain contracts stay small.** Persist relationships, IDs and media URIs; keep model
+   parameters and provider response objects out of audiovisual domain models unless a downstream
+   phase needs them.
+2. **Models decide semantic boundaries; Python owns invariants.** LLMs may decide grouping,
+   descriptions or prompts, while Python assigns IDs, reconstructs immutable text, checks ordering
+   and derives deterministic timelines.
+3. **Provider state is explicit.** Stateful model chains use provider-issued response IDs; cloud GPU
+   jobs use explicit manifests, transport IDs and transactional state.
+4. **Generated media is persisted as artifacts, not hidden state.** Downstream stages consume local
+   or object-storage URIs and hashes rather than opaque provider handles.
+5. **Cloud transport is not domain identity.** Salad queue job IDs are replaceable transport IDs;
+   application job IDs remain deterministic across retries/replays.
+6. **The narration timeline is canonical.** GPU frame rounding may produce slightly longer clips, but
+   it never rewrites `ShotTiming`.
+7. **Expensive stages must be resumable and selectively regenerable.** Completed work is reused only
+   after identity/hash validation.
 
-## Bots before agents
-
-Production planning uses bounded bots: one stable instruction set, one well-defined task and one
-Structured Output contract. Bots do not decide which tool to call or autonomously restructure the
-workflow.
-
-Autonomous agents are reserved for later verification stages, where a verifier may inspect an
-artifact and request selective regeneration.
-
-## Ownership principle
-
-The project repeatedly applies the same rule:
-
-> The model owns semantic decisions. Python owns canonical identity, ordering, reconstruction,
-> validation and persistence.
-
-Examples:
-
-- narrative segmentation: model chooses boundaries, Python reconstructs original text;
-- beat timing: model chooses ending word IDs, Python reconstructs timestamps;
-- storyboard prompts: model chooses a visual composition, Python keeps the canonical `shot_id`;
-- grids: no model is needed because grouping already exists in `Shot.scene_id`.
-
-This keeps model output small and makes downstream stages auditable.
-
-## Current production hierarchy
-
-### Narrative hierarchy
+## Production pipeline
 
 ```text
 SourceScript
-  -> NarrativeBlock[]
-      -> Beat[]
-          -> Scene[]
-              -> Shot[]
+   |
+   v
+NarrativeBlock[]
+   |
+   v
+Beat[]
+   |
+   v
+Scene[]
+   |
+   v
+Shot[]
+   |
+   +---------------------------+
+   |                           |
+   v                           v
+ContinuityEntity[]       NarrationAudio
+   |                           |
+   v                           v
+VisualReference[]        NarrationWord[]
+   |                           |
+   v                           v
+ReferenceAsset[]          BeatTiming[]
+   |                           |
+   |                           v
+   |                      ShotTiming[]
+   |                           |
+   +-------------+-------------+
+                 |
+                 v
+          StoryboardFrame[]
+                 |
+                 v
+        StoryboardKeyframe[]
+                 |
+                 +-------------------+
+                 |                   |
+                 v                   v
+          StoryboardGrid[]      VideoPrompt[]
+                                     |
+                                     v
+                              GPUJobRequest[]
+                                     |
+                                     v
+                           Salad + GPU worker
+                                     |
+                                     v
+                                VideoClip[]
+                                     |
+                                     v
+                         Phase 9 compositor
 ```
 
-### Continuity hierarchy
+## Canonical domain contracts
+
+```text
+SourceScript        = { text }
+NarrativeBlock      = { id, text }
+Beat                = { id, block_id, action }
+Scene               = { id, beat_ids }
+ContinuityEntity    = { id, kind, name, description }
+BlockContinuity     = { block_id, entity_ids }
+Shot                = { id, scene_id, beat_ids, entity_ids, action }
+VisualReference     = { entity_id, prompt }
+ReferenceAsset      = { entity_id, uri }
+NarrationAudio      = { uri, duration_seconds }
+NarrationWord       = { id, text, start_seconds, end_seconds }
+BeatTiming          = { beat_id, start_word_id, end_word_id, start_seconds, end_seconds }
+ShotTiming          = { shot_id, start_seconds, end_seconds }
+StoryboardFrame     = { shot_id, prompt }
+StoryboardKeyframe  = { shot_id, uri }
+StoryboardGrid      = { scene_id, uri }
+VideoPrompt         = { shot_id, prompt }
+VideoClip           = { shot_id, uri }
+```
+
+Operational contracts such as `GPUJobRequest`, `GPUJobResponse`, queue snapshots, manifests, leases,
+object metadata and benchmark reports are intentionally separate from these audiovisual contracts.
+
+## Phase 2 — Narrative planning
+
+Production begins from immutable `SourceScript.text`.
+
+```text
+SourceScript
+   |
+   v
+NarrativeBlockBot
+   |
+   v
+NarrativeBlock[]
+   |
+   +--> BeatExtractorBot (parallel per block)
+   |         |
+   |         v
+   |       Beat[]
+   |         |
+   +---------+
+             |
+             v
+      ScenePlannerBot
+             |
+             v
+          Scene[]
+```
+
+The model chooses narrative and beat boundaries. Python reconstructs exact source text, assigns IDs,
+restores global ordering after parallel work and validates coverage.
+
+## Phase 3 — Continuity and shots
+
+`ContinuityBot` runs serially across narrative blocks using a provider-managed state chain. It emits
+stable physical entities and block/entity relationships. IDs are assigned by Python.
+
+`ShotPlannerBot` runs serially by scene and consumes canonical continuity IDs. Python validates exact
+beat coverage and preserves scene/shot order.
+
+Provider state is never treated as canonical project memory. The handoff between stages is persisted
+JSON.
+
+## Phase 4 — Visual references
+
+`VisualReferenceBot` creates one reusable identity/environment description per continuity entity.
+Python applies entity-kind templates and sends the prompt to an image provider.
 
 ```text
 ContinuityEntity[]
-  -> VisualReference[]
-      -> ReferenceAsset[]
+       |
+       v
+VisualReference[]
+       |
+       v
+ReferenceAsset[] + PNG
 ```
 
-### Temporal hierarchy
+`ReferenceAsset.uri` is the persisted boundary. Raw image-provider responses and binary payloads are
+not domain state.
+
+## Phase 5 — Audio and timing
+
+Narration is generated as one continuous audio asset to preserve prosody.
 
 ```text
 SourceScript.text
-  -> NarrationAudio
-      -> NarrationWord[]
-          -> BeatTiming[]
-              -> ShotTiming[]
-```
-
-### Storyboard hierarchy
-
-```text
-Shot[] + ShotTiming[] + VisualReference[]
-                  -> StoryboardFrame[]
-
-StoryboardFrame[] + Shot[] + ReferenceAsset[]
-                  -> StoryboardKeyframe[]
-
-Scene[] + Shot[] + StoryboardKeyframe[]
-                  -> StoryboardGrid[]
-```
-
-## Canonical contracts
-
-Definitions:
-
-- **NarrativeBlock**: contiguous semantic section of the immutable source script.
-- **Beat**: one visualizable action, change or idea belonging to one narrative block.
-- **Scene**: ordered grouping of beat IDs.
-- **Shot**: minimal audiovisual unit planned from consecutive beats inside one scene.
-- **ContinuityEntity**: recurring visual identity tracked across narrative context.
-- **VisualReference**: provider-neutral canonical visual description for one entity.
-- **ReferenceAsset**: persisted reference-image URI bound to one entity.
-- **NarrationAudio**: canonical narration URI plus measured playback duration.
-- **NarrationWord**: recognized word and timestamps used only as timing evidence.
-- **BeatTiming**: canonical narration interval assigned to one beat.
-- **ShotTiming**: deterministic projection of beat timing onto one shot.
-- **StoryboardFrame**: provider-neutral still-image prompt for one canonical shot.
-- **StoryboardKeyframe**: persisted still-image URI bound to one canonical shot.
-- **StoryboardGrid**: persisted scene-level review grid URI.
-- **GPUDeviceProfile**: immutable GPU identity and total VRAM observed before a benchmark.
-- **LTXBenchmarkProfile**: one reproducible model, pipeline, shape and runtime configuration.
-- **LTXBenchmarkSample**: one measured run with duration, peak VRAM and output identity.
-- **LTXBenchmarkReport**: hardware, sanitized command, samples and aggregate benchmark evidence.
-
-The contracts remain intentionally small:
-
-```text
-NarrativeBlock     = { id, text }
-Beat               = { id, block_id, action }
-Scene              = { id, beat_ids }
-ContinuityEntity   = { id, kind, name, description }
-BlockContinuity    = { block_id, entity_ids }
-Shot               = { id, scene_id, beat_ids, entity_ids, action }
-VisualReference    = { entity_id, prompt }
-ReferenceAsset     = { entity_id, uri }
-NarrationAudio     = { uri, duration_seconds }
-NarrationWord      = { id, text, start_seconds, end_seconds }
-BeatTiming         = { beat_id, start_word_id, end_word_id, start_seconds, end_seconds }
-ShotTiming         = { shot_id, start_seconds, end_seconds }
-StoryboardFrame    = { shot_id, prompt }
-StoryboardKeyframe = { shot_id, uri }
-StoryboardGrid     = { scene_id, uri }
-GPUDeviceProfile    = { index, name, memory_total_mib }
-LTXBenchmarkProfile = { label, ltx_source, pipeline, quantization, offload, dimensions, runs }
-LTXBenchmarkSample  = { run_index, duration_seconds, peak_gpu_memory_mib, output metadata }
-LTXBenchmarkReport  = { profile, command, devices, samples, aggregate metrics }
-```
-
-Provider parameters such as model, quality, resolution, speech voice or image-edit options are not
-stored in these contracts unless a downstream stage genuinely needs them.
-
-## Continuity registry
-
-Phase 3 keeps continuity separate from narrative structure rather than mutating
-`NarrativeBlock`, `Beat` or `Scene`.
-
-Supported entity kinds:
-
-```text
-character
-group
-location
-object
-```
-
-`object` means a physical tangible object. Abstract concepts, values, doctrines or mental states
-remain narrative concepts and do not receive continuity IDs.
-
-The model never assigns canonical IDs. It decides whether known entities reappear and describes
-new entities. Python assigns deterministic type-prefixed IDs such as `character_001` and
-`location_001`.
-
-Entities may remain contextually active when the narrative clearly continues in the same place or
-situation. They are not retained merely because they appeared earlier.
-
-## Orchestration patterns
-
-### Parallel fan-out / fan-in: beat extraction
-
-Independent narrative blocks are processed concurrently:
-
-```text
-block 1 -> BeatExtractorBot --\
-block 2 -> BeatExtractorBot ----> Beat[] -> ScenePlannerBot
-block N -> BeatExtractorBot --/
-```
-
-`asyncio.gather` performs fan-out. Python restores deterministic global beat IDs after calls finish.
-
-### Stateful serial continuity
-
-Continuity-sensitive work runs in order:
-
-```text
-block 1 -> ContinuityBot -> response_id_1
-                              |
-                              v
-block 2 -> ContinuityBot -> response_id_2
-                              |
-                              v
-block N -> ContinuityBot -> ...
-```
-
-Each turn receives the current block, Python's canonical entity registry and the previous provider
-response ID.
-
-### Stateful serial shot planning
-
-Shot planning uses a separate state chain:
-
-```text
-scene 1 -> ShotPlannerBot -> shot_response_id_1
-                              |
-                              v
-scene 2 -> ShotPlannerBot -> shot_response_id_2
-                              |
-                              v
-scene N -> ShotPlannerBot -> Shot[]
-```
-
-Provider state is local to one bot process. Canonical continuity crosses stages through persisted
-IDs and artifacts, not hidden shared model memory.
-
-The model groups consecutive beats and chooses active entity IDs. Python validates exact beat
-coverage, ordering, scene relationships and entity validity before assigning global shot IDs.
-
-### Parallel fan-out / fan-in: visual references
-
-Once continuity identities are resolved, entity design is independent:
-
-```text
-entity 1 + narrative context -> VisualReferenceBot --\
-entity 2 + narrative context -> VisualReferenceBot ----> VisualReference[]
-entity N + narrative context -> VisualReferenceBot --/
-```
-
-Narrative context is derived by Python from `NarrativeBlock[]` and `BlockContinuity[]`. It is
-temporary evidence and is not copied into the persisted contract.
-
-### Parallel fan-out / fan-in: reference assets
-
-Validated visual-reference prompts are rendered independently:
-
-```text
-VisualReference 1 -> ImageProvider --\
-VisualReference 2 -> ImageProvider ----> GeneratedImage[] -> ReferenceAsset[]
-VisualReference N -> ImageProvider --/
-```
-
-Binary payloads remain ephemeral until all generations succeed. Only then are deterministic files
-written. This prevents a provider failure from leaving a partially committed batch.
-
-### Single canonical narration
-
-Phase 5 deliberately creates one continuous narration instead of TTS per shot:
-
-```text
-SourceScript.text
-      ↓
-SpeechProvider
-      ↓
-GeneratedSpeech bytes
-      ↓
-validate WAV + measure real PCM duration
-      ↓
-NarrationAudio
-```
-
-This preserves prosody and prevents visual planning from forcing artificial audio cuts.
-
-Duration is measured from the PCM frames actually present rather than trusting a potentially
-streaming/sentinel WAV data-size header.
-
-### Word-level timing evidence
-
-```text
-SourceScript.text + narration.wav
-              ↓
+       |
+       v
+NarrationAudio + WAV
+       |
+       v
 TranscriptionProvider
-              ↓
+       |
+       v
+NarrationWord[]
+       |
+       v
+BeatTimingBot -> model-owned end-word boundaries
+       |
+       v
+Python reconstruction
+       |
+       v
+BeatTiming[]
+       |
+       v
+ShotTiming[]
+```
+
+The model never invents timestamps. Python maps selected word boundaries to measured timing evidence
+and derives shot intervals deterministically. The timeline is continuous and is authoritative for
+later composition.
+
+## Phase 6 — Storyboard architecture
+
+### Prompt planning
+
+`StoryboardFrameBot` receives shot action, measured duration, canonical visual references and only
+the previous storyboard prompt within the same scene.
+
+The previous generated image is not used as the next image input. Identity continuity comes from
+canonical references rather than image-to-image propagation.
+
+### Keyframe generation
+
+Each shot resolves only its own referenced entity assets. Keyframes are generated independently and
+concurrently, allowing selective regeneration without contaminating later shots.
+
+### Scene grids
+
+Pillow composes review-only scene contact sheets from canonical keyframes. The operation is local and
+deterministic; grids preserve shot order and keyframe aspect ratio without modifying source PNGs.
+
+## Phase 7 — GPU infrastructure
+
+### Benchmark boundary
+
+Phase 7 first established a reproducible LTX benchmark rather than hardcoding a cloud GPU profile.
+Python owns repetitions, output validation, hashing and `nvidia-smi` sampling. LTX owns inference.
+
+The validated baseline is an RTX 5090 using `fp8-cast` with CPU offload. The closure matrix measured
+121 frames at 768x1280 and recorded approximately 194.93 seconds mean runtime with 24,513 MiB peak
+VRAM. This remains a replaceable production baseline, not a permanent domain constraint.
+
+### Worker boundary
+
+```text
+Salad input
+    |
+    v
+GPUJobRequest
+    |
+    v
+transactional application-job claim + lease
+    |                         |
+    v                         v
+R2 validated inputs       task runner
+                              |
+                              v
+                     deterministic R2 output
+                              |
+                              v
+                      Postgres success commit
+```
+
+`GPUJobRequest.job_id` is application identity. Salad's queue ID is transport identity.
+
+Canonical request JSON produces an immutable request SHA-256. Reusing an application job ID with a
+different request is a conflict. A completed Postgres row replays. Matching R2 output can reconcile a
+crash between upload and success commit. Foreign object metadata is never overwritten.
+
+Postgres owns atomic claims, attempt counts, leases and heartbeat renewal. Losing the lease prevents
+artifact commit.
+
+Phase 7 closed the infrastructure with a real cloud smoke, idempotent replay, digest-pinned image and
+real LTX benchmark.
+
+## Phase 8 — Video generation architecture
+
+Phase 8 reuses the Phase 7 worker/storage/state boundary and registers the direct LTX task:
+
+```text
+video.ltx25.generate
+```
+
+There is no ComfyUI dependency.
+
+### 8.1 Motion prompt boundary
+
+Static composition and motion are separate concerns:
+
+```text
+Shot + ShotTiming + visual/storyboard context
+                    |
+                    v
+             VideoPromptBot
+                    |
+                    v
+VideoPrompt = { shot_id, prompt }
+```
+
+The motion prompt describes subject/camera motion for an already selected canonical keyframe. It does
+not redefine identity, timing or static composition.
+
+### 8.2 Direct LTX adapter
+
+The validated generation profile is:
+
+```text
+ltx25-distilled-a95ab856-fp8cpu-v1
+```
+
+`LTXVideoParameters` validates profile, prompt, seed, dimensions, fps and frame count. Dimensions must
+be divisible by 64 and frame count must satisfy `8k + 1`.
+
+The frame count is derived from canonical shot duration by rounding upward to the next valid LTX
+shape:
+
+```text
+minimum_frames = ceil(shot_duration * fps)
+num_frames     = next value satisfying 8k + 1
+```
+
+This may make the generated media a few frames longer than `ShotTiming`. That extra media is not a
+new timing contract. Phase 9 must still use `ShotTiming` as the timeline authority and trim/compose
+media accordingly.
+
+The production model files are resolved below `LTX_MODEL_ROOT`:
+
+```text
+diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors
+text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors
+vae/ltx-2.5-video-vae-bf16.safetensors
+vae/ltx-2.5-audio-vae-bf16.safetensors
+latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors
+```
+
+The direct backend prepares the pipeline once, keeps it resident and serializes access with an
+in-process lock.
+
+### 8.3 Real production worker
+
+The direct adapter was validated through the full cloud boundary:
+
+```text
+Storyboard keyframe in R2
+        |
+        v
+Salad queue transport
+        |
+        v
+GPUJobRequest
+        |
+        v
+Postgres claim/lease
+        |
+        v
+direct LTX inference on RTX 5090
+        |
+        v
+silent H.264 MP4 -> R2
+        |
+        v
+GPUJobResponse
+```
+
+Exact resubmission of a completed application request returns the persisted result with
+`replayed=true`; it does not reinfer.
+
+The same warmed instance successfully processed multiple real jobs sequentially, proving that model
+construction can be amortized across a batch.
+
+### 8.4 Deterministic fanout and resume
+
+Before any submission, Python builds every `GPUJobRequest` and computes a run fingerprint from the
+ordered set of shot IDs, deterministic application job IDs and request SHA-256 values.
+
+Application IDs are derived from:
+
+```text
+shot_id
+generation_profile
+motion_prompt
+keyframe_sha256
+seed
+width
+height
+fps
+num_frames
+```
+
+and have the stable form:
+
+```text
+phase8-shot-<shot_id>-<hash-prefix>
+```
+
+The Salad transport ID is deliberately excluded.
+
+The resumable manifest stores, per shot:
+
+```text
+shot_id
+application_job_id
+request_sha256
+transport_job_id
+transport_status
+submission_count
+validated GPUJobResponse
+```
+
+Resume behavior:
+
+| Manifest state | Action |
+| --- | --- |
+| unsubmitted | submit |
+| pending/running | query existing transport |
+| succeeded + validated response | no query and no submit |
+| failed/cancelled | explicit next-run resubmission with same application ID |
+
+All unresolved shots are submitted before polling begins. This exposes the whole batch to the queue
+and lets one warmed GPU consume the jobs sequentially.
+
+Manifest writes are atomic (`temporary file + os.replace`). A changed generation plan is rejected by
+run fingerprint rather than mixed with old state.
+
+### 8.4 fan-in
+
+Once all transports succeed, each `GPUJobResponse` is checked against the planned application ID,
+request fingerprint and deterministic R2 output key. MP4s are downloaded to canonical local names.
+
+An existing local clip is reused only when size and SHA-256 match the worker response. The canonical
+result is:
+
+```text
+VideoClip = { shot_id, uri }
+```
+
+The final array is ordered by shot ID and persisted as `video_clips.json`.
+
+### Real 8-shot closure
+
+The cloud closure validated one manifest containing all eight shots. Shots 1, 5 and 8 replayed prior
+successful application jobs; shots 2, 3, 4, 6 and 7 performed real inference. All clips passed local
+size/SHA-256 checks, H.264 probing, 768x1280 resolution, 24 fps, expected frame count and no-audio
+validation.
+
+A second completed invocation produced zero new submissions, zero new transport IDs and an unchanged
+manifest SHA-256.
+
+The group was then stopped with zero replicas.
+
+Detailed evidence is recorded in:
+
+- `docs/phase8.4-validation-results.md`
+- `docs/phase8-closure.md`
+
+### Operational cloud configuration
+
+The configuration encoded by `scripts/manage_phase8_worker.ps1 -Action Prepare` must match the
+settings proven by the real run:
+
+```text
+priority: medium
+liveness path: /health
+liveness period: 30 s
+liveness timeout: 10 s
+liveness failure threshold: 20
+queue autoscaler min: 0
+queue autoscaler max: 1
+```
+
+The wider liveness tolerance is required because the old `timeout=5 / failure_threshold=3` policy
+could kill a healthy process during expensive LTX construction/inference.
+
+`Prepare` also supplies Hugging Face authentication securely from `HF_TOKEN` and pins the published
+image by digest before patching Salad.
+
+The normal run path should start/stop the already prepared group; `Prepare` is an intentional image
+or configuration upgrade operation, not a per-batch step.
+
+## Phase 9 compositor boundary
+
+Phase 9 should consume persisted audiovisual contracts, not GPU/cloud implementation details.
+
+Minimum useful handoff:
+
+```text
+VideoClip[]
+ShotTiming[]
+NarrationAudio
 NarrationWord[]
 ```
 
-`NarrationWord.text` is recognized evidence, not canonical narrative text. Small ASR artifacts are
-preserved rather than silently rewriting `SourceScript.text`.
-
-Point-like timestamps where `start_seconds == end_seconds` are valid when the global sequence is
-non-decreasing and remains inside the measured narration duration.
-
-### Model-owned beat boundaries, Python-owned time
+Responsibilities:
 
 ```text
-SourceScript + Beat[] + NarrationWord[]
-                 ↓
-BeatTimingBot
-                 ↓
-beat_end_word_ids[]
-                 ↓
-Python reconstruction
-                 ↓
-BeatTiming[]
+VideoClip[] + ShotTiming[]
+            +
+       NarrationAudio
+            +
+       NarrationWord[]
+            |
+            v
+       composition timeline
+            |
+      +-----+-----------------------------+
+      |     |             |               |
+      v     v             v               v
+   trim   transitions   captions   overlays/motion graphics
+      \     |             |               /
+       +----+-------------+---------------+
+                         |
+                         v
+              audio/video final mux
 ```
 
-The model never generates timestamps. For non-final beats, Python ends an interval at the start of
-the next beat's first word. The final beat ends at `NarrationAudio.duration_seconds`.
+Phase 9 may probe/transcode clips using FFmpeg/ffprobe and render timeline/motion graphics with
+Remotion. It must not require Salad queue IDs, application-job fingerprints, Postgres rows or LTX
+checkpoint paths.
 
-This assigns inter-beat pauses to the previous visual state and yields a continuous timeline.
+`ShotTiming` remains the timing authority even when an LTX clip contains extra rounded frames.
 
-### Deterministic shot timing
-
-```text
-Shot.beat_ids + BeatTiming[]
-            ↓
-Python
-            ↓
-ShotTiming[]
-```
-
-A shot starts at its first beat and ends at its last beat. Python validates exact beat coverage,
-ordering and continuity. No LLM is required.
-
-The pipeline therefore does not depend on a fixed number of shots.
-
-## Phase 4 visual-reference boundary
-
-`VisualReferenceBot` returns a stable description for one entity. Python applies a fixed template
-selected by entity kind.
-
-Current templates conceptually cover:
-
-```text
-character -> neutral full-body identity reference
-group     -> representative shared-appearance reference
-location  -> single coherent environment reference
-object    -> isolated tangible-object reference
-```
-
-Templates avoid temporary shot action, visible text, labels and watermarks. `visual_style` remains
-a runtime input rather than part of continuity identity.
-
-Broad locations are contextualized into one reusable physical environment instead of becoming an
-encyclopedic montage. This rule was introduced after a real validation where a broad `Japan`
-reference initially drifted toward a modern-country interpretation.
-
-## Phase 6 storyboard architecture
-
-### 6.1 Provider-neutral storyboard prompts
-
-Inputs:
-
-```text
-Shot[]
-ShotTiming[]
-VisualReference[]
-```
-
-Output:
-
-```text
-StoryboardFrame = { shot_id, prompt }
-```
-
-`StoryboardFrameBot` runs serially **within each scene**. The current shot receives:
-
-- `Shot.action`;
-- the measured shot duration;
-- canonical visual-reference descriptions for `Shot.entity_ids`;
-- the previous storyboard prompt when still inside the same scene.
-
-At a scene boundary, previous-frame context is reset. Identity continuity still comes from canonical
-references, while scene composition is free to change.
-
-The bot is explicitly instructed that continuity does not mean repetition. If narrative meaning
-changes, subject, state, composition or context should change visibly.
-
-For abstract ideas such as legacy, memory or symbolic influence, the bot translates the concept
-into physical visual evidence grounded in `Shot.action` rather than merely making the same image
-more dramatic.
-
-The prompt is still a **single static keyframe**. Camera movement, transitions and video-generation
-instructions remain deferred to video-generation/composition stages.
-
-### 6.2 Reference-conditioned keyframe generation
-
-Inputs:
-
-```text
-StoryboardFrame[]
-Shot[]
-ReferenceAsset[]
-```
-
-Output:
-
-```text
-StoryboardKeyframe = { shot_id, uri }
-```
-
-For each shot, Python resolves only the reference assets named by `Shot.entity_ids`. Unrelated
-reference images are not sent to the provider.
-
-`ReferenceAwareImageProvider` adds a second provider-neutral capability without changing the
-original Phase 4 `ImageProvider.generate_image()` contract:
-
-```text
-no references  -> generate_image(...)
-with references -> generate_image_with_references(...)
-```
-
-The current OpenAI implementation uses image editing with multiple image inputs for the
-reference-conditioned path.
-
-Model-specific parameters are deliberately optional. A real Phase 6 validation showed that
-`gpt-image-2` accepts the image references but rejects an explicit `input_fidelity` parameter. The
-provider therefore omits optional fidelity controls unless the caller explicitly requests them.
-This prevents capability assumptions from leaking into the provider-neutral contract.
-
-Keyframes are generated **independently and concurrently**. The previous generated PNG is not fed
-into the next shot. This avoids propagating one visual defect through the whole sequence and keeps
-future selective regeneration possible.
-
-As with Phase 4 assets, all provider calls complete before the workflow writes the batch.
-
-### 6.3 Deterministic scene grids
-
-Inputs:
-
-```text
-Scene[]
-Shot[]
-StoryboardKeyframe[]
-```
-
-Output:
-
-```text
-StoryboardGrid = { scene_id, uri }
-```
-
-This stage uses no LLM and no external API. Pillow composes scene-level contact sheets from the
-canonical keyframes.
-
-Python validates:
-
-- unique scene and shot IDs;
-- exact keyframe/shot ID alignment;
-- known `scene_id` references;
-- scene order and contiguity of shots;
-- safe relative asset URIs;
-- existing, decodable PNG keyframes;
-- positive layout dimensions.
-
-The layout preserves shot order, keeps keyframe aspect ratio without cropping, uses up to three
-columns and adds rows automatically. Scene and shot labels exist only inside the review grid; they
-do not modify the canonical keyframe files.
-
-All grids are composed in memory before persistence so invalid input does not leave a partial
-scene-grid batch.
-
-## Phase 7 GPU infrastructure
-
-### 7.1 Benchmark before worker shape
-
-Phase 7 begins with measurement rather than a hardcoded Salad GPU profile. The benchmark accepts an
-auditable LTX-2.5 command template and runs it directly without a shell:
-
-```text
-LTXBenchmarkProfile + command template
-                   ↓
-             warmup runs
-                   ↓
- measured runs + nvidia-smi sampling
-                   ↓
- validate MP4 + SHA-256
-                   ↓
-          LTXBenchmarkReport
-```
-
-Python owns the run count, output placeholder, timing, validation, hashing, aggregation and
-persistence. LTX owns inference. `nvidia-smi` is an evidence provider only; its peak value covers
-total memory used on each visible GPU, so benchmark nodes must not run unrelated workloads.
-
-The report stores the complete command needed for audit, but common inline token, API-key, password
-and object-storage credential forms are redacted first. Output files are removed before every run,
-so a successful process cannot accidentally validate a stale artifact.
-
-Warmups are deliberately excluded from aggregate timings. Measured samples retain their individual
-duration, peak memory, size and SHA-256 so later hardware selection does not depend only on one
-average.
-
-The validated Phase 7 baseline is an RTX 5090 using `fp8-cast` with CPU offload. A real matrix with
-one warmup and three measured runs produced a 194.93-second mean, 0.621 end-to-end FPS and a
-24,513 MiB peak for 121 frames at 768x1280. This is a provisional production starting point rather
-than a permanent hardware lock; future matrices may replace it without changing the worker
-boundary. LTX and its model-sized checkpoint set remain outside the application package and are
-loaded in the target GPU environment.
-
-`run_phase7_benchmark_matrix.py` expands the canonical bf16/fp8/offload cases on one hardware
-target and writes one report per case plus a local matrix. `summarize_phase7_benchmarks.py` then
-compares matrices from different GPUs, rejects workload drift and records the SHA-256 of every
-source matrix. It identifies the fastest measured case but intentionally does not replace the
-required visual-quality, availability and cost decision.
-
-### 7.2 implemented worker boundary
-
-The worker is a versioned HTTP boundary compatible with Salad Job Queue:
-
-```text
-Salad input -> GPUJobRequest -> transactional claim + lease
-                                  /                 \
-                         R2 inputs            task runner
-                                                   |
-                                            R2 deterministic output
-                                                   |
-                                         Postgres success commit
-```
-
-`GPUJobRequest` owns the application `job_id`; Salad's `Salad-Job-Id` remains a transport ID.
-Canonical JSON produces an immutable request SHA-256. Reusing one application ID with a different
-request is a conflict.
-
-The output key must be scoped below `jobs/<job_id>/`. R2 metadata stores the job, request and
-artifact hashes. A completed Postgres row is replayed. If R2 contains the matching artifact but
-Postgres does not yet contain the success commit, the worker reconciles it without executing the
-task again. Foreign output metadata is never overwritten.
-
-Postgres owns atomic claims, attempt counts and expiring leases. A background heartbeat renews the
-lease and the worker performs a synchronous renewal immediately before upload. Losing ownership
-prevents the artifact commit.
-
-Phase 7 registers only `infrastructure.copy`, a deterministic smoke task. Phase 8 will register the
-direct Python/PyTorch LTX runner without changing storage, lease or HTTP semantics.
-
-### 7.3 operational validation and closure
-
-The cloud smoke completed on 27 August 2026 with one attempt and identical input/output SHA-256.
-`replay_phase7_smoke.py` then resubmitted the exact saved request and returned `replayed=true`, the
-same artifact identity and the unchanged attempt count. The production worker image was observed
-by registry digest, and the worker group was returned to zero replicas.
-
-Deployment manifests include the HTTP probe's required empty `headers` list. The renderer requires
-a registry reference pinned as `repository@sha256:<digest>` by default; mutable tags are available
-only through an explicit debugging override. Both facts were observed in Salad. The later LTX-2.5
-benchmark also completed on real RTX 5090 hardware, its JSON and MP4 passed validation, and its
-group was stopped. Phase 7 is closed; the evidence inventory is in `docs/phase7-closure.md`.
-
-## Media provider boundaries
+## Provider boundaries
 
 ### Structured text
 
-`StructuredTextProvider` handles independent Structured Output transformations.
-`StatefulStructuredTextProvider` adds provider-managed state:
-
-```text
-StatefulStructuredResult
-  output
-  response_id
-```
-
-`OpenAIProvider` implements both. Python remains authoritative for IDs, ordering and relationships.
+`StructuredTextProvider` handles independent Structured Output transforms.
+`StatefulStructuredTextProvider` adds provider-managed state and returns an explicit response ID.
 
 ### Images
 
-Base generation:
-
-```text
-ImageProvider.generate_image(...)
-  -> GeneratedImage
-       content
-       media_type
-       extension
-```
-
-Reference-aware generation:
-
-```text
-ReferenceAwareImageProvider.generate_image_with_references(...)
-  -> GeneratedImage
-```
-
-`GeneratedImage.content` is ephemeral. Persisted domain objects store URIs, not provider response
-objects or base64 payloads.
-
-`OpenAIImageProvider` is the initial implementation. Model, quality, size and optional edit controls
-remain runtime concerns.
+`ImageProvider` handles base generation. `ReferenceAwareImageProvider` adds optional reference-image
+conditioning without changing the persisted `ReferenceAsset` boundary.
 
 ### Speech
 
-```text
-SpeechProvider.generate_speech(...)
-  -> GeneratedSpeech
-       content
-       media_type
-       extension
-```
-
-The initial implementation is `OpenAISpeechProvider`. Voice, model, speed and instructions are
-runtime generation parameters.
+`SpeechProvider.generate_speech()` returns ephemeral generated bytes; the domain persists
+`NarrationAudio` and its URI.
 
 ### Transcription
 
-`TranscriptionProvider` exposes normalized word-level timing evidence independently of TTS.
-The domain persists `NarrationWord[]`, not raw provider responses.
+`TranscriptionProvider` returns normalized word timing evidence. The domain persists
+`NarrationWord[]`, not raw provider response JSON.
 
-## Persisted artifacts by phase
+### GPU queue
 
-### Phase 2
+`JobQueueClient` is provider-neutral. The Salad implementation converts queue responses into
+`QueueJobSnapshot` objects. Workflow code depends on the protocol rather than Salad's raw API shape.
+
+## Persisted artifacts
 
 ```text
 data/output/phase2/
-├── source_script.json
-├── narrative_blocks.json
-├── beats.json
-└── scenes.json
-```
+  source_script.json
+  narrative_blocks.json
+  beats.json
+  scenes.json
 
-### Phase 3
-
-```text
 data/output/phase3/
-├── entities.json
-├── block_continuity.json
-└── shots.json
-```
+  entities.json
+  block_continuity.json
+  shots.json
 
-### Phase 4
-
-```text
 data/output/phase4/
-├── visual_references.json
-├── reference_assets.json
-└── reference_assets/
-    ├── group_001.png
-    ├── group_002.png
-    └── location_001.png
-```
+  visual_references.json
+  reference_assets.json
+  reference_assets/*.png
 
-### Phase 5
-
-```text
 data/output/phase5/
-├── narration.wav
-├── narration.json
-├── narration_words.json
-├── beat_timings.json
-└── shot_timings.json
-```
+  narration.wav
+  narration.json
+  narration_words.json
+  beat_timings.json
+  shot_timings.json
 
-### Phase 6
-
-```text
 data/output/phase6/
-├── storyboard_frames.json
-├── storyboard_keyframes.json
-├── storyboard_keyframes/
-│   ├── shot_001.png
-│   ├── ...
-│   └── shot_008.png
-├── storyboard_grids.json
-└── storyboard_grids/
-    ├── scene_001.png
-    ├── scene_002.png
-    └── scene_003.png
+  storyboard_frames.json
+  storyboard_keyframes.json
+  storyboard_keyframes/*.png
+  storyboard_grids.json
+  storyboard_grids/*.png
+
+data/output/phase8/
+  video_prompts.json
+  video_generation_manifest.json
+  video_clips.json
+  video_clips/*.mp4
 ```
 
-### Phase 7
-
-```text
-data/output/phase7/
-└── ltx_benchmark.json
-```
-
-The filename may be changed per hardware/profile case. Generated benchmark MP4 files are temporary
-and remain under `data/tmp/phase7/` by default.
-
-## Real validation summary
-
-### Phase 3
-
-Stateful continuity and stateful shot planning were validated as separate provider-state chains.
-The historical closing run produced 7 shots.
-
-### Phase 4
-
-The samurai example produced 3 reusable visual references and 3 canonical PNG assets:
-
-- samurai group;
-- differentiated feudal-lord group;
-- coherent feudal Japanese environment.
-
-### Phase 5
-
-The same production example validated the complete temporal chain:
-
-- canonical narration: **45.0 seconds**;
-- recognized timing words: **105**;
-- beat intervals: **11**, covering `0.0–45.0` exactly;
-- regenerated shots for this run: **8**;
-- shot intervals: **8**, covering `0.0–45.0` exactly.
-
-The different historical shot counts demonstrate that timing projection does not depend on a
-hardcoded count.
-
-### Phase 6
-
-The 8-shot regeneration was used for real storyboard validation:
-
-- **8** `StoryboardFrame` prompts were reviewed and iterated semantically;
-- the first shot was corrected so the visual represented warrior rule rather than an empty
-  establishing shot;
-- abstract legacy in the final shot was translated into armor, katana and pictorial/historical
-  evidence rather than another repeated living-warrior pose;
-- **8** reference-conditioned vertical keyframes were generated at `1024x1536`;
-- identity and visual language remained coherent while compositions varied across shots;
-- **3** deterministic scene grids were composed locally;
-- scene 1 contains shots 1–4, scene 2 contains 5–6 and scene 3 contains 7–8;
-- the grids preserved aspect ratio, order and readable shot labels without modifying keyframes.
-
-These results are sufficient to close Phase 6.
-
-## Phase 1 compatibility
-
-The Phase 1 `DirectorAgent` remains an experiment and regression fixture. Its rich scene type is
-`StoryboardScene` so it cannot be confused with the production `Scene` contract.
-
-The Phase 1 flow is not the long-term production architecture.
-
-## Planned media stack
-
-- **LLM orchestration:** OpenAI Responses API + Structured Outputs.
-- **Storyboard planning:** completed provider-neutral keyframe pipeline from Phase 6.
-- **GPU inference:** Docker containers on Salad.
-- **Video model:** LTX-2.5 with the validated RTX 5090 / `fp8-cast` / CPU-offload baseline.
-- **Object storage:** Cloudflare R2.
-- **Job/application state:** Supabase/Postgres.
-- **Composition:** Remotion for timeline, transitions, captions and motion graphics.
-- **Media plumbing:** FFmpeg/ffprobe for probing, codecs, audio, transcoding and muxing.
-- **Model execution:** Python/PyTorch directly; no ComfyUI dependency.
+The Phase 8 manifest is operational resume state. The Phase 9 handoff is `VideoClip[]` plus the
+canonical timing/audio artifacts from Phase 5.
 
 ## Current implementation status
 
-Completed:
+Completed production stages:
 
-1. `NarrativeBlockBot`: `SourceScript -> NarrativeBlock[]`
-2. `BeatExtractorBot`: `NarrativeBlock -> Beat[]` in parallel
-3. `ScenePlannerBot`: `Beat[] -> Scene[]`
-4. `ContinuityBot`: serial `NarrativeBlock[] -> ContinuityEntity[] + BlockContinuity[]`
-5. `ShotPlannerBot`: serial `Scene[] -> Shot[]`
-6. `VisualReferenceBot`: contextual parallel `ContinuityEntity[] -> VisualReference[]`
-7. Reference asset generation: `VisualReference[] -> ReferenceAsset[] + PNG files`
-8. Canonical narration: `SourceScript -> NarrationAudio + WAV`
-9. Word alignment: `NarrationAudio -> NarrationWord[]`
-10. Beat timing: `Beat[] + NarrationWord[] -> BeatTiming[]`
-11. Shot timing: `Shot[] + BeatTiming[] -> ShotTiming[]`
-12. Storyboard prompting: `Shot[] + ShotTiming[] + VisualReference[] -> StoryboardFrame[]`
-13. Keyframe generation: `StoryboardFrame[] + ReferenceAsset[] -> StoryboardKeyframe[]`
-14. Scene grids: `Scene[] + Shot[] + StoryboardKeyframe[] -> StoryboardGrid[]`
-15. Reproducible LTX matrix and multi-hardware comparison -> reports + auditable JSON
-16. Versioned HTTP worker: `GPUJobRequest -> GPUJobResponse`
-17. Cloudflare R2 adapter: streamed local files + object metadata reconciliation
-18. Supabase/Postgres adapter: atomic claims, leases, retries and completed results
-19. Salad Docker image: official queue worker v0.7.0 verified by SHA-256
-20. Digest-pinned deployment renderer, smoke verifier and replay/idempotency verifier
+1. narrative block planning;
+2. beat extraction and scene planning;
+3. continuity registry and shot planning;
+4. visual references and reference assets;
+5. narration, word alignment and deterministic timing;
+6. storyboard prompts, keyframes and scene grids;
+7. reproducible GPU benchmark and idempotent cloud worker infrastructure;
+8. motion prompts, direct LTX-2.5 execution, real GPU worker, resumable fanout and verified
+   `VideoClip[]` fan-in.
 
-## Next validation step
-
-**Phase 8 — direct LTX-2.5 video generation.**
-
-Phase 7 is closed: infrastructure smoke, idempotent replay, digest-pinned worker deployment, real
-RTX 5090 benchmark, artifact validation and scale-down all passed. Phase 8 now adds the direct
-LTX-2.5 Python/PyTorch task runner to the existing registry and returns R2 metadata through the same
-idempotent contract rather than transporting video bytes through the orchestrator. A future
-multi-hardware benchmark can refine the provisional baseline without reopening the infrastructure
-contract.
+Next implementation stage: **Phase 9 — compositor**.

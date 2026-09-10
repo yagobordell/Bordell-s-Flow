@@ -146,6 +146,7 @@ function Show-Status {
             name,
             version,
             replicas,
+            priority,
             pending_change,
             @{Name = "Status"; Expression = {$_.current_state.status}},
             @{Name = "Description"; Expression = {$_.current_state.description}},
@@ -153,20 +154,35 @@ function Show-Status {
             @{Name = "CPU"; Expression = {$_.container.resources.cpu}},
             @{Name = "MemoryMiB"; Expression = {$_.container.resources.memory}},
             @{Name = "GPUClasses"; Expression = {$_.container.resources.gpu_classes -join ","}},
-            @{Name = "StorageBytes"; Expression = {$_.container.resources.storage_amount}} |
+            @{Name = "StorageBytes"; Expression = {$_.container.resources.storage_amount}},
+            @{Name = "LivenessPeriodSeconds"; Expression = {$_.liveness_probe.period_seconds}},
+            @{Name = "LivenessTimeoutSeconds"; Expression = {$_.liveness_probe.timeout_seconds}},
+            @{Name = "LivenessFailureThreshold"; Expression = {$_.liveness_probe.failure_threshold}} |
         Format-List
 
     try {
-        $Instances = Invoke-RestMethod `
+        $Response = Invoke-RestMethod `
             -Uri "$ContainersBase/$GroupName/instances" `
             -Headers $Headers `
             -TimeoutSec 30
-        if ($null -ne $Instances.items) {
-            $Instances.items |
+
+        $InstanceRows = @()
+        if ($Response.PSObject.Properties.Name -contains "instances") {
+            $InstanceRows = @($Response.instances)
+        }
+        elseif ($Response.PSObject.Properties.Name -contains "items") {
+            $InstanceRows = @($Response.items)
+        }
+
+        if ($InstanceRows.Count -gt 0) {
+            $InstanceRows |
                 Select-Object `
+                    id,
                     machine_id,
                     state,
+                    pulling_progress,
                     ready,
+                    started,
                     update_time |
                 Format-Table -AutoSize
         }
@@ -253,10 +269,12 @@ switch ($Action) {
         $R2Bucket = Get-Setting -Name "R2_BUCKET" -Prompt "R2 bucket"
         $R2AccessKey = Get-Setting -Name "R2_ACCESS_KEY_ID" -Prompt "R2 access key ID" -Secret
         $R2SecretKey = Get-Setting -Name "R2_SECRET_ACCESS_KEY" -Prompt "R2 secret access key" -Secret
+        $HfToken = Get-Setting -Name "HF_TOKEN" -Prompt "Hugging Face token" -Secret
 
         $PreviousVersion = [int]$Group.version
         $PatchBody = @{
             replicas = 0
+            priority = "medium"
             container = @{
                 image = $PinnedImage
                 resources = @{
@@ -272,6 +290,7 @@ switch ($Action) {
                     R2_BUCKET = $R2Bucket
                     R2_ACCESS_KEY_ID = $R2AccessKey
                     R2_SECRET_ACCESS_KEY = $R2SecretKey
+                    HF_TOKEN = $HfToken
                     GPU_WORKER_MODE = "production"
                     GPU_WORKER_RUNTIME = "phase8"
                     GPU_WORKER_LEASE_SECONDS = "900"
@@ -283,7 +302,6 @@ switch ($Action) {
                     SALAD_LOG_LEVEL = "info"
                 }
                 image_caching = $true
-                priority = "batch"
             }
             startup_probe = @{
                 http = @{headers = @(); path = "/health"; port = 8080; scheme = "http"}
@@ -305,9 +323,9 @@ switch ($Action) {
                 http = @{headers = @(); path = "/health"; port = 8080; scheme = "http"}
                 initial_delay_seconds = 0
                 period_seconds = 30
-                failure_threshold = 3
+                failure_threshold = 20
                 success_threshold = 1
-                timeout_seconds = 5
+                timeout_seconds = 10
             }
             queue_connection = @{
                 path = "/jobs"
@@ -358,11 +376,20 @@ switch ($Action) {
         if ([int]$Group.version -le $PreviousVersion) {
             throw "Container group version did not increase."
         }
+        if ([string]$Group.priority -ne "medium") {
+            throw "Salad did not activate the validated priority=medium configuration."
+        }
+        if ([int]$Group.liveness_probe.period_seconds -ne 30 -or
+            [int]$Group.liveness_probe.timeout_seconds -ne 10 -or
+            [int]$Group.liveness_probe.failure_threshold -ne 20) {
+            throw "Salad did not activate the validated Phase 8 liveness configuration."
+        }
 
         $PatchBody = $null
         $PostgresDsn = $null
         $R2SecretKey = $null
         $R2AccessKey = $null
+        $HfToken = $null
 
         Write-Host "Phase 8 worker image/config prepared and group remains stopped." `
             -ForegroundColor Green
