@@ -1,6 +1,6 @@
 # Phase 9.4 — Boundary-preserving transitions and motion overlays
 
-Status: implemented, pending canonical local render and visual validation.
+Status: implemented, CI-validated, pending canonical local render and visual validation.
 
 Phase 9.4 adds visual polish on top of the closed Phase 9.3 renderer without changing the canonical
 Phase 9 timeline. It consumes the same closed `composition_plan.json`; no semantic or timing decision
@@ -131,6 +131,25 @@ Experimental renderer-only tuning is available through:
 The defaults remain the canonical Phase 9.4 validation profile until visual review gives a concrete
 reason to change them.
 
+## CI validation
+
+The implementation passed the repository CI after the full Phase 9.4 code and documentation landed:
+
+```text
+workflow run: 34488188456
+Python install:      success
+Ruff:                success
+Pytest:              success
+PowerShell syntax:   success
+Node 22 install:     success
+Remotion npm install: success
+TypeScript:          success
+```
+
+The CI validates the renderer props schema, motion-profile invariants and TypeScript integration. It
+does not render the private local Phase 8 MP4 artifacts, so the real 1080-frame render remains the
+final acceptance step.
+
 ## Closure criteria
 
 Phase 9.4 closes after the canonical local run confirms:
@@ -143,6 +162,6 @@ Phase 9.4 closes after the canonical local run confirms:
 6. the entry/exit dip and scale remain subtle rather than obscuring generated video content;
 7. the boundary accent and progress bar remain inside safe areas and do not interfere with captions;
 8. caption cue motion remains readable and active-word highlighting remains clear;
-9. Python Ruff/pytest and Remotion TypeScript validation pass in CI.
+9. Python Ruff/pytest and Remotion TypeScript validation pass in CI — confirmed.
 
 Final narration muxing remains a later Phase 9 subphase.
