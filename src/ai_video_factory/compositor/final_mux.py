@@ -171,6 +171,7 @@ def validate_final_mux_inputs(
 
     video = probe_video_fn(visual_path.resolve())
     canonical_duration = plan.total_frames / plan.fps
+    frame_tolerance = 1 / plan.fps
 
     if video.codec_name != "h264":
         raise ValueError(f"Phase 9.5 visual input must be H.264, found {video.codec_name}")
@@ -182,19 +183,22 @@ def validate_final_mux_inputs(
         raise ValueError("Phase 9.5 visual input must remain silent before final muxing")
     if _frame_count(video, fps=plan.fps) != plan.total_frames:
         raise ValueError("Phase 9.5 visual frame count does not match the composition plan")
-    if abs(video.duration_seconds - canonical_duration) > 1 / plan.fps:
+    if abs(video.duration_seconds - canonical_duration) > frame_tolerance:
         raise ValueError("Phase 9.5 visual duration differs from the canonical timeline")
 
     wav = probe_wav(audio_path)
     if Path(narration.uri).name != audio_path.name:
         raise ValueError("Narration metadata URI does not match the selected WAV file")
 
-    metadata_tolerance = max(1 / wav.sample_rate, 1e-6)
-    if abs(wav.duration_seconds - narration.duration_seconds) > metadata_tolerance:
-        raise ValueError("Narration WAV duration does not match NarrationAudio metadata")
-    if abs(narration.duration_seconds - canonical_duration) > 1 / plan.fps:
+    if abs(wav.duration_seconds - canonical_duration) > frame_tolerance:
         raise ValueError(
-            "Narration duration differs from the canonical composition by over one frame"
+            "Narration WAV duration differs from the canonical composition by over one frame: "
+            f"wav={wav.duration_seconds:.6f}s canonical={canonical_duration:.6f}s"
+        )
+    if abs(wav.duration_seconds - narration.duration_seconds) > frame_tolerance:
+        raise ValueError(
+            "Narration WAV duration differs from NarrationAudio metadata by over one frame: "
+            f"wav={wav.duration_seconds:.6f}s metadata={narration.duration_seconds:.6f}s"
         )
 
     return FinalMuxInputs(
