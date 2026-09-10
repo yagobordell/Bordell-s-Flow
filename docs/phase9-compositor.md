@@ -61,10 +61,10 @@ down or silently padded.
 
 ## Phase 9.2 — Deterministic caption track
 
-Status: implemented and validated structurally on the canonical 105-word narration; refined grouping
-is pending one final local rerun before closure.
+Status: refined implementation validated against the canonical 105-word narration. One unchanged
+local replay remains to confirm identical JSON before formal closure.
 
-The first canonical local run produced:
+The refined canonical local run produced:
 
 ```text
 shots=8
@@ -75,9 +75,20 @@ captions=29
 words=105
 ```
 
-That run confirmed complete word coverage but exposed two render-facing issues before Remotion:
-avoidable one-word cues created by greedy soft limits and a one-frame cue overlap inherited from
-slightly overlapping word timestamps. The planner now addresses both deterministically.
+The refined output confirms:
+
+- all `NarrationWord` IDs 1 through 105 appear exactly once and in order;
+- all caption word intervals are positive and remain inside the 1080-frame composition;
+- no caption words overlap after frame quantization;
+- no adjacent caption cues overlap;
+- the eight canonical shot intervals remain unchanged;
+- avoidable singleton cues from the first implementation have been rebalanced;
+- only `Lealtad` remains a one-word cue because it is isolated by real narration pauses.
+
+Examples of improved grouping include `poder y territorio`, `dominaban la disciplina`,
+`hasta la muerte` and `de los siglos`. The former one-frame overlap between the cues beginning with
+`los samuráis dejaron de ser` and `solo soldados y se convirtieron` is also removed: the first cue
+ends at frame 922 and the second starts at frame 922.
 
 Phase 9.2 extends the same composition plan with captions derived only from canonical Phase 5 word
 timing evidence:
@@ -109,7 +120,9 @@ composition_plan.json captions[]
 
 No LLM call is made and caption planning does not reconstruct timing from text. Every rendered word
 keeps its canonical `word_id`. Text is preserved verbatim from `NarrationWord`; caption planning does
-not silently correct or normalize transcription punctuation or symbols.
+not silently correct or normalize transcription punctuation or symbols. This means upstream text such
+as `†el` and `sirve†` remains visible in the plan until it is corrected at its source or an explicit
+presentation-normalization policy is introduced.
 
 A zero-duration narration timestamp is legal upstream. For rendering only, Phase 9.2 expands such a
 word to one visible frame. If rounded word timestamps overlap, the later word is advanced only as far
@@ -201,17 +214,17 @@ stage gives a concrete reason to change it.
 
 ## Phase 9.2 closure criteria
 
-Phase 9.2 can be closed after the refined canonical local run confirms all of the following:
+Phase 9.2 can be closed after all of the following are confirmed:
 
-1. all 105 canonical `NarrationWord` IDs appear in captions exactly once and in order;
-2. every caption word has a positive visible frame interval inside the 1080-frame composition;
-3. neither caption words nor adjacent cues overlap after frame quantization;
-4. no avoidable singleton cue is created solely by a soft word/character/duration limit;
-5. caption planning leaves the eight shot intervals and `total_frames` unchanged;
-6. cue grouping uses only deterministic timing/text rules and makes no provider call;
-7. a second invocation with identical inputs produces identical caption JSON;
-8. `python -m ruff check .` passes;
-9. `python -m pytest` passes.
+1. all 105 canonical `NarrationWord` IDs appear in captions exactly once and in order — confirmed;
+2. every caption word has a positive visible frame interval inside 1080 frames — confirmed;
+3. neither caption words nor adjacent cues overlap after frame quantization — confirmed;
+4. no avoidable singleton cue is created solely by a soft grouping limit — confirmed;
+5. caption planning leaves the eight shot intervals and `total_frames` unchanged — confirmed;
+6. cue grouping uses only deterministic timing/text rules and makes no provider call — confirmed;
+7. a second invocation with identical inputs produces identical caption JSON — pending local replay;
+8. `python -m ruff check .` passes — confirmed by CI;
+9. `python -m pytest` passes — confirmed by CI.
 
 Remotion rendering, visual caption styling, transitions and final narration muxing remain outside
 Phase 9.2.
