@@ -113,16 +113,46 @@ def test_validate_final_mux_inputs_preserves_canonical_timeline(tmp_path: Path) 
     assert inputs.narration.duration_seconds == pytest.approx(2.0)
 
 
+def test_validate_final_mux_inputs_allows_metadata_rounding_within_one_frame(
+    tmp_path: Path,
+) -> None:
+    visual = tmp_path / "visual_motion.mp4"
+    visual.touch()
+    audio = tmp_path / "narration.wav"
+    _write_wav(audio, duration_seconds=2.02)
+    narration = NarrationAudio(uri="narration.wav", duration_seconds=2.0)
+
+    inputs = validate_final_mux_inputs(
+        _plan(),
+        narration,
+        visual,
+        audio,
+        probe_video_fn=lambda _: _video_probe(),
+    )
+
+    assert inputs.narration.duration_seconds == pytest.approx(2.02)
+
+
 def test_validate_final_mux_inputs_rejects_wrong_audio_or_visual(tmp_path: Path) -> None:
     visual = tmp_path / "visual_motion.mp4"
     visual.touch()
     audio = tmp_path / "narration.wav"
     _write_wav(audio)
 
-    with pytest.raises(ValueError, match="Narration WAV duration"):
+    with pytest.raises(ValueError, match="Narration WAV duration differs"):
         validate_final_mux_inputs(
             _plan(),
             NarrationAudio(uri="narration.wav", duration_seconds=1.5),
+            visual,
+            audio,
+            probe_video_fn=lambda _: _video_probe(),
+        )
+
+    _write_wav(audio, duration_seconds=2.1)
+    with pytest.raises(ValueError, match="canonical composition"):
+        validate_final_mux_inputs(
+            _plan(),
+            NarrationAudio(uri="narration.wav", duration_seconds=2.1),
             visual,
             audio,
             probe_video_fn=lambda _: _video_probe(),
