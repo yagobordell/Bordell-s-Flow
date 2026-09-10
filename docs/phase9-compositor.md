@@ -5,7 +5,16 @@ composition. The compositor is deliberately isolated from Phase 8 GPU transport 
 
 ## Phase 9.1 — Media probe and frame-exact timeline
 
-Status: implemented, pending local validation against the canonical eight-shot Phase 8 artifacts.
+Status: closed and validated against the canonical eight-shot Phase 8 artifacts.
+
+The validated local run produced:
+
+```text
+shots=8
+frames=1080
+duration=45.000s
+fps=24
+```
 
 The Phase 9.1 input boundary is:
 
@@ -37,57 +46,99 @@ start_frame = round_half_up(start_seconds * fps)
 end_frame   = round_half_up(end_seconds * fps)
 ```
 
-Durations are then derived from adjacent absolute boundaries:
-
-```text
-duration_frames = end_frame - start_frame
-```
-
-The implementation does not round every shot duration separately. This prevents cumulative drift
-across a long sequence and guarantees that adjacent canonical shot boundaries remain contiguous.
+Durations are then derived from adjacent absolute boundaries. The implementation does not round every
+shot duration separately, preventing cumulative drift and preserving contiguous boundaries.
 
 ### Source media validation
 
 Each `VideoClip.uri` is resolved below the directory containing `video_clips.json` unless an explicit
 base directory is supplied. Escaping that base directory is rejected.
 
-Before a clip enters the composition plan, `ffprobe` must confirm:
+Before a clip enters the composition plan, `ffprobe` must confirm exactly one H.264 video stream,
+768x1280 dimensions by default, 24 fps by default, no audio streams and enough source frames to cover
+the frame-quantized canonical shot interval. Clips that are too short fail rather than being slowed
+down or silently padded.
 
-- exactly one video stream;
-- H.264 codec;
-- 768x1280 dimensions by default;
-- 24 fps by default;
-- no audio streams;
-- enough source frames to cover the frame-quantized canonical shot interval.
+## Phase 9.2 — Deterministic caption track
 
-If `nb_frames` is unavailable, Phase 9.1 derives an available-frame estimate from the measured
-container duration and expected fps. Clips that are too short fail rather than being slowed down or
-silently padded.
+Status: implemented, pending validation against the canonical local `narration_words.json` artifact.
 
-### Composition plan
-
-The generated `data/output/phase9/composition_plan.json` is an internal rendering contract, not a
-new canonical audiovisual domain model. It contains:
+Phase 9.2 extends the same composition plan with captions derived only from canonical Phase 5 word
+timing evidence:
 
 ```text
-schema_version
-width
-height
-fps
-total_frames
-shots[]:
-  shot_id
-  uri
-  start_frame
-  end_frame
-  duration_frames
-  source_duration_seconds
-  source_frame_count
+NarrationWord[]
+      |
+      v
+validate ordered words
+      |
+      v
+absolute seconds -> frames
+      |
+      v
+deterministic grouping
+      |
+      v
+CaptionCue[]
+      |
+      v
+composition_plan.json captions[]
 ```
 
-The resolved source URI is local because the later Remotion renderer will run on the same compositor
-host. A future Phase 9 manifest will identify reusable renders by content hashes rather than by this
-machine-specific path.
+No LLM call is made and caption planning does not reconstruct timing from text. Every rendered word
+keeps its canonical `word_id` and receives a frame interval using the same round-half-up conversion as
+the shot timeline.
+
+A zero-duration narration timestamp is legal upstream. For rendering only, Phase 9.2 expands such a
+word to one visible frame. Word intervals are clipped at the final composition frame and a word whose
+start lies outside the composition timeline is rejected.
+
+### Cue grouping
+
+The default caption profile is intentionally conservative for vertical short-form video:
+
+```text
+max words per cue:       5
+max characters per cue: 36
+max cue duration:        2.5 s
+pause split threshold:   0.35 s
+```
+
+A new cue starts before the next word when any of these conditions applies:
+
+- the previous word ends a sentence with `.`, `?`, `!` or `…`;
+- the silence before the next word exceeds the pause threshold;
+- adding the next word would exceed the maximum word count;
+- adding the next word would exceed the maximum character count;
+- adding the next word would exceed the maximum cue duration.
+
+Single words are never discarded merely because they exceed a configured display limit. The limits
+control grouping boundaries, not canonical narration content.
+
+### Caption plan contract
+
+`composition_plan.json` now contains an additional internal track:
+
+```text
+captions[]:
+  id
+  text
+  start_frame
+  end_frame
+  word_ids[]
+  words[]:
+    word_id
+    text
+    start_frame
+    end_frame
+```
+
+Keeping individual frame-quantized words inside each cue allows the future Remotion renderer to
+highlight the active spoken word without reading Phase 5 artifacts again.
+
+`CaptionCue` and `CaptionWord` are compositor-internal models. They are not promoted to canonical
+audiovisual domain contracts because no downstream semantic phase needs them independently of the
+composition plan.
 
 ### Command
 
@@ -102,26 +153,35 @@ Defaults:
 ```text
 clips:    data/output/phase8/video_clips.json
 timings:  data/output/phase5/shot_timings.json
+words:    data/output/phase5/narration_words.json
 output:   data/output/phase9/composition_plan.json
 profile:  768x1280 @ 24 fps
 ```
 
-Alternative inputs can be supplied with `--clips`, `--timings`, `--clip-base-dir`, `--width`,
-`--height`, `--fps` and `--output`.
+Caption grouping can be tuned for experiments with:
 
-## Phase 9.1 closure criteria
+```text
+--caption-max-words
+--caption-max-chars
+--caption-max-duration-seconds
+--caption-pause-threshold-seconds
+```
 
-Phase 9.1 can be closed after the canonical eight-shot Phase 8 output is run locally and all of the
-following are confirmed:
+The default profile should remain the canonical profile until visual validation in the Remotion
+stage gives a concrete reason to change it.
 
-1. all eight `VideoClip` IDs match the ordered `ShotTiming` IDs;
-2. all eight MP4 files pass the source-media checks;
-3. the first composition interval starts at frame 0;
-4. every adjacent interval is contiguous;
-5. no frame interval has zero or negative duration;
-6. every source clip has enough media for its canonical interval;
-7. the final `total_frames` equals the quantized final `ShotTiming.end_seconds` boundary;
-8. `python -m ruff check .` passes;
-9. `python -m pytest` passes.
+## Phase 9.2 closure criteria
 
-Remotion rendering, captions, transitions and final narration muxing remain outside Phase 9.1.
+Phase 9.2 can be closed after the canonical local artifacts are run and all of the following are
+confirmed:
+
+1. all canonical `NarrationWord` IDs appear in captions exactly once and in order;
+2. every caption word has a positive visible frame interval inside the 1080-frame composition;
+3. caption planning leaves the eight shot intervals and `total_frames` unchanged;
+4. cue grouping uses only deterministic timing/text rules and makes no provider call;
+5. a second invocation with identical inputs produces identical caption JSON;
+6. `python -m ruff check .` passes;
+7. `python -m pytest` passes.
+
+Remotion rendering, visual caption styling, transitions and final narration muxing remain outside
+Phase 9.2.
