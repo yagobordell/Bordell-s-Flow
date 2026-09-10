@@ -4,8 +4,9 @@ from collections.abc import Callable
 from math import floor, isclose
 from pathlib import Path
 
-from ai_video_factory.domain import ShotTiming, VideoClip
+from ai_video_factory.domain import NarrationWord, ShotTiming, VideoClip
 
+from .captions import build_caption_cues
 from .media import MediaProbe, probe_video
 from .models import CompositionPlan, CompositionShot
 from .timeline import quantize_shot_timings
@@ -18,12 +19,17 @@ def build_composition_plan(
     timings: list[ShotTiming],
     *,
     clip_base_dir: Path,
+    words: list[NarrationWord] | None = None,
     width: int = 768,
     height: int = 1280,
     fps: int = 24,
+    caption_max_words: int = 5,
+    caption_max_chars: int = 36,
+    caption_max_duration_seconds: float = 2.5,
+    caption_pause_threshold_seconds: float = 0.35,
     probe: ProbeVideo = probe_video,
 ) -> CompositionPlan:
-    """Build and validate the frame-exact visual timeline for Phase 9."""
+    """Build and validate the frame-exact Phase 9 visual and caption timeline."""
 
     if width <= 0 or height <= 0 or fps <= 0:
         raise ValueError("Composition dimensions and fps must be positive")
@@ -61,12 +67,26 @@ def build_composition_plan(
             )
         )
 
+    total_frames = shots[-1].end_frame
+    captions = []
+    if words is not None:
+        captions = build_caption_cues(
+            words,
+            fps=fps,
+            total_frames=total_frames,
+            max_words=caption_max_words,
+            max_chars=caption_max_chars,
+            max_duration_seconds=caption_max_duration_seconds,
+            pause_threshold_seconds=caption_pause_threshold_seconds,
+        )
+
     return CompositionPlan(
         width=width,
         height=height,
         fps=fps,
-        total_frames=shots[-1].end_frame,
+        total_frames=total_frames,
         shots=shots,
+        captions=captions,
     )
 
 
