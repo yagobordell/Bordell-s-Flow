@@ -27,8 +27,52 @@ class CompositionShot(BaseModel):
         return self
 
 
+class CaptionWord(BaseModel):
+    """One canonical narration word quantized onto the composition frame timeline."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    word_id: int = Field(ge=1)
+    text: str = Field(min_length=1)
+    start_frame: int = Field(ge=0)
+    end_frame: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_interval(self) -> CaptionWord:
+        if self.end_frame <= self.start_frame:
+            raise ValueError("Caption word end_frame must be greater than start_frame")
+        return self
+
+
+class CaptionCue(BaseModel):
+    """A short display group of ordered narration words for the caption renderer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int = Field(ge=1)
+    text: str = Field(min_length=1)
+    start_frame: int = Field(ge=0)
+    end_frame: int = Field(gt=0)
+    word_ids: list[int] = Field(min_length=1)
+    words: list[CaptionWord] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_words(self) -> CaptionCue:
+        if self.end_frame <= self.start_frame:
+            raise ValueError("Caption cue end_frame must be greater than start_frame")
+        if self.word_ids != [word.word_id for word in self.words]:
+            raise ValueError("Caption cue word_ids must match its ordered words")
+        if self.text != " ".join(word.text for word in self.words):
+            raise ValueError("Caption cue text must be reconstructed from its words")
+        if self.start_frame != self.words[0].start_frame:
+            raise ValueError("Caption cue start_frame must match its first word")
+        if self.end_frame != self.words[-1].end_frame:
+            raise ValueError("Caption cue end_frame must match its final word")
+        return self
+
+
 class CompositionPlan(BaseModel):
-    """Deterministic Phase 9 visual timeline consumed by later rendering stages."""
+    """Deterministic Phase 9 timeline consumed by later rendering stages."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -38,6 +82,7 @@ class CompositionPlan(BaseModel):
     fps: int = Field(gt=0)
     total_frames: int = Field(gt=0)
     shots: list[CompositionShot] = Field(min_length=1)
+    captions: list[CaptionCue] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_timeline(self) -> CompositionPlan:
@@ -54,5 +99,22 @@ class CompositionPlan(BaseModel):
 
         if self.shots[-1].end_frame != self.total_frames:
             raise ValueError("Composition total_frames must equal the final shot boundary")
+
+        if self.captions:
+            caption_ids = [caption.id for caption in self.captions]
+            if caption_ids != list(range(1, len(self.captions) + 1)):
+                raise ValueError("Caption cues must have consecutive IDs starting at 1")
+
+            word_ids = [word_id for caption in self.captions for word_id in caption.word_ids]
+            if word_ids != list(range(1, len(word_ids) + 1)):
+                raise ValueError("Caption cues must cover consecutive narration word IDs exactly once")
+
+            for caption in self.captions:
+                if caption.start_frame >= self.total_frames or caption.end_frame > self.total_frames:
+                    raise ValueError("Caption cues must remain inside the composition timeline")
+
+            for previous, current in zip(self.captions, self.captions[1:], strict=False):
+                if current.start_frame < previous.start_frame:
+                    raise ValueError("Caption cues must preserve narration order")
 
         return self
