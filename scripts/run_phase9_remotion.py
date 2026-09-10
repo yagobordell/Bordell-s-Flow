@@ -132,7 +132,8 @@ def _resolve_remotion_cli(renderer_dir: Path) -> Path:
     binary = renderer_dir / "node_modules" / ".bin" / binary_name
     if not binary.is_file():
         raise SystemExit(
-            "Remotion CLI is not installed. Run: npm install --prefix remotion"
+            "Remotion CLI is not installed. From the repository root run: "
+            "Push-Location remotion; npm.cmd install; Pop-Location"
         )
     return binary.resolve()
 
