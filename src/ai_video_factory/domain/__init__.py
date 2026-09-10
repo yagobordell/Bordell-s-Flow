@@ -29,13 +29,14 @@ from .models import (
     VideoPrompt,
     VisualReference,
 )
-from .video import VideoClip
+from .video import FinalVideo, VideoClip
 
 __all__ = [
     "Beat",
     "BeatTiming",
     "BlockContinuity",
     "ContinuityEntity",
+    "FinalVideo",
     "GPUDeviceProfile",
     "GPUOffload",
     "GPUQuantization",
