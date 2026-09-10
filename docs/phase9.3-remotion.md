@@ -1,6 +1,7 @@
 # Phase 9.3 — Remotion visual renderer
 
-Status: implemented, pending validation against the canonical local eight-shot composition.
+Status: technically validated against the canonical local eight-shot composition; visual inspection
+remains before formal closure.
 
 Phase 9.3 is the first real visual render in Phase 9. It consumes the closed
 `composition_plan.json` from Phase 9.2 and produces a silent H.264 MP4. It does not decide semantic
@@ -104,6 +105,10 @@ The initial style is deliberately simple and readable for 9:16 output: centered 
 caption card, high-contrast text and active-word emphasis. Styling can be refined after the first real
 render without touching timing contracts.
 
+`@remotion/media` expects video fitting to use the dedicated `objectFit` prop. The canonical component
+therefore uses `objectFit="cover"` directly on `<Video>` rather than putting `objectFit` inside its
+React `style`; this removes the warning observed on the first real local render.
+
 ## Output contract
 
 `data/output/phase9/visual.mp4` must be:
@@ -120,12 +125,40 @@ audio:        none
 Python probes the rendered file and rejects codec, resolution, fps, frame-count or audio mismatches.
 Narration muxing remains outside Phase 9.3.
 
+## Canonical local validation
+
+The first complete local Remotion render succeeded against the real eight-shot composition:
+
+```text
+shots=8
+captions=29
+words=105
+presentation_normalizations=2
+rendered frames=1080
+duration=45.000s
+fps=24
+audio_streams=0
+output size=39.9 MB
+```
+
+The two expected presentation fixes were applied to word IDs 41 and 43. Remotion downloaded and
+cached Chrome Headless Shell on the first invocation, bundled the renderer, rendered all frames and
+produced `data/output/phase9/visual.mp4`. The Python post-render probe accepted the result.
+
+The first render also emitted a non-fatal `@remotion/media` warning asking for the dedicated
+`objectFit` prop. The renderer was updated immediately afterward so subsequent renders use
+`objectFit="cover"` directly and should not emit that warning.
+
 ## Commands
 
-From the repository root after pulling the Phase 9.3 implementation:
+From the repository root after pulling the Phase 9.3 implementation, install the isolated Node project
+from inside its directory. On Windows PowerShell, `npm.cmd` avoids environments where `npm.ps1` is
+blocked by execution policy:
 
 ```powershell
-npm install --prefix remotion
+Push-Location .\remotion
+npm.cmd install
+Pop-Location
 python scripts/run_phase9_remotion.py
 ```
 
@@ -145,21 +178,25 @@ data/output/phase9/visual.mp4
 The Remotion Studio can be opened separately with:
 
 ```powershell
-npm --prefix remotion run studio
+Push-Location .\remotion
+npm.cmd run studio
+Pop-Location
 ```
 
 ## Closure criteria
 
-Phase 9.3 closes after the canonical local run confirms:
+Phase 9.3 closure status after the canonical local render:
 
-1. eight staged source clips preserve the eight canonical shot intervals;
-2. all 29 caption cues and 105 words are present in renderer props;
-3. exactly the two known dagger artifacts are normalized for presentation;
-4. the canonical Phase 9.2 composition plan remains unchanged;
-5. Remotion produces one H.264 768x1280 video at 24 fps;
-6. the output contains exactly 1080 frames and no audio stream;
-7. visual inspection confirms hard cuts, readable captions and active-word timing;
-8. Python Ruff and pytest pass;
-9. Remotion TypeScript typecheck passes in CI.
+1. eight staged source clips preserve the eight canonical shot intervals — confirmed;
+2. all 29 caption cues and 105 words are present in renderer props — confirmed;
+3. exactly the two known dagger artifacts are normalized for presentation — confirmed;
+4. the canonical Phase 9.2 composition plan remains unchanged — confirmed by the read-only renderer
+   preparation path;
+5. Remotion produces one H.264 768x1280 video at 24 fps — confirmed;
+6. the output contains exactly 1080 frames and no audio stream — confirmed;
+7. visual inspection confirms hard cuts, readable captions and active-word timing — pending;
+8. Python Ruff and pytest pass — confirmed in CI;
+9. Remotion TypeScript typecheck passes in CI — confirmed.
 
+Phase 9.3 is technically validated but remains open until the rendered MP4 is visually reviewed.
 Transitions, motion graphics and final narration muxing remain outside Phase 9.3.
