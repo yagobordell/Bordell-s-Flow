@@ -2,8 +2,29 @@ import {Sequence, useCurrentFrame} from "remotion";
 
 import type {RemotionCaptionCue} from "./types";
 
-const CaptionCueView = ({cue}: {cue: RemotionCaptionCue}) => {
+const CaptionCueView = ({
+  cue,
+  motionFrames,
+}: {
+  cue: RemotionCaptionCue;
+  motionFrames: number;
+}) => {
   const localFrame = useCurrentFrame();
+  const duration = cue.end_frame - cue.start_frame;
+  const effectiveMotionFrames = Math.min(
+    motionFrames,
+    Math.max(0, Math.floor((duration - 1) / 2)),
+  );
+  const enterProgress =
+    effectiveMotionFrames === 0
+      ? 1
+      : Math.min(1, localFrame / effectiveMotionFrames);
+  const remainingFrames = duration - 1 - localFrame;
+  const exitProgress =
+    effectiveMotionFrames === 0
+      ? 1
+      : Math.min(1, Math.max(0, remainingFrames) / effectiveMotionFrames);
+  const motionProgress = Math.min(enterProgress, exitProgress);
 
   return (
     <div
@@ -15,6 +36,8 @@ const CaptionCueView = ({cue}: {cue: RemotionCaptionCue}) => {
         display: "flex",
         justifyContent: "center",
         pointerEvents: "none",
+        opacity: 0.82 + motionProgress * 0.18,
+        transform: `translateY(${(1 - motionProgress) * 10}px) scale(${0.99 + motionProgress * 0.01})`,
       }}
     >
       <div
@@ -56,7 +79,13 @@ const CaptionCueView = ({cue}: {cue: RemotionCaptionCue}) => {
   );
 };
 
-export const CaptionTrack = ({captions}: {captions: RemotionCaptionCue[]}) => {
+export const CaptionTrack = ({
+  captions,
+  motionFrames = 0,
+}: {
+  captions: RemotionCaptionCue[];
+  motionFrames?: number;
+}) => {
   return (
     <>
       {captions.map((cue) => (
@@ -66,7 +95,7 @@ export const CaptionTrack = ({captions}: {captions: RemotionCaptionCue[]}) => {
           durationInFrames={cue.end_frame - cue.start_frame}
           name={`Caption ${cue.id}`}
         >
-          <CaptionCueView cue={cue} />
+          <CaptionCueView cue={cue} motionFrames={motionFrames} />
         </Sequence>
       ))}
     </>
