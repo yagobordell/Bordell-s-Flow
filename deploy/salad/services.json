@@ -87,7 +87,7 @@
       "queue_name": "ai-video-factory-breeze-tts2-jobs",
       "dockerfile": "docker/workers/breeze-tts2/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:breeze-tts2-fast-all-v1",
-      "priority": "medium",
+      "priority": "high",
       "resources": {
         "cpu": 8,
         "memory": 32768,
