@@ -636,6 +636,42 @@ function Update-ContainerGroup {
         Out-Null
 }
 
+function Ensure-PreparedZeroReplicas {
+    param(
+        [Parameter(Mandatory)][hashtable]$Headers,
+        [Parameter(Mandatory)][object]$Group
+    )
+
+    if ([int]$Group.replicas -eq 0) {
+        return $Group
+    }
+
+    Write-Warning (
+        "Salad raised '$GroupName' to replicas=$([int]$Group.replicas) while preparing $Service. " +
+        "Forcing replicas back to zero before Prepare completes."
+    )
+    $Body = @{ replicas = 0 } | ConvertTo-Json
+    Invoke-RestMethod `
+        -Method Patch `
+        -Uri "$ContainersBase/$GroupName" `
+        -Headers $Headers `
+        -ContentType "application/merge-patch+json" `
+        -Body $Body `
+        -TimeoutSec 60 |
+        Out-Null
+
+    $Updated = Wait-ForGroupSettled `
+        -Headers $Headers `
+        -TimeoutMinutes $PrepareTimeoutMinutes
+    if ([int]$Updated.replicas -ne 0) {
+        throw (
+            "Prepared service '$Service' could not be normalized to zero replicas; " +
+            "current replicas=$([int]$Updated.replicas)."
+        )
+    }
+    return $Updated
+}
+
 function Assert-PreparedGroup {
     param(
         [Parameter(Mandatory)][object]$Group,
@@ -842,6 +878,7 @@ switch ($Action) {
             }
         }
 
+        $Group = Ensure-PreparedZeroReplicas -Headers $Headers -Group $Group
         Assert-PreparedGroup -Group $Group -PinnedImage $PinnedImage
         $WorkerEnvironment = $null
         $GpuClassIds = $null
