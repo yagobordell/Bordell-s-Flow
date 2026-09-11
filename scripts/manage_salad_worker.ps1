@@ -39,7 +39,9 @@ if ([string]::IsNullOrWhiteSpace($Image)) {
     $Image = [string]$Definition.image
 }
 
-$ApiBase = "https://api.salad.com/api/public/organizations/$Organization/projects/$Project"
+$OrganizationApiBase = "https://api.salad.com/api/public/organizations/$Organization"
+$GpuClassesBase = "$OrganizationApiBase/gpu-classes"
+$ApiBase = "$OrganizationApiBase/projects/$Project"
 $ContainersBase = "$ApiBase/containers"
 $QueuesBase = "$ApiBase/queues"
 $SecretNames = @(
@@ -101,6 +103,60 @@ function Get-HttpStatusCode {
     catch {
         return $null
     }
+}
+
+function Resolve-GpuClassIds {
+    param([Parameter(Mandatory)][hashtable]$Headers)
+
+    $NameProperty = $Definition.resources.PSObject.Properties["gpu_class_names"]
+    $Names = @()
+    if ($null -ne $NameProperty) {
+        $Names = @($NameProperty.Value)
+    }
+
+    if ($Names.Count -eq 0) {
+        $LegacyProperty = $Definition.resources.PSObject.Properties["gpu_classes"]
+        if ($null -eq $LegacyProperty) {
+            throw "Service '$Service' must define resources.gpu_class_names or gpu_classes."
+        }
+        $LegacyIds = @($LegacyProperty.Value | ForEach-Object { [string]$_ })
+        if ($LegacyIds.Count -eq 0) {
+            throw "Service '$Service' has no configured GPU classes."
+        }
+        Write-Warning "Service '$Service' still uses legacy GPU class UUIDs."
+        return $LegacyIds
+    }
+
+    $Response = Invoke-RestMethod `
+        -Uri $GpuClassesBase `
+        -Headers $Headers `
+        -TimeoutSec 30
+    $Items = @()
+    if ($Response.PSObject.Properties.Name -contains "items") {
+        $Items = @($Response.items)
+    }
+    else {
+        $Items = @($Response)
+    }
+
+    $Resolved = @()
+    foreach ($ConfiguredName in $Names) {
+        $Name = [string]$ConfiguredName
+        $Matches = @($Items | Where-Object { [string]$_.name -eq $Name })
+        if ($Matches.Count -eq 0) {
+            $Available = @($Items | ForEach-Object { [string]$_.name }) -join ", "
+            throw "Salad GPU class '$Name' was not found. Available classes: $Available"
+        }
+        if ($Matches.Count -gt 1) {
+            throw "Salad returned multiple GPU classes named '$Name'."
+        }
+        $Resolved += [string]$Matches[0].id
+    }
+
+    Write-Host (
+        "Resolved GPU profile for {0}: {1}" -f $Service, (@($Names) -join ", ")
+    ) -ForegroundColor Green
+    return $Resolved
 }
 
 function Ensure-Queue {
@@ -268,6 +324,12 @@ function Show-Status {
     param([Parameter(Mandatory)][hashtable]$Headers)
 
     $Group = Get-Group -Headers $Headers
+    $ConfiguredGpuProperty = $Definition.resources.PSObject.Properties["gpu_class_names"]
+    $ConfiguredGpu = "legacy UUIDs"
+    if ($null -ne $ConfiguredGpuProperty) {
+        $ConfiguredGpu = @($ConfiguredGpuProperty.Value) -join ","
+    }
+
     $Group |
         Select-Object `
             name,
@@ -277,6 +339,7 @@ function Show-Status {
             pending_change,
             @{Name = "Service"; Expression = {$Service}},
             @{Name = "Queue"; Expression = {$QueueName}},
+            @{Name = "RequestedGPU"; Expression = {$ConfiguredGpu}},
             @{Name = "Status"; Expression = {$_.current_state.status}},
             @{Name = "Description"; Expression = {$_.current_state.description}},
             @{Name = "Image"; Expression = {$_.container.image}},
@@ -389,6 +452,7 @@ switch ($Action) {
         $PinnedImage = Resolve-PinnedImage -MutableImage $Image
         Write-Host "Pinned image: $PinnedImage" -ForegroundColor Green
         $WorkerEnvironment = Get-WorkerEnvironment
+        $GpuClassIds = @(Resolve-GpuClassIds -Headers $Headers)
         $PreviousVersion = [int]$Group.version
 
         $PatchBody = @{
@@ -399,7 +463,7 @@ switch ($Action) {
                 resources = @{
                     cpu = [int]$Definition.resources.cpu
                     memory = [int]$Definition.resources.memory
-                    gpu_classes = @($Definition.resources.gpu_classes)
+                    gpu_classes = $GpuClassIds
                     shm_size = [int]$Definition.resources.shm_size
                     storage_amount = [Int64]$Definition.resources.storage_amount
                 }
@@ -465,6 +529,7 @@ switch ($Action) {
 
         $PatchBody = $null
         $WorkerEnvironment = $null
+        $GpuClassIds = $null
 
         Write-Host "$Service worker image/config prepared; group remains stopped." `
             -ForegroundColor Green
