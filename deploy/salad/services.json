@@ -66,6 +66,74 @@
         "max_downscale_per_minute": 1
       }
     },
+    "breeze_tts2": {
+      "display_name": "AI Video Factory Breeze TTS 2",
+      "organization": "yagobordellorg",
+      "project": "aivideofactory",
+      "group_name": "ai-video-factory-breeze-tts2-worker",
+      "queue_name": "ai-video-factory-breeze-tts2-jobs",
+      "dockerfile": "docker/workers/breeze-tts2/Dockerfile",
+      "image": "docker.io/yagobordell/ai-video-factory:breeze-tts2-fast-all-v1",
+      "priority": "medium",
+      "resources": {
+        "cpu": 8,
+        "memory": 32768,
+        "shm_size": 8192,
+        "storage_amount": 68719476736,
+        "gpu_class_names": [
+          "RTX 4090"
+        ]
+      },
+      "environment": {
+        "INFERENCE_WORKER_MODE": "production",
+        "INFERENCE_WORKER_LEASE_SECONDS": "900",
+        "INFERENCE_WORKER_HEARTBEAT_SECONDS": "30",
+        "BREEZE_MODEL_ROOT": "/workspace/models/breeze-tts-2",
+        "BREEZE_MODEL_REPOSITORY": "BreezeBlue/Breeze-TTS-2",
+        "BREEZE_MODEL_REVISION": "main",
+        "BREEZE_RUNTIME_ROOT": "/opt/breeze-infer",
+        "BREEZE_DEVICE": "cuda",
+        "BREEZE_MAX_CHUNK_CHARS": "1200",
+        "BREEZE_INTER_CHUNK_PAUSE_MS": "120",
+        "SALAD_QUEUE_ENABLED": "true",
+        "SALAD_LOG_LEVEL": "info"
+      },
+      "required_secrets": [
+        "POSTGRES_DSN",
+        "R2_ENDPOINT_URL",
+        "R2_BUCKET",
+        "R2_ACCESS_KEY_ID",
+        "R2_SECRET_ACCESS_KEY"
+      ],
+      "probes": {
+        "startup": {
+          "path": "/health",
+          "period_seconds": 15,
+          "timeout_seconds": 5,
+          "failure_threshold": 40
+        },
+        "readiness": {
+          "path": "/ready",
+          "period_seconds": 10,
+          "timeout_seconds": 5,
+          "failure_threshold": 12
+        },
+        "liveness": {
+          "path": "/health",
+          "period_seconds": 30,
+          "timeout_seconds": 10,
+          "failure_threshold": 20
+        }
+      },
+      "autoscaler": {
+        "min_replicas": 0,
+        "max_replicas": 2,
+        "desired_queue_length": 1,
+        "polling_period": 30,
+        "max_upscale_per_minute": 1,
+        "max_downscale_per_minute": 1
+      }
+    },
     "whisper": {
       "display_name": "AI Video Factory Whisper",
       "organization": "yagobordellorg",
