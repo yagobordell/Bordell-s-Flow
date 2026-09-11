@@ -413,7 +413,10 @@ def _split_oversized_piece(text: str, max_chars: int) -> list[str]:
         if current:
             chunks.append(current)
         if len(word) > max_chars:
-            chunks.extend(word[index : index + max_chars] for index in range(0, len(word), max_chars))
+            chunks.extend(
+                word[index : index + max_chars]
+                for index in range(0, len(word), max_chars)
+            )
             current = ""
         else:
             current = word
