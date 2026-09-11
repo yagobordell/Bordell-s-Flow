@@ -1,1 +1,0 @@
-Queue-autoscaler repair is exercised through manage_salad_stack Prepare and keeps groups stopped at zero replicas until explicit Start.
