@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
-from ai_video_factory.gpu.contracts import GPUJobRequest
+from ai_video_factory.inference.contracts import InferenceJobRequest
 
 
 class QueueJobStatus(StrEnum):
@@ -24,11 +24,11 @@ class QueueJobSnapshot:
 
 
 class JobQueueClient(Protocol):
-    """Provider-neutral transport for submitting and observing GPU jobs."""
+    """Provider-neutral transport for submitting and observing inference jobs."""
 
     def submit(
         self,
-        request: GPUJobRequest,
+        request: InferenceJobRequest,
         *,
         metadata: Mapping[str, str],
     ) -> QueueJobSnapshot: ...
