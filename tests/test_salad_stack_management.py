@@ -5,6 +5,7 @@ from pathlib import Path
 MANIFEST = Path("deploy/salad/services.json")
 WORKER_MANAGER = Path("scripts/manage_salad_worker.ps1")
 STACK_MANAGER = Path("scripts/manage_salad_stack.ps1")
+QUEUE_REPAIR = Path("scripts/repair_salad_queue_attachment.ps1")
 
 
 def _document() -> dict:
@@ -100,6 +101,33 @@ def test_stack_manager_orchestrates_all_model_services() -> None:
     assert '& $WorkerManager @WorkerArguments' in script
     assert '$WorkerArguments = @{' in script
     assert 'Service = $Name' in script
-    assert 'Action = $Action' in script
+    assert 'Action = $WorkerAction' in script
     assert '"-Service", $Name' not in script
     assert 'Get-Setting -Name "SALAD_API_KEY"' in script
+    assert "start_salad_scale_to_zero.ps1" in script
+
+
+def test_prepare_repairs_queue_attachment_before_and_after_worker_update() -> None:
+    script = STACK_MANAGER.read_text(encoding="utf-8")
+
+    prepare_block = script.split('"Prepare" {', maxsplit=1)[1].split('"Start" {', maxsplit=1)[0]
+    assert "Invoke-QueueRepair -Name $Name -AllowMissing" in prepare_block
+    assert 'Invoke-WorkerAction -Name $Name -WorkerAction "Prepare"' in prepare_block
+    assert "Invoke-QueueRepair -Name $Name" in prepare_block
+    assert prepare_block.index("-AllowMissing") < prepare_block.index('-WorkerAction "Prepare"')
+
+
+def test_queue_repair_blocks_work_and_normalizes_stopped_replicas() -> None:
+    script = QUEUE_REPAIR.read_text(encoding="utf-8")
+
+    assert "[switch]$AllowMissing" in script
+    assert "current_queue_length" in script
+    assert "Cancel them before Prepare can change the container group." in script
+    assert 'current_state.status -ne "stopped"' in script
+    assert "function Set-ZeroReplicas" in script
+    assert "Normalizing stopped group" in script
+    assert '@{ replicas = 0 }' in script
+    assert "networking = New-Networking" in script
+    assert "queue_connection = New-QueueConnection" in script
+    assert "queue_autoscaler = New-QueueAutoscaler" in script
+    assert "Test-QueueAttachment" in script
