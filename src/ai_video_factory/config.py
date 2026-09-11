@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     openai_tts_model: str = "gpt-4o-mini-tts"
     openai_tts_voice: str = "marin"
 
+    ideogram4_model: str = "ideogram-ai/ideogram-4-nf4"
+
     breeze_tts_model: str = "BreezeBlue/Breeze-TTS-2"
     breeze_tts_voice: str = (
         "A warm, confident documentary narrator with a clear neutral English accent, "
@@ -36,6 +38,7 @@ class Settings(BaseSettings):
     salad_organization: str | None = None
     salad_project: str | None = None
     salad_breeze_tts2_queue_name: str = "ai-video-factory-breeze-tts2-jobs"
+    salad_ideogram4_queue_name: str = "ai-video-factory-ideogram4-jobs"
     salad_whisper_queue_name: str = "ai-video-factory-whisper-jobs"
 
     r2_endpoint_url: str | None = None

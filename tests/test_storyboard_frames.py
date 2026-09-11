@@ -9,17 +9,37 @@ from ai_video_factory.bots.storyboard_frames import (
     StoryboardPromptOutput,
 )
 from ai_video_factory.domain import Shot, ShotTiming, VisualReference
+from ai_video_factory.providers.ideogram_caption import (
+    IdeogramCaptionPlan,
+    IdeogramStylePlan,
+    render_ideogram_caption,
+)
 from ai_video_factory.workflows.storyboard_frames import build_storyboard_frames
 
 
+def _plan(description: str) -> IdeogramCaptionPlan:
+    return IdeogramCaptionPlan(
+        high_level_description=description,
+        style=IdeogramStylePlan(
+            aesthetics="cinematic documentary realism",
+            lighting="soft directional daylight",
+            medium="documentary photograph",
+            render_mode="photo",
+            render_description="realistic 35mm photography",
+        ),
+        background="Historically grounded feudal Japanese environment.",
+        elements=[],
+    )
+
+
 class FakeStructuredProvider:
-    def __init__(self, prompts: list[str]) -> None:
+    def __init__(self, prompts: list[IdeogramCaptionPlan]) -> None:
         self.prompts = prompts
         self.calls: list[dict[str, Any]] = []
 
     async def generate_structured(self, **kwargs: Any) -> StoryboardPromptOutput:
         self.calls.append(kwargs)
-        return StoryboardPromptOutput(prompt=self.prompts[len(self.calls) - 1])
+        return self.prompts[len(self.calls) - 1]
 
 
 def _shots() -> list[Shot]:
@@ -67,10 +87,14 @@ def test_storyboard_instructions_require_action_visibility_and_visual_progressio
         STORYBOARD_FRAME_INSTRUCTIONS
     )
     assert "evidencia visual concreta o una metáfora física" in STORYBOARD_FRAME_INSTRUCTIONS
+    assert "no recibe las imágenes de referencia" in STORYBOARD_FRAME_INSTRUCTIONS
+    assert "solo elementos de tipo objeto" in STORYBOARD_FRAME_INSTRUCTIONS
 
 
 def test_storyboard_workflow_is_serial_and_carries_previous_frame() -> None:
-    provider = FakeStructuredProvider(["First keyframe", "Second keyframe"])
+    first = _plan("First keyframe")
+    second = _plan("Second keyframe")
+    provider = FakeStructuredProvider([first, second])
     bot = StoryboardFrameBot(provider=provider, model="test-model")  # type: ignore[arg-type]
 
     frames = asyncio.run(
@@ -84,17 +108,25 @@ def test_storyboard_workflow_is_serial_and_carries_previous_frame() -> None:
         )
     )
 
+    first_caption = render_ideogram_caption(first)
+    second_caption = render_ideogram_caption(second)
     assert [frame.model_dump() for frame in frames] == [
-        {"shot_id": 1, "prompt": "First keyframe"},
-        {"shot_id": 2, "prompt": "Second keyframe"},
+        {"shot_id": 1, "prompt": first_caption},
+        {"shot_id": 2, "prompt": second_caption},
     ]
     assert len(provider.calls) == 2
-    assert "PREVIOUS STORYBOARD FRAME:\n(none)" in provider.calls[0]["input_text"]
-    assert "PREVIOUS STORYBOARD FRAME:\nFirst keyframe" in provider.calls[1]["input_text"]
+    assert "PREVIOUS STORYBOARD FRAME (Ideogram JSON caption):\n(none)" in (
+        provider.calls[0]["input_text"]
+    )
+    assert (
+        "PREVIOUS STORYBOARD FRAME (Ideogram JSON caption):\n" + first_caption
+        in provider.calls[1]["input_text"]
+    )
+    assert provider.calls[0]["output_type"] is StoryboardPromptOutput
 
 
 def test_storyboard_workflow_resets_previous_frame_on_new_scene() -> None:
-    provider = FakeStructuredProvider(["First scene", "Second scene"])
+    provider = FakeStructuredProvider([_plan("First scene"), _plan("Second scene")])
     bot = StoryboardFrameBot(provider=provider, model="test-model")  # type: ignore[arg-type]
     shots = _shots()
     shots[1] = shots[1].model_copy(update={"scene_id": 2})
@@ -110,12 +142,13 @@ def test_storyboard_workflow_resets_previous_frame_on_new_scene() -> None:
         )
     )
 
-    assert "PREVIOUS STORYBOARD FRAME:\n(none)" in provider.calls[0]["input_text"]
-    assert "PREVIOUS STORYBOARD FRAME:\n(none)" in provider.calls[1]["input_text"]
+    previous_none = "PREVIOUS STORYBOARD FRAME (Ideogram JSON caption):\n(none)"
+    assert previous_none in provider.calls[0]["input_text"]
+    assert previous_none in provider.calls[1]["input_text"]
 
 
 def test_storyboard_bot_receives_duration_and_only_relevant_references() -> None:
-    provider = FakeStructuredProvider(["Frame one", "Frame two"])
+    provider = FakeStructuredProvider([_plan("Frame one"), _plan("Frame two")])
     bot = StoryboardFrameBot(provider=provider, model="test-model")  # type: ignore[arg-type]
 
     asyncio.run(
@@ -139,7 +172,7 @@ def test_storyboard_bot_receives_duration_and_only_relevant_references() -> None
 
 
 def test_storyboard_workflow_rejects_unknown_visual_entity() -> None:
-    provider = FakeStructuredProvider(["unused"])
+    provider = FakeStructuredProvider([_plan("unused")])
     bot = StoryboardFrameBot(provider=provider, model="test-model")  # type: ignore[arg-type]
     shots = [
         Shot(
@@ -167,7 +200,7 @@ def test_storyboard_workflow_rejects_unknown_visual_entity() -> None:
 
 
 def test_storyboard_workflow_rejects_noncontiguous_timings() -> None:
-    provider = FakeStructuredProvider(["unused", "unused"])
+    provider = FakeStructuredProvider([_plan("unused"), _plan("unused")])
     bot = StoryboardFrameBot(provider=provider, model="test-model")  # type: ignore[arg-type]
     timings = [
         ShotTiming(shot_id=1, start_seconds=0.0, end_seconds=3.5),

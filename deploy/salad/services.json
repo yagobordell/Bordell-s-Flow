@@ -134,6 +134,74 @@
         "max_downscale_per_minute": 1
       }
     },
+    "ideogram4": {
+      "display_name": "AI Video Factory Ideogram 4 Quality",
+      "organization": "yagobordellorg",
+      "project": "aivideofactory",
+      "group_name": "ai-video-factory-ideogram4-worker",
+      "queue_name": "ai-video-factory-ideogram4-jobs",
+      "dockerfile": "docker/workers/ideogram4/Dockerfile",
+      "image": "docker.io/yagobordell/ai-video-factory:ideogram4-nf4-quality48-v1",
+      "priority": "medium",
+      "resources": {
+        "cpu": 8,
+        "memory": 32768,
+        "shm_size": 8192,
+        "storage_amount": 103079215104,
+        "gpu_class_names": [
+          "RTX 4090"
+        ]
+      },
+      "environment": {
+        "INFERENCE_WORKER_MODE": "production",
+        "INFERENCE_WORKER_LEASE_SECONDS": "900",
+        "INFERENCE_WORKER_HEARTBEAT_SECONDS": "30",
+        "IDEOGRAM_MODEL_ROOT": "/workspace/models/ideogram4",
+        "IDEOGRAM_MODEL_REPOSITORY": "ideogram-ai/ideogram-4-nf4",
+        "IDEOGRAM_MODEL_REVISION": "main",
+        "IDEOGRAM_DEVICE": "cuda",
+        "IDEOGRAM_DTYPE": "bfloat16",
+        "IDEOGRAM_SAMPLER_PRESET": "V4_QUALITY_48",
+        "SALAD_QUEUE_ENABLED": "true",
+        "SALAD_LOG_LEVEL": "info"
+      },
+      "required_secrets": [
+        "POSTGRES_DSN",
+        "R2_ENDPOINT_URL",
+        "R2_BUCKET",
+        "R2_ACCESS_KEY_ID",
+        "R2_SECRET_ACCESS_KEY",
+        "HF_TOKEN"
+      ],
+      "probes": {
+        "startup": {
+          "path": "/health",
+          "period_seconds": 15,
+          "timeout_seconds": 5,
+          "failure_threshold": 40
+        },
+        "readiness": {
+          "path": "/ready",
+          "period_seconds": 10,
+          "timeout_seconds": 5,
+          "failure_threshold": 60
+        },
+        "liveness": {
+          "path": "/health",
+          "period_seconds": 30,
+          "timeout_seconds": 10,
+          "failure_threshold": 20
+        }
+      },
+      "autoscaler": {
+        "min_replicas": 0,
+        "max_replicas": 4,
+        "desired_queue_length": 1,
+        "polling_period": 30,
+        "max_upscale_per_minute": 2,
+        "max_downscale_per_minute": 1
+      }
+    },
     "whisper": {
       "display_name": "AI Video Factory Whisper",
       "organization": "yagobordellorg",
