@@ -613,11 +613,11 @@ function Update-ContainerGroup {
 
     $PatchBody = @{
         replicas = 0
-        priority = [string]$Definition.priority
         container = New-ContainerConfiguration `
             -PinnedImage $PinnedImage `
             -WorkerEnvironment $WorkerEnvironment `
-            -GpuClassIds $GpuClassIds
+            -GpuClassIds $GpuClassIds `
+            -IncludePriority
         startup_probe = New-Probe -Probe $Definition.probes.startup
         readiness_probe = New-Probe -Probe $Definition.probes.readiness
         liveness_probe = New-Probe -Probe $Definition.probes.liveness
@@ -680,6 +680,12 @@ function Assert-PreparedGroup {
 
     if ($Group.container.image -ne $PinnedImage) {
         throw "Salad did not activate the expected image. Received: $($Group.container.image)"
+    }
+    if ([string]$Group.priority -ne [string]$Definition.priority) {
+        throw (
+            "Salad did not activate the expected priority '$([string]$Definition.priority)'. " +
+            "Received: $([string]$Group.priority)"
+        )
     }
     if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
         throw "Salad did not activate the expected queue: $QueueName"
