@@ -92,7 +92,7 @@ function Get-Headers {
     return @{
         "Salad-Api-Key" = Get-Setting -Name "SALAD_API_KEY" -Prompt "Salad API key" -Secret
         "Accept" = "application/json"
-        "User-Agent" = "ai-video-factory-queue-repair/1.1"
+        "User-Agent" = "ai-video-factory-queue-repair/1.2"
     }
 }
 
@@ -140,11 +140,12 @@ function Test-GroupConfiguration {
     param([Parameter(Mandatory)][object]$Group)
 
     $Autoscaler = $Group.PSObject.Properties["queue_autoscaler"]
-    $Networking = $Group.PSObject.Properties["networking"]
     if ($null -eq $Autoscaler -or $null -eq $Autoscaler.Value) {
         return $false
     }
-    if ($null -eq $Networking -or $null -eq $Networking.Value) {
+
+    $Networking = $Group.PSObject.Properties["networking"]
+    if ($null -ne $Networking -and $null -ne $Networking.Value) {
         return $false
     }
 
@@ -152,7 +153,6 @@ function Test-GroupConfiguration {
         [string]$Group.queue_connection.queue_name -eq $QueueName -and
         [string]$Group.queue_connection.path -eq $QueuePath -and
         [int]$Group.queue_connection.port -eq $ContainerPort -and
-        [int]$Group.networking.port -eq $ContainerPort -and
         [int]$Group.queue_autoscaler.min_replicas -eq [int]$Definition.autoscaler.min_replicas -and
         [int]$Group.queue_autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
         [int]$Group.queue_autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
@@ -259,14 +259,6 @@ function New-QueueConnection {
     }
 }
 
-function New-Networking {
-    return @{
-        protocol = "http"
-        port = $ContainerPort
-        auth = $true
-    }
-}
-
 function New-CreateBody {
     param([Parameter(Mandatory)][object]$ExistingGroup)
 
@@ -285,7 +277,6 @@ function New-CreateBody {
         replicas = 0
         restart_policy = [string]$Document.stack.restart_policy
         scheduled_scaling_enabled = $false
-        networking = New-Networking
         container = @{
             image = [string]$ExistingGroup.container.image
             resources = @{
@@ -417,7 +408,6 @@ if (
     $null -eq $Group.queue_autoscaler
 ) {
     $PatchBody = @{
-        networking = New-Networking
         queue_connection = New-QueueConnection
         queue_autoscaler = New-QueueAutoscaler
     } | ConvertTo-Json -Depth 10
