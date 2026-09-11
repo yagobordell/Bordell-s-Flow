@@ -1,108 +1,21 @@
-from __future__ import annotations
+"""Backward-compatible aliases for provider-neutral inference ports."""
 
-from collections.abc import Mapping
-from dataclasses import dataclass
-from enum import StrEnum
-from pathlib import Path
-from typing import Any, Protocol
+from ai_video_factory.inference.ports import (
+    ClaimDecision,
+    JobClaim,
+    JobRepository,
+    LocalArtifact,
+    ObjectStorage,
+    StoredObject,
+    TaskRunner,
+)
 
-from .contracts import GPUJobRequest
-
-
-@dataclass(frozen=True, slots=True)
-class StoredObject:
-    key: str
-    content_type: str
-    size_bytes: int
-    etag: str | None
-    metadata: Mapping[str, str]
-
-
-class ObjectStorage(Protocol):
-    def download(self, key: str, destination: Path) -> StoredObject: ...
-
-    def upload(
-        self,
-        source: Path,
-        key: str,
-        *,
-        content_type: str,
-        metadata: Mapping[str, str],
-    ) -> StoredObject: ...
-
-    def stat(self, key: str) -> StoredObject | None: ...
-
-    def ping(self) -> None: ...
-
-
-class ClaimDecision(StrEnum):
-    START = "start"
-    REPLAY = "replay"
-    BUSY = "busy"
-
-
-@dataclass(frozen=True, slots=True)
-class JobClaim:
-    decision: ClaimDecision
-    attempt_count: int
-    result: Mapping[str, Any] | None = None
-
-
-class JobRepository(Protocol):
-    def claim(
-        self,
-        request: GPUJobRequest,
-        request_sha256: str,
-        *,
-        owner: str,
-        lease_seconds: int,
-        transport_job_id: str | None,
-    ) -> JobClaim: ...
-
-    def renew_lease(
-        self,
-        job_id: str,
-        request_sha256: str,
-        *,
-        owner: str,
-        lease_seconds: int,
-    ) -> bool: ...
-
-    def mark_succeeded(
-        self,
-        job_id: str,
-        request_sha256: str,
-        *,
-        owner: str,
-        result: Mapping[str, Any],
-    ) -> None: ...
-
-    def mark_failed(
-        self,
-        job_id: str,
-        request_sha256: str,
-        *,
-        owner: str,
-        error: str,
-    ) -> None: ...
-
-    def ping(self) -> None: ...
-
-    def close(self) -> None: ...
-
-
-@dataclass(frozen=True, slots=True)
-class LocalArtifact:
-    path: Path
-    content_type: str
-
-
-class TaskRunner(Protocol):
-    task_name: str
-
-    def run(
-        self,
-        request: GPUJobRequest,
-        inputs: Mapping[str, Path],
-        work_dir: Path,
-    ) -> LocalArtifact: ...
+__all__ = [
+    "ClaimDecision",
+    "JobClaim",
+    "JobRepository",
+    "LocalArtifact",
+    "ObjectStorage",
+    "StoredObject",
+    "TaskRunner",
+]

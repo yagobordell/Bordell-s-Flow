@@ -1,30 +1,25 @@
-class GPUInfrastructureError(RuntimeError):
-    """Base error for the Phase 7 worker boundary."""
+"""Backward-compatible aliases for inference infrastructure errors."""
 
+from ai_video_factory.inference.errors import (
+    InferenceInfrastructureError,
+    InputIntegrityError,
+    JobBusyError,
+    JobConflictError,
+    JobExecutionError,
+    LeaseLostError,
+    OutputConflictError,
+    UnsupportedTaskError,
+)
 
-class JobConflictError(GPUInfrastructureError):
-    """The same application job ID was reused for different immutable input."""
+GPUInfrastructureError = InferenceInfrastructureError
 
-
-class OutputConflictError(JobConflictError):
-    """The deterministic output key exists but belongs to a different request."""
-
-
-class JobBusyError(GPUInfrastructureError):
-    """Another worker still owns a live lease for this job."""
-
-
-class LeaseLostError(GPUInfrastructureError):
-    """The worker no longer owns the lease and must not commit an output."""
-
-
-class InputIntegrityError(GPUInfrastructureError):
-    """A downloaded input does not match its declared digest."""
-
-
-class UnsupportedTaskError(GPUInfrastructureError):
-    """No task runner is registered for the requested task."""
-
-
-class JobExecutionError(GPUInfrastructureError):
-    """A retryable infrastructure or task execution failure occurred."""
+__all__ = [
+    "GPUInfrastructureError",
+    "InputIntegrityError",
+    "JobBusyError",
+    "JobConflictError",
+    "JobExecutionError",
+    "LeaseLostError",
+    "OutputConflictError",
+    "UnsupportedTaskError",
+]
