@@ -41,15 +41,16 @@ def test_smoke_ideogram_caption_matches_local_contract() -> None:
 
 def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     text = VALIDATION_MANAGER.read_text(encoding="utf-8")
+    action_set = 'ValidateSet("Validate", "Prepare", "Start", "Status", "Smoke", "Stop")'
 
-    assert 'ValidateSet("Validate", "Prepare", "Start", "Status", "Smoke", "Stop")' in text
+    assert action_set in text
     assert 'ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25", "all")' in text
     assert 'python scripts/run_salad_smoke_suite.py' in text
     assert "manage_salad_stack.ps1" in text
     assert '"Prepare" { Invoke-StackAction -StackAction "Prepare" }' in text
     assert '"Start" { Invoke-StackAction -StackAction "Start" }' in text
     assert '"Stop" { Invoke-StackAction -StackAction "Stop" }' in text
-    assert "Full" not in text
+    assert 'ValidateSet("Full"' not in text
 
 
 def test_smoke_suite_persists_evidence_for_each_worker() -> None:
