@@ -83,7 +83,7 @@
     },
     "breeze_tts2": {
       "display_name": "AI Video Factory Breeze TTS 2",
-      "group_name": "ai-video-factory-breeze-tts2-worker",
+      "group_name": "ai-video-factory-breeze-tts2-worker-v2",
       "queue_name": "ai-video-factory-breeze-tts2-jobs",
       "dockerfile": "docker/workers/breeze-tts2/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:breeze-tts2-fast-all-v1",
