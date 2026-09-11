@@ -83,5 +83,9 @@ def test_stack_manager_orchestrates_all_model_services() -> None:
     assert "Every model service must have its own Salad container group." in script
     assert "Every model service must have its own Salad job queue." in script
     assert '[array]::Reverse($ExecutionOrder)' in script
-    assert '& $WorkerManager @Arguments' in script
+    assert '& $WorkerManager @WorkerArguments' in script
+    assert '$WorkerArguments = @{' in script
+    assert 'Service = $Name' in script
+    assert 'Action = $Action' in script
+    assert '"-Service", $Name' not in script
     assert 'Get-Setting -Name "SALAD_API_KEY"' in script
