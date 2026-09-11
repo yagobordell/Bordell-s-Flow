@@ -119,7 +119,7 @@ def test_breeze_worker_settings_and_salad_manifest() -> None:
     assert settings.device == "cuda"
     assert settings.max_chunk_chars == 1200
     assert service["queue_name"] == "ai-video-factory-breeze-tts2-jobs"
-    assert service["resources"]["gpu_class_names"] == ["RTX 4090"]
+    assert service["resources"]["gpu_class_names"] == ["RTX 4090 (24 GB)"]
     assert service["dockerfile"] == "docker/workers/breeze-tts2/Dockerfile"
     assert service["autoscaler"]["min_replicas"] == 0
     assert service["autoscaler"]["max_replicas"] == 2
