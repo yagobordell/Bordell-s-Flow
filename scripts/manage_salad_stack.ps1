@@ -23,6 +23,7 @@ $ManifestPath = Join-Path $RepoRoot "deploy\salad\services.json"
 $WorkerManager = Join-Path $PSScriptRoot "manage_salad_worker.ps1"
 $QueueAttachmentRepair = Join-Path $PSScriptRoot "repair_salad_queue_attachment.ps1"
 $ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
+$ZeroReplicaGuard = Join-Path $PSScriptRoot "ensure_salad_zero_replicas.ps1"
 
 function Import-EnvFile {
     param([Parameter(Mandatory)][string]$Path)
@@ -252,6 +253,24 @@ function Invoke-ScaleToZeroStart {
     }
 }
 
+function Invoke-ZeroReplicaGuard {
+    param([Parameter(Mandatory)][string]$Name)
+
+    $Arguments = @{
+        Service = $Name
+        EnvFile = $EnvFile
+    }
+    if ($NonInteractive) {
+        $Arguments["NonInteractive"] = $true
+    }
+
+    & $ZeroReplicaGuard @Arguments
+    $Succeeded = $?
+    if (-not $Succeeded) {
+        throw "Salad zero-replica guard failed for service '$Name'."
+    }
+}
+
 foreach ($RequiredPath in @($ManifestPath, $WorkerManager)) {
     if (-not (Test-Path -LiteralPath $RequiredPath -PathType Leaf)) {
         throw "Required Salad deployment file not found: $RequiredPath"
@@ -262,6 +281,9 @@ if ($Action -eq "Prepare" -and -not (Test-Path -LiteralPath $QueueAttachmentRepa
 }
 if ($Action -eq "Start" -and -not (Test-Path -LiteralPath $ScaleToZeroStarter -PathType Leaf)) {
     throw "Salad scale-to-zero starter not found: $ScaleToZeroStarter"
+}
+if ($Action -eq "Stop" -and -not (Test-Path -LiteralPath $ZeroReplicaGuard -PathType Leaf)) {
+    throw "Salad zero-replica guard not found: $ZeroReplicaGuard"
 }
 
 Import-EnvFile -Path $EnvFile
@@ -343,6 +365,7 @@ foreach ($Name in $ExecutionOrder) {
         }
         "Stop" {
             Invoke-WorkerAction -Name $Name -WorkerAction "Stop"
+            Invoke-ZeroReplicaGuard -Name $Name
         }
         default {
             throw "Unsupported Salad stack action '$Action'."
