@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
+import ai_video_factory.workers.whisper.model as whisper_model
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
 from ai_video_factory.workers.whisper import (
     WHISPER_GENERATION_PROFILE,
@@ -15,7 +15,6 @@ from ai_video_factory.workers.whisper import (
     WhisperWord,
     whisper_application_job_id,
 )
-import ai_video_factory.workers.whisper.model as whisper_model
 
 
 class FakeBackend:
@@ -178,6 +177,7 @@ def test_whisper_backend_builds_once_and_requests_word_timestamps(
     assert state["builds"] == 1
     assert state["pipeline_kwargs"]["model"] == str(model_root)
     assert state["pipeline_kwargs"]["device"] == "cuda:0"
+    assert state["pipeline_kwargs"]["dtype"] == "float16"
     assert state["calls"][0][1]["return_timestamps"] == "word"
     assert state["calls"][0][1]["generate_kwargs"] == {
         "task": "transcribe",
