@@ -48,6 +48,7 @@ def test_every_model_has_its_own_group_and_queue() -> None:
     assert len(queues) == len(set(queues)) == 4
     assert services["whisper"]["required_environment"] == []
     assert services["breeze_tts2"]["required_environment"] == []
+    assert services["breeze_tts2"]["group_name"] == "ai-video-factory-breeze-tts2-worker-v2"
     assert services["ideogram4"]["required_environment"] == ["HF_TOKEN"]
     assert services["ltx25"]["required_environment"] == ["HF_TOKEN"]
 
@@ -117,7 +118,7 @@ def test_prepare_repairs_queue_attachment_before_and_after_worker_update() -> No
     assert prepare_block.index("-AllowMissing") < prepare_block.index('-WorkerAction "Prepare"')
 
 
-def test_queue_repair_blocks_work_and_normalizes_stopped_replicas() -> None:
+def test_queue_repair_never_deletes_and_reuses_a_salad_group_name() -> None:
     script = QUEUE_REPAIR.read_text(encoding="utf-8")
 
     assert "[switch]$AllowMissing" in script
@@ -129,6 +130,8 @@ def test_queue_repair_blocks_work_and_normalizes_stopped_replicas() -> None:
     assert '@{ replicas = 0 }' in script
     assert "function New-Networking" not in script
     assert "networking = New-Networking" not in script
-    assert "queue_connection = New-QueueConnection" in script
-    assert "queue_autoscaler = New-QueueAutoscaler" in script
+    assert "-Method Delete" not in script
+    assert "Recreating stopped container group" not in script
+    assert "cannot be safely recreated with the same Salad name" in script
+    assert "Increment services.$Service.group_name" in script
     assert "Test-QueueAttachment" in script
