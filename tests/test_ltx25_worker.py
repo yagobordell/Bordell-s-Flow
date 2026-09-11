@@ -43,3 +43,16 @@ def test_ltx25_salad_manifest_has_dedicated_queue_and_image() -> None:
     assert service["autoscaler"]["max_replicas"] == 1
     assert service["environment"]["INFERENCE_WORKER_MODE"] == "production"
     assert "GPU_WORKER_RUNTIME" not in service["environment"]
+
+
+def test_ltx25_container_is_model_specific() -> None:
+    dockerfile = Path("docker/workers/ltx25/Dockerfile")
+    text = dockerfile.read_text(encoding="utf-8")
+
+    assert dockerfile.is_file()
+    assert not Path("docker/phase8-worker/Dockerfile").exists()
+    assert "ai_video_factory.workers.ltx25.runtime:app" in Path(
+        "docker/workers/ltx25/entrypoint.sh"
+    ).read_text(encoding="utf-8")
+    assert "COPY src /opt/factory/src" in text
+    assert "COPY . /opt/factory" not in text
