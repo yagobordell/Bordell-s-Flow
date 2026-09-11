@@ -128,7 +128,9 @@ def test_queue_repair_patches_autoscaling_without_reusing_group_name() -> None:
     assert "function Set-ZeroReplicas" in script
     assert "function Repair-GroupConfiguration" in script
     assert "Repairing Job Queue autoscaling in place" in script
-    assert "Normalizing stopped group" in script
+    assert "Normalizing group" in script
+    assert "Forcing replicas back to zero now." in script
+    assert "$Updated = Set-ZeroReplicas -Group $Updated" in script
     assert '@{ replicas = 0 }' in script
     assert "function New-Networking" not in script
     assert "networking = New-Networking" not in script

@@ -14,6 +14,8 @@ def test_queue_attachment_repair_contract() -> None:
     assert "Method Patch" in text
     assert "replicas -ne 0" in text
     assert "Repair-GroupConfiguration" in text
+    assert "Forcing replicas back to zero now." in text
+    assert "$Updated = Set-ZeroReplicas -Group $Updated" in text
     assert "Runtime attachment will be validated after Start/Smoke." in text
     assert "did not persist the complete Job Queue autoscaling configuration after PATCH" in text
 
