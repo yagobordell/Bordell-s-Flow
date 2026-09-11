@@ -79,11 +79,13 @@ def test_renderer_default_runs_complete_phase9_in_order() -> None:
 def test_local_manager_exposes_safe_one_shot_actions() -> None:
     text = LOCAL_MANAGER.read_text(encoding="utf-8")
 
-    assert 'ValidateSet("Validate", "Build", "Smoke", "Phase9")' in text
+    assert 'ValidateSet("Validate", "Build", "Smoke", "Phase9", "Production")' in text
     assert 'Invoke-Compose -Arguments @("config", "--quiet")' in text
     assert '"build"' in text
     assert '"scripts/local_container_smoke.py"' in text
+    assert '"scripts/run_production.py"' in text
     assert 'Invoke-Compose -Arguments @("run", "--rm", "renderer")' in text
+    assert "Production source script must live below data/" in text
     assert "manage_salad_stack" not in text
 
 
