@@ -10,8 +10,9 @@ def test_queue_attachment_repair_contract() -> None:
     assert "queue_connection" in text
     assert "networking" in text
     assert "current_queue_length" in text
-    assert "Method Delete" in text
+    assert "Method Delete" not in text
     assert "replicas -ne 0" in text
+    assert "cannot be safely recreated with the same Salad name" in text
 
 
 def test_stack_prepare_runs_queue_attachment_repair() -> None:
