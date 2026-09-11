@@ -127,7 +127,8 @@ def test_queue_repair_blocks_work_and_normalizes_stopped_replicas() -> None:
     assert "function Set-ZeroReplicas" in script
     assert "Normalizing stopped group" in script
     assert '@{ replicas = 0 }' in script
-    assert "networking = New-Networking" in script
+    assert "function New-Networking" not in script
+    assert "networking = New-Networking" not in script
     assert "queue_connection = New-QueueConnection" in script
     assert "queue_autoscaler = New-QueueAutoscaler" in script
     assert "Test-QueueAttachment" in script
