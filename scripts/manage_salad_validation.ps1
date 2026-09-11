@@ -49,7 +49,8 @@ function Invoke-StackAction {
     }
 
     & $StackManager @Arguments
-    if ($LASTEXITCODE -ne 0) {
+    $CallSucceeded = $?
+    if (-not $CallSucceeded) {
         throw "Salad stack action failed: $StackAction"
     }
 }
