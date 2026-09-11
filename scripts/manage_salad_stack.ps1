@@ -252,20 +252,20 @@ if ($Action -eq "Stop") {
 
 foreach ($Name in $ExecutionOrder) {
     Write-Host "=== Salad $Action : $Name ===" -ForegroundColor Cyan
-    $Arguments = @(
-        "-Service", $Name,
-        "-Action", $Action,
-        "-EnvFile", $EnvFile,
-        "-PrepareTimeoutMinutes", $PrepareTimeoutMinutes
-    )
+    $WorkerArguments = @{
+        Service = $Name
+        Action = $Action
+        EnvFile = $EnvFile
+        PrepareTimeoutMinutes = $PrepareTimeoutMinutes
+    }
     if ($SkipBuild) {
-        $Arguments += "-SkipBuild"
+        $WorkerArguments["SkipBuild"] = $true
     }
     if ($NonInteractive) {
-        $Arguments += "-NonInteractive"
+        $WorkerArguments["NonInteractive"] = $true
     }
 
-    & $WorkerManager @Arguments
+    & $WorkerManager @WorkerArguments
     $CallSucceeded = $?
     if (-not $CallSucceeded) {
         throw "Salad $Action failed for service '$Name'."
