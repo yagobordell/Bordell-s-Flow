@@ -89,7 +89,7 @@ function Get-Headers {
     return @{
         "Salad-Api-Key" = Get-Setting -Name "SALAD_API_KEY" -Prompt "Salad API key" -Secret
         "Accept" = "application/json"
-        "User-Agent" = "ai-video-factory-queue-repair/1.5"
+        "User-Agent" = "ai-video-factory-queue-repair/1.6"
     }
 }
 
@@ -206,7 +206,7 @@ function Set-ZeroReplicas {
     }
 
     Write-Host (
-        "Normalizing stopped group {0} replicas from {1} to 0 before Prepare." -f `
+        "Normalizing group {0} replicas from {1} to 0." -f `
         $GroupName,
         [int]$Group.replicas
     ) -ForegroundColor Cyan
@@ -263,9 +263,11 @@ function Repair-GroupConfiguration {
 
     $Updated = Wait-ForGroupSettled
     if ([int]$Updated.replicas -ne 0) {
-        throw (
-            "Queue repair unexpectedly left '$GroupName' at replicas=$([int]$Updated.replicas)."
+        Write-Warning (
+            "Salad raised '$GroupName' to replicas=$([int]$Updated.replicas) while applying " +
+            "the Job Queue autoscaler. Forcing replicas back to zero now."
         )
+        $Updated = Set-ZeroReplicas -Group $Updated
     }
     if (-not (Test-GroupConfiguration -Group $Updated)) {
         throw "Salad did not persist the complete Job Queue autoscaling configuration after PATCH."
