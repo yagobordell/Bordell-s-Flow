@@ -164,7 +164,6 @@ def test_ideogram_task_runner_writes_one_png(tmp_path: Path) -> None:
         backend=backend,
         task_name=IDEOGRAM4_KEYFRAME_TASK,
     )
-
     artifact = runner.run(_request(), {}, tmp_path)
 
     assert artifact.content_type == "image/png"
@@ -174,16 +173,10 @@ def test_ideogram_task_runner_writes_one_png(tmp_path: Path) -> None:
     assert backend.calls[0].height == 1536
 
 
-def test_ideogram_backend_builds_once_and_uses_quality_preset(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+def test_ideogram_backend_builds_once_and_uses_quality_preset(tmp_path: Path, monkeypatch) -> None:
     model_root = tmp_path / "ideogram4"
     model_root.mkdir()
-    (model_root / ".ready").write_text(
-        f"{IDEOGRAM4_MODEL_ID}@main\n",
-        encoding="utf-8",
-    )
+    (model_root / ".ready").write_text(f"{IDEOGRAM4_MODEL_ID}@main\n", encoding="utf-8")
     state: dict[str, Any] = {"builds": 0, "calls": []}
 
     class FakeCuda:
@@ -271,7 +264,7 @@ def test_ideogram_worker_settings_and_salad_manifest() -> None:
     assert settings.model_repository == IDEOGRAM4_MODEL_ID
     assert settings.sampler_preset == "V4_QUALITY_48"
     assert service["queue_name"] == "ai-video-factory-ideogram4-jobs"
-    assert service["resources"]["gpu_class_names"] == ["RTX 4090"]
+    assert service["resources"]["gpu_class_names"] == ["RTX 4090 (24 GB)"]
     assert service["autoscaler"]["min_replicas"] == 0
     assert service["autoscaler"]["max_replicas"] == 4
     assert service["required_environment"] == ["HF_TOKEN"]
@@ -280,9 +273,7 @@ def test_ideogram_worker_settings_and_salad_manifest() -> None:
 def test_ideogram_container_pins_official_runtime_and_stays_model_specific() -> None:
     dockerfile = Path("docker/workers/ideogram4/Dockerfile").read_text(encoding="utf-8")
     entrypoint = Path("docker/workers/ideogram4/entrypoint.sh").read_text(encoding="utf-8")
-    downloader = Path("docker/workers/ideogram4/download_models.sh").read_text(
-        encoding="utf-8"
-    )
+    downloader = Path("docker/workers/ideogram4/download_models.sh").read_text(encoding="utf-8")
 
     assert "990fe1c4e950bb9e9dc90e01c0ad98ba434f83c2" in dockerfile
     assert "HF_HUB_OFFLINE=1" in dockerfile
