@@ -213,7 +213,8 @@ if ($Action -eq "Validate") {
             -Action Validate `
             -EnvFile $EnvFile `
             -NonInteractive:$NonInteractive
-        if ($LASTEXITCODE -ne 0) {
+        $CallSucceeded = $?
+        if (-not $CallSucceeded) {
             throw "Validation failed for Salad service '$Name'."
         }
     }
@@ -265,7 +266,8 @@ foreach ($Name in $ExecutionOrder) {
     }
 
     & $WorkerManager @Arguments
-    if ($LASTEXITCODE -ne 0) {
+    $CallSucceeded = $?
+    if (-not $CallSucceeded) {
         throw "Salad $Action failed for service '$Name'."
     }
 }
