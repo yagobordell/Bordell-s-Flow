@@ -21,6 +21,22 @@ def test_salad_services_use_named_gpu_classes() -> None:
         assert "gpu_classes" not in service["resources"]
 
 
+def test_salad_probe_failure_thresholds_stay_within_api_limit() -> None:
+    document = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
+
+    for service_name, service in document["services"].items():
+        for probe_name, probe in service["probes"].items():
+            threshold = probe["failure_threshold"]
+            assert 1 <= threshold <= 20, f"{service_name}.{probe_name}={threshold}"
+
+    breeze_startup = document["services"]["breeze_tts2"]["probes"]["startup"]
+    assert breeze_startup["period_seconds"] * breeze_startup["failure_threshold"] == 600
+
+    ideogram = document["services"]["ideogram4"]["probes"]
+    assert ideogram["startup"]["period_seconds"] * ideogram["startup"]["failure_threshold"] == 600
+    assert ideogram["readiness"]["period_seconds"] * ideogram["readiness"]["failure_threshold"] == 600
+
+
 def test_salad_manager_resolves_gpu_names_through_organization_api() -> None:
     script = Path("scripts/manage_salad_worker.ps1").read_text(encoding="utf-8")
 
