@@ -32,6 +32,55 @@ if (-not [IO.Path]::IsPathRooted($ComposePath)) {
     $ComposePath = Join-Path $RepoRoot $ComposePath
 }
 
+function Get-SelectedServiceNames {
+    if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
+        throw "Salad stack manifest not found: $ManifestPath"
+    }
+
+    $Document = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    if ($Service -eq "all") {
+        return @($Document.stack.service_order | ForEach-Object { [string]$_ })
+    }
+    return @($Service)
+}
+
+function Use-ManifestEnvironment {
+    param([Parameter(Mandatory)][scriptblock]$ScriptBlock)
+
+    $Document = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    $Previous = @{}
+    foreach ($Name in Get-SelectedServiceNames) {
+        $Definition = $Document.services.PSObject.Properties[$Name].Value
+        foreach ($Property in $Definition.environment.PSObject.Properties) {
+            $EnvironmentName = [string]$Property.Name
+            if (-not $Previous.ContainsKey($EnvironmentName)) {
+                $Previous[$EnvironmentName] = [Environment]::GetEnvironmentVariable(
+                    $EnvironmentName,
+                    [EnvironmentVariableTarget]::Process
+                )
+            }
+            [Environment]::SetEnvironmentVariable(
+                $EnvironmentName,
+                [string]$Property.Value,
+                [EnvironmentVariableTarget]::Process
+            )
+        }
+    }
+
+    try {
+        & $ScriptBlock
+    }
+    finally {
+        foreach ($Entry in $Previous.GetEnumerator()) {
+            [Environment]::SetEnvironmentVariable(
+                [string]$Entry.Key,
+                $Entry.Value,
+                [EnvironmentVariableTarget]::Process
+            )
+        }
+    }
+}
+
 function Invoke-StackAction {
     param([Parameter(Mandatory)][string]$StackAction)
 
@@ -50,11 +99,19 @@ function Invoke-StackAction {
         $Arguments["NonInteractive"] = $true
     }
 
-    & $StackManager @Arguments
-    $CallSucceeded = $?
-    if (-not $CallSucceeded) {
-        throw "Salad stack action failed: $StackAction"
+    $InvokeStack = {
+        & $StackManager @Arguments
+        $CallSucceeded = $?
+        if (-not $CallSucceeded) {
+            throw "Salad stack action failed: $StackAction"
+        }
     }
+
+    if ($StackAction -eq "Prepare") {
+        Use-ManifestEnvironment -ScriptBlock $InvokeStack
+        return
+    }
+    & $InvokeStack
 }
 
 function Invoke-ScaleToZeroStart {
