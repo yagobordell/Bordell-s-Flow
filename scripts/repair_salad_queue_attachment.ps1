@@ -89,7 +89,7 @@ function Get-Headers {
     return @{
         "Salad-Api-Key" = Get-Setting -Name "SALAD_API_KEY" -Prompt "Salad API key" -Secret
         "Accept" = "application/json"
-        "User-Agent" = "ai-video-factory-queue-repair/1.3"
+        "User-Agent" = "ai-video-factory-queue-repair/1.4"
     }
 }
 
@@ -252,12 +252,22 @@ if ([string]$Group.current_state.status -ne "stopped") {
 
 $Group = Set-ZeroReplicas -Group $Group
 $Queue = Get-Queue
-if ((Test-GroupConfiguration -Group $Group) -and (Test-QueueAttachment -Queue $Queue)) {
-    Write-Host "$Service queue autoscaling verified; no repair needed." -ForegroundColor Green
+if (Test-GroupConfiguration -Group $Group) {
+    if (Test-QueueAttachment -Queue $Queue) {
+        Write-Host "$Service queue autoscaling and queue listing verified." -ForegroundColor Green
+    }
+    else {
+        Write-Warning (
+            "$Service queue autoscaling is configured on the stopped container group, " +
+            "but Salad does not list stopped groups in queue.container_groups reliably. " +
+            "Runtime attachment will be validated after Start/Smoke."
+        )
+    }
     exit 0
 }
 
 throw (
-    "Container group '$GroupName' cannot be safely recreated with the same Salad name. " +
-    "Increment services.$Service.group_name in deploy/salad/services.json, then run Prepare again."
+    "Container group '$GroupName' has incomplete Job Queue autoscaling configuration. " +
+    "Because Salad group names cannot be safely reused, increment services.$Service.group_name " +
+    "in deploy/salad/services.json, then run Prepare again."
 )
