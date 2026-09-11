@@ -120,4 +120,5 @@ captions produced by the semantic planning layer; binary Phase 4 reference image
 project evidence but are not sent to the open-weight Ideogram pipeline.
 
 Hardware profiles and replica ceilings are documented in `docs/salad-gpu-profiles.md`. Ideogram
-bootstrap and caption details are documented in `docs/ideogram4-worker.md`.
+bootstrap and caption details are documented in `docs/ideogram4-worker.md`. Unified provisioning,
+configuration, stack lifecycle and `.env` handling are documented in `docs/salad-stack-deployment.md`.
