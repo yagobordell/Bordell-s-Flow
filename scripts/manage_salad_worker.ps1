@@ -344,7 +344,7 @@ function Ensure-Queue {
 
     $QueueBody = @{
         name = $QueueName
-        display_name = "$Service jobs"
+        display_name = "$($Definition.display_name) Jobs"
         description = "AI Video Factory jobs for the $Service inference worker"
     } | ConvertTo-Json
 
