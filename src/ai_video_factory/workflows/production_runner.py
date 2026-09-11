@@ -11,15 +11,7 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-StageKind = Literal["automatic", "manual_gate"]
-StageStatus = Literal[
-    "current",
-    "adoptable",
-    "pending",
-    "stale",
-    "blocked",
-    "gate",
-]
+StageStatus = Literal["current", "adoptable", "pending", "stale", "blocked"]
 RecordOrigin = Literal["executed", "adopted"]
 
 PRODUCTION_STAGE_NAMES = (
@@ -41,22 +33,16 @@ PRODUCTION_STAGE_NAMES = (
 
 @dataclass(frozen=True, slots=True)
 class ProductionStage:
-    """One resumable production stage backed by existing phase scripts or a manual gate."""
+    """One resumable production stage backed by an existing validated phase script."""
 
     name: str
     description: str
     inputs: tuple[Path, ...]
     outputs: tuple[Path, ...]
-    kind: StageKind = "automatic"
-    script: Path | None = None
+    script: Path
     arguments: tuple[str, ...] = ()
-    gate_message: str | None = None
 
     def command(self, python_executable: str = sys.executable) -> tuple[str, ...]:
-        if self.kind == "manual_gate":
-            return ()
-        if self.script is None:
-            raise ValueError(f"Automatic stage {self.name} requires a script")
         return (python_executable, self.script.as_posix(), *self.arguments)
 
 
@@ -66,7 +52,6 @@ class ProductionStageRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     stage_name: str
-    kind: StageKind
     spec_sha256: str
     input_sha256: str
     output_sha256: str
@@ -79,7 +64,7 @@ class ProductionRunManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["2"] = "2"
     stages: dict[str, ProductionStageRecord] = Field(default_factory=dict)
 
 
@@ -104,12 +89,6 @@ class StageExecutor(Protocol):
     def __call__(self, stage: ProductionStage) -> None: ...
 
 
-class ProductionGateRequired(RuntimeError):
-    def __init__(self, stage: ProductionStage, message: str) -> None:
-        super().__init__(message)
-        self.stage = stage
-
-
 class ProductionStageBlocked(RuntimeError):
     def __init__(self, stage: ProductionStage, missing: tuple[Path, ...]) -> None:
         rendered = ", ".join(path.as_posix() for path in missing)
@@ -126,14 +105,15 @@ class SubprocessStageExecutor:
         self._python_executable = python_executable
 
     def __call__(self, stage: ProductionStage) -> None:
-        command = stage.command(self._python_executable)
-        if not command:
-            raise ValueError(f"Manual stage {stage.name} cannot be executed automatically")
-        subprocess.run(command, cwd=self._repo_root, check=True)
+        subprocess.run(
+            stage.command(self._python_executable),
+            cwd=self._repo_root,
+            check=True,
+        )
 
 
 class ProductionRunner:
-    """Inspect persisted artifacts, adopt valid legacy runs, and execute only stale stages."""
+    """Inspect persisted artifacts, adopt valid historical runs, and execute stale stages."""
 
     def __init__(
         self,
@@ -148,11 +128,6 @@ class ProductionRunner:
         names = [stage.name for stage in stages]
         if len(names) != len(set(names)):
             raise ValueError("Production stage names must be unique")
-        for stage in stages:
-            if stage.kind == "automatic" and stage.script is None:
-                raise ValueError(f"Automatic stage {stage.name} requires a script")
-            if stage.kind == "manual_gate" and stage.script is not None:
-                raise ValueError(f"Manual gate {stage.name} cannot declare an executable script")
 
         self._stages = stages
         self._manifest_path = manifest_path
@@ -201,12 +176,6 @@ class ProductionRunner:
                 print(f"ADOPT {stage.name}: existing artifacts recorded in production manifest")
                 adopted.append(stage.name)
                 continue
-
-            if stage.kind == "manual_gate":
-                message = stage.gate_message or (
-                    f"Stage {stage.name} requires a manually supplied artifact before continuing"
-                )
-                raise ProductionGateRequired(stage, message)
 
             print(f"RUN   {stage.name}: {stage.description}")
             self._executor(stage)
@@ -281,25 +250,11 @@ class ProductionRunner:
                 )
             return StageInspection(
                 stage=stage,
-                status="gate" if stage.kind == "manual_gate" else "stale",
+                status="stale",
                 reason="persisted outputs no longer match the recorded stage fingerprints",
                 spec_sha256=spec_sha256,
                 input_sha256=input_sha256,
                 output_sha256=output_sha256,
-            )
-
-        if stage.kind == "manual_gate":
-            reason = "manual artifact is missing"
-            if outputs_partial:
-                reason = "manual artifact set is incomplete"
-            elif record is not None:
-                reason = "recorded manual artifact is no longer present"
-            return StageInspection(
-                stage=stage,
-                status="gate",
-                reason=reason,
-                spec_sha256=spec_sha256,
-                input_sha256=input_sha256,
             )
 
         if outputs_partial or record is not None:
@@ -332,30 +287,25 @@ class ProductionRunner:
 
         manifest.stages[stage.name] = ProductionStageRecord(
             stage_name=stage.name,
-            kind=stage.kind,
             spec_sha256=self._stage_spec_sha256(stage),
             input_sha256=_digest_paths(stage.inputs),
             output_sha256=_digest_paths(stage.outputs),
             origin=origin,
-            command=list(stage.command()) if stage.kind == "automatic" else [],
+            command=list(stage.command()),
         )
 
     def _stage_spec_sha256(self, stage: ProductionStage) -> str:
-        script_sha256: str | None = None
-        if stage.script is not None:
-            script_path = stage.script
-            if not script_path.is_absolute():
-                script_path = self._repo_root / script_path
-            if not script_path.is_file():
-                raise FileNotFoundError(f"Production stage script not found: {script_path}")
-            script_sha256 = _sha256_file(script_path)
+        script_path = stage.script
+        if not script_path.is_absolute():
+            script_path = self._repo_root / script_path
+        if not script_path.is_file():
+            raise FileNotFoundError(f"Production stage script not found: {script_path}")
 
         payload = {
             "name": stage.name,
             "description": stage.description,
-            "kind": stage.kind,
-            "script": None if stage.script is None else stage.script.as_posix(),
-            "script_sha256": script_sha256,
+            "script": stage.script.as_posix(),
+            "script_sha256": _sha256_file(script_path),
             "arguments": list(stage.arguments),
             "inputs": [path.as_posix() for path in stage.inputs],
             "outputs": [path.as_posix() for path in stage.outputs],
@@ -366,9 +316,11 @@ class ProductionRunner:
     def _load_manifest(self) -> ProductionRunManifest:
         if not self._manifest_path.is_file():
             return ProductionRunManifest()
-        return ProductionRunManifest.model_validate_json(
-            self._manifest_path.read_text(encoding="utf-8")
-        )
+
+        payload = json.loads(self._manifest_path.read_text(encoding="utf-8"))
+        if payload.get("schema_version") == "1":
+            payload = _upgrade_v1_manifest(payload)
+        return ProductionRunManifest.model_validate(payload)
 
     def _write_manifest(self, manifest: ProductionRunManifest) -> None:
         self._manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -436,16 +388,11 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
             description="plan ordered shots from scenes and continuity",
             script=Path("scripts/run_phase3_shots.py"),
             arguments=(
-                "--beats",
-                str(beats),
-                "--scenes",
-                str(scenes),
-                "--entities",
-                str(entities),
-                "--continuity",
-                str(continuity),
-                "--output",
-                str(shots),
+                "--beats", str(beats),
+                "--scenes", str(scenes),
+                "--entities", str(entities),
+                "--continuity", str(continuity),
+                "--output", str(shots),
             ),
             inputs=(beats, scenes, entities, continuity),
             outputs=(shots,),
@@ -456,12 +403,9 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
             script=Path("scripts/run_phase4.py"),
             arguments=(
                 str(entities),
-                "--blocks",
-                str(narrative_blocks),
-                "--continuity",
-                str(continuity),
-                "--output",
-                str(visual_references),
+                "--blocks", str(narrative_blocks),
+                "--continuity", str(continuity),
+                "--output", str(visual_references),
             ),
             inputs=(entities, narrative_blocks, continuity),
             outputs=(visual_references,),
@@ -472,10 +416,8 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
             script=Path("scripts/run_phase4_assets.py"),
             arguments=(
                 str(visual_references),
-                "--output-dir",
-                str(reference_assets_dir),
-                "--metadata",
-                str(reference_assets),
+                "--output-dir", str(reference_assets_dir),
+                "--metadata", str(reference_assets),
             ),
             inputs=(visual_references,),
             outputs=(reference_assets, reference_assets_dir),
@@ -486,10 +428,8 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
             script=Path("scripts/run_phase5_audio.py"),
             arguments=(
                 str(source_script),
-                "--output-dir",
-                str(phase5),
-                "--metadata",
-                str(narration),
+                "--output-dir", str(phase5),
+                "--metadata", str(narration),
             ),
             inputs=(source_script,),
             outputs=(narration, narration_audio),
@@ -499,14 +439,10 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
             description="align narration words through the Whisper Salad worker",
             script=Path("scripts/run_phase5_alignment.py"),
             arguments=(
-                "--source",
-                str(source_script),
-                "--narration",
-                str(narration),
-                "--audio",
-                str(narration_audio),
-                "--output",
-                str(narration_words),
+                "--source", str(source_script),
+                "--narration", str(narration),
+                "--audio", str(narration_audio),
+                "--output", str(narration_words),
             ),
             inputs=(source_script, narration, narration_audio),
             outputs=(narration_words,),
@@ -516,16 +452,11 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
             description="map beats to aligned narration words",
             script=Path("scripts/run_phase5_beat_timing.py"),
             arguments=(
-                "--source",
-                str(source_script),
-                "--beats",
-                str(beats),
-                "--narration",
-                str(narration),
-                "--words",
-                str(narration_words),
-                "--output",
-                str(beat_timings),
+                "--source", str(source_script),
+                "--beats", str(beats),
+                "--narration", str(narration),
+                "--words", str(narration_words),
+                "--output", str(beat_timings),
             ),
             inputs=(source_script, beats, narration, narration_words),
             outputs=(beat_timings,),
@@ -535,12 +466,9 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
             description="derive deterministic shot timing",
             script=Path("scripts/run_phase5_shot_timing.py"),
             arguments=(
-                "--shots",
-                str(shots),
-                "--beat-timings",
-                str(beat_timings),
-                "--output",
-                str(shot_timings),
+                "--shots", str(shots),
+                "--beat-timings", str(beat_timings),
+                "--output", str(shot_timings),
             ),
             inputs=(shots, beat_timings),
             outputs=(shot_timings,),
@@ -550,65 +478,71 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
             description="build provider-neutral storyboard frame prompts",
             script=Path("scripts/run_phase6_storyboard.py"),
             arguments=(
-                "--shots",
-                str(shots),
-                "--timings",
-                str(shot_timings),
-                "--references",
-                str(visual_references),
-                "--output",
-                str(storyboard_frames),
+                "--shots", str(shots),
+                "--timings", str(shot_timings),
+                "--references", str(visual_references),
+                "--output", str(storyboard_frames),
             ),
             inputs=(shots, shot_timings, visual_references),
             outputs=(storyboard_frames,),
         ),
         ProductionStage(
             name="phase8-video-prompts",
-            description="prepare motion prompts before the keyframe model gate",
+            description="prepare motion prompts from the storyboard plan",
             script=Path("scripts/run_phase8_video_prompts.py"),
             arguments=(
-                "--shots",
-                str(shots),
-                "--timings",
-                str(shot_timings),
-                "--storyboard-frames",
-                str(storyboard_frames),
-                "--output",
-                str(video_prompts),
+                "--shots", str(shots),
+                "--timings", str(shot_timings),
+                "--storyboard-frames", str(storyboard_frames),
+                "--output", str(video_prompts),
             ),
             inputs=(shots, shot_timings, storyboard_frames),
             outputs=(video_prompts,),
         ),
         ProductionStage(
             name="phase6-keyframes",
-            description="supply production storyboard keyframes",
-            kind="manual_gate",
-            inputs=(storyboard_frames, shots, reference_assets, reference_assets_dir),
-            outputs=(storyboard_keyframes, storyboard_keyframes_dir),
-            gate_message=(
-                "Production keyframes are not automated because the production keyframe model "
-                "has not been selected. Choose the model before integrating this stage. Existing "
-                "keyframes can be adopted when both metadata and PNG artifacts already exist."
+            description="generate storyboard keyframes through Ideogram 4 Quality",
+            script=Path("scripts/run_phase6_keyframes.py"),
+            arguments=(
+                "--frames", str(storyboard_frames),
+                "--shots", str(shots),
+                "--size", "1024x1536",
+                "--quality", "high",
+                "--output-dir", str(storyboard_keyframes_dir),
+                "--output", str(storyboard_keyframes),
             ),
+            inputs=(storyboard_frames, shots),
+            outputs=(storyboard_keyframes, storyboard_keyframes_dir),
         ),
         ProductionStage(
             name="phase8-videos",
             description="fan out, resume, verify, and download LTX 2.5 video clips",
             script=Path("scripts/run_phase8_videos.py"),
             arguments=(
-                "--keyframes",
-                str(storyboard_keyframes),
-                "--prompts",
-                str(video_prompts),
-                "--timings",
-                str(shot_timings),
-                "--output-dir",
-                str(phase8),
+                "--keyframes", str(storyboard_keyframes),
+                "--prompts", str(video_prompts),
+                "--timings", str(shot_timings),
+                "--output-dir", str(phase8),
             ),
             inputs=(storyboard_keyframes, storyboard_keyframes_dir, video_prompts, shot_timings),
             outputs=(video_clips, video_clips_dir),
         ),
     ]
+
+
+def _upgrade_v1_manifest(payload: dict[str, object]) -> dict[str, object]:
+    stages = payload.get("stages")
+    upgraded_stages: dict[str, object] = {}
+    if isinstance(stages, dict):
+        for name, raw_record in stages.items():
+            if not isinstance(raw_record, dict):
+                continue
+            if raw_record.get("kind") == "manual_gate":
+                continue
+            record = dict(raw_record)
+            record.pop("kind", None)
+            upgraded_stages[str(name)] = record
+    return {"schema_version": "2", "stages": upgraded_stages}
 
 
 def _digest_paths(paths: tuple[Path, ...]) -> str:
