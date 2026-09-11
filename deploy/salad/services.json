@@ -1,9 +1,29 @@
 {
+  "schema_version": "2",
+  "stack": {
+    "organization": "yagobordellorg",
+    "project": "aivideofactory",
+    "service_order": [
+      "whisper",
+      "breeze_tts2",
+      "ideogram4",
+      "ltx25"
+    ],
+    "shared_required_environment": [
+      "POSTGRES_DSN",
+      "R2_ENDPOINT_URL",
+      "R2_BUCKET",
+      "R2_ACCESS_KEY_ID",
+      "R2_SECRET_ACCESS_KEY"
+    ],
+    "autostart_policy": false,
+    "restart_policy": "always",
+    "queue_path": "/jobs",
+    "container_port": 8080
+  },
   "services": {
     "ltx25": {
       "display_name": "AI Video Factory LTX 2.5",
-      "organization": "yagobordellorg",
-      "project": "aivideofactory",
       "group_name": "ai-video-factory-worker",
       "queue_name": "ai-video-factory-ltx25-jobs",
       "dockerfile": "docker/workers/ltx25/Dockerfile",
@@ -29,12 +49,7 @@
         "SALAD_QUEUE_ENABLED": "true",
         "SALAD_LOG_LEVEL": "info"
       },
-      "required_secrets": [
-        "POSTGRES_DSN",
-        "R2_ENDPOINT_URL",
-        "R2_BUCKET",
-        "R2_ACCESS_KEY_ID",
-        "R2_SECRET_ACCESS_KEY",
+      "required_environment": [
         "HF_TOKEN"
       ],
       "probes": {
@@ -68,8 +83,6 @@
     },
     "breeze_tts2": {
       "display_name": "AI Video Factory Breeze TTS 2",
-      "organization": "yagobordellorg",
-      "project": "aivideofactory",
       "group_name": "ai-video-factory-breeze-tts2-worker",
       "queue_name": "ai-video-factory-breeze-tts2-jobs",
       "dockerfile": "docker/workers/breeze-tts2/Dockerfile",
@@ -98,13 +111,7 @@
         "SALAD_QUEUE_ENABLED": "true",
         "SALAD_LOG_LEVEL": "info"
       },
-      "required_secrets": [
-        "POSTGRES_DSN",
-        "R2_ENDPOINT_URL",
-        "R2_BUCKET",
-        "R2_ACCESS_KEY_ID",
-        "R2_SECRET_ACCESS_KEY"
-      ],
+      "required_environment": [],
       "probes": {
         "startup": {
           "path": "/health",
@@ -136,8 +143,6 @@
     },
     "ideogram4": {
       "display_name": "AI Video Factory Ideogram 4 Quality",
-      "organization": "yagobordellorg",
-      "project": "aivideofactory",
       "group_name": "ai-video-factory-ideogram4-worker",
       "queue_name": "ai-video-factory-ideogram4-jobs",
       "dockerfile": "docker/workers/ideogram4/Dockerfile",
@@ -165,12 +170,7 @@
         "SALAD_QUEUE_ENABLED": "true",
         "SALAD_LOG_LEVEL": "info"
       },
-      "required_secrets": [
-        "POSTGRES_DSN",
-        "R2_ENDPOINT_URL",
-        "R2_BUCKET",
-        "R2_ACCESS_KEY_ID",
-        "R2_SECRET_ACCESS_KEY",
+      "required_environment": [
         "HF_TOKEN"
       ],
       "probes": {
@@ -204,8 +204,6 @@
     },
     "whisper": {
       "display_name": "AI Video Factory Whisper",
-      "organization": "yagobordellorg",
-      "project": "aivideofactory",
       "group_name": "ai-video-factory-whisper-worker",
       "queue_name": "ai-video-factory-whisper-jobs",
       "dockerfile": "docker/workers/whisper/Dockerfile",
@@ -232,13 +230,7 @@
         "SALAD_QUEUE_ENABLED": "true",
         "SALAD_LOG_LEVEL": "info"
       },
-      "required_secrets": [
-        "POSTGRES_DSN",
-        "R2_ENDPOINT_URL",
-        "R2_BUCKET",
-        "R2_ACCESS_KEY_ID",
-        "R2_SECRET_ACCESS_KEY"
-      ],
+      "required_environment": [],
       "probes": {
         "startup": {
           "path": "/health",
