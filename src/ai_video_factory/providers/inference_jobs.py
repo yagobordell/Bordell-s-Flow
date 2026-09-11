@@ -79,7 +79,9 @@ class InferenceJobExecutor:
         if response.job_id != request.job_id:
             raise RuntimeError("Inference response job_id does not match the submitted request")
         if response.request_sha256 != request.fingerprint():
-            raise RuntimeError("Inference response fingerprint does not match the submitted request")
+            raise RuntimeError(
+                "Inference response fingerprint does not match the submitted request"
+            )
         return response
 
     def download_output(self, response: InferenceJobResponse, destination: Path) -> None:
@@ -88,4 +90,6 @@ class InferenceJobExecutor:
             raise RuntimeError("Downloaded inference artifact size does not match worker response")
         digest = sha256_file(destination)
         if digest != response.output.sha256:
-            raise RuntimeError("Downloaded inference artifact SHA-256 does not match worker response")
+            raise RuntimeError(
+                "Downloaded inference artifact SHA-256 does not match worker response"
+            )
