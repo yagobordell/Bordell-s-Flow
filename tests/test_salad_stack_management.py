@@ -132,6 +132,7 @@ def test_queue_repair_never_deletes_and_reuses_a_salad_group_name() -> None:
     assert "networking = New-Networking" not in script
     assert "-Method Delete" not in script
     assert "Recreating stopped container group" not in script
-    assert "cannot be safely recreated with the same Salad name" in script
-    assert "Increment services.$Service.group_name" in script
+    assert "incomplete Job Queue autoscaling configuration" in script
+    assert "increment services.$Service.group_name" in script
+    assert "Runtime attachment will be validated after Start/Smoke." in script
     assert "Test-QueueAttachment" in script
