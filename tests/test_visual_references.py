@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import Any
 
 from ai_video_factory.bots.visual_references import (
@@ -24,7 +25,7 @@ class FakeStructuredProvider:
         return self.output
 
 
-def test_visual_reference_bot_uses_context_and_normalizes_location_prompt() -> None:
+def test_visual_reference_bot_uses_context_and_builds_location_caption() -> None:
     provider = FakeStructuredProvider(
         VisualDesignOutput(
             description=(
@@ -48,19 +49,49 @@ def test_visual_reference_bot_uses_context_and_normalizes_location_prompt() -> N
         )
     )
 
+    caption = json.loads(reference.prompt)
     assert reference.entity_id == "location_001"
-    assert reference.prompt.startswith(
-        "Canonical location reference, cinematic documentary."
-    )
-    assert "weathered mountain temple" in reference.prompt
-    assert "single coherent environment" in reference.prompt.lower()
-    assert ".." not in reference.prompt
-    assert "no text" in reference.prompt
+    assert caption["high_level_description"].startswith("Canonical location reference.")
+    assert "weathered mountain temple" in caption["high_level_description"]
+    assert "weathered mountain temple" in caption["compositional_deconstruction"]["background"]
+    assert caption["compositional_deconstruction"]["elements"] == []
+    assert caption["style_description"]["aesthetics"] == "cinematic documentary"
+    assert "photo" in caption["style_description"]
+    assert "text" not in reference.prompt.lower()
     assert provider.last_call is not None
     assert provider.last_call["output_type"] is VisualDesignOutput
     assert "ENTITY ID: location_001" in provider.last_call["input_text"]
     assert "época feudal" in provider.last_call["input_text"]
     assert "no describas un catálogo" in provider.last_call["instructions"]
+
+
+def test_visual_reference_character_caption_has_one_identity_element() -> None:
+    provider = FakeStructuredProvider(
+        VisualDesignOutput(
+            description="A veteran warrior with weathered features and dark lamellar armor."
+        )
+    )
+    bot = VisualReferenceBot(provider=provider, model="test-model")  # type: ignore[arg-type]
+
+    reference = asyncio.run(
+        bot.run(
+            ContinuityEntity(
+                id="character_001",
+                kind="character",
+                name="veteran warrior",
+                description="An experienced warrior",
+            ),
+            visual_style="cinematic documentary",
+            narrative_context="The warrior appears throughout the feudal campaign.",
+        )
+    )
+
+    caption = json.loads(reference.prompt)
+    elements = caption["compositional_deconstruction"]["elements"]
+    assert len(elements) == 1
+    assert elements[0]["type"] == "obj"
+    assert elements[0]["bbox"] == [60, 180, 940, 820]
+    assert "dark lamellar armor" in elements[0]["desc"]
 
 
 class ParallelReferenceBot:
