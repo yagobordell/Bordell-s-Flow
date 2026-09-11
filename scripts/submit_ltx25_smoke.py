@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import os
-
-from submit_phase8_smoke import main
+import runpy
+from pathlib import Path
 
 
 if __name__ == "__main__":
@@ -10,4 +10,7 @@ if __name__ == "__main__":
         "SALAD_QUEUE_NAME",
         os.getenv("SALAD_LTX25_QUEUE_NAME", "ai-video-factory-ltx25-jobs"),
     )
-    main()
+    runpy.run_path(
+        str(Path(__file__).with_name("submit_phase8_smoke.py")),
+        run_name="__main__",
+    )
