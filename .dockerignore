@@ -9,9 +9,9 @@ __pycache__
 .env
 .env.*
 !.env.example
-data/input
-data/output
-data/tmp
+data
+node_modules
+remotion/node_modules
 models
 *.safetensors
 *.ckpt
