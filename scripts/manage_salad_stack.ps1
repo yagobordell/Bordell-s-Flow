@@ -22,6 +22,7 @@ $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $ManifestPath = Join-Path $RepoRoot "deploy\salad\services.json"
 $WorkerManager = Join-Path $PSScriptRoot "manage_salad_worker.ps1"
 $QueueAttachmentRepair = Join-Path $PSScriptRoot "repair_salad_queue_attachment.ps1"
+$ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
 
 function Import-EnvFile {
     param([Parameter(Mandatory)][string]$Path)
@@ -109,7 +110,10 @@ function Get-Setting {
 function Get-ServiceRequiredEnvironment {
     param([Parameter(Mandatory)][object]$Definition)
 
-    $Names = @($Document.stack.shared_required_environment | ForEach-Object { [string]$_ })
+    $Names = @(
+        $Document.stack.shared_required_environment |
+            ForEach-Object { [string]$_ }
+    )
     $RequiredProperty = $Definition.PSObject.Properties["required_environment"]
     if ($null -ne $RequiredProperty) {
         $Names += @($RequiredProperty.Value | ForEach-Object { [string]$_ })
@@ -124,8 +128,7 @@ function Get-ServiceRequiredEnvironment {
 }
 
 function Assert-StackManifest {
-    $SchemaProperty = $Document.PSObject.Properties["schema_version"]
-    if ($null -eq $SchemaProperty -or [string]$SchemaProperty.Value -ne "2") {
+    if ([string]$Document.schema_version -ne "2") {
         throw "deploy/salad/services.json must use schema_version=2."
     }
     if ([string]::IsNullOrWhiteSpace([string]$Document.stack.organization)) {
@@ -172,6 +175,7 @@ function Assert-StackManifest {
             throw "Service '$($Property.Name)' image must contain an explicit tag."
         }
     }
+
     if ($Groups.Count -ne @($Groups | Select-Object -Unique).Count) {
         throw "Every model service must have its own Salad container group."
     }
@@ -180,14 +184,84 @@ function Assert-StackManifest {
     }
 }
 
-if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
-    throw "Salad stack manifest not found: $ManifestPath"
+function Invoke-QueueRepair {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [switch]$AllowMissing
+    )
+
+    $RepairArguments = @{
+        Service = $Name
+        EnvFile = $EnvFile
+    }
+    if ($AllowMissing) {
+        $RepairArguments["AllowMissing"] = $true
+    }
+    if ($NonInteractive) {
+        $RepairArguments["NonInteractive"] = $true
+    }
+
+    & $QueueAttachmentRepair @RepairArguments
+    $Succeeded = $?
+    if (-not $Succeeded) {
+        throw "Salad Job Queue attachment repair failed for service '$Name'."
+    }
 }
-if (-not (Test-Path -LiteralPath $WorkerManager -PathType Leaf)) {
-    throw "Salad worker manager not found: $WorkerManager"
+
+function Invoke-WorkerAction {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$WorkerAction
+    )
+
+    $WorkerArguments = @{
+        Service = $Name
+        Action = $WorkerAction
+        EnvFile = $EnvFile
+        PrepareTimeoutMinutes = $PrepareTimeoutMinutes
+    }
+    if ($SkipBuild) {
+        $WorkerArguments["SkipBuild"] = $true
+    }
+    if ($NonInteractive) {
+        $WorkerArguments["NonInteractive"] = $true
+    }
+
+    & $WorkerManager @WorkerArguments
+    $Succeeded = $?
+    if (-not $Succeeded) {
+        throw "Salad $WorkerAction failed for service '$Name'."
+    }
+}
+
+function Invoke-ScaleToZeroStart {
+    param([Parameter(Mandatory)][string]$Name)
+
+    $Arguments = @{
+        Service = $Name
+        EnvFile = $EnvFile
+    }
+    if ($NonInteractive) {
+        $Arguments["NonInteractive"] = $true
+    }
+
+    & $ScaleToZeroStarter @Arguments
+    $Succeeded = $?
+    if (-not $Succeeded) {
+        throw "Salad scale-to-zero Start failed for service '$Name'."
+    }
+}
+
+foreach ($RequiredPath in @($ManifestPath, $WorkerManager)) {
+    if (-not (Test-Path -LiteralPath $RequiredPath -PathType Leaf)) {
+        throw "Required Salad deployment file not found: $RequiredPath"
+    }
 }
 if ($Action -eq "Prepare" -and -not (Test-Path -LiteralPath $QueueAttachmentRepair -PathType Leaf)) {
     throw "Salad queue attachment repair helper not found: $QueueAttachmentRepair"
+}
+if ($Action -eq "Start" -and -not (Test-Path -LiteralPath $ScaleToZeroStarter -PathType Leaf)) {
+    throw "Salad scale-to-zero starter not found: $ScaleToZeroStarter"
 }
 
 Import-EnvFile -Path $EnvFile
@@ -212,15 +286,8 @@ else {
 
 if ($Action -eq "Validate") {
     foreach ($Name in $Selected) {
-        & $WorkerManager `
-            -Service $Name `
-            -Action Validate `
-            -EnvFile $EnvFile `
-            -NonInteractive:$NonInteractive
-        $CallSucceeded = $?
-        if (-not $CallSucceeded) {
-            throw "Validation failed for Salad service '$Name'."
-        }
+        Write-Host "=== Salad Validate : $Name ===" -ForegroundColor Cyan
+        Invoke-WorkerAction -Name $Name -WorkerAction "Validate"
     }
     Write-Host (
         "VALID stack={0}/{1} services={2}" -f `
@@ -233,7 +300,12 @@ if ($Action -eq "Validate") {
 
 Get-Setting -Name "SALAD_API_KEY" -Prompt "Salad API key" -Secret | Out-Null
 if ($Action -eq "Prepare") {
-    $SecretNames = @("POSTGRES_DSN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "HF_TOKEN")
+    $SecretNames = @(
+        "POSTGRES_DSN",
+        "R2_ACCESS_KEY_ID",
+        "R2_SECRET_ACCESS_KEY",
+        "HF_TOKEN"
+    )
     $Required = @()
     foreach ($Name in $Selected) {
         $Definition = $Document.services.PSObject.Properties[$Name].Value
@@ -256,41 +328,30 @@ if ($Action -eq "Stop") {
 
 foreach ($Name in $ExecutionOrder) {
     Write-Host "=== Salad $Action : $Name ===" -ForegroundColor Cyan
-    $WorkerArguments = @{
-        Service = $Name
-        Action = $Action
-        EnvFile = $EnvFile
-        PrepareTimeoutMinutes = $PrepareTimeoutMinutes
-    }
-    if ($SkipBuild) {
-        $WorkerArguments["SkipBuild"] = $true
-    }
-    if ($NonInteractive) {
-        $WorkerArguments["NonInteractive"] = $true
-    }
 
-    & $WorkerManager @WorkerArguments
-    $CallSucceeded = $?
-    if (-not $CallSucceeded) {
-        throw "Salad $Action failed for service '$Name'."
-    }
-
-    if ($Action -eq "Prepare") {
-        $RepairArguments = @{
-            Service = $Name
-            EnvFile = $EnvFile
+    switch ($Action) {
+        "Prepare" {
+            Invoke-QueueRepair -Name $Name -AllowMissing
+            Invoke-WorkerAction -Name $Name -WorkerAction "Prepare"
+            Invoke-QueueRepair -Name $Name
         }
-        if ($NonInteractive) {
-            $RepairArguments["NonInteractive"] = $true
+        "Start" {
+            Invoke-ScaleToZeroStart -Name $Name
         }
-        & $QueueAttachmentRepair @RepairArguments
-        $RepairSucceeded = $?
-        if (-not $RepairSucceeded) {
-            throw "Salad Job Queue attachment repair failed for service '$Name'."
+        "Status" {
+            Invoke-WorkerAction -Name $Name -WorkerAction "Status"
+        }
+        "Stop" {
+            Invoke-WorkerAction -Name $Name -WorkerAction "Stop"
+        }
+        default {
+            throw "Unsupported Salad stack action '$Action'."
         }
     }
 }
 
 Write-Host (
-    "Salad stack action complete: action={0} services={1}" -f $Action, ($ExecutionOrder -join ",")
+    "Salad stack action complete: action={0} services={1}" -f `
+    $Action,
+    ($ExecutionOrder -join ",")
 ) -ForegroundColor Green
