@@ -33,6 +33,13 @@ def _environment() -> dict[str, str]:
     return {name: os.environ[name] for name in REQUIRED_ENV}
 
 
+def _default_queue_name() -> str:
+    return os.getenv(
+        "SALAD_LTX25_QUEUE_NAME",
+        os.getenv("SALAD_QUEUE_NAME", "ai-video-factory-ltx25-jobs"),
+    )
+
+
 def _read_models[ModelT](path: Path, model_type: type[ModelT]) -> list[ModelT]:
     if not path.is_file():
         raise SystemExit(f"Required JSON file not found: {path}")
@@ -95,11 +102,11 @@ def _watch_manifest(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fan out, resume and verify all Phase 8 LTX video jobs through Salad/R2."
+        description="Fan out, resume and verify all LTX-2.5 video jobs through Salad/R2."
     )
     parser.add_argument(
         "--queue-name",
-        default=os.getenv("SALAD_QUEUE_NAME", "ai-video-factory-jobs"),
+        default=_default_queue_name(),
     )
     parser.add_argument(
         "--keyframes",
@@ -223,14 +230,14 @@ def main() -> None:
 
     if args.submit_only:
         print(f"manifest={manifest_path}")
-        print("Phase 8.4 fanout submitted; rerun without --submit-only to resume and fan in.")
+        print("LTX-2.5 fanout submitted; rerun without --submit-only to resume and fan in.")
         return
 
     clips_path = args.output_dir / "video_clips.json"
     _write_json(clips_path, [clip.model_dump(mode="json") for clip in clips])
     print(f"clips={clips_path}")
     print(f"count={len(clips)}")
-    print("Phase 8.4 video fanout/resume: OK")
+    print("LTX-2.5 video fanout/resume: OK")
 
 
 if __name__ == "__main__":
