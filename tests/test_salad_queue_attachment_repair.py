@@ -12,7 +12,8 @@ def test_queue_attachment_repair_contract() -> None:
     assert "current_queue_length" in text
     assert "Method Delete" not in text
     assert "replicas -ne 0" in text
-    assert "cannot be safely recreated with the same Salad name" in text
+    assert "Runtime attachment will be validated after Start/Smoke." in text
+    assert "incomplete Job Queue autoscaling configuration" in text
 
 
 def test_stack_prepare_runs_queue_attachment_repair() -> None:
