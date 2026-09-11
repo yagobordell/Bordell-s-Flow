@@ -1,26 +1,30 @@
-from pydantic import BaseModel, Field
-
 from ai_video_factory.domain import Shot, ShotTiming, StoryboardFrame, VisualReference
 from ai_video_factory.providers.base import StructuredTextProvider
+from ai_video_factory.providers.ideogram_caption import (
+    IdeogramCaptionPlan,
+    render_ideogram_caption,
+)
 
 STORYBOARD_FRAME_INSTRUCTIONS = """\
-Eres un bot de storyboard para un vídeo documental vertical.
+Eres un bot de storyboard para un vídeo documental vertical generado con Ideogram 4.
 
 Recibes un shot ya planificado, su duración real y las referencias visuales canónicas de las
-entidades que participan. Cuando existe, también recibes el prompt del frame anterior.
+entidades que participan. Cuando existe, también recibes el caption JSON del frame anterior.
 
-Tu única tarea es escribir en inglés un prompt provider-neutral para UN solo keyframe estático que
-represente visualmente el núcleo del shot.
+Tu única tarea es diseñar en inglés el caption estructurado de UN solo keyframe estático que
+represente visualmente el núcleo del shot. La aplicación serializará tu respuesta al JSON exacto de
+Ideogram 4, así que rellena únicamente el esquema solicitado.
 
 Reglas estrictas:
-- Conserva la identidad visual de las entidades usando las referencias canónicas como restricciones.
+- Conserva la identidad visual de las entidades usando las referencias canónicas como restricciones
+  textuales. El modelo open-weight no recibe las imágenes de referencia durante el keyframe.
 - Las referencias canónicas describen identidad, NO obligan a conservar su fondo neutro, pose de
   referencia o iluminación de estudio.
 - El keyframe debe representar de forma visible el núcleo de `SHOT.action`; no sustituyas la acción
   por un establishing shot genérico si el sujeto o relación principal puede mostrarse en imagen.
 - Si la acción se centra en una entidad participante, hazla visualmente relevante en el frame salvo
   que la propia acción describa explícitamente su ausencia.
-- Usa el prompt anterior solo para mantener continuidad visible cuando el shot actual comparte
+- Usa el frame anterior solo para mantener continuidad visible cuando el shot actual comparte
   entidades o entorno; no arrastres elementos que ya no pertenecen al shot.
 - Continuidad no significa repetición. Si cambia el significado narrativo respecto al frame
   anterior, introduce una variación visual significativa en sujeto, estado, composición o contexto.
@@ -31,6 +35,8 @@ Reglas estrictas:
 - La duración sirve para limitar la complejidad visual: representa un momento claro que pueda
   sostener el shot, no una secuencia de acciones comprimida en una sola imagen.
 - Puedes decidir composición, escala de plano, ángulo de cámara estático y distribución espacial.
+- `bbox` usa coordenadas normalizadas [ymin, xmin, ymax, xmax] entre 0 y 1000 y es opcional.
+- Incluye solo elementos de tipo objeto. No generes elementos de texto.
 - No generes movimiento de cámara, transición, duración, instrucciones de vídeo ni múltiples
   paneles.
 - No conviertas el keyframe en collage, split screen, hoja de contactos o storyboard grid.
@@ -38,18 +44,14 @@ Reglas estrictas:
 - No inventes personajes, objetos, símbolos escritos ni hechos narrativos ajenos a la acción del
   shot.
 - Mantén el estilo visual solicitado y el aspect ratio indicado.
-- Devuelve únicamente el prompt, sin Markdown ni explicaciones.
+- Las paletas, si las usas, deben ser colores hexadecimales #RRGGBB en mayúsculas.
 """
 
-
-class StoryboardPromptOutput(BaseModel):
-    """Model-owned visual description for one storyboard still."""
-
-    prompt: str = Field(min_length=1)
+StoryboardPromptOutput = IdeogramCaptionPlan
 
 
 class StoryboardFrameBot:
-    """Design one provider-neutral storyboard keyframe prompt at a time."""
+    """Design one Ideogram 4 storyboard caption at a time."""
 
     def __init__(self, *, provider: StructuredTextProvider, model: str) -> None:
         self._provider = provider
@@ -88,9 +90,9 @@ class StoryboardFrameBot:
             f"duration_seconds: {duration:.3f}\n"
             f"visual_style: {visual_style}\n"
             f"aspect_ratio: {aspect_ratio}\n\n"
-            "CANONICAL VISUAL REFERENCES:\n"
+            "CANONICAL VISUAL REFERENCES (Ideogram JSON captions):\n"
             f"{reference_text}\n\n"
-            "PREVIOUS STORYBOARD FRAME:\n"
+            "PREVIOUS STORYBOARD FRAME (Ideogram JSON caption):\n"
             f"{previous_text}"
         )
 
@@ -100,4 +102,4 @@ class StoryboardFrameBot:
             input_text=input_text,
             output_type=StoryboardPromptOutput,
         )
-        return result.prompt.strip()
+        return render_ideogram_caption(result)
