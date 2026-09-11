@@ -11,6 +11,12 @@ def test_breeze_uses_high_priority_for_current_capacity() -> None:
     assert document["services"]["breeze_tts2"]["priority"] == "high"
 
 
+def test_breeze_uses_indexed_cuda_device() -> None:
+    document = json.loads(MANIFEST.read_text(encoding="utf-8"))
+
+    assert document["services"]["breeze_tts2"]["environment"]["BREEZE_DEVICE"] == "cuda:0"
+
+
 def test_worker_update_sends_priority_inside_container() -> None:
     script = WORKER_MANAGER.read_text(encoding="utf-8")
     update_block = script.split("function Update-ContainerGroup", maxsplit=1)[1].split(
