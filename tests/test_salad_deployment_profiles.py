@@ -7,6 +7,7 @@ def test_salad_services_use_named_gpu_classes() -> None:
 
     assert document["services"]["ltx25"]["resources"]["gpu_class_names"] == ["RTX 5090"]
     assert document["services"]["breeze_tts2"]["resources"]["gpu_class_names"] == ["RTX 4090"]
+    assert document["services"]["ideogram4"]["resources"]["gpu_class_names"] == ["RTX 4090"]
     assert document["services"]["whisper"]["resources"]["gpu_class_names"] == ["RTX 3090"]
     for service in document["services"].values():
         assert "gpu_classes" not in service["resources"]
@@ -39,3 +40,15 @@ def test_breeze_autoscaler_allows_parallel_narration_workers() -> None:
     assert autoscaler["min_replicas"] == 0
     assert autoscaler["max_replicas"] == 2
     assert autoscaler["desired_queue_length"] == 1
+
+
+def test_ideogram_autoscaler_allows_parallel_reference_and_keyframe_workers() -> None:
+    document = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
+    service = document["services"]["ideogram4"]
+    autoscaler = service["autoscaler"]
+
+    assert service["queue_name"] == "ai-video-factory-ideogram4-jobs"
+    assert autoscaler["min_replicas"] == 0
+    assert autoscaler["max_replicas"] == 4
+    assert autoscaler["desired_queue_length"] == 1
+    assert autoscaler["max_upscale_per_minute"] == 2
