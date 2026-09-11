@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Literal, Self
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class IdeogramStylePlan(BaseModel):
@@ -60,7 +60,6 @@ class IdeogramCaptionPlan(BaseModel):
     style: IdeogramStylePlan
     background: str = Field(min_length=1, max_length=5000)
     elements: list[IdeogramElementPlan] = Field(default_factory=list, max_length=24)
-
 
 
 def render_ideogram_caption(plan: IdeogramCaptionPlan) -> str:
