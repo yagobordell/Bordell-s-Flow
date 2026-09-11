@@ -33,8 +33,15 @@ def test_salad_probe_failure_thresholds_stay_within_api_limit() -> None:
     assert breeze_startup["period_seconds"] * breeze_startup["failure_threshold"] == 600
 
     ideogram = document["services"]["ideogram4"]["probes"]
-    assert ideogram["startup"]["period_seconds"] * ideogram["startup"]["failure_threshold"] == 600
-    assert ideogram["readiness"]["period_seconds"] * ideogram["readiness"]["failure_threshold"] == 600
+    ideogram_startup_window = (
+        ideogram["startup"]["period_seconds"] * ideogram["startup"]["failure_threshold"]
+    )
+    ideogram_readiness_window = (
+        ideogram["readiness"]["period_seconds"]
+        * ideogram["readiness"]["failure_threshold"]
+    )
+    assert ideogram_startup_window == 600
+    assert ideogram_readiness_window == 600
 
 
 def test_salad_manager_resolves_gpu_names_through_organization_api() -> None:
