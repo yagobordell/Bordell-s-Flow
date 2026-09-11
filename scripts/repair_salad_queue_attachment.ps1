@@ -49,7 +49,6 @@ function Import-EnvFile {
                 $Value = $Value.Substring(1, $Value.Length - 2)
             }
         }
-
         if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($Name))) {
             [Environment]::SetEnvironmentVariable($Name, $Value)
         }
@@ -70,7 +69,6 @@ function Get-Setting {
     if ($NonInteractive) {
         throw "$Name is missing and -NonInteractive was requested."
     }
-
     if ($Secret) {
         $SecureValue = Read-Host $Prompt -AsSecureString
         $Credential = [PSCredential]::new("salad-queue-repair", $SecureValue)
@@ -82,7 +80,6 @@ function Get-Setting {
     if ([string]::IsNullOrWhiteSpace($Value)) {
         throw "$Name is empty."
     }
-
     $Value = $Value.Trim()
     [Environment]::SetEnvironmentVariable($Name, $Value)
     return $Value
@@ -92,7 +89,7 @@ function Get-Headers {
     return @{
         "Salad-Api-Key" = Get-Setting -Name "SALAD_API_KEY" -Prompt "Salad API key" -Secret
         "Accept" = "application/json"
-        "User-Agent" = "ai-video-factory-queue-repair/1.2"
+        "User-Agent" = "ai-video-factory-queue-repair/1.3"
     }
 }
 
@@ -160,19 +157,6 @@ function Test-GroupConfiguration {
     )
 }
 
-function Wait-ForGroupDeleted {
-    $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
-    do {
-        Start-Sleep -Seconds 3
-        if ($null -eq (Try-Get-Group)) {
-            return
-        }
-    }
-    while ((Get-Date) -lt $Deadline)
-
-    throw "Container group '$GroupName' was not deleted before timeout."
-}
-
 function Wait-ForGroupSettled {
     $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
     do {
@@ -187,117 +171,6 @@ function Wait-ForGroupSettled {
     throw "Container group '$GroupName' did not settle before timeout."
 }
 
-function Get-WorkerEnvironment {
-    $Environment = @{}
-    foreach ($Property in $Definition.environment.PSObject.Properties) {
-        $Override = [Environment]::GetEnvironmentVariable($Property.Name)
-        if ([string]::IsNullOrWhiteSpace($Override)) {
-            $Environment[$Property.Name] = [string]$Property.Value
-        }
-        else {
-            $Environment[$Property.Name] = $Override.Trim()
-        }
-    }
-
-    $Required = @(
-        $Document.stack.shared_required_environment |
-            ForEach-Object { [string]$_ }
-    )
-    $Required += @(
-        $Definition.required_environment |
-            ForEach-Object { [string]$_ }
-    )
-    $SecretNames = @(
-        "POSTGRES_DSN",
-        "R2_ACCESS_KEY_ID",
-        "R2_SECRET_ACCESS_KEY",
-        "HF_TOKEN"
-    )
-    foreach ($Name in @($Required | Select-Object -Unique)) {
-        $Environment[$Name] = Get-Setting `
-            -Name $Name `
-            -Prompt $Name `
-            -Secret:($SecretNames -contains $Name)
-    }
-    return $Environment
-}
-
-function New-Probe {
-    param([Parameter(Mandatory)][object]$Probe)
-
-    return @{
-        http = @{
-            headers = @()
-            path = [string]$Probe.path
-            port = $ContainerPort
-            scheme = "http"
-        }
-        initial_delay_seconds = 0
-        period_seconds = [int]$Probe.period_seconds
-        failure_threshold = [int]$Probe.failure_threshold
-        success_threshold = 1
-        timeout_seconds = [int]$Probe.timeout_seconds
-    }
-}
-
-function New-QueueAutoscaler {
-    return @{
-        min_replicas = [int]$Definition.autoscaler.min_replicas
-        max_replicas = [int]$Definition.autoscaler.max_replicas
-        desired_queue_length = [int]$Definition.autoscaler.desired_queue_length
-        polling_period = [int]$Definition.autoscaler.polling_period
-        max_upscale_per_minute = [int]$Definition.autoscaler.max_upscale_per_minute
-        max_downscale_per_minute = [int]$Definition.autoscaler.max_downscale_per_minute
-    }
-}
-
-function New-QueueConnection {
-    return @{
-        path = $QueuePath
-        port = $ContainerPort
-        queue_name = $QueueName
-    }
-}
-
-function New-CreateBody {
-    param([Parameter(Mandatory)][object]$ExistingGroup)
-
-    $GpuClasses = @(
-        $ExistingGroup.container.resources.gpu_classes |
-            ForEach-Object { [string]$_ }
-    )
-    if ($GpuClasses.Count -eq 0) {
-        throw "Existing group '$GroupName' has no resolved GPU classes to preserve."
-    }
-
-    return @{
-        name = $GroupName
-        display_name = [string]$Definition.display_name
-        autostart_policy = [bool]$Document.stack.autostart_policy
-        replicas = 0
-        restart_policy = [string]$Document.stack.restart_policy
-        scheduled_scaling_enabled = $false
-        container = @{
-            image = [string]$ExistingGroup.container.image
-            resources = @{
-                cpu = [int]$Definition.resources.cpu
-                memory = [int]$Definition.resources.memory
-                gpu_classes = $GpuClasses
-                shm_size = [int]$Definition.resources.shm_size
-                storage_amount = [Int64]$Definition.resources.storage_amount
-            }
-            environment_variables = Get-WorkerEnvironment
-            image_caching = $true
-            priority = [string]$Definition.priority
-        }
-        startup_probe = New-Probe -Probe $Definition.probes.startup
-        readiness_probe = New-Probe -Probe $Definition.probes.readiness
-        liveness_probe = New-Probe -Probe $Definition.probes.liveness
-        queue_connection = New-QueueConnection
-        queue_autoscaler = New-QueueAutoscaler
-    }
-}
-
 function Set-ZeroReplicas {
     param([Parameter(Mandatory)][object]$Group)
 
@@ -310,6 +183,7 @@ function Set-ZeroReplicas {
         $GroupName,
         [int]$Group.replicas
     ) -ForegroundColor Cyan
+
     $Body = @{ replicas = 0 } | ConvertTo-Json
     Invoke-RestMethod `
         -Method Patch `
@@ -319,6 +193,7 @@ function Set-ZeroReplicas {
         -Body $Body `
         -TimeoutSec 60 |
         Out-Null
+
     $Updated = Wait-ForGroupSettled
     if ([int]$Updated.replicas -ne 0) {
         throw (
@@ -382,58 +257,7 @@ if ((Test-GroupConfiguration -Group $Group) -and (Test-QueueAttachment -Queue $Q
     exit 0
 }
 
-$CreateBody = New-CreateBody -ExistingGroup $Group | ConvertTo-Json -Depth 20
-Write-Warning (
-    "Recreating stopped container group '$GroupName' so Salad can attach Job Queue autoscaling."
+throw (
+    "Container group '$GroupName' cannot be safely recreated with the same Salad name. " +
+    "Increment services.$Service.group_name in deploy/salad/services.json, then run Prepare again."
 )
-Invoke-RestMethod `
-    -Method Delete `
-    -Uri $GroupUrl `
-    -Headers $Headers `
-    -TimeoutSec 60 |
-    Out-Null
-Wait-ForGroupDeleted
-Invoke-RestMethod `
-    -Method Post `
-    -Uri "$Base/containers" `
-    -Headers $Headers `
-    -ContentType "application/json" `
-    -Body $CreateBody `
-    -TimeoutSec 60 |
-    Out-Null
-$Group = Wait-ForGroupSettled
-
-if (
-    $null -eq $Group.PSObject.Properties["queue_autoscaler"] -or
-    $null -eq $Group.queue_autoscaler
-) {
-    $PatchBody = @{
-        queue_connection = New-QueueConnection
-        queue_autoscaler = New-QueueAutoscaler
-    } | ConvertTo-Json -Depth 10
-    Invoke-RestMethod `
-        -Method Patch `
-        -Uri $GroupUrl `
-        -Headers $Headers `
-        -ContentType "application/merge-patch+json" `
-        -Body $PatchBody `
-        -TimeoutSec 60 |
-        Out-Null
-    $Group = Wait-ForGroupSettled
-}
-
-$Queue = Get-Queue
-if (-not (Test-GroupConfiguration -Group $Group)) {
-    throw "Salad did not persist the complete Job Queue autoscaling configuration."
-}
-if (-not (Test-QueueAttachment -Queue $Queue)) {
-    throw "Salad did not attach '$GroupName' to Job Queue '$QueueName'."
-}
-if ([int]$Group.replicas -ne 0) {
-    throw (
-        "Queue repair unexpectedly left '$GroupName' at replicas=$([int]$Group.replicas)."
-    )
-}
-Write-Host (
-    "$Service Job Queue autoscaling repaired and verified; group remains at zero replicas."
-) -ForegroundColor Green
