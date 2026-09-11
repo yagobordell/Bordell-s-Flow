@@ -274,7 +274,7 @@ def test_ideogram_worker_settings_and_salad_manifest() -> None:
     assert service["resources"]["gpu_class_names"] == ["RTX 4090"]
     assert service["autoscaler"]["min_replicas"] == 0
     assert service["autoscaler"]["max_replicas"] == 4
-    assert "HF_TOKEN" in service["required_secrets"]
+    assert service["required_environment"] == ["HF_TOKEN"]
 
 
 def test_ideogram_container_pins_official_runtime_and_stays_model_specific() -> None:
