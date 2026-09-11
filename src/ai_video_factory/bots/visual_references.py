@@ -2,6 +2,12 @@ from pydantic import BaseModel, Field
 
 from ai_video_factory.domain import ContinuityEntity, VisualReference
 from ai_video_factory.providers.base import StructuredTextProvider
+from ai_video_factory.providers.ideogram_caption import (
+    IdeogramCaptionPlan,
+    IdeogramElementPlan,
+    IdeogramStylePlan,
+    render_ideogram_caption,
+)
 
 VISUAL_REFERENCE_INSTRUCTIONS = """\
 Eres un bot de diseño de referencias visuales canónicas para un pipeline de vídeo.
@@ -38,13 +44,13 @@ Reglas estrictas:
 
 
 class VisualDesignOutput(BaseModel):
-    """Model-owned visual identity before the fixed application template is applied."""
+    """Model-owned visual identity before the fixed Ideogram template is applied."""
 
     description: str = Field(min_length=1)
 
 
 class VisualReferenceBot:
-    """Build one provider-neutral canonical reference prompt from a continuity entity."""
+    """Build one canonical Ideogram reference caption from a continuity entity."""
 
     def __init__(self, *, provider: StructuredTextProvider, model: str) -> None:
         self._provider = provider
@@ -93,35 +99,91 @@ class VisualReferenceBot:
 
 
 def _build_reference_prompt(*, kind: str, description: str, visual_style: str) -> str:
-    templates = {
-        "character": (
-            "Canonical character reference, {style}. {description}. "
-            "Single full-body subject in a neutral standing pose, clear silhouette, clothing and "
-            "recurring accessories fully visible, plain neutral studio background, even reference "
-            "lighting, no action, no text, no labels, no watermark."
-        ),
-        "group": (
-            "Canonical group reference, {style}. {description}. "
-            "Small representative group showing consistent shared appearance and recurring visual "
-            "traits, neutral arrangement, plain neutral background, even reference lighting, "
-            "no action, no text, no labels, no watermark."
-        ),
-        "location": (
-            "Canonical location reference, {style}. {description}. "
-            "Single coherent environment rather than a montage, emphasizing permanent "
-            "architecture, materials, layout and recurring landmarks, neutral reference lighting, "
-            "no temporary events, no text, no labels, no watermark."
-        ),
-        "object": (
-            "Canonical object reference, {style}. {description}. "
-            "Single physical object isolated and fully visible, clear shape, materials and "
-            "recurring details, plain neutral background, even reference lighting, no action, "
-            "no text, no labels, no watermark."
-        ),
-    }
-    try:
-        template = templates[kind]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported continuity entity kind: {kind}") from exc
+    render_mode = _render_mode_for_style(visual_style)
+    if render_mode == "photo":
+        medium = "cinematic documentary reference photograph"
+        render_description = (
+            "realistic reference photography, natural proportions, crisp material detail"
+        )
+    else:
+        medium = "digital image"
+        render_description = visual_style
 
-    return template.format(style=visual_style, description=description)
+    style = IdeogramStylePlan(
+        aesthetics=visual_style,
+        lighting="even neutral reference lighting with clear readable form",
+        medium=medium,
+        render_mode=render_mode,
+        render_description=render_description,
+    )
+
+    if kind == "character":
+        high_level = f"Canonical full-body character reference. {description}."
+        background = "Plain neutral studio background with no text or props."
+        elements = [
+            IdeogramElementPlan(
+                description=(
+                    f"{description}. Neutral standing pose, clear silhouette, clothing and "
+                    "recurring accessories fully visible, no action."
+                ),
+                bbox=[60, 180, 940, 820],
+            )
+        ]
+    elif kind == "group":
+        high_level = f"Canonical group identity reference. {description}."
+        background = "Plain neutral background with no text, labels, or temporary events."
+        elements = [
+            IdeogramElementPlan(
+                description=(
+                    f"{description}. Small representative group in a neutral arrangement, "
+                    "showing consistent shared appearance and recurring visual traits."
+                ),
+                bbox=[100, 80, 920, 920],
+            )
+        ]
+    elif kind == "location":
+        high_level = f"Canonical location reference. {description}."
+        background = (
+            f"{description}. One coherent reusable environment emphasizing permanent "
+            "architecture, materials, layout and recurring landmarks. No temporary events."
+        )
+        elements = []
+    elif kind == "object":
+        high_level = f"Canonical object reference. {description}."
+        background = "Plain neutral studio background with no text or labels."
+        elements = [
+            IdeogramElementPlan(
+                description=(
+                    f"{description}. Single physical object isolated and fully visible, with "
+                    "clear shape, materials and recurring details, no action."
+                ),
+                bbox=[100, 180, 900, 820],
+            )
+        ]
+    else:
+        raise ValueError(f"Unsupported continuity entity kind: {kind}")
+
+    return render_ideogram_caption(
+        IdeogramCaptionPlan(
+            high_level_description=high_level,
+            style=style,
+            background=background,
+            elements=elements,
+        )
+    )
+
+
+def _render_mode_for_style(visual_style: str) -> str:
+    style = visual_style.lower()
+    non_photo_markers = (
+        "illustration",
+        "painting",
+        "anime",
+        "cartoon",
+        "3d render",
+        "stylized",
+        "graphic",
+    )
+    if any(marker in style for marker in non_photo_markers):
+        return "art"
+    return "photo"
