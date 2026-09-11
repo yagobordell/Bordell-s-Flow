@@ -5,10 +5,18 @@ from pathlib import Path
 def test_salad_services_use_named_gpu_classes() -> None:
     document = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
 
-    assert document["services"]["ltx25"]["resources"]["gpu_class_names"] == ["RTX 5090"]
-    assert document["services"]["breeze_tts2"]["resources"]["gpu_class_names"] == ["RTX 4090"]
-    assert document["services"]["ideogram4"]["resources"]["gpu_class_names"] == ["RTX 4090"]
-    assert document["services"]["whisper"]["resources"]["gpu_class_names"] == ["RTX 3090"]
+    assert document["services"]["ltx25"]["resources"]["gpu_class_names"] == [
+        "RTX 5090 (32 GB)"
+    ]
+    assert document["services"]["breeze_tts2"]["resources"]["gpu_class_names"] == [
+        "RTX 4090 (24 GB)"
+    ]
+    assert document["services"]["ideogram4"]["resources"]["gpu_class_names"] == [
+        "RTX 4090 (24 GB)"
+    ]
+    assert document["services"]["whisper"]["resources"]["gpu_class_names"] == [
+        "RTX 3090 (24 GB)"
+    ]
     for service in document["services"].values():
         assert "gpu_classes" not in service["resources"]
 
