@@ -11,6 +11,7 @@ from .openai import OpenAIProvider
 from .openai_images import OpenAIImageProvider
 from .openai_speech import OpenAISpeechProvider
 from .openai_transcription import OpenAITranscriptionProvider
+from .salad_breeze import SaladBreezeSpeechProvider
 from .salad_whisper import SaladWhisperTranscriptionProvider
 from .speech import GeneratedSpeech, SpeechProvider
 from .transcription import TranscribedWord, TranscriptionProvider
@@ -25,6 +26,7 @@ __all__ = [
     "OpenAISpeechProvider",
     "OpenAITranscriptionProvider",
     "ReferenceAwareImageProvider",
+    "SaladBreezeSpeechProvider",
     "SaladWhisperTranscriptionProvider",
     "SpeechProvider",
     "StructuredTextProvider",
