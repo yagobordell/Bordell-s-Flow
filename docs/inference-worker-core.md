@@ -89,16 +89,23 @@ Salad images import the shared core and package only the dependencies needed by 
 current/target layout is:
 
 ```text
-docker/workers/ideogram4       # planned
+docker/workers/ideogram4       # planned; Phase 4 references + Phase 6 keyframes
 docker/workers/breeze-tts2     # planned
 docker/workers/whisper         # implemented
-docker/workers/keyframe        # model TBD
 docker/workers/ltx25           # implemented
 ```
 
-Each service has its own Salad queue and image lifecycle. Changing one model therefore does not
-require rebuilding or pushing the others.
+Ideogram 4 Quality is now the selected keyframe model as well as the Phase 4 reference-image model.
+There is intentionally no second `keyframe` image: both workloads share one model-specific queue and
+container image, while Salad creates multiple replicas of that group to run independent image jobs in
+parallel.
+
+Each model family has its own Salad queue and image lifecycle. Changing one model therefore does not
+require rebuilding or pushing the others. A worker remains serialized within one GPU; horizontal
+parallelism comes from queue-autoscaled container replicas.
 
 On the client side, `InferenceJobExecutor` provides the reusable submit/poll/verify/download loop for
 simple one-artifact inference providers. Whisper uses it first; later media providers can reuse it
 without coupling their domain contracts to Salad transport details.
+
+Hardware profiles and replica ceilings are documented in `docs/salad-gpu-profiles.md`.
