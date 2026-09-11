@@ -133,6 +133,11 @@ def test_breeze_container_pins_runtime_and_targets_4090() -> None:
     assert "FLASH_ATTN_CUDA_ARCHS=89" in dockerfile
     assert "torch==2.9.1" in dockerfile
     assert "flash-attn==2.8.3" in dockerfile
+    assert "python3.12-venv" in dockerfile
+    assert "VIRTUAL_ENV=/opt/venv" in dockerfile
+    assert 'python3.12 -m venv "$VIRTUAL_ENV"' in dockerfile
+    assert "--break-system-packages" not in dockerfile
+    assert "assert sys.prefix == '/opt/venv'" in dockerfile
     assert "COPY src /opt/factory/src" in dockerfile
     assert "COPY . /opt/factory" not in dockerfile
     assert "ai_video_factory.workers.breeze_tts2.runtime:app" in entrypoint
