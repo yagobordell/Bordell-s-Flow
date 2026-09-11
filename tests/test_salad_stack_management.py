@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 MANIFEST = Path("deploy/salad/services.json")
@@ -48,6 +49,19 @@ def test_every_model_has_its_own_group_and_queue() -> None:
     assert services["breeze_tts2"]["required_environment"] == []
     assert services["ideogram4"]["required_environment"] == ["HF_TOKEN"]
     assert services["ltx25"]["required_environment"] == ["HF_TOKEN"]
+
+
+def test_worker_queue_display_names_match_salad_api_contract() -> None:
+    display_name_pattern = re.compile(r"^[ A-Za-z0-9,.\-]{2,63}$")
+    services = _document()["services"]
+
+    for service in services.values():
+        assert display_name_pattern.fullmatch(service["display_name"])
+        assert display_name_pattern.fullmatch(f'{service["display_name"]} Jobs')
+
+    script = WORKER_MANAGER.read_text(encoding="utf-8")
+    assert 'display_name = "$($Definition.display_name) Jobs"' in script
+    assert 'display_name = "$Service jobs"' not in script
 
 
 def test_worker_prepare_can_create_missing_container_group() -> None:
