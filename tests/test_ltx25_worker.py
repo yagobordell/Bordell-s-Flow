@@ -4,9 +4,9 @@ from pathlib import Path
 from ai_video_factory.gpu.ltx_jobs import ltx_video_application_job_id as legacy_job_id
 from ai_video_factory.gpu.ltx_video import DirectLTX25Backend as LegacyBackend
 from ai_video_factory.workers.ltx25 import (
+    LTX_VIDEO_TASK,
     DirectLTX25Backend,
     LTX25WorkerSettings,
-    LTX_VIDEO_TASK,
     ltx_video_application_job_id,
 )
 
