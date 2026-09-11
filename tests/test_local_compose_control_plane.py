@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 COMPOSE = Path("compose.yaml")
 ORCHESTRATOR_DOCKERFILE = Path("docker/local/orchestrator/Dockerfile")
 RENDERER_DOCKERFILE = Path("docker/local/renderer/Dockerfile")
