@@ -8,6 +8,7 @@ from ai_video_factory.providers.ideogram_caption import validate_ideogram_captio
 
 SMOKE_SCRIPT = Path("scripts/run_salad_smoke_suite.py")
 VALIDATION_MANAGER = Path("scripts/manage_salad_validation.ps1")
+SCALE_TO_ZERO_STARTER = Path("scripts/start_salad_scale_to_zero.ps1")
 
 
 def _load_smoke_module() -> ModuleType:
@@ -47,12 +48,26 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     assert 'ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25", "all")' in text
     assert 'python scripts/run_salad_smoke_suite.py' in text
     assert "manage_salad_stack.ps1" in text
+    assert "start_salad_scale_to_zero.ps1" in text
     assert '$CallSucceeded = $?' in text
     assert 'if (-not $CallSucceeded)' in text
     assert '"Prepare" { Invoke-StackAction -StackAction "Prepare" }' in text
-    assert '"Start" { Invoke-StackAction -StackAction "Start" }' in text
+    assert '"Start" { Invoke-ScaleToZeroStart }' in text
     assert '"Stop" { Invoke-StackAction -StackAction "Stop" }' in text
     assert 'ValidateSet("Full"' not in text
+
+
+def test_scale_to_zero_start_accepts_idle_deploying_state() -> None:
+    text = SCALE_TO_ZERO_STARTER.read_text(encoding="utf-8")
+
+    assert "function Test-ScaleToZeroActive" in text
+    assert '[int]$Definition.autoscaler.min_replicas -eq 0' in text
+    assert '[int]$Group.replicas -eq 0' in text
+    assert '$Status -eq "deploying"' in text
+    assert '$Status -eq "running"' in text
+    assert '"$GroupUrl/start"' in text
+    assert "first queued job may trigger a cold start" in text
+    assert "Container group did not reach status 'running' before timeout." not in text
 
 
 def test_smoke_suite_persists_evidence_for_each_worker() -> None:
