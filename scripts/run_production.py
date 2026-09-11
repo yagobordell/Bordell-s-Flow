@@ -7,7 +7,6 @@ from pathlib import Path
 from ai_video_factory.config import settings
 from ai_video_factory.workflows.production_runner import (
     PRODUCTION_STAGE_NAMES,
-    ProductionGateRequired,
     ProductionRunner,
     ProductionStageBlocked,
     build_production_stages,
@@ -18,7 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run the production pipeline resumably, adopting valid persisted artifacts and "
-            "executing only pending or stale automatic stages."
+            "executing only pending or stale stages."
         )
     )
     parser.add_argument(
@@ -51,7 +50,7 @@ def parse_args() -> argparse.Namespace:
         action="append",
         choices=PRODUCTION_STAGE_NAMES,
         default=[],
-        help="Rerun one automatic stage even when its recorded fingerprints are current.",
+        help="Rerun one stage even when its recorded fingerprints are current.",
     )
     parser.add_argument(
         "--plan",
@@ -91,13 +90,6 @@ def main() -> None:
             through=args.through,
             force_stages=set(args.force_stage),
         )
-    except ProductionGateRequired as exc:
-        print(f"GATE  {exc.stage.name}: {exc}", file=sys.stderr)
-        print(
-            "The completed upstream stages remain persisted and will be skipped on the next run.",
-            file=sys.stderr,
-        )
-        raise SystemExit(20) from exc
     except ProductionStageBlocked as exc:
         print(f"BLOCK {exc.stage.name}: {exc}", file=sys.stderr)
         raise SystemExit(21) from exc

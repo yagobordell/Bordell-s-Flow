@@ -1,9 +1,9 @@
+import json
 from pathlib import Path
 
 import pytest
 
 from ai_video_factory.workflows.production_runner import (
-    ProductionGateRequired,
     ProductionRunManifest,
     ProductionRunner,
     ProductionStage,
@@ -63,10 +63,11 @@ def test_existing_stage_is_adopted_then_skipped(tmp_path: Path) -> None:
     manifest = ProductionRunManifest.model_validate_json(
         (tmp_path / "manifest.json").read_text(encoding="utf-8")
     )
+    assert manifest.schema_version == "2"
     assert manifest.stages["stage"].origin == "adopted"
 
 
-def test_input_change_reruns_recorded_automatic_stage(tmp_path: Path) -> None:
+def test_input_change_reruns_recorded_stage(tmp_path: Path) -> None:
     source = tmp_path / "input.txt"
     output = tmp_path / "output.json"
     source.write_text("v1", encoding="utf-8")
@@ -126,60 +127,6 @@ def test_script_change_invalidates_recorded_stage(tmp_path: Path) -> None:
     assert executor.calls == ["stage"]
 
 
-def test_missing_manual_keyframe_artifact_stops_at_gate(tmp_path: Path) -> None:
-    source = tmp_path / "storyboard.json"
-    source.write_text("[]", encoding="utf-8")
-    stage = ProductionStage(
-        name="phase6-keyframes",
-        description="manual keyframe gate",
-        kind="manual_gate",
-        inputs=(source,),
-        outputs=(tmp_path / "storyboard_keyframes.json",),
-        gate_message="choose the production keyframe model",
-    )
-    executor = RecordingExecutor()
-    runner = ProductionRunner(
-        [stage],
-        manifest_path=tmp_path / "manifest.json",
-        repo_root=tmp_path,
-        executor=executor,
-    )
-
-    with pytest.raises(ProductionGateRequired, match="choose the production keyframe model"):
-        runner.run()
-
-    assert executor.calls == []
-    assert not (tmp_path / "manifest.json").exists()
-
-
-def test_existing_manual_keyframes_are_adopted(tmp_path: Path) -> None:
-    source = tmp_path / "storyboard.json"
-    metadata = tmp_path / "storyboard_keyframes.json"
-    artifacts = tmp_path / "storyboard_keyframes"
-    source.write_text("[]", encoding="utf-8")
-    metadata.write_text("[]", encoding="utf-8")
-    artifacts.mkdir()
-    (artifacts / "shot_001.png").write_bytes(b"png")
-    runner = ProductionRunner(
-        [
-            ProductionStage(
-                name="phase6-keyframes",
-                description="manual keyframe gate",
-                kind="manual_gate",
-                inputs=(source,),
-                outputs=(metadata, artifacts),
-            )
-        ],
-        manifest_path=tmp_path / "manifest.json",
-        repo_root=tmp_path,
-        executor=RecordingExecutor(),
-    )
-
-    summary = runner.run()
-
-    assert summary.adopted == ("phase6-keyframes",)
-
-
 def test_missing_stage_input_is_blocked(tmp_path: Path) -> None:
     stage = ProductionStage(
         name="stage",
@@ -199,7 +146,7 @@ def test_missing_stage_input_is_blocked(tmp_path: Path) -> None:
         runner.run()
 
 
-def test_production_dag_prepares_video_prompts_before_keyframe_gate(tmp_path: Path) -> None:
+def test_production_dag_automates_ideogram_keyframes(tmp_path: Path) -> None:
     stages = build_production_stages(
         script_file=tmp_path / "script.txt",
         output_dir=tmp_path / "output",
@@ -209,9 +156,98 @@ def test_production_dag_prepares_video_prompts_before_keyframe_gate(tmp_path: Pa
 
     assert names.index("phase8-video-prompts") < names.index("phase6-keyframes")
     assert names.index("phase6-keyframes") < names.index("phase8-videos")
-    assert keyframe.kind == "manual_gate"
-    assert keyframe.script is None
-    assert "reference_assets.json" in {path.name for path in keyframe.inputs}
+    assert keyframe.script == Path("scripts/run_phase6_keyframes.py")
+    assert "--quality" in keyframe.arguments
+    assert "high" in keyframe.arguments
+    assert "--size" in keyframe.arguments
+    assert "1024x1536" in keyframe.arguments
+    assert {path.name for path in keyframe.inputs} == {
+        "storyboard_frames.json",
+        "shots.json",
+    }
+    assert "reference_assets.json" not in {path.name for path in keyframe.inputs}
+
+
+def test_existing_keyframes_are_adopted_then_stale_inputs_regenerate(tmp_path: Path) -> None:
+    source = tmp_path / "storyboard.json"
+    metadata = tmp_path / "storyboard_keyframes.json"
+    artifacts = tmp_path / "storyboard_keyframes"
+    script = _script(tmp_path, "keyframes.py")
+    source.write_text("[]", encoding="utf-8")
+    metadata.write_text("[]", encoding="utf-8")
+    artifacts.mkdir()
+    (artifacts / "shot_001.png").write_bytes(b"png")
+    executor = RecordingExecutor()
+    runner = ProductionRunner(
+        [
+            ProductionStage(
+                name="phase6-keyframes",
+                description="Ideogram keyframes",
+                script=script,
+                inputs=(source,),
+                outputs=(metadata, artifacts),
+            )
+        ],
+        manifest_path=tmp_path / "manifest.json",
+        repo_root=tmp_path,
+        executor=executor,
+    )
+
+    first = runner.run()
+    source.write_text("[1]", encoding="utf-8")
+    second = runner.run()
+
+    assert first.adopted == ("phase6-keyframes",)
+    assert second.executed == ("phase6-keyframes",)
+    assert executor.calls == ["phase6-keyframes"]
+
+
+def test_v1_manifest_drops_old_manual_gate_record(tmp_path: Path) -> None:
+    source = tmp_path / "input.txt"
+    output = tmp_path / "output.json"
+    source.write_text("input", encoding="utf-8")
+    output.write_text("existing", encoding="utf-8")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "stages": {
+                    "phase6-keyframes": {
+                        "stage_name": "phase6-keyframes",
+                        "kind": "manual_gate",
+                        "spec_sha256": "old",
+                        "input_sha256": "old",
+                        "output_sha256": "old",
+                        "origin": "adopted",
+                        "command": [],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    runner = ProductionRunner(
+        [
+            ProductionStage(
+                name="stage",
+                description="test",
+                script=_script(tmp_path),
+                inputs=(source,),
+                outputs=(output,),
+            )
+        ],
+        manifest_path=manifest_path,
+        repo_root=tmp_path,
+        executor=RecordingExecutor(),
+    )
+
+    summary = runner.run()
+
+    assert summary.adopted == ("stage",)
+    upgraded = ProductionRunManifest.model_validate_json(manifest_path.read_text(encoding="utf-8"))
+    assert upgraded.schema_version == "2"
+    assert "phase6-keyframes" not in upgraded.stages
 
 
 def test_plan_does_not_mutate_manifest(tmp_path: Path) -> None:
