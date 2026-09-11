@@ -27,13 +27,13 @@ from ai_video_factory.providers.ideogram_caption import (
 )
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
+from ai_video_factory.workers.breeze_tts2 import BREEZE_TTS2_MODEL_ID
 from ai_video_factory.workers.ideogram4 import (
     IDEOGRAM4_KEYFRAME_TASK,
     IDEOGRAM4_MODEL_ID,
     IDEOGRAM4_REFERENCE_TASK,
 )
 from ai_video_factory.workers.whisper import WHISPER_MODEL_ID
-from ai_video_factory.workers.breeze_tts2 import BREEZE_TTS2_MODEL_ID
 
 _SERVICE_ORDER = ("breeze_tts2", "whisper", "ideogram4", "ltx25")
 _DEFAULT_OUTPUT_DIR = Path("data/output/deployment-validation")
@@ -108,7 +108,12 @@ def _storage() -> R2ObjectStorage:
     )
 
 
-def _executor(queue_name: str, *, timeout_seconds: float, poll_seconds: float) -> InferenceJobExecutor:
+def _executor(
+    queue_name: str,
+    *,
+    timeout_seconds: float,
+    poll_seconds: float,
+) -> InferenceJobExecutor:
     organization, project = _stack_identity()
     queue = SaladJobQueueClient(
         organization=organization,
@@ -199,7 +204,8 @@ async def _smoke_whisper(args: argparse.Namespace) -> None:
     audio_path = args.whisper_audio or (args.output_dir / "breeze-smoke.wav")
     if not audio_path.is_file():
         raise SystemExit(
-            "Whisper smoke input is missing. Run --service breeze_tts2 first or pass --whisper-audio."
+            "Whisper smoke input is missing. Run --service breeze_tts2 first "
+            "or pass --whisper-audio."
         )
     executor = _executor(
         settings.salad_whisper_queue_name,
