@@ -47,6 +47,8 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     assert 'ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25", "all")' in text
     assert 'python scripts/run_salad_smoke_suite.py' in text
     assert "manage_salad_stack.ps1" in text
+    assert '$CallSucceeded = $?' in text
+    assert 'if (-not $CallSucceeded)' in text
     assert '"Prepare" { Invoke-StackAction -StackAction "Prepare" }' in text
     assert '"Start" { Invoke-StackAction -StackAction "Start" }' in text
     assert '"Stop" { Invoke-StackAction -StackAction "Stop" }' in text
