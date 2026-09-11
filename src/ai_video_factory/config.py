@@ -14,7 +14,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     openai_api_key: str | None = None
-    openai_model: str = "gpt-5.4-mini"
+    openai_model: str = "gpt-5.6-luna"
+    openai_reasoning_effort: str = "high"
+    openai_service_tier: str = "flex"
+    openai_fallback_service_tier: str = "default"
     openai_image_model: str = "gpt-image-2"
     openai_tts_model: str = "gpt-4o-mini-tts"
     openai_tts_voice: str = "marin"
