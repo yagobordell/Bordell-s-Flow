@@ -25,6 +25,8 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $StackManager = Join-Path $PSScriptRoot "manage_salad_stack.ps1"
+$ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
+$ManifestPath = Join-Path $RepoRoot "deploy\salad\services.json"
 $ComposePath = $ComposeFile
 if (-not [IO.Path]::IsPathRooted($ComposePath)) {
     $ComposePath = Join-Path $RepoRoot $ComposePath
@@ -53,6 +55,43 @@ function Invoke-StackAction {
     if (-not $CallSucceeded) {
         throw "Salad stack action failed: $StackAction"
     }
+}
+
+function Invoke-ScaleToZeroStart {
+    if (-not (Test-Path -LiteralPath $ScaleToZeroStarter -PathType Leaf)) {
+        throw "Scale-to-zero starter not found: $ScaleToZeroStarter"
+    }
+    if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
+        throw "Salad stack manifest not found: $ManifestPath"
+    }
+
+    $Document = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    $Services = if ($Service -eq "all") {
+        @($Document.stack.service_order | ForEach-Object { [string]$_ })
+    }
+    else {
+        @($Service)
+    }
+
+    foreach ($Name in $Services) {
+        Write-Host "=== Salad Start : $Name ===" -ForegroundColor Cyan
+        $Arguments = @{
+            Service = $Name
+            EnvFile = $EnvFile
+        }
+        if ($NonInteractive) {
+            $Arguments["NonInteractive"] = $true
+        }
+        & $ScaleToZeroStarter @Arguments
+        $CallSucceeded = $?
+        if (-not $CallSucceeded) {
+            throw "Salad scale-to-zero Start failed for service '$Name'."
+        }
+    }
+
+    Write-Host (
+        "Salad scale-to-zero Start complete: services={0}" -f ($Services -join ",")
+    ) -ForegroundColor Green
 }
 
 function Assert-Docker {
@@ -94,7 +133,7 @@ function Invoke-Smoke {
 switch ($Action) {
     "Validate" { Invoke-StackAction -StackAction "Validate" }
     "Prepare" { Invoke-StackAction -StackAction "Prepare" }
-    "Start" { Invoke-StackAction -StackAction "Start" }
+    "Start" { Invoke-ScaleToZeroStart }
     "Status" { Invoke-StackAction -StackAction "Status" }
     "Smoke" { Invoke-Smoke }
     "Stop" { Invoke-StackAction -StackAction "Stop" }
