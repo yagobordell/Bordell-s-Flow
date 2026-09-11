@@ -55,6 +55,11 @@ jobs:
               exit 1
           }
 
+      - name: Docker Compose config
+        run: |
+          docker compose version
+          docker compose -f compose.yaml config --quiet
+
   remotion:
     runs-on: ubuntu-latest
     timeout-minutes: 15
