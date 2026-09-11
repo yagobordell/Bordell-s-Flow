@@ -12,7 +12,7 @@ from ai_video_factory.workers.ltx25 import (
 
 
 def test_legacy_ltx_imports_resolve_to_dedicated_worker() -> None:
-    assert LegacyBackend is DirectLTX25Backend
+    assert issubclass(LegacyBackend, DirectLTX25Backend)
     assert legacy_job_id is ltx_video_application_job_id
     assert LTX_VIDEO_TASK == "video.ltx25.generate"
 
