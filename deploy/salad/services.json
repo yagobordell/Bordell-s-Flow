@@ -1,0 +1,70 @@
+{
+  "services": {
+    "ltx25": {
+      "display_name": "AI Video Factory LTX 2.5",
+      "organization": "yagobordellorg",
+      "project": "aivideofactory",
+      "group_name": "ai-video-factory-worker",
+      "queue_name": "ai-video-factory-ltx25-jobs",
+      "dockerfile": "docker/workers/ltx25/Dockerfile",
+      "image": "docker.io/yagobordell/ai-video-factory:ltx25-torch211-cu128-natten0216-v2",
+      "priority": "medium",
+      "resources": {
+        "cpu": 8,
+        "memory": 61440,
+        "shm_size": 8192,
+        "storage_amount": 137438953472,
+        "gpu_classes": [
+          "851399fb-7329-4195-a042-d6514b28cf33"
+        ]
+      },
+      "environment": {
+        "INFERENCE_WORKER_MODE": "production",
+        "INFERENCE_WORKER_LEASE_SECONDS": "900",
+        "INFERENCE_WORKER_HEARTBEAT_SECONDS": "30",
+        "LTX_MODEL_ROOT": "/workspace/models/ltx-2.5",
+        "LTX_MODEL_REPOSITORY": "Lightricks/LTX-2.5",
+        "LTX_MODEL_REVISION": "main",
+        "LTX_DEVICE": "cuda",
+        "SALAD_QUEUE_ENABLED": "true",
+        "SALAD_LOG_LEVEL": "info"
+      },
+      "required_secrets": [
+        "POSTGRES_DSN",
+        "R2_ENDPOINT_URL",
+        "R2_BUCKET",
+        "R2_ACCESS_KEY_ID",
+        "R2_SECRET_ACCESS_KEY",
+        "HF_TOKEN"
+      ],
+      "probes": {
+        "startup": {
+          "path": "/health",
+          "period_seconds": 15,
+          "timeout_seconds": 5,
+          "failure_threshold": 20
+        },
+        "readiness": {
+          "path": "/ready",
+          "period_seconds": 10,
+          "timeout_seconds": 5,
+          "failure_threshold": 6
+        },
+        "liveness": {
+          "path": "/health",
+          "period_seconds": 30,
+          "timeout_seconds": 10,
+          "failure_threshold": 20
+        }
+      },
+      "autoscaler": {
+        "min_replicas": 0,
+        "max_replicas": 1,
+        "desired_queue_length": 1,
+        "polling_period": 30,
+        "max_upscale_per_minute": 1,
+        "max_downscale_per_minute": 1
+      }
+    }
+  }
+}
