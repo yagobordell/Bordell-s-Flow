@@ -41,9 +41,10 @@ implementations. Model-specific imports must not be added to `ai_video_factory.i
 compatible. `inputs` is optional, allowing prompt-only inference jobs such as reference-image or
 speech generation without inventing dummy R2 objects. Existing LTX requests remain unchanged.
 
-The current response represents one primary artifact. Whisper uses that artifact for `words.json`;
-LTX uses it for the generated MP4. If a future task needs multiple persisted artifacts, that should be
-introduced as an explicit new schema version rather than silently changing schema v1.
+The current response represents one primary artifact. Whisper uses that artifact for `words.json`,
+Breeze uses it for the narration WAV and LTX uses it for the generated MP4. If a future task needs
+multiple persisted artifacts, that should be introduced as an explicit new schema version rather than
+silently changing schema v1.
 
 ## Configuration
 
@@ -60,8 +61,9 @@ INFERENCE_LOCAL_OBJECT_ROOT
 
 R2 and Postgres credentials retain their shared names (`R2_*`, `POSTGRES_DSN`).
 
-Model-specific settings live under each worker namespace. For example, LTX reads `LTX_*` and Whisper
-reads `WHISPER_*`; those settings do not leak into the shared inference package.
+Model-specific settings live under each worker namespace. For example, LTX reads `LTX_*`, Breeze
+reads `BREEZE_*` and Whisper reads `WHISPER_*`; those settings do not leak into the shared inference
+package.
 
 ## Backward compatibility
 
@@ -75,9 +77,9 @@ GPUWorker      -> InferenceWorker
 ```
 
 Storage, repositories, errors, ports and the FastAPI app are also re-exported from the inference core
-where older Phase 7/8 code still imports them. The canonical LTX runtime is now
-`ai_video_factory.workers.ltx25`, while the canonical transcription runtime is
-`ai_video_factory.workers.whisper`.
+where older Phase 7/8 code still imports them. The canonical LTX runtime is
+`ai_video_factory.workers.ltx25`, narration is `ai_video_factory.workers.breeze_tts2`, and
+transcription is `ai_video_factory.workers.whisper`.
 
 The physical Postgres table remains `gpu.jobs` during this migration. Its name is an implementation
 detail, not a public contract; renaming it is intentionally deferred to avoid unnecessary production
@@ -90,13 +92,13 @@ current/target layout is:
 
 ```text
 docker/workers/ideogram4       # planned; Phase 4 references + Phase 6 keyframes
-docker/workers/breeze-tts2     # planned
+docker/workers/breeze-tts2     # implemented
 docker/workers/whisper         # implemented
 docker/workers/ltx25           # implemented
 ```
 
-Ideogram 4 Quality is now the selected keyframe model as well as the Phase 4 reference-image model.
-There is intentionally no second `keyframe` image: both workloads share one model-specific queue and
+Ideogram 4 Quality is the selected keyframe model as well as the Phase 4 reference-image model. There
+is intentionally no second `keyframe` image: both workloads share one model-specific queue and
 container image, while Salad creates multiple replicas of that group to run independent image jobs in
 parallel.
 
@@ -105,7 +107,7 @@ require rebuilding or pushing the others. A worker remains serialized within one
 parallelism comes from queue-autoscaled container replicas.
 
 On the client side, `InferenceJobExecutor` provides the reusable submit/poll/verify/download loop for
-simple one-artifact inference providers. Whisper uses it first; later media providers can reuse it
-without coupling their domain contracts to Salad transport details.
+simple one-artifact inference providers. Whisper and Breeze use this path without coupling their
+domain contracts to Salad transport details.
 
 Hardware profiles and replica ceilings are documented in `docs/salad-gpu-profiles.md`.
