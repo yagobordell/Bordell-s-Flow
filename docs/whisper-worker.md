@@ -129,9 +129,15 @@ pinned after the first real Salad smoke without rebuilding the orchestration lay
 The declarative service entry is `whisper` in `deploy/salad/services.json`. It uses a separate group
 and queue from LTX because one model image must never consume another model's jobs.
 
-The first deployment keeps the GPU class already validated for this project. That is a conservative
-bootstrap choice, not a cost recommendation. After a real transcription benchmark, the Whisper group
-should be moved to the cheapest GPU class that satisfies latency and VRAM requirements.
+The initial hardware profile is `RTX 3090` with 24 GB VRAM. Whisper Large V3 Turbo is far below that
+memory ceiling in FP16, while the 3090 has strong availability in Salad and provides a conservative
+cost/performance baseline without paying for a 4090/5090. The first real smoke should record latency
+and peak VRAM; a cheaper 12-16 GB class may be tested later, but the production profile should change
+only after a measured comparison.
+
+GPU classes are declared by human-readable name in `deploy/salad/services.json`. During `Prepare`,
+`manage_salad_worker.ps1` calls Salad's organization GPU-class endpoint and resolves the current UUID.
+This avoids baking provider-specific class IDs into source control.
 
 The generic manager remains:
 
