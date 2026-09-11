@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 start_app() {
-  uvicorn ai_video_factory.gpu.runtime:app \
+  uvicorn ai_video_factory.workers.ltx25.runtime:app \
     --host 0.0.0.0 \
     --port 8080 \
     --no-access-log
@@ -50,20 +50,20 @@ trap terminate TERM INT EXIT
 start_app &
 app_pid=$!
 if ! wait_for_health; then
-  echo "Phase 8 GPU worker HTTP health endpoint did not start" >&2
+  echo "LTX-2.5 worker HTTP health endpoint did not start" >&2
   exit 1
 fi
 
-echo "Phase 8 GPU worker health endpoint is up; bootstrapping models"
-phase8-download-models
+echo "LTX-2.5 worker health endpoint is up; bootstrapping model weights"
+download-models
 
 if ! wait_for_ready; then
-  echo "Phase 8 GPU worker did not become ready after model bootstrap" >&2
+  echo "LTX-2.5 worker did not become ready after model bootstrap" >&2
   exit 1
 fi
 
 if [[ "${SALAD_QUEUE_ENABLED:-false}" != "true" ]]; then
-  echo "Phase 8 GPU worker ready; queue transport disabled"
+  echo "LTX-2.5 worker ready; queue transport disabled"
   set +e
   wait "${app_pid}"
   status=$?
@@ -71,7 +71,7 @@ if [[ "${SALAD_QUEUE_ENABLED:-false}" != "true" ]]; then
   exit "${status}"
 fi
 
-echo "Phase 8 GPU worker ready; starting Salad queue transport"
+echo "LTX-2.5 worker ready; starting Salad queue transport"
 /usr/local/bin/salad-http-job-queue-worker &
 queue_pid=$!
 

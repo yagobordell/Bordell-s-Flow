@@ -24,10 +24,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HUB_DISABLE_XET=1 \
     HF_HUB_ENABLE_HF_TRANSFER=0 \
     TORCH_CUDA_ARCH_LIST=12.0 \
-    GPU_WORKER_MODE=production \
-    GPU_WORKER_RUNTIME=phase8 \
-    GPU_WORKER_TEMP_DIR=/tmp/ai-video-factory \
+    INFERENCE_WORKER_MODE=production \
+    INFERENCE_WORKER_TEMP_DIR=/tmp/ai-video-factory \
     LTX_MODEL_ROOT=/workspace/models/ltx-2.5 \
+    LTX_MODEL_REPOSITORY=Lightricks/LTX-2.5 \
+    LTX_MODEL_REVISION=main \
     LTX_DEVICE=cuda \
     SALAD_QUEUE_ENABLED=false
 
@@ -49,10 +50,10 @@ RUN python3 -c \
      assert torchvision.__version__.startswith('0.26.0'), torchvision.__version__; \
      assert torchaudio.__version__.startswith('2.11.0'), torchaudio.__version__"
 
-ARG LTX_COMMIT=a95ab856bf29407b6b066ede0abe1846050db56c
+ARG LTX_SOURCE_COMMIT=a95ab856bf29407b6b066ede0abe1846050db56c
 
 RUN git clone --filter=blob:none https://github.com/Lightricks/LTX-2.git /opt/ltx \
-    && git -C /opt/ltx checkout "${LTX_COMMIT}"
+    && git -C /opt/ltx checkout "${LTX_SOURCE_COMMIT}"
 
 RUN printf '%s\n' \
         'torch==2.11.0' \
@@ -69,14 +70,15 @@ RUN python3 -m pip install \
         --editable /opt/ltx/packages/ltx-pipelines
 
 WORKDIR /opt/factory
-COPY . /opt/factory
+COPY pyproject.toml README.md /opt/factory/
+COPY src /opt/factory/src
 
 RUN python3 -m pip install \
         --break-system-packages \
         --no-cache-dir \
         --constraint /opt/torch-constraints.txt \
         --extra-index-url https://download.pytorch.org/whl/cu128 \
-        --editable '/opt/factory[gpu]' \
+        '/opt/factory[gpu]' \
         'huggingface-hub[cli]'
 
 RUN python3 -m pip install \
@@ -87,19 +89,19 @@ RUN python3 -m pip install \
         'natten==0.21.6+torch2110cu128'
 
 COPY --from=salad-worker /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/
-COPY docker/phase8-worker/download_models.sh /usr/local/bin/phase8-download-models
-COPY docker/phase8-worker/entrypoint.sh /usr/local/bin/phase8-entrypoint
+COPY docker/workers/ltx25/download_models.sh /usr/local/bin/download-models
+COPY docker/workers/ltx25/entrypoint.sh /usr/local/bin/worker-entrypoint
 
 RUN chmod 0755 \
         /usr/local/bin/salad-http-job-queue-worker \
-        /usr/local/bin/phase8-download-models \
-        /usr/local/bin/phase8-entrypoint \
+        /usr/local/bin/download-models \
+        /usr/local/bin/worker-entrypoint \
     && useradd --create-home --uid 10001 worker \
     && mkdir --parents \
         /workspace/models/ltx-2.5 \
         /workspace/.cache/huggingface \
         /tmp/ai-video-factory \
-        /opt/factory/data/phase7-local \
+        /opt/factory/data/inference-local \
     && chown --recursive worker:worker \
         /workspace \
         /tmp/ai-video-factory \
@@ -122,4 +124,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5m --retries=3 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
 
-ENTRYPOINT ["phase8-entrypoint"]
+ENTRYPOINT ["worker-entrypoint"]

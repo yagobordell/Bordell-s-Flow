@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 MODEL_REPOSITORY="${LTX_MODEL_REPOSITORY:-Lightricks/LTX-2.5}"
+MODEL_REVISION="${LTX_MODEL_REVISION:-main}"
 MODEL_ROOT="${LTX_MODEL_ROOT:-/workspace/models/ltx-2.5}"
 
 MODEL_FILES=(
@@ -14,7 +15,7 @@ MODEL_FILES=(
 
 mkdir -p "${MODEL_ROOT}"
 
-echo "phase8 model bootstrap repository=${MODEL_REPOSITORY} root=${MODEL_ROOT}"
+echo "ltx25 model bootstrap repository=${MODEL_REPOSITORY} revision=${MODEL_REVISION} root=${MODEL_ROOT}"
 for model_file in "${MODEL_FILES[@]}"; do
   destination="${MODEL_ROOT}/${model_file}"
   if [[ -s "${destination}" ]]; then
@@ -26,6 +27,7 @@ for model_file in "${MODEL_FILES[@]}"; do
   hf download \
     "${MODEL_REPOSITORY}" \
     "${model_file}" \
+    --revision "${MODEL_REVISION}" \
     --local-dir "${MODEL_ROOT}"
   test -s "${destination}"
   echo "MODEL_DOWNLOAD_DONE ${model_file}"
