@@ -104,23 +104,66 @@ The service entry is `breeze_tts2` in `deploy/salad/services.json`:
 
 ```text
 queue: ai-video-factory-breeze-tts2-jobs
-container group: ai-video-factory-breeze-tts2-worker
+container group: ai-video-factory-breeze-tts2-worker-v2
 GPU: RTX 4090 24 GB
+priority: high
 min replicas: 0
 max replicas: 2
 ```
 
-Breeze documents approximately 14.4 GiB VRAM for the `--fast-all` path and recommends a 24 GB GPU for
-that configuration. RTX 4090 is the initial latency-oriented baseline. The first real Salad smoke must
-record actual startup time, peak VRAM and narration real-time factor before this profile is considered
-validated.
+The production deployment environment is manifest-owned. In particular, the validated Salad group
+uses:
 
-Prepare the service with the generic manager:
+```text
+INFERENCE_WORKER_MODE=production
+BREEZE_DEVICE=cuda:0
+SALAD_QUEUE_ENABLED=true
+```
+
+Local `.env` values must not override those deployment-managed values during `Prepare`; `.env` remains
+the source for required secrets and external credentials.
+
+Breeze documents approximately 14.4 GiB VRAM for the `--fast-all` path and recommends a 24 GB GPU for
+that configuration. RTX 4090 is the initial latency-oriented baseline.
+
+### Validated real deployment baseline
+
+The Breeze worker completed its first end-to-end real Salad smoke on 2026-09-11. The validated group
+configuration was version 6 with `priority=high`, zero idle replicas and the pinned image:
+
+```text
+docker.io/yagobordell/ai-video-factory@sha256:c83278ad2fcb3b6434e7120fd54ed277d8eea723a808a1c828192429f240e382
+```
+
+The smoke exercised the real Salad Job Queue transport, scale-from-zero, runtime bootstrap, inference,
+R2 artifact flow and local download. The resulting evidence was:
+
+```text
+status: succeeded
+wall_seconds: 978.352
+artifact: breeze-smoke.wav
+size_bytes: 238124
+sha256: bc9f0cb0ba8675aadb3247f9c93de532de693189faf31e849b9af2ec69cc97ab
+duration_seconds: 4.96
+sample_rate: 24000
+channels: 1
+```
+
+After the smoke, the container group was explicitly stopped and verified at `replicas=0`. This closes
+the functional deployment baseline for Breeze TTS 2. Peak VRAM, steady-state real-time factor and
+cost/latency optimization remain separate performance measurements and were not inferred from this
+smoke.
+
+The validation used `BREEZE_MODEL_REVISION=main`. Pinning the exact model checkpoint revision remains
+a deployment-hardening follow-up so future image/config changes cannot silently move the model weights.
+
+Prepare the service with the generic validation manager:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/manage_salad_worker.ps1 `
+.\scripts\manage_salad_validation.ps1 `
   -Service breeze_tts2 `
-  -Action Prepare
+  -Action Prepare `
+  -SkipBuild
 ```
 
 The manager resolves the current Salad GPU-class UUID for `RTX 4090` at deployment time.
@@ -137,8 +180,9 @@ Breeze runtime commit 008f769016b0a24711becd7a4925030bc93f608c
 Ada flash-attention target sm89
 ```
 
-The model checkpoint revision remains configurable through `BREEZE_MODEL_REVISION`. After the first
-successful Salad smoke, that value should be replaced with the exact validated model revision.
+The model checkpoint revision remains configurable through `BREEZE_MODEL_REVISION`. The validated
+functional baseline currently uses `main`; production hardening should replace it with the exact
+validated model revision.
 
 ## License
 
