@@ -105,7 +105,7 @@
         "BREEZE_MODEL_REPOSITORY": "BreezeBlue/Breeze-TTS-2",
         "BREEZE_MODEL_REVISION": "main",
         "BREEZE_RUNTIME_ROOT": "/opt/breeze-infer",
-        "BREEZE_DEVICE": "cuda",
+        "BREEZE_DEVICE": "cuda:0",
         "BREEZE_MAX_CHUNK_CHARS": "1200",
         "BREEZE_INTER_CHUNK_PAUSE_MS": "120",
         "SALAD_QUEUE_ENABLED": "true",
