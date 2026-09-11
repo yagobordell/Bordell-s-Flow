@@ -4,7 +4,6 @@ import os
 import runpy
 from pathlib import Path
 
-
 if __name__ == "__main__":
     os.environ.setdefault(
         "SALAD_QUEUE_NAME",
