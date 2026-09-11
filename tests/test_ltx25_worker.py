@@ -39,7 +39,7 @@ def test_ltx25_salad_manifest_has_dedicated_queue_and_image() -> None:
     assert service["queue_name"] == "ai-video-factory-ltx25-jobs"
     assert service["dockerfile"] == "docker/workers/ltx25/Dockerfile"
     assert "ltx25" in service["image"]
-    assert service["resources"]["gpu_class_names"] == ["RTX 5090"]
+    assert service["resources"]["gpu_class_names"] == ["RTX 5090 (32 GB)"]
     assert "gpu_classes" not in service["resources"]
     assert service["autoscaler"]["min_replicas"] == 0
     assert service["autoscaler"]["max_replicas"] == 4
