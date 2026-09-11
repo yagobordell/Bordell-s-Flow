@@ -9,7 +9,7 @@ Each worker remains serialized internally so one GPU processes one inference job
 | Service | Model/profile | Initial GPU | Replica ceiling | Rationale |
 | --- | --- | --- | ---: | --- |
 | `whisper` | `openai/whisper-large-v3-turbo`, FP16 | RTX 3090 24 GB | 1 | Large VRAM margin and strong Salad supply without paying for Ada/Blackwell capacity that alignment does not require. |
-| `breeze_tts2` | Breeze TTS 2 `--fast-all` | RTX 4090 24 GB | 2 planned | The fast path is documented around 14.4 GiB and recommends a 24 GB GPU. 4090 is the initial latency/throughput profile. |
+| `breeze_tts2` | Breeze TTS 2 `--fast-all` | RTX 4090 24 GB | 2 | The fast path is documented around 14.4 GiB and recommends a 24 GB GPU. 4090 is the initial latency/throughput profile. |
 | `ideogram4` | Ideogram 4 NF4 + `V4_QUALITY_48` | RTX 4090 24 GB | 4 planned | NF4 is the CUDA profile; 24 GB provides practical activation headroom for portrait/vertical Quality generations. |
 | `ltx25` | LTX 2.5 distilled FP8-cast + CPU offload | RTX 5090 32 GB | 4 | The validated project benchmark peaked around 24.5 GiB, so a 24 GB class is not a safe production target. |
 
@@ -55,8 +55,9 @@ boundary.
 
 LTX is configured for up to four replicas so independent shot jobs can render concurrently. Ideogram
 will use the same maximum because Phase 4 references and Phase 6 keyframes are naturally fan-out
-workloads. Breeze and Whisper are lower by default because one video normally contains one canonical
-narration asset, though their ceilings may be increased when multiple videos are processed at once.
+workloads. Breeze is configured for up to two replicas, allowing two video narrations to synthesize in
+parallel while keeping one resident fast-all runtime per 4090. Whisper remains at one replica by
+default because alignment is comparatively lightweight and normally follows a single narration asset.
 
 All services keep `min_replicas=0` so idle models scale to zero.
 
