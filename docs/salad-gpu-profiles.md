@@ -10,7 +10,7 @@ Each worker remains serialized internally so one GPU processes one inference job
 | --- | --- | --- | ---: | --- |
 | `whisper` | `openai/whisper-large-v3-turbo`, FP16 | RTX 3090 24 GB | 1 | Large VRAM margin and strong Salad supply without paying for Ada/Blackwell capacity that alignment does not require. |
 | `breeze_tts2` | Breeze TTS 2 `--fast-all` | RTX 4090 24 GB | 2 | The fast path is documented around 14.4 GiB and recommends a 24 GB GPU. 4090 is the initial latency/throughput profile. |
-| `ideogram4` | Ideogram 4 NF4 + `V4_QUALITY_48` | RTX 4090 24 GB | 4 planned | NF4 is the CUDA profile; 24 GB provides practical activation headroom for portrait/vertical Quality generations. |
+| `ideogram4` | Ideogram 4 NF4 + `V4_QUALITY_48` | RTX 4090 24 GB | 4 | NF4 is the CUDA profile; 24 GB provides practical activation headroom for portrait/vertical Quality generations. |
 | `ltx25` | LTX 2.5 distilled FP8-cast + CPU offload | RTX 5090 32 GB | 4 | The validated project benchmark peaked around 24.5 GiB, so a 24 GB class is not a safe production target. |
 
 These are deployment baselines, not permanent hardware contracts. Every new worker should record a
@@ -53,32 +53,33 @@ model queue
 This keeps model memory ownership simple and lets Postgres/R2 idempotency remain the coordination
 boundary.
 
-LTX is configured for up to four replicas so independent shot jobs can render concurrently. Ideogram
-will use the same maximum because Phase 4 references and Phase 6 keyframes are naturally fan-out
-workloads. Breeze is configured for up to two replicas, allowing two video narrations to synthesize in
-parallel while keeping one resident fast-all runtime per 4090. Whisper remains at one replica by
+LTX and Ideogram are configured for up to four replicas. LTX fans independent shots across 5090s;
+Ideogram fans both Phase 4 reference jobs and Phase 6 keyframe jobs across 4090s through one shared
+model queue. Breeze is configured for up to two replicas, allowing two video narrations to synthesize
+in parallel while keeping one resident fast-all runtime per 4090. Whisper remains at one replica by
 default because alignment is comparatively lightweight and normally follows a single narration asset.
 
 All services keep `min_replicas=0` so idle models scale to zero.
 
 ## Ideogram 4 scope
 
-Both Phase 4 visual-reference images and Phase 6 storyboard keyframes will migrate to one dedicated
-Ideogram 4 worker using the open-weight NF4 model with the `V4_QUALITY_48` sampler preset.
+Both Phase 4 visual-reference images and Phase 6 storyboard keyframes use the dedicated Ideogram 4
+worker with the open-weight NF4 model and `V4_QUALITY_48` sampler preset.
 
 The open-weight Ideogram 4 pipeline is text-to-image. Its Qwen3-VL encoder is used in text-only mode,
-and the released local pipeline does not expose the multiple reference-image conditioning currently
-supported by the OpenAI keyframe provider. Consequently, Phase 6 continuity must be carried in the
-canonical structured prompt: entity identity, clothing, physical traits, environment, palette,
-composition and other persistent details must be repeated explicitly in the Ideogram JSON caption.
+and the released local pipeline does not expose the multiple reference-image conditioning previously
+used by the OpenAI keyframe provider. Consequently, Phase 6 continuity is carried in the canonical
+structured JSON caption: entity identity, clothing, physical traits, environment, palette, composition
+and other persistent details are repeated explicitly in text.
 
-The hosted Ideogram 4 API offers single-image Remix, but that is not equivalent to the existing
-multi-reference keyframe contract and is not part of the local Salad worker plan.
+`ReferenceAsset` remains persisted project evidence and a useful review artifact. The Phase 6
+keyframe workflow no longer loads those PNGs or claims they are model inputs. Instead, OpenAI Luna
+receives the relevant `VisualReference` captions and previous storyboard caption, then produces the
+next structured Ideogram caption.
 
-The migration must therefore preserve `ReferenceAsset` as project evidence while treating the
-`VisualReference` descriptions and continuity contracts as the primary Ideogram conditioning source.
-The keyframe workflow should not silently pretend the local Ideogram worker consumed image references
-when it did not.
+One Ideogram worker registers both `image.ideogram4.reference` and `image.ideogram4.keyframe`, so the
+same resident model and the same autoscaled group serve both workloads without maintaining duplicate
+24 GB model containers.
 
 ## Cost and benchmark policy
 
