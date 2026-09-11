@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-
 MANIFEST = Path("deploy/salad/services.json")
 WORKER_MANAGER = Path("scripts/manage_salad_worker.ps1")
 
