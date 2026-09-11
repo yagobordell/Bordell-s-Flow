@@ -14,8 +14,8 @@
         "memory": 61440,
         "shm_size": 8192,
         "storage_amount": 137438953472,
-        "gpu_classes": [
-          "851399fb-7329-4195-a042-d6514b28cf33"
+        "gpu_class_names": [
+          "RTX 5090"
         ]
       },
       "environment": {
@@ -59,10 +59,10 @@
       },
       "autoscaler": {
         "min_replicas": 0,
-        "max_replicas": 1,
+        "max_replicas": 4,
         "desired_queue_length": 1,
         "polling_period": 30,
-        "max_upscale_per_minute": 1,
+        "max_upscale_per_minute": 2,
         "max_downscale_per_minute": 1
       }
     },
@@ -80,8 +80,8 @@
         "memory": 16384,
         "shm_size": 4096,
         "storage_amount": 34359738368,
-        "gpu_classes": [
-          "851399fb-7329-4195-a042-d6514b28cf33"
+        "gpu_class_names": [
+          "RTX 3090"
         ]
       },
       "environment": {
