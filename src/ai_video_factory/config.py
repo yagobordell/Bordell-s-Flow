@@ -22,11 +22,20 @@ class Settings(BaseSettings):
     openai_tts_model: str = "gpt-4o-mini-tts"
     openai_tts_voice: str = "marin"
 
+    breeze_tts_model: str = "BreezeBlue/Breeze-TTS-2"
+    breeze_tts_voice: str = (
+        "A warm, confident documentary narrator with a clear neutral English accent, "
+        "natural low-mid register, crisp articulation, and restrained cinematic presence"
+    )
+    breeze_tts_cfg_scale: float = 4.0
+    breeze_tts_seed: int = 42
+
     whisper_model: str = "openai/whisper-large-v3-turbo"
 
     salad_api_key: str | None = None
     salad_organization: str | None = None
     salad_project: str | None = None
+    salad_breeze_tts2_queue_name: str = "ai-video-factory-breeze-tts2-jobs"
     salad_whisper_queue_name: str = "ai-video-factory-whisper-jobs"
 
     r2_endpoint_url: str | None = None
