@@ -6,7 +6,7 @@ import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -71,7 +71,7 @@ class WhisperWord(BaseModel):
 class WhisperTranscript(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: str = "1"
+    schema_version: Literal["1"] = "1"
     model_id: str
     words: list[WhisperWord] = Field(min_length=1)
 
@@ -247,7 +247,7 @@ class TransformersWhisperBackend:
         self._pipeline = bindings.pipeline_factory(
             task="automatic-speech-recognition",
             model=str(self._model_root),
-            torch_dtype=torch_dtype,
+            dtype=torch_dtype,
             device=self._device,
         )
         return self._pipeline
@@ -280,6 +280,7 @@ class WhisperTaskRunner:
             parameters=parameters,
         )
         transcript = WhisperTranscript(model_id=parameters.model_id, words=words)
+        work_dir.mkdir(parents=True, exist_ok=True)
         output = work_dir / "words.json"
         output.write_text(
             transcript.model_dump_json(indent=2),
