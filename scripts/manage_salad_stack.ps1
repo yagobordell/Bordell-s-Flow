@@ -21,6 +21,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $ManifestPath = Join-Path $RepoRoot "deploy\salad\services.json"
 $WorkerManager = Join-Path $PSScriptRoot "manage_salad_worker.ps1"
+$QueueAttachmentRepair = Join-Path $PSScriptRoot "repair_salad_queue_attachment.ps1"
 
 function Import-EnvFile {
     param([Parameter(Mandatory)][string]$Path)
@@ -185,6 +186,9 @@ if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $WorkerManager -PathType Leaf)) {
     throw "Salad worker manager not found: $WorkerManager"
 }
+if ($Action -eq "Prepare" -and -not (Test-Path -LiteralPath $QueueAttachmentRepair -PathType Leaf)) {
+    throw "Salad queue attachment repair helper not found: $QueueAttachmentRepair"
+}
 
 Import-EnvFile -Path $EnvFile
 $Document = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
@@ -269,6 +273,21 @@ foreach ($Name in $ExecutionOrder) {
     $CallSucceeded = $?
     if (-not $CallSucceeded) {
         throw "Salad $Action failed for service '$Name'."
+    }
+
+    if ($Action -eq "Prepare") {
+        $RepairArguments = @{
+            Service = $Name
+            EnvFile = $EnvFile
+        }
+        if ($NonInteractive) {
+            $RepairArguments["NonInteractive"] = $true
+        }
+        & $QueueAttachmentRepair @RepairArguments
+        $RepairSucceeded = $?
+        if (-not $RepairSucceeded) {
+            throw "Salad Job Queue attachment repair failed for service '$Name'."
+        }
     }
 }
 
