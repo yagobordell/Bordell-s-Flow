@@ -11,8 +11,8 @@ from ai_video_factory.workers.whisper import (
     TransformersWhisperBackend,
     WhisperTaskRunner,
     WhisperTranscriptionParameters,
-    WhisperWorkerSettings,
     WhisperWord,
+    WhisperWorkerSettings,
     whisper_application_job_id,
 )
 
