@@ -11,9 +11,11 @@ def test_queue_attachment_repair_contract() -> None:
     assert "networking" in text
     assert "current_queue_length" in text
     assert "Method Delete" not in text
+    assert "Method Patch" in text
     assert "replicas -ne 0" in text
+    assert "Repair-GroupConfiguration" in text
     assert "Runtime attachment will be validated after Start/Smoke." in text
-    assert "incomplete Job Queue autoscaling configuration" in text
+    assert "did not persist the complete Job Queue autoscaling configuration after PATCH" in text
 
 
 def test_stack_prepare_runs_queue_attachment_repair() -> None:
