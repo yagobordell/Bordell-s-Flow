@@ -7,14 +7,18 @@ from typing import Any
 from pydantic import BaseModel
 
 from ai_video_factory.config import settings
-from ai_video_factory.domain import ReferenceAsset, Shot, StoryboardFrame
-from ai_video_factory.providers.openai_images import OpenAIImageProvider
+from ai_video_factory.domain import Shot, StoryboardFrame
+from ai_video_factory.inference.storage import R2ObjectStorage
+from ai_video_factory.providers import SaladIdeogramImageProvider
+from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
+from ai_video_factory.providers.salad_queue import SaladJobQueueClient
+from ai_video_factory.workers.ideogram4 import IDEOGRAM4_KEYFRAME_TASK
 from ai_video_factory.workflows.storyboard_keyframes import generate_storyboard_keyframes
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate reference-conditioned storyboard keyframe images for planned shots."
+        description="Generate Phase 6 storyboard keyframes with the Salad Ideogram 4 worker."
     )
     parser.add_argument(
         "--frames",
@@ -27,14 +31,9 @@ def parse_args() -> argparse.Namespace:
         default=settings.output_dir / "phase3" / "shots.json",
     )
     parser.add_argument(
-        "--reference-assets",
-        type=Path,
-        default=settings.output_dir / "phase4" / "reference_assets.json",
-    )
-    parser.add_argument(
         "--model",
-        default=settings.openai_image_model,
-        help="Image model. Defaults to OPENAI_IMAGE_MODEL.",
+        default=settings.ideogram4_model,
+        help="Ideogram 4 NF4 model hosted by the dedicated Salad worker.",
     )
     parser.add_argument(
         "--size",
@@ -43,17 +42,24 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--quality",
-        choices=("low", "medium", "high", "auto"),
-        default="medium",
+        choices=("high", "auto"),
+        default="high",
+        help="Ideogram worker is fixed to the V4_QUALITY_48 preset.",
     )
     parser.add_argument(
-        "--input-fidelity",
-        choices=("low", "high"),
-        default=None,
-        help=(
-            "Optional provider/model-specific reference fidelity. Omitted by default for "
-            "GPT-Image-2 compatibility."
-        ),
+        "--queue-name",
+        default=settings.salad_ideogram4_queue_name,
+        help="Dedicated Salad queue shared by Ideogram reference and keyframe jobs.",
+    )
+    parser.add_argument(
+        "--poll-seconds",
+        type=float,
+        default=settings.inference_client_poll_seconds,
+    )
+    parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=settings.inference_client_timeout_seconds,
     )
     parser.add_argument(
         "--output-dir",
@@ -68,28 +74,52 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _required_setting(name: str, value: str | None) -> str:
+    if value is None or not value.strip():
+        raise SystemExit(f"{name} is missing. Add it to your local .env file.")
+    return value.strip()
+
+
 async def main() -> None:
     args = parse_args()
 
-    if not settings.openai_api_key:
-        raise SystemExit("OPENAI_API_KEY is missing. Add it to your local .env file.")
-
     frames = _read_models(args.frames, StoryboardFrame)
     shots = _read_models(args.shots, Shot)
-    reference_assets = _read_models(args.reference_assets, ReferenceAsset)
 
-    image_provider = OpenAIImageProvider(api_key=settings.openai_api_key)
+    storage = R2ObjectStorage.create(
+        endpoint_url=_required_setting("R2_ENDPOINT_URL", settings.r2_endpoint_url),
+        bucket=_required_setting("R2_BUCKET", settings.r2_bucket),
+        access_key_id=_required_setting("R2_ACCESS_KEY_ID", settings.r2_access_key_id),
+        secret_access_key=_required_setting(
+            "R2_SECRET_ACCESS_KEY",
+            settings.r2_secret_access_key,
+        ),
+    )
+    queue = SaladJobQueueClient(
+        organization=_required_setting("SALAD_ORGANIZATION", settings.salad_organization),
+        project=_required_setting("SALAD_PROJECT", settings.salad_project),
+        queue_name=args.queue_name,
+        api_key=_required_setting("SALAD_API_KEY", settings.salad_api_key),
+    )
+    executor = InferenceJobExecutor(
+        queue=queue,
+        storage=storage,
+        poll_seconds=args.poll_seconds,
+        timeout_seconds=args.timeout_seconds,
+    )
+    image_provider = SaladIdeogramImageProvider(
+        executor=executor,
+        temp_dir=settings.temp_dir / "ideogram4-keyframe-client",
+        task_name=IDEOGRAM4_KEYFRAME_TASK,
+    )
     keyframes = await generate_storyboard_keyframes(
         frames,
         shots,
-        reference_assets,
         image_provider=image_provider,
-        reference_root=args.reference_assets.parent,
         output_dir=args.output_dir,
         model=args.model,
         size=args.size,
         quality=args.quality,
-        input_fidelity=args.input_fidelity,
     )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -100,6 +130,7 @@ async def main() -> None:
 
     print(f"Phase 6 storyboard keyframes complete. Metadata: {args.output.resolve()}")
     print(f"Generated {len(keyframes)} keyframe PNG files in {args.output_dir.resolve()}")
+    print(f"Generated with {args.model} via Salad queue {args.queue_name}")
 
 
 def _read_models[ModelT: BaseModel](
