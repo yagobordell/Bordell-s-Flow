@@ -28,6 +28,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HUB_DISABLE_XET=1 \
     HF_HUB_ENABLE_HF_TRANSFER=0 \
     PYTHONPATH=/opt/breeze-infer \
+    VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:$PATH \
     INFERENCE_WORKER_MODE=production \
     INFERENCE_WORKER_TEMP_DIR=/tmp/ai-video-factory \
     BREEZE_MODEL_ROOT=/workspace/models/breeze-tts-2 \
@@ -50,19 +52,19 @@ RUN apt-get update \
         ninja-build \
         python3.12 \
         python3.12-dev \
+        python3.12-venv \
         python3-pip \
         sox \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3.12 /usr/local/bin/python \
-    && ln -sf /usr/bin/python3.12 /usr/local/bin/python3
+    && ln -sf /usr/bin/python3.12 /usr/local/bin/python3 \
+    && python3.12 -m venv "$VIRTUAL_ENV"
 
 RUN python -m pip install \
-        --break-system-packages \
         --no-cache-dir \
         --upgrade pip setuptools wheel packaging ninja
 
 RUN python -m pip install \
-        --break-system-packages \
         --no-cache-dir \
         --index-url https://download.pytorch.org/whl/cu128 \
         torch==2.9.1 \
@@ -74,11 +76,9 @@ RUN git clone https://github.com/breezeblue-ai/breeze-tts.git /opt/breeze-infer 
     && test "$(git rev-parse HEAD)" = "${BREEZE_RUNTIME_COMMIT}"
 
 RUN python -m pip install \
-        --break-system-packages \
         --no-cache-dir \
         -r /opt/breeze-infer/requirements.txt \
     && MAX_JOBS=8 FLASH_ATTN_CUDA_ARCHS=${FLASH_ATTN_CUDA_ARCHS} python -m pip install \
-        --break-system-packages \
         --no-build-isolation \
         --no-cache-dir \
         --no-deps \
@@ -89,7 +89,6 @@ COPY pyproject.toml README.md /opt/factory/
 COPY src /opt/factory/src
 
 RUN python -m pip install \
-        --break-system-packages \
         --no-cache-dir \
         '/opt/factory[gpu]' \
         'huggingface-hub[cli]'
@@ -115,12 +114,14 @@ RUN chmod 0755 \
 
 RUN python -c \
     "import sys, torch, torchaudio; \
+     assert sys.prefix == '/opt/venv', sys.prefix; \
      assert sys.version_info >= (3, 12), sys.version; \
      assert torch.__version__.startswith('2.9.1'), torch.__version__; \
      assert torch.version.cuda == '12.8', torch.version.cuda; \
      assert torchaudio.__version__.startswith('2.9.1'), torchaudio.__version__; \
      import breeze_infer; \
      print('python=', sys.version); \
+     print('venv=', sys.prefix); \
      print('torch=', torch.__version__); \
      print('cuda=', torch.version.cuda)"
 
