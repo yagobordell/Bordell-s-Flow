@@ -89,7 +89,7 @@ function Get-Headers {
     return @{
         "Salad-Api-Key" = Get-Setting -Name "SALAD_API_KEY" -Prompt "Salad API key" -Secret
         "Accept" = "application/json"
-        "User-Agent" = "ai-video-factory-queue-repair/1.4"
+        "User-Agent" = "ai-video-factory-queue-repair/1.5"
     }
 }
 
@@ -133,11 +133,34 @@ function Test-QueueAttachment {
     ).Count -eq 1
 }
 
+function New-QueueConnection {
+    return @{
+        path = $QueuePath
+        port = $ContainerPort
+        queue_name = $QueueName
+    }
+}
+
+function New-QueueAutoscaler {
+    return @{
+        min_replicas = [int]$Definition.autoscaler.min_replicas
+        max_replicas = [int]$Definition.autoscaler.max_replicas
+        desired_queue_length = [int]$Definition.autoscaler.desired_queue_length
+        polling_period = [int]$Definition.autoscaler.polling_period
+        max_upscale_per_minute = [int]$Definition.autoscaler.max_upscale_per_minute
+        max_downscale_per_minute = [int]$Definition.autoscaler.max_downscale_per_minute
+    }
+}
+
 function Test-GroupConfiguration {
     param([Parameter(Mandatory)][object]$Group)
 
+    $Connection = $Group.PSObject.Properties["queue_connection"]
     $Autoscaler = $Group.PSObject.Properties["queue_autoscaler"]
-    if ($null -eq $Autoscaler -or $null -eq $Autoscaler.Value) {
+    if (
+        $null -eq $Connection -or $null -eq $Connection.Value -or
+        $null -eq $Autoscaler -or $null -eq $Autoscaler.Value
+    ) {
         return $false
     }
 
@@ -153,7 +176,11 @@ function Test-GroupConfiguration {
         [int]$Group.queue_autoscaler.min_replicas -eq [int]$Definition.autoscaler.min_replicas -and
         [int]$Group.queue_autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
         [int]$Group.queue_autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
-        [int]$Group.queue_autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period
+        [int]$Group.queue_autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period -and
+        [int]$Group.queue_autoscaler.max_upscale_per_minute -eq `
+            [int]$Definition.autoscaler.max_upscale_per_minute -and
+        [int]$Group.queue_autoscaler.max_downscale_per_minute -eq `
+            [int]$Definition.autoscaler.max_downscale_per_minute
     )
 }
 
@@ -200,6 +227,48 @@ function Set-ZeroReplicas {
             "Salad did not normalize '$GroupName' to zero replicas; current replicas={0}." -f `
             [int]$Updated.replicas
         )
+    }
+    return $Updated
+}
+
+function Repair-GroupConfiguration {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $Networking = $Group.PSObject.Properties["networking"]
+    if ($null -ne $Networking -and $null -ne $Networking.Value) {
+        throw (
+            "Container group '$GroupName' has networking enabled, which Salad does not allow with " +
+            "queue_connection. Increment services.$Service.group_name in deploy/salad/services.json " +
+            "and run Prepare again."
+        )
+    }
+
+    Write-Host (
+        "Repairing Job Queue autoscaling in place for stopped group '$GroupName'..."
+    ) -ForegroundColor Cyan
+    $Body = @{
+        queue_connection = New-QueueConnection
+        queue_autoscaler = New-QueueAutoscaler
+        replicas = 0
+    } | ConvertTo-Json -Depth 10
+
+    Invoke-RestMethod `
+        -Method Patch `
+        -Uri $GroupUrl `
+        -Headers $Headers `
+        -ContentType "application/merge-patch+json" `
+        -Body $Body `
+        -TimeoutSec 60 |
+        Out-Null
+
+    $Updated = Wait-ForGroupSettled
+    if ([int]$Updated.replicas -ne 0) {
+        throw (
+            "Queue repair unexpectedly left '$GroupName' at replicas=$([int]$Updated.replicas)."
+        )
+    }
+    if (-not (Test-GroupConfiguration -Group $Updated)) {
+        throw "Salad did not persist the complete Job Queue autoscaling configuration after PATCH."
     }
     return $Updated
 }
@@ -251,23 +320,22 @@ if ([string]$Group.current_state.status -ne "stopped") {
 }
 
 $Group = Set-ZeroReplicas -Group $Group
-$Queue = Get-Queue
-if (Test-GroupConfiguration -Group $Group) {
-    if (Test-QueueAttachment -Queue $Queue) {
-        Write-Host "$Service queue autoscaling and queue listing verified." -ForegroundColor Green
-    }
-    else {
-        Write-Warning (
-            "$Service queue autoscaling is configured on the stopped container group, " +
-            "but Salad does not list stopped groups in queue.container_groups reliably. " +
-            "Runtime attachment will be validated after Start/Smoke."
-        )
-    }
-    exit 0
+if (-not (Test-GroupConfiguration -Group $Group)) {
+    $Group = Repair-GroupConfiguration -Group $Group
 }
 
-throw (
-    "Container group '$GroupName' has incomplete Job Queue autoscaling configuration. " +
-    "Because Salad group names cannot be safely reused, increment services.$Service.group_name " +
-    "in deploy/salad/services.json, then run Prepare again."
-)
+$Queue = Get-Queue
+if (Test-QueueAttachment -Queue $Queue) {
+    Write-Host "$Service queue autoscaling and queue listing verified." -ForegroundColor Green
+}
+else {
+    Write-Warning (
+        "$Service queue autoscaling is configured on the stopped container group, " +
+        "but Salad does not list stopped groups in queue.container_groups reliably. " +
+        "Runtime attachment will be validated after Start/Smoke."
+    )
+}
+
+Write-Host (
+    "$Service Job Queue autoscaling configuration verified; group remains at zero replicas."
+) -ForegroundColor Green

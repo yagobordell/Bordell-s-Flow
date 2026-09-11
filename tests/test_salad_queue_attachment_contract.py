@@ -12,13 +12,16 @@ def test_queue_attachment_verifies_without_enabling_networking() -> None:
     assert "networking = New-Networking" not in script
 
 
-def test_stopped_group_configuration_is_sufficient_for_prepare() -> None:
+def test_stopped_group_can_repair_autoscaler_in_place() -> None:
     script = REPAIR_SCRIPT.read_text(encoding="utf-8")
 
     assert "[switch]$AllowMissing" in script
     assert "has no existing container group; preflight repair not needed" in script
     assert "Cancel them before Prepare can change the container group" in script
-    assert "if (Test-GroupConfiguration -Group $Group)" in script
-    assert "Runtime attachment will be validated after Start/Smoke." in script
+    assert "function Repair-GroupConfiguration" in script
+    assert "Repairing Job Queue autoscaling in place" in script
+    assert "queue_connection = New-QueueConnection" in script
+    assert "queue_autoscaler = New-QueueAutoscaler" in script
+    assert "-Method Patch" in script
     assert "-Method Delete" not in script
-    assert "increment services.$Service.group_name" in script
+    assert "Runtime attachment will be validated after Start/Smoke." in script
