@@ -6,13 +6,13 @@ import urllib.request
 from collections.abc import Mapping
 from typing import Any
 
-from ai_video_factory.gpu.contracts import GPUJobRequest
+from ai_video_factory.inference.contracts import InferenceJobRequest
 
 from .job_queue import JobQueueClient, QueueJobSnapshot, QueueJobStatus
 
 
 class SaladJobQueueClient(JobQueueClient):
-    """Minimal Salad Job Queue HTTP adapter used by the Phase 8 orchestrator."""
+    """Minimal Salad Job Queue HTTP adapter for model-specific inference workers."""
 
     def __init__(
         self,
@@ -32,7 +32,7 @@ class SaladJobQueueClient(JobQueueClient):
 
     def submit(
         self,
-        request: GPUJobRequest,
+        request: InferenceJobRequest,
         *,
         metadata: Mapping[str, str],
     ) -> QueueJobSnapshot:
@@ -65,7 +65,7 @@ class SaladJobQueueClient(JobQueueClient):
                 "Salad-Api-Key": self._api_key,
                 "Accept": "application/json",
                 "Content-Type": "application/json",
-                "User-Agent": "ai-video-factory-phase8/0.2",
+                "User-Agent": "ai-video-factory-inference/1.0",
             },
         )
         try:
