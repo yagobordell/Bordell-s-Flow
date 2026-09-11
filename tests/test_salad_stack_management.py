@@ -80,6 +80,15 @@ def test_worker_prepare_can_create_missing_container_group() -> None:
     assert "Run -Action Prepare first" in script
 
 
+def test_worker_prepare_normalizes_unexpected_replicas_to_zero() -> None:
+    script = WORKER_MANAGER.read_text(encoding="utf-8")
+
+    assert "function Ensure-PreparedZeroReplicas" in script
+    assert "Forcing replicas back to zero before Prepare completes." in script
+    assert "$Group = Ensure-PreparedZeroReplicas -Headers $Headers -Group $Group" in script
+    assert "could not be normalized to zero replicas" in script
+
+
 def test_worker_manager_supports_env_file_and_unattended_deployment() -> None:
     script = WORKER_MANAGER.read_text(encoding="utf-8")
 
