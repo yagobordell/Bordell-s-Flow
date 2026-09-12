@@ -49,7 +49,29 @@ RUN python3 -c \
 
 RUN git clone https://github.com/ideogram-oss/ideogram4.git /opt/ideogram4 \
     && cd /opt/ideogram4 \
-    && git checkout "${IDEOGRAM4_RUNTIME_REVISION}" \
+    && git checkout "${IDEOGRAM4_RUNTIME_REVISION}"
+
+RUN python3 - <<'PY'
+from pathlib import Path
+
+path = Path("/opt/ideogram4/src/ideogram4/pipeline_ideogram4.py")
+text = path.read_text(encoding="utf-8")
+import_line = "from huggingface_hub.errors import EntryNotFoundError"
+except_line = "except EntryNotFoundError:"
+if text.count(import_line) != 1 or text.count(except_line) != 2:
+    raise RuntimeError("Unexpected Ideogram 4 Hugging Face fallback layout")
+text = text.replace(
+    import_line,
+    "from huggingface_hub.errors import EntryNotFoundError, LocalEntryNotFoundError",
+)
+text = text.replace(
+    except_line,
+    "except (EntryNotFoundError, LocalEntryNotFoundError):",
+)
+path.write_text(text, encoding="utf-8")
+PY
+
+RUN cd /opt/ideogram4 \
     && python3 -m pip install --break-system-packages --no-cache-dir .
 
 WORKDIR /opt/factory
