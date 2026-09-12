@@ -45,7 +45,6 @@ def test_ideogram_downloader_materializes_snapshot_before_ready(tmp_path: Path) 
 set -Eeuo pipefail
 [[ "$1" == "download" ]]
 shift
-repo="$1"
 shift
 local_dir=""
 while [[ $# -gt 0 ]]; do
@@ -66,7 +65,8 @@ done
 [[ -n "${local_dir}" ]]
 mkdir -p "${local_dir}/transformer" "${local_dir}/unconditional_transformer"
 printf 'conditional' > "${local_dir}/transformer/diffusion_pytorch_model.safetensors"
-printf 'unconditional' > "${local_dir}/unconditional_transformer/diffusion_pytorch_model.safetensors"
+unconditional_path="${local_dir}/unconditional_transformer/diffusion_pytorch_model.safetensors"
+printf 'unconditional' > "${unconditional_path}"
 printf '%s\n' "${local_dir}"
 """,
         encoding="utf-8",
