@@ -20,7 +20,20 @@ def test_queue_attachment_repair_contract() -> None:
     assert "did not persist the complete Job Queue autoscaling configuration after PATCH" in text
 
 
+def test_queue_attachment_preflight_allows_missing_queue() -> None:
+    text = REPAIR.read_text(encoding="utf-8")
+    assert "function Try-Get-Queue" in text
+    assert "(Get-HttpStatusCode -ErrorRecord $_) -eq 404" in text
+    assert "$Queue = Try-Get-Queue" in text
+    assert 'if ($AllowMissing)' in text
+    assert "has no existing job queue; preflight repair not needed." in text
+    assert "Job queue '$QueueName' is missing. Run Prepare first." in text
+
+
 def test_stack_prepare_runs_queue_attachment_repair() -> None:
     text = STACK.read_text(encoding="utf-8")
     assert "repair_salad_queue_attachment.ps1" in text
     assert '$Action -eq "Prepare"' in text
+    assert "Invoke-QueueRepair -Name $Name -AllowMissing" in text
+    assert "Invoke-WorkerAction -Name $Name -WorkerAction \"Prepare\"" in text
+    assert "Invoke-QueueRepair -Name $Name" in text

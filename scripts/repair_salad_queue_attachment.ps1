@@ -120,8 +120,24 @@ function Try-Get-Group {
     }
 }
 
+function Try-Get-Queue {
+    try {
+        return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
+    }
+    catch {
+        if ((Get-HttpStatusCode -ErrorRecord $_) -eq 404) {
+            return $null
+        }
+        throw
+    }
+}
+
 function Get-Queue {
-    return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
+    $Queue = Try-Get-Queue
+    if ($null -eq $Queue) {
+        throw "Job queue '$QueueName' is missing. Run Prepare first."
+    }
+    return $Queue
 }
 
 function Test-QueueAttachment {
@@ -296,7 +312,15 @@ $GroupUrl = "$Base/containers/$GroupName"
 $QueueUrl = "$Base/queues/$QueueName"
 $Headers = Get-Headers
 
-$Queue = Get-Queue
+$Queue = Try-Get-Queue
+if ($null -eq $Queue) {
+    if ($AllowMissing) {
+        Write-Host "$Service has no existing job queue; preflight repair not needed." `
+            -ForegroundColor Green
+        exit 0
+    }
+    throw "Job queue '$QueueName' is missing. Run Prepare first."
+}
 if ([int]$Queue.current_queue_length -ne 0) {
     throw (
         "Queue '$QueueName' contains $($Queue.current_queue_length) job(s). " +
