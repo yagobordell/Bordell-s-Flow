@@ -9,6 +9,7 @@ from ai_video_factory.gpu.repository import InMemoryJobRepository
 from ai_video_factory.gpu.storage import LocalObjectStorage, sha256_file
 from ai_video_factory.gpu.tasks import TaskRunnerRegistry
 from ai_video_factory.gpu.worker import GPUWorker
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 
 
 def test_http_worker_health_readiness_and_job(tmp_path: Path) -> None:
@@ -66,7 +67,7 @@ class _RetryingPrepareWorker:
     def prepare(self) -> None:
         self.prepare_calls += 1
         if not self.model_available.is_set():
-            raise FileNotFoundError("models are still downloading")
+            raise ModelBootstrapPendingError("models are still downloading")
 
     def ready(self) -> None:
         self.ready_calls += 1
