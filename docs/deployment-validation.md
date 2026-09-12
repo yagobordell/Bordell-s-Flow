@@ -48,6 +48,17 @@ ltx25-smoke.json
 smoke-summary.json
 ```
 
+Completed real-infrastructure checkpoints are recorded separately so they remain useful after later
+runbook changes:
+
+```text
+docs/breeze-salad-validation-2026-09-11.md
+docs/whisper-salad-validation-2026-09-12.md
+```
+
+Breeze TTS 2 and Whisper have completed their independent queue-backed correctness baselines. Ideogram
+4 and LTX 2.5 remain the next validation stages.
+
 ## Required local prerequisites
 
 Before the first real deployment validation:
@@ -79,6 +90,15 @@ All validation actions use:
 
 ```powershell
 .\scripts\manage_salad_validation.ps1 -Service <service> -Action <action>
+```
+
+If the local PowerShell execution policy blocks project scripts, use a process-local bypass instead
+of changing the machine policy:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\manage_salad_validation.ps1 `
+  -Service <service> `
+  -Action <action>
 ```
 
 Services are:
@@ -144,10 +164,17 @@ Acceptance criteria:
 - `whisper-smoke.json` reports `status=succeeded`;
 - at least one word with valid start/end timestamps is returned;
 - the assigned GPU class is RTX 3090;
-- there are no CUDA OOM or model-loading errors.
+- there are no CUDA OOM or model-loading errors;
+- the final queue length returns to zero and the group is stopped at zero replicas.
 
-A later optimization pass may test a cheaper GPU, but the first deployment baseline should validate
-the intended RTX 3090 configuration without changing another variable at the same time.
+The production baseline passed on 2026-09-12 using an RTX 3090, priority `medium`, and image digest
+`sha256:28ef8956398a646992dc1741ea6f9139dac93394697d11bd23f398ee8db41084`. The smoke returned ten
+ordered words spanning `0.0` to `4.94` seconds. See
+`docs/whisper-salad-validation-2026-09-12.md` for the full evidence and the bootstrap race fixed during
+validation.
+
+A later optimization pass may test a cheaper GPU, but do not change GPU class while validating another
+variable at the same time.
 
 ### 3. Ideogram 4 Quality / RTX 4090
 
@@ -232,7 +259,8 @@ If a smoke fails:
 2. Keep the other workers stopped.
 3. Preserve `data/output/deployment-validation/` and the Salad container logs.
 4. Run `Stop` for the failing service before changing image/runtime configuration.
-5. Fix one cause at a time, then repeat only that service's `Start` + `Smoke` cycle.
+5. Cancel any stale pending queue job created by the failed smoke before the next `Start`.
+6. Fix one cause at a time, then repeat only that service's `Start` + `Smoke` cycle.
 
 Do not proceed to the production runner until all four service reports show success and the final
 complete-chain smoke has passed.
