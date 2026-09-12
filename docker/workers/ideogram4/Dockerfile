@@ -27,6 +27,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     INFERENCE_WORKER_MODE=production \
     INFERENCE_WORKER_TEMP_DIR=/tmp/ai-video-factory \
     IDEOGRAM_MODEL_ROOT=/workspace/models/ideogram4 \
+    IDEOGRAM_MODEL_LOCAL_SNAPSHOT=/workspace/models/ideogram4/snapshot \
     IDEOGRAM_MODEL_REPOSITORY=ideogram-ai/ideogram-4-nf4 \
     IDEOGRAM_MODEL_REVISION=main \
     IDEOGRAM_DEVICE=cuda \
@@ -58,8 +59,22 @@ path = Path("/opt/ideogram4/src/ideogram4/pipeline_ideogram4.py")
 text = path.read_text(encoding="utf-8")
 import_line = "from huggingface_hub.errors import EntryNotFoundError"
 except_line = "except EntryNotFoundError:"
+hub_call = "hf_hub_download("
+imports_anchor = "import json\nimport warnings\n"
+pathlib_anchor = "from posixpath import dirname as _posix_dirname, join as _posix_join\n"
+helper_anchor = "\ndef _load_subfolder_state_dict(\n"
+config_anchor = (
+    "    config = config or Ideogram4PipelineConfig()\n"
+    "    transformer_config = transformer_config or Ideogram4Config()\n"
+)
 if text.count(import_line) != 1 or text.count(except_line) != 2:
     raise RuntimeError("Unexpected Ideogram 4 Hugging Face fallback layout")
+if text.count(hub_call) != 6:
+    raise RuntimeError("Unexpected Ideogram 4 Hugging Face download layout")
+if text.count(imports_anchor) != 1 or text.count(pathlib_anchor) != 1:
+    raise RuntimeError("Unexpected Ideogram 4 import layout")
+if text.count(helper_anchor) != 1 or text.count(config_anchor) != 1:
+    raise RuntimeError("Unexpected Ideogram 4 pipeline construction layout")
 text = text.replace(
     import_line,
     "from huggingface_hub.errors import EntryNotFoundError, LocalEntryNotFoundError",
@@ -68,6 +83,32 @@ text = text.replace(
     except_line,
     "except (EntryNotFoundError, LocalEntryNotFoundError):",
 )
+text = text.replace(imports_anchor, "import json\nimport os\nimport warnings\n")
+text = text.replace(pathlib_anchor, pathlib_anchor + "from pathlib import Path\n")
+text = text.replace(hub_call, "_resolve_model_file(")
+helper = '''
+
+def _resolve_model_file(repo_id: str, filename: str) -> str:
+  local_repo = Path(repo_id)
+  if local_repo.is_dir():
+    local_file = local_repo / filename
+    if not local_file.is_file():
+      raise EntryNotFoundError(f"Model file is missing from local snapshot: {local_file}")
+    return str(local_file)
+  return hf_hub_download(repo_id=repo_id, filename=filename)
+'''
+text = text.replace(helper_anchor, helper + helper_anchor)
+local_config = (
+    "    config = config or Ideogram4PipelineConfig()\n"
+    "    local_snapshot = Path(os.environ[\"IDEOGRAM_MODEL_LOCAL_SNAPSHOT\"])\n"
+    "    if not local_snapshot.is_dir():\n"
+    "      raise FileNotFoundError(\n"
+    "        f\"Ideogram local model snapshot is unavailable: {local_snapshot}\"\n"
+    "      )\n"
+    "    config.weights_repo = str(local_snapshot)\n"
+    "    transformer_config = transformer_config or Ideogram4Config()\n"
+)
+text = text.replace(config_anchor, local_config)
 path.write_text(text, encoding="utf-8")
 PY
 
