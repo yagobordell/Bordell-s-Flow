@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("Validate", "Prepare", "Start", "Status", "Smoke", "Stop")]
+    [ValidateSet("Validate", "Prepare", "Start", "Status", "Smoke", "ProtectedSmoke", "Stop")]
     [string]$Action = "Status",
 
     [ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25", "all")]
@@ -115,6 +115,8 @@ function Invoke-StackAction {
 }
 
 function Invoke-ScaleToZeroStart {
+    param([switch]$AllowBootstrapReplica)
+
     if (-not (Test-Path -LiteralPath $ScaleToZeroStarter -PathType Leaf)) {
         throw "Scale-to-zero starter not found: $ScaleToZeroStarter"
     }
@@ -135,6 +137,9 @@ function Invoke-ScaleToZeroStart {
         $Arguments = @{
             Service = $Name
             EnvFile = $EnvFile
+        }
+        if ($AllowBootstrapReplica) {
+            $Arguments["AllowBootstrapReplica"] = $true
         }
         if ($NonInteractive) {
             $Arguments["NonInteractive"] = $true
@@ -187,11 +192,26 @@ function Invoke-Smoke {
     Write-Host "Real Salad smoke passed for: $Service" -ForegroundColor Green
 }
 
+function Invoke-ProtectedSmoke {
+    if ($Service -eq "all") {
+        throw "ProtectedSmoke requires one explicit service so GPU workers stay serialized."
+    }
+
+    try {
+        Invoke-ScaleToZeroStart -AllowBootstrapReplica
+        Invoke-Smoke
+    }
+    finally {
+        Invoke-StackAction -StackAction "Stop"
+    }
+}
+
 switch ($Action) {
     "Validate" { Invoke-StackAction -StackAction "Validate" }
     "Prepare" { Invoke-StackAction -StackAction "Prepare" }
     "Start" { Invoke-ScaleToZeroStart }
     "Status" { Invoke-StackAction -StackAction "Status" }
     "Smoke" { Invoke-Smoke }
+    "ProtectedSmoke" { Invoke-ProtectedSmoke }
     "Stop" { Invoke-StackAction -StackAction "Stop" }
 }

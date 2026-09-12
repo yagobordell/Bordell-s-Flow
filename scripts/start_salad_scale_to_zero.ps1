@@ -9,6 +9,8 @@ param(
     [ValidateRange(1, 10)]
     [int]$TimeoutMinutes = 2,
 
+    [switch]$AllowBootstrapReplica,
+
     [switch]$NonInteractive
 )
 
@@ -98,12 +100,19 @@ function Test-ScaleToZeroActive {
         return $true
     }
 
-    return (
-        [int]$Definition.autoscaler.min_replicas -eq 0 -and
-        [int]$Group.replicas -eq 0 -and
-        -not [bool]$Group.pending_change -and
-        $Status -eq "deploying"
-    )
+    if (
+        [int]$Definition.autoscaler.min_replicas -ne 0 -or
+        [bool]$Group.pending_change -or
+        $Status -ne "deploying"
+    ) {
+        return $false
+    }
+
+    if ([int]$Group.replicas -eq 0) {
+        return $true
+    }
+
+    return ($AllowBootstrapReplica -and [int]$Group.replicas -eq 1)
 }
 
 Import-EnvFile -Path $EnvFile
@@ -180,9 +189,17 @@ do {
         throw "Container group '$GroupName' entered failed state during Start."
     }
     if (Test-ScaleToZeroActive -Group $Group) {
-        Write-Host (
-            "$Service scale-to-zero start accepted; the first queued job may trigger a cold start."
-        ) -ForegroundColor Green
+        if ($AllowBootstrapReplica -and [int]$Group.replicas -eq 1) {
+            Write-Warning (
+                "$Service bootstrap replica accepted for protected smoke; " +
+                "the caller must stop the group in a finally block."
+            )
+        }
+        else {
+            Write-Host (
+                "$Service scale-to-zero start accepted; the first queued job may trigger a cold start."
+            ) -ForegroundColor Green
+        }
         exit 0
     }
 }
