@@ -2,6 +2,10 @@ class InferenceInfrastructureError(RuntimeError):
     """Base error for remote inference infrastructure."""
 
 
+class ModelBootstrapPendingError(InferenceInfrastructureError):
+    """Required model bootstrap artifacts are not available yet."""
+
+
 class JobConflictError(InferenceInfrastructureError):
     """The same application job ID was reused for different immutable input."""
 
