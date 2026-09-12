@@ -42,7 +42,10 @@ def test_smoke_ideogram_caption_matches_local_contract() -> None:
 
 def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     text = VALIDATION_MANAGER.read_text(encoding="utf-8")
-    action_set = 'ValidateSet("Validate", "Prepare", "Start", "Status", "Smoke", "Stop")'
+    action_set = (
+        'ValidateSet("Validate", "Prepare", "Start", "Status", "Smoke", '
+        '"ProtectedSmoke", "Stop")'
+    )
 
     assert action_set in text
     assert 'ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25", "all")' in text
@@ -53,6 +56,7 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     assert 'if (-not $CallSucceeded)' in text
     assert '"Prepare" { Invoke-StackAction -StackAction "Prepare" }' in text
     assert '"Start" { Invoke-ScaleToZeroStart }' in text
+    assert '"ProtectedSmoke" { Invoke-ProtectedSmoke }' in text
     assert '"Stop" { Invoke-StackAction -StackAction "Stop" }' in text
     assert 'ValidateSet("Full"' not in text
 
@@ -61,13 +65,35 @@ def test_scale_to_zero_start_accepts_idle_deploying_state() -> None:
     text = SCALE_TO_ZERO_STARTER.read_text(encoding="utf-8")
 
     assert "function Test-ScaleToZeroActive" in text
-    assert '[int]$Definition.autoscaler.min_replicas -eq 0' in text
+    assert '[int]$Definition.autoscaler.min_replicas -ne 0' in text
     assert '[int]$Group.replicas -eq 0' in text
-    assert '$Status -eq "deploying"' in text
+    assert '$Status -ne "deploying"' in text
     assert '$Status -eq "running"' in text
     assert '"$GroupUrl/start"' in text
     assert "first queued job may trigger a cold start" in text
     assert "Container group did not reach status 'running' before timeout." not in text
+
+
+def test_protected_smoke_accepts_only_one_bootstrap_replica_and_always_stops() -> None:
+    starter = SCALE_TO_ZERO_STARTER.read_text(encoding="utf-8")
+    manager = VALIDATION_MANAGER.read_text(encoding="utf-8")
+
+    assert "[switch]$AllowBootstrapReplica" in starter
+    assert 'return ($AllowBootstrapReplica -and [int]$Group.replicas -eq 1)' in starter
+    assert "bootstrap replica accepted for protected smoke" in starter
+
+    protected = manager.split("function Invoke-ProtectedSmoke", maxsplit=1)[1].split(
+        "switch ($Action)", maxsplit=1
+    )[0]
+    assert '$Service -eq "all"' in protected
+    assert "Invoke-ScaleToZeroStart -AllowBootstrapReplica" in protected
+    assert "Invoke-Smoke" in protected
+    assert "finally" in protected
+    assert 'Invoke-StackAction -StackAction "Stop"' in protected
+    assert protected.index("Invoke-ScaleToZeroStart -AllowBootstrapReplica") < protected.index(
+        "Invoke-Smoke"
+    )
+    assert protected.index("Invoke-Smoke") < protected.index("finally")
 
 
 def test_smoke_suite_persists_evidence_for_each_worker() -> None:
