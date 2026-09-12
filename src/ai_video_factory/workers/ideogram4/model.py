@@ -11,6 +11,7 @@ from typing import Any, Protocol, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ai_video_factory.inference.contracts import InferenceJobRequest
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.ports import LocalArtifact
 from ai_video_factory.providers.ideogram_caption import validate_ideogram_caption
 
@@ -210,7 +211,7 @@ class Ideogram4Backend:
 
     def _validate_bootstrap(self) -> None:
         if not self.bootstrap_marker.is_file():
-            raise FileNotFoundError(
+            raise ModelBootstrapPendingError(
                 f"Ideogram model bootstrap marker is missing: {self.bootstrap_marker}"
             )
         marker = self.bootstrap_marker.read_text(encoding="utf-8").strip()
