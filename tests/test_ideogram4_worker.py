@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -75,6 +78,20 @@ def _request(task_name: str = IDEOGRAM4_KEYFRAME_TASK) -> InferenceJobRequest:
             "seed": ideogram_seed_for_job(job_id),
         },
     )
+
+
+def test_ideogram_runtime_imports_in_fresh_interpreter() -> None:
+    environment = os.environ.copy()
+    environment["INFERENCE_WORKER_MODE"] = "local"
+    completed = subprocess.run(
+        [sys.executable, "-c", "import ai_video_factory.workers.ideogram4.runtime"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_ideogram_caption_renderer_preserves_official_key_order() -> None:
