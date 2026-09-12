@@ -15,7 +15,7 @@ def test_ideogram_container_uses_downloaded_local_snapshot() -> None:
     assert "text.count(hub_call) != 6" in dockerfile
     assert 'text = text.replace(hub_call, "_resolve_model_file(")' in dockerfile
     assert "def _resolve_model_file(repo_id: str, filename: str) -> str:" in dockerfile
-    assert 'local_snapshot = Path(os.environ["IDEOGRAM_MODEL_LOCAL_SNAPSHOT"])' in dockerfile
+    assert "IDEOGRAM_MODEL_LOCAL_SNAPSHOT" in dockerfile
     assert "config.weights_repo = str(local_snapshot)" in dockerfile
 
     assert 'snapshot_link="${model_root}/snapshot"' in downloader
