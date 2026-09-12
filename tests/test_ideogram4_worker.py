@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -80,11 +81,14 @@ def _request(task_name: str = IDEOGRAM4_KEYFRAME_TASK) -> InferenceJobRequest:
 
 
 def test_ideogram_runtime_imports_in_fresh_interpreter() -> None:
+    environment = os.environ.copy()
+    environment["INFERENCE_WORKER_MODE"] = "local"
     completed = subprocess.run(
         [sys.executable, "-c", "import ai_video_factory.workers.ideogram4.runtime"],
         check=False,
         capture_output=True,
         text=True,
+        env=environment,
     )
 
     assert completed.returncode == 0, completed.stderr
