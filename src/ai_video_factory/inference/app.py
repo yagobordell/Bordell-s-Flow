@@ -13,6 +13,7 @@ from .errors import (
     JobConflictError,
     JobExecutionError,
     LeaseLostError,
+    ModelBootstrapPendingError,
     UnsupportedTaskError,
 )
 from .worker import InferenceWorker
@@ -36,7 +37,7 @@ def create_app(
         while not preparation_stop.is_set():
             try:
                 worker.prepare()
-            except FileNotFoundError as exc:
+            except ModelBootstrapPendingError as exc:
                 logger.info("inference runtime is waiting for model files: %s", exc)
                 if preparation_stop.wait(prepare_retry_seconds):
                     return
