@@ -1,5 +1,4 @@
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -88,7 +87,7 @@ printf '%s\n' "${local_dir}"
     )
 
     completed = subprocess.run(
-        [shutil.which("bash") or "bash", str(DOWNLOADER)],
+        ["bash", str(DOWNLOADER)],
         check=False,
         capture_output=True,
         text=True,
@@ -146,7 +145,7 @@ printf '%s\n' "${local_dir}"
     )
 
     completed = subprocess.run(
-        [shutil.which("bash") or "bash", str(DOWNLOADER)],
+        ["bash", str(DOWNLOADER)],
         check=False,
         capture_output=True,
         text=True,
