@@ -389,10 +389,29 @@ function Get-Group {
 function Get-GroupStatus {
     param([Parameter(Mandatory)][object]$Group)
 
-    if ($null -eq $Group.current_state) {
+    $CurrentStateProperty = $Group.PSObject.Properties["current_state"]
+    if ($null -eq $CurrentStateProperty -or $null -eq $CurrentStateProperty.Value) {
         return "unknown"
     }
-    return [string]$Group.current_state.status
+    $StatusProperty = $CurrentStateProperty.Value.PSObject.Properties["status"]
+    if ($null -eq $StatusProperty -or $null -eq $StatusProperty.Value) {
+        return "unknown"
+    }
+    return [string]$StatusProperty.Value
+}
+
+function Get-GroupDescription {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $CurrentStateProperty = $Group.PSObject.Properties["current_state"]
+    if ($null -eq $CurrentStateProperty -or $null -eq $CurrentStateProperty.Value) {
+        return ""
+    }
+    $DescriptionProperty = $CurrentStateProperty.Value.PSObject.Properties["description"]
+    if ($null -eq $DescriptionProperty -or $null -eq $DescriptionProperty.Value) {
+        return ""
+    }
+    return [string]$DescriptionProperty.Value
 }
 
 function Wait-ForGroupStatus {
@@ -414,7 +433,7 @@ function Wait-ForGroupStatus {
             $Status,
             $Group.replicas,
             $Group.pending_change,
-            [string]$Group.current_state.description
+            (Get-GroupDescription -Group $Group)
         )
         if ($Status -eq $Expected -and -not $Group.pending_change) {
             return $Group
@@ -442,7 +461,7 @@ function Wait-ForGroupSettled {
             $Group.version,
             $Group.pending_change,
             (Get-GroupStatus -Group $Group),
-            [string]$Group.current_state.description
+            (Get-GroupDescription -Group $Group)
         )
         if (-not $Group.pending_change) {
             return $Group
@@ -725,8 +744,8 @@ function Show-Status {
             @{Name = "Service"; Expression = {$Service}},
             @{Name = "Queue"; Expression = {$QueueName}},
             @{Name = "RequestedGPU"; Expression = {$ConfiguredGpu}},
-            @{Name = "Status"; Expression = {$_.current_state.status}},
-            @{Name = "Description"; Expression = {$_.current_state.description}},
+            @{Name = "Status"; Expression = {Get-GroupStatus -Group $_}},
+            @{Name = "Description"; Expression = {Get-GroupDescription -Group $_}},
             @{Name = "Image"; Expression = {$_.container.image}},
             @{Name = "CPU"; Expression = {$_.container.resources.cpu}},
             @{Name = "MemoryMiB"; Expression = {$_.container.resources.memory}},
