@@ -36,7 +36,7 @@ adapter and its task runner.
 
 ## Model profile
 
-The initial profile is:
+The validated profile is:
 
 ```text
 model: openai/whisper-large-v3-turbo
@@ -121,19 +121,33 @@ WHISPER_DEVICE=cuda:0
 WHISPER_DTYPE=float16
 ```
 
-`WHISPER_MODEL_REVISION` is deliberately configurable so a validated Hugging Face revision can be
-pinned after the first real Salad smoke without rebuilding the orchestration layer.
+The downloader writes the Hugging Face snapshot into a staging directory, validates that both
+`config.json` and non-empty safetensors weights are present, and only then promotes the completed
+snapshot into `WHISPER_MODEL_ROOT`. This prevents the background runtime from observing and trying to
+load a partially downloaded model.
+
+`WHISPER_MODEL_REVISION` remains configurable so a validated Hugging Face revision can be pinned
+without changing the orchestration layer. The production deployment currently uses `main`; pinning an
+exact revision is a follow-up hardening task.
 
 ## Salad deployment
 
 The declarative service entry is `whisper` in `deploy/salad/services.json`. It uses a separate group
 and queue from LTX because one model image must never consume another model's jobs.
 
-The initial hardware profile is `RTX 3090` with 24 GB VRAM. Whisper Large V3 Turbo is far below that
-memory ceiling in FP16, while the 3090 has strong availability in Salad and provides a conservative
-cost/performance baseline without paying for a 4090/5090. The first real smoke should record latency
-and peak VRAM; a cheaper 12-16 GB class may be tested later, but the production profile should change
-only after a measured comparison.
+The validated hardware profile is `RTX 3090` with 24 GB VRAM at Salad priority `medium`. The real
+queue-backed smoke on 2026-09-12 completed successfully with ten ordered word timestamps and no CUDA
+OOM. The first cold-start smoke took `1046.931` seconds including scale-from-zero and model bootstrap;
+this is a correctness baseline rather than a steady-state inference benchmark.
+
+The validated container image is:
+
+```text
+docker.io/yagobordell/ai-video-factory@sha256:28ef8956398a646992dc1741ea6f9139dac93394697d11bd23f398ee8db41084
+```
+
+Full validation evidence and the deployment issues found along the way are recorded in
+`docs/whisper-salad-validation-2026-09-12.md`.
 
 GPU classes are declared by human-readable name in `deploy/salad/services.json`. During `Prepare`,
 `manage_salad_worker.ps1` calls Salad's organization GPU-class endpoint and resolves the current UUID.
@@ -147,9 +161,10 @@ powershell -ExecutionPolicy Bypass -File scripts/manage_salad_worker.ps1 `
   -Action Prepare
 ```
 
-The service currently expects a Salad container-group slot named
-`ai-video-factory-whisper-worker`. The manager will create the dedicated queue, but the group slot must
-exist before `Prepare` if Salad has not provisioned it yet.
+On a first deployment the validation manager can create the dedicated queue and container group when
+they are absent. Queue-repair preflight tolerates a missing queue, then post-`Prepare` validation
+checks the resulting group and autoscaler. `Prepare` must still finish with the group stopped at zero
+replicas before any `Start` or smoke is attempted.
 
 ## Compatibility
 
