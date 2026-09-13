@@ -90,7 +90,7 @@ def test_protected_smoke_bootstraps_through_autoscaler_and_real_instance() -> No
     assert "$Instances.Count -gt 1" in bootstrap
     assert "@{ replicas = 1 }" not in bootstrap
 
-    protected = manager.split("function Invoke-ProtectedSmoke", maxsplit=1)[1].split(
+    protected = manager.split("function Invoke-ProtectedSmoke {", maxsplit=1)[1].split(
         "function Invoke-SafeStop", maxsplit=1
     )[0]
     assert '$Service -eq "all"' in protected
