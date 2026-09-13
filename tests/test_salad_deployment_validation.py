@@ -77,18 +77,19 @@ def test_scale_to_zero_start_keeps_idle_deploying_for_normal_start() -> None:
     assert "first queued job may trigger a cold start" in text
 
 
-def test_protected_smoke_bootstraps_through_autoscaler_and_real_instance() -> None:
+def test_protected_smoke_bootstraps_through_manual_replica_and_real_instance() -> None:
     bootstrap = PROTECTED_BOOTSTRAP.read_text(encoding="utf-8")
     manager = VALIDATION_MANAGER.read_text(encoding="utf-8")
 
-    assert "min_replicas = 1" in bootstrap
+    assert "@{ replicas = 1 }" in bootstrap
+    assert "min_replicas = 1" not in bootstrap
+    assert "[int]$Group.queue_autoscaler.min_replicas -eq 0" in bootstrap
     assert '"$GroupUrl/start"' in bootstrap
     assert '"$GroupUrl/instances"' in bootstrap
     assert "Test-QueueAttachment" in bootstrap
     assert "current_queue_length" in bootstrap
     assert "$StartedInstances.Count -eq 1" in bootstrap
     assert "$Instances.Count -gt 1" in bootstrap
-    assert "@{ replicas = 1 }" not in bootstrap
 
     protected = manager.split("function Invoke-ProtectedSmoke {", maxsplit=1)[1].split(
         "function Invoke-SafeStop", maxsplit=1

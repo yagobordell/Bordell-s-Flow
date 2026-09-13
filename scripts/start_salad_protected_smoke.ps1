@@ -111,17 +111,6 @@ function Test-QueueAttachment {
     ).Count -eq 1
 }
 
-function New-BootstrapAutoscaler {
-    return @{
-        min_replicas = 1
-        max_replicas = [int]$Definition.autoscaler.max_replicas
-        desired_queue_length = [int]$Definition.autoscaler.desired_queue_length
-        polling_period = [int]$Definition.autoscaler.polling_period
-        max_upscale_per_minute = [int]$Definition.autoscaler.max_upscale_per_minute
-        max_downscale_per_minute = [int]$Definition.autoscaler.max_downscale_per_minute
-    }
-}
-
 Import-EnvFile -Path $EnvFile
 if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
     throw "Salad stack manifest not found: $ManifestPath"
@@ -173,10 +162,17 @@ if ($Status -ne "stopped" -or [bool]$Group.pending_change -or [int]$Group.replic
 if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
     throw "Container group '$GroupName' is configured for an unexpected queue."
 }
+if ([int]$Group.queue_autoscaler.min_replicas -ne 0) {
+    throw (
+        "Protected smoke bootstrap requires the remote autoscaler to remain at " +
+        "min_replicas=0 before requesting a manual replica."
+    )
+}
 
-$Body = @{ queue_autoscaler = New-BootstrapAutoscaler } | ConvertTo-Json -Depth 10
+$Body = @{ replicas = 1 } | ConvertTo-Json -Depth 10
 Write-Host (
-    "$Service protected smoke temporarily setting queue_autoscaler.min_replicas=1."
+    "$Service protected smoke temporarily setting replicas=1 while keeping " +
+    "queue_autoscaler.min_replicas=0."
 ) -ForegroundColor Cyan
 Invoke-RestMethod `
     -Method Patch `
@@ -193,14 +189,22 @@ do {
     $Group = Get-Group
     if (
         -not [bool]$Group.pending_change -and
-        [int]$Group.queue_autoscaler.min_replicas -eq 1
+        [int]$Group.replicas -eq 1 -and
+        [int]$Group.queue_autoscaler.min_replicas -eq 0
     ) {
         break
     }
 }
 while ((Get-Date) -lt $PatchDeadline)
-if ([int]$Group.queue_autoscaler.min_replicas -ne 1 -or [bool]$Group.pending_change) {
-    throw "Salad did not persist protected smoke min_replicas=1 before Start."
+if (
+    [int]$Group.replicas -ne 1 -or
+    [bool]$Group.pending_change -or
+    [int]$Group.queue_autoscaler.min_replicas -ne 0
+) {
+    throw (
+        "Salad did not persist protected smoke replicas=1 with " +
+        "queue_autoscaler.min_replicas=0 before Start."
+    )
 }
 
 Invoke-RestMethod `
@@ -243,14 +247,15 @@ do {
     }
     if (
         -not [bool]$Group.pending_change -and
-        [int]$Group.queue_autoscaler.min_replicas -eq 1 -and
+        [int]$Group.replicas -eq 1 -and
+        [int]$Group.queue_autoscaler.min_replicas -eq 0 -and
         $Instances.Count -eq 1 -and
         $StartedInstances.Count -eq 1 -and
         $Attached
     ) {
         Write-Warning (
             "$Service protected bootstrap verified one started instance and queue attachment; " +
-            "the caller must restore min_replicas=0 and stop in a finally block."
+            "the caller must stop and normalize replicas=0 in a finally block."
         )
         exit 0
     }

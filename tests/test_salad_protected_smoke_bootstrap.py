@@ -5,13 +5,15 @@ RESTORE = Path("scripts/restore_salad_scale_to_zero.ps1")
 MANAGER = Path("scripts/manage_salad_validation.ps1")
 
 
-def test_bootstrap_uses_autoscaler_minimum_not_manual_replica_patch() -> None:
+def test_bootstrap_uses_manual_replica_with_scale_to_zero_autoscaler() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
 
-    assert "min_replicas = 1" in script
-    assert "queue_autoscaler = New-BootstrapAutoscaler" in script
-    assert "@{ replicas = 1 }" not in script
+    assert "@{ replicas = 1 }" in script
+    assert "min_replicas = 1" not in script
+    assert "New-BootstrapAutoscaler" not in script
+    assert "[int]$Group.queue_autoscaler.min_replicas -eq 0" in script
     assert '"$GroupUrl/instances"' in script
+    assert "$Instances.Count -eq 1" in script
     assert "$StartedInstances.Count -eq 1" in script
     assert "Test-QueueAttachment" in script
 
