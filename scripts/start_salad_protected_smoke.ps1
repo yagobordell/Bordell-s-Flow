@@ -285,10 +285,11 @@ do {
         [int]$Group.queue_autoscaler.min_replicas -eq 0 -and
         $Instances.Count -eq 1 -and
         $StartedInstances.Count -eq 1 -and
-        $Attached
+        $Ready
     ) {
         Write-Warning (
-            "$Service protected bootstrap verified one started instance and queue attachment; " +
+            "$Service protected bootstrap verified one started ready instance; " +
+            "queue attachment observation=$Attached; " +
             "the caller must stop and normalize replicas=0 in a finally block."
         )
         exit 0
@@ -297,6 +298,5 @@ do {
 while ((Get-Date) -lt $Deadline)
 
 throw (
-    "Container group did not expose one started bootstrap instance with verified queue attachment " +
-    "before timeout."
+    "Container group did not expose one started ready bootstrap instance before timeout."
 )
