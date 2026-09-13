@@ -92,10 +92,34 @@ function Get-Group {
         -TimeoutSec 30
 }
 
+function Get-Queue {
+    return Invoke-RestMethod `
+        -Uri $QueueUrl `
+        -Headers $Headers `
+        -TimeoutSec 30
+}
+
+function Test-QueueAttachment {
+    param([Parameter(Mandatory)][object]$Queue)
+
+    return @(
+        @($Queue.container_groups) |
+            Where-Object { [string]$_.name -eq $GroupName }
+    ).Count -eq 1
+}
+
 function Test-ScaleToZeroActive {
     param([Parameter(Mandatory)][object]$Group)
 
     $Status = [string]$Group.current_state.status
+    if ($AllowBootstrapReplica) {
+        return (
+            -not [bool]$Group.pending_change -and
+            [int]$Group.replicas -eq 1 -and
+            $Status -in @("deploying", "running")
+        )
+    }
+
     if ($Status -eq "running" -and -not [bool]$Group.pending_change) {
         return $true
     }
@@ -108,11 +132,7 @@ function Test-ScaleToZeroActive {
         return $false
     }
 
-    if ([int]$Group.replicas -eq 0) {
-        return $true
-    }
-
-    return ($AllowBootstrapReplica -and [int]$Group.replicas -eq 1)
+    return [int]$Group.replicas -eq 0
 }
 
 Import-EnvFile -Path $EnvFile
@@ -133,20 +153,28 @@ if ([int]$Definition.autoscaler.min_replicas -ne 0) {
 $Organization = [string]$Document.stack.organization
 $Project = [string]$Document.stack.project
 $GroupName = [string]$Definition.group_name
-$GroupUrl = (
-    "https://api.salad.com/api/public/organizations/{0}/projects/{1}/containers/{2}" -f
-    $Organization,
-    $Project,
-    $GroupName
-)
+$QueueName = [string]$Definition.queue_name
+$BaseUrl = "https://api.salad.com/api/public/organizations/$Organization/projects/$Project"
+$GroupUrl = "$BaseUrl/containers/$GroupName"
+$QueueUrl = "$BaseUrl/queues/$QueueName"
 $Headers = @{
     "Salad-Api-Key" = Get-SaladApiKey
     "Accept" = "application/json"
-    "User-Agent" = "ai-video-factory-scale-to-zero-starter/1.0"
+    "User-Agent" = "ai-video-factory-scale-to-zero-starter/1.1"
+}
+
+if ($AllowBootstrapReplica) {
+    $Queue = Get-Queue
+    if ([int]$Queue.current_queue_length -ne 0) {
+        throw (
+            "Protected smoke requires an empty queue before bootstrap; " +
+            "'$QueueName' contains $([int]$Queue.current_queue_length) job(s)."
+        )
+    }
 }
 
 $Group = Get-Group
-if (Test-ScaleToZeroActive -Group $Group) {
+if (-not $AllowBootstrapReplica -and (Test-ScaleToZeroActive -Group $Group)) {
     Write-Host (
         "{0} scale-to-zero active: status={1} replicas={2} pending={3}" -f
         $Service,
@@ -170,6 +198,7 @@ if ([string]$Group.current_state.status -eq "stopped") {
         Out-Null
 }
 
+$BootstrapRequested = $false
 $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 do {
     Start-Sleep -Seconds 5
@@ -188,21 +217,81 @@ do {
     if ($Status -eq "failed") {
         throw "Container group '$GroupName' entered failed state during Start."
     }
-    if (Test-ScaleToZeroActive -Group $Group) {
-        if ($AllowBootstrapReplica -and [int]$Group.replicas -eq 1) {
-            Write-Warning (
-                "$Service bootstrap replica accepted for protected smoke; " +
-                "the caller must stop the group in a finally block."
+
+    if ($AllowBootstrapReplica) {
+        if ([int]$Group.replicas -gt 1) {
+            throw (
+                "Protected smoke refuses to continue with more than one replica; " +
+                "'$GroupName' reports $([int]$Group.replicas)."
             )
         }
-        else {
+
+        if (
+            -not $BootstrapRequested -and
+            -not [bool]$Group.pending_change -and
+            [int]$Group.replicas -eq 0 -and
+            $Status -in @("deploying", "running")
+        ) {
+            $Body = @{ replicas = 1 } | ConvertTo-Json
             Write-Host (
-                "$Service scale-to-zero start accepted; the first queued job may trigger a cold start."
-            ) -ForegroundColor Green
+                "$Service protected smoke requesting exactly one bootstrap replica."
+            ) -ForegroundColor Cyan
+            Invoke-RestMethod `
+                -Method Patch `
+                -Uri $GroupUrl `
+                -Headers $Headers `
+                -ContentType "application/merge-patch+json" `
+                -Body $Body `
+                -TimeoutSec 60 |
+                Out-Null
+            $BootstrapRequested = $true
+            continue
         }
+
+        if (
+            $BootstrapRequested -and
+            -not [bool]$Group.pending_change -and
+            [int]$Group.replicas -eq 0
+        ) {
+            throw (
+                "Protected smoke bootstrap replica returned to zero before queue attachment " +
+                "was verified for '$GroupName'."
+            )
+        }
+
+        if ([int]$Group.replicas -eq 1) {
+            $BootstrapRequested = $true
+        }
+
+        if (Test-ScaleToZeroActive -Group $Group) {
+            $Queue = Get-Queue
+            if (Test-QueueAttachment -Queue $Queue) {
+                Write-Warning (
+                    "$Service bootstrap replica and queue attachment verified for protected smoke; " +
+                    "the caller must stop the group in a finally block."
+                )
+                exit 0
+            }
+            Write-Host (
+                "$Service bootstrap replica is active; waiting for queue attachment."
+            )
+        }
+        continue
+    }
+
+    if (Test-ScaleToZeroActive -Group $Group) {
+        Write-Host (
+            "$Service scale-to-zero start accepted; the first queued job may trigger a cold start."
+        ) -ForegroundColor Green
         exit 0
     }
 }
 while ((Get-Date) -lt $Deadline)
 
+if ($AllowBootstrapReplica) {
+    throw (
+        "Container group did not expose exactly one bootstrap replica with a verified " +
+        "queue attachment before timeout."
+    )
+}
 throw "Container group did not activate scale-to-zero state before timeout."
