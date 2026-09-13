@@ -61,26 +61,30 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     assert 'ValidateSet("Full"' not in text
 
 
-def test_scale_to_zero_start_accepts_idle_deploying_state() -> None:
+def test_scale_to_zero_start_keeps_idle_deploying_for_normal_start() -> None:
     text = SCALE_TO_ZERO_STARTER.read_text(encoding="utf-8")
 
     assert "function Test-ScaleToZeroActive" in text
     assert '[int]$Definition.autoscaler.min_replicas -ne 0' in text
-    assert '[int]$Group.replicas -eq 0' in text
     assert '$Status -ne "deploying"' in text
     assert '$Status -eq "running"' in text
+    assert 'return [int]$Group.replicas -eq 0' in text
     assert '"$GroupUrl/start"' in text
     assert "first queued job may trigger a cold start" in text
-    assert "Container group did not reach status 'running' before timeout." not in text
 
 
-def test_protected_smoke_accepts_only_one_bootstrap_replica_and_always_stops() -> None:
+def test_protected_smoke_bootstraps_one_replica_and_verifies_queue_attachment() -> None:
     starter = SCALE_TO_ZERO_STARTER.read_text(encoding="utf-8")
     manager = VALIDATION_MANAGER.read_text(encoding="utf-8")
 
     assert "[switch]$AllowBootstrapReplica" in starter
-    assert 'return ($AllowBootstrapReplica -and [int]$Group.replicas -eq 1)' in starter
-    assert "bootstrap replica accepted for protected smoke" in starter
+    assert "function Test-QueueAttachment" in starter
+    assert "current_queue_length" in starter
+    assert '@{ replicas = 1 }' in starter
+    assert '$Status -in @("deploying", "running")' in starter
+    assert "Protected smoke refuses to continue with more than one replica" in starter
+    assert "waiting for queue attachment" in starter
+    assert "bootstrap replica and queue attachment verified for protected smoke" in starter
 
     protected = manager.split("function Invoke-ProtectedSmoke", maxsplit=1)[1].split(
         "switch ($Action)", maxsplit=1
