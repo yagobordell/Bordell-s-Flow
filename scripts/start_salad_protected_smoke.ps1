@@ -6,8 +6,8 @@ param(
 
     [string]$EnvFile = ".env",
 
-    [ValidateRange(1, 15)]
-    [int]$TimeoutMinutes = 15,
+    [ValidateRange(1, 60)]
+    [int]$TimeoutMinutes = 40,
 
     [switch]$NonInteractive
 )
@@ -240,9 +240,10 @@ do {
         }
     }
 
-    Write-Host (
+    $Message = (
         "{0} service={1} status={2} replicas={3} instances={4} started={5} " +
-        "state={6} pulling_progress={7} ready={8} attached={9} pending={10}" -f
+        "state={6} pulling_progress={7} ready={8} attached={9} pending={10}"
+    ) -f (
         (Get-Date -Format "HH:mm:ss"),
         $Service,
         $Status,
@@ -255,6 +256,7 @@ do {
         $Attached,
         [bool]$Group.pending_change
     )
+    Write-Host $Message
 
     if ($Status -eq "failed") {
         throw "Container group '$GroupName' entered failed state during protected bootstrap."
