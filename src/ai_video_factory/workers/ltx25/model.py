@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ai_video_factory.inference.contracts import InferenceJobRequest
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.ports import LocalArtifact
 
 LTX_VIDEO_TASK = "video.ltx25.generate"
@@ -189,7 +190,10 @@ class DirectLTX25Backend:
 
         with self._lock:
             bindings = self._get_bindings()
-            self._validate_runtime(bindings)
+            try:
+                self._validate_runtime(bindings)
+            except FileNotFoundError as exc:
+                raise ModelBootstrapPendingError(str(exc)) from exc
             with _torch_inference_context(bindings.torch):
                 self._get_or_build_pipeline(bindings)
 

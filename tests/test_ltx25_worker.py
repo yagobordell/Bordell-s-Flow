@@ -1,8 +1,11 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from ai_video_factory.gpu.ltx_jobs import ltx_video_application_job_id as legacy_job_id
 from ai_video_factory.gpu.ltx_video import DirectLTX25Backend as LegacyBackend
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.workers.ltx25 import (
     LTX_VIDEO_TASK,
     DirectLTX25Backend,
@@ -15,6 +18,17 @@ def test_legacy_ltx_imports_resolve_to_dedicated_worker() -> None:
     assert issubclass(LegacyBackend, DirectLTX25Backend)
     assert legacy_job_id is ltx_video_application_job_id
     assert LTX_VIDEO_TASK == "video.ltx25.generate"
+
+
+def test_ltx25_prepare_treats_missing_model_files_as_bootstrap_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = DirectLTX25Backend(model_root=tmp_path)
+    monkeypatch.setattr(backend, "_get_bindings", lambda: object())
+
+    with pytest.raises(ModelBootstrapPendingError, match="Missing LTX-2.5 model files"):
+        backend.prepare()
 
 
 def test_ltx25_worker_settings_use_shared_inference_core() -> None:
