@@ -26,6 +26,8 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $StackManager = Join-Path $PSScriptRoot "manage_salad_stack.ps1"
 $ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
+$ProtectedSmokeBootstrap = Join-Path $PSScriptRoot "start_salad_protected_smoke.ps1"
+$ScaleToZeroRestorer = Join-Path $PSScriptRoot "restore_salad_scale_to_zero.ps1"
 $ManifestPath = Join-Path $RepoRoot "deploy\salad\services.json"
 $ComposePath = $ComposeFile
 if (-not [IO.Path]::IsPathRooted($ComposePath)) {
@@ -115,8 +117,6 @@ function Invoke-StackAction {
 }
 
 function Invoke-ScaleToZeroStart {
-    param([switch]$AllowBootstrapReplica)
-
     if (-not (Test-Path -LiteralPath $ScaleToZeroStarter -PathType Leaf)) {
         throw "Scale-to-zero starter not found: $ScaleToZeroStarter"
     }
@@ -124,22 +124,11 @@ function Invoke-ScaleToZeroStart {
         throw "Salad stack manifest not found: $ManifestPath"
     }
 
-    $Document = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
-    $Services = if ($Service -eq "all") {
-        @($Document.stack.service_order | ForEach-Object { [string]$_ })
-    }
-    else {
-        @($Service)
-    }
-
-    foreach ($Name in $Services) {
+    foreach ($Name in Get-SelectedServiceNames) {
         Write-Host "=== Salad Start : $Name ===" -ForegroundColor Cyan
         $Arguments = @{
             Service = $Name
             EnvFile = $EnvFile
-        }
-        if ($AllowBootstrapReplica) {
-            $Arguments["AllowBootstrapReplica"] = $true
         }
         if ($NonInteractive) {
             $Arguments["NonInteractive"] = $true
@@ -152,8 +141,53 @@ function Invoke-ScaleToZeroStart {
     }
 
     Write-Host (
-        "Salad scale-to-zero Start complete: services={0}" -f ($Services -join ",")
+        "Salad scale-to-zero Start complete: services={0}" -f ((Get-SelectedServiceNames) -join ",")
     ) -ForegroundColor Green
+}
+
+function Invoke-ProtectedSmokeBootstrap {
+    if ($Service -eq "all") {
+        throw "ProtectedSmoke requires one explicit service so GPU workers stay serialized."
+    }
+    if (-not (Test-Path -LiteralPath $ProtectedSmokeBootstrap -PathType Leaf)) {
+        throw "Protected smoke bootstrap not found: $ProtectedSmokeBootstrap"
+    }
+
+    Write-Host "=== Salad Protected Bootstrap : $Service ===" -ForegroundColor Cyan
+    $Arguments = @{
+        Service = $Service
+        EnvFile = $EnvFile
+    }
+    if ($NonInteractive) {
+        $Arguments["NonInteractive"] = $true
+    }
+    & $ProtectedSmokeBootstrap @Arguments
+    $CallSucceeded = $?
+    if (-not $CallSucceeded) {
+        throw "Salad protected bootstrap failed for service '$Service'."
+    }
+}
+
+function Invoke-ScaleToZeroRestore {
+    if (-not (Test-Path -LiteralPath $ScaleToZeroRestorer -PathType Leaf)) {
+        throw "Scale-to-zero restorer not found: $ScaleToZeroRestorer"
+    }
+
+    foreach ($Name in Get-SelectedServiceNames) {
+        Write-Host "=== Salad Scale-to-Zero Restore : $Name ===" -ForegroundColor Cyan
+        $Arguments = @{
+            Service = $Name
+            EnvFile = $EnvFile
+        }
+        if ($NonInteractive) {
+            $Arguments["NonInteractive"] = $true
+        }
+        & $ScaleToZeroRestorer @Arguments
+        $CallSucceeded = $?
+        if (-not $CallSucceeded) {
+            throw "Salad scale-to-zero restore failed for service '$Name'."
+        }
+    }
 }
 
 function Assert-Docker {
@@ -198,8 +232,22 @@ function Invoke-ProtectedSmoke {
     }
 
     try {
-        Invoke-ScaleToZeroStart -AllowBootstrapReplica
+        Invoke-ProtectedSmokeBootstrap
         Invoke-Smoke
+    }
+    finally {
+        try {
+            Invoke-ScaleToZeroRestore
+        }
+        finally {
+            Invoke-StackAction -StackAction "Stop"
+        }
+    }
+}
+
+function Invoke-SafeStop {
+    try {
+        Invoke-ScaleToZeroRestore
     }
     finally {
         Invoke-StackAction -StackAction "Stop"
@@ -213,5 +261,5 @@ switch ($Action) {
     "Status" { Invoke-StackAction -StackAction "Status" }
     "Smoke" { Invoke-Smoke }
     "ProtectedSmoke" { Invoke-ProtectedSmoke }
-    "Stop" { Invoke-StackAction -StackAction "Stop" }
+    "Stop" { Invoke-SafeStop }
 }
