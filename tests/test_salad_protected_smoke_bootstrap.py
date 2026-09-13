@@ -10,7 +10,7 @@ def test_bootstrap_uses_autoscaler_minimum_not_manual_replica_patch() -> None:
 
     assert "min_replicas = 1" in script
     assert "queue_autoscaler = New-BootstrapAutoscaler" in script
-    assert "replicas = 1" not in script
+    assert "@{ replicas = 1 }" not in script
     assert '"$GroupUrl/instances"' in script
     assert "$StartedInstances.Count -eq 1" in script
     assert "Test-QueueAttachment" in script
