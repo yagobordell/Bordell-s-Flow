@@ -16,8 +16,8 @@ def test_bootstrap_uses_manual_replica_with_scale_to_zero_autoscaler() -> None:
     assert "$Instances.Count -eq 1" in script
     assert "$StartedInstances.Count -eq 1" in script
     assert "Test-QueueAttachment" in script
-    assert "[ValidateRange(1, 60)]" in script
-    assert "[int]$TimeoutMinutes = 40" in script
+    assert "[ValidateRange(1, 120)]" in script
+    assert "[int]$TimeoutMinutes = 90" in script
     assert '$Instance.PSObject.Properties.Name -contains "state"' in script
     assert '$Instance.PSObject.Properties.Name -contains "pulling_progress"' in script
     assert '$Instance.PSObject.Properties.Name -contains "ready"' in script
