@@ -7,7 +7,7 @@ param(
     [string]$EnvFile = ".env",
 
     [ValidateRange(1, 15)]
-    [int]$TimeoutMinutes = 5,
+    [int]$TimeoutMinutes = 15,
 
     [switch]$NonInteractive
 )
@@ -224,14 +224,34 @@ do {
     $Attached = Test-QueueAttachment -Queue $Queue
     $StartedInstances = @($Instances | Where-Object { [bool]$_.started })
 
+    $InstanceState = "-"
+    $PullingProgress = "-"
+    $Ready = $false
+    if ($Instances.Count -eq 1) {
+        $Instance = $Instances[0]
+        if ($Instance.PSObject.Properties.Name -contains "state") {
+            $InstanceState = [string]$Instance.state
+        }
+        if ($Instance.PSObject.Properties.Name -contains "pulling_progress") {
+            $PullingProgress = [string]$Instance.pulling_progress
+        }
+        if ($Instance.PSObject.Properties.Name -contains "ready") {
+            $Ready = [bool]$Instance.ready
+        }
+    }
+
     Write-Host (
-        "{0} service={1} status={2} replicas={3} instances={4} started={5} attached={6} pending={7}" -f
+        "{0} service={1} status={2} replicas={3} instances={4} started={5} " +
+        "state={6} pulling_progress={7} ready={8} attached={9} pending={10}" -f
         (Get-Date -Format "HH:mm:ss"),
         $Service,
         $Status,
         [int]$Group.replicas,
         $Instances.Count,
         $StartedInstances.Count,
+        $InstanceState,
+        $PullingProgress,
+        $Ready,
         $Attached,
         [bool]$Group.pending_change
     )
