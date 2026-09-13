@@ -6,8 +6,8 @@ param(
 
     [string]$EnvFile = ".env",
 
-    [ValidateRange(1, 60)]
-    [int]$TimeoutMinutes = 40,
+    [ValidateRange(1, 120)]
+    [int]$TimeoutMinutes = 90,
 
     [switch]$NonInteractive
 )
