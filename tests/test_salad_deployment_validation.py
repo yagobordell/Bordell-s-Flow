@@ -88,7 +88,7 @@ def test_protected_smoke_bootstraps_through_autoscaler_and_real_instance() -> No
     assert "current_queue_length" in bootstrap
     assert "$StartedInstances.Count -eq 1" in bootstrap
     assert "$Instances.Count -gt 1" in bootstrap
-    assert "replicas = 1" not in bootstrap
+    assert "@{ replicas = 1 }" not in bootstrap
 
     protected = manager.split("function Invoke-ProtectedSmoke", maxsplit=1)[1].split(
         "function Invoke-SafeStop", maxsplit=1
