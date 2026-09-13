@@ -215,6 +215,7 @@ Invoke-RestMethod `
     Out-Null
 
 $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+$StartedBootstrapDeadlineSet = $false
 do {
     Start-Sleep -Seconds 5
     $Group = Get-Group
@@ -223,6 +224,17 @@ do {
     $Status = [string]$Group.current_state.status
     $Attached = Test-QueueAttachment -Queue $Queue
     $StartedInstances = @($Instances | Where-Object { [bool]$_.started })
+
+    if (-not $StartedBootstrapDeadlineSet -and $StartedInstances.Count -eq 1) {
+        $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+        $StartedBootstrapDeadlineSet = $true
+        Write-Host (
+            "{0} service={1} started bootstrap timeout window={2}m" -f
+            (Get-Date -Format "HH:mm:ss"),
+            $Service,
+            $TimeoutMinutes
+        )
+    }
 
     $InstanceState = "-"
     $PullingProgress = "-"
