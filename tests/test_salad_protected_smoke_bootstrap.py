@@ -30,6 +30,25 @@ def test_bootstrap_uses_manual_replica_with_scale_to_zero_autoscaler() -> None:
     assert "Write-Host $Message" in script
 
 
+def test_bootstrap_gates_on_readiness_not_queue_attachment() -> None:
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+
+    readiness_gate = (
+        "$StartedInstances.Count -eq 1 -and\n"
+        "        $Ready\n"
+        "    ) {"
+    )
+    attachment_gate = (
+        "$StartedInstances.Count -eq 1 -and\n"
+        "        $Attached\n"
+        "    ) {"
+    )
+
+    assert readiness_gate in script
+    assert attachment_gate not in script
+    assert "queue attachment observation=$Attached" in script
+    assert "one started ready bootstrap instance before timeout" in script
+
 def test_restore_returns_autoscaler_to_manifest_before_stop() -> None:
     restore = RESTORE.read_text(encoding="utf-8")
     manager = MANAGER.read_text(encoding="utf-8")
