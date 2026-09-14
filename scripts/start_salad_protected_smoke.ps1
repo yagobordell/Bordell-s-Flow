@@ -15,6 +15,12 @@ param(
     [ValidateRange(1, 10)]
     [int]$MaxDownloadReallocations = 3,
 
+    [ValidateRange(1, 60)]
+    [int]$RunningNotReadyTimeoutMinutes = 20,
+
+    [ValidateRange(1, 10)]
+    [int]$MaxRunningNotReadyReallocations = 2,
+
     [switch]$NonInteractive
 )
 
@@ -238,6 +244,9 @@ $ReallocationPending = $false
 $ReallocatedMachineId = ""
 $AllocatingSince = $null
 $AllocatingInstanceId = ""
+$RunningNotReadySince = $null
+$RunningNotReadyInstanceId = ""
+$RunningNotReadyReallocations = 0
 do {
     Start-Sleep -Seconds 5
     $Group = Get-Group
@@ -346,6 +355,75 @@ do {
             $Service
         ) -ForegroundColor Cyan
         $ReallocationPending = $false
+    }
+
+    $RunningNotReady = (
+        $Service -eq "ltx25" -and
+        $Instances.Count -eq 1 -and
+        $StartedInstances.Count -eq 1 -and
+        $InstanceState -eq "running" -and
+        -not $Ready
+    )
+    if ($RunningNotReady) {
+        if (
+            $null -eq $RunningNotReadySince -or
+            $InstanceId -ne $RunningNotReadyInstanceId
+        ) {
+            $RunningNotReadySince = Get-Date
+            $RunningNotReadyInstanceId = $InstanceId
+            Write-Host (
+                "{0} service={1} running-not-ready watchdog started limit={2}m" -f
+                (Get-Date -Format "HH:mm:ss"),
+                $Service,
+                $RunningNotReadyTimeoutMinutes
+            ) -ForegroundColor Cyan
+        }
+
+        $RunningNotReadyElapsed = (Get-Date) - $RunningNotReadySince
+        if (
+            $RunningNotReadyElapsed.TotalMinutes -ge $RunningNotReadyTimeoutMinutes -and
+            -not $ReallocationPending
+        ) {
+            if (
+                $RunningNotReadyReallocations -ge $MaxRunningNotReadyReallocations
+            ) {
+                throw (
+                    "LTX model bootstrap remained running but not ready after " +
+                    "$MaxRunningNotReadyReallocations Salad node reallocations."
+                )
+            }
+
+            if ([string]::IsNullOrWhiteSpace($InstanceId)) {
+                throw (
+                    "Cannot reallocate stalled LTX model bootstrap because " +
+                    "instance id is missing."
+                )
+            }
+
+            $RunningNotReadyReallocations += 1
+            $ReallocationPending = $true
+            $ReallocatedMachineId = $MachineId
+
+            Write-Warning (
+                "$Service remained running but not ready for at least " +
+                "$RunningNotReadyTimeoutMinutes minute(s); reallocating to " +
+                "another Salad node " +
+                "($RunningNotReadyReallocations/" +
+                "$MaxRunningNotReadyReallocations)."
+            )
+
+            Request-InstanceReallocation -InstanceId $InstanceId
+
+            $RunningNotReadySince = $null
+            $RunningNotReadyInstanceId = ""
+            $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+            $StartedBootstrapDeadlineSet = $false
+            continue
+        }
+    }
+    else {
+        $RunningNotReadySince = $null
+        $RunningNotReadyInstanceId = ""
     }
 
     $FractionalDownload = (

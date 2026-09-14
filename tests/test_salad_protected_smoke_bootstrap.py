@@ -104,3 +104,28 @@ def test_ltx_allocating_watchdog_aborts_stalled_bootstrap() -> None:
     assert "$AllocatingElapsed = (Get-Date) - $AllocatingSince" in script
     assert "$AllocatingElapsed.TotalMinutes -ge $AllocatingTimeoutMinutes" in script
     assert "aborting protected bootstrap" in script
+
+
+def test_ltx_running_not_ready_reallocates_stalled_model_bootstrap() -> None:
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+
+    assert "[int]$RunningNotReadyTimeoutMinutes = 20" in script
+    assert "[int]$MaxRunningNotReadyReallocations = 2" in script
+    assert "$RunningNotReadySince = $null" in script
+    assert "$RunningNotReadyInstanceId = \"\"" in script
+    assert "$RunningNotReadyReallocations = 0" in script
+    assert '$InstanceState -eq "running"' in script
+    assert "$StartedInstances.Count -eq 1" in script
+    assert "-not $Ready" in script
+    assert (
+        "$RunningNotReadyElapsed.TotalMinutes -ge "
+        "$RunningNotReadyTimeoutMinutes"
+    ) in script
+    assert "-not $ReallocationPending" in script
+    assert (
+        "$RunningNotReadyReallocations -ge "
+        "$MaxRunningNotReadyReallocations"
+    ) in script
+    assert "running-not-ready watchdog started" in script
+    assert "remained running but not ready" in script
+    assert "Request-InstanceReallocation -InstanceId $InstanceId" in script
