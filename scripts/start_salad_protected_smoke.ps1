@@ -9,6 +9,9 @@ param(
     [ValidateRange(1, 120)]
     [int]$TimeoutMinutes = 90,
 
+    [ValidateRange(1, 60)]
+    [int]$AllocatingTimeoutMinutes = 10,
+
     [ValidateRange(1, 10)]
     [int]$MaxDownloadReallocations = 3,
 
@@ -233,6 +236,8 @@ $StartedBootstrapDeadlineSet = $false
 $DownloadReallocations = 0
 $ReallocationPending = $false
 $ReallocatedMachineId = ""
+$AllocatingSince = $null
+$AllocatingInstanceId = ""
 do {
     Start-Sleep -Seconds 5
     $Group = Get-Group
@@ -256,10 +261,14 @@ do {
     $InstanceState = "-"
     $PullingProgress = "-"
     $PullingProgressValue = $null
+    $InstanceId = ""
     $MachineId = "-"
     $Ready = $false
     if ($Instances.Count -eq 1) {
         $Instance = $Instances[0]
+        if ($Instance.PSObject.Properties.Name -contains "id") {
+            $InstanceId = [string]$Instance.id
+        }
         if ($Instance.PSObject.Properties.Name -contains "state") {
             $InstanceState = [string]$Instance.state
         }
@@ -294,6 +303,38 @@ do {
     Write-Host $Message
 
     if (
+        $Service -eq "ltx25" -and
+        $Instances.Count -eq 1 -and
+        $InstanceState -eq "allocating"
+    ) {
+        if (
+            $null -eq $AllocatingSince -or
+            $InstanceId -ne $AllocatingInstanceId
+        ) {
+            $AllocatingSince = Get-Date
+            $AllocatingInstanceId = $InstanceId
+            Write-Host (
+                "{0} service={1} allocating watchdog started limit={2}m" -f
+                (Get-Date -Format "HH:mm:ss"),
+                $Service,
+                $AllocatingTimeoutMinutes
+            ) -ForegroundColor Cyan
+        }
+
+        $AllocatingElapsed = (Get-Date) - $AllocatingSince
+        if ($AllocatingElapsed.TotalMinutes -ge $AllocatingTimeoutMinutes) {
+            throw (
+                "LTX instance remained in allocating for at least " +
+                "$AllocatingTimeoutMinutes minute(s); aborting protected bootstrap."
+            )
+        }
+    }
+    else {
+        $AllocatingSince = $null
+        $AllocatingInstanceId = ""
+    }
+
+    if (
         $ReallocationPending -and
         $Instances.Count -eq 1 -and
         $MachineId -ne "-" -and
@@ -324,7 +365,6 @@ do {
             )
         }
 
-        $InstanceId = [string]$Instance.id
         if ([string]::IsNullOrWhiteSpace($InstanceId)) {
             throw "Cannot reallocate slow LTX download because instance id is missing."
         }
