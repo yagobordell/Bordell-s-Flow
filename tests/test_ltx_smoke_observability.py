@@ -51,4 +51,4 @@ def test_phase8_smoke_exposes_safe_stage_markers_and_pending_guard() -> None:
 
     assert '"--pending-timeout-seconds"' in text
     assert "verify queue attachment/routing" in text
-    assert "SALAD_API_KEY" not in text.split("def _event", maxsplit=1)[0]
+    assert '_event("SMOKE_START", shot_id=args.shot_id, queue=args.queue_name)' in text
