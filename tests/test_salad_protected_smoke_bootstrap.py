@@ -90,3 +90,17 @@ def test_ltx_fractional_download_reallocates_slow_salad_node() -> None:
     assert "$MachineId -ne $ReallocatedMachineId" in script
     assert "Request-InstanceReallocation -InstanceId $InstanceId" in script
     assert "$StartedBootstrapDeadlineSet = $false" in script
+
+
+def test_ltx_allocating_watchdog_aborts_stalled_bootstrap() -> None:
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+
+    assert "[int]$AllocatingTimeoutMinutes = 10" in script
+    assert "$AllocatingSince = $null" in script
+    assert "$AllocatingInstanceId = \"\"" in script
+    assert '$InstanceState -eq "allocating"' in script
+    assert "$InstanceId -ne $AllocatingInstanceId" in script
+    assert "$AllocatingSince = Get-Date" in script
+    assert "$AllocatingElapsed = (Get-Date) - $AllocatingSince" in script
+    assert "$AllocatingElapsed.TotalMinutes -ge $AllocatingTimeoutMinutes" in script
+    assert "aborting protected bootstrap" in script
