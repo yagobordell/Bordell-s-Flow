@@ -32,6 +32,12 @@ REQUIRED_ENV = (
 )
 
 
+def _event(name: str, **fields: object) -> None:
+    details = " ".join(f"{key}={value}" for key, value in fields.items())
+    suffix = f" {details}" if details else ""
+    print(f"{name}{suffix}", flush=True)
+
+
 def _environment() -> dict[str, str]:
     missing = [name for name in REQUIRED_ENV if not os.getenv(name)]
     if missing:
@@ -151,6 +157,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout-seconds", type=int, default=7200)
     parser.add_argument("--poll-seconds", type=int, default=15)
     parser.add_argument(
+        "--pending-timeout-seconds",
+        type=int,
+        default=0,
+        help=(
+            "Optional maximum time a submitted job may remain pending. "
+            "Zero disables the pending-only timeout."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("data/output/phase8/cloud"),
@@ -162,7 +177,11 @@ def main() -> None:
     args = parse_args()
     if args.shot_id < 1:
         raise SystemExit("--shot-id must be >= 1")
+    if args.pending_timeout_seconds < 0:
+        raise SystemExit("--pending-timeout-seconds must be >= 0")
 
+    _event("SMOKE_START", shot_id=args.shot_id, queue=args.queue_name)
+    _event("REQUEST_BUILD_START")
     environment = _environment()
     keyframes = _read_models(args.keyframes, StoryboardKeyframe)
     prompts = _read_models(args.prompts, VideoPrompt)
@@ -192,24 +211,6 @@ def main() -> None:
     )
     input_key = f"phase8/keyframes/{keyframe_sha256}.png"
     output_key = f"jobs/{job_id}/shot_{args.shot_id:03d}.mp4"
-
-    storage = R2ObjectStorage.create(
-        endpoint_url=environment["R2_ENDPOINT_URL"],
-        bucket=environment["R2_BUCKET"],
-        access_key_id=environment["R2_ACCESS_KEY_ID"],
-        secret_access_key=environment["R2_SECRET_ACCESS_KEY"],
-    )
-    storage.upload(
-        keyframe_path,
-        input_key,
-        content_type="image/png",
-        metadata={
-            "purpose": "phase8-keyframe",
-            "shot-id": str(args.shot_id),
-            "artifact-sha256": keyframe_sha256,
-        },
-    )
-
     job = GPUJobRequest(
         job_id=job_id,
         task=LTX_VIDEO_TASK,
@@ -240,47 +241,113 @@ def main() -> None:
             "shot_id": str(args.shot_id),
         },
     }
-    base_url = (
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    request_path = args.output_dir / f"job-request-{job_id}.json"
+    response_path = args.output_dir / f"queue-response-{job_id}.json"
+    request_path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
+    _event("REQUEST_BUILD_DONE", application_job_id=job_id, request=request_path)
+
+    storage = R2ObjectStorage.create(
+        endpoint_url=environment["R2_ENDPOINT_URL"],
+        bucket=environment["R2_BUCKET"],
+        access_key_id=environment["R2_ACCESS_KEY_ID"],
+        secret_access_key=environment["R2_SECRET_ACCESS_KEY"],
+    )
+    _event("R2_UPLOAD_START", input_key=input_key)
+    storage.upload(
+        keyframe_path,
+        input_key,
+        content_type="image/png",
+        metadata={
+            "purpose": "phase8-keyframe",
+            "shot-id": str(args.shot_id),
+            "artifact-sha256": keyframe_sha256,
+        },
+    )
+    _event("R2_UPLOAD_DONE", input_key=input_key)
+
+    queue_url = (
         "https://api.salad.com/api/public/organizations/"
         f"{environment['SALAD_ORGANIZATION']}/projects/{environment['SALAD_PROJECT']}"
-        f"/queues/{args.queue_name}/jobs"
+        f"/queues/{args.queue_name}"
     )
+    base_url = f"{queue_url}/jobs"
+    _event("QUEUE_PREFLIGHT_START", queue=args.queue_name)
+    queue_state = _salad_request(queue_url, environment["SALAD_API_KEY"])
+    container_groups = queue_state.get("container_groups") or []
+    group_names = ",".join(
+        str(group.get("name", "?"))
+        for group in container_groups
+        if isinstance(group, dict)
+    )
+    _event(
+        "QUEUE_PREFLIGHT_DONE",
+        queue=args.queue_name,
+        current_queue_length=queue_state.get("current_queue_length", "?"),
+        container_groups=group_names or "-",
+    )
+
+    _event("QUEUE_SUBMIT_START", queue=args.queue_name)
     created = _salad_request(
         base_url,
         environment["SALAD_API_KEY"],
         method="POST",
         body=body,
     )
-
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    request_path = args.output_dir / f"job-request-{job_id}.json"
-    response_path = args.output_dir / f"queue-response-{job_id}.json"
-    request_path.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
     response_path.write_text(json.dumps(created, indent=2) + "\n", encoding="utf-8")
+    _event(
+        "QUEUE_SUBMIT_DONE",
+        salad_job_id=created["id"],
+        status=created.get("status", "?"),
+    )
 
-    print(f"application_job_id={job_id}")
-    print(f"salad_job_id={created['id']}")
-    print(f"shot_id={args.shot_id}")
-    print(f"duration_seconds={duration_seconds:.3f}")
-    print(f"num_frames={num_frames}")
-    print(f"seed={seed}")
-    print(f"input_key={input_key}")
-    print(f"output_key={output_key}")
-    print(request_path)
-    print(response_path)
+    print(f"application_job_id={job_id}", flush=True)
+    print(f"salad_job_id={created['id']}", flush=True)
+    print(f"shot_id={args.shot_id}", flush=True)
+    print(f"duration_seconds={duration_seconds:.3f}", flush=True)
+    print(f"num_frames={num_frames}", flush=True)
+    print(f"seed={seed}", flush=True)
+    print(f"input_key={input_key}", flush=True)
+    print(f"output_key={output_key}", flush=True)
+    print(request_path, flush=True)
+    print(response_path, flush=True)
 
     if not args.wait:
+        _event("SMOKE_DONE", status="submitted", salad_job_id=created["id"])
         return
 
     job_url = f"{base_url}/{created['id']}"
     deadline = time.monotonic() + args.timeout_seconds
     current = created
+    pending_since = time.monotonic() if current.get("status") == "pending" else None
+    _event(
+        "QUEUE_WAIT_START",
+        salad_job_id=created["id"],
+        timeout_seconds=args.timeout_seconds,
+        pending_timeout_seconds=args.pending_timeout_seconds,
+    )
     while current["status"] not in {"succeeded", "failed", "cancelled"}:
         if time.monotonic() >= deadline:
             raise TimeoutError(f"job did not finish within {args.timeout_seconds} seconds")
         time.sleep(args.poll_seconds)
         current = _salad_request(job_url, environment["SALAD_API_KEY"])
-        print(f"status={current['status']}")
+        status = str(current["status"])
+        _event("QUEUE_WAIT_STATUS", salad_job_id=created["id"], status=status)
+        if status == "pending":
+            if pending_since is None:
+                pending_since = time.monotonic()
+            pending_elapsed = time.monotonic() - pending_since
+            if (
+                args.pending_timeout_seconds > 0
+                and pending_elapsed >= args.pending_timeout_seconds
+            ):
+                raise TimeoutError(
+                    "job remained pending for "
+                    f"{args.pending_timeout_seconds} seconds; verify queue attachment/routing"
+                )
+        else:
+            pending_since = None
 
     response_path.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
     if current["status"] != "succeeded":
@@ -298,7 +365,9 @@ def main() -> None:
         raise RuntimeError(f"worker returned invalid MP4 metadata: {artifact}")
 
     destination = args.output_dir / f"shot_{args.shot_id:03d}.mp4"
+    _event("ARTIFACT_DOWNLOAD_START", output_key=output_key)
     storage.download(output_key, destination)
+    _event("ARTIFACT_DOWNLOAD_DONE", destination=destination)
     downloaded_sha256 = sha256_file(destination)
     if downloaded_sha256 != artifact.get("sha256"):
         raise RuntimeError(
@@ -320,13 +389,14 @@ def main() -> None:
             raise RuntimeError(f"expected exactly one video stream, got {len(video_streams)}")
         if audio_streams:
             raise RuntimeError("Phase 8 MP4 unexpectedly contains an audio stream")
-        print(probe_path)
+        print(probe_path, flush=True)
 
-    print(f"downloaded={destination.resolve()}")
-    print(f"sha256={downloaded_sha256}")
-    print(f"replayed={bool(output.get('replayed'))}")
-    print(f"attempt_count={output.get('attempt_count')}")
-    print("Phase 8.3 real video smoke test: OK")
+    print(f"downloaded={destination.resolve()}", flush=True)
+    print(f"sha256={downloaded_sha256}", flush=True)
+    print(f"replayed={bool(output.get('replayed'))}", flush=True)
+    print(f"attempt_count={output.get('attempt_count')}", flush=True)
+    _event("SMOKE_DONE", status="succeeded", salad_job_id=created["id"])
+    print("Phase 8.3 real video smoke test: OK", flush=True)
 
 
 if __name__ == "__main__":

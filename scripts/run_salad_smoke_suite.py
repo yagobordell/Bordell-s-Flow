@@ -413,15 +413,25 @@ def _smoke_ltx25(args: argparse.Namespace) -> None:
         "--output-dir",
         str(cloud_dir),
     ]
-    completed = subprocess.run(
+    log_path = args.output_dir / "ltx25-smoke.log"
+    process = subprocess.Popen(
         command,
-        check=True,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
         env=_ltx_environment(),
     )
-    log_path = args.output_dir / "ltx25-smoke.log"
-    log_path.write_text(completed.stdout + completed.stderr, encoding="utf-8")
+    if process.stdout is None:  # pragma: no cover - PIPE guarantees stdout
+        raise RuntimeError("LTX smoke process did not expose stdout")
+    with log_path.open("w", encoding="utf-8") as log_handle:
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            log_handle.write(line)
+            log_handle.flush()
+    returncode = process.wait()
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, command)
+
     videos = sorted(cloud_dir.glob("shot_*.mp4"))
     if len(videos) != 1 or videos[0].stat().st_size <= 0:
         raise RuntimeError("LTX smoke did not produce exactly one non-empty MP4")
