@@ -9,6 +9,9 @@ param(
     [ValidateRange(1, 120)]
     [int]$TimeoutMinutes = 90,
 
+    [ValidateRange(1, 10)]
+    [int]$MaxDownloadReallocations = 3,
+
     [switch]$NonInteractive
 )
 
@@ -100,6 +103,17 @@ function Get-Instances {
         return @($Response.items)
     }
     return @()
+}
+
+function Request-InstanceReallocation {
+    param([Parameter(Mandatory)][string]$InstanceId)
+
+    Invoke-RestMethod `
+        -Method Post `
+        -Uri "$InstancesUrl/$InstanceId/reallocate" `
+        -Headers $Headers `
+        -TimeoutSec 60 |
+        Out-Null
 }
 
 function Test-QueueAttachment {
@@ -216,6 +230,9 @@ Invoke-RestMethod `
 
 $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 $StartedBootstrapDeadlineSet = $false
+$DownloadReallocations = 0
+$ReallocationPending = $false
+$ReallocatedMachineId = ""
 do {
     Start-Sleep -Seconds 5
     $Group = Get-Group
@@ -238,14 +255,20 @@ do {
 
     $InstanceState = "-"
     $PullingProgress = "-"
+    $PullingProgressValue = $null
+    $MachineId = "-"
     $Ready = $false
     if ($Instances.Count -eq 1) {
         $Instance = $Instances[0]
         if ($Instance.PSObject.Properties.Name -contains "state") {
             $InstanceState = [string]$Instance.state
         }
+        if ($Instance.PSObject.Properties.Name -contains "machine_id") {
+            $MachineId = [string]$Instance.machine_id
+        }
         if ($Instance.PSObject.Properties.Name -contains "pulling_progress") {
             $PullingProgress = [string]$Instance.pulling_progress
+            $PullingProgressValue = [double]$Instance.pulling_progress
         }
         if ($Instance.PSObject.Properties.Name -contains "ready") {
             $Ready = [bool]$Instance.ready
@@ -269,6 +292,59 @@ do {
         [bool]$Group.pending_change
     )
     Write-Host $Message
+
+    if (
+        $ReallocationPending -and
+        $Instances.Count -eq 1 -and
+        $MachineId -ne "-" -and
+        $MachineId -ne $ReallocatedMachineId
+    ) {
+        Write-Host (
+            "{0} service={1} reallocation completed on a different Salad node" -f
+            (Get-Date -Format "HH:mm:ss"),
+            $Service
+        ) -ForegroundColor Cyan
+        $ReallocationPending = $false
+    }
+
+    $FractionalDownload = (
+        $Service -eq "ltx25" -and
+        $Instances.Count -eq 1 -and
+        -not $ReallocationPending -and
+        $InstanceState -eq "downloading" -and
+        $null -ne $PullingProgressValue -and
+        $PullingProgressValue -gt 0.0 -and
+        $PullingProgressValue -lt 1.0
+    )
+    if ($FractionalDownload) {
+        if ($DownloadReallocations -ge $MaxDownloadReallocations) {
+            throw (
+                "LTX download remained fractional after " +
+                "$MaxDownloadReallocations Salad node reallocations."
+            )
+        }
+
+        $InstanceId = [string]$Instance.id
+        if ([string]::IsNullOrWhiteSpace($InstanceId)) {
+            throw "Cannot reallocate slow LTX download because instance id is missing."
+        }
+
+        $DownloadReallocations += 1
+        $ReallocationPending = $true
+        $ReallocatedMachineId = $MachineId
+
+        Write-Warning (
+            "$Service detected fractional download progress=$PullingProgress; " +
+            "reallocating to another Salad node " +
+            "($DownloadReallocations/$MaxDownloadReallocations)."
+        )
+
+        Request-InstanceReallocation -InstanceId $InstanceId
+
+        $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+        $StartedBootstrapDeadlineSet = $false
+        continue
+    }
 
     if ($Status -eq "failed") {
         throw "Container group '$GroupName' entered failed state during protected bootstrap."

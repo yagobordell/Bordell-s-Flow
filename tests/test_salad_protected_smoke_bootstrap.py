@@ -73,3 +73,20 @@ def test_manual_stop_also_restores_scale_to_zero_configuration() -> None:
 
     assert "Invoke-ScaleToZeroRestore" in safe_stop
     assert 'Invoke-StackAction -StackAction "Stop"' in safe_stop
+
+
+def test_ltx_fractional_download_reallocates_slow_salad_node() -> None:
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+
+    assert "[int]$MaxDownloadReallocations = 3" in script
+    assert 'function Request-InstanceReallocation' in script
+    assert '"$InstancesUrl/$InstanceId/reallocate"' in script
+    assert '$Service -eq "ltx25"' in script
+    assert '$InstanceState -eq "downloading"' in script
+    assert "$PullingProgressValue -gt 0.0" in script
+    assert "$PullingProgressValue -lt 1.0" in script
+    assert "$DownloadReallocations -ge $MaxDownloadReallocations" in script
+    assert "$ReallocationPending = $true" in script
+    assert "$MachineId -ne $ReallocatedMachineId" in script
+    assert "Request-InstanceReallocation -InstanceId $InstanceId" in script
+    assert "$StartedBootstrapDeadlineSet = $false" in script
