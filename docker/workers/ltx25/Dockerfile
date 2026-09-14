@@ -21,8 +21,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DEFAULT_TIMEOUT=300 \
     HF_HOME=/workspace/.cache/huggingface \
     XDG_CACHE_HOME=/workspace/.cache \
-    HF_HUB_DISABLE_XET=1 \
-    HF_HUB_ENABLE_HF_TRANSFER=0 \
+    HF_HUB_DOWNLOAD_TIMEOUT=120 \
+    HF_HUB_ETAG_TIMEOUT=30 \
     TORCH_CUDA_ARCH_LIST=12.0 \
     INFERENCE_WORKER_MODE=production \
     INFERENCE_WORKER_TEMP_DIR=/tmp/ai-video-factory \
@@ -79,7 +79,8 @@ RUN python3 -m pip install \
         --constraint /opt/torch-constraints.txt \
         --extra-index-url https://download.pytorch.org/whl/cu128 \
         '/opt/factory[gpu]' \
-        'huggingface-hub[cli]'
+        'huggingface-hub==1.31.0' \
+        'hf-xet==1.6.0'
 
 RUN python3 -m pip install \
         --break-system-packages \

@@ -15,6 +15,20 @@ MODEL_FILES=(
 
 mkdir -p "${MODEL_ROOT}"
 
+python3 - <<'PY'
+from importlib.metadata import version
+import os
+
+print(
+    "HF_DOWNLOAD_RUNTIME "
+    f"huggingface_hub={version('huggingface-hub')} "
+    f"hf_xet={version('hf-xet')} "
+    f"download_timeout={os.environ.get('HF_HUB_DOWNLOAD_TIMEOUT', '-')} "
+    f"etag_timeout={os.environ.get('HF_HUB_ETAG_TIMEOUT', '-')} "
+    f"xet_disabled={os.environ.get('HF_HUB_DISABLE_XET', 'false')}"
+)
+PY
+
 echo "ltx25 model bootstrap repository=${MODEL_REPOSITORY} revision=${MODEL_REVISION} root=${MODEL_ROOT}"
 for model_file in "${MODEL_FILES[@]}"; do
   destination="${MODEL_ROOT}/${model_file}"

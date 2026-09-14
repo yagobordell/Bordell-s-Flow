@@ -73,3 +73,30 @@ def test_ltx25_container_is_model_specific() -> None:
     ).read_text(encoding="utf-8")
     assert "COPY src /opt/factory/src" in text
     assert "COPY . /opt/factory" not in text
+
+
+def test_ltx25_model_download_uses_xet_with_resilient_timeouts() -> None:
+    dockerfile = Path("docker/workers/ltx25/Dockerfile").read_text(encoding="utf-8")
+    bootstrap = Path("docker/workers/ltx25/download_models.sh").read_text(
+        encoding="utf-8"
+    )
+    manifest = json.loads(
+        Path("deploy/salad/services.json").read_text(encoding="utf-8")
+    )
+    service = manifest["services"]["ltx25"]
+
+    assert "HF_HUB_DOWNLOAD_TIMEOUT=120" in dockerfile
+    assert "HF_HUB_ETAG_TIMEOUT=30" in dockerfile
+    assert "HF_HUB_DISABLE_XET" not in dockerfile
+    assert "HF_HUB_ENABLE_HF_TRANSFER" not in dockerfile
+    assert "'huggingface-hub==1.31.0'" in dockerfile
+    assert "'hf-xet==1.6.0'" in dockerfile
+
+    assert "HF_DOWNLOAD_RUNTIME" in bootstrap
+    assert "huggingface_hub=" in bootstrap
+    assert "hf_xet=" in bootstrap
+    assert "xet_disabled=" in bootstrap
+
+    assert service["image"].endswith(
+        ":ltx25-torch211-cu128-natten0216-xet-v3"
+    )
