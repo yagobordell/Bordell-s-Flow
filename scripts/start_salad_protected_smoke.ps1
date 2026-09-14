@@ -16,6 +16,9 @@ param(
     [int]$MaxDownloadReallocations = 3,
 
     [ValidateRange(1, 60)]
+    [int]$DownloadStallTimeoutMinutes = 10,
+
+    [ValidateRange(1, 60)]
     [int]$RunningNotReadyTimeoutMinutes = 20,
 
     [ValidateRange(1, 10)]
@@ -240,6 +243,10 @@ Invoke-RestMethod `
 $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 $StartedBootstrapDeadlineSet = $false
 $DownloadReallocations = 0
+$DownloadProgressThreshold = 0.005
+$DownloadProgressBaseline = $null
+$DownloadProgressSince = $null
+$DownloadProgressInstanceId = ""
 $ReallocationPending = $false
 $ReallocatedMachineId = ""
 $AllocatingSince = $null
@@ -436,32 +443,77 @@ do {
         $PullingProgressValue -lt 1.0
     )
     if ($FractionalDownload) {
-        if ($DownloadReallocations -ge $MaxDownloadReallocations) {
-            throw (
-                "LTX download remained fractional after " +
-                "$MaxDownloadReallocations Salad node reallocations."
+        if (
+            $null -eq $DownloadProgressSince -or
+            $InstanceId -ne $DownloadProgressInstanceId
+        ) {
+            $DownloadProgressBaseline = $PullingProgressValue
+            $DownloadProgressSince = Get-Date
+            $DownloadProgressInstanceId = $InstanceId
+
+            Write-Host (
+                "{0} service={1} image-pull watchdog started progress={2} " +
+                "stall_limit={3}m threshold={4}" -f
+                (Get-Date -Format "HH:mm:ss"),
+                $Service,
+                $PullingProgress,
+                $DownloadStallTimeoutMinutes,
+                $DownloadProgressThreshold
+            ) -ForegroundColor Cyan
+        }
+        elseif (
+            $PullingProgressValue -lt $DownloadProgressBaseline -or
+            $PullingProgressValue -ge (
+                $DownloadProgressBaseline + $DownloadProgressThreshold
             )
+        ) {
+            $DownloadProgressBaseline = $PullingProgressValue
+            $DownloadProgressSince = Get-Date
         }
+        else {
+            $DownloadStallElapsed = (Get-Date) - $DownloadProgressSince
+            if ($DownloadStallElapsed.TotalMinutes -ge $DownloadStallTimeoutMinutes) {
+                if ($DownloadReallocations -ge $MaxDownloadReallocations) {
+                    throw (
+                        "LTX image pull remained stalled after " +
+                        "$MaxDownloadReallocations Salad node reallocations."
+                    )
+                }
 
-        if ([string]::IsNullOrWhiteSpace($InstanceId)) {
-            throw "Cannot reallocate slow LTX download because instance id is missing."
+                if ([string]::IsNullOrWhiteSpace($InstanceId)) {
+                    throw (
+                        "Cannot reallocate stalled LTX image pull because " +
+                        "instance id is missing."
+                    )
+                }
+
+                $DownloadReallocations += 1
+                $ReallocationPending = $true
+                $ReallocatedMachineId = $MachineId
+
+                Write-Warning (
+                    "$Service image pull made less than " +
+                    "$DownloadProgressThreshold progress for at least " +
+                    "$DownloadStallTimeoutMinutes minute(s); reallocating " +
+                    "to another Salad node " +
+                    "($DownloadReallocations/$MaxDownloadReallocations)."
+                )
+
+                Request-InstanceReallocation -InstanceId $InstanceId
+
+                $DownloadProgressBaseline = $null
+                $DownloadProgressSince = $null
+                $DownloadProgressInstanceId = ""
+                $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+                $StartedBootstrapDeadlineSet = $false
+                continue
+            }
         }
-
-        $DownloadReallocations += 1
-        $ReallocationPending = $true
-        $ReallocatedMachineId = $MachineId
-
-        Write-Warning (
-            "$Service detected fractional download progress=$PullingProgress; " +
-            "reallocating to another Salad node " +
-            "($DownloadReallocations/$MaxDownloadReallocations)."
-        )
-
-        Request-InstanceReallocation -InstanceId $InstanceId
-
-        $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
-        $StartedBootstrapDeadlineSet = $false
-        continue
+    }
+    else {
+        $DownloadProgressBaseline = $null
+        $DownloadProgressSince = $null
+        $DownloadProgressInstanceId = ""
     }
 
     if ($Status -eq "failed") {
