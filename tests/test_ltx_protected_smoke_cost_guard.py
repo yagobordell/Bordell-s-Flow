@@ -6,7 +6,7 @@ WRAPPER = Path("scripts/run_ltx25_protected_smoke.ps1")
 def test_ltx_protected_smoke_caps_model_bootstrap_before_reallocation() -> None:
     script = WRAPPER.read_text(encoding="utf-8")
 
-    assert '$ModelBootstrapTimeoutMinutes = 19' in script
+    assert '$ModelBootstrapTimeoutMinutes = 45' in script
     assert '$RunningNotReadyReallocationThresholdMinutes = 60' in script
     assert 'TimeoutMinutes = $ModelBootstrapTimeoutMinutes' in script
     assert (
