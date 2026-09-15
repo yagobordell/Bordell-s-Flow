@@ -249,7 +249,12 @@ def _generation_attempts(caption: str, seed: int) -> list[tuple[str, int]]:
         attempt_seed = (seed + len(attempts)) & 0x7FFFFFFF
         attempts.append((variant, attempt_seed))
         if len(attempts) == _MAX_GENERATION_ATTEMPTS:
-            break
+            return attempts
+
+    fallback_caption = attempts[-1][0] if attempts else caption
+    while len(attempts) < _MAX_GENERATION_ATTEMPTS:
+        attempt_seed = (seed + len(attempts)) & 0x7FFFFFFF
+        attempts.append((fallback_caption, attempt_seed))
     return attempts
 
 
