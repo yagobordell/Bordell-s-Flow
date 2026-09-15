@@ -6,7 +6,11 @@ import re
 import tempfile
 from pathlib import Path
 
-from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectOutput
+from ai_video_factory.inference.contracts import (
+    InferenceJobRequest,
+    InferenceJobResponse,
+    ObjectOutput,
+)
 from ai_video_factory.workers.ideogram4 import (
     IDEOGRAM4_GENERATION_PROFILE,
     IDEOGRAM4_KEYFRAME_TASK,
@@ -138,7 +142,7 @@ class SaladIdeogramImageProvider:
         model: str,
         width: int,
         height: int,
-    ) -> object:
+    ) -> InferenceJobResponse:
         job_id = ideogram_application_job_id(
             task_name=self._task_name,
             caption=caption,
