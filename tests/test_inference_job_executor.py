@@ -71,29 +71,32 @@ class TransientThenSuccessQueue:
         if self.gets <= self.failures:
             raise TransientQueueError("temporary Salad read timeout")
         assert self.request is not None
-        request = self.request
-        return QueueJobSnapshot(
-            id=transport_job_id,
-            status=QueueJobStatus.SUCCEEDED,
-            output={
-                "schema_version": "1",
-                "job_id": request.job_id,
-                "status": "succeeded",
-                "request_sha256": request.fingerprint(),
-                "output": {
-                    "key": request.output.key,
-                    "content_type": request.output.content_type,
-                    "size_bytes": 123,
-                    "sha256": "a" * 64,
-                    "etag": "etag-1",
-                },
-                "attempt_count": 1,
-                "replayed": False,
-            },
-        )
+        return _success_snapshot(self.request, transport_job_id)
 
     def cancel(self, transport_job_id: str) -> None:
         raise AssertionError("successful polling path must not cancel transport jobs")
+
+
+class PendingThenRunningSuccessQueue:
+    def __init__(self) -> None:
+        self.request: InferenceJobRequest | None = None
+        self.gets = 0
+
+    def submit(self, request: InferenceJobRequest, *, metadata: dict[str, str]) -> QueueJobSnapshot:
+        self.request = request
+        return QueueJobSnapshot(id="transport-cold-start", status=QueueJobStatus.PENDING)
+
+    def get(self, transport_job_id: str) -> QueueJobSnapshot:
+        self.gets += 1
+        if self.gets == 1:
+            return QueueJobSnapshot(id=transport_job_id, status=QueueJobStatus.PENDING)
+        if self.gets == 2:
+            return QueueJobSnapshot(id=transport_job_id, status=QueueJobStatus.RUNNING)
+        assert self.request is not None
+        return _success_snapshot(self.request, transport_job_id)
+
+    def cancel(self, transport_job_id: str) -> None:
+        raise AssertionError("successful cold-start path must not cancel transport jobs")
 
 
 def _request() -> InferenceJobRequest:
@@ -104,6 +107,31 @@ def _request() -> InferenceJobRequest:
             key="jobs/image-test-001/image.png",
             content_type="image/png",
         ),
+    )
+
+
+def _success_snapshot(
+    request: InferenceJobRequest,
+    transport_job_id: str,
+) -> QueueJobSnapshot:
+    return QueueJobSnapshot(
+        id=transport_job_id,
+        status=QueueJobStatus.SUCCEEDED,
+        output={
+            "schema_version": "1",
+            "job_id": request.job_id,
+            "status": "succeeded",
+            "request_sha256": request.fingerprint(),
+            "output": {
+                "key": request.output.key,
+                "content_type": request.output.content_type,
+                "size_bytes": 123,
+                "sha256": "a" * 64,
+                "etag": "etag-1",
+            },
+            "attempt_count": 1,
+            "replayed": False,
+        },
     )
 
 
@@ -188,7 +216,33 @@ def test_executor_keeps_polling_after_transient_queue_read_failures() -> None:
     assert queue.gets == 3
 
 
-def test_executor_cancels_pending_transport_when_global_timeout_expires() -> None:
+def test_pending_wait_does_not_consume_running_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = {"now": 0.0}
+    monkeypatch.setattr(
+        "ai_video_factory.providers.inference_jobs.time.monotonic",
+        lambda: clock["now"],
+    )
+    monkeypatch.setattr(
+        "ai_video_factory.providers.inference_jobs.time.sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+    queue = PendingThenRunningSuccessQueue()
+    executor = InferenceJobExecutor(
+        queue=queue,  # type: ignore[arg-type]
+        storage=FakeStorage(),
+        poll_seconds=4,
+        timeout_seconds=6,
+        pending_timeout_seconds=20,
+    )
+
+    response = executor.execute(_request(), metadata={"phase": "4"})
+
+    assert response.status == "succeeded"
+    assert clock["now"] == 12
+    assert queue.gets == 3
+
+
+def test_executor_cancels_pending_transport_when_pending_timeout_expires() -> None:
     queue = FakeQueue(
         QueueJobSnapshot(
             id="transport-pending",
@@ -199,7 +253,8 @@ def test_executor_cancels_pending_transport_when_global_timeout_expires() -> Non
         queue=queue,
         storage=FakeStorage(),
         poll_seconds=0.001,
-        timeout_seconds=0.003,
+        timeout_seconds=1,
+        pending_timeout_seconds=0.003,
     )
 
     with pytest.raises(TimeoutError, match="cancelled pending transport job transport-pending"):
@@ -209,7 +264,7 @@ def test_executor_cancels_pending_transport_when_global_timeout_expires() -> Non
     assert queue.cancellations == ["transport-pending"]
 
 
-def test_executor_does_not_cancel_transport_after_dispatch() -> None:
+def test_executor_does_not_cancel_transport_after_running_timeout() -> None:
     queue = FakeQueue(
         QueueJobSnapshot(
             id="transport-running",
@@ -221,6 +276,7 @@ def test_executor_does_not_cancel_transport_after_dispatch() -> None:
         storage=FakeStorage(),
         poll_seconds=0.001,
         timeout_seconds=0.003,
+        pending_timeout_seconds=1,
     )
 
     with pytest.raises(TimeoutError, match="already dispatched and was not cancelled"):
