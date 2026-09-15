@@ -513,7 +513,7 @@ def test_ideogram_worker_settings_and_salad_manifest() -> None:
     assert service["queue_name"] == "ai-video-factory-ideogram4-jobs"
     assert service["resources"]["gpu_class_names"] == ["RTX 4090 (24 GB)"]
     assert service["autoscaler"]["min_replicas"] == 0
-    assert service["autoscaler"]["max_replicas"] == 4
+    assert service["autoscaler"]["max_replicas"] == 1
     assert service["required_environment"] == ["HF_TOKEN"]
 
 
