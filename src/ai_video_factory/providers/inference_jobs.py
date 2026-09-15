@@ -82,14 +82,12 @@ class InferenceJobExecutor:
 
         while snapshot.status in {QueueJobStatus.PENDING, QueueJobStatus.RUNNING}:
             if time.monotonic() >= deadline:
-                message = (
-                    f"Inference job {request.job_id} did not finish within "
-                    f"{self._timeout_seconds} seconds"
+                self._raise_timeout(
+                    request=request,
+                    snapshot_status=snapshot.status,
+                    transport_job_id=snapshot.id,
+                    last_poll_error=last_poll_error,
                 )
-                if last_poll_error is not None:
-                    message += f"; last queue polling error: {last_poll_error}"
-                    raise TimeoutError(message) from last_poll_error
-                raise TimeoutError(message)
 
             time.sleep(self._poll_seconds)
             try:
@@ -116,6 +114,40 @@ class InferenceJobExecutor:
                 "Inference response fingerprint does not match the submitted request"
             )
         return response
+
+    def _raise_timeout(
+        self,
+        *,
+        request: InferenceJobRequest,
+        snapshot_status: QueueJobStatus,
+        transport_job_id: str,
+        last_poll_error: TransientQueueError | None,
+    ) -> None:
+        message = (
+            f"Inference job {request.job_id} did not finish within "
+            f"{self._timeout_seconds} seconds"
+        )
+        cancellation_error: Exception | None = None
+        if snapshot_status == QueueJobStatus.PENDING:
+            try:
+                self._queue.cancel(transport_job_id)
+                message += f"; cancelled pending transport job {transport_job_id}"
+            except Exception as exc:
+                cancellation_error = exc
+                message += (
+                    f"; failed to cancel pending transport job {transport_job_id}: {exc}"
+                )
+        elif snapshot_status == QueueJobStatus.RUNNING:
+            message += (
+                f"; transport job {transport_job_id} was already dispatched and was not cancelled"
+            )
+
+        if last_poll_error is not None:
+            message += f"; last queue polling error: {last_poll_error}"
+            raise TimeoutError(message) from last_poll_error
+        if cancellation_error is not None:
+            raise TimeoutError(message) from cancellation_error
+        raise TimeoutError(message)
 
     def _cached_response(self, request: InferenceJobRequest) -> InferenceJobResponse | None:
         stored = self._storage.stat(request.output.key)

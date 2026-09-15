@@ -54,12 +54,20 @@ class SaladJobQueueClient(JobQueueClient):
     def get(self, transport_job_id: str) -> QueueJobSnapshot:
         return self._snapshot(self._request(f"{self._base_url}/{transport_job_id}"))
 
+    def cancel(self, transport_job_id: str) -> None:
+        self._request(
+            f"{self._base_url}/{transport_job_id}",
+            method="DELETE",
+            expect_json=False,
+        )
+
     def _request(
         self,
         url: str,
         *,
         method: str = "GET",
         body: dict[str, Any] | None = None,
+        expect_json: bool = True,
     ) -> dict[str, Any]:
         payload = None if body is None else json.dumps(body).encode("utf-8")
         request = urllib.request.Request(
@@ -70,12 +78,12 @@ class SaladJobQueueClient(JobQueueClient):
                 "Salad-Api-Key": self._api_key,
                 "Accept": "application/json",
                 "Content-Type": "application/json",
-                "User-Agent": "ai-video-factory-inference/1.1",
+                "User-Agent": "ai-video-factory-inference/1.2",
             },
         )
         try:
             with urllib.request.urlopen(request, timeout=self._timeout_seconds) as response:
-                value = json.loads(response.read().decode("utf-8"))
+                raw = response.read()
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             message = f"Salad API returned HTTP {exc.code}: {detail}"
@@ -93,6 +101,12 @@ class SaladJobQueueClient(JobQueueClient):
                 raise TransientQueueError(message) from exc
             raise RuntimeError(message) from exc
 
+        if not expect_json:
+            return {}
+        try:
+            value = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Salad API returned invalid JSON") from exc
         if not isinstance(value, dict):
             raise RuntimeError("Salad API returned a non-object JSON payload")
         return value

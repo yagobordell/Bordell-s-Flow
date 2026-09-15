@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import urllib.request
+from typing import Any
 
 import pytest
 
@@ -60,5 +61,53 @@ def test_queue_submit_does_not_treat_timeout_as_safe_to_retry(
 
     with pytest.raises(RuntimeError, match="POST request timed out"):
         _client().submit(_request(), metadata={"phase": "4"})
+
+    assert calls == 1
+
+
+def test_queue_cancel_uses_delete_and_accepts_empty_202_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class EmptyResponse:
+        def __enter__(self) -> EmptyResponse:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b""
+
+    def succeed(request: urllib.request.Request, *, timeout: float) -> EmptyResponse:
+        captured["method"] = request.get_method()
+        captured["url"] = request.full_url
+        captured["timeout"] = timeout
+        return EmptyResponse()
+
+    monkeypatch.setattr(urllib.request, "urlopen", succeed)
+
+    _client().cancel("transport-001")
+
+    assert captured["method"] == "DELETE"
+    assert captured["url"].endswith("/queues/queue/jobs/transport-001")
+    assert captured["timeout"] == 0.01
+
+
+def test_queue_cancel_timeout_is_not_retried_implicitly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def fail(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fail)
+
+    with pytest.raises(RuntimeError, match="DELETE request timed out"):
+        _client().cancel("transport-001")
 
     assert calls == 1
