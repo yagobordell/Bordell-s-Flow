@@ -15,7 +15,7 @@ $ErrorActionPreference = "Stop"
 $Bootstrap = Join-Path $PSScriptRoot "start_salad_protected_smoke.ps1"
 $Manager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $Service = "ltx25"
-$ModelBootstrapTimeoutMinutes = 19
+$ModelBootstrapTimeoutMinutes = 45
 $RunningNotReadyReallocationThresholdMinutes = 60
 
 foreach ($RequiredPath in @($Bootstrap, $Manager)) {
