@@ -12,6 +12,7 @@ from .errors import (
     JobConflictError,
     JobExecutionError,
     LeaseLostError,
+    NonRetryableTaskError,
     UnsupportedTaskError,
 )
 from .ports import ClaimDecision, JobRepository, ObjectStorage, StoredObject
@@ -129,7 +130,13 @@ class InferenceWorker:
 
         try:
             response = self._execute_claimed(request, request_sha256, claim.attempt_count)
-        except (JobConflictError, InputIntegrityError, LeaseLostError, UnsupportedTaskError) as exc:
+        except (
+            JobConflictError,
+            InputIntegrityError,
+            LeaseLostError,
+            NonRetryableTaskError,
+            UnsupportedTaskError,
+        ) as exc:
             self._mark_failed(request, request_sha256, exc)
             raise
         except Exception as exc:
