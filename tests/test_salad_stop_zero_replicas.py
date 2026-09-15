@@ -1,6 +1,7 @@
 from pathlib import Path
 
 STACK = Path("scripts/manage_salad_stack.ps1")
+VALIDATION = Path("scripts/manage_salad_validation.ps1")
 GUARD = Path("scripts/ensure_salad_zero_replicas.ps1")
 
 
@@ -15,10 +16,26 @@ def test_stack_stop_runs_zero_replica_guard_after_worker_stop() -> None:
     assert stop_block.index('-WorkerAction "Stop"') < stop_block.index("Invoke-ZeroReplicaGuard")
 
 
-def test_zero_replica_guard_requires_stopped_and_patches_to_zero() -> None:
+def test_validation_stop_has_zero_replica_fallback_when_stack_stop_errors() -> None:
+    script = VALIDATION.read_text(encoding="utf-8")
+
+    assert '$ZeroReplicaGuard = Join-Path $PSScriptRoot "ensure_salad_zero_replicas.ps1"' in script
+    assert "function Invoke-StackStopWithGuardFallback" in script
+    fallback = script.split("function Invoke-StackStopWithGuardFallback", maxsplit=1)[1]
+    fallback = fallback.split("function Assert-Docker", maxsplit=1)[0]
+    assert 'Invoke-StackAction -StackAction "Stop"' in fallback
+    assert "Invoke-ZeroReplicaGuard" in fallback
+    assert "terminal stopped/replicas=0 state" in fallback
+    assert "zero-replica guard verified stopped/replicas=0" in fallback
+
+
+def test_zero_replica_guard_waits_for_stopped_then_patches_to_zero() -> None:
     script = GUARD.read_text(encoding="utf-8")
 
-    assert 'if ($Status -ne "stopped")' in script
+    assert "function Wait-ForStoppedGroup" in script
+    assert '$Status -eq "stopped" -and -not $Pending' in script
+    assert "did not reach stopped state before timeout" in script
+    assert "$Group = Wait-ForStoppedGroup -InitialGroup $Group" in script
     assert "@{ replicas = 0 }" in script
     assert "-Method Patch" in script
     assert 'if ($Status -eq "stopped" -and $Replicas -eq 0' in script
