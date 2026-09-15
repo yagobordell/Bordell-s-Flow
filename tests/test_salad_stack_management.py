@@ -133,8 +133,8 @@ def test_queue_repair_patches_autoscaling_without_reusing_group_name() -> None:
     assert "[switch]$AllowMissing" in script
     assert "current_queue_length" in script
     assert "function Get-ActiveQueueJobs" in script
-    assert "Cancel pending/running jobs" in script
-    assert "Terminal queue history will not block Prepare." in script
+    assert "Cancel pending jobs and allow running jobs to finish" in script
+    assert "Terminal queue history will" in script
     assert 'current_state.status -ne "stopped"' in script
     assert "function Set-ZeroReplicas" in script
     assert "function Repair-GroupConfiguration" in script
