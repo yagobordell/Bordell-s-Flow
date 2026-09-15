@@ -15,6 +15,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ai_video_factory.inference.contracts import InferenceJobRequest
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.ports import LocalArtifact
 
 BREEZE_TTS2_TASK = "audio.breeze_tts2.generate"
@@ -162,6 +163,8 @@ class BreezeTTS2Backend:
         *,
         model_root: Path,
         runtime_root: Path,
+        model_repository: str = BREEZE_TTS2_MODEL_ID,
+        model_revision: str = "main",
         device: str = "cuda",
         max_chunk_chars: int = 1200,
         inter_chunk_pause_ms: int = 120,
@@ -172,6 +175,8 @@ class BreezeTTS2Backend:
             raise ValueError("Breeze inter_chunk_pause_ms must be between 0 and 2000")
         self._model_root = model_root
         self._runtime_root = runtime_root
+        self._model_repository = model_repository
+        self._model_revision = model_revision
         self._device = device
         self._max_chunk_chars = max_chunk_chars
         self._inter_chunk_pause_ms = inter_chunk_pause_ms
@@ -186,14 +191,20 @@ class BreezeTTS2Backend:
     def runtime_loaded(self) -> bool:
         return self._runtime is not None
 
+    @property
+    def bootstrap_marker(self) -> Path:
+        return self._model_root / ".ready"
+
     def prepare(self) -> None:
         with self._lock:
+            self._validate_bootstrap()
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
             self._get_or_build_runtime(bindings)
 
     def ready(self) -> None:
         with self._lock:
+            self._validate_bootstrap()
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
             if self._runtime is None:
@@ -209,6 +220,7 @@ class BreezeTTS2Backend:
         raw_path = output_path.with_name(f"{output_path.stem}.raw.wav")
 
         with self._lock:
+            self._validate_bootstrap()
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
             runtime = self._get_or_build_runtime(bindings)
@@ -265,11 +277,23 @@ class BreezeTTS2Backend:
             self._bindings = _load_breeze_bindings()
         return self._bindings
 
+    def _validate_bootstrap(self) -> None:
+        if not self.bootstrap_marker.is_file():
+            raise ModelBootstrapPendingError(
+                f"Breeze model bootstrap marker is missing: {self.bootstrap_marker}"
+            )
+        marker = self.bootstrap_marker.read_text(encoding="utf-8").strip()
+        expected = f"{self._model_repository}@{self._model_revision}"
+        if marker != expected:
+            raise RuntimeError(
+                f"Breeze bootstrap marker {marker!r} does not match {expected!r}"
+            )
+
     def _validate_runtime(self, bindings: _BreezeBindings) -> None:
         if not self._model_root.is_dir():
-            raise FileNotFoundError(f"Breeze model directory does not exist: {self._model_root}")
+            raise RuntimeError(f"Breeze model directory does not exist: {self._model_root}")
         if not (self._model_root / "config.json").is_file():
-            raise FileNotFoundError(f"Breeze config.json is missing from {self._model_root}")
+            raise RuntimeError(f"Breeze config.json is missing from {self._model_root}")
         fast_config = self._runtime_root / "configs" / "fast.json"
         if not fast_config.is_file():
             raise FileNotFoundError(f"Breeze fast config is missing: {fast_config}")

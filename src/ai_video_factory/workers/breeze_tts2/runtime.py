@@ -13,6 +13,8 @@ from .settings import BreezeTTS2WorkerSettings
 def build_breeze_worker(settings: BreezeTTS2WorkerSettings):
     backend = BreezeTTS2Backend(
         model_root=settings.model_root,
+        model_repository=settings.model_repository,
+        model_revision=settings.model_revision,
         runtime_root=settings.runtime_root,
         device=settings.device,
         max_chunk_chars=settings.max_chunk_chars,

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from PIL import Image, ImageDraw
 
 import ai_video_factory.workers.ideogram4.model as ideogram_model
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectOutput
@@ -29,6 +30,7 @@ from ai_video_factory.workers.ideogram4 import (
     ideogram_application_job_id,
     ideogram_seed_for_job,
 )
+from ai_video_factory.workers.ideogram4.model import _looks_like_safety_placeholder
 
 
 def _caption() -> str:
@@ -78,6 +80,22 @@ def _request(task_name: str = IDEOGRAM4_KEYFRAME_TASK) -> InferenceJobRequest:
             "seed": ideogram_seed_for_job(job_id),
         },
     )
+
+
+def _blocked_placeholder(size: tuple[int, int]) -> Image.Image:
+    image = Image.new("RGB", size, (132, 133, 134))
+    draw = ImageDraw.Draw(image)
+    width, height = size
+    draw.rectangle(
+        (
+            round(width * 0.20),
+            round(height * 0.49),
+            round(width * 0.80),
+            round(height * 0.51),
+        ),
+        fill=(225, 225, 225),
+    )
+    return image
 
 
 def test_ideogram_runtime_imports_in_fresh_interpreter() -> None:
@@ -151,11 +169,22 @@ def test_ideogram_application_job_id_and_seed_are_deterministic() -> None:
         height=1536,
     )
 
+    assert IDEOGRAM4_GENERATION_PROFILE.endswith("-v2")
     assert first == second
     assert first.startswith("ideogram-keyframe-")
     assert reference.startswith("ideogram-reference-")
     assert reference != first
     assert ideogram_seed_for_job(first) == ideogram_seed_for_job(second)
+
+
+def test_ideogram_safety_placeholder_detector_is_conservative() -> None:
+    blocked = _blocked_placeholder((1024, 1024))
+    normal = Image.new("RGB", (1024, 1024), (40, 80, 120))
+    draw = ImageDraw.Draw(normal)
+    draw.rectangle((0, 512, 1024, 1024), fill=(210, 170, 120))
+
+    assert _looks_like_safety_placeholder(blocked) is True
+    assert _looks_like_safety_placeholder(normal) is False
 
 
 class FakeBackend:
@@ -207,6 +236,10 @@ def test_ideogram_backend_builds_once_and_uses_quality_preset(tmp_path: Path, mo
 
     class FakeImage:
         size = (1024, 1536)
+
+        def convert(self, mode: str) -> Image.Image:
+            assert mode == "RGB"
+            return Image.new("RGB", self.size, (50, 100, 150))
 
         def save(self, path: Path, *, format: str) -> None:
             state["saved_format"] = format
@@ -266,6 +299,73 @@ def test_ideogram_backend_builds_once_and_uses_quality_preset(tmp_path: Path, mo
     assert state["calls"][0][1]["num_steps"] == 48
     assert state["calls"][0][1]["raise_on_caption_issues"] is True
     assert state["saved_format"] == "PNG"
+
+
+def test_ideogram_backend_retries_safety_placeholder_with_next_seed(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    model_root = tmp_path / "ideogram4"
+    model_root.mkdir()
+    (model_root / ".ready").write_text(f"{IDEOGRAM4_MODEL_ID}@main\n", encoding="utf-8")
+    seeds: list[int] = []
+
+    class FakeCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+    class FakeTorch:
+        cuda = FakeCuda()
+        bfloat16 = "bfloat16"
+
+    class FakePipeline:
+        def __call__(self, caption: str, **kwargs: Any) -> list[Image.Image]:
+            seeds.append(kwargs["seed"])
+            if len(seeds) == 1:
+                return [_blocked_placeholder((1024, 1536))]
+            return [Image.new("RGB", (1024, 1536), (30, 90, 150))]
+
+    class FakePipelineType:
+        @classmethod
+        def from_pretrained(cls, **kwargs: Any) -> FakePipeline:
+            return FakePipeline()
+
+    class FakePipelineConfig:
+        def __init__(self, *, weights_repo: str) -> None:
+            self.weights_repo = weights_repo
+
+    monkeypatch.setattr(
+        ideogram_model,
+        "_load_ideogram_bindings",
+        lambda: ideogram_model._IdeogramBindings(
+            torch=FakeTorch,
+            pipeline_type=FakePipelineType,
+            pipeline_config_type=FakePipelineConfig,
+            presets={
+                "V4_QUALITY_48": SimpleNamespace(
+                    num_steps=48,
+                    guidance_schedule=(3.0,) * 3 + (7.0,) * 45,
+                    mu=0.0,
+                    std=1.5,
+                )
+            },
+        ),
+    )
+
+    backend = Ideogram4Backend(
+        model_root=model_root,
+        model_repository=IDEOGRAM4_MODEL_ID,
+        model_revision="main",
+    )
+    backend.prepare()
+    parameters = IdeogramImageParameters.model_validate(_request().parameters)
+    output = tmp_path / "output.png"
+    backend.generate(parameters=parameters, output_path=output)
+
+    assert seeds == [parameters.seed, (parameters.seed + 1) & 0x7FFFFFFF]
+    assert output.is_file()
+    assert not _looks_like_safety_placeholder(Image.open(output))
 
 
 def test_ideogram_worker_settings_and_salad_manifest() -> None:

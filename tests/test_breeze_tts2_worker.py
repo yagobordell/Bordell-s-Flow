@@ -3,12 +3,16 @@ import wave
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectOutput
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.workers.breeze_tts2 import (
     BREEZE_TTS2_GENERATION_PROFILE,
     BREEZE_TTS2_MODEL_ID,
     BREEZE_TTS2_TASK,
     BreezeSpeechTaskRunner,
+    BreezeTTS2Backend,
     BreezeTTS2WorkerSettings,
     breeze_application_job_id,
 )
@@ -90,6 +94,35 @@ def test_breeze_task_runner_writes_wav_artifact(tmp_path: Path) -> None:
     assert backend.calls[0]["parameters"].model_id == BREEZE_TTS2_MODEL_ID
 
 
+def test_breeze_backend_waits_for_atomic_bootstrap_marker(tmp_path: Path) -> None:
+    backend = BreezeTTS2Backend(
+        model_root=tmp_path / "breeze",
+        runtime_root=tmp_path / "runtime",
+        model_repository=BREEZE_TTS2_MODEL_ID,
+        model_revision="main",
+        device="cpu",
+    )
+
+    with pytest.raises(ModelBootstrapPendingError, match="bootstrap marker is missing"):
+        backend.prepare()
+
+
+def test_breeze_backend_rejects_wrong_bootstrap_revision(tmp_path: Path) -> None:
+    model_root = tmp_path / "breeze"
+    model_root.mkdir()
+    (model_root / ".ready").write_text("BreezeBlue/Breeze-TTS-2@old\n", encoding="utf-8")
+    backend = BreezeTTS2Backend(
+        model_root=model_root,
+        runtime_root=tmp_path / "runtime",
+        model_repository=BREEZE_TTS2_MODEL_ID,
+        model_revision="main",
+        device="cpu",
+    )
+
+    with pytest.raises(RuntimeError, match="does not match"):
+        backend.prepare()
+
+
 def test_breeze_text_chunking_preserves_content_order() -> None:
     text = "First sentence is short. Second sentence is also short. Third sentence ends here."
     chunks = _split_narration_text(text, 35)
@@ -128,6 +161,12 @@ def test_breeze_worker_settings_and_salad_manifest() -> None:
 def test_breeze_container_pins_runtime_and_targets_4090() -> None:
     dockerfile = Path("docker/workers/breeze-tts2/Dockerfile").read_text(encoding="utf-8")
     entrypoint = Path("docker/workers/breeze-tts2/entrypoint.sh").read_text(encoding="utf-8")
+    downloader = Path("docker/workers/breeze-tts2/download_models.sh").read_text(
+        encoding="utf-8"
+    )
+    runtime = Path("src/ai_video_factory/workers/breeze_tts2/runtime.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "BREEZE_RUNTIME_COMMIT=008f769016b0a24711becd7a4925030bc93f608c" in dockerfile
     assert "FLASH_ATTN_CUDA_ARCHS=89" in dockerfile
@@ -141,3 +180,8 @@ def test_breeze_container_pins_runtime_and_targets_4090() -> None:
     assert "COPY src /opt/factory/src" in dockerfile
     assert "COPY . /opt/factory" not in dockerfile
     assert "ai_video_factory.workers.breeze_tts2.runtime:app" in entrypoint
+    assert 'staging_root="${model_root}.staging"' in downloader
+    assert 'printf \'%s\\n\' "${expected_marker}" > "${staging_root}/.ready"' in downloader
+    assert 'mv "${staging_root}" "${model_root}"' in downloader
+    assert "model_repository=settings.model_repository" in runtime
+    assert "model_revision=settings.model_revision" in runtime
