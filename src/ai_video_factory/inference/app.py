@@ -14,6 +14,7 @@ from .errors import (
     JobExecutionError,
     LeaseLostError,
     ModelBootstrapPendingError,
+    NonRetryableTaskError,
     UnsupportedTaskError,
 )
 from .worker import InferenceWorker
@@ -123,7 +124,7 @@ def create_app(
             ) from exc
         except JobConflictError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-        except (InputIntegrityError, UnsupportedTaskError) as exc:
+        except (InputIntegrityError, NonRetryableTaskError, UnsupportedTaskError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(exc),
