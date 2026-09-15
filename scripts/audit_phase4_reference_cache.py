@@ -166,14 +166,24 @@ def audit_reference_cache(
 def _print_report(records: list[dict[str, Any]], *, metadata_only: bool) -> None:
     for record in records:
         print(
-            "{status:<7} entity={entity} job={job} size={size} content_type={content_type} "
-            "request_sha256={request_sha} artifact_sha256={artifact_sha}".format(
+            "{status:<7} entity={entity} expected_job={expected_job} stored_job={stored_job} "
+            "size={size} expected_content_type={expected_content_type} "
+            "stored_content_type={stored_content_type}".format(
                 status=str(record["status"]).upper(),
                 entity=record["entity_id"],
-                job=record["job_id"],
+                expected_job=record["job_id"],
+                stored_job=record["stored_job_id"],
                 size=record["stored_size_bytes"],
-                content_type=record["stored_content_type"],
-                request_sha=record["stored_request_sha256"],
+                expected_content_type=record["expected_content_type"],
+                stored_content_type=record["stored_content_type"],
+            )
+        )
+        print(
+            "        expected_request_sha256={expected_request_sha} "
+            "stored_request_sha256={stored_request_sha} "
+            "stored_artifact_sha256={artifact_sha}".format(
+                expected_request_sha=record["expected_request_sha256"],
+                stored_request_sha=record["stored_request_sha256"],
                 artifact_sha=record["stored_artifact_sha256"],
             )
         )
