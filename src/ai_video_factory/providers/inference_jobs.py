@@ -13,7 +13,7 @@ from ai_video_factory.inference.contracts import (
 from ai_video_factory.inference.ports import ObjectStorage, StoredObject
 from ai_video_factory.inference.storage import sha256_file
 
-from .job_queue import JobQueueClient, QueueJobStatus
+from .job_queue import JobQueueClient, QueueJobStatus, TransientQueueError
 
 
 class RemoteInferenceRejectedError(RuntimeError):
@@ -78,15 +78,26 @@ class InferenceJobExecutor:
 
         snapshot = self._queue.submit(request, metadata=metadata)
         deadline = time.monotonic() + self._timeout_seconds
+        last_poll_error: TransientQueueError | None = None
 
         while snapshot.status in {QueueJobStatus.PENDING, QueueJobStatus.RUNNING}:
             if time.monotonic() >= deadline:
-                raise TimeoutError(
+                message = (
                     f"Inference job {request.job_id} did not finish within "
                     f"{self._timeout_seconds} seconds"
                 )
+                if last_poll_error is not None:
+                    message += f"; last queue polling error: {last_poll_error}"
+                    raise TimeoutError(message) from last_poll_error
+                raise TimeoutError(message)
+
             time.sleep(self._poll_seconds)
-            snapshot = self._queue.get(snapshot.id)
+            try:
+                snapshot = self._queue.get(snapshot.id)
+                last_poll_error = None
+            except TransientQueueError as exc:
+                last_poll_error = exc
+                continue
 
         if snapshot.status != QueueJobStatus.SUCCEEDED:
             raise RuntimeError(
