@@ -121,7 +121,7 @@ $GroupUrl = "$Base/containers/$GroupName"
 $Headers = @{
     "Salad-Api-Key" = Get-Setting -Name "SALAD_API_KEY" -Prompt "Salad API key" -Secret
     "Accept" = "application/json"
-    "User-Agent" = "ai-video-factory-zero-replicas/1.0"
+    "User-Agent" = "ai-video-factory-zero-replicas/1.1"
 }
 
 function Get-Group {
@@ -143,6 +143,42 @@ function Get-Group {
     }
 }
 
+function Wait-ForStoppedGroup {
+    param([Parameter(Mandatory)][object]$InitialGroup)
+
+    $Group = $InitialGroup
+    $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    while ($true) {
+        $Status = [string]$Group.current_state.status
+        $Replicas = [int]$Group.replicas
+        $Pending = [bool]$Group.pending_change
+
+        if ($Status -eq "stopped" -and -not $Pending) {
+            return $Group
+        }
+        if ((Get-Date) -ge $Deadline) {
+            throw (
+                "Container group '$GroupName' did not reach stopped state before timeout. " +
+                "Current status=$Status replicas=$Replicas pending=$Pending."
+            )
+        }
+
+        Write-Host (
+            "{0} service={1} waiting-for-stopped status={2} replicas={3} pending={4}" -f `
+            (Get-Date -Format "HH:mm:ss"),
+            $Service,
+            $Status,
+            $Replicas,
+            $Pending
+        )
+        Start-Sleep -Seconds 5
+        $Group = Get-Group
+        if ($null -eq $Group) {
+            throw "Container group '$GroupName' disappeared while waiting for stopped state."
+        }
+    }
+}
+
 $Group = Get-Group
 if ($null -eq $Group) {
     Write-Host "$Service worker group does not exist; zero-replica guard not needed." -ForegroundColor Green
@@ -150,10 +186,11 @@ if ($null -eq $Group) {
 }
 
 $Status = [string]$Group.current_state.status
-if ($Status -ne "stopped") {
-    throw (
-        "Zero-replica guard requires '$GroupName' to be stopped. Current status=$Status."
-    )
+if ($Status -ne "stopped" -or [bool]$Group.pending_change) {
+    Write-Host (
+        "Waiting for '$GroupName' to settle as stopped before normalizing replicas..."
+    ) -ForegroundColor Cyan
+    $Group = Wait-ForStoppedGroup -InitialGroup $Group
 }
 
 if ([int]$Group.replicas -eq 0) {

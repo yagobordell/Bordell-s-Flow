@@ -16,6 +16,10 @@ class QueueJobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class TransientQueueError(RuntimeError):
+    """Queue transport/API failure that is safe to retry while polling an existing job."""
+
+
 @dataclass(frozen=True, slots=True)
 class QueueJobSnapshot:
     id: str

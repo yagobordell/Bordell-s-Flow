@@ -11,7 +11,11 @@ from ai_video_factory.providers.inference_jobs import (
     InferenceJobExecutor,
     RemoteInferenceRejectedError,
 )
-from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
+from ai_video_factory.providers.job_queue import (
+    QueueJobSnapshot,
+    QueueJobStatus,
+    TransientQueueError,
+)
 
 
 class FakeStorage:
@@ -44,6 +48,45 @@ class FakeQueue:
 
     def get(self, transport_job_id: str) -> QueueJobSnapshot:
         return self.snapshot
+
+
+class TransientThenSuccessQueue:
+    def __init__(self, failures: int = 2) -> None:
+        self.failures = failures
+        self.submits = 0
+        self.gets = 0
+        self.request: InferenceJobRequest | None = None
+
+    def submit(self, request: InferenceJobRequest, *, metadata: dict[str, str]) -> QueueJobSnapshot:
+        self.submits += 1
+        self.request = request
+        return QueueJobSnapshot(id="transport-001", status=QueueJobStatus.PENDING)
+
+    def get(self, transport_job_id: str) -> QueueJobSnapshot:
+        self.gets += 1
+        if self.gets <= self.failures:
+            raise TransientQueueError("temporary Salad read timeout")
+        assert self.request is not None
+        request = self.request
+        return QueueJobSnapshot(
+            id=transport_job_id,
+            status=QueueJobStatus.SUCCEEDED,
+            output={
+                "schema_version": "1",
+                "job_id": request.job_id,
+                "status": "succeeded",
+                "request_sha256": request.fingerprint(),
+                "output": {
+                    "key": request.output.key,
+                    "content_type": request.output.content_type,
+                    "size_bytes": 123,
+                    "sha256": "a" * 64,
+                    "etag": "etag-1",
+                },
+                "attempt_count": 1,
+                "replayed": False,
+            },
+        )
 
 
 def _request() -> InferenceJobRequest:
@@ -119,3 +162,19 @@ def test_executor_reuses_verified_object_storage_artifact_without_queue_submissi
     assert response.output.size_bytes == 123
     assert response.replayed is True
     assert queue.submits == 0
+
+
+def test_executor_keeps_polling_after_transient_queue_read_failures() -> None:
+    queue = TransientThenSuccessQueue(failures=2)
+    executor = InferenceJobExecutor(
+        queue=queue,  # type: ignore[arg-type]
+        storage=FakeStorage(),
+        poll_seconds=0.001,
+        timeout_seconds=1,
+    )
+
+    response = executor.execute(_request(), metadata={"phase": "4"})
+
+    assert response.status == "succeeded"
+    assert queue.submits == 1
+    assert queue.gets == 3

@@ -28,6 +28,7 @@ $StackManager = Join-Path $PSScriptRoot "manage_salad_stack.ps1"
 $ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
 $ProtectedSmokeBootstrap = Join-Path $PSScriptRoot "start_salad_protected_smoke.ps1"
 $ScaleToZeroRestorer = Join-Path $PSScriptRoot "restore_salad_scale_to_zero.ps1"
+$ZeroReplicaGuard = Join-Path $PSScriptRoot "ensure_salad_zero_replicas.ps1"
 $ManifestPath = Join-Path $RepoRoot "deploy\salad\services.json"
 $ComposePath = $ComposeFile
 if (-not [IO.Path]::IsPathRooted($ComposePath)) {
@@ -190,6 +191,49 @@ function Invoke-ScaleToZeroRestore {
     }
 }
 
+function Invoke-ZeroReplicaGuard {
+    if (-not (Test-Path -LiteralPath $ZeroReplicaGuard -PathType Leaf)) {
+        throw "Zero-replica guard not found: $ZeroReplicaGuard"
+    }
+
+    foreach ($Name in Get-SelectedServiceNames) {
+        Write-Host "=== Salad Zero-Replica Guard : $Name ===" -ForegroundColor Cyan
+        $Arguments = @{
+            Service = $Name
+            EnvFile = $EnvFile
+        }
+        if ($NonInteractive) {
+            $Arguments["NonInteractive"] = $true
+        }
+        & $ZeroReplicaGuard @Arguments
+        $CallSucceeded = $?
+        if (-not $CallSucceeded) {
+            throw "Salad zero-replica guard failed for service '$Name'."
+        }
+    }
+}
+
+function Invoke-ZeroReplicaFallback {
+    param([Parameter(Mandatory)][object]$StopFailure)
+
+    Write-Warning (
+        "Salad stack Stop reported an error. The zero-replica guard will still verify the " +
+        "terminal stopped/replicas=0 state. Error: $($StopFailure.Exception.Message)"
+    )
+    try {
+        Invoke-ZeroReplicaGuard
+    }
+    catch {
+        throw (
+            "Salad Stop failed and the zero-replica fallback also failed. Stop error: " +
+            "$($StopFailure.Exception.Message) Guard error: $($_.Exception.Message)"
+        )
+    }
+    Write-Warning (
+        "Salad Stop reported an error, but the zero-replica guard verified stopped/replicas=0."
+    )
+}
+
 function Assert-Docker {
     & docker version *> $null
     if ($LASTEXITCODE -ne 0) {
@@ -240,7 +284,12 @@ function Invoke-ProtectedSmoke {
             Invoke-ScaleToZeroRestore
         }
         finally {
-            Invoke-StackAction -StackAction "Stop"
+            try {
+                Invoke-StackAction -StackAction "Stop"
+            }
+            catch {
+                Invoke-ZeroReplicaFallback -StopFailure $_
+            }
         }
     }
 }
@@ -250,7 +299,12 @@ function Invoke-SafeStop {
         Invoke-ScaleToZeroRestore
     }
     finally {
-        Invoke-StackAction -StackAction "Stop"
+        try {
+            Invoke-StackAction -StackAction "Stop"
+        }
+        catch {
+            Invoke-ZeroReplicaFallback -StopFailure $_
+        }
     }
 }
 

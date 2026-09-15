@@ -56,6 +56,7 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     assert "start_salad_scale_to_zero.ps1" in text
     assert "start_salad_protected_smoke.ps1" in text
     assert "restore_salad_scale_to_zero.ps1" in text
+    assert "ensure_salad_zero_replicas.ps1" in text
     assert '$CallSucceeded = $?' in text
     assert 'if (-not $CallSucceeded)' in text
     assert '"Prepare" { Invoke-StackAction -StackAction "Prepare" }' in text
@@ -100,6 +101,7 @@ def test_protected_smoke_bootstraps_through_manual_replica_and_real_instance() -
     assert "Invoke-ScaleToZeroRestore" in protected
     assert "finally" in protected
     assert 'Invoke-StackAction -StackAction "Stop"' in protected
+    assert "Invoke-ZeroReplicaFallback -StopFailure $_" in protected
     assert protected.index("Invoke-ProtectedSmokeBootstrap") < protected.index("Invoke-Smoke")
     assert protected.index("Invoke-Smoke") < protected.index("Invoke-ScaleToZeroRestore")
     assert protected.index("Invoke-ScaleToZeroRestore") < protected.index(
@@ -122,6 +124,7 @@ def test_scale_to_zero_restore_reinstates_manifest_autoscaler() -> None:
     )[0]
     assert "Invoke-ScaleToZeroRestore" in safe_stop
     assert 'Invoke-StackAction -StackAction "Stop"' in safe_stop
+    assert "Invoke-ZeroReplicaFallback -StopFailure $_" in safe_stop
     assert safe_stop.index("Invoke-ScaleToZeroRestore") < safe_stop.index(
         'Invoke-StackAction -StackAction "Stop"'
     )
