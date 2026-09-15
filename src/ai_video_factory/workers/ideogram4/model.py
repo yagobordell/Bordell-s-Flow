@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, Self
 
+from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ai_video_factory.inference.contracts import InferenceJobRequest
@@ -19,9 +20,11 @@ IDEOGRAM4_REFERENCE_TASK = "image.ideogram4.reference"
 IDEOGRAM4_KEYFRAME_TASK = "image.ideogram4.keyframe"
 IDEOGRAM4_MODEL_ID = "ideogram-ai/ideogram-4-nf4"
 IDEOGRAM4_SAMPLER_PRESET = "V4_QUALITY_48"
-IDEOGRAM4_GENERATION_PROFILE = "ideogram4-nf4-v4-quality-48-v1"
+IDEOGRAM4_GENERATION_PROFILE = "ideogram4-nf4-v4-quality-48-v2"
 
 _SUPPORTED_TASKS = frozenset({IDEOGRAM4_REFERENCE_TASK, IDEOGRAM4_KEYFRAME_TASK})
+_MAX_GENERATION_ATTEMPTS = 3
+_SAFETY_SAMPLE_SIZE = (64, 64)
 
 
 class IdeogramImageParameters(BaseModel):
@@ -131,6 +134,40 @@ def ideogram_seed_for_job(job_id: str) -> int:
     return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
 
 
+def _looks_like_safety_placeholder(image: Image.Image) -> bool:
+    """Detect Ideogram's documented gray safety-filter placeholder without OCR."""
+
+    sample = image.convert("RGB").resize(_SAFETY_SAMPLE_SIZE)
+    pixels = list(sample.getdata())
+    if not pixels:
+        return False
+
+    neutral_midgray = 0
+    bright_neutral = 0
+    dark = 0
+    for red, green, blue in pixels:
+        low = min(red, green, blue)
+        high = max(red, green, blue)
+        luminance = (red + green + blue) / 3
+        chroma = high - low
+        if 125 <= luminance <= 145 and chroma <= 10:
+            neutral_midgray += 1
+        if luminance >= 180 and chroma <= 20:
+            bright_neutral += 1
+        if luminance < 100:
+            dark += 1
+
+    total = len(pixels)
+    midgray_fraction = neutral_midgray / total
+    bright_fraction = bright_neutral / total
+    dark_fraction = dark / total
+    return (
+        midgray_fraction >= 0.90
+        and 0.001 <= bright_fraction <= 0.05
+        and dark_fraction <= 0.01
+    )
+
+
 class Ideogram4Backend:
     """Resident Ideogram 4 NF4 runtime using the V4_QUALITY_48 sampler."""
 
@@ -182,27 +219,37 @@ class Ideogram4Backend:
         output_path: Path,
     ) -> None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.unlink(missing_ok=True)
         with self._lock:
             bindings = self._get_bindings()
             pipeline = self._get_or_build_pipeline(bindings)
             preset = bindings.presets[self._sampler_preset]
-            images = pipeline(
-                parameters.caption,
-                height=parameters.height,
-                width=parameters.width,
-                num_steps=preset.num_steps,
-                guidance_schedule=preset.guidance_schedule,
-                mu=preset.mu,
-                std=preset.std,
-                seed=parameters.seed,
-                raise_on_caption_issues=True,
-            )
-            if len(images) != 1:
-                raise RuntimeError("Ideogram 4 did not return exactly one image")
-            image = images[0]
-            if image.size != (parameters.width, parameters.height):
-                raise RuntimeError("Ideogram 4 returned an image with unexpected dimensions")
-            image.save(output_path, format="PNG")
+            for attempt in range(_MAX_GENERATION_ATTEMPTS):
+                seed = (parameters.seed + attempt) & 0x7FFFFFFF
+                images = pipeline(
+                    parameters.caption,
+                    height=parameters.height,
+                    width=parameters.width,
+                    num_steps=preset.num_steps,
+                    guidance_schedule=preset.guidance_schedule,
+                    mu=preset.mu,
+                    std=preset.std,
+                    seed=seed,
+                    raise_on_caption_issues=True,
+                )
+                if len(images) != 1:
+                    raise RuntimeError("Ideogram 4 did not return exactly one image")
+                image = images[0]
+                if image.size != (parameters.width, parameters.height):
+                    raise RuntimeError("Ideogram 4 returned an image with unexpected dimensions")
+                if _looks_like_safety_placeholder(image):
+                    continue
+                image.save(output_path, format="PNG")
+                return
+
+        raise RuntimeError(
+            "Ideogram 4 safety filter blocked all deterministic generation attempts"
+        )
 
     def _get_bindings(self) -> _IdeogramBindings:
         if self._bindings is None:
