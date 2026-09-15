@@ -206,7 +206,10 @@ def _reference_recovery_caption(caption: str, *, task_name: str) -> str:
             flags=re.IGNORECASE,
         )
     neutral = re.sub(r"\bred-sand desert\b", "desert", neutral, flags=re.IGNORECASE)
-    neutral = neutral.replace("observatory’s", "observatory").replace("observatory's", "observatory")
+    neutral = neutral.replace("observatory’s", "observatory").replace(
+        "observatory's",
+        "observatory",
+    )
     neutral = re.sub(r"\s+", " ", neutral).strip(" ,")
     neutral = re.sub(r"^A asphalt\b", "An asphalt", neutral)
     neutral = re.sub(r"\ban desert\b", "a desert", neutral, flags=re.IGNORECASE)
