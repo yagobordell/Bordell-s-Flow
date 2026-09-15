@@ -25,6 +25,42 @@ class RemoteInferenceRejectedError(RuntimeError):
         super().__init__(f"Inference job {job_id} was rejected by worker: {detail}")
 
 
+def cached_inference_response(
+    storage: ObjectStorage,
+    request: InferenceJobRequest,
+) -> InferenceJobResponse | None:
+    """Return a verified cached response using only object-storage metadata reads."""
+
+    stored = storage.stat(request.output.key)
+    if stored is None:
+        return None
+
+    request_sha256 = request.fingerprint()
+    artifact_sha256 = stored.metadata.get("artifact-sha256")
+    if (
+        stored.metadata.get("job-id") != request.job_id
+        or stored.metadata.get("request-sha256") != request_sha256
+        or artifact_sha256 is None
+    ):
+        raise RuntimeError(
+            f"Cached inference output metadata does not match request {request.job_id}"
+        )
+    if stored.content_type != request.output.content_type:
+        raise RuntimeError(
+            f"Cached inference output content type does not match request {request.job_id}"
+        )
+    if stored.size_bytes < 1:
+        raise RuntimeError(f"Cached inference output is empty for request {request.job_id}")
+
+    return InferenceJobResponse(
+        job_id=request.job_id,
+        request_sha256=request_sha256,
+        output=_artifact_from_stored(stored, artifact_sha256),
+        attempt_count=1,
+        replayed=True,
+    )
+
+
 class InferenceJobExecutor:
     """Synchronous submit/poll/download client shared by Salad-backed providers."""
 
@@ -72,7 +108,7 @@ class InferenceJobExecutor:
         *,
         metadata: Mapping[str, str],
     ) -> InferenceJobResponse:
-        cached = self._cached_response(request)
+        cached = cached_inference_response(self._storage, request)
         if cached is not None:
             return cached
 
@@ -148,36 +184,6 @@ class InferenceJobExecutor:
         if cancellation_error is not None:
             raise TimeoutError(message) from cancellation_error
         raise TimeoutError(message)
-
-    def _cached_response(self, request: InferenceJobRequest) -> InferenceJobResponse | None:
-        stored = self._storage.stat(request.output.key)
-        if stored is None:
-            return None
-
-        request_sha256 = request.fingerprint()
-        artifact_sha256 = stored.metadata.get("artifact-sha256")
-        if (
-            stored.metadata.get("job-id") != request.job_id
-            or stored.metadata.get("request-sha256") != request_sha256
-            or artifact_sha256 is None
-        ):
-            raise RuntimeError(
-                f"Cached inference output metadata does not match request {request.job_id}"
-            )
-        if stored.content_type != request.output.content_type:
-            raise RuntimeError(
-                f"Cached inference output content type does not match request {request.job_id}"
-            )
-        if stored.size_bytes < 1:
-            raise RuntimeError(f"Cached inference output is empty for request {request.job_id}")
-
-        return InferenceJobResponse(
-            job_id=request.job_id,
-            request_sha256=request_sha256,
-            output=_artifact_from_stored(stored, artifact_sha256),
-            attempt_count=1,
-            replayed=True,
-        )
 
     def download_output(self, response: InferenceJobResponse, destination: Path) -> None:
         stored = self._storage.download(response.output.key, destination)
