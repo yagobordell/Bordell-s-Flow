@@ -213,20 +213,13 @@ function Invoke-ZeroReplicaGuard {
     }
 }
 
-function Invoke-StackStopWithGuardFallback {
-    $StopFailure = $null
-    try {
-        Invoke-StackAction -StackAction "Stop"
-        return
-    }
-    catch {
-        $StopFailure = $_
-        Write-Warning (
-            "Salad stack Stop reported an error. The zero-replica guard will still verify the " +
-            "terminal stopped/replicas=0 state. Error: $($_.Exception.Message)"
-        )
-    }
+function Invoke-ZeroReplicaFallback {
+    param([Parameter(Mandatory)][object]$StopFailure)
 
+    Write-Warning (
+        "Salad stack Stop reported an error. The zero-replica guard will still verify the " +
+        "terminal stopped/replicas=0 state. Error: $($StopFailure.Exception.Message)"
+    )
     try {
         Invoke-ZeroReplicaGuard
     }
@@ -236,7 +229,6 @@ function Invoke-StackStopWithGuardFallback {
             "$($StopFailure.Exception.Message) Guard error: $($_.Exception.Message)"
         )
     }
-
     Write-Warning (
         "Salad Stop reported an error, but the zero-replica guard verified stopped/replicas=0."
     )
@@ -278,15 +270,6 @@ function Invoke-Smoke {
     Write-Host "Real Salad smoke passed for: $Service" -ForegroundColor Green
 }
 
-function Invoke-SafeStop {
-    try {
-        Invoke-ScaleToZeroRestore
-    }
-    finally {
-        Invoke-StackStopWithGuardFallback
-    }
-}
-
 function Invoke-ProtectedSmoke {
     if ($Service -eq "all") {
         throw "ProtectedSmoke requires one explicit service so GPU workers stay serialized."
@@ -297,7 +280,31 @@ function Invoke-ProtectedSmoke {
         Invoke-Smoke
     }
     finally {
-        Invoke-SafeStop
+        try {
+            Invoke-ScaleToZeroRestore
+        }
+        finally {
+            try {
+                Invoke-StackAction -StackAction "Stop"
+            }
+            catch {
+                Invoke-ZeroReplicaFallback -StopFailure $_
+            }
+        }
+    }
+}
+
+function Invoke-SafeStop {
+    try {
+        Invoke-ScaleToZeroRestore
+    }
+    finally {
+        try {
+            Invoke-StackAction -StackAction "Stop"
+        }
+        catch {
+            Invoke-ZeroReplicaFallback -StopFailure $_
+        }
     }
 }
 
