@@ -86,7 +86,7 @@ async def main() -> None:
     if not args.references_file.is_file():
         raise SystemExit(f"Visual references file not found: {args.references_file}")
 
-    raw: Any = json.loads(args.references_file.read_text(encoding="utf-8"))
+    raw: Any = json.loads(args.references_file.read_text(encoding="utf-8-sig"))
     if not isinstance(raw, list):
         raise SystemExit("Visual references file must contain a JSON array.")
 
