@@ -71,13 +71,19 @@ class InferenceJobExecutor:
         storage: ObjectStorage,
         poll_seconds: float = 5.0,
         timeout_seconds: float = 3600.0,
+        pending_timeout_seconds: float | None = None,
     ) -> None:
         if poll_seconds <= 0 or timeout_seconds <= 0:
             raise ValueError("poll_seconds and timeout_seconds must be positive")
+        if pending_timeout_seconds is not None and pending_timeout_seconds <= 0:
+            raise ValueError("pending_timeout_seconds must be positive")
         self._queue = queue
         self._storage = storage
         self._poll_seconds = poll_seconds
         self._timeout_seconds = timeout_seconds
+        self._pending_timeout_seconds = (
+            timeout_seconds if pending_timeout_seconds is None else pending_timeout_seconds
+        )
 
     @property
     def storage(self) -> ObjectStorage:
@@ -113,17 +119,34 @@ class InferenceJobExecutor:
             return cached
 
         snapshot = self._queue.submit(request, metadata=metadata)
-        deadline = time.monotonic() + self._timeout_seconds
+        pending_deadline = time.monotonic() + self._pending_timeout_seconds
+        running_deadline: float | None = None
         last_poll_error: TransientQueueError | None = None
 
         while snapshot.status in {QueueJobStatus.PENDING, QueueJobStatus.RUNNING}:
-            if time.monotonic() >= deadline:
-                self._raise_timeout(
-                    request=request,
-                    snapshot_status=snapshot.status,
-                    transport_job_id=snapshot.id,
-                    last_poll_error=last_poll_error,
-                )
+            now = time.monotonic()
+            if snapshot.status == QueueJobStatus.PENDING:
+                if now >= pending_deadline:
+                    self._raise_timeout(
+                        request=request,
+                        snapshot_status=snapshot.status,
+                        transport_job_id=snapshot.id,
+                        last_poll_error=last_poll_error,
+                        phase="pending",
+                        timeout_seconds=self._pending_timeout_seconds,
+                    )
+            else:
+                if running_deadline is None:
+                    running_deadline = now + self._timeout_seconds
+                if now >= running_deadline:
+                    self._raise_timeout(
+                        request=request,
+                        snapshot_status=snapshot.status,
+                        transport_job_id=snapshot.id,
+                        last_poll_error=last_poll_error,
+                        phase="running",
+                        timeout_seconds=self._timeout_seconds,
+                    )
 
             time.sleep(self._poll_seconds)
             try:
@@ -158,10 +181,12 @@ class InferenceJobExecutor:
         snapshot_status: QueueJobStatus,
         transport_job_id: str,
         last_poll_error: TransientQueueError | None,
+        phase: str,
+        timeout_seconds: float,
     ) -> None:
         message = (
-            f"Inference job {request.job_id} did not finish within "
-            f"{self._timeout_seconds} seconds"
+            f"Inference job {request.job_id} exceeded the {phase} timeout of "
+            f"{timeout_seconds} seconds"
         )
         cancellation_error: Exception | None = None
         if snapshot_status == QueueJobStatus.PENDING:

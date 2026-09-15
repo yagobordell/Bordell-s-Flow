@@ -58,6 +58,13 @@ def parse_args() -> argparse.Namespace:
         "--timeout-seconds",
         type=float,
         default=settings.inference_client_timeout_seconds,
+        help="Maximum seconds after Salad dispatches the job to a worker.",
+    )
+    parser.add_argument(
+        "--pending-timeout-seconds",
+        type=float,
+        default=settings.inference_client_timeout_seconds,
+        help="Maximum seconds for queue wait, cold start, and model bootstrap before dispatch.",
     )
     parser.add_argument(
         "--output-dir",
@@ -111,6 +118,7 @@ async def main() -> None:
         storage=storage,
         poll_seconds=args.poll_seconds,
         timeout_seconds=args.timeout_seconds,
+        pending_timeout_seconds=args.pending_timeout_seconds,
     )
     provider = SaladIdeogramImageProvider(
         executor=executor,
