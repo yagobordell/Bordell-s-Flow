@@ -62,7 +62,11 @@ def test_executor_surfaces_terminal_worker_detail_without_pydantic_validation_er
         QueueJobSnapshot(
             id="transport-001",
             status=QueueJobStatus.SUCCEEDED,
-            output={"detail": "Ideogram 4 safety filter blocked all deterministic caption variants"},
+            output={
+                "detail": (
+                    "Ideogram 4 safety filter blocked all deterministic caption variants"
+                )
+            },
         )
     )
     executor = InferenceJobExecutor(
