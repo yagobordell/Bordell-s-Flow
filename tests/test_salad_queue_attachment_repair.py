@@ -30,14 +30,19 @@ def test_queue_attachment_preflight_allows_missing_queue() -> None:
     assert "Job queue '$QueueName' is missing. Run Prepare first." in text
 
 
-def test_queue_attachment_preflight_blocks_only_active_jobs() -> None:
+def test_queue_attachment_preflight_always_enumerates_active_jobs() -> None:
     text = REPAIR.read_text(encoding="utf-8")
     assert "function Get-ActiveQueueJobs" in text
     assert 'page_size=$PageSize' in text
+    assert "$PageSize = 100" in text
     assert '@("pending", "running")' in text
     assert "$ActiveJobs = @(Get-ActiveQueueJobs)" in text
+    assert "if ($ActiveJobs.Count -ne 0)" in text
+    assert "Write-ActiveQueueJobs -Jobs $ActiveJobs" in text
+    assert "active transport={0} status={1} application={2}" in text
     assert "contains $($ActiveJobs.Count) active job(s)" in text
-    assert "Terminal queue history will not block Prepare." in text
+    assert "exhaustive pagination found no pending/running jobs" in text
+    assert "Terminal queue history will" in text
 
 
 def test_stack_prepare_runs_queue_attachment_repair() -> None:

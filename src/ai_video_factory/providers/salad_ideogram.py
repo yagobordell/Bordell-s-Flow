@@ -60,12 +60,16 @@ class SaladIdeogramImageProvider:
         executor: InferenceJobExecutor,
         temp_dir: Path,
         task_name: str,
+        max_concurrency: int = 1,
     ) -> None:
         if task_name not in _SUPPORTED_TASKS:
             raise ValueError(f"Unsupported Ideogram provider task: {task_name}")
+        if max_concurrency < 1:
+            raise ValueError("Ideogram provider max_concurrency must be at least 1")
         self._executor = executor
         self._temp_dir = temp_dir
         self._task_name = task_name
+        self._generation_gate = asyncio.Semaphore(max_concurrency)
 
     async def generate_image(
         self,
@@ -76,14 +80,15 @@ class SaladIdeogramImageProvider:
         quality: ImageQuality,
         output_format: ImageFormat,
     ) -> GeneratedImage:
-        return await asyncio.to_thread(
-            self._generate_image_sync,
-            prompt=prompt,
-            model=model,
-            size=size,
-            quality=quality,
-            output_format=output_format,
-        )
+        async with self._generation_gate:
+            return await asyncio.to_thread(
+                self._generate_image_sync,
+                prompt=prompt,
+                model=model,
+                size=size,
+                quality=quality,
+                output_format=output_format,
+            )
 
     def _generate_image_sync(
         self,

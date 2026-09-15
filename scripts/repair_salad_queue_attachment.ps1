@@ -89,7 +89,7 @@ function Get-Headers {
     return @{
         "Salad-Api-Key" = Get-Setting -Name "SALAD_API_KEY" -Prompt "Salad API key" -Secret
         "Accept" = "application/json"
-        "User-Agent" = "ai-video-factory-queue-repair/1.7"
+        "User-Agent" = "ai-video-factory-queue-repair/1.8"
     }
 }
 
@@ -143,7 +143,7 @@ function Get-Queue {
 function Get-ActiveQueueJobs {
     $ActiveJobs = @()
     $Page = 1
-    $PageSize = 25
+    $PageSize = 100
 
     while ($true) {
         if ($Page -gt 100) {
@@ -165,6 +165,23 @@ function Get-ActiveQueueJobs {
     }
 
     return @($ActiveJobs)
+}
+
+function Write-ActiveQueueJobs {
+    param([Parameter(Mandatory)][object[]]$Jobs)
+
+    foreach ($Job in $Jobs) {
+        $ApplicationJobId = ""
+        if ($null -ne $Job.input -and $null -ne $Job.input.PSObject.Properties["job_id"]) {
+            $ApplicationJobId = [string]$Job.input.job_id
+        }
+        Write-Warning (
+            "active transport={0} status={1} application={2}" -f `
+            [string]$Job.id,
+            [string]$Job.status,
+            $ApplicationJobId
+        )
+    }
 }
 
 function Test-QueueAttachment {
@@ -348,19 +365,25 @@ if ($null -eq $Queue) {
     }
     throw "Job queue '$QueueName' is missing. Run Prepare first."
 }
+
+$ActiveJobs = @(Get-ActiveQueueJobs)
+if ($ActiveJobs.Count -ne 0) {
+    Write-ActiveQueueJobs -Jobs $ActiveJobs
+    throw (
+        "Queue '$QueueName' contains $($ActiveJobs.Count) active job(s) " +
+        "(current_queue_length=$($Queue.current_queue_length)). Cancel pending jobs and allow " +
+        "running jobs to finish before changing the container group."
+    )
+}
 if ([int]$Queue.current_queue_length -ne 0) {
-    $ActiveJobs = @(Get-ActiveQueueJobs)
-    if ($ActiveJobs.Count -ne 0) {
-        throw (
-            "Queue '$QueueName' contains $($ActiveJobs.Count) active job(s) " +
-            "(current_queue_length=$($Queue.current_queue_length)). Cancel pending/running jobs " +
-            "before Prepare can change the container group."
-        )
-    }
     Write-Warning (
         "Queue '$QueueName' reports current_queue_length=$($Queue.current_queue_length), " +
-        "but no pending/running jobs exist. Terminal queue history will not block Prepare."
+        "but exhaustive pagination found no pending/running jobs. Terminal queue history will " +
+        "not block Prepare."
     )
+}
+else {
+    Write-Host "Queue '$QueueName' has no pending/running jobs." -ForegroundColor Green
 }
 
 $Group = Try-Get-Group

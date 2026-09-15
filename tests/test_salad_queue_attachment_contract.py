@@ -17,8 +17,9 @@ def test_stopped_group_can_repair_autoscaler_in_place() -> None:
 
     assert "[switch]$AllowMissing" in script
     assert "has no existing container group; preflight repair not needed" in script
-    assert "Cancel pending/running jobs" in script
-    assert "Terminal queue history will not block Prepare." in script
+    assert "Cancel pending jobs and allow " in script
+    assert "running jobs to finish before changing the container group." in script
+    assert "Terminal queue history will" in script
     assert "function Repair-GroupConfiguration" in script
     assert "Repairing Job Queue autoscaling in place" in script
     assert "queue_connection = New-QueueConnection" in script

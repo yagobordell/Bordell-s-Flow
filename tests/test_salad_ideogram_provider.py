@@ -1,5 +1,7 @@
 import asyncio
 import json
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -91,6 +93,27 @@ class SafetyThenSuccessExecutor(FakeExecutor):
         return object()
 
 
+class ConcurrencyTrackingExecutor(FakeExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.active = 0
+        self.max_active = 0
+        self._lock = threading.Lock()
+
+    def execute(self, request: Any, *, metadata: dict[str, str]) -> object:
+        with self._lock:
+            self.requests.append(request)
+            self.metadata.append(metadata)
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+        try:
+            time.sleep(0.03)
+            return object()
+        finally:
+            with self._lock:
+                self.active -= 1
+
+
 def test_salad_ideogram_provider_submits_reference_job(tmp_path: Path) -> None:
     executor = FakeExecutor()
     provider = SaladIdeogramImageProvider(
@@ -149,6 +172,48 @@ def test_salad_ideogram_provider_submits_keyframe_job(tmp_path: Path) -> None:
     assert executor.metadata == [
         {"phase": "6", "provider": "ideogram4", "purpose": "keyframe"}
     ]
+
+
+def test_salad_ideogram_provider_serializes_generation_by_default(tmp_path: Path) -> None:
+    executor = ConcurrencyTrackingExecutor()
+    provider = SaladIdeogramImageProvider(
+        executor=executor,  # type: ignore[arg-type]
+        temp_dir=tmp_path,
+        task_name=IDEOGRAM4_REFERENCE_TASK,
+    )
+
+    async def generate_two() -> None:
+        await asyncio.gather(
+            provider.generate_image(
+                prompt=_caption(),
+                model=IDEOGRAM4_MODEL_ID,
+                size="1024x1024",
+                quality="high",
+                output_format="png",
+            ),
+            provider.generate_image(
+                prompt=_caption(),
+                model=IDEOGRAM4_MODEL_ID,
+                size="1024x1024",
+                quality="high",
+                output_format="png",
+            ),
+        )
+
+    asyncio.run(generate_two())
+
+    assert len(executor.requests) == 2
+    assert executor.max_active == 1
+
+
+def test_salad_ideogram_provider_rejects_invalid_concurrency(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="max_concurrency"):
+        SaladIdeogramImageProvider(
+            executor=FakeExecutor(),  # type: ignore[arg-type]
+            temp_dir=tmp_path,
+            task_name=IDEOGRAM4_REFERENCE_TASK,
+            max_concurrency=0,
+        )
 
 
 def test_salad_ideogram_provider_uses_one_neutral_location_recovery_after_safety_block(

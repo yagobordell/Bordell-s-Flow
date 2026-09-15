@@ -195,10 +195,10 @@
       },
       "autoscaler": {
         "min_replicas": 0,
-        "max_replicas": 4,
+        "max_replicas": 1,
         "desired_queue_length": 1,
         "polling_period": 30,
-        "max_upscale_per_minute": 2,
+        "max_upscale_per_minute": 1,
         "max_downscale_per_minute": 1
       }
     },
