@@ -51,6 +51,48 @@ _RECOVERY_STYLE = {
 _RECOVERY_BACKGROUND = "Clear neutral environment reference with consistent geography and layout."
 
 
+def build_ideogram_job_request(
+    *,
+    task_name: str,
+    caption: str,
+    model_id: str,
+    width: int,
+    height: int,
+) -> InferenceJobRequest:
+    """Build the canonical queue request used by both production and cache audits."""
+
+    if task_name not in _SUPPORTED_TASKS:
+        raise ValueError(f"Unsupported Ideogram provider task: {task_name}")
+    if model_id != IDEOGRAM4_MODEL_ID:
+        raise ValueError(f"Ideogram provider requires model {IDEOGRAM4_MODEL_ID!r}")
+    validated_caption = validate_ideogram_caption(caption)
+    _validate_dimensions(width, height)
+    job_id = ideogram_application_job_id(
+        task_name=task_name,
+        caption=validated_caption,
+        width=width,
+        height=height,
+        model_id=model_id,
+    )
+    seed = ideogram_seed_for_job(job_id)
+    return InferenceJobRequest(
+        job_id=job_id,
+        task=task_name,
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/image.png",
+            content_type="image/png",
+        ),
+        parameters={
+            "generation_profile": IDEOGRAM4_GENERATION_PROFILE,
+            "model_id": model_id,
+            "caption": validated_caption,
+            "width": width,
+            "height": height,
+            "seed": seed,
+        },
+    )
+
+
 class SaladIdeogramImageProvider:
     """Image provider backed by the shared Salad Ideogram 4 Quality queue."""
 
@@ -107,7 +149,7 @@ class SaladIdeogramImageProvider:
             raise ValueError("Ideogram worker is fixed to Quality mode; use quality='high'")
 
         caption = validate_ideogram_caption(prompt)
-        width, height = _parse_size(size)
+        width, height = parse_ideogram_size(size)
         try:
             response = self._execute_caption(
                 caption=caption,
@@ -148,29 +190,12 @@ class SaladIdeogramImageProvider:
         width: int,
         height: int,
     ) -> InferenceJobResponse:
-        job_id = ideogram_application_job_id(
+        request = build_ideogram_job_request(
             task_name=self._task_name,
             caption=caption,
+            model_id=model,
             width=width,
             height=height,
-            model_id=model,
-        )
-        seed = ideogram_seed_for_job(job_id)
-        request = InferenceJobRequest(
-            job_id=job_id,
-            task=self._task_name,
-            output=ObjectOutput(
-                key=f"jobs/{job_id}/image.png",
-                content_type="image/png",
-            ),
-            parameters={
-                "generation_profile": IDEOGRAM4_GENERATION_PROFILE,
-                "model_id": model,
-                "caption": caption,
-                "width": width,
-                "height": height,
-                "seed": seed,
-            },
         )
         purpose = (
             "reference"
@@ -236,7 +261,7 @@ def _reference_recovery_caption(caption: str, *, task_name: str) -> str:
     return validate_ideogram_caption(rendered)
 
 
-def _parse_size(size: str) -> tuple[int, int]:
+def parse_ideogram_size(size: str) -> tuple[int, int]:
     parts = size.lower().split("x", maxsplit=1)
     if len(parts) != 2:
         raise ValueError("Ideogram size must use WIDTHxHEIGHT notation")
@@ -244,8 +269,12 @@ def _parse_size(size: str) -> tuple[int, int]:
         width, height = (int(part) for part in parts)
     except ValueError as exc:
         raise ValueError("Ideogram size must contain integer dimensions") from exc
+    _validate_dimensions(width, height)
+    return width, height
+
+
+def _validate_dimensions(width: int, height: int) -> None:
     if not 256 <= width <= 2048 or not 256 <= height <= 2048:
         raise ValueError("Ideogram dimensions must be between 256 and 2048 pixels")
     if width % 16 or height % 16:
         raise ValueError("Ideogram dimensions must be divisible by 16")
-    return width, height
