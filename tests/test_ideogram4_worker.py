@@ -397,7 +397,10 @@ def test_ideogram_backend_retries_blocked_output_with_caption_fallbacks(
     ]
     assert len({caption for caption, _ in calls}) == 3
     expected_high_level = json.loads(parameters.caption)["high_level_description"]
-    assert all(json.loads(caption)["high_level_description"] == expected_high_level for caption, _ in calls)
+    attempt_high_levels = [
+        json.loads(caption)["high_level_description"] for caption, _ in calls
+    ]
+    assert attempt_high_levels == [expected_high_level] * 3
     assert output.is_file()
     assert not _looks_like_safety_placeholder(Image.open(output))
 
