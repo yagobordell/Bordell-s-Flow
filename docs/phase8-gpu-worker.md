@@ -1,23 +1,24 @@
 # Fase 8.3 — worker GPU de producción
 
-Estado: **cerrada y validada en cloud sobre RTX 5090**.
+Estado: **cerrada y revalidada en cloud sobre RTX 5090 el 2026-09-15**.
 
 ## Objetivo
 
-La Fase 8.3 conecta el adapter directo de Fase 8.2 al worker idempotente validado en Fase 7 y lo
-ejecuta como runtime de producción dentro de Salad Job Queue.
+La Fase 8.3 conecta el adapter directo de Fase 8.2 con el worker idempotente de inferencia y lo ejecuta dentro de Salad Job Queue. El despliegue actual ya no usa el antiguo worker GPU compartido de Fase 8: LTX-2.5 tiene servicio, imagen y cola dedicados.
 
 ```text
-Salad Job Queue
+orquestador local
+      ↓
+Salad queue: ai-video-factory-ltx25-jobs
+      ↓
+ai-video-factory-ltx25-worker
       ↓
 POST /jobs
       ↓
-GPUWorker
+shared inference worker core
   ├── Postgres: claim / lease / replay
   ├── R2: input / output
-  └── TaskRunnerRegistry.phase8
-            ↓
-     LTXVideoTaskRunner
+  └── video.ltx25.generate
             ↓
      DirectLTX25Backend
             ↓
@@ -28,12 +29,11 @@ GPUWorker
             R2
 ```
 
-Los bytes del vídeo no atraviesan el orquestador. Queue transporta el request y metadata; el MP4
-termina bajo `jobs/<application_job_id>/...` en R2.
+Los bytes del vídeo no atraviesan el orquestador. Queue transporta el request y metadata; el MP4 termina bajo `jobs/<application_job_id>/...` en R2.
 
 ## Runtime GPU
 
-La imagen conserva la baseline validada en Fase 7:
+La baseline validada conserva:
 
 - PyTorch 2.11.0 + CUDA 12.8;
 - Lightricks/LTX-2 commit `a95ab856bf29407b6b066ede0abe1846050db56c`;
@@ -44,44 +44,36 @@ La imagen conserva la baseline validada en Fase 7:
 - conditioning por primer frame;
 - MP4 SDR H.264 sin audio.
 
-El task registrado es:
+El task registrado es `video.ltx25.generate` y el perfil validado es `ltx25-distilled-a95ab856-fp8cpu-v1`.
+
+## Recursos cloud validados — servicio dedicado
+
+La revalidación real del 2026-09-15 usó:
 
 ```text
-video.ltx25.generate
-```
-
-Perfil:
-
-```text
-ltx25-distilled-a95ab856-fp8cpu-v1
-```
-
-## Recursos cloud validados
-
-```text
-Group:       ai-video-factory-worker
-Queue:       ai-video-factory-jobs
-GPU class:   851399fb-7329-4195-a042-d6514b28cf33  # RTX 5090
+Group:       ai-video-factory-ltx25-worker
+Queue:       ai-video-factory-ltx25-jobs
+Version:     5
+GPU class:   851399fb-7329-4195-a042-d6514b28cf33  # RTX 5090 32 GB
 CPU:         8
-RAM:         61,440 MiB
+RAM:         40,960 MiB
 SHM:         8,192 MiB
 Storage:     137,438,953,472 bytes
 Priority:    medium
-Autoscaler:  min=0, max=1
+Autoscaler:  min=0, max=4
 ```
 
-La imagen usada durante el cierre real fue:
+Imagen inmutable validada:
 
 ```text
-docker.io/yagobordell/ai-video-factory@sha256:4577972ab55ecb8fdf305e87d3851b4db6d70b239ed3f61094142a7d7b8d0141
+docker.io/yagobordell/ai-video-factory@sha256:598d743b82f75e531cf29c521530a5b9d8d606a6d98a4e7b9fd737811c384a02
 ```
 
-La configuración live exitosa alcanzó la versión 11 del Container Group.
+Esta configuración sustituye como baseline operativo al antiguo slot compartido `ai-video-factory-worker` documentado durante el cierre original de Fase 8. La evidencia histórica del run de 8 shots sigue siendo válida para fanout, replay y estabilidad de la lógica de Fase 8.4; la revalidación de 2026-09-15 confirma la arquitectura dedicada que se despliega actualmente.
 
 ## Bootstrap de modelos
 
-La imagen no incorpora los checkpoints grandes. `docker/phase8-worker/download_models.sh` descarga
-secuencialmente los cinco ficheros a `/workspace/models/ltx-2.5`:
+La imagen no incorpora los checkpoints grandes. `docker/workers/ltx25/download_models.sh` descarga secuencialmente los cinco ficheros a `/workspace/models/ltx-2.5`:
 
 ```text
 diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors
@@ -91,13 +83,11 @@ vae/ltx-2.5-audio-vae-bf16.safetensors
 latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors
 ```
 
-`HF_TOKEN` se suministra únicamente como secreto de entorno. `manage_phase8_worker.ps1 -Action
-Prepare` lo obtiene del proceso o mediante `Read-Host -AsSecureString`; nunca se versiona.
+La revalidación descargó y materializó los cinco ficheros sin stall. El downloader publica progreso de bytes cada 30 segundos y aborta una descarga sólo si no observa crecimiento durante 600 segundos. Esto permite distinguir un checkpoint grande pero sano de una transferencia realmente congelada.
 
-El filesystem de una instancia Salad es efímero. Los modelos se reutilizan durante la vida de la
-instancia, pero una nueva allocation puede repetir el cold start.
+`HF_TOKEN` se suministra únicamente como secreto de entorno. El filesystem de la instancia Salad es efímero: los modelos se reutilizan durante la vida de la instancia, pero una nueva allocation puede repetir el cold start.
 
-## Health, readiness y liveness
+## Health, readiness y estado busy
 
 El HTTP de salud se desacopla del bootstrap pesado:
 
@@ -112,18 +102,11 @@ container start
   -> queue traffic
 ```
 
-`/health` prueba que el proceso está vivo. `/ready` permanece 503 hasta que runtime, Postgres, R2,
-modelos, CUDA y pipeline residente están listos.
+`/health` prueba que el proceso está vivo. `/ready` permanece 503 hasta que runtime, Postgres, R2, modelos, CUDA y pipeline residente están listos.
 
-La validación real mostró que el liveness inicial era demasiado agresivo. Durante construcción del
-pipeline/inferencia, la configuración antigua:
+Durante el smoke real del 2026-09-15 el worker alcanzó `ready=true`, recibió el job y después cambió transitoriamente a `ready=false` mientras la inferencia estaba ocupada. Al completar el job volvió a `ready=true`. Esa transición es comportamiento normal de worker ocupado, no una caída del runtime.
 
-```text
-timeout_seconds=5
-failure_threshold=3
-```
-
-podía matar una instancia saludable. El cierre de Fase 8 usa y versiona:
+El liveness versionado permanece:
 
 ```text
 path=/health
@@ -133,71 +116,91 @@ failure_threshold=20
 success_threshold=1
 ```
 
-Con esa configuración, la misma instancia permaneció viva durante inferencias reales consecutivas.
+## Queue attachment
 
-## Pipeline residente
+La API de Salad no lista de forma fiable un container group detenido en `queue.container_groups`. Durante la revalidación, la observación de attachment seguía siendo falsa incluso después del bootstrap, pero el transporte real recibió el job correctamente y lo ejecutó hasta `succeeded`.
 
-`DirectLTX25Backend.prepare()` construye una única `DistilledPipeline`. El backend conserva bindings
-y pipeline y serializa `prepare`, `ready` e inferencia con un lock.
-
-Esto amortiza descarga/carga/cuantización durante un batch. El worker validado procesa una inferencia
-a la vez, coherente con el perfil RTX 5090 de 32 GiB.
+Por tanto, `queue.container_groups` es observabilidad auxiliar y **no** un hard gate de readiness. La prueba autoritativa es que existe una instancia iniciada y ready y que la Queue entrega el trabajo.
 
 ## Gestión del Container Group
 
-```powershell
-.\scripts\manage_phase8_worker.ps1 -Action Status
-.\scripts\manage_phase8_worker.ps1 -Action Stop
-.\scripts\manage_phase8_worker.ps1 -Action Prepare
-.\scripts\manage_phase8_worker.ps1 -Action Start
-```
-
-`Prepare` solo se usa para una actualización intencional de imagen/configuración y exige el grupo
-detenido. Construye/publica la imagen, resuelve el digest, aplica recursos/secretos/probes/Queue y
-verifica que Salad activó `priority=medium` y el liveness validado. El grupo permanece detenido al
-terminar.
-
-Para un batch normal se usa el grupo ya preparado:
+Los comandos canónicos usan el gestor por servicio:
 
 ```powershell
-.\scripts\start_phase8_autoscaled.ps1
+.\scripts\manage_salad_worker.ps1 -Service ltx25 -Action Status
+.\scripts\manage_salad_worker.ps1 -Service ltx25 -Action Prepare
+.\scripts\manage_salad_worker.ps1 -Service ltx25 -Action Start
+.\scripts\manage_salad_worker.ps1 -Service ltx25 -Action Stop
 ```
 
-Con `min_replicas=0`, la demanda de Queue crea la réplica GPU.
+Los wrappers históricos de Fase 8 siguen existiendo por compatibilidad, pero el servicio `ltx25` y su entrada en `deploy/salad/services.json` son la fuente de verdad del despliegue actual.
 
-## Smoke real y replay
+`Prepare` sólo se usa para una actualización intencional de imagen/configuración y exige el grupo detenido. Construye/publica la imagen, resuelve el digest inmutable y deja el grupo detenido a cero réplicas.
 
-`scripts/submit_phase8_smoke.py` construye el mismo application job ID canónico que el workflow de
-Fase 8.4 mediante `ltx_video_application_job_id()`. Así el smoke y la orquestación completa no pueden
-derivar en algoritmos de identidad distintos.
+## Smoke real protegido
 
-La validación real demostró:
+El comando validado para una prueba real del worker dedicado es:
 
-1. shot 1 generado realmente mediante Queue -> worker -> Postgres/R2;
-2. H.264 768x1280 a 24 fps, sin audio, descargado y validado por SHA-256;
-3. replay exacto del mismo request con `replayed=true` y sin reinferencia;
-4. shot 8 y shot 5 ejecutados después sobre la misma instancia caliente;
-5. shot 5 completó 233 frames sin OOM;
-6. el runtime permaneció estable durante varias inferencias consecutivas;
-7. el grupo se devolvió a `stopped` al cerrar la prueba.
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_ltx25_protected_smoke.ps1 `
+  -SkipLocalBuild
+```
 
-Los application job IDs validados y posteriormente reutilizados como replay en Fase 8.4 fueron:
+El wrapper aplica límites separados:
 
 ```text
-phase8-shot-001-7ed73f1ff682
-phase8-shot-005-69262d45109b
-phase8-shot-008-a617c67ccd15
+bootstrap total sano:             45 min
+running/not-ready reallocation:   60 min
+modelo sin progreso de bytes:     10 min
 ```
+
+Así, una descarga grande que sigue progresando puede terminar sin provocar una reallocation cara, pero una transferencia realmente parada se corta antes. El wrapper ejecuta el `Stop` existente en un bloque `finally`, tanto en éxito como en fallo.
+
+## Evidencia real — 2026-09-15
+
+El smoke generó un shot de un segundo a través de la ruta completa:
+
+```text
+application job: phase8-shot-001-730e00d82f95
+Salad job:       e06633cb-814e-4e77-99c3-a2b5b0f2f9fd
+resolution:      768x1280
+fps:             24
+frames:          25
+seed:            43
+replayed:        false
+status:          succeeded
+```
+
+Artefacto descargado:
+
+```text
+data/output/deployment-validation/ltx25-cloud/shot_001.mp4
+sha256=ff82d028b04bb5cf91a7198bf75f2e7cf6e585e1cbf25ca8679b376956dc655a
+```
+
+La Queue avanzó `pending -> running -> succeeded`, el MP4 fue recuperado desde R2 y el wrapper terminó con:
+
+```text
+status=stopped
+replicas=0
+pending=False
+```
+
+La evidencia detallada está en [`ltx25-salad-validation-2026-09-15.md`](ltx25-salad-validation-2026-09-15.md).
+
+## Evidencia histórica de Fase 8.4
+
+Antes de la migración al worker dedicado, Fase 8.4 validó fanout completo, resume, replay y múltiples inferencias secuenciales sobre el antiguo slot de producción. Esa evidencia no se invalida por el cambio de despliegue: las identidades `phase8-shot-*`, los contratos de Postgres/R2 y el workflow de video permanecen compatibles.
+
+Ver [`phase8.4-validation-results.md`](phase8.4-validation-results.md) para el run completo de 8 shots.
 
 ## Cierre
 
-Fase 8.3 queda cerrada. Fase 8.4 reutilizó exactamente este worker para fanout de los 8 shots y
-confirmó que los tres application jobs anteriores replayaban mientras los otros cinco realizaban
-inferencia real.
+Fase 8.3 queda cerrada también sobre la arquitectura dedicada actual. La ruta validada es:
 
-Ver también:
+```text
+orchestrator -> ai-video-factory-ltx25-jobs -> dedicated LTX worker
+             -> Postgres/R2 -> direct LTX inference -> MP4 -> R2 -> local verification
+```
 
-- [`phase8-ltx-adapter.md`](phase8-ltx-adapter.md)
-- [`phase8-video-generation.md`](phase8-video-generation.md)
-- [`phase8.4-validation-results.md`](phase8.4-validation-results.md)
-- [`phase8-closure.md`](phase8-closure.md)
+El siguiente trabajo sobre LTX debe tratar optimización de cold start como un cambio separado de la baseline de correctness ya probada.

@@ -1,6 +1,6 @@
 # Dedicated LTX-2.5 worker
 
-LTX-2.5 is the first model runtime migrated from a phase-specific GPU image to the shared inference-worker architecture.
+LTX-2.5 is the first model runtime migrated from a phase-specific GPU image to the shared inference-worker architecture. The dedicated deployment was revalidated end to end on real SaladCloud infrastructure on 2026-09-15.
 
 The canonical production boundary is now:
 
@@ -54,39 +54,42 @@ The canonical Dockerfile is:
 docker/workers/ltx25/Dockerfile
 ```
 
-The old `docker/phase8-worker` image definition has been removed. The new image copies only the Python package sources required by the worker rather than the whole repository. Remotion, tests, docs, local orchestration scripts and unrelated future model runtimes are not bundled into the LTX image.
+The old `docker/phase8-worker` image definition has been removed. The new image copies only the Python package sources required by the worker rather than the whole repository. Remotion, tests, docs, local orchestration scripts and unrelated model runtimes are not bundled into the LTX image.
 
-The LTX source runtime remains pinned to the already validated git commit:
+The LTX source runtime remains pinned to the validated git commit:
 
 ```text
 a95ab856bf29407b6b066ede0abe1846050db56c
 ```
 
-Model weights are bootstrapped after the HTTP health endpoint starts. The model repository revision is controlled separately through:
-
-```text
-LTX_MODEL_REVISION
-```
-
-This permits pinning an exact validated Hugging Face revision in deployment configuration without coupling it to the container runtime source commit.
+Model weights are bootstrapped after the HTTP health endpoint starts. The model repository revision is controlled separately through `LTX_MODEL_REVISION`.
 
 ## Salad service
 
-Model-specific Salad configuration lives in:
+Model-specific Salad configuration lives in `deploy/salad/services.json`.
+
+The validated dedicated service is:
 
 ```text
-deploy/salad/services.json
+service:      ltx25
+group:        ai-video-factory-ltx25-worker
+queue:        ai-video-factory-ltx25-jobs
+GPU:          RTX 5090 (32 GB)
+CPU:          8
+memory:       40960 MiB
+shared memory:8192 MiB
+storage:      137438953472 bytes
+priority:     medium
+autoscaler:   min=0, max=4
 ```
 
-The LTX service owns the dedicated queue:
+The 2026-09-15 real validation used container-group version 5 and immutable image:
 
 ```text
-ai-video-factory-ltx25-jobs
+docker.io/yagobordell/ai-video-factory@sha256:598d743b82f75e531cf29c521530a5b9d8d606a6d98a4e7b9fd737811c384a02
 ```
 
-The existing validated Salad container group is reused as the LTX deployment slot during this migration. The service manifest binds that slot to the LTX image and queue; future model workers will receive their own service entries, container groups and queues.
-
-The generic operator command is:
+The generic operator commands are:
 
 ```powershell
 .\scripts\manage_salad_worker.ps1 -Service ltx25 -Action Status
@@ -95,15 +98,86 @@ The generic operator command is:
 .\scripts\manage_salad_worker.ps1 -Service ltx25 -Action Stop
 ```
 
-`Prepare` builds and pushes only the LTX image, resolves the mutable tag to an immutable digest, ensures the dedicated queue exists, injects runtime secrets from the process environment or secure prompt, and patches the configured Salad deployment slot while it is stopped.
+`Prepare` builds and pushes only the LTX image, resolves the mutable tag to an immutable digest, ensures the dedicated queue exists, injects runtime secrets, and patches the configured Salad deployment slot while it is stopped. It leaves the group stopped with zero replicas.
 
-`Start` and `Stop` operate on that service only. With `min_replicas=0`, starting the container group enables queue-driven autoscaling without forcing an idle GPU replica.
+`Start` and `Stop` operate on that service only. With `min_replicas=0`, enabling the group permits queue-driven autoscaling without forcing an idle GPU replica.
 
 The old `manage_phase8_worker.ps1`, `start_phase8_autoscaled.ps1`, and `status_phase8_instances.ps1` commands remain compatibility wrappers around the LTX service manager.
 
+## Model bootstrap and watchdogs
+
+`docker/workers/ltx25/download_models.sh` materializes the five production checkpoints sequentially under `/workspace/models/ltx-2.5`:
+
+```text
+diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors
+text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors
+vae/ltx-2.5-video-vae-bf16.safetensors
+vae/ltx-2.5-audio-vae-bf16.safetensors
+latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors
+```
+
+The downloader emits `MODEL_DOWNLOAD_PROGRESS` every 30 seconds using observed local download bytes. Any byte growth resets the idle timer. Ten minutes with no byte growth produces `MODEL_DOWNLOAD_STALLED` and terminates that download attempt.
+
+The successful real validation showed that the large cold start is slow but healthy: all five files completed, the worker reached `ready=true`, and no stall event occurred.
+
+Salad instance storage is ephemeral, so a new allocation can repeat the download even after a previous successful run. Persistent/external model caching is an optimization candidate, not part of the current correctness baseline.
+
+## Readiness and queue transport
+
+The lifecycle is:
+
+```text
+container starts
+  -> /health = 200
+  -> checkpoint bootstrap
+  -> resident pipeline preparation
+  -> /ready = 200
+  -> Salad Job Queue transport starts
+```
+
+During a real job `/ready` may temporarily become false while the worker is busy. In the successful 2026-09-15 smoke it returned to true immediately after the job completed.
+
+Salad's `queue.container_groups` listing is not used as a hard readiness gate. The successful smoke observed `attached=False` while the worker nevertheless received and completed the queued job. Runtime delivery is authoritative.
+
+## Cost-guarded real smoke
+
+The canonical expensive validation command is:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_ltx25_protected_smoke.ps1 `
+  -SkipLocalBuild
+```
+
+The wrapper uses:
+
+```text
+healthy bootstrap deadline:          45 minutes
+running/not-ready reallocation:      60 minutes
+no-progress model-download timeout:  600 seconds
+```
+
+It always executes the normal LTX `Stop` path in `finally`, so a success or failure returns the group to the stopped/zero-replica state unless the cleanup itself reports an error.
+
+The 2026-09-15 smoke completed:
+
+```text
+application_job_id: phase8-shot-001-730e00d82f95
+salad_job_id:       e06633cb-814e-4e77-99c3-a2b5b0f2f9fd
+status:             succeeded
+resolution:         768x1280
+fps:                24
+num_frames:         25
+replayed:           false
+output sha256:      ff82d028b04bb5cf91a7198bf75f2e7cf6e585e1cbf25ca8679b376956dc655a
+```
+
+The final cleanup reported `stopped / replicas=0 / pending=False`.
+
+Full evidence: [`ltx25-salad-validation-2026-09-15.md`](ltx25-salad-validation-2026-09-15.md).
+
 ## Orchestrator queue selection
 
-`run_phase8_videos.py` now resolves its queue in this order:
+`run_phase8_videos.py` resolves its queue in this order:
 
 ```text
 SALAD_LTX25_QUEUE_NAME
@@ -121,7 +195,7 @@ Existing deterministic application job IDs deliberately retain the `phase8-shot-
 
 ## Template for later workers
 
-Ideogram, Breeze TTS, Whisper and the future keyframe model should follow the same boundary:
+Other model workers follow the same boundary:
 
 ```text
 workers/<model>/
@@ -140,4 +214,4 @@ deploy/salad/services.json
     one model-specific image
 ```
 
-They should import the shared inference core rather than copying LTX infrastructure or depending on the `gpu` compatibility namespace.
+They import the shared inference core rather than copying LTX infrastructure or depending on the `gpu` compatibility namespace.
