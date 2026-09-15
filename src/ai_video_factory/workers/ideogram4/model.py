@@ -26,7 +26,8 @@ _SUPPORTED_TASKS = frozenset({IDEOGRAM4_REFERENCE_TASK, IDEOGRAM4_KEYFRAME_TASK}
 _MAX_GENERATION_ATTEMPTS = 3
 _SAFETY_SAMPLE_SIZE = (64, 64)
 _FALLBACK_BACKGROUND = (
-    "Environment matching the high-level description with consistent geography, materials, and layout."
+    "Environment matching the high-level description with consistent geography, "
+    "materials, and layout."
 )
 _FALLBACK_PHOTO_STYLE = {
     "aesthetics": "cinematic documentary realism",
