@@ -34,7 +34,8 @@ def test_queue_attachment_preflight_always_enumerates_active_jobs() -> None:
     text = REPAIR.read_text(encoding="utf-8")
     assert "function Get-ActiveQueueJobs" in text
     assert 'page_size=$PageSize' in text
-    assert "$PageSize = 100" in text
+    assert "$PageSize = 25" in text
+    assert "$PageSize = 100" not in text
     assert '@("pending", "running")' in text
     assert "$ActiveJobs = @(Get-ActiveQueueJobs)" in text
     assert "if ($ActiveJobs.Count -ne 0)" in text

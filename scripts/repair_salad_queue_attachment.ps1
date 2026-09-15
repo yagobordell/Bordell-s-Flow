@@ -143,7 +143,7 @@ function Get-Queue {
 function Get-ActiveQueueJobs {
     $ActiveJobs = @()
     $Page = 1
-    $PageSize = 100
+    $PageSize = 25
 
     while ($true) {
         if ($Page -gt 100) {
