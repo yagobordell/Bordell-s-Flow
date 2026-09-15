@@ -20,11 +20,26 @@ IDEOGRAM4_REFERENCE_TASK = "image.ideogram4.reference"
 IDEOGRAM4_KEYFRAME_TASK = "image.ideogram4.keyframe"
 IDEOGRAM4_MODEL_ID = "ideogram-ai/ideogram-4-nf4"
 IDEOGRAM4_SAMPLER_PRESET = "V4_QUALITY_48"
-IDEOGRAM4_GENERATION_PROFILE = "ideogram4-nf4-v4-quality-48-v2"
+IDEOGRAM4_GENERATION_PROFILE = "ideogram4-nf4-v4-quality-48-v3"
 
 _SUPPORTED_TASKS = frozenset({IDEOGRAM4_REFERENCE_TASK, IDEOGRAM4_KEYFRAME_TASK})
 _MAX_GENERATION_ATTEMPTS = 3
 _SAFETY_SAMPLE_SIZE = (64, 64)
+_FALLBACK_BACKGROUND = (
+    "Environment matching the high-level description with consistent geography, materials, and layout."
+)
+_FALLBACK_PHOTO_STYLE = {
+    "aesthetics": "cinematic documentary realism",
+    "lighting": "neutral natural daylight with clearly readable form",
+    "photo": "realistic reference photography with natural proportions",
+    "medium": "documentary photograph",
+}
+_FALLBACK_ART_STYLE = {
+    "aesthetics": "coherent cinematic visual reference",
+    "lighting": "neutral balanced lighting with clearly readable form",
+    "medium": "production visual reference",
+    "art_style": "clean realistic concept art",
+}
 
 
 class IdeogramImageParameters(BaseModel):
@@ -168,6 +183,75 @@ def _looks_like_safety_placeholder(image: Image.Image) -> bool:
     )
 
 
+def _compact_background(caption: dict[str, Any]) -> str:
+    composition = caption["compositional_deconstruction"]
+    background = str(composition["background"]).strip()
+    high_level = str(caption.get("high_level_description", "")).strip()
+    if high_level and background.startswith(high_level):
+        background = background[len(high_level) :].lstrip(" .")
+    return background or _FALLBACK_BACKGROUND
+
+
+def _fallback_style(style: Mapping[str, Any]) -> dict[str, Any]:
+    fallback = (
+        dict(_FALLBACK_PHOTO_STYLE)
+        if "photo" in style
+        else dict(_FALLBACK_ART_STYLE)
+    )
+    palette = style.get("color_palette")
+    if isinstance(palette, list) and palette:
+        fallback["color_palette"] = palette
+    return fallback
+
+
+def _caption_variant(
+    caption: str,
+    *,
+    simplify_style: bool,
+) -> str:
+    payload = json.loads(caption)
+    if not isinstance(payload, dict):
+        return caption
+    composition = payload.get("compositional_deconstruction")
+    style = payload.get("style_description")
+    if not isinstance(composition, dict) or not isinstance(style, dict):
+        return caption
+
+    variant = {
+        "high_level_description": payload.get("high_level_description", ""),
+        "style_description": _fallback_style(style) if simplify_style else style,
+        "compositional_deconstruction": {
+            "background": (
+                _FALLBACK_BACKGROUND
+                if simplify_style
+                else _compact_background(payload)
+            ),
+            "elements": composition.get("elements", []),
+        },
+    }
+    rendered = json.dumps(variant, ensure_ascii=False, separators=(",", ":"))
+    return validate_ideogram_caption(rendered)
+
+
+def _generation_attempts(caption: str, seed: int) -> list[tuple[str, int]]:
+    variants = [
+        caption,
+        _caption_variant(caption, simplify_style=False),
+        _caption_variant(caption, simplify_style=True),
+    ]
+    attempts: list[tuple[str, int]] = []
+    seen: set[str] = set()
+    for variant in variants:
+        if variant in seen:
+            continue
+        seen.add(variant)
+        attempt_seed = (seed + len(attempts)) & 0x7FFFFFFF
+        attempts.append((variant, attempt_seed))
+        if len(attempts) == _MAX_GENERATION_ATTEMPTS:
+            break
+    return attempts
+
+
 class Ideogram4Backend:
     """Resident Ideogram 4 NF4 runtime using the V4_QUALITY_48 sampler."""
 
@@ -224,10 +308,9 @@ class Ideogram4Backend:
             bindings = self._get_bindings()
             pipeline = self._get_or_build_pipeline(bindings)
             preset = bindings.presets[self._sampler_preset]
-            for attempt in range(_MAX_GENERATION_ATTEMPTS):
-                seed = (parameters.seed + attempt) & 0x7FFFFFFF
+            for caption, seed in _generation_attempts(parameters.caption, parameters.seed):
                 images = pipeline(
-                    parameters.caption,
+                    caption,
                     height=parameters.height,
                     width=parameters.width,
                     num_steps=preset.num_steps,
@@ -248,7 +331,7 @@ class Ideogram4Backend:
                 return
 
         raise RuntimeError(
-            "Ideogram 4 safety filter blocked all deterministic generation attempts"
+            "Ideogram 4 safety filter blocked all deterministic caption variants"
         )
 
     def _get_bindings(self) -> _IdeogramBindings:
