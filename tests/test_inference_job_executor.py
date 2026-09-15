@@ -41,6 +41,7 @@ class FakeQueue:
     def __init__(self, snapshot: QueueJobSnapshot) -> None:
         self.snapshot = snapshot
         self.submits = 0
+        self.cancellations: list[str] = []
 
     def submit(self, request: InferenceJobRequest, *, metadata: dict[str, str]) -> QueueJobSnapshot:
         self.submits += 1
@@ -48,6 +49,9 @@ class FakeQueue:
 
     def get(self, transport_job_id: str) -> QueueJobSnapshot:
         return self.snapshot
+
+    def cancel(self, transport_job_id: str) -> None:
+        self.cancellations.append(transport_job_id)
 
 
 class TransientThenSuccessQueue:
@@ -87,6 +91,9 @@ class TransientThenSuccessQueue:
                 "replayed": False,
             },
         )
+
+    def cancel(self, transport_job_id: str) -> None:
+        raise AssertionError("successful polling path must not cancel transport jobs")
 
 
 def _request() -> InferenceJobRequest:
@@ -162,6 +169,7 @@ def test_executor_reuses_verified_object_storage_artifact_without_queue_submissi
     assert response.output.size_bytes == 123
     assert response.replayed is True
     assert queue.submits == 0
+    assert queue.cancellations == []
 
 
 def test_executor_keeps_polling_after_transient_queue_read_failures() -> None:
@@ -178,3 +186,45 @@ def test_executor_keeps_polling_after_transient_queue_read_failures() -> None:
     assert response.status == "succeeded"
     assert queue.submits == 1
     assert queue.gets == 3
+
+
+def test_executor_cancels_pending_transport_when_global_timeout_expires() -> None:
+    queue = FakeQueue(
+        QueueJobSnapshot(
+            id="transport-pending",
+            status=QueueJobStatus.PENDING,
+        )
+    )
+    executor = InferenceJobExecutor(
+        queue=queue,
+        storage=FakeStorage(),
+        poll_seconds=0.001,
+        timeout_seconds=0.003,
+    )
+
+    with pytest.raises(TimeoutError, match="cancelled pending transport job transport-pending"):
+        executor.execute(_request(), metadata={"phase": "4"})
+
+    assert queue.submits == 1
+    assert queue.cancellations == ["transport-pending"]
+
+
+def test_executor_does_not_cancel_transport_after_dispatch() -> None:
+    queue = FakeQueue(
+        QueueJobSnapshot(
+            id="transport-running",
+            status=QueueJobStatus.RUNNING,
+        )
+    )
+    executor = InferenceJobExecutor(
+        queue=queue,
+        storage=FakeStorage(),
+        poll_seconds=0.001,
+        timeout_seconds=0.003,
+    )
+
+    with pytest.raises(TimeoutError, match="already dispatched and was not cancelled"):
+        executor.execute(_request(), metadata={"phase": "4"})
+
+    assert queue.submits == 1
+    assert queue.cancellations == []
