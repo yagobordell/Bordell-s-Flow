@@ -3,12 +3,26 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
-from ai_video_factory.inference.contracts import InferenceJobRequest, InferenceJobResponse
-from ai_video_factory.inference.ports import ObjectStorage
+from ai_video_factory.inference.contracts import (
+    InferenceJobRequest,
+    InferenceJobResponse,
+    OutputArtifact,
+)
+from ai_video_factory.inference.ports import ObjectStorage, StoredObject
 from ai_video_factory.inference.storage import sha256_file
 
 from .job_queue import JobQueueClient, QueueJobStatus
+
+
+class RemoteInferenceRejectedError(RuntimeError):
+    """Terminal application-level rejection returned through a succeeded transport job."""
+
+    def __init__(self, job_id: str, detail: str) -> None:
+        self.job_id = job_id
+        self.detail = detail
+        super().__init__(f"Inference job {job_id} was rejected by worker: {detail}")
 
 
 class InferenceJobExecutor:
@@ -58,6 +72,10 @@ class InferenceJobExecutor:
         *,
         metadata: Mapping[str, str],
     ) -> InferenceJobResponse:
+        cached = self._cached_response(request)
+        if cached is not None:
+            return cached
+
         snapshot = self._queue.submit(request, metadata=metadata)
         deadline = time.monotonic() + self._timeout_seconds
 
@@ -75,6 +93,10 @@ class InferenceJobExecutor:
                 f"Inference job {request.job_id} finished with transport status "
                 f"{snapshot.status.value}"
             )
+        rejection = _terminal_rejection_detail(snapshot.output)
+        if rejection is not None:
+            raise RemoteInferenceRejectedError(request.job_id, rejection)
+
         response = InferenceJobResponse.model_validate(snapshot.output)
         if response.job_id != request.job_id:
             raise RuntimeError("Inference response job_id does not match the submitted request")
@@ -83,6 +105,36 @@ class InferenceJobExecutor:
                 "Inference response fingerprint does not match the submitted request"
             )
         return response
+
+    def _cached_response(self, request: InferenceJobRequest) -> InferenceJobResponse | None:
+        stored = self._storage.stat(request.output.key)
+        if stored is None:
+            return None
+
+        request_sha256 = request.fingerprint()
+        artifact_sha256 = stored.metadata.get("artifact-sha256")
+        if (
+            stored.metadata.get("job-id") != request.job_id
+            or stored.metadata.get("request-sha256") != request_sha256
+            or artifact_sha256 is None
+        ):
+            raise RuntimeError(
+                f"Cached inference output metadata does not match request {request.job_id}"
+            )
+        if stored.content_type != request.output.content_type:
+            raise RuntimeError(
+                f"Cached inference output content type does not match request {request.job_id}"
+            )
+        if stored.size_bytes < 1:
+            raise RuntimeError(f"Cached inference output is empty for request {request.job_id}")
+
+        return InferenceJobResponse(
+            job_id=request.job_id,
+            request_sha256=request_sha256,
+            output=_artifact_from_stored(stored, artifact_sha256),
+            attempt_count=1,
+            replayed=True,
+        )
 
     def download_output(self, response: InferenceJobResponse, destination: Path) -> None:
         stored = self._storage.download(response.output.key, destination)
@@ -93,3 +145,24 @@ class InferenceJobExecutor:
             raise RuntimeError(
                 "Downloaded inference artifact SHA-256 does not match worker response"
             )
+
+
+def _terminal_rejection_detail(output: Any) -> str | None:
+    if not isinstance(output, Mapping):
+        return None
+    if set(output) != {"detail"}:
+        return None
+    detail = output.get("detail")
+    if not isinstance(detail, str) or not detail.strip():
+        return None
+    return detail.strip()
+
+
+def _artifact_from_stored(stored: StoredObject, sha256: str) -> OutputArtifact:
+    return OutputArtifact(
+        key=stored.key,
+        content_type=stored.content_type,
+        size_bytes=stored.size_bytes,
+        sha256=sha256,
+        etag=stored.etag,
+    )

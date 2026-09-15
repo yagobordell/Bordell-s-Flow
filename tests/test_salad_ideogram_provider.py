@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +10,7 @@ from ai_video_factory.providers.ideogram_caption import (
     IdeogramStylePlan,
     render_ideogram_caption,
 )
+from ai_video_factory.providers.inference_jobs import RemoteInferenceRejectedError
 from ai_video_factory.providers.salad_ideogram import SaladIdeogramImageProvider
 from ai_video_factory.workers.ideogram4 import (
     IDEOGRAM4_GENERATION_PROFILE,
@@ -35,6 +37,32 @@ def _caption() -> str:
     )
 
 
+def _road_caption() -> str:
+    return render_ideogram_caption(
+        IdeogramCaptionPlan(
+            high_level_description=(
+                "Canonical location reference. A single narrow, weathered asphalt service road "
+                "crossing an arid red-sand desert and leading toward the abandoned observatory’s "
+                "telescope domes. The road has extensive irregular cracks and broken edges."
+            ),
+            style=IdeogramStylePlan(
+                aesthetics="cinematic documentary",
+                lighting="even neutral reference lighting with clear readable form",
+                medium="cinematic documentary reference photograph",
+                render_mode="photo",
+                render_description=(
+                    "realistic reference photography, natural proportions, crisp material detail"
+                ),
+            ),
+            background=(
+                "A single narrow, weathered asphalt service road crossing an arid red-sand desert "
+                "and leading toward the abandoned observatory’s telescope domes."
+            ),
+            elements=[],
+        )
+    )
+
+
 class FakeExecutor:
     def __init__(self) -> None:
         self.requests: list[Any] = []
@@ -49,6 +77,18 @@ class FakeExecutor:
     def download_output(self, response: Any, destination: Path) -> None:
         self.downloaded_response = response
         destination.write_bytes(b"\x89PNG\r\n\x1a\nideogram-output")
+
+
+class SafetyThenSuccessExecutor(FakeExecutor):
+    def execute(self, request: Any, *, metadata: dict[str, str]) -> object:
+        self.requests.append(request)
+        self.metadata.append(metadata)
+        if len(self.requests) == 1:
+            raise RemoteInferenceRejectedError(
+                request.job_id,
+                "Ideogram 4 safety filter blocked all deterministic caption variants",
+            )
+        return object()
 
 
 def test_salad_ideogram_provider_submits_reference_job(tmp_path: Path) -> None:
@@ -109,6 +149,39 @@ def test_salad_ideogram_provider_submits_keyframe_job(tmp_path: Path) -> None:
     assert executor.metadata == [
         {"phase": "6", "provider": "ideogram4", "purpose": "keyframe"}
     ]
+
+
+def test_salad_ideogram_provider_uses_one_neutral_location_recovery_after_safety_block(
+    tmp_path: Path,
+) -> None:
+    executor = SafetyThenSuccessExecutor()
+    provider = SaladIdeogramImageProvider(
+        executor=executor,  # type: ignore[arg-type]
+        temp_dir=tmp_path,
+        task_name=IDEOGRAM4_REFERENCE_TASK,
+    )
+
+    image = asyncio.run(
+        provider.generate_image(
+            prompt=_road_caption(),
+            model=IDEOGRAM4_MODEL_ID,
+            size="1024x1024",
+            quality="high",
+            output_format="png",
+        )
+    )
+
+    assert len(executor.requests) == 2
+    primary, recovery = executor.requests
+    assert primary.job_id != recovery.job_id
+    assert recovery.parameters["generation_profile"] == IDEOGRAM4_GENERATION_PROFILE
+    recovery_caption = json.loads(recovery.parameters["caption"])
+    assert recovery_caption["high_level_description"] == (
+        "Canonical location reference. An asphalt service road crossing a desert and leading "
+        "toward the observatory telescope domes."
+    )
+    assert recovery_caption["compositional_deconstruction"]["elements"] == []
+    assert image.content.startswith(b"\x89PNG")
 
 
 def test_salad_ideogram_provider_rejects_plain_prompt_and_non_quality_mode(

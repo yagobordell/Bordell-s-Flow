@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 
 from ai_video_factory.domain import ReferenceAsset, VisualReference
-from ai_video_factory.providers.images import ImageProvider, ImageQuality
+from ai_video_factory.providers.images import GeneratedImage, ImageProvider, ImageQuality
 
 
 async def generate_reference_assets(
@@ -23,7 +23,7 @@ async def generate_reference_assets(
     if not references:
         return []
 
-    generated_images = await asyncio.gather(
+    results = await asyncio.gather(
         *(
             image_provider.generate_image(
                 prompt=reference.prompt,
@@ -33,8 +33,17 @@ async def generate_reference_assets(
                 output_format="png",
             )
             for reference in references
-        )
+        ),
+        return_exceptions=True,
     )
+    failures = [result for result in results if isinstance(result, BaseException)]
+    if failures:
+        raise failures[0]
+    generated_images = [
+        result for result in results if isinstance(result, GeneratedImage)
+    ]
+    if len(generated_images) != len(references):
+        raise RuntimeError("Reference image provider returned an unexpected result type")
 
     if any(image.extension != "png" for image in generated_images):
         raise ValueError("Reference asset workflow requires PNG provider output")

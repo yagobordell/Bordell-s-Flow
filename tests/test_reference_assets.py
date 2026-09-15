@@ -140,3 +140,47 @@ def test_reference_asset_workflow_writes_nothing_when_generation_fails(tmp_path:
         )
 
     assert not output_dir.exists()
+
+
+class SettlingFailingProvider:
+    def __init__(self) -> None:
+        self.finished: list[str] = []
+
+    async def generate_image(self, **kwargs: Any) -> GeneratedImage:
+        prompt = str(kwargs["prompt"])
+        if prompt == "fail-fast":
+            await asyncio.sleep(0.01)
+            self.finished.append(prompt)
+            raise RuntimeError("terminal generation failure")
+        await asyncio.sleep(0.05)
+        self.finished.append(prompt)
+        return GeneratedImage(
+            content=b"unused",
+            media_type="image/png",
+            extension="png",
+        )
+
+
+def test_reference_asset_workflow_settles_other_generations_before_raising(
+    tmp_path: Any,
+) -> None:
+    provider = SettlingFailingProvider()
+    output_dir = tmp_path / "phase4" / "reference_assets"
+
+    with pytest.raises(RuntimeError, match="terminal generation failure"):
+        asyncio.run(
+            generate_reference_assets(
+                [
+                    VisualReference(entity_id="location_001", prompt="fail-fast"),
+                    VisualReference(entity_id="location_002", prompt="finish-later"),
+                ],
+                image_provider=provider,  # type: ignore[arg-type]
+                output_dir=output_dir,
+                model="gpt-image-2",
+                size="1024x1024",
+                quality="low",
+            )
+        )
+
+    assert provider.finished == ["fail-fast", "finish-later"]
+    assert not output_dir.exists()
