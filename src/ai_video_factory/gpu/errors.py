@@ -7,6 +7,7 @@ from ai_video_factory.inference.errors import (
     JobConflictError,
     JobExecutionError,
     LeaseLostError,
+    NonRetryableTaskError,
     OutputConflictError,
     UnsupportedTaskError,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "JobConflictError",
     "JobExecutionError",
     "LeaseLostError",
+    "NonRetryableTaskError",
     "OutputConflictError",
     "UnsupportedTaskError",
 ]
