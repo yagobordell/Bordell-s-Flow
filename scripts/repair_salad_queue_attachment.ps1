@@ -89,7 +89,7 @@ function Get-Headers {
     return @{
         "Salad-Api-Key" = Get-Setting -Name "SALAD_API_KEY" -Prompt "Salad API key" -Secret
         "Accept" = "application/json"
-        "User-Agent" = "ai-video-factory-queue-repair/1.6"
+        "User-Agent" = "ai-video-factory-queue-repair/1.7"
     }
 }
 
@@ -138,6 +138,33 @@ function Get-Queue {
         throw "Job queue '$QueueName' is missing. Run Prepare first."
     }
     return $Queue
+}
+
+function Get-ActiveQueueJobs {
+    $ActiveJobs = @()
+    $Page = 1
+    $PageSize = 25
+
+    while ($true) {
+        if ($Page -gt 100) {
+            throw "Job queue '$QueueName' exceeded the 100-page safety limit while listing jobs."
+        }
+
+        $JobsUrl = "$QueueUrl/jobs?page=$Page&page_size=$PageSize"
+        $Response = Invoke-RestMethod -Uri $JobsUrl -Headers $Headers -TimeoutSec 30
+        $Items = @($Response.items)
+        $ActiveJobs += @(
+            $Items |
+                Where-Object { [string]$_.status -in @("pending", "running") }
+        )
+
+        if ($Items.Count -lt $PageSize) {
+            break
+        }
+        $Page += 1
+    }
+
+    return @($ActiveJobs)
 }
 
 function Test-QueueAttachment {
@@ -322,9 +349,17 @@ if ($null -eq $Queue) {
     throw "Job queue '$QueueName' is missing. Run Prepare first."
 }
 if ([int]$Queue.current_queue_length -ne 0) {
-    throw (
-        "Queue '$QueueName' contains $($Queue.current_queue_length) job(s). " +
-        "Cancel them before Prepare can change the container group."
+    $ActiveJobs = @(Get-ActiveQueueJobs)
+    if ($ActiveJobs.Count -ne 0) {
+        throw (
+            "Queue '$QueueName' contains $($ActiveJobs.Count) active job(s) " +
+            "(current_queue_length=$($Queue.current_queue_length)). Cancel pending/running jobs " +
+            "before Prepare can change the container group."
+        )
+    }
+    Write-Warning (
+        "Queue '$QueueName' reports current_queue_length=$($Queue.current_queue_length), " +
+        "but no pending/running jobs exist. Terminal queue history will not block Prepare."
     )
 }
 
