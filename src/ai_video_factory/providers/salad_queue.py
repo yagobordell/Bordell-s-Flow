@@ -8,7 +8,12 @@ from typing import Any
 
 from ai_video_factory.inference.contracts import InferenceJobRequest
 
-from .job_queue import JobQueueClient, QueueJobSnapshot, QueueJobStatus
+from .job_queue import (
+    JobQueueClient,
+    QueueJobSnapshot,
+    QueueJobStatus,
+    TransientQueueError,
+)
 
 
 class SaladJobQueueClient(JobQueueClient):
@@ -65,7 +70,7 @@ class SaladJobQueueClient(JobQueueClient):
                 "Salad-Api-Key": self._api_key,
                 "Accept": "application/json",
                 "Content-Type": "application/json",
-                "User-Agent": "ai-video-factory-inference/1.0",
+                "User-Agent": "ai-video-factory-inference/1.1",
             },
         )
         try:
@@ -73,9 +78,20 @@ class SaladJobQueueClient(JobQueueClient):
                 value = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Salad API returned HTTP {exc.code}: {detail}") from exc
+            message = f"Salad API returned HTTP {exc.code}: {detail}"
+            if method == "GET" and (exc.code == 429 or 500 <= exc.code < 600):
+                raise TransientQueueError(message) from exc
+            raise RuntimeError(message) from exc
+        except TimeoutError as exc:
+            message = f"Salad API {method} request timed out: {exc}"
+            if method == "GET":
+                raise TransientQueueError(message) from exc
+            raise RuntimeError(message) from exc
         except urllib.error.URLError as exc:
-            raise RuntimeError(f"Salad API request failed: {exc.reason}") from exc
+            message = f"Salad API request failed: {exc.reason}"
+            if method == "GET":
+                raise TransientQueueError(message) from exc
+            raise RuntimeError(message) from exc
 
         if not isinstance(value, dict):
             raise RuntimeError("Salad API returned a non-object JSON payload")
