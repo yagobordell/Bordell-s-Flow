@@ -30,7 +30,10 @@ from ai_video_factory.workers.ideogram4 import (
     ideogram_application_job_id,
     ideogram_seed_for_job,
 )
-from ai_video_factory.workers.ideogram4.model import _looks_like_safety_placeholder
+from ai_video_factory.workers.ideogram4.model import (
+    _generation_attempts,
+    _looks_like_safety_placeholder,
+)
 
 
 def _caption() -> str:
@@ -169,7 +172,7 @@ def test_ideogram_application_job_id_and_seed_are_deterministic() -> None:
         height=1536,
     )
 
-    assert IDEOGRAM4_GENERATION_PROFILE.endswith("-v2")
+    assert IDEOGRAM4_GENERATION_PROFILE.endswith("-v3")
     assert first == second
     assert first.startswith("ideogram-keyframe-")
     assert reference.startswith("ideogram-reference-")
@@ -185,6 +188,30 @@ def test_ideogram_safety_placeholder_detector_is_conservative() -> None:
 
     assert _looks_like_safety_placeholder(blocked) is True
     assert _looks_like_safety_placeholder(normal) is False
+
+
+def test_ideogram_generation_attempts_reduce_redundancy_without_changing_subject() -> None:
+    payload = json.loads(_caption())
+    high_level = payload["high_level_description"]
+    payload["compositional_deconstruction"]["background"] = (
+        f"{high_level} One coherent reusable environment with stable materials and layout."
+    )
+    caption = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+    attempts = _generation_attempts(caption, 41)
+
+    assert len(attempts) == 3
+    assert [seed for _, seed in attempts] == [41, 42, 43]
+    assert len({attempt_caption for attempt_caption, _ in attempts}) == 3
+    for attempt_caption, _ in attempts:
+        assert validate_ideogram_caption(attempt_caption) == attempt_caption
+        assert json.loads(attempt_caption)["high_level_description"] == high_level
+    compact = json.loads(attempts[1][0])
+    simplified = json.loads(attempts[2][0])
+    assert compact["compositional_deconstruction"]["background"] == (
+        "One coherent reusable environment with stable materials and layout."
+    )
+    assert simplified["style_description"]["photo"].startswith("realistic reference")
 
 
 class FakeBackend:
@@ -301,14 +328,14 @@ def test_ideogram_backend_builds_once_and_uses_quality_preset(tmp_path: Path, mo
     assert state["saved_format"] == "PNG"
 
 
-def test_ideogram_backend_retries_safety_placeholder_with_next_seed(
+def test_ideogram_backend_retries_blocked_output_with_caption_fallbacks(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     model_root = tmp_path / "ideogram4"
     model_root.mkdir()
     (model_root / ".ready").write_text(f"{IDEOGRAM4_MODEL_ID}@main\n", encoding="utf-8")
-    seeds: list[int] = []
+    calls: list[tuple[str, int]] = []
 
     class FakeCuda:
         @staticmethod
@@ -321,8 +348,8 @@ def test_ideogram_backend_retries_safety_placeholder_with_next_seed(
 
     class FakePipeline:
         def __call__(self, caption: str, **kwargs: Any) -> list[Image.Image]:
-            seeds.append(kwargs["seed"])
-            if len(seeds) == 1:
+            calls.append((caption, kwargs["seed"]))
+            if len(calls) < 3:
                 return [_blocked_placeholder((1024, 1536))]
             return [Image.new("RGB", (1024, 1536), (30, 90, 150))]
 
@@ -363,7 +390,14 @@ def test_ideogram_backend_retries_safety_placeholder_with_next_seed(
     output = tmp_path / "output.png"
     backend.generate(parameters=parameters, output_path=output)
 
-    assert seeds == [parameters.seed, (parameters.seed + 1) & 0x7FFFFFFF]
+    assert [seed for _, seed in calls] == [
+        parameters.seed,
+        (parameters.seed + 1) & 0x7FFFFFFF,
+        (parameters.seed + 2) & 0x7FFFFFFF,
+    ]
+    assert len({caption for caption, _ in calls}) == 3
+    expected_high_level = json.loads(parameters.caption)["high_level_description"]
+    assert all(json.loads(caption)["high_level_description"] == expected_high_level for caption, _ in calls)
     assert output.is_file()
     assert not _looks_like_safety_placeholder(Image.open(output))
 
