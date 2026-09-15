@@ -108,6 +108,54 @@ function Test-QueueAttachment {
     ).Count -eq 1
 }
 
+function Test-GroupQueueConfiguration {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $Connection = $Group.PSObject.Properties["queue_connection"]
+    $Autoscaler = $Group.PSObject.Properties["queue_autoscaler"]
+    if (
+        $null -eq $Connection -or $null -eq $Connection.Value -or
+        $null -eq $Autoscaler -or $null -eq $Autoscaler.Value
+    ) {
+        return $false
+    }
+
+    $Networking = $Group.PSObject.Properties["networking"]
+    if ($null -ne $Networking -and $null -ne $Networking.Value) {
+        return $false
+    }
+
+    return (
+        [string]$Group.queue_connection.queue_name -eq $QueueName -and
+        [string]$Group.queue_connection.path -eq [string]$Document.stack.queue_path -and
+        [int]$Group.queue_connection.port -eq [int]$Document.stack.container_port -and
+        [int]$Group.queue_autoscaler.min_replicas -eq [int]$Definition.autoscaler.min_replicas -and
+        [int]$Group.queue_autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
+        [int]$Group.queue_autoscaler.desired_queue_length -eq `
+            [int]$Definition.autoscaler.desired_queue_length -and
+        [int]$Group.queue_autoscaler.polling_period -eq `
+            [int]$Definition.autoscaler.polling_period -and
+        [int]$Group.queue_autoscaler.max_upscale_per_minute -eq `
+            [int]$Definition.autoscaler.max_upscale_per_minute -and
+        [int]$Group.queue_autoscaler.max_downscale_per_minute -eq `
+            [int]$Definition.autoscaler.max_downscale_per_minute
+    )
+}
+
+function Assert-GroupQueueConfiguration {
+    param([Parameter(Mandatory)][object]$Group)
+
+    if (Test-GroupQueueConfiguration -Group $Group) {
+        return
+    }
+
+    throw (
+        "Container group '$GroupName' Job Queue configuration does not match " +
+        "deploy/salad/services.json. Keep the group stopped and run " +
+        "scripts/repair_salad_queue_attachment.ps1 -Service $Service before Start."
+    )
+}
+
 function Test-ScaleToZeroActive {
     param([Parameter(Mandatory)][object]$Group)
 
@@ -160,7 +208,7 @@ $QueueUrl = "$BaseUrl/queues/$QueueName"
 $Headers = @{
     "Salad-Api-Key" = Get-SaladApiKey
     "Accept" = "application/json"
-    "User-Agent" = "ai-video-factory-scale-to-zero-starter/1.1"
+    "User-Agent" = "ai-video-factory-scale-to-zero-starter/1.2"
 }
 
 if ($AllowBootstrapReplica) {
@@ -174,6 +222,7 @@ if ($AllowBootstrapReplica) {
 }
 
 $Group = Get-Group
+Assert-GroupQueueConfiguration -Group $Group
 if (-not $AllowBootstrapReplica -and (Test-ScaleToZeroActive -Group $Group)) {
     Write-Host (
         "{0} scale-to-zero active: status={1} replicas={2} pending={3}" -f
@@ -203,6 +252,7 @@ $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 do {
     Start-Sleep -Seconds 5
     $Group = Get-Group
+    Assert-GroupQueueConfiguration -Group $Group
     $Status = [string]$Group.current_state.status
     Write-Host (
         "{0} service={1} status={2} replicas={3} pending={4} description={5}" -f
