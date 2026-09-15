@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 BOOTSTRAP = Path("docker/workers/ltx25/download_models.sh")
 
 
