@@ -12,7 +12,7 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ai_video_factory.inference.contracts import InferenceJobRequest
-from ai_video_factory.inference.errors import ModelBootstrapPendingError
+from ai_video_factory.inference.errors import ModelBootstrapPendingError, NonRetryableTaskError
 from ai_video_factory.inference.ports import LocalArtifact
 from ai_video_factory.providers.ideogram_caption import validate_ideogram_caption
 
@@ -20,11 +20,16 @@ IDEOGRAM4_REFERENCE_TASK = "image.ideogram4.reference"
 IDEOGRAM4_KEYFRAME_TASK = "image.ideogram4.keyframe"
 IDEOGRAM4_MODEL_ID = "ideogram-ai/ideogram-4-nf4"
 IDEOGRAM4_SAMPLER_PRESET = "V4_QUALITY_48"
-IDEOGRAM4_GENERATION_PROFILE = "ideogram4-nf4-v4-quality-48-v3"
+IDEOGRAM4_GENERATION_PROFILE = "ideogram4-nf4-v4-quality-48-v4"
 
 _SUPPORTED_TASKS = frozenset({IDEOGRAM4_REFERENCE_TASK, IDEOGRAM4_KEYFRAME_TASK})
 _MAX_GENERATION_ATTEMPTS = 3
 _SAFETY_SAMPLE_SIZE = (64, 64)
+_CANONICAL_PREFIXES = (
+    "Canonical location reference.",
+    "Canonical object reference.",
+    "Canonical character reference.",
+)
 _FALLBACK_BACKGROUND = (
     "Environment matching the high-level description with consistent geography, "
     "materials, and layout."
@@ -193,6 +198,23 @@ def _compact_background(caption: dict[str, Any]) -> str:
     return background or _FALLBACK_BACKGROUND
 
 
+def _concise_high_level(caption: dict[str, Any]) -> str:
+    high_level = str(caption.get("high_level_description", "")).strip()
+    original = high_level
+    for prefix in _CANONICAL_PREFIXES:
+        if high_level.startswith(prefix):
+            high_level = high_level[len(prefix) :].strip()
+            break
+    if not high_level:
+        return original
+
+    first_sentence, separator, _ = high_level.partition(". ")
+    concise = first_sentence.strip()
+    if separator and concise and not concise.endswith((".", "!", "?")):
+        concise += "."
+    return concise or original
+
+
 def _fallback_style(style: Mapping[str, Any]) -> dict[str, Any]:
     fallback = (
         dict(_FALLBACK_PHOTO_STYLE)
@@ -209,6 +231,7 @@ def _caption_variant(
     caption: str,
     *,
     simplify_style: bool,
+    concise_high_level: bool = False,
 ) -> str:
     payload = json.loads(caption)
     if not isinstance(payload, dict):
@@ -218,8 +241,13 @@ def _caption_variant(
     if not isinstance(composition, dict) or not isinstance(style, dict):
         return caption
 
+    high_level = (
+        _concise_high_level(payload)
+        if concise_high_level
+        else payload.get("high_level_description", "")
+    )
     variant = {
-        "high_level_description": payload.get("high_level_description", ""),
+        "high_level_description": high_level,
         "style_description": _fallback_style(style) if simplify_style else style,
         "compositional_deconstruction": {
             "background": (
@@ -238,7 +266,11 @@ def _generation_attempts(caption: str, seed: int) -> list[tuple[str, int]]:
     variants = [
         caption,
         _caption_variant(caption, simplify_style=False),
-        _caption_variant(caption, simplify_style=True),
+        _caption_variant(
+            caption,
+            simplify_style=True,
+            concise_high_level=True,
+        ),
     ]
     attempts: list[tuple[str, int]] = []
     seen: set[str] = set()
@@ -336,7 +368,7 @@ class Ideogram4Backend:
                 image.save(output_path, format="PNG")
                 return
 
-        raise RuntimeError(
+        raise NonRetryableTaskError(
             "Ideogram 4 safety filter blocked all deterministic caption variants"
         )
 

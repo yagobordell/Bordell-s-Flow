@@ -30,5 +30,9 @@ class UnsupportedTaskError(InferenceInfrastructureError):
     """No task runner is registered for the requested task."""
 
 
+class NonRetryableTaskError(InferenceInfrastructureError):
+    """Deterministic task rejection that must not re-run expensive inference."""
+
+
 class JobExecutionError(InferenceInfrastructureError):
     """A retryable infrastructure or task execution failure occurred."""

@@ -14,6 +14,7 @@ from .errors import (
     JobConflictError,
     JobExecutionError,
     LeaseLostError,
+    NonRetryableTaskError,
     OutputConflictError,
     UnsupportedTaskError,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "JobConflictError",
     "JobExecutionError",
     "LeaseLostError",
+    "NonRetryableTaskError",
     "ObjectInput",
     "ObjectOutput",
     "OutputArtifact",

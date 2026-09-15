@@ -7,6 +7,7 @@ from .errors import (
     JobConflictError,
     JobExecutionError,
     LeaseLostError,
+    NonRetryableTaskError,
     OutputConflictError,
     UnsupportedTaskError,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "LTXVideoParameters",
     "LTXVideoTaskRunner",
     "LeaseLostError",
+    "NonRetryableTaskError",
     "ObjectInput",
     "ObjectOutput",
     "OutputArtifact",

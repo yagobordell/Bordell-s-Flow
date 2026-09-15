@@ -8,8 +8,17 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .contracts import InferenceJobRequest
-from .errors import JobConflictError, LeaseLostError
+from .errors import JobConflictError, LeaseLostError, NonRetryableTaskError
 from .ports import ClaimDecision, JobClaim
+
+_NON_RETRYABLE_PREFIX = "NonRetryableTaskError:"
+
+
+def _raise_if_non_retryable(last_error: str | None) -> None:
+    if not last_error or not last_error.startswith(_NON_RETRYABLE_PREFIX):
+        return
+    detail = last_error.removeprefix(_NON_RETRYABLE_PREFIX).strip()
+    raise NonRetryableTaskError(detail or "deterministic task rejection")
 
 
 @dataclass(slots=True)
@@ -53,6 +62,8 @@ class InMemoryJobRepository:
                     row.attempt_count,
                     deepcopy(row.result),
                 )
+            if row.status == "retryable_failed":
+                _raise_if_non_retryable(row.last_error)
             if (
                 row.status == "running"
                 and row.lease_expires_at is not None
@@ -188,7 +199,7 @@ class PostgresJobRepository:
             )
             row = connection.execute(
                 """
-                SELECT request_sha256, status, attempt_count, lease_expires_at, result
+                SELECT request_sha256, status, attempt_count, lease_expires_at, result, last_error
                 FROM gpu.jobs
                 WHERE job_id = %s
                 FOR UPDATE
@@ -207,6 +218,8 @@ class PostgresJobRepository:
                     int(row["attempt_count"]),
                     row["result"],
                 )
+            if row["status"] == "retryable_failed":
+                _raise_if_non_retryable(row["last_error"])
             now = datetime.now(UTC)
             if (
                 row["status"] == "running"
