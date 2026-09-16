@@ -15,6 +15,7 @@ from ai_video_factory.workflows.reference_assets import generate_reference_asset
 
 DEFAULT_SIZE = "1024x1024"
 DEFAULT_QUALITY = "high"
+DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS = 5400.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,8 +64,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pending-timeout-seconds",
         type=float,
-        default=settings.inference_client_timeout_seconds,
-        help="Maximum seconds for queue wait, cold start, and model bootstrap before dispatch.",
+        default=DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS,
+        help=(
+            "Maximum seconds for Salad capacity wait, cold start, model download, and runtime "
+            "preparation before dispatch. Ideogram uses a 90-minute default because bootstrap "
+            "has its own independent progress watchdog."
+        ),
     )
     parser.add_argument(
         "--output-dir",
