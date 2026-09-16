@@ -12,8 +12,8 @@ param(
     [Parameter(Mandatory)]
     [string]$Output,
 
-    [ValidateRange(10, 180)]
-    [int]$PrewarmTimeoutMinutes = 90,
+    [ValidateRange(10, 120)]
+    [int]$PrewarmTimeoutMinutes = 60,
 
     [ValidateRange(30, 900)]
     [int]$PendingTimeoutSeconds = 300,
@@ -31,6 +31,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
+$OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $Phase6Runner = Join-Path $PSScriptRoot "run_phase6_keyframes.py"
 
 foreach ($Path in @($Frames, $Shots)) {
@@ -40,22 +41,21 @@ foreach ($Path in @($Frames, $Shots)) {
 }
 
 $PrewarmArguments = @{
-    Action = "Prewarm"
     Service = "ideogram4"
-    PrewarmTimeoutMinutes = $PrewarmTimeoutMinutes
+    TimeoutMinutes = $PrewarmTimeoutMinutes
 }
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
 }
 
 try {
-    Write-Host "=== Ideogram prewarm: waiting for one ready RTX4090 ===" -ForegroundColor Cyan
-    & $ValidationManager @PrewarmArguments
+    Write-Host "=== Ideogram optimized prewarm: selecting one ready node ===" -ForegroundColor Cyan
+    & $OptimizedPrewarm @PrewarmArguments
     if (-not $?) {
-        throw "Ideogram prewarm failed."
+        throw "Ideogram optimized prewarm failed."
     }
 
-    Write-Host "=== Phase 6 generation: worker is ready before queue submission ===" -ForegroundColor Cyan
+    Write-Host "=== Phase 6 generation: ready worker before queue submission ===" -ForegroundColor Cyan
     & python $Phase6Runner `
         --frames $Frames `
         --shots $Shots `
