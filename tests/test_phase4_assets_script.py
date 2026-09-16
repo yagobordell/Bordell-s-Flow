@@ -28,14 +28,17 @@ def test_validation_manager_exposes_explicit_prewarm_action() -> None:
     assert '"Prewarm" { Invoke-ProtectedSmokeBootstrap }' in text
 
 
-def test_controlled_ideogram_runners_prewarm_before_queue_and_always_stop() -> None:
+def test_controlled_ideogram_runners_use_optimized_prewarm_before_queue() -> None:
     for script in (PHASE4_CONTROLLED, PHASE6_CONTROLLED):
         text = script.read_text(encoding="utf-8")
-        assert 'Action = "Prewarm"' in text
+        assert 'start_salad_optimized_prewarm.ps1' in text
         assert 'Service = "ideogram4"' in text
+        assert 'TimeoutMinutes = $PrewarmTimeoutMinutes' in text
         assert '--pending-timeout-seconds $PendingTimeoutSeconds' in text
         assert '[int]$PendingTimeoutSeconds = 300' in text
         assert 'finally {' in text
         assert '-Action Stop' in text
         assert '-Action Status' in text
-        assert text.index('Action = "Prewarm"') < text.index('--pending-timeout-seconds')
+        assert text.index('start_salad_optimized_prewarm.ps1') < text.index(
+            '--pending-timeout-seconds'
+        )
