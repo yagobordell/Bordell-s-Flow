@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
+from r2_client import create_r2_storage
 
 from ai_video_factory.config import settings
 from ai_video_factory.domain import Shot, StoryboardFrame
@@ -13,7 +14,6 @@ from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_KEYFRAME_TASK
 from ai_video_factory.workflows.storyboard_keyframes import generate_storyboard_keyframes
-from r2_client import create_r2_storage
 
 DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS = 300.0
 
