@@ -3,7 +3,6 @@ from pydantic import ValidationError
 
 from ai_video_factory.gpu.settings import GPUWorkerSettings
 
-
 _CLOUD_ENVIRONMENT_NAMES = (
     "POSTGRES_DSN",
     "R2_ENDPOINT_URL",
