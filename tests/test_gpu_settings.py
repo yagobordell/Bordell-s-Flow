@@ -4,6 +4,15 @@ from pydantic import ValidationError
 from ai_video_factory.gpu.settings import GPUWorkerSettings
 
 
+_CLOUD_ENVIRONMENT_NAMES = (
+    "POSTGRES_DSN",
+    "R2_ENDPOINT_URL",
+    "R2_BUCKET",
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY",
+)
+
+
 def test_local_settings_do_not_require_cloud_secrets() -> None:
     settings = GPUWorkerSettings(
         _env_file=None,
@@ -30,7 +39,10 @@ def test_phase8_runtime_defaults_to_validated_model_location_and_cuda() -> None:
     assert settings.ltx_device == "cuda"
 
 
-def test_production_settings_require_cloud_secrets() -> None:
+def test_production_settings_require_cloud_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in _CLOUD_ENVIRONMENT_NAMES:
+        monkeypatch.delenv(name, raising=False)
+
     with pytest.raises(ValidationError, match="production GPU worker configuration is missing"):
         GPUWorkerSettings(_env_file=None, gpu_worker_mode="production")
 
