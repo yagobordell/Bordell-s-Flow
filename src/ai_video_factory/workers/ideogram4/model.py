@@ -16,6 +16,8 @@ from ai_video_factory.inference.errors import ModelBootstrapPendingError, NonRet
 from ai_video_factory.inference.ports import LocalArtifact
 from ai_video_factory.providers.ideogram_caption import validate_ideogram_caption
 
+from .bootstrap_progress import IdeogramBootstrapProgress
+
 IDEOGRAM4_REFERENCE_TASK = "image.ideogram4.reference"
 IDEOGRAM4_KEYFRAME_TASK = "image.ideogram4.keyframe"
 IDEOGRAM4_MODEL_ID = "ideogram-ai/ideogram-4-nf4"
@@ -23,29 +25,7 @@ IDEOGRAM4_SAMPLER_PRESET = "V4_QUALITY_48"
 IDEOGRAM4_GENERATION_PROFILE = "ideogram4-nf4-v4-quality-48-v4"
 
 _SUPPORTED_TASKS = frozenset({IDEOGRAM4_REFERENCE_TASK, IDEOGRAM4_KEYFRAME_TASK})
-_MAX_GENERATION_ATTEMPTS = 3
 _SAFETY_SAMPLE_SIZE = (64, 64)
-_CANONICAL_PREFIXES = (
-    "Canonical location reference.",
-    "Canonical object reference.",
-    "Canonical character reference.",
-)
-_FALLBACK_BACKGROUND = (
-    "Environment matching the high-level description with consistent geography, "
-    "materials, and layout."
-)
-_FALLBACK_PHOTO_STYLE = {
-    "aesthetics": "cinematic documentary realism",
-    "lighting": "neutral natural daylight with clearly readable form",
-    "photo": "realistic reference photography with natural proportions",
-    "medium": "documentary photograph",
-}
-_FALLBACK_ART_STYLE = {
-    "aesthetics": "coherent cinematic visual reference",
-    "lighting": "neutral balanced lighting with clearly readable form",
-    "medium": "production visual reference",
-    "art_style": "clean realistic concept art",
-}
 
 
 class IdeogramImageParameters(BaseModel):
@@ -189,107 +169,6 @@ def _looks_like_safety_placeholder(image: Image.Image) -> bool:
     )
 
 
-def _compact_background(caption: dict[str, Any]) -> str:
-    composition = caption["compositional_deconstruction"]
-    background = str(composition["background"]).strip()
-    high_level = str(caption.get("high_level_description", "")).strip()
-    if high_level and background.startswith(high_level):
-        background = background[len(high_level) :].lstrip(" .")
-    return background or _FALLBACK_BACKGROUND
-
-
-def _concise_high_level(caption: dict[str, Any]) -> str:
-    high_level = str(caption.get("high_level_description", "")).strip()
-    original = high_level
-    for prefix in _CANONICAL_PREFIXES:
-        if high_level.startswith(prefix):
-            high_level = high_level[len(prefix) :].strip()
-            break
-    if not high_level:
-        return original
-
-    first_sentence, separator, _ = high_level.partition(". ")
-    concise = first_sentence.strip()
-    if separator and concise and not concise.endswith((".", "!", "?")):
-        concise += "."
-    return concise or original
-
-
-def _fallback_style(style: Mapping[str, Any]) -> dict[str, Any]:
-    fallback = (
-        dict(_FALLBACK_PHOTO_STYLE)
-        if "photo" in style
-        else dict(_FALLBACK_ART_STYLE)
-    )
-    palette = style.get("color_palette")
-    if isinstance(palette, list) and palette:
-        fallback["color_palette"] = palette
-    return fallback
-
-
-def _caption_variant(
-    caption: str,
-    *,
-    simplify_style: bool,
-    concise_high_level: bool = False,
-) -> str:
-    payload = json.loads(caption)
-    if not isinstance(payload, dict):
-        return caption
-    composition = payload.get("compositional_deconstruction")
-    style = payload.get("style_description")
-    if not isinstance(composition, dict) or not isinstance(style, dict):
-        return caption
-
-    high_level = (
-        _concise_high_level(payload)
-        if concise_high_level
-        else payload.get("high_level_description", "")
-    )
-    variant = {
-        "high_level_description": high_level,
-        "style_description": _fallback_style(style) if simplify_style else style,
-        "compositional_deconstruction": {
-            "background": (
-                _FALLBACK_BACKGROUND
-                if simplify_style
-                else _compact_background(payload)
-            ),
-            "elements": composition.get("elements", []),
-        },
-    }
-    rendered = json.dumps(variant, ensure_ascii=False, separators=(",", ":"))
-    return validate_ideogram_caption(rendered)
-
-
-def _generation_attempts(caption: str, seed: int) -> list[tuple[str, int]]:
-    variants = [
-        caption,
-        _caption_variant(caption, simplify_style=False),
-        _caption_variant(
-            caption,
-            simplify_style=True,
-            concise_high_level=True,
-        ),
-    ]
-    attempts: list[tuple[str, int]] = []
-    seen: set[str] = set()
-    for variant in variants:
-        if variant in seen:
-            continue
-        seen.add(variant)
-        attempt_seed = (seed + len(attempts)) & 0x7FFFFFFF
-        attempts.append((variant, attempt_seed))
-        if len(attempts) == _MAX_GENERATION_ATTEMPTS:
-            return attempts
-
-    fallback_caption = attempts[-1][0] if attempts else caption
-    while len(attempts) < _MAX_GENERATION_ATTEMPTS:
-        attempt_seed = (seed + len(attempts)) & 0x7FFFFFFF
-        attempts.append((fallback_caption, attempt_seed))
-    return attempts
-
-
 class Ideogram4Backend:
     """Resident Ideogram 4 NF4 runtime using the V4_QUALITY_48 sampler."""
 
@@ -299,6 +178,7 @@ class Ideogram4Backend:
         model_root: Path,
         model_repository: str,
         model_revision: str,
+        bootstrap_status_path: Path,
         device: str = "cuda",
         sampler_preset: str = IDEOGRAM4_SAMPLER_PRESET,
     ) -> None:
@@ -310,6 +190,7 @@ class Ideogram4Backend:
         self._bindings: _IdeogramBindings | None = None
         self._pipeline: Any | None = None
         self._lock = threading.Lock()
+        self._progress = IdeogramBootstrapProgress(bootstrap_status_path)
 
     @property
     def runtime_loaded(self) -> bool:
@@ -333,6 +214,7 @@ class Ideogram4Backend:
             self._validate_runtime(bindings)
             if self._pipeline is None:
                 raise RuntimeError("Ideogram 4 runtime has not been prepared")
+            self._progress.record("worker_ready")
 
     def generate(
         self,
@@ -346,38 +228,37 @@ class Ideogram4Backend:
             bindings = self._get_bindings()
             pipeline = self._get_or_build_pipeline(bindings)
             preset = bindings.presets[self._sampler_preset]
-            for caption, seed in _generation_attempts(parameters.caption, parameters.seed):
-                images = pipeline(
-                    caption,
-                    height=parameters.height,
-                    width=parameters.width,
-                    num_steps=preset.num_steps,
-                    guidance_schedule=preset.guidance_schedule,
-                    mu=preset.mu,
-                    std=preset.std,
-                    seed=seed,
-                    raise_on_caption_issues=True,
+            images = pipeline(
+                parameters.caption,
+                height=parameters.height,
+                width=parameters.width,
+                num_steps=preset.num_steps,
+                guidance_schedule=preset.guidance_schedule,
+                mu=preset.mu,
+                std=preset.std,
+                seed=parameters.seed,
+                raise_on_caption_issues=True,
+            )
+            if len(images) != 1:
+                raise RuntimeError("Ideogram 4 did not return exactly one image")
+            image = images[0]
+            if image.size != (parameters.width, parameters.height):
+                raise RuntimeError("Ideogram 4 returned an image with unexpected dimensions")
+            if _looks_like_safety_placeholder(image):
+                raise NonRetryableTaskError(
+                    "Ideogram 4 safety filter blocked generated image"
                 )
-                if len(images) != 1:
-                    raise RuntimeError("Ideogram 4 did not return exactly one image")
-                image = images[0]
-                if image.size != (parameters.width, parameters.height):
-                    raise RuntimeError("Ideogram 4 returned an image with unexpected dimensions")
-                if _looks_like_safety_placeholder(image):
-                    continue
-                image.save(output_path, format="PNG")
-                return
-
-        raise NonRetryableTaskError(
-            "Ideogram 4 safety filter blocked all deterministic caption variants"
-        )
+            image.save(output_path, format="PNG")
 
     def _get_bindings(self) -> _IdeogramBindings:
         if self._bindings is None:
+            self._progress.record("importing_runtime")
             self._bindings = _load_ideogram_bindings()
+            self._progress.record("runtime_imported")
         return self._bindings
 
     def _validate_bootstrap(self) -> None:
+        self._progress.record("validating_model_files")
         if not self.bootstrap_marker.is_file():
             raise ModelBootstrapPendingError(
                 f"Ideogram model bootstrap marker is missing: {self.bootstrap_marker}"
@@ -388,24 +269,41 @@ class Ideogram4Backend:
             raise RuntimeError(
                 f"Ideogram bootstrap marker {marker!r} does not match {expected!r}"
             )
+        self._progress.record("model_files_validated")
 
     def _validate_runtime(self, bindings: _IdeogramBindings) -> None:
+        self._progress.record("validating_runtime")
         if self._device.startswith("cuda") and not bindings.torch.cuda.is_available():
             raise RuntimeError("CUDA is not available for the Ideogram 4 NF4 runtime")
         if self._sampler_preset not in bindings.presets:
             raise RuntimeError(f"Ideogram sampler preset is unavailable: {self._sampler_preset}")
+        self._progress.record("runtime_validated")
 
     def _get_or_build_pipeline(self, bindings: _IdeogramBindings) -> Any:
         if self._pipeline is not None:
+            self._progress.record("pipeline_ready")
             return self._pipeline
 
+        self._progress.record("building_pipeline_config")
         dtype = bindings.torch.bfloat16
         config = bindings.pipeline_config_type(weights_repo=self._model_repository)
-        self._pipeline = bindings.pipeline_type.from_pretrained(
+        self._progress.record("pipeline_config_built")
+        self._progress.record("from_pretrained")
+        pipeline = bindings.pipeline_type.from_pretrained(
             config=config,
             device=self._device,
             dtype=dtype,
         )
+        self._progress.record("pipeline_loaded")
+
+        synchronize = getattr(bindings.torch.cuda, "synchronize", None)
+        if self._device.startswith("cuda") and callable(synchronize):
+            self._progress.record("cuda_synchronize")
+            synchronize()
+            self._progress.record("cuda_synchronized")
+
+        self._pipeline = pipeline
+        self._progress.record("pipeline_ready")
         return self._pipeline
 
 

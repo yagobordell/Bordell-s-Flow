@@ -5,6 +5,7 @@ MANIFEST = Path("deploy/salad/services.json")
 PREWARM = Path("scripts/start_salad_optimized_prewarm.ps1")
 PRODUCTION_RUNNER = Path("scripts/run_production.py")
 R2_PREFLIGHT = Path("scripts/check_r2_ready.py")
+QUEUE_CLEANUP = Path("scripts/cleanup_salad_queue.ps1")
 
 WORKERS = {
     "ideogram4": Path("docker/workers/ideogram4/download_models.sh"),
@@ -64,6 +65,9 @@ def test_optimized_prewarm_applies_bounded_node_selection_to_every_worker() -> N
     assert "MaxAllocatingReallocations" in text
     assert "MaxImagePullReallocations" in text
     assert "MaxRunningNotReadyReallocations" in text
+    assert "MaxNodeChanges" in text
+    assert "$NodeChanges" in text
+    assert "exceeded the global node-change budget" in text
     assert '"$InstancesUrl/$InstanceId/reallocate"' in text
     assert "current_queue_length" in text
     assert "@{ replicas = 1 }" in text
@@ -73,10 +77,21 @@ def test_optimized_prewarm_applies_bounded_node_selection_to_every_worker() -> N
     assert "prewarm complete: exactly one started ready replica, queue still empty" in text
 
 
+def test_ideogram_prewarm_has_specific_finite_runtime_and_node_budget() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+    ideogram_profile = text.split("    ideogram4 = @{", maxsplit=1)[1].split("    }", maxsplit=1)[0]
+
+    assert "RunningNotReadySeconds = 900" in ideogram_profile
+    assert "FinalRunningNotReadySeconds = 900" in ideogram_profile
+    assert "MaxRunningNotReadyReallocations = 1" in ideogram_profile
+    assert "MaxNodeChanges = 2" in ideogram_profile
+    assert 'max_replicas -ne 1' in text
+
+
 def test_manifest_versions_and_download_profiles_are_explicit() -> None:
     services = json.loads(MANIFEST.read_text(encoding="utf-8"))["services"]
 
-    assert services["ideogram4"]["image"].endswith("ideogram4-nf4-quality48-v3")
+    assert services["ideogram4"]["image"].endswith("ideogram4-nf4-quality48-v4")
     assert services["breeze_tts2"]["image"].endswith("breeze-tts2-fast-all-v2")
     assert services["whisper"]["image"].endswith("whisper-large-v3-turbo-v2")
     assert services["ltx25"]["image"].endswith("ltx25-torch211-cu128-natten0216-xet-v3")
@@ -95,6 +110,11 @@ def test_manifest_versions_and_download_profiles_are_explicit() -> None:
         assert environment[f"{prefix}_DOWNLOAD_STALL_TIMEOUT_SECONDS"]
         assert environment[f"{prefix}_DOWNLOAD_HARD_TIMEOUT_SECONDS"]
 
+    ideogram = services["ideogram4"]["environment"]
+    assert ideogram["IDEOGRAM_BOOTSTRAP_STALL_TIMEOUT_SECONDS"] == "720"
+    assert ideogram["IDEOGRAM_BOOTSTRAP_HARD_TIMEOUT_SECONDS"] == "900"
+    assert ideogram["IDEOGRAM_BOOTSTRAP_REALLOCATE_ON_STALL"] == "true"
+
 
 def test_controlled_gpu_runners_prewarm_and_always_stop() -> None:
     for path in ALL_CONTROLLED_RUNNERS:
@@ -103,6 +123,24 @@ def test_controlled_gpu_runners_prewarm_and_always_stop() -> None:
         assert "finally" in text, path.name
         assert "-Action Stop" in text, path.name
         assert "-Action Status" in text, path.name
+
+
+def test_ideogram_controlled_runners_hold_warm_and_clean_queue() -> None:
+    assert QUEUE_CLEANUP.is_file()
+    cleanup = QUEUE_CLEANUP.read_text(encoding="utf-8")
+    assert 'Where-Object { [string]$_.status -eq "pending" }' in cleanup
+    assert "Waiting for dispatched job(s)" in cleanup
+    assert "requires '$GroupName' fully stopped first" in cleanup
+
+    for path in (
+        Path("scripts/run_phase4_assets_controlled.ps1"),
+        Path("scripts/run_phase6_keyframes_controlled.ps1"),
+    ):
+        text = path.read_text(encoding="utf-8")
+        assert "hold_salad_warm_replica.ps1" in text, path.name
+        assert "cleanup_salad_queue.ps1" in text, path.name
+        assert text.index("-Action Stop") < text.index("& $QueueCleanup"), path.name
+        assert text.index("& $QueueCleanup") < text.index("-Action Status"), path.name
 
 
 def test_controlled_gpu_runners_preflight_r2_before_prewarm() -> None:

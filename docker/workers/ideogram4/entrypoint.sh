@@ -1,11 +1,29 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+bootstrap_status_path="${IDEOGRAM_BOOTSTRAP_STATUS_PATH:-/tmp/ai-video-factory/ideogram-bootstrap.json}"
+bootstrap_stage_timeout="${IDEOGRAM_BOOTSTRAP_STALL_TIMEOUT_SECONDS:-720}"
+bootstrap_hard_timeout="${IDEOGRAM_BOOTSTRAP_HARD_TIMEOUT_SECONDS:-900}"
+bootstrap_poll_seconds="${IDEOGRAM_BOOTSTRAP_POLL_SECONDS:-15}"
+
 start_app() {
   uvicorn ai_video_factory.workers.ideogram4.runtime:app \
     --host 0.0.0.0 \
     --port 8080 \
     --no-access-log
+}
+
+start_bootstrap_watchdog() {
+  local args=(
+    --status-path "${bootstrap_status_path}"
+    --stage-timeout-seconds "${bootstrap_stage_timeout}"
+    --hard-timeout-seconds "${bootstrap_hard_timeout}"
+    --poll-seconds "${bootstrap_poll_seconds}"
+  )
+  if [[ "${IDEOGRAM_BOOTSTRAP_REALLOCATE_ON_STALL:-true}" == "true" ]]; then
+    args+=(--reallocate-on-stall)
+  fi
+  python -m ai_video_factory.workers.ideogram4.bootstrap_watchdog "${args[@]}"
 }
 
 wait_for_health() {
@@ -24,13 +42,19 @@ wait_for_health() {
 }
 
 wait_for_ready() {
-  for _ in $(seq 1 720); do
+  for _ in $(seq 1 240); do
     if ! kill -0 "${app_pid}" 2>/dev/null; then
+      return 1
+    fi
+    if ! kill -0 "${watchdog_pid}" 2>/dev/null; then
+      wait "${watchdog_pid}" || true
       return 1
     fi
     if python -c \
       "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/ready', timeout=3)" \
       >/dev/null 2>&1; then
+      wait "${watchdog_pid}"
+      watchdog_pid=""
       return 0
     fi
     sleep 5
@@ -40,12 +64,17 @@ wait_for_ready() {
 
 app_pid=""
 queue_pid=""
+watchdog_pid=""
 
 terminate() {
+  [[ -n "${watchdog_pid}" ]] && kill -TERM "${watchdog_pid}" 2>/dev/null || true
   [[ -n "${app_pid}" ]] && kill -TERM "${app_pid}" 2>/dev/null || true
   [[ -n "${queue_pid}" ]] && kill -TERM "${queue_pid}" 2>/dev/null || true
 }
 trap terminate TERM INT EXIT
+
+mkdir -p "$(dirname "${bootstrap_status_path}")"
+rm -f "${bootstrap_status_path}" "${bootstrap_status_path}.tmp"
 
 start_app &
 app_pid=$!
@@ -57,8 +86,12 @@ fi
 echo "Ideogram 4 worker health endpoint is up; bootstrapping gated model weights"
 download-models
 
+echo "Ideogram 4 model files downloaded; starting runtime bootstrap watchdog"
+start_bootstrap_watchdog &
+watchdog_pid=$!
+
 if ! wait_for_ready; then
-  echo "Ideogram 4 worker did not become ready after model bootstrap" >&2
+  echo "Ideogram 4 worker did not become ready within the bounded runtime bootstrap budget" >&2
   exit 1
 fi
 

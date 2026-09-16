@@ -30,6 +30,7 @@ $ErrorActionPreference = "Stop"
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $WarmReplicaHold = Join-Path $PSScriptRoot "hold_salad_warm_replica.ps1"
+$QueueCleanup = Join-Path $PSScriptRoot "cleanup_salad_queue.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $Phase4Runner = Join-Path $PSScriptRoot "run_phase4_assets.py"
 
@@ -49,6 +50,11 @@ $PrewarmArguments = @{
 }
 $HoldArguments = @{
     Service = "ideogram4"
+}
+$CleanupArguments = @{
+    Service = "ideogram4"
+    TimeoutSeconds = 180
+    NonInteractive = $true
 }
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
@@ -89,9 +95,14 @@ finally {
             -NonInteractive
     }
     finally {
-        & $ValidationManager `
-            -Action Status `
-            -Service ideogram4 `
-            -NonInteractive
+        try {
+            & $QueueCleanup @CleanupArguments
+        }
+        finally {
+            & $ValidationManager `
+                -Action Status `
+                -Service ideogram4 `
+                -NonInteractive
+        }
     }
 }

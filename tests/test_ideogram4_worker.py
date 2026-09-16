@@ -31,10 +31,7 @@ from ai_video_factory.workers.ideogram4 import (
     ideogram_application_job_id,
     ideogram_seed_for_job,
 )
-from ai_video_factory.workers.ideogram4.model import (
-    _generation_attempts,
-    _looks_like_safety_placeholder,
-)
+from ai_video_factory.workers.ideogram4.model import _looks_like_safety_placeholder
 
 
 def _caption() -> str:
@@ -191,60 +188,6 @@ def test_ideogram_safety_placeholder_detector_is_conservative() -> None:
     assert _looks_like_safety_placeholder(normal) is False
 
 
-def test_ideogram_generation_attempts_reduce_redundancy_without_changing_subject() -> None:
-    payload = json.loads(_caption())
-    high_level = payload["high_level_description"]
-    payload["compositional_deconstruction"]["background"] = (
-        f"{high_level} One coherent reusable environment with stable materials and layout."
-    )
-    caption = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-
-    attempts = _generation_attempts(caption, 41)
-
-    assert len(attempts) == 3
-    assert [seed for _, seed in attempts] == [41, 42, 43]
-    assert len({attempt_caption for attempt_caption, _ in attempts}) == 3
-    for attempt_caption, _ in attempts:
-        assert validate_ideogram_caption(attempt_caption) == attempt_caption
-    compact = json.loads(attempts[1][0])
-    simplified = json.loads(attempts[2][0])
-    assert json.loads(attempts[0][0])["high_level_description"] == high_level
-    assert compact["high_level_description"] == high_level
-    assert simplified["high_level_description"] == high_level
-    assert compact["compositional_deconstruction"]["background"] == (
-        "One coherent reusable environment with stable materials and layout."
-    )
-    assert simplified["style_description"]["photo"].startswith("realistic reference")
-
-
-def test_ideogram_final_fallback_uses_concise_canonical_location_description() -> None:
-    payload = json.loads(_caption())
-    payload["high_level_description"] = (
-        "Canonical location reference. A single narrow, weathered asphalt service road "
-        "crossing an arid red-sand desert and leading toward distant observatory domes. "
-        "The road has irregular cracks, faded pavement, broken edges, and sandy shoulders."
-    )
-    payload["compositional_deconstruction"]["background"] = (
-        "A single narrow, weathered asphalt service road crossing an arid red-sand desert "
-        "and leading toward distant observatory domes. The road has irregular cracks, "
-        "faded pavement, broken edges, and sandy shoulders."
-    )
-    caption = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-
-    attempts = _generation_attempts(caption, 101)
-    final_payload = json.loads(attempts[2][0])
-
-    assert len(attempts) == 3
-    assert final_payload["high_level_description"] == (
-        "A single narrow, weathered asphalt service road crossing an arid red-sand desert "
-        "and leading toward distant observatory domes."
-    )
-    assert final_payload["compositional_deconstruction"]["elements"] == payload[
-        "compositional_deconstruction"
-    ]["elements"]
-    assert validate_ideogram_caption(attempts[2][0]) == attempts[2][0]
-
-
 class FakeBackend:
     def __init__(self) -> None:
         self.prepare_calls = 0
@@ -277,16 +220,24 @@ def test_ideogram_task_runner_writes_one_png(tmp_path: Path) -> None:
     assert backend.calls[0].height == 1536
 
 
-def test_ideogram_backend_builds_once_and_uses_quality_preset(tmp_path: Path, monkeypatch) -> None:
+def test_ideogram_backend_builds_once_and_records_bootstrap_stages(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     model_root = tmp_path / "ideogram4"
     model_root.mkdir()
     (model_root / ".ready").write_text(f"{IDEOGRAM4_MODEL_ID}@main\n", encoding="utf-8")
+    bootstrap_status = tmp_path / "bootstrap.json"
     state: dict[str, Any] = {"builds": 0, "calls": []}
 
     class FakeCuda:
         @staticmethod
         def is_available() -> bool:
             return True
+
+        @staticmethod
+        def synchronize() -> None:
+            state["synchronized"] = True
 
     class FakeTorch:
         cuda = FakeCuda()
@@ -341,9 +292,11 @@ def test_ideogram_backend_builds_once_and_uses_quality_preset(tmp_path: Path, mo
         model_root=model_root,
         model_repository=IDEOGRAM4_MODEL_ID,
         model_revision="main",
+        bootstrap_status_path=bootstrap_status,
     )
     backend.prepare()
     backend.prepare()
+    backend.ready()
     output = tmp_path / "output.png"
     backend.generate(
         parameters=IdeogramImageParameters.model_validate(_request().parameters),
@@ -357,9 +310,11 @@ def test_ideogram_backend_builds_once_and_uses_quality_preset(tmp_path: Path, mo
     assert state["calls"][0][1]["num_steps"] == 48
     assert state["calls"][0][1]["raise_on_caption_issues"] is True
     assert state["saved_format"] == "PNG"
+    assert state["synchronized"] is True
+    assert json.loads(bootstrap_status.read_text(encoding="utf-8"))["stage"] == "worker_ready"
 
 
-def test_ideogram_backend_retries_blocked_output_with_caption_fallbacks(
+def test_ideogram_backend_safety_block_is_one_paid_attempt(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -380,80 +335,6 @@ def test_ideogram_backend_retries_blocked_output_with_caption_fallbacks(
     class FakePipeline:
         def __call__(self, caption: str, **kwargs: Any) -> list[Image.Image]:
             calls.append((caption, kwargs["seed"]))
-            if len(calls) < 3:
-                return [_blocked_placeholder((1024, 1536))]
-            return [Image.new("RGB", (1024, 1536), (30, 90, 150))]
-
-    class FakePipelineType:
-        @classmethod
-        def from_pretrained(cls, **kwargs: Any) -> FakePipeline:
-            return FakePipeline()
-
-    class FakePipelineConfig:
-        def __init__(self, *, weights_repo: str) -> None:
-            self.weights_repo = weights_repo
-
-    monkeypatch.setattr(
-        ideogram_model,
-        "_load_ideogram_bindings",
-        lambda: ideogram_model._IdeogramBindings(
-            torch=FakeTorch,
-            pipeline_type=FakePipelineType,
-            pipeline_config_type=FakePipelineConfig,
-            presets={
-                "V4_QUALITY_48": SimpleNamespace(
-                    num_steps=48,
-                    guidance_schedule=(3.0,) * 3 + (7.0,) * 45,
-                    mu=0.0,
-                    std=1.5,
-                )
-            },
-        ),
-    )
-
-    backend = Ideogram4Backend(
-        model_root=model_root,
-        model_repository=IDEOGRAM4_MODEL_ID,
-        model_revision="main",
-    )
-    backend.prepare()
-    parameters = IdeogramImageParameters.model_validate(_request().parameters)
-    output = tmp_path / "output.png"
-    backend.generate(parameters=parameters, output_path=output)
-
-    assert [seed for _, seed in calls] == [
-        parameters.seed,
-        (parameters.seed + 1) & 0x7FFFFFFF,
-        (parameters.seed + 2) & 0x7FFFFFFF,
-    ]
-    assert len({caption for caption, _ in calls}) >= 2
-    assert output.is_file()
-    assert not _looks_like_safety_placeholder(Image.open(output))
-
-
-def test_ideogram_backend_marks_exhausted_safety_filter_non_retryable(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    model_root = tmp_path / "ideogram4"
-    model_root.mkdir()
-    (model_root / ".ready").write_text(f"{IDEOGRAM4_MODEL_ID}@main\n", encoding="utf-8")
-    calls = 0
-
-    class FakeCuda:
-        @staticmethod
-        def is_available() -> bool:
-            return True
-
-    class FakeTorch:
-        cuda = FakeCuda()
-        bfloat16 = "bfloat16"
-
-    class FakePipeline:
-        def __call__(self, caption: str, **kwargs: Any) -> list[Image.Image]:
-            nonlocal calls
-            del caption, kwargs
-            calls += 1
             return [_blocked_placeholder((1024, 1536))]
 
     class FakePipelineType:
@@ -488,14 +369,15 @@ def test_ideogram_backend_marks_exhausted_safety_filter_non_retryable(
         model_root=model_root,
         model_repository=IDEOGRAM4_MODEL_ID,
         model_revision="main",
+        bootstrap_status_path=tmp_path / "bootstrap.json",
     )
     backend.prepare()
     parameters = IdeogramImageParameters.model_validate(_request().parameters)
 
-    with pytest.raises(NonRetryableTaskError, match="safety filter blocked"):
+    with pytest.raises(NonRetryableTaskError, match="safety filter blocked generated image"):
         backend.generate(parameters=parameters, output_path=tmp_path / "output.png")
 
-    assert calls == 3
+    assert calls == [(parameters.caption, parameters.seed)]
 
 
 def test_ideogram_worker_settings_and_salad_manifest() -> None:
@@ -511,9 +393,12 @@ def test_ideogram_worker_settings_and_salad_manifest() -> None:
     assert settings.model_repository == IDEOGRAM4_MODEL_ID
     assert settings.sampler_preset == "V4_QUALITY_48"
     assert service["queue_name"] == "ai-video-factory-ideogram4-jobs"
+    assert service["image"].endswith("ideogram4-nf4-quality48-v4")
     assert service["resources"]["gpu_class_names"] == ["RTX 4090 (24 GB)"]
     assert service["autoscaler"]["min_replicas"] == 0
     assert service["autoscaler"]["max_replicas"] == 1
+    assert service["environment"]["IDEOGRAM_BOOTSTRAP_STALL_TIMEOUT_SECONDS"] == "720"
+    assert service["environment"]["IDEOGRAM_BOOTSTRAP_HARD_TIMEOUT_SECONDS"] == "900"
     assert service["required_environment"] == ["HF_TOKEN"]
 
 
@@ -527,4 +412,5 @@ def test_ideogram_container_pins_official_runtime_and_stays_model_specific() -> 
     assert "COPY src /opt/factory/src" in dockerfile
     assert "COPY . /opt/factory" not in dockerfile
     assert "ai_video_factory.workers.ideogram4.runtime:app" in entrypoint
+    assert "bootstrap_watchdog" in entrypoint
     assert "HF_HUB_OFFLINE=0 hf download" in downloader
