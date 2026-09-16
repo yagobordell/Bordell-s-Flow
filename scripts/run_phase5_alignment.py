@@ -3,13 +3,14 @@ import asyncio
 import json
 from pathlib import Path
 
+from r2_client import create_r2_storage
+
 from ai_video_factory.config import settings
 from ai_video_factory.domain import NarrationAudio, SourceScript
 from ai_video_factory.providers import SaladWhisperTranscriptionProvider
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workflows.narration_alignment import align_narration_words
-from r2_client import create_r2_storage
 
 
 def parse_args() -> argparse.Namespace:
