@@ -14,6 +14,7 @@ from ai_video_factory.providers.ideogram_caption import (
     IdeogramStylePlan,
     render_ideogram_caption,
 )
+from ai_video_factory.providers.ideogram_rejections import safety_rejection_key
 from ai_video_factory.providers.inference_jobs import RemoteInferenceRejectedError
 from ai_video_factory.providers.salad_ideogram import (
     SaladIdeogramImageProvider,
@@ -61,16 +62,40 @@ def _road_caption() -> str:
                     "realistic reference photography, natural proportions, crisp material detail"
                 ),
             ),
-            background="Stable physical geography and architecture.",
+            background=(
+                "Stable physical geography and architecture. Extra background narrative detail."
+            ),
             elements=[],
         )
     )
 
 
-class EmptyStorage:
-    def stat(self, key: str) -> None:
-        del key
-        return None
+class MemoryStorage:
+    def __init__(self) -> None:
+        self.objects: dict[str, StoredObject] = {}
+        self.uploaded: list[tuple[str, dict[str, str]]] = []
+
+    def stat(self, key: str) -> StoredObject | None:
+        return self.objects.get(key)
+
+    def upload(
+        self,
+        source: Path,
+        key: str,
+        *,
+        content_type: str,
+        metadata: dict[str, str],
+    ) -> StoredObject:
+        stored = StoredObject(
+            key=key,
+            content_type=content_type,
+            size_bytes=source.stat().st_size,
+            etag="etag",
+            metadata=dict(metadata),
+        )
+        self.objects[key] = stored
+        self.uploaded.append((key, dict(metadata)))
+        return stored
 
 
 class FakeExecutor:
@@ -78,7 +103,7 @@ class FakeExecutor:
         self.requests: list[Any] = []
         self.metadata: list[dict[str, str]] = []
         self.downloaded_response: Any = None
-        self.storage = EmptyStorage() if storage is None else storage
+        self.storage = MemoryStorage() if storage is None else storage
 
     def _response(self, request: Any) -> Any:
         return SimpleNamespace(
@@ -104,9 +129,21 @@ class SafetyThenSuccessExecutor(FakeExecutor):
         if len(self.requests) == 1:
             raise RemoteInferenceRejectedError(
                 request.job_id,
-                "Ideogram 4 safety filter blocked all deterministic caption variants",
+                "Ideogram 4 safety filter blocked generated image",
+                transport_job_id="transport-safety-1",
             )
         return self._response(request)
+
+
+class AlwaysSafetyExecutor(FakeExecutor):
+    def execute(self, request: Any, *, metadata: dict[str, str]) -> Any:
+        self.requests.append(request)
+        self.metadata.append(metadata)
+        raise RemoteInferenceRejectedError(
+            request.job_id,
+            "Ideogram 4 safety filter blocked generated image",
+            transport_job_id=f"transport-{len(self.requests)}",
+        )
 
 
 class ConcurrencyTrackingExecutor(FakeExecutor):
@@ -130,21 +167,17 @@ class ConcurrencyTrackingExecutor(FakeExecutor):
                 self.active -= 1
 
 
-class FallbackCacheStorage(EmptyStorage):
+class FallbackCacheStorage(MemoryStorage):
     def __init__(self, request: Any) -> None:
-        self.request = request
-
-    def stat(self, key: str) -> StoredObject | None:
-        if key != self.request.output.key:
-            return None
-        return StoredObject(
-            key=key,
+        super().__init__()
+        self.objects[request.output.key] = StoredObject(
+            key=request.output.key,
             content_type="image/png",
             size_bytes=123,
             etag="etag",
             metadata={
-                "job-id": self.request.job_id,
-                "request-sha256": self.request.fingerprint(),
+                "job-id": request.job_id,
+                "request-sha256": request.fingerprint(),
                 "artifact-sha256": "a" * 64,
             },
         )
@@ -210,14 +243,8 @@ def test_salad_ideogram_provider_submits_keyframe_job(tmp_path: Path) -> None:
     assert request.task == IDEOGRAM4_KEYFRAME_TASK
     assert request.parameters["width"] == 1024
     assert request.parameters["height"] == 1536
-    assert executor.metadata == [
-        {
-            "phase": "6",
-            "provider": "ideogram4",
-            "purpose": "keyframe",
-            "prompt_variant": "canonical",
-        }
-    ]
+    assert executor.metadata[0]["phase"] == "6"
+    assert executor.metadata[0]["prompt_variant"] == "canonical"
 
 
 def test_salad_ideogram_provider_serializes_generation_by_default(tmp_path: Path) -> None:
@@ -261,7 +288,25 @@ def test_salad_ideogram_provider_rejects_invalid_concurrency(tmp_path: Path) -> 
         )
 
 
-def test_salad_ideogram_provider_uses_structural_location_fallback_after_safety_block(
+def test_ideogram_safety_variants_are_structurally_distinct_for_phase4_and_phase6() -> None:
+    for task_name in (IDEOGRAM4_REFERENCE_TASK, IDEOGRAM4_KEYFRAME_TASK):
+        variants = reference_caption_variants(_road_caption(), task_name=task_name)
+        assert [name for name, _ in variants] == [
+            "canonical",
+            "safe_simplified",
+            "safe_minimal_art",
+        ]
+        assert len({caption for _, caption in variants}) == 3
+        simplified = json.loads(variants[1][1])
+        minimal = json.loads(variants[2][1])
+        assert "Extra narrative sentence" not in variants[1][1]
+        assert "photo" in simplified["style_description"]
+        assert "art_style" not in simplified["style_description"]
+        assert "art_style" in minimal["style_description"]
+        assert "photo" not in minimal["style_description"]
+
+
+def test_salad_ideogram_provider_uses_next_structural_variant_after_safety_block(
     tmp_path: Path,
 ) -> None:
     executor = SafetyThenSuccessExecutor()
@@ -284,14 +329,55 @@ def test_salad_ideogram_provider_uses_structural_location_fallback_after_safety_
     assert len(executor.requests) == 2
     primary, recovery = executor.requests
     assert primary.job_id != recovery.job_id
-    recovery_caption = json.loads(recovery.parameters["caption"])
-    assert recovery_caption["high_level_description"] == (
-        "Canonical location reference. A paved road crossing rocky terrain toward several white "
-        "scientific dome buildings."
+    assert primary.parameters["caption"] != recovery.parameters["caption"]
+    assert executor.metadata[-1]["prompt_variant"] == "safe_simplified"
+    assert image.metadata["prompt_variant"] == "safe_simplified"
+    rejection = executor.storage.stat(safety_rejection_key(primary.job_id))
+    assert rejection is not None
+    assert rejection.metadata["transport-job-id"] == "transport-safety-1"
+    assert rejection.metadata["request-sha256"] == primary.fingerprint()
+
+
+def test_salad_ideogram_provider_never_resubmits_cached_safety_rejections(
+    tmp_path: Path,
+) -> None:
+    storage = MemoryStorage()
+    first_executor = AlwaysSafetyExecutor(storage=storage)
+    provider = SaladIdeogramImageProvider(
+        executor=first_executor,  # type: ignore[arg-type]
+        temp_dir=tmp_path,
+        task_name=IDEOGRAM4_KEYFRAME_TASK,
     )
-    assert "Extra narrative sentence" not in recovery.parameters["caption"]
-    assert executor.metadata[-1]["prompt_variant"] == "safe_fallback"
-    assert image.metadata["prompt_variant"] == "safe_fallback"
+
+    with pytest.raises(RemoteInferenceRejectedError, match="all provider caption variants"):
+        asyncio.run(
+            provider.generate_image(
+                prompt=_road_caption(),
+                model=IDEOGRAM4_MODEL_ID,
+                size="1024x1024",
+                quality="high",
+                output_format="png",
+            )
+        )
+    assert len(first_executor.requests) == 3
+
+    second_executor = AlwaysSafetyExecutor(storage=storage)
+    second_provider = SaladIdeogramImageProvider(
+        executor=second_executor,  # type: ignore[arg-type]
+        temp_dir=tmp_path,
+        task_name=IDEOGRAM4_KEYFRAME_TASK,
+    )
+    with pytest.raises(RemoteInferenceRejectedError, match="all provider caption variants"):
+        asyncio.run(
+            second_provider.generate_image(
+                prompt=_road_caption(),
+                model=IDEOGRAM4_MODEL_ID,
+                size="1024x1024",
+                quality="high",
+                output_format="png",
+            )
+        )
+    assert second_executor.requests == []
 
 
 def test_salad_ideogram_provider_reuses_cached_fallback_before_queue_submission(
@@ -326,7 +412,7 @@ def test_salad_ideogram_provider_reuses_cached_fallback_before_queue_submission(
     )
 
     assert executor.requests == []
-    assert image.metadata["prompt_variant"] == "safe_fallback"
+    assert image.metadata["prompt_variant"] == "safe_simplified"
     assert image.metadata["replayed"] == "true"
 
 
