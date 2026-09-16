@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from r2_client import create_r2_storage
+
 from ai_video_factory.config import settings
 from ai_video_factory.domain import VisualReference
 from ai_video_factory.providers import SaladIdeogramImageProvider
@@ -11,7 +13,6 @@ from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_REFERENCE_TASK
 from ai_video_factory.workflows.reference_assets import generate_reference_assets
-from r2_client import create_r2_storage
 
 DEFAULT_SIZE = "1024x1024"
 DEFAULT_QUALITY = "high"
