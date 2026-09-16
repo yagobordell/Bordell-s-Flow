@@ -289,21 +289,35 @@ def test_salad_ideogram_provider_rejects_invalid_concurrency(tmp_path: Path) -> 
 
 
 def test_ideogram_safety_variants_are_structurally_distinct_for_phase4_and_phase6() -> None:
-    for task_name in (IDEOGRAM4_REFERENCE_TASK, IDEOGRAM4_KEYFRAME_TASK):
-        variants = reference_caption_variants(_road_caption(), task_name=task_name)
-        assert [name for name, _ in variants] == [
-            "canonical",
-            "safe_simplified",
-            "safe_minimal_art",
-        ]
-        assert len({caption for _, caption in variants}) == 3
-        simplified = json.loads(variants[1][1])
-        minimal = json.loads(variants[2][1])
-        assert "Extra narrative sentence" not in variants[1][1]
-        assert "photo" in simplified["style_description"]
-        assert "art_style" not in simplified["style_description"]
-        assert "art_style" in minimal["style_description"]
-        assert "photo" not in minimal["style_description"]
+    reference_variants = reference_caption_variants(
+        _road_caption(),
+        task_name=IDEOGRAM4_REFERENCE_TASK,
+    )
+    assert [name for name, _ in reference_variants] == [
+        "canonical",
+        "safe_fallback",
+        "safe_simplified",
+        "safe_minimal_art",
+    ]
+    assert len({caption for _, caption in reference_variants}) == 4
+    simplified = json.loads(reference_variants[2][1])
+    minimal = json.loads(reference_variants[3][1])
+    assert "Extra narrative sentence" not in reference_variants[2][1]
+    assert "photo" in simplified["style_description"]
+    assert "art_style" not in simplified["style_description"]
+    assert "art_style" in minimal["style_description"]
+    assert "photo" not in minimal["style_description"]
+
+    keyframe_variants = reference_caption_variants(
+        _road_caption(),
+        task_name=IDEOGRAM4_KEYFRAME_TASK,
+    )
+    assert [name for name, _ in keyframe_variants] == [
+        "canonical",
+        "safe_simplified",
+        "safe_minimal_art",
+    ]
+    assert len({caption for _, caption in keyframe_variants}) == 3
 
 
 def test_salad_ideogram_provider_uses_next_structural_variant_after_safety_block(
@@ -330,7 +344,10 @@ def test_salad_ideogram_provider_uses_next_structural_variant_after_safety_block
     primary, recovery = executor.requests
     assert primary.job_id != recovery.job_id
     assert primary.parameters["caption"] != recovery.parameters["caption"]
-    assert executor.metadata[-1]["prompt_variant"] == "safe_simplified"
+    assert [item["prompt_variant"] for item in executor.metadata] == [
+        "canonical",
+        "safe_simplified",
+    ]
     assert image.metadata["prompt_variant"] == "safe_simplified"
     rejection = executor.storage.stat(safety_rejection_key(primary.job_id))
     assert rejection is not None
@@ -380,13 +397,14 @@ def test_salad_ideogram_provider_never_resubmits_cached_safety_rejections(
     assert second_executor.requests == []
 
 
-def test_salad_ideogram_provider_reuses_cached_fallback_before_queue_submission(
+def test_salad_ideogram_provider_reuses_legacy_cached_fallback_without_resubmitting_it(
     tmp_path: Path,
 ) -> None:
     variants = reference_caption_variants(
         _road_caption(),
         task_name=IDEOGRAM4_REFERENCE_TASK,
     )
+    assert variants[1][0] == "safe_fallback"
     fallback_request = build_ideogram_job_request(
         task_name=IDEOGRAM4_REFERENCE_TASK,
         caption=variants[1][1],
@@ -412,7 +430,7 @@ def test_salad_ideogram_provider_reuses_cached_fallback_before_queue_submission(
     )
 
     assert executor.requests == []
-    assert image.metadata["prompt_variant"] == "safe_simplified"
+    assert image.metadata["prompt_variant"] == "safe_fallback"
     assert image.metadata["replayed"] == "true"
 
 
