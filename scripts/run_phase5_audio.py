@@ -2,13 +2,14 @@ import argparse
 import asyncio
 from pathlib import Path
 
+from r2_client import create_r2_storage
+
 from ai_video_factory.config import settings
 from ai_video_factory.domain import SourceScript
 from ai_video_factory.providers import SaladBreezeSpeechProvider
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workflows.narration_audio import generate_narration_audio
-from r2_client import create_r2_storage
 
 DEFAULT_INSTRUCTIONS = (
     "Natural English documentary narration. Clear, engaging, measured delivery with restrained "
