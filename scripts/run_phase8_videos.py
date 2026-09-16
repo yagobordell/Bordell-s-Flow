@@ -6,6 +6,8 @@ import os
 import threading
 from pathlib import Path
 
+from r2_client import create_r2_storage
+
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workflows.video_generation import (
@@ -13,7 +15,6 @@ from ai_video_factory.workflows.video_generation import (
     build_video_generation_plan,
     run_video_generation,
 )
-from r2_client import create_r2_storage
 
 REQUIRED_ENV = (
     "SALAD_API_KEY",
