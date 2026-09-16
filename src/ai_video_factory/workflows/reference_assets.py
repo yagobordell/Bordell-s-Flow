@@ -58,6 +58,7 @@ async def generate_reference_assets(
             ReferenceAsset(
                 entity_id=reference.entity_id,
                 uri=path.relative_to(output_dir.parent).as_posix(),
+                metadata=dict(image.metadata),
             )
         )
 
