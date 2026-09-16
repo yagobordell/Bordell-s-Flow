@@ -42,13 +42,38 @@ The Hugging Face download now runs under a byte-progress watchdog:
 
 The watchdog measures bytes under the local model snapshot, not the `N/27` file counter. Large files may therefore continue downloading for as long as bytes keep increasing. A replica that makes no byte progress for ten minutes exits, allowing Salad to replace the unhealthy host instead of keeping an RTX 4090 allocated indefinitely.
 
-## Cold-start pending budget
+## Ready-before-queue execution
 
-The Salad transport job remains `pending` while Salad finds capacity and while a fresh Ideogram replica downloads weights and prepares the runtime. These are separate phases, but the client observes one pending interval.
+Cold start and queue wait are now separate lifecycle phases.
 
-A validated cold start showed roughly 35 minutes waiting for Salad capacity followed by about 19 minutes of healthy byte-progress model download. A 60-minute client pending timeout therefore expired only a few minutes after the model bootstrap completed, before the runtime became ready.
+Production Phase 4 and Phase 6 execution must use the controlled PowerShell runners. They first call `manage_salad_validation.ps1 -Action Prewarm -Service ideogram4`, which temporarily requests exactly one replica while keeping `queue_autoscaler.min_replicas=0`, starts the group, and waits until Salad reports one started instance with `ready=True`.
 
-Phase 4 references and Phase 6 keyframes now default to a 5400-second (90-minute) pending timeout. The dispatched/running timeout remains independent. This larger pending budget does not remove the worker safeguards: model download still has the 10-minute no-progress watchdog and the 30-minute absolute download limit.
+Only after the worker is ready does the controlled runner submit the inference job. Therefore Salad capacity wait, model download and runtime preparation no longer consume the transport job's `pending` deadline.
+
+The raw Python Phase 4 and Phase 6 clients now default to a short 300-second pending timeout. If a supposedly ready worker does not claim a job within five minutes, the client fails closed instead of keeping a queued job alive for 60 or 90 minutes.
+
+The controlled runners always execute `Stop` and `Status` in `finally`, so success, rejection, timeout or bootstrap failure must all return Ideogram to stopped/zero replicas.
+
+Canonical commands:
+
+```powershell
+.\scripts\run_phase4_assets_controlled.ps1 `
+    -ReferencesFile <visual_references.json> `
+    -OutputDir <reference-assets-dir> `
+    -Metadata <reference-assets.json> `
+    -NonInteractive
+```
+
+```powershell
+.\scripts\run_phase6_keyframes_controlled.ps1 `
+    -Frames <storyboard_frames.json> `
+    -Shots <shots.json> `
+    -OutputDir <keyframes-dir> `
+    -Output <storyboard_keyframes.json> `
+    -NonInteractive
+```
+
+Do not manually call `Start` before these runners. `Prewarm` is the allocation/bootstrap step and deliberately keeps the job queue empty until the worker is ready.
 
 ## Deployment
 
@@ -62,6 +87,6 @@ The Ideogram deployment remains scale-to-zero with `min_replicas=0`, `max_replic
 
 Because the worker/bootstrap code changed, this revision requires exactly one Ideogram `Prepare` after merging and pulling the change. `Prepare` must finish with the group stopped at zero replicas before any generation job is submitted.
 
-The later 90-minute client pending-budget adjustment is orchestration-only and does not require another Ideogram image build or `Prepare`.
+The ready-before-queue orchestration is client/control-plane only and does not require another Ideogram image build or `Prepare`.
 
 LTX is not affected by this change.
