@@ -13,6 +13,7 @@ from ai_video_factory.providers.inference_jobs import cached_inference_response
 from ai_video_factory.providers.salad_ideogram import (
     build_ideogram_job_request,
     parse_ideogram_size,
+    reference_caption_variants,
 )
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_REFERENCE_TASK
 
@@ -68,7 +69,7 @@ def _required_setting(name: str, value: str | None) -> str:
 def _load_references(path: Path) -> list[VisualReference]:
     if not path.is_file():
         raise SystemExit(f"Visual references file not found: {path}")
-    raw: Any = json.loads(path.read_text(encoding="utf-8"))
+    raw: Any = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(raw, list):
         raise SystemExit("Visual references file must contain a JSON array.")
     references = [VisualReference.model_validate(item) for item in raw]
@@ -92,21 +93,32 @@ def audit_reference_cache(
     records: list[dict[str, Any]] = []
 
     for reference in references:
-        request = build_ideogram_job_request(
+        candidates: list[tuple[str, Any]] = []
+        for variant_name, caption in reference_caption_variants(
+            reference.prompt,
             task_name=IDEOGRAM4_REFERENCE_TASK,
-            caption=reference.prompt,
-            model_id=model_id,
-            width=width,
-            height=height,
-        )
-        stored = storage.stat(request.output.key)
+        ):
+            request = build_ideogram_job_request(
+                task_name=IDEOGRAM4_REFERENCE_TASK,
+                caption=caption,
+                model_id=model_id,
+                width=width,
+                height=height,
+            )
+            candidates.append((variant_name, request))
+
+        canonical_request = candidates[0][1]
         record: dict[str, Any] = {
             "entity_id": reference.entity_id,
             "status": "miss",
-            "job_id": request.job_id,
-            "object_key": request.output.key,
-            "expected_request_sha256": request.fingerprint(),
-            "expected_content_type": request.output.content_type,
+            "matched_variant": None,
+            "job_id": canonical_request.job_id,
+            "object_key": canonical_request.output.key,
+            "expected_request_sha256": canonical_request.fingerprint(),
+            "expected_content_type": canonical_request.output.content_type,
+            "candidate_job_ids": {
+                variant_name: request.job_id for variant_name, request in candidates
+            },
             "stored_job_id": None,
             "stored_request_sha256": None,
             "stored_artifact_sha256": None,
@@ -116,47 +128,53 @@ def audit_reference_cache(
             "content_sha256_verified": None,
             "error": None,
         }
-        if stored is None:
-            records.append(record)
-            continue
 
-        record.update(
-            {
-                "stored_job_id": stored.metadata.get("job-id"),
-                "stored_request_sha256": stored.metadata.get("request-sha256"),
-                "stored_artifact_sha256": stored.metadata.get("artifact-sha256"),
-                "stored_content_type": stored.content_type,
-                "stored_size_bytes": stored.size_bytes,
-                "stored_etag": stored.etag,
-            }
-        )
-        try:
-            response = cached_inference_response(storage, request)
-        except RuntimeError as exc:
-            record["status"] = "invalid"
-            record["error"] = str(exc)
-            records.append(record)
-            continue
+        for variant_name, request in candidates:
+            stored = storage.stat(request.output.key)
+            if stored is None:
+                continue
 
-        if response is None:  # pragma: no cover - defensive against an object disappearing
-            record["status"] = "miss"
-            record["error"] = "Object disappeared between R2 metadata reads"
-            records.append(record)
-            continue
-
-        record["status"] = "hit"
-        if verify_content_sha256:
-            with tempfile.TemporaryDirectory() as directory:
-                destination = Path(directory) / "image.png"
-                downloaded = storage.download(request.output.key, destination)
-                digest = sha256_file(destination)
-            record["content_sha256_verified"] = (
-                downloaded.size_bytes == response.output.size_bytes
-                and digest == response.output.sha256
+            record.update(
+                {
+                    "matched_variant": variant_name,
+                    "job_id": request.job_id,
+                    "object_key": request.output.key,
+                    "expected_request_sha256": request.fingerprint(),
+                    "expected_content_type": request.output.content_type,
+                    "stored_job_id": stored.metadata.get("job-id"),
+                    "stored_request_sha256": stored.metadata.get("request-sha256"),
+                    "stored_artifact_sha256": stored.metadata.get("artifact-sha256"),
+                    "stored_content_type": stored.content_type,
+                    "stored_size_bytes": stored.size_bytes,
+                    "stored_etag": stored.etag,
+                }
             )
-            if not record["content_sha256_verified"]:
+            try:
+                response = cached_inference_response(storage, request)
+            except RuntimeError as exc:
                 record["status"] = "invalid"
-                record["error"] = "Downloaded content does not match cached size/SHA-256 metadata"
+                record["error"] = str(exc)
+                break
+
+            if response is None:  # pragma: no cover - defensive against disappearing object
+                continue
+
+            record["status"] = "hit"
+            if verify_content_sha256:
+                with tempfile.TemporaryDirectory() as directory:
+                    destination = Path(directory) / "image.png"
+                    downloaded = storage.download(request.output.key, destination)
+                    digest = sha256_file(destination)
+                record["content_sha256_verified"] = (
+                    downloaded.size_bytes == response.output.size_bytes
+                    and digest == response.output.sha256
+                )
+                if not record["content_sha256_verified"]:
+                    record["status"] = "invalid"
+                    record["error"] = (
+                        "Downloaded content does not match cached size/SHA-256 metadata"
+                    )
+            break
 
         records.append(record)
 
@@ -166,11 +184,12 @@ def audit_reference_cache(
 def _print_report(records: list[dict[str, Any]], *, metadata_only: bool) -> None:
     for record in records:
         print(
-            "{status:<7} entity={entity} expected_job={expected_job} stored_job={stored_job} "
-            "size={size} expected_content_type={expected_content_type} "
+            "{status:<7} entity={entity} variant={variant} expected_job={expected_job} "
+            "stored_job={stored_job} size={size} expected_content_type={expected_content_type} "
             "stored_content_type={stored_content_type}".format(
                 status=str(record["status"]).upper(),
                 entity=record["entity_id"],
+                variant=record["matched_variant"],
                 expected_job=record["job_id"],
                 stored_job=record["stored_job_id"],
                 size=record["stored_size_bytes"],

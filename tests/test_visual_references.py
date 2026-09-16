@@ -25,13 +25,17 @@ class FakeStructuredProvider:
         return self.output
 
 
-def test_visual_reference_bot_uses_context_and_builds_location_caption() -> None:
+def test_visual_reference_bot_uses_safe_location_description_for_caption() -> None:
     provider = FakeStructuredProvider(
         VisualDesignOutput(
             description=(
                 "A weathered mountain temple built from dark timber and stone, with a broad "
                 "central stairway and red wooden gates."
-            )
+            ),
+            safe_generation_description=(
+                "A dark timber and stone mountain temple with a broad central stairway and "
+                "red wooden gates."
+            ),
         )
     )
     bot = VisualReferenceBot(provider=provider, model="test-model")  # type: ignore[arg-type]
@@ -52,23 +56,29 @@ def test_visual_reference_bot_uses_context_and_builds_location_caption() -> None
     caption = json.loads(reference.prompt)
     assert reference.entity_id == "location_001"
     assert caption["high_level_description"].startswith("Canonical location reference.")
-    assert "weathered mountain temple" in caption["high_level_description"]
-    assert "weathered mountain temple" in caption["compositional_deconstruction"]["background"]
+    assert "dark timber and stone mountain temple" in caption["high_level_description"]
+    assert "weathered" not in reference.prompt.lower()
+    assert "dark timber and stone mountain temple" not in (
+        caption["compositional_deconstruction"]["background"]
+    )
     assert caption["compositional_deconstruction"]["elements"] == []
     assert caption["style_description"]["aesthetics"] == "cinematic documentary"
     assert "photo" in caption["style_description"]
-    assert "text" not in reference.prompt.lower()
     assert provider.last_call is not None
     assert provider.last_call["output_type"] is VisualDesignOutput
     assert "ENTITY ID: location_001" in provider.last_call["input_text"]
     assert "época feudal" in provider.last_call["input_text"]
-    assert "no describas un catálogo" in provider.last_call["instructions"]
+    assert "safe_generation_description" in provider.last_call["instructions"]
+    assert "estado narrativo" in provider.last_call["instructions"]
 
 
-def test_visual_reference_character_caption_has_one_identity_element() -> None:
+def test_visual_reference_character_caption_keeps_rich_identity() -> None:
     provider = FakeStructuredProvider(
         VisualDesignOutput(
-            description="A veteran warrior with weathered features and dark lamellar armor."
+            description="A veteran warrior with weathered features and dark lamellar armor.",
+            safe_generation_description=(
+                "A veteran warrior with weathered features and dark lamellar armor."
+            ),
         )
     )
     bot = VisualReferenceBot(provider=provider, model="test-model")  # type: ignore[arg-type]

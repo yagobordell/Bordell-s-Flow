@@ -94,6 +94,7 @@ class ReferenceAsset(BaseModel):
 
     entity_id: str = Field(pattern=r"^(character|group|location|object)_\d{3,}$")
     uri: str = Field(min_length=1)
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class NarrationAudio(BaseModel):

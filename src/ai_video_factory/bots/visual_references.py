@@ -20,8 +20,16 @@ La aplicación proporciona también el contexto narrativo de los bloques donde e
 activa. Usa ese contexto como evidencia para resolver época, entorno y significado visual, pero no
 conviertas acciones temporales del guion en rasgos permanentes de la entidad.
 
+Devuelve dos campos:
+- description: identidad visual rica y estable de la entidad.
+- safe_generation_description: descripción física breve y neutral destinada al generador de
+  imágenes. Para localizaciones, debe contener solo geografía visible, arquitectura, materiales,
+  distribución y landmarks físicos necesarios para reconocer el lugar. Evita estado narrativo,
+  historia, peligrosidad, abandono, daño, conflicto, dramatización, personas concretas, acciones o
+  acontecimientos. Para otros tipos puede ser equivalente a description.
+
 Reglas estrictas:
-- Devuelve la descripción visual en inglés.
+- Devuelve ambas descripciones en inglés.
 - Conserva la identidad, tipo, nombre y significado de la entidad recibida.
 - Puedes concretar detalles visuales moderados necesarios para hacer la entidad reconocible y
   consistente, siempre que no contradigan la entidad ni su contexto narrativo.
@@ -44,9 +52,10 @@ Reglas estrictas:
 
 
 class VisualDesignOutput(BaseModel):
-    """Model-owned visual identity before the fixed Ideogram template is applied."""
+    """Model-owned visual identity plus a generation-safe physical description."""
 
     description: str = Field(min_length=1)
+    safe_generation_description: str = Field(min_length=1)
 
 
 class VisualReferenceBot:
@@ -87,12 +96,16 @@ class VisualReferenceBot:
         )
 
         description = " ".join(result.description.split()).rstrip(" .")
+        safe_description = " ".join(result.safe_generation_description.split()).rstrip(" .")
         if not description:
             raise ValueError("VisualReferenceBot returned an empty visual description")
+        if not safe_description:
+            raise ValueError("VisualReferenceBot returned an empty safe generation description")
 
+        generation_description = safe_description if entity.kind == "location" else description
         prompt = _build_reference_prompt(
             kind=entity.kind,
-            description=description,
+            description=generation_description,
             visual_style=style,
         )
         return VisualReference(entity_id=entity.id, prompt=prompt)
@@ -144,8 +157,8 @@ def _build_reference_prompt(*, kind: str, description: str, visual_style: str) -
     elif kind == "location":
         high_level = f"Canonical location reference. {description}."
         background = (
-            f"{description}. One coherent reusable environment emphasizing permanent "
-            "architecture, materials, layout and recurring landmarks. No temporary events."
+            "Clear reusable environment reference emphasizing stable physical geography, "
+            "architecture, materials, layout and recurring landmarks."
         )
         elements = []
     elif kind == "object":
