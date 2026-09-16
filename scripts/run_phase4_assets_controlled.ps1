@@ -29,6 +29,7 @@ $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
+$WarmReplicaHold = Join-Path $PSScriptRoot "hold_salad_warm_replica.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $Phase4Runner = Join-Path $PSScriptRoot "run_phase4_assets.py"
 
@@ -46,8 +47,12 @@ $PrewarmArguments = @{
     Service = "ideogram4"
     TimeoutMinutes = $PrewarmTimeoutMinutes
 }
+$HoldArguments = @{
+    Service = "ideogram4"
+}
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
+    $HoldArguments["NonInteractive"] = $true
 }
 
 try {
@@ -55,6 +60,13 @@ try {
     & $OptimizedPrewarm @PrewarmArguments
     if (-not $?) {
         throw "Ideogram optimized prewarm failed."
+    }
+
+    Write-Host "=== Ideogram warm hold: pin one ready replica for the full Phase 4 batch ===" `
+        -ForegroundColor Cyan
+    & $WarmReplicaHold @HoldArguments
+    if (-not $?) {
+        throw "Ideogram warm replica hold failed; refusing to submit Phase 4 jobs."
     }
 
     Write-Host "=== Phase 4 generation: ready worker before queue submission ===" -ForegroundColor Cyan
