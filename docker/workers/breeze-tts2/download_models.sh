@@ -7,6 +7,15 @@ revision="${BREEZE_MODEL_REVISION:-main}"
 staging_root="${model_root}.staging"
 marker="${model_root}/.ready"
 expected_marker="${repository}@${revision}"
+stall_timeout="${BREEZE_DOWNLOAD_STALL_TIMEOUT_SECONDS:-300}"
+hard_timeout="${BREEZE_DOWNLOAD_HARD_TIMEOUT_SECONDS:-1200}"
+poll_seconds="${BREEZE_DOWNLOAD_POLL_SECONDS:-15}"
+min_mibps="${BREEZE_DOWNLOAD_MIN_MIBPS:-6}"
+throughput_grace="${BREEZE_DOWNLOAD_THROUGHPUT_GRACE_SECONDS:-120}"
+throughput_window="${BREEZE_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS:-90}"
+
+export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-120}"
+export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-30}"
 
 if [[ -s "${marker}" ]] && \
    [[ "$(tr -d '\r\n' < "${marker}")" == "${expected_marker}" ]] && \
@@ -27,8 +36,29 @@ if [[ -n "${HF_TOKEN:-}" ]]; then
   args+=(--token "${HF_TOKEN}")
 fi
 
+python - <<'PY'
+from importlib.metadata import PackageNotFoundError, version
+
+for package in ("huggingface-hub", "hf-xet"):
+    try:
+        print(f"HF_DOWNLOAD_RUNTIME {package}={version(package)}")
+    except PackageNotFoundError:
+        print(f"HF_DOWNLOAD_RUNTIME {package}=missing")
+PY
+
 echo "Downloading ${repository}@${revision} to staging directory ${staging_root}"
-hf "${args[@]}"
+python -m ai_video_factory.workers.download_watchdog \
+  --progress-root "${staging_root}" \
+  --stall-timeout-seconds "${stall_timeout}" \
+  --hard-timeout-seconds "${hard_timeout}" \
+  --poll-seconds "${poll_seconds}" \
+  --label breeze_tts2 \
+  --min-throughput-mibps "${min_mibps}" \
+  --throughput-grace-seconds "${throughput_grace}" \
+  --throughput-window-seconds "${throughput_window}" \
+  --reallocate-on-slow \
+  -- \
+  hf "${args[@]}"
 
 required_files=(
   "config.json"
