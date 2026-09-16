@@ -32,6 +32,8 @@ PY
 
 echo "Downloading Ideogram 4 weights: ${repo}@${revision}"
 echo "Download watchdog: stall=${stall_timeout}s hard=${hard_timeout}s poll=${poll_seconds}s min=${min_mibps}MiB/s grace=${throughput_grace}s window=${throughput_window}s"
+# Preserve the online bootstrap contract: HF_HUB_OFFLINE=0 hf download is now executed under
+# the shared progress/throughput watchdog rather than directly.
 HF_HUB_OFFLINE=0 python -m ai_video_factory.workers.download_watchdog \
     --progress-root "${snapshot_dir}" \
     --stall-timeout-seconds "${stall_timeout}" \
