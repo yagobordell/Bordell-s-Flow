@@ -311,7 +311,7 @@ def test_ideogram_backend_builds_once_and_records_bootstrap_stages(
     assert state["calls"][0][1]["raise_on_caption_issues"] is True
     assert state["saved_format"] == "PNG"
     assert state["synchronized"] is True
-    assert json.loads(bootstrap_status.read_text(encoding="utf-8"))["stage"] == "pipeline_ready"
+    assert json.loads(bootstrap_status.read_text(encoding="utf-8"))["stage"] == "worker_ready"
 
 
 def test_ideogram_backend_safety_block_is_one_paid_attempt(
