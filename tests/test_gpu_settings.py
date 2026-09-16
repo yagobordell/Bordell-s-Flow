@@ -1,5 +1,5 @@
-from pydantic import ValidationError
 import pytest
+from pydantic import ValidationError
 
 from ai_video_factory.gpu.settings import GPUWorkerSettings
 
