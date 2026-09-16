@@ -16,11 +16,15 @@ DOCKERFILES = {
     "whisper": Path("docker/workers/whisper/Dockerfile"),
 }
 
-CONTROLLED_RUNNERS = (
+READY_BEFORE_QUEUE_RUNNERS = (
     Path("scripts/run_phase4_assets_controlled.ps1"),
     Path("scripts/run_phase5_audio_controlled.ps1"),
     Path("scripts/run_phase5_alignment_controlled.ps1"),
     Path("scripts/run_phase6_keyframes_controlled.ps1"),
+)
+
+ALL_CONTROLLED_RUNNERS = READY_BEFORE_QUEUE_RUNNERS + (
+    Path("scripts/run_phase8_videos_controlled.ps1"),
 )
 
 
@@ -82,14 +86,19 @@ def test_manifest_versions_and_download_profiles_are_explicit() -> None:
         assert environment[f"{prefix}_DOWNLOAD_HARD_TIMEOUT_SECONDS"]
 
 
-def test_controlled_gpu_runners_prewarm_before_queue_and_always_stop() -> None:
-    for path in CONTROLLED_RUNNERS:
+def test_controlled_gpu_runners_prewarm_and_always_stop() -> None:
+    for path in ALL_CONTROLLED_RUNNERS:
         text = path.read_text(encoding="utf-8")
         assert "start_salad_optimized_prewarm.ps1" in text, path.name
-        assert "pending-timeout-seconds" in text, path.name
         assert "finally" in text, path.name
         assert "-Action Stop" in text, path.name
         assert "-Action Status" in text, path.name
+
+
+def test_ready_before_queue_runners_keep_short_pending_deadline() -> None:
+    for path in READY_BEFORE_QUEUE_RUNNERS:
+        text = path.read_text(encoding="utf-8")
+        assert "pending-timeout-seconds" in text, path.name
 
 
 def test_phase5_clients_have_separate_pending_deadline() -> None:
