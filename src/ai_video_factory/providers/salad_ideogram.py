@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import tempfile
 from pathlib import Path
 
@@ -22,33 +21,25 @@ from ai_video_factory.workers.ideogram4 import (
 
 from .ideogram_caption import validate_ideogram_caption
 from .images import GeneratedImage, ImageFormat, ImageQuality
-from .inference_jobs import InferenceJobExecutor, RemoteInferenceRejectedError
+from .inference_jobs import (
+    InferenceJobExecutor,
+    RemoteInferenceRejectedError,
+    cached_inference_response,
+)
 
 _SUPPORTED_TASKS = frozenset({IDEOGRAM4_REFERENCE_TASK, IDEOGRAM4_KEYFRAME_TASK})
 _SAFETY_BLOCK_DETAIL = "Ideogram 4 safety filter blocked all deterministic caption variants"
 _LOCATION_PREFIX = "Canonical location reference."
-_LOCATION_CONDITION_MODIFIERS = (
-    "single",
-    "narrow",
-    "weathered",
-    "arid",
-    "abandoned",
-    "extensive",
-    "irregular",
-    "faded",
-    "sun-bleached",
-    "broken",
-    "shallow",
-    "distant",
-    "recognizable",
-)
 _RECOVERY_STYLE = {
     "aesthetics": "documentary realism",
     "lighting": "neutral natural daylight with clearly readable form",
     "photo": "realistic reference photography with natural proportions",
     "medium": "documentary photograph",
 }
-_RECOVERY_BACKGROUND = "Clear neutral environment reference with consistent geography and layout."
+_RECOVERY_BACKGROUND = (
+    "Clear reusable environment reference emphasizing stable physical geography, architecture, "
+    "materials, layout and recurring landmarks."
+)
 
 
 def build_ideogram_job_request(
@@ -91,6 +82,17 @@ def build_ideogram_job_request(
             "seed": seed,
         },
     )
+
+
+def reference_caption_variants(caption: str, *, task_name: str) -> list[tuple[str, str]]:
+    """Return deterministic canonical/fallback captions in execution priority order."""
+
+    canonical = validate_ideogram_caption(caption)
+    recovery = _reference_recovery_caption(canonical, task_name=task_name)
+    variants = [("canonical", canonical)]
+    if recovery != canonical:
+        variants.append(("safe_fallback", recovery))
+    return variants
 
 
 class SaladIdeogramImageProvider:
@@ -148,25 +150,46 @@ class SaladIdeogramImageProvider:
         if quality not in {"high", "auto"}:
             raise ValueError("Ideogram worker is fixed to Quality mode; use quality='high'")
 
-        caption = validate_ideogram_caption(prompt)
         width, height = parse_ideogram_size(size)
-        try:
-            response = self._execute_caption(
-                caption=caption,
-                model=model,
+        variants = reference_caption_variants(prompt, task_name=self._task_name)
+
+        response: InferenceJobResponse | None = None
+        selected_variant = "canonical"
+        for variant_name, variant_caption in variants:
+            request = build_ideogram_job_request(
+                task_name=self._task_name,
+                caption=variant_caption,
+                model_id=model,
                 width=width,
                 height=height,
             )
-        except RemoteInferenceRejectedError as exc:
-            recovery_caption = _reference_recovery_caption(caption, task_name=self._task_name)
-            if exc.detail != _SAFETY_BLOCK_DETAIL or recovery_caption == caption:
-                raise
-            response = self._execute_caption(
-                caption=recovery_caption,
-                model=model,
-                width=width,
-                height=height,
-            )
+            cached = cached_inference_response(self._executor.storage, request)
+            if cached is not None:
+                response = cached
+                selected_variant = variant_name
+                break
+
+        if response is None:
+            selected_variant, caption = variants[0]
+            try:
+                response = self._execute_caption(
+                    caption=caption,
+                    model=model,
+                    width=width,
+                    height=height,
+                    prompt_variant=selected_variant,
+                )
+            except RemoteInferenceRejectedError as exc:
+                if exc.detail != _SAFETY_BLOCK_DETAIL or len(variants) < 2:
+                    raise
+                selected_variant, recovery_caption = variants[1]
+                response = self._execute_caption(
+                    caption=recovery_caption,
+                    model=model,
+                    width=width,
+                    height=height,
+                    prompt_variant=selected_variant,
+                )
 
         self._temp_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=self._temp_dir) as directory:
@@ -180,6 +203,12 @@ class SaladIdeogramImageProvider:
             content=content,
             media_type="image/png",
             extension="png",
+            metadata={
+                "prompt_variant": selected_variant,
+                "job_id": response.job_id,
+                "request_sha256": response.request_sha256,
+                "replayed": str(response.replayed).lower(),
+            },
         )
 
     def _execute_caption(
@@ -189,6 +218,7 @@ class SaladIdeogramImageProvider:
         model: str,
         width: int,
         height: int,
+        prompt_variant: str,
     ) -> InferenceJobResponse:
         request = build_ideogram_job_request(
             task_name=self._task_name,
@@ -197,11 +227,7 @@ class SaladIdeogramImageProvider:
             width=width,
             height=height,
         )
-        purpose = (
-            "reference"
-            if self._task_name == IDEOGRAM4_REFERENCE_TASK
-            else "keyframe"
-        )
+        purpose = "reference" if self._task_name == IDEOGRAM4_REFERENCE_TASK else "keyframe"
         phase = "4" if purpose == "reference" else "6"
         return self._executor.execute(
             request,
@@ -209,6 +235,7 @@ class SaladIdeogramImageProvider:
                 "phase": phase,
                 "provider": "ideogram4",
                 "purpose": purpose,
+                "prompt_variant": prompt_variant,
             },
         )
 
@@ -226,31 +253,16 @@ def _reference_recovery_caption(caption: str, *, task_name: str) -> str:
     if not isinstance(composition, dict) or composition.get("elements"):
         return caption
 
-    subject = high_level[len(_LOCATION_PREFIX) :].strip().split(". ", maxsplit=1)[0]
-    neutral = subject
-    for modifier in _LOCATION_CONDITION_MODIFIERS:
-        neutral = re.sub(
-            rf"\b{re.escape(modifier)}\b[ -]*",
-            "",
-            neutral,
-            flags=re.IGNORECASE,
-        )
-    neutral = re.sub(r"\bred-sand desert\b", "desert", neutral, flags=re.IGNORECASE)
-    neutral = neutral.replace("observatory’s", "observatory").replace(
-        "observatory's",
-        "observatory",
-    )
-    neutral = re.sub(r"\s*,\s*", " ", neutral)
-    neutral = re.sub(r"\s+", " ", neutral).strip(" ,")
-    neutral = re.sub(r"^A asphalt\b", "An asphalt", neutral)
-    neutral = re.sub(r"\ban desert\b", "a desert", neutral, flags=re.IGNORECASE)
-    if not neutral:
+    subject = high_level[len(_LOCATION_PREFIX) :].strip()
+    subject = subject.split(". ", maxsplit=1)[0].strip()
+    subject = " ".join(subject.split()).strip(" ,")
+    if not subject:
         return caption
-    if not neutral.endswith((".", "!", "?")):
-        neutral += "."
+    if not subject.endswith((".", "!", "?")):
+        subject += "."
 
     recovery = {
-        "high_level_description": f"{_LOCATION_PREFIX} {neutral}",
+        "high_level_description": f"{_LOCATION_PREFIX} {subject}",
         "style_description": dict(_RECOVERY_STYLE),
         "compositional_deconstruction": {
             "background": _RECOVERY_BACKGROUND,
