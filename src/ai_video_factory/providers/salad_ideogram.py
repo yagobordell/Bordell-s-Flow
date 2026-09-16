@@ -43,6 +43,18 @@ _CANONICAL_PREFIXES = (
     "Canonical object reference.",
     "Canonical character reference.",
 )
+_LOCATION_PREFIX = "Canonical location reference."
+_LEGACY_RECOVERY_STYLE = {
+    "aesthetics": "documentary realism",
+    "lighting": "neutral natural daylight with clearly readable form",
+    "photo": "realistic reference photography with natural proportions",
+    "medium": "documentary photograph",
+}
+_LEGACY_RECOVERY_BACKGROUND = (
+    "Clear reusable environment reference emphasizing stable physical geography, architecture, "
+    "materials, layout and recurring landmarks."
+)
+_LEGACY_CACHE_ONLY_VARIANT = "safe_fallback"
 
 
 def build_ideogram_job_request(
@@ -88,17 +100,26 @@ def build_ideogram_job_request(
 
 
 def reference_caption_variants(caption: str, *, task_name: str) -> list[tuple[str, str]]:
-    """Return audited controller-side prompt variants in deterministic priority order."""
+    """Return deterministic cache candidates and executable safety variants."""
 
     if task_name not in _SUPPORTED_TASKS:
         raise ValueError(f"Unsupported Ideogram provider task: {task_name}")
     canonical = validate_ideogram_caption(caption)
     payload = json.loads(canonical)
-    variants = [
-        ("canonical", canonical),
-        ("safe_simplified", _safety_recovery_caption(payload, minimal=False)),
-        ("safe_minimal_art", _safety_recovery_caption(payload, minimal=True)),
-    ]
+    variants = [("canonical", canonical)]
+    if task_name == IDEOGRAM4_REFERENCE_TASK:
+        variants.append(
+            (
+                _LEGACY_CACHE_ONLY_VARIANT,
+                _legacy_reference_recovery_caption(canonical),
+            )
+        )
+    variants.extend(
+        [
+            ("safe_simplified", _safety_recovery_caption(payload, minimal=False)),
+            ("safe_minimal_art", _safety_recovery_caption(payload, minimal=True)),
+        ]
+    )
 
     unique: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -210,6 +231,13 @@ class SaladIdeogramImageProvider:
         last_rejection: RemoteInferenceRejectedError | None = None
         if response is None:
             for variant_name, request in candidates:
+                if variant_name == _LEGACY_CACHE_ONLY_VARIANT:
+                    logger.info(
+                        "Ideogram legacy cache-only variant has no cached output; "
+                        "application_job_id=%s queue submission skipped",
+                        request.job_id,
+                    )
+                    continue
                 if request.job_id in rejected_job_ids:
                     continue
                 try:
@@ -239,7 +267,12 @@ class SaladIdeogramImageProvider:
                     last_rejection = exc
 
         if response is None:
-            last_request = candidates[-1][1]
+            executable = [
+                request
+                for variant_name, request in candidates
+                if variant_name != _LEGACY_CACHE_ONLY_VARIANT
+            ]
+            last_request = executable[-1]
             raise RemoteInferenceRejectedError(
                 last_request.job_id,
                 "Ideogram 4 safety filter blocked all provider caption variants",
@@ -290,6 +323,39 @@ class SaladIdeogramImageProvider:
                 "prompt_variant": prompt_variant,
             },
         )
+
+
+def _legacy_reference_recovery_caption(caption: str) -> str:
+    """Rebuild the pre-v4 fallback exactly so valid historical R2 objects remain hits."""
+
+    payload = json.loads(caption)
+    if not isinstance(payload, dict):
+        return caption
+    high_level = str(payload.get("high_level_description", "")).strip()
+    if not high_level.startswith(_LOCATION_PREFIX):
+        return caption
+    composition = payload.get("compositional_deconstruction")
+    if not isinstance(composition, dict) or composition.get("elements"):
+        return caption
+
+    subject = high_level[len(_LOCATION_PREFIX) :].strip()
+    subject = subject.split(". ", maxsplit=1)[0].strip()
+    subject = " ".join(subject.split()).strip(" ,")
+    if not subject:
+        return caption
+    if not subject.endswith((".", "!", "?")):
+        subject += "."
+
+    recovery = {
+        "high_level_description": f"{_LOCATION_PREFIX} {subject}",
+        "style_description": dict(_LEGACY_RECOVERY_STYLE),
+        "compositional_deconstruction": {
+            "background": _LEGACY_RECOVERY_BACKGROUND,
+            "elements": [],
+        },
+    }
+    rendered = json.dumps(recovery, ensure_ascii=False, separators=(",", ":"))
+    return validate_ideogram_caption(rendered)
 
 
 def _safety_recovery_caption(payload: dict[str, Any], *, minimal: bool) -> str:
@@ -365,7 +431,7 @@ def _recovery_elements(elements: Any, *, minimal: bool) -> list[Any]:
             recovered.append(element)
             continue
         item = dict(element)
-        for key in ("description", "visual_description", "appearance"):
+        for key in ("desc", "description", "visual_description", "appearance"):
             value = item.get(key)
             if isinstance(value, str):
                 item[key] = _concise_text(value)
