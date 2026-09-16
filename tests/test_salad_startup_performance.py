@@ -3,6 +3,7 @@ from pathlib import Path
 
 MANIFEST = Path("deploy/salad/services.json")
 PREWARM = Path("scripts/start_salad_optimized_prewarm.ps1")
+PRODUCTION_RUNNER = Path("scripts/run_production.py")
 
 WORKERS = {
     "ideogram4": Path("docker/workers/ideogram4/download_models.sh"),
@@ -109,3 +110,19 @@ def test_phase5_clients_have_separate_pending_deadline() -> None:
         text = path.read_text(encoding="utf-8")
         assert '"--pending-timeout-seconds"' in text
         assert "pending_timeout_seconds=args.pending_timeout_seconds" in text
+
+
+def test_full_production_routes_every_gpu_stage_through_controlled_runner() -> None:
+    text = PRODUCTION_RUNNER.read_text(encoding="utf-8")
+
+    for script in ALL_CONTROLLED_RUNNERS:
+        assert script.as_posix() in text
+    for stage_name in (
+        "phase4-reference-assets",
+        "phase5-narration",
+        "phase5-alignment",
+        "phase6-keyframes",
+        "phase8-videos",
+    ):
+        assert f'stage_name == "{stage_name}"' in text
+    assert '"powershell.exe" if os.name == "nt" else "pwsh"' in text
