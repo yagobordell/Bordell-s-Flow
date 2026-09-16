@@ -8,12 +8,12 @@ from pydantic import BaseModel
 
 from ai_video_factory.config import settings
 from ai_video_factory.domain import Shot, StoryboardFrame
-from ai_video_factory.inference.storage import R2ObjectStorage
 from ai_video_factory.providers import SaladIdeogramImageProvider
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_KEYFRAME_TASK
 from ai_video_factory.workflows.storyboard_keyframes import generate_storyboard_keyframes
+from r2_client import create_r2_storage
 
 DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS = 300.0
 
@@ -98,7 +98,7 @@ async def main() -> None:
     frames = _read_models(args.frames, StoryboardFrame)
     shots = _read_models(args.shots, Shot)
 
-    storage = R2ObjectStorage.create(
+    storage = create_r2_storage(
         endpoint_url=_required_setting("R2_ENDPOINT_URL", settings.r2_endpoint_url),
         bucket=_required_setting("R2_BUCKET", settings.r2_bucket),
         access_key_id=_required_setting("R2_ACCESS_KEY_ID", settings.r2_access_key_id),
