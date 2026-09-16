@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -15,14 +16,26 @@ from ai_video_factory.inference.storage import sha256_file
 
 from .job_queue import JobQueueClient, QueueJobStatus, TransientQueueError
 
+logger = logging.getLogger(__name__)
+
 
 class RemoteInferenceRejectedError(RuntimeError):
     """Terminal application-level rejection returned through a succeeded transport job."""
 
-    def __init__(self, job_id: str, detail: str) -> None:
+    def __init__(
+        self,
+        job_id: str,
+        detail: str,
+        *,
+        transport_job_id: str | None = None,
+    ) -> None:
         self.job_id = job_id
         self.detail = detail
-        super().__init__(f"Inference job {job_id} was rejected by worker: {detail}")
+        self.transport_job_id = transport_job_id
+        transport = f" transport={transport_job_id}" if transport_job_id else ""
+        super().__init__(
+            f"Inference job {job_id}{transport} was rejected by worker: {detail}"
+        )
 
 
 def cached_inference_response(
@@ -119,6 +132,12 @@ class InferenceJobExecutor:
             return cached
 
         snapshot = self._queue.submit(request, metadata=metadata)
+        logger.info(
+            "Inference transport submitted application_job_id=%s transport_job_id=%s metadata=%s",
+            request.job_id,
+            snapshot.id,
+            dict(metadata),
+        )
         pending_deadline = time.monotonic() + self._pending_timeout_seconds
         running_deadline: float | None = None
         last_poll_error: TransientQueueError | None = None
@@ -159,11 +178,21 @@ class InferenceJobExecutor:
         if snapshot.status != QueueJobStatus.SUCCEEDED:
             raise RuntimeError(
                 f"Inference job {request.job_id} finished with transport status "
-                f"{snapshot.status.value}"
+                f"{snapshot.status.value}; transport_job_id={snapshot.id}"
             )
         rejection = _terminal_rejection_detail(snapshot.output)
         if rejection is not None:
-            raise RemoteInferenceRejectedError(request.job_id, rejection)
+            logger.warning(
+                "Inference worker rejection application_job_id=%s transport_job_id=%s detail=%s",
+                request.job_id,
+                snapshot.id,
+                rejection,
+            )
+            raise RemoteInferenceRejectedError(
+                request.job_id,
+                rejection,
+                transport_job_id=snapshot.id,
+            )
 
         response = InferenceJobResponse.model_validate(snapshot.output)
         if response.job_id != request.job_id:
