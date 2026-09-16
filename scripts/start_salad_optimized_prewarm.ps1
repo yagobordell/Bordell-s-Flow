@@ -1,0 +1,483 @@
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)]
+    [ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25")]
+    [string]$Service,
+
+    [string]$EnvFile = ".env",
+
+    [ValidateRange(10, 120)]
+    [int]$TimeoutMinutes = 60,
+
+    [switch]$NonInteractive
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$ManifestPath = Join-Path $RepoRoot "deploy\salad\services.json"
+
+$Profiles = @{
+    whisper = @{
+        AllocatingSeconds = 180
+        FinalAllocatingSeconds = 480
+        MaxAllocatingReallocations = 2
+        ImagePullStallSeconds = 120
+        FinalImagePullStallSeconds = 360
+        MaxImagePullReallocations = 2
+        RunningNotReadySeconds = 480
+        FinalRunningNotReadySeconds = 900
+        MaxRunningNotReadyReallocations = 1
+    }
+    breeze_tts2 = @{
+        AllocatingSeconds = 240
+        FinalAllocatingSeconds = 600
+        MaxAllocatingReallocations = 2
+        ImagePullStallSeconds = 180
+        FinalImagePullStallSeconds = 480
+        MaxImagePullReallocations = 2
+        RunningNotReadySeconds = 900
+        FinalRunningNotReadySeconds = 1500
+        MaxRunningNotReadyReallocations = 1
+    }
+    ideogram4 = @{
+        AllocatingSeconds = 300
+        FinalAllocatingSeconds = 900
+        MaxAllocatingReallocations = 2
+        ImagePullStallSeconds = 180
+        FinalImagePullStallSeconds = 480
+        MaxImagePullReallocations = 2
+        RunningNotReadySeconds = 1200
+        FinalRunningNotReadySeconds = 2100
+        MaxRunningNotReadyReallocations = 1
+    }
+    ltx25 = @{
+        AllocatingSeconds = 480
+        FinalAllocatingSeconds = 1200
+        MaxAllocatingReallocations = 2
+        ImagePullStallSeconds = 300
+        FinalImagePullStallSeconds = 900
+        MaxImagePullReallocations = 2
+        RunningNotReadySeconds = 1800
+        FinalRunningNotReadySeconds = 3600
+        MaxRunningNotReadyReallocations = 1
+    }
+}
+
+function Import-EnvFile {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $Resolved = $Path
+    if (-not [IO.Path]::IsPathRooted($Resolved)) {
+        $Resolved = Join-Path $RepoRoot $Resolved
+    }
+    if (-not (Test-Path -LiteralPath $Resolved -PathType Leaf)) {
+        return
+    }
+
+    foreach ($RawLine in Get-Content -LiteralPath $Resolved) {
+        $Line = $RawLine.Trim()
+        if ([string]::IsNullOrWhiteSpace($Line) -or $Line.StartsWith("#")) {
+            continue
+        }
+        if ($Line -notmatch '^(?:export\s+)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<value>.*)$') {
+            continue
+        }
+        $Name = $Matches["name"]
+        $Value = $Matches["value"].Trim()
+        if ($Value.Length -ge 2) {
+            $First = $Value.Substring(0, 1)
+            $Last = $Value.Substring($Value.Length - 1, 1)
+            if (($First -eq '"' -and $Last -eq '"') -or ($First -eq "'" -and $Last -eq "'")) {
+                $Value = $Value.Substring(1, $Value.Length - 2)
+            }
+        }
+        $Existing = [Environment]::GetEnvironmentVariable(
+            $Name,
+            [EnvironmentVariableTarget]::Process
+        )
+        if ([string]::IsNullOrWhiteSpace($Existing)) {
+            [Environment]::SetEnvironmentVariable(
+                $Name,
+                $Value,
+                [EnvironmentVariableTarget]::Process
+            )
+        }
+    }
+}
+
+function Get-SaladApiKey {
+    $Value = [Environment]::GetEnvironmentVariable(
+        "SALAD_API_KEY",
+        [EnvironmentVariableTarget]::Process
+    )
+    if (-not [string]::IsNullOrWhiteSpace($Value)) {
+        return $Value.Trim()
+    }
+    if ($NonInteractive) {
+        throw "SALAD_API_KEY is missing and -NonInteractive was requested."
+    }
+    $SecureValue = Read-Host "Salad API key" -AsSecureString
+    $Credential = [PSCredential]::new("salad-optimized-prewarm", $SecureValue)
+    $Value = $Credential.GetNetworkCredential().Password
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        throw "SALAD_API_KEY is empty."
+    }
+    return $Value.Trim()
+}
+
+function Get-Group {
+    return Invoke-RestMethod -Uri $GroupUrl -Headers $Headers -TimeoutSec 30
+}
+
+function Get-Queue {
+    return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
+}
+
+function Get-Instances {
+    $Response = Invoke-RestMethod -Uri $InstancesUrl -Headers $Headers -TimeoutSec 30
+    if ($Response.PSObject.Properties.Name -contains "instances") {
+        return @($Response.instances)
+    }
+    if ($Response.PSObject.Properties.Name -contains "items") {
+        return @($Response.items)
+    }
+    return @()
+}
+
+function Request-InstanceReallocation {
+    param(
+        [Parameter(Mandatory)][string]$InstanceId,
+        [Parameter(Mandatory)][string]$Reason
+    )
+
+    Write-Warning "$Service requesting Salad node reallocation: $Reason"
+    Invoke-RestMethod `
+        -Method Post `
+        -Uri "$InstancesUrl/$InstanceId/reallocate" `
+        -Headers $Headers `
+        -ContentType "application/json" `
+        -Body (@{ reason = $Reason } | ConvertTo-Json -Compress) `
+        -TimeoutSec 60 |
+        Out-Null
+}
+
+function Test-QueueAttachment {
+    param([Parameter(Mandatory)][object]$Queue)
+
+    return @(
+        @($Queue.container_groups) |
+            Where-Object { [string]$_.name -eq $GroupName }
+    ).Count -eq 1
+}
+
+Import-EnvFile -Path $EnvFile
+if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
+    throw "Salad stack manifest not found: $ManifestPath"
+}
+
+$Document = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+$ServiceProperty = $Document.services.PSObject.Properties[$Service]
+if ($null -eq $ServiceProperty) {
+    throw "Unknown Salad service '$Service'."
+}
+$Definition = $ServiceProperty.Value
+$Profile = $Profiles[$Service]
+if ([int]$Definition.autoscaler.min_replicas -ne 0) {
+    throw "Optimized prewarm requires min_replicas=0 for '$Service'."
+}
+if ([int]$Definition.autoscaler.max_replicas -lt 1) {
+    throw "Optimized prewarm requires max_replicas>=1 for '$Service'."
+}
+
+$Organization = [string]$Document.stack.organization
+$Project = [string]$Document.stack.project
+$GroupName = [string]$Definition.group_name
+$QueueName = [string]$Definition.queue_name
+$BaseUrl = "https://api.salad.com/api/public/organizations/$Organization/projects/$Project"
+$GroupUrl = "$BaseUrl/containers/$GroupName"
+$InstancesUrl = "$GroupUrl/instances"
+$QueueUrl = "$BaseUrl/queues/$QueueName"
+$Headers = @{
+    "Salad-Api-Key" = Get-SaladApiKey
+    "Accept" = "application/json"
+    "User-Agent" = "ai-video-factory-optimized-prewarm/1.0"
+}
+
+$Queue = Get-Queue
+if ([int]$Queue.current_queue_length -ne 0) {
+    throw (
+        "Optimized prewarm requires an empty queue; '$QueueName' contains " +
+        "$([int]$Queue.current_queue_length) job(s)."
+    )
+}
+
+$Group = Get-Group
+$Status = [string]$Group.current_state.status
+if ($Status -ne "stopped" -or [bool]$Group.pending_change -or [int]$Group.replicas -ne 0) {
+    throw (
+        "Optimized prewarm requires '$GroupName' stopped at replicas=0/pending=False; " +
+        "status=$Status replicas=$([int]$Group.replicas) pending=$([bool]$Group.pending_change)."
+    )
+}
+if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
+    throw "Container group '$GroupName' is configured for an unexpected queue."
+}
+if ([int]$Group.queue_autoscaler.min_replicas -ne 0) {
+    throw "Optimized prewarm refuses a remote autoscaler with min_replicas != 0."
+}
+
+Write-Host (
+    "Optimized prewarm profile: service={0} allocating={1}s/{2} retries " +
+    "image_pull_stall={3}s/{4} retries running_not_ready={5}s/{6} retries" -f
+    $Service,
+    $Profile.AllocatingSeconds,
+    $Profile.MaxAllocatingReallocations,
+    $Profile.ImagePullStallSeconds,
+    $Profile.MaxImagePullReallocations,
+    $Profile.RunningNotReadySeconds,
+    $Profile.MaxRunningNotReadyReallocations
+) -ForegroundColor Cyan
+
+Invoke-RestMethod `
+    -Method Patch `
+    -Uri $GroupUrl `
+    -Headers $Headers `
+    -ContentType "application/merge-patch+json" `
+    -Body (@{ replicas = 1 } | ConvertTo-Json -Compress) `
+    -TimeoutSec 60 |
+    Out-Null
+
+$PatchDeadline = (Get-Date).AddMinutes(2)
+do {
+    Start-Sleep -Seconds 5
+    $Group = Get-Group
+    if (
+        -not [bool]$Group.pending_change -and
+        [int]$Group.replicas -eq 1 -and
+        [int]$Group.queue_autoscaler.min_replicas -eq 0
+    ) {
+        break
+    }
+}
+while ((Get-Date) -lt $PatchDeadline)
+if (
+    [bool]$Group.pending_change -or
+    [int]$Group.replicas -ne 1 -or
+    [int]$Group.queue_autoscaler.min_replicas -ne 0
+) {
+    throw "Salad did not persist the one-replica prewarm state safely."
+}
+
+Invoke-RestMethod `
+    -Method Post `
+    -Uri "$GroupUrl/start" `
+    -Headers $Headers `
+    -TimeoutSec 60 |
+    Out-Null
+
+$Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+$CurrentInstanceId = ""
+$CurrentMachineId = ""
+$AllocatingSince = $null
+$ImagePullSince = $null
+$ImagePullBaseline = $null
+$RunningNotReadySince = $null
+$AllocatingReallocations = 0
+$ImagePullReallocations = 0
+$RunningNotReadyReallocations = 0
+$ImagePullProgressThreshold = 0.005
+
+while ((Get-Date) -lt $Deadline) {
+    Start-Sleep -Seconds 5
+    $Group = Get-Group
+    $Queue = Get-Queue
+    $Instances = @(Get-Instances)
+    $Status = [string]$Group.current_state.status
+    $Attached = Test-QueueAttachment -Queue $Queue
+
+    if ($Status -eq "failed") {
+        throw "Container group '$GroupName' entered failed state during prewarm."
+    }
+    if ([int]$Group.replicas -gt 1 -or $Instances.Count -gt 1) {
+        throw (
+            "Optimized prewarm refuses more than one replica; " +
+            "replicas=$([int]$Group.replicas) instances=$($Instances.Count)."
+        )
+    }
+
+    $InstanceId = ""
+    $MachineId = ""
+    $InstanceState = "-"
+    $PullingProgress = $null
+    $Ready = $false
+    $Started = $false
+    if ($Instances.Count -eq 1) {
+        $Instance = $Instances[0]
+        if ($Instance.PSObject.Properties.Name -contains "id") {
+            $InstanceId = [string]$Instance.id
+        }
+        if ($Instance.PSObject.Properties.Name -contains "machine_id") {
+            $MachineId = [string]$Instance.machine_id
+        }
+        if ($Instance.PSObject.Properties.Name -contains "state") {
+            $InstanceState = [string]$Instance.state
+        }
+        if ($Instance.PSObject.Properties.Name -contains "pulling_progress") {
+            $PullingProgress = [double]$Instance.pulling_progress
+        }
+        if ($Instance.PSObject.Properties.Name -contains "ready") {
+            $Ready = [bool]$Instance.ready
+        }
+        if ($Instance.PSObject.Properties.Name -contains "started") {
+            $Started = [bool]$Instance.started
+        }
+    }
+
+    if ($InstanceId -ne $CurrentInstanceId -or $MachineId -ne $CurrentMachineId) {
+        if (-not [string]::IsNullOrWhiteSpace($CurrentMachineId)) {
+            Write-Host "$Service moved to a different Salad node." -ForegroundColor Cyan
+        }
+        $CurrentInstanceId = $InstanceId
+        $CurrentMachineId = $MachineId
+        $AllocatingSince = $null
+        $ImagePullSince = $null
+        $ImagePullBaseline = $null
+        $RunningNotReadySince = $null
+    }
+
+    $PullRendered = if ($null -eq $PullingProgress) { "-" } else { $PullingProgress }
+    Write-Host (
+        "{0} service={1} status={2} state={3} started={4} ready={5} " +
+        "pulling_progress={6} machine={7} attached={8}" -f
+        (Get-Date -Format "HH:mm:ss"),
+        $Service,
+        $Status,
+        $InstanceState,
+        $Started,
+        $Ready,
+        $PullRendered,
+        $MachineId,
+        $Attached
+    )
+
+    if (
+        -not [bool]$Group.pending_change -and
+        [int]$Group.replicas -eq 1 -and
+        $Instances.Count -eq 1 -and
+        $Started -and
+        $Ready
+    ) {
+        Write-Host (
+            "$Service prewarm complete: exactly one started ready replica, queue still empty."
+        ) -ForegroundColor Green
+        exit 0
+    }
+
+    if ($Instances.Count -ne 1 -or [string]::IsNullOrWhiteSpace($InstanceId)) {
+        continue
+    }
+
+    if ($InstanceState -eq "allocating") {
+        if ($null -eq $AllocatingSince) {
+            $AllocatingSince = Get-Date
+        }
+        $Limit = if ($AllocatingReallocations -lt $Profile.MaxAllocatingReallocations) {
+            [int]$Profile.AllocatingSeconds
+        }
+        else {
+            [int]$Profile.FinalAllocatingSeconds
+        }
+        if (((Get-Date) - $AllocatingSince).TotalSeconds -ge $Limit) {
+            if ($AllocatingReallocations -ge $Profile.MaxAllocatingReallocations) {
+                throw "$Service could not allocate an acceptable node within the final ${Limit}s window."
+            }
+            $AllocatingReallocations += 1
+            Request-InstanceReallocation `
+                -InstanceId $InstanceId `
+                -Reason "Allocation remained pending for at least ${Limit}s"
+            $AllocatingSince = $null
+            continue
+        }
+    }
+    else {
+        $AllocatingSince = $null
+    }
+
+    $FractionalImagePull = (
+        $InstanceState -eq "downloading" -and
+        $null -ne $PullingProgress -and
+        $PullingProgress -gt 0.0 -and
+        $PullingProgress -lt 1.0
+    )
+    if ($FractionalImagePull) {
+        if ($null -eq $ImagePullSince) {
+            $ImagePullSince = Get-Date
+            $ImagePullBaseline = $PullingProgress
+        }
+        elseif (
+            $PullingProgress -lt $ImagePullBaseline -or
+            $PullingProgress -ge ($ImagePullBaseline + $ImagePullProgressThreshold)
+        ) {
+            $ImagePullSince = Get-Date
+            $ImagePullBaseline = $PullingProgress
+        }
+        else {
+            $Limit = if ($ImagePullReallocations -lt $Profile.MaxImagePullReallocations) {
+                [int]$Profile.ImagePullStallSeconds
+            }
+            else {
+                [int]$Profile.FinalImagePullStallSeconds
+            }
+            if (((Get-Date) - $ImagePullSince).TotalSeconds -ge $Limit) {
+                if ($ImagePullReallocations -ge $Profile.MaxImagePullReallocations) {
+                    throw "$Service image pull remained stalled during the final ${Limit}s window."
+                }
+                $ImagePullReallocations += 1
+                Request-InstanceReallocation `
+                    -InstanceId $InstanceId `
+                    -Reason "Container image pull made less than 0.5% progress for ${Limit}s"
+                $ImagePullSince = $null
+                $ImagePullBaseline = $null
+                continue
+            }
+        }
+    }
+    else {
+        $ImagePullSince = $null
+        $ImagePullBaseline = $null
+    }
+
+    if ($Started -and $InstanceState -eq "running" -and -not $Ready) {
+        if ($null -eq $RunningNotReadySince) {
+            $RunningNotReadySince = Get-Date
+        }
+        $Limit = if (
+            $RunningNotReadyReallocations -lt $Profile.MaxRunningNotReadyReallocations
+        ) {
+            [int]$Profile.RunningNotReadySeconds
+        }
+        else {
+            [int]$Profile.FinalRunningNotReadySeconds
+        }
+        if (((Get-Date) - $RunningNotReadySince).TotalSeconds -ge $Limit) {
+            if (
+                $RunningNotReadyReallocations -ge $Profile.MaxRunningNotReadyReallocations
+            ) {
+                throw "$Service remained running but not ready during the final ${Limit}s window."
+            }
+            $RunningNotReadyReallocations += 1
+            Request-InstanceReallocation `
+                -InstanceId $InstanceId `
+                -Reason "Model bootstrap remained running but not ready for ${Limit}s"
+            $RunningNotReadySince = $null
+            continue
+        }
+    }
+    else {
+        $RunningNotReadySince = $null
+    }
+}
+
+throw "$Service did not become ready within the overall $TimeoutMinutes minute prewarm budget."
