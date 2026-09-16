@@ -24,8 +24,8 @@ from ai_video_factory.workers.ideogram4 import (
 
 from .ideogram_caption import validate_ideogram_caption
 from .ideogram_rejections import (
+    find_safety_rejection,
     is_safety_rejection_detail,
-    known_safety_rejection,
     record_safety_rejection,
 )
 from .images import GeneratedImage, ImageFormat, ImageQuality
@@ -219,13 +219,16 @@ class SaladIdeogramImageProvider:
                 response = cached
                 selected_variant = variant_name
                 break
-            if known_safety_rejection(self._executor.storage, request):
+            rejection = find_safety_rejection(self._executor.storage, request)
+            if rejection is not None:
                 rejected_job_ids.add(request.job_id)
                 logger.warning(
-                    "Ideogram cached safety rejection prompt_variant=%s application_job_id=%s; "
-                    "queue submission skipped",
+                    "Ideogram cached safety rejection prompt_variant=%s application_job_id=%s "
+                    "transport_job_id=%s reason=%s; queue submission skipped",
                     variant_name,
                     request.job_id,
+                    rejection.transport_job_id or "unknown",
+                    rejection.detail,
                 )
 
         last_rejection: RemoteInferenceRejectedError | None = None
@@ -261,7 +264,7 @@ class SaladIdeogramImageProvider:
                         "transport_job_id=%s reason=%s",
                         variant_name,
                         request.job_id,
-                        exc.transport_job_id,
+                        exc.transport_job_id or "unknown",
                         exc.detail,
                     )
                     last_rejection = exc
