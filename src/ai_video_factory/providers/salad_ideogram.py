@@ -410,8 +410,8 @@ def _recovery_style(style: Mapping[str, Any], *, minimal: bool) -> dict[str, Any
         recovered = {
             "aesthetics": "neutral production reference",
             "lighting": "clear neutral daylight with readable forms",
-            "medium": "reference photograph",
             "photo": "straightforward realistic reference photography",
+            "medium": "reference photograph",
         }
     else:
         recovered = {
