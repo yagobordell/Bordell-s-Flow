@@ -6,12 +6,12 @@ from typing import Any
 
 from ai_video_factory.config import settings
 from ai_video_factory.domain import VisualReference
-from ai_video_factory.inference.storage import R2ObjectStorage
 from ai_video_factory.providers import SaladIdeogramImageProvider
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_REFERENCE_TASK
 from ai_video_factory.workflows.reference_assets import generate_reference_assets
+from r2_client import create_r2_storage
 
 DEFAULT_SIZE = "1024x1024"
 DEFAULT_QUALITY = "high"
@@ -102,7 +102,7 @@ async def main() -> None:
         raise SystemExit("Visual references file must contain a JSON array.")
 
     references = [VisualReference.model_validate(item) for item in raw]
-    storage = R2ObjectStorage.create(
+    storage = create_r2_storage(
         endpoint_url=_required_setting("R2_ENDPOINT_URL", settings.r2_endpoint_url),
         bucket=_required_setting("R2_BUCKET", settings.r2_bucket),
         access_key_id=_required_setting("R2_ACCESS_KEY_ID", settings.r2_access_key_id),
