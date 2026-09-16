@@ -29,6 +29,7 @@ $Profiles = @{
         RunningNotReadySeconds = 480
         FinalRunningNotReadySeconds = 900
         MaxRunningNotReadyReallocations = 1
+        MaxNodeChanges = 6
     }
     breeze_tts2 = @{
         AllocatingSeconds = 240
@@ -40,6 +41,7 @@ $Profiles = @{
         RunningNotReadySeconds = 900
         FinalRunningNotReadySeconds = 1500
         MaxRunningNotReadyReallocations = 1
+        MaxNodeChanges = 6
     }
     ideogram4 = @{
         AllocatingSeconds = 300
@@ -48,9 +50,10 @@ $Profiles = @{
         ImagePullStallSeconds = 180
         FinalImagePullStallSeconds = 480
         MaxImagePullReallocations = 2
-        RunningNotReadySeconds = 1200
-        FinalRunningNotReadySeconds = 2100
+        RunningNotReadySeconds = 900
+        FinalRunningNotReadySeconds = 900
         MaxRunningNotReadyReallocations = 1
+        MaxNodeChanges = 2
     }
     ltx25 = @{
         AllocatingSeconds = 480
@@ -62,6 +65,7 @@ $Profiles = @{
         RunningNotReadySeconds = 1800
         FinalRunningNotReadySeconds = 3600
         MaxRunningNotReadyReallocations = 1
+        MaxNodeChanges = 6
     }
 }
 
@@ -188,6 +192,9 @@ if ([int]$Definition.autoscaler.min_replicas -ne 0) {
 if ([int]$Definition.autoscaler.max_replicas -lt 1) {
     throw "Optimized prewarm requires max_replicas>=1 for '$Service'."
 }
+if ($Service -eq "ideogram4" -and [int]$Definition.autoscaler.max_replicas -ne 1) {
+    throw "Ideogram optimized prewarm requires max_replicas=1."
+}
 
 $Organization = [string]$Document.stack.organization
 $Project = [string]$Document.stack.project
@@ -225,17 +232,22 @@ if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
 if ([int]$Group.queue_autoscaler.min_replicas -ne 0) {
     throw "Optimized prewarm refuses a remote autoscaler with min_replicas != 0."
 }
+if ($Service -eq "ideogram4" -and [int]$Group.queue_autoscaler.max_replicas -ne 1) {
+    throw "Ideogram optimized prewarm refuses a remote autoscaler with max_replicas != 1."
+}
 
 Write-Host (
     "Optimized prewarm profile: service={0} allocating={1}s/{2} retries " +
-    "image_pull_stall={3}s/{4} retries running_not_ready={5}s/{6} retries" -f
+    "image_pull_stall={3}s/{4} retries running_not_ready={5}s/{6} retries " +
+    "max_node_changes={7}" -f
     $Service,
     $Profile.AllocatingSeconds,
     $Profile.MaxAllocatingReallocations,
     $Profile.ImagePullStallSeconds,
     $Profile.MaxImagePullReallocations,
     $Profile.RunningNotReadySeconds,
-    $Profile.MaxRunningNotReadyReallocations
+    $Profile.MaxRunningNotReadyReallocations,
+    $Profile.MaxNodeChanges
 ) -ForegroundColor Cyan
 
 Invoke-RestMethod `
@@ -278,6 +290,8 @@ Invoke-RestMethod `
 $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 $CurrentInstanceId = ""
 $CurrentMachineId = ""
+$LastObservedNonEmptyMachineId = ""
+$NodeChanges = 0
 $AllocatingSince = $null
 $ImagePullSince = $null
 $ImagePullBaseline = $null
@@ -339,10 +353,27 @@ while ((Get-Date) -lt $Deadline) {
         }
     }
 
-    if ($InstanceId -ne $CurrentInstanceId -or $MachineId -ne $CurrentMachineId) {
-        if (-not [string]::IsNullOrWhiteSpace($CurrentMachineId)) {
-            Write-Host "$Service moved to a different Salad node." -ForegroundColor Cyan
+    if (-not [string]::IsNullOrWhiteSpace($MachineId)) {
+        if (
+            -not [string]::IsNullOrWhiteSpace($LastObservedNonEmptyMachineId) -and
+            $MachineId -ne $LastObservedNonEmptyMachineId
+        ) {
+            $NodeChanges += 1
+            Write-Warning (
+                "$Service moved from Salad node $LastObservedNonEmptyMachineId to $MachineId; " +
+                "global node changes=$NodeChanges/$($Profile.MaxNodeChanges)."
+            )
+            if ($NodeChanges -gt [int]$Profile.MaxNodeChanges) {
+                throw (
+                    "$Service exceeded the global node-change budget of " +
+                    "$($Profile.MaxNodeChanges); refusing further reallocation churn."
+                )
+            }
         }
+        $LastObservedNonEmptyMachineId = $MachineId
+    }
+
+    if ($InstanceId -ne $CurrentInstanceId -or $MachineId -ne $CurrentMachineId) {
         $CurrentInstanceId = $InstanceId
         $CurrentMachineId = $MachineId
         $AllocatingSince = $null
@@ -354,7 +385,7 @@ while ((Get-Date) -lt $Deadline) {
     $PullRendered = if ($null -eq $PullingProgress) { "-" } else { $PullingProgress }
     Write-Host (
         "{0} service={1} status={2} state={3} started={4} ready={5} " +
-        "pulling_progress={6} machine={7} attached={8}" -f
+        "pulling_progress={6} machine={7} attached={8} node_changes={9}/{10}" -f
         (Get-Date -Format "HH:mm:ss"),
         $Service,
         $Status,
@@ -363,7 +394,9 @@ while ((Get-Date) -lt $Deadline) {
         $Ready,
         $PullRendered,
         $MachineId,
-        $Attached
+        $Attached,
+        $NodeChanges,
+        $Profile.MaxNodeChanges
     )
 
     if (
