@@ -15,6 +15,8 @@ from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_KEYFRAME_TASK
 from ai_video_factory.workflows.storyboard_keyframes import generate_storyboard_keyframes
 
+DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS = 5400.0
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -65,8 +67,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pending-timeout-seconds",
         type=float,
-        default=settings.inference_client_timeout_seconds,
-        help="Maximum seconds for queue wait, cold start, and model bootstrap before dispatch.",
+        default=DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS,
+        help=(
+            "Maximum seconds for Salad capacity wait, cold start, model download, and runtime "
+            "preparation before dispatch. Ideogram uses a 90-minute default because bootstrap "
+            "has its own independent progress watchdog."
+        ),
     )
     parser.add_argument(
         "--output-dir",
