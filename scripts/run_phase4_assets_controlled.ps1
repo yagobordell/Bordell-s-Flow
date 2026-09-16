@@ -9,8 +9,8 @@ param(
     [Parameter(Mandatory)]
     [string]$Metadata,
 
-    [ValidateRange(10, 180)]
-    [int]$PrewarmTimeoutMinutes = 90,
+    [ValidateRange(10, 120)]
+    [int]$PrewarmTimeoutMinutes = 60,
 
     [ValidateRange(30, 900)]
     [int]$PendingTimeoutSeconds = 300,
@@ -27,8 +27,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
+$OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $Phase4Runner = Join-Path $PSScriptRoot "run_phase4_assets.py"
 
 if (-not (Test-Path -LiteralPath $ReferencesFile -PathType Leaf)) {
@@ -36,22 +36,21 @@ if (-not (Test-Path -LiteralPath $ReferencesFile -PathType Leaf)) {
 }
 
 $PrewarmArguments = @{
-    Action = "Prewarm"
     Service = "ideogram4"
-    PrewarmTimeoutMinutes = $PrewarmTimeoutMinutes
+    TimeoutMinutes = $PrewarmTimeoutMinutes
 }
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
 }
 
 try {
-    Write-Host "=== Ideogram prewarm: waiting for one ready RTX4090 ===" -ForegroundColor Cyan
-    & $ValidationManager @PrewarmArguments
+    Write-Host "=== Ideogram optimized prewarm: selecting one ready node ===" -ForegroundColor Cyan
+    & $OptimizedPrewarm @PrewarmArguments
     if (-not $?) {
-        throw "Ideogram prewarm failed."
+        throw "Ideogram optimized prewarm failed."
     }
 
-    Write-Host "=== Phase 4 generation: worker is ready before queue submission ===" -ForegroundColor Cyan
+    Write-Host "=== Phase 4 generation: ready worker before queue submission ===" -ForegroundColor Cyan
     & python $Phase4Runner `
         $ReferencesFile `
         --output-dir $OutputDir `
