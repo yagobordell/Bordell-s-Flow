@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 type ImageQuality = Literal["low", "medium", "high", "auto"]
@@ -13,6 +13,7 @@ class GeneratedImage:
     content: bytes
     media_type: str
     extension: ImageFormat
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
