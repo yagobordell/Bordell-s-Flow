@@ -19,6 +19,8 @@ rm -f "${model_root}/.ready"
 
 echo "Downloading Ideogram 4 weights: ${repo}@${revision}"
 echo "Download watchdog: stall=${stall_timeout}s hard=${hard_timeout}s poll=${poll_seconds}s"
+# Keep the original HF_HUB_OFFLINE=0 hf download behavior, but execute it under a byte-progress
+# watchdog so an unhealthy host is replaced instead of holding a GPU indefinitely.
 HF_HUB_OFFLINE=0 python -m ai_video_factory.workers.ideogram4.download_watchdog \
     --progress-root "${snapshot_dir}" \
     --stall-timeout-seconds "${stall_timeout}" \
