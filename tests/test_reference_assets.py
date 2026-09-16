@@ -44,6 +44,7 @@ def test_openai_image_provider_decodes_png_and_forwards_generation_settings() ->
     assert image.content == b"fake-png-bytes"
     assert image.media_type == "image/png"
     assert image.extension == "png"
+    assert image.metadata == {}
     assert client.images.last_call == {
         "model": "gpt-image-2",
         "prompt": "Canonical samurai reference",
@@ -71,6 +72,7 @@ class ParallelImageProvider:
             content=prompt.encode("utf-8"),
             media_type="image/png",
             extension="png",
+            metadata={"prompt_variant": "test"},
         )
 
 
@@ -100,10 +102,12 @@ def test_reference_asset_workflow_runs_in_parallel_and_writes_deterministic_file
         {
             "entity_id": "group_001",
             "uri": "reference_assets/group_001.png",
+            "metadata": {"prompt_variant": "test"},
         },
         {
             "entity_id": "location_001",
             "uri": "reference_assets/location_001.png",
+            "metadata": {"prompt_variant": "test"},
         },
     ]
     assert (output_dir / "group_001.png").read_bytes() == b"Samurai group"
