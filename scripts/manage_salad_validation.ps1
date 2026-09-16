@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("Validate", "Prepare", "Start", "Status", "Smoke", "ProtectedSmoke", "Stop")]
+    [ValidateSet("Validate", "Prepare", "Start", "Prewarm", "Status", "Smoke", "ProtectedSmoke", "Stop")]
     [string]$Action = "Status",
 
     [ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25", "all")]
@@ -12,6 +12,9 @@ param(
 
     [ValidateRange(10, 180)]
     [int]$PrepareTimeoutMinutes = 120,
+
+    [ValidateRange(10, 180)]
+    [int]$PrewarmTimeoutMinutes = 90,
 
     [switch]$SkipBuild,
 
@@ -148,16 +151,17 @@ function Invoke-ScaleToZeroStart {
 
 function Invoke-ProtectedSmokeBootstrap {
     if ($Service -eq "all") {
-        throw "ProtectedSmoke requires one explicit service so GPU workers stay serialized."
+        throw "Prewarm requires one explicit service so GPU workers stay serialized."
     }
     if (-not (Test-Path -LiteralPath $ProtectedSmokeBootstrap -PathType Leaf)) {
-        throw "Protected smoke bootstrap not found: $ProtectedSmokeBootstrap"
+        throw "Protected prewarm bootstrap not found: $ProtectedSmokeBootstrap"
     }
 
-    Write-Host "=== Salad Protected Bootstrap : $Service ===" -ForegroundColor Cyan
+    Write-Host "=== Salad Prewarm : $Service ===" -ForegroundColor Cyan
     $Arguments = @{
         Service = $Service
         EnvFile = $EnvFile
+        TimeoutMinutes = $PrewarmTimeoutMinutes
     }
     if ($NonInteractive) {
         $Arguments["NonInteractive"] = $true
@@ -165,7 +169,7 @@ function Invoke-ProtectedSmokeBootstrap {
     & $ProtectedSmokeBootstrap @Arguments
     $CallSucceeded = $?
     if (-not $CallSucceeded) {
-        throw "Salad protected bootstrap failed for service '$Service'."
+        throw "Salad prewarm failed for service '$Service'."
     }
 }
 
@@ -312,6 +316,7 @@ switch ($Action) {
     "Validate" { Invoke-StackAction -StackAction "Validate" }
     "Prepare" { Invoke-StackAction -StackAction "Prepare" }
     "Start" { Invoke-ScaleToZeroStart }
+    "Prewarm" { Invoke-ProtectedSmokeBootstrap }
     "Status" { Invoke-StackAction -StackAction "Status" }
     "Smoke" { Invoke-Smoke }
     "ProtectedSmoke" { Invoke-ProtectedSmoke }
