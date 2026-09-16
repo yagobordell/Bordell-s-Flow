@@ -1,3 +1,4 @@
+import subprocess
 import sys
 from pathlib import Path
 
@@ -89,3 +90,39 @@ def test_shared_watchdog_does_not_reallocate_when_progress_is_fast_enough(
 
     assert return_code == 0
     assert reasons == []
+
+
+def test_windows_process_termination_falls_back_to_kill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeProcess:
+        pid = 42
+
+        def __init__(self) -> None:
+            self.terminated = False
+            self.killed = False
+            self.wait_calls = 0
+
+        def poll(self) -> int | None:
+            return -9 if self.killed else None
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+        def wait(self, timeout: int) -> int:
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise subprocess.TimeoutExpired(cmd="fake", timeout=timeout)
+            return -9
+
+    process = FakeProcess()
+    monkeypatch.setattr(download_watchdog.os, "name", "nt")
+
+    download_watchdog._terminate_process_group(process)  # type: ignore[arg-type]
+
+    assert process.terminated is True
+    assert process.killed is True
+    assert process.wait_calls == 2
