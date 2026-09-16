@@ -26,6 +26,10 @@ class Ideogram4WorkerSettings(InferenceWorkerSettings):
         default="V4_QUALITY_48",
         validation_alias="IDEOGRAM_SAMPLER_PRESET",
     )
+    bootstrap_status_path: Path = Field(
+        default=Path("/tmp/ai-video-factory/ideogram-bootstrap.json"),
+        validation_alias="IDEOGRAM_BOOTSTRAP_STATUS_PATH",
+    )
 
     @model_validator(mode="after")
     def validate_ideogram(self) -> Self:
