@@ -45,7 +45,7 @@ def test_smoke_ideogram_caption_matches_local_contract() -> None:
 def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     text = VALIDATION_MANAGER.read_text(encoding="utf-8")
     action_set = (
-        'ValidateSet("Validate", "Prepare", "Start", "Status", "Smoke", '
+        'ValidateSet("Validate", "Prepare", "Start", "Prewarm", "Status", "Smoke", '
         '"ProtectedSmoke", "Stop")'
     )
 
@@ -61,6 +61,7 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     assert 'if (-not $CallSucceeded)' in text
     assert '"Prepare" { Invoke-StackAction -StackAction "Prepare" }' in text
     assert '"Start" { Invoke-ScaleToZeroStart }' in text
+    assert '"Prewarm" { Invoke-ProtectedSmokeBootstrap }' in text
     assert '"ProtectedSmoke" { Invoke-ProtectedSmoke }' in text
     assert '"Stop" { Invoke-SafeStop }' in text
     assert 'ValidateSet("Full"' not in text
