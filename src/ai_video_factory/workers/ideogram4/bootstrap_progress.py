@@ -12,15 +12,17 @@ class IdeogramBootstrapProgress:
 
     def __init__(self, status_path: Path) -> None:
         self._status_path = status_path
-        self._stage_started_epoch = time.time()
+        self._terminal = False
 
     @property
     def status_path(self) -> Path:
         return self._status_path
 
     def record(self, stage: str, **details: Any) -> None:
+        if self._terminal and stage != "worker_ready":
+            return
+
         now = time.time()
-        self._stage_started_epoch = now
         payload: dict[str, Any] = {
             "stage": stage,
             "stage_started_epoch": now,
@@ -28,6 +30,8 @@ class IdeogramBootstrapProgress:
         }
         payload.update(details)
         self._write(payload)
+        if stage == "worker_ready":
+            self._terminal = True
         rendered_details = " ".join(
             f"{key}={value}" for key, value in sorted(details.items())
         )
