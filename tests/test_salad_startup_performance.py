@@ -15,7 +15,7 @@ WORKERS = {
 
 DOCKERFILES = {
     "ideogram4": Path("docker/workers/ideogram4/Dockerfile"),
-    "breeze_tts2": Path("docker/workers/breeze-tss2/Dockerfile"),
+    "breeze_tts2": Path("docker/workers/breeze-tts2/Dockerfile"),
     "whisper": Path("docker/workers/whisper/Dockerfile"),
 }
 
