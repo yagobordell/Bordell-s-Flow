@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from ai_video_factory.inference.contracts import (
     InferenceJobRequest,
@@ -20,6 +23,11 @@ from ai_video_factory.workers.ideogram4 import (
 )
 
 from .ideogram_caption import validate_ideogram_caption
+from .ideogram_rejections import (
+    is_safety_rejection_detail,
+    known_safety_rejection,
+    record_safety_rejection,
+)
 from .images import GeneratedImage, ImageFormat, ImageQuality
 from .inference_jobs import (
     InferenceJobExecutor,
@@ -27,18 +35,13 @@ from .inference_jobs import (
     cached_inference_response,
 )
 
+logger = logging.getLogger(__name__)
+
 _SUPPORTED_TASKS = frozenset({IDEOGRAM4_REFERENCE_TASK, IDEOGRAM4_KEYFRAME_TASK})
-_SAFETY_BLOCK_DETAIL = "Ideogram 4 safety filter blocked all deterministic caption variants"
-_LOCATION_PREFIX = "Canonical location reference."
-_RECOVERY_STYLE = {
-    "aesthetics": "documentary realism",
-    "lighting": "neutral natural daylight with clearly readable form",
-    "photo": "realistic reference photography with natural proportions",
-    "medium": "documentary photograph",
-}
-_RECOVERY_BACKGROUND = (
-    "Clear reusable environment reference emphasizing stable physical geography, architecture, "
-    "materials, layout and recurring landmarks."
+_CANONICAL_PREFIXES = (
+    "Canonical location reference.",
+    "Canonical object reference.",
+    "Canonical character reference.",
 )
 
 
@@ -85,14 +88,26 @@ def build_ideogram_job_request(
 
 
 def reference_caption_variants(caption: str, *, task_name: str) -> list[tuple[str, str]]:
-    """Return deterministic canonical/fallback captions in execution priority order."""
+    """Return audited controller-side prompt variants in deterministic priority order."""
 
+    if task_name not in _SUPPORTED_TASKS:
+        raise ValueError(f"Unsupported Ideogram provider task: {task_name}")
     canonical = validate_ideogram_caption(caption)
-    recovery = _reference_recovery_caption(canonical, task_name=task_name)
-    variants = [("canonical", canonical)]
-    if recovery != canonical:
-        variants.append(("safe_fallback", recovery))
-    return variants
+    payload = json.loads(canonical)
+    variants = [
+        ("canonical", canonical),
+        ("safe_simplified", _safety_recovery_caption(payload, minimal=False)),
+        ("safe_minimal_art", _safety_recovery_caption(payload, minimal=True)),
+    ]
+
+    unique: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for name, rendered in variants:
+        if rendered in seen:
+            continue
+        seen.add(rendered)
+        unique.append((name, rendered))
+    return unique
 
 
 class SaladIdeogramImageProvider:
@@ -151,45 +166,87 @@ class SaladIdeogramImageProvider:
             raise ValueError("Ideogram worker is fixed to Quality mode; use quality='high'")
 
         width, height = parse_ideogram_size(size)
-        variants = reference_caption_variants(prompt, task_name=self._task_name)
+        candidates = [
+            (
+                variant_name,
+                build_ideogram_job_request(
+                    task_name=self._task_name,
+                    caption=variant_caption,
+                    model_id=model,
+                    width=width,
+                    height=height,
+                ),
+            )
+            for variant_name, variant_caption in reference_caption_variants(
+                prompt,
+                task_name=self._task_name,
+            )
+        ]
 
         response: InferenceJobResponse | None = None
         selected_variant = "canonical"
-        for variant_name, variant_caption in variants:
-            request = build_ideogram_job_request(
-                task_name=self._task_name,
-                caption=variant_caption,
-                model_id=model,
-                width=width,
-                height=height,
-            )
+        rejected_job_ids: set[str] = set()
+
+        for variant_name, request in candidates:
             cached = cached_inference_response(self._executor.storage, request)
             if cached is not None:
+                logger.info(
+                    "Ideogram cache hit prompt_variant=%s application_job_id=%s",
+                    variant_name,
+                    request.job_id,
+                )
                 response = cached
                 selected_variant = variant_name
                 break
+            if known_safety_rejection(self._executor.storage, request):
+                rejected_job_ids.add(request.job_id)
+                logger.warning(
+                    "Ideogram cached safety rejection prompt_variant=%s application_job_id=%s; "
+                    "queue submission skipped",
+                    variant_name,
+                    request.job_id,
+                )
+
+        last_rejection: RemoteInferenceRejectedError | None = None
+        if response is None:
+            for variant_name, request in candidates:
+                if request.job_id in rejected_job_ids:
+                    continue
+                try:
+                    response = self._execute_request(
+                        request=request,
+                        prompt_variant=variant_name,
+                    )
+                    selected_variant = variant_name
+                    break
+                except RemoteInferenceRejectedError as exc:
+                    if not is_safety_rejection_detail(exc.detail):
+                        raise
+                    record_safety_rejection(
+                        self._executor.storage,
+                        request,
+                        detail=exc.detail,
+                        transport_job_id=exc.transport_job_id,
+                    )
+                    logger.warning(
+                        "Ideogram safety rejection prompt_variant=%s application_job_id=%s "
+                        "transport_job_id=%s reason=%s",
+                        variant_name,
+                        request.job_id,
+                        exc.transport_job_id,
+                        exc.detail,
+                    )
+                    last_rejection = exc
 
         if response is None:
-            selected_variant, caption = variants[0]
-            try:
-                response = self._execute_caption(
-                    caption=caption,
-                    model=model,
-                    width=width,
-                    height=height,
-                    prompt_variant=selected_variant,
-                )
-            except RemoteInferenceRejectedError as exc:
-                if exc.detail != _SAFETY_BLOCK_DETAIL or len(variants) < 2:
-                    raise
-                selected_variant, recovery_caption = variants[1]
-                response = self._execute_caption(
-                    caption=recovery_caption,
-                    model=model,
-                    width=width,
-                    height=height,
-                    prompt_variant=selected_variant,
-                )
+            last_request = candidates[-1][1]
+            raise RemoteInferenceRejectedError(
+                last_request.job_id,
+                "Ideogram 4 safety filter blocked all provider caption variants",
+                transport_job_id=(
+                    last_rejection.transport_job_id if last_rejection is not None else None
+                ),
+            )
 
         self._temp_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=self._temp_dir) as directory:
@@ -211,24 +268,19 @@ class SaladIdeogramImageProvider:
             },
         )
 
-    def _execute_caption(
+    def _execute_request(
         self,
         *,
-        caption: str,
-        model: str,
-        width: int,
-        height: int,
+        request: InferenceJobRequest,
         prompt_variant: str,
     ) -> InferenceJobResponse:
-        request = build_ideogram_job_request(
-            task_name=self._task_name,
-            caption=caption,
-            model_id=model,
-            width=width,
-            height=height,
-        )
         purpose = "reference" if self._task_name == IDEOGRAM4_REFERENCE_TASK else "keyframe"
         phase = "4" if purpose == "reference" else "6"
+        logger.info(
+            "Ideogram submit prompt_variant=%s application_job_id=%s",
+            prompt_variant,
+            request.job_id,
+        )
         return self._executor.execute(
             request,
             metadata={
@@ -240,37 +292,85 @@ class SaladIdeogramImageProvider:
         )
 
 
-def _reference_recovery_caption(caption: str, *, task_name: str) -> str:
-    if task_name != IDEOGRAM4_REFERENCE_TASK:
-        return caption
-    payload = json.loads(caption)
-    if not isinstance(payload, dict):
-        return caption
-    high_level = str(payload.get("high_level_description", "")).strip()
-    if not high_level.startswith(_LOCATION_PREFIX):
-        return caption
+def _safety_recovery_caption(payload: dict[str, Any], *, minimal: bool) -> str:
     composition = payload.get("compositional_deconstruction")
-    if not isinstance(composition, dict) or composition.get("elements"):
-        return caption
+    style = payload.get("style_description")
+    if not isinstance(composition, dict) or not isinstance(style, dict):
+        raise ValueError("Validated Ideogram caption has an invalid structured payload")
 
-    subject = high_level[len(_LOCATION_PREFIX) :].strip()
-    subject = subject.split(". ", maxsplit=1)[0].strip()
-    subject = " ".join(subject.split()).strip(" ,")
-    if not subject:
-        return caption
-    if not subject.endswith((".", "!", "?")):
-        subject += "."
+    high_level = _concise_text(str(payload.get("high_level_description", "")))
+    background = _concise_text(str(composition.get("background", "")))
+    if not background:
+        background = high_level
 
     recovery = {
-        "high_level_description": f"{_LOCATION_PREFIX} {subject}",
-        "style_description": dict(_RECOVERY_STYLE),
+        "high_level_description": high_level,
+        "style_description": _recovery_style(style, minimal=minimal),
         "compositional_deconstruction": {
-            "background": _RECOVERY_BACKGROUND,
-            "elements": [],
+            "background": background,
+            "elements": _recovery_elements(composition.get("elements", []), minimal=minimal),
         },
     }
     rendered = json.dumps(recovery, ensure_ascii=False, separators=(",", ":"))
     return validate_ideogram_caption(rendered)
+
+
+def _concise_text(value: str) -> str:
+    value = " ".join(value.split()).strip()
+    for prefix in _CANONICAL_PREFIXES:
+        if value.startswith(prefix):
+            value = value[len(prefix) :].strip()
+            break
+    first_sentence, separator, _ = value.partition(". ")
+    concise = first_sentence.strip()
+    if separator and concise and not concise.endswith((".", "!", "?")):
+        concise += "."
+    return concise or value
+
+
+def _recovery_style(style: Mapping[str, Any], *, minimal: bool) -> dict[str, Any]:
+    palette = style.get("color_palette")
+    if minimal:
+        recovered: dict[str, Any] = {
+            "aesthetics": "clean production visual study",
+            "lighting": "clear neutral daylight with readable forms",
+            "medium": "production visual reference",
+            "art_style": "clean realistic concept art",
+        }
+    elif "photo" in style:
+        recovered = {
+            "aesthetics": "neutral production reference",
+            "lighting": "clear neutral daylight with readable forms",
+            "medium": "reference photograph",
+            "photo": "straightforward realistic reference photography",
+        }
+    else:
+        recovered = {
+            "aesthetics": "neutral production reference",
+            "lighting": "clear neutral daylight with readable forms",
+            "medium": "production visual reference",
+            "art_style": "clean realistic reference art",
+        }
+    if isinstance(palette, list) and palette:
+        recovered["color_palette"] = palette
+    return recovered
+
+
+def _recovery_elements(elements: Any, *, minimal: bool) -> list[Any]:
+    if not isinstance(elements, list) or not minimal:
+        return elements if isinstance(elements, list) else []
+    recovered: list[Any] = []
+    for element in elements:
+        if not isinstance(element, dict):
+            recovered.append(element)
+            continue
+        item = dict(element)
+        for key in ("description", "visual_description", "appearance"):
+            value = item.get(key)
+            if isinstance(value, str):
+                item[key] = _concise_text(value)
+        recovered.append(item)
+    return recovered
 
 
 def parse_ideogram_size(size: str) -> tuple[int, int]:
