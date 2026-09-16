@@ -20,6 +20,7 @@ def build_ideogram4_worker(settings: Ideogram4WorkerSettings):
         model_root=settings.model_root,
         model_repository=settings.model_repository,
         model_revision=settings.model_revision,
+        bootstrap_status_path=settings.bootstrap_status_path,
         device=settings.device,
         sampler_preset=settings.sampler_preset,
     )
