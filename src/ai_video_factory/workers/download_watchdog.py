@@ -31,6 +31,23 @@ def directory_size_bytes(root: Path) -> int:
     return total
 
 
+def process_write_bytes(pid: int) -> int | None:
+    """Return Linux process disk write bytes when procfs exposes them."""
+
+    try:
+        text = Path(f"/proc/{pid}/io").read_text(encoding="utf-8")
+    except (FileNotFoundError, PermissionError, OSError):
+        return None
+    for line in text.splitlines():
+        key, separator, value = line.partition(":")
+        if separator and key.strip() == "write_bytes":
+            try:
+                return int(value.strip())
+            except ValueError:
+                return None
+    return None
+
+
 def request_salad_reallocation(reason: str, *, timeout_seconds: float = 3.0) -> bool:
     """Ask Salad IMDS to move this replica away from an under-performing node."""
 
@@ -76,19 +93,22 @@ def run_with_progress_watchdog(
         raise ValueError("throughput grace/window values are invalid")
 
     progress_root.mkdir(parents=True, exist_ok=True)
+    initial_tree_bytes = directory_size_bytes(progress_root)
+    process = subprocess.Popen(list(command), start_new_session=True)
+    initial_process_write_bytes = process_write_bytes(process.pid)
+
     started = time.monotonic()
     last_progress_at = started
-    last_size = directory_size_bytes(progress_root)
-    samples: deque[tuple[float, int]] = deque([(started, last_size)])
+    last_progress_bytes = 0
+    samples: deque[tuple[float, int]] = deque([(started, 0)])
     print(
-        f"MODEL_DOWNLOAD_WATCHDOG label={label} bytes={last_size} "
+        f"MODEL_DOWNLOAD_WATCHDOG label={label} initial_tree_bytes={initial_tree_bytes} "
         f"stall_timeout_seconds={stall_timeout_seconds:g} "
         f"hard_timeout_seconds={hard_timeout_seconds:g} "
         f"min_throughput_mibps={min_throughput_mib_per_second:g}",
         flush=True,
     )
 
-    process = subprocess.Popen(list(command), start_new_session=True)
     try:
         while True:
             return_code = process.poll()
@@ -97,13 +117,26 @@ def run_with_progress_watchdog(
 
             time.sleep(poll_seconds)
             now = time.monotonic()
-            current_size = directory_size_bytes(progress_root)
-            delta = current_size - last_size
+            current_tree_bytes = directory_size_bytes(progress_root)
+            tree_progress = max(0, current_tree_bytes - initial_tree_bytes)
+            current_process_write_bytes = process_write_bytes(process.pid)
+            io_progress = 0
+            if (
+                current_process_write_bytes is not None
+                and initial_process_write_bytes is not None
+            ):
+                io_progress = max(
+                    0,
+                    current_process_write_bytes - initial_process_write_bytes,
+                )
+
+            current_progress_bytes = max(last_progress_bytes, tree_progress, io_progress)
+            delta = current_progress_bytes - last_progress_bytes
             if delta > 0:
-                last_size = current_size
+                last_progress_bytes = current_progress_bytes
                 last_progress_at = now
 
-            samples.append((now, current_size))
+            samples.append((now, current_progress_bytes))
             window_start = now - throughput_window_seconds
             while len(samples) > 2 and samples[1][0] <= window_start:
                 samples.popleft()
@@ -113,8 +146,10 @@ def run_with_progress_watchdog(
             throughput_mibps = _throughput_mib_per_second(samples)
             print(
                 f"MODEL_DOWNLOAD_PROGRESS label={label} elapsed_seconds={elapsed:.1f} "
-                f"bytes={current_size} delta_bytes={delta} idle_seconds={idle:.1f} "
-                f"window_mibps={throughput_mibps:.2f}",
+                f"progress_bytes={current_progress_bytes} delta_bytes={delta} "
+                f"tree_bytes={current_tree_bytes} process_write_bytes="
+                f"{current_process_write_bytes if current_process_write_bytes is not None else '-'} "
+                f"idle_seconds={idle:.1f} window_mibps={throughput_mibps:.2f}",
                 flush=True,
             )
 
