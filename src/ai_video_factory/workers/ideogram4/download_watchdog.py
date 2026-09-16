@@ -5,8 +5,8 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 
 def directory_size_bytes(root: Path) -> int:
