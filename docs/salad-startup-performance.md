@@ -21,11 +21,13 @@ Jobs are submitted only after the selected worker reports `ready=true` in contro
 
 The prewarm can reallocate a node when allocation is unusually slow, when the container image pull stops making meaningful progress, or when a started container remains not-ready beyond the service budget. Reallocations are capped. The last candidate receives a longer final window rather than cycling indefinitely.
 
-A successful prewarm requires exactly one started, ready replica and an empty queue. Callers must always restore scale-to-zero and stop the group in a `finally` block.
+The public Salad instance-reallocation endpoint is called without a request body, matching Salad's public API contract. A human-readable reason is kept in local logs. Worker-side IMDS reallocation separately sends the supported `reason` JSON payload.
+
+A successful prewarm requires exactly one started, ready replica and an empty queue. The prewarm continuously verifies that the queue remains empty so no transport job can accidentally absorb cold-start time. Callers must always restore scale-to-zero and stop the group in a `finally` block.
 
 ## Model download quality gate
 
-Ideogram, Breeze and Whisper use `ai_video_factory.workers.download_watchdog` around `hf download`. The watchdog measures real bytes written under the model directory and records a moving MiB/s throughput window.
+Ideogram, Breeze and Whisper use `ai_video_factory.workers.download_watchdog` around `hf download`. The watchdog measures both growth under the model directory and Linux process `write_bytes` from `/proc/<pid>/io`. Using both signals keeps throughput accounting valid when Xet writes temporary chunks outside the final model directory.
 
 It aborts on:
 
@@ -59,8 +61,13 @@ The following wrappers perform optimized prewarm before queue submission and alw
 - `run_phase5_audio_controlled.ps1` — Breeze narration
 - `run_phase5_alignment_controlled.ps1` — Whisper alignment
 - `run_phase6_keyframes_controlled.ps1` — Ideogram keyframes
+- `run_phase8_videos_controlled.ps1` — LTX video generation
 
-Once a worker is ready, these flows use short queue-pending deadlines. Cold-start time is never charged against the inference job's queue timer.
+For Phase 4, Phase 5 and Phase 6, once the worker is ready these flows use short queue-pending deadlines. Cold-start time is never charged against the inference job's queue timer.
+
+Phase 8 prewarms one healthy RTX 5090 before submitting the video batch. After submission, the normal LTX queue autoscaler may still expand up to its manifest maximum, so time-to-first-video improves without removing parallel shot generation.
+
+`run_production.py` routes every GPU-backed production stage through the corresponding controlled wrapper. CPU/text planning stages continue to run through their existing Python executors.
 
 ## Deployment versions
 
