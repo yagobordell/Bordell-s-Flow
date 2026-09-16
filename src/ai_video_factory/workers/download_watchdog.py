@@ -144,11 +144,16 @@ def run_with_progress_watchdog(
             elapsed = now - started
             idle = now - last_progress_at
             throughput_mibps = _throughput_mib_per_second(samples)
+            process_write_rendered = (
+                str(current_process_write_bytes)
+                if current_process_write_bytes is not None
+                else "-"
+            )
             print(
                 f"MODEL_DOWNLOAD_PROGRESS label={label} elapsed_seconds={elapsed:.1f} "
                 f"progress_bytes={current_progress_bytes} delta_bytes={delta} "
-                f"tree_bytes={current_tree_bytes} process_write_bytes="
-                f"{current_process_write_bytes if current_process_write_bytes is not None else '-'} "
+                f"tree_bytes={current_tree_bytes} "
+                f"process_write_bytes={process_write_rendered} "
                 f"idle_seconds={idle:.1f} window_mibps={throughput_mibps:.2f}",
                 flush=True,
             )
