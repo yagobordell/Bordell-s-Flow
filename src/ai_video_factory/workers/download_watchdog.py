@@ -215,6 +215,26 @@ def _request_reallocation_with_log(reason: str) -> None:
 
 
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
+    if process.poll() is not None:
+        return
+
+    if os.name == "nt":
+        try:
+            process.terminate()
+        except OSError:
+            return
+        try:
+            process.wait(timeout=10)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            process.kill()
+        except OSError:
+            return
+        process.wait(timeout=10)
+        return
+
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
