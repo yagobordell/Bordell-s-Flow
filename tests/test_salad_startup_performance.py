@@ -4,6 +4,7 @@ from pathlib import Path
 MANIFEST = Path("deploy/salad/services.json")
 PREWARM = Path("scripts/start_salad_optimized_prewarm.ps1")
 PRODUCTION_RUNNER = Path("scripts/run_production.py")
+R2_PREFLIGHT = Path("scripts/check_r2_ready.py")
 
 WORKERS = {
     "ideogram4": Path("docker/workers/ideogram4/download_models.sh"),
@@ -26,6 +27,14 @@ READY_BEFORE_QUEUE_RUNNERS = (
 
 ALL_CONTROLLED_RUNNERS = READY_BEFORE_QUEUE_RUNNERS + (
     Path("scripts/run_phase8_videos_controlled.ps1"),
+)
+
+GPU_CLIENTS = (
+    Path("scripts/run_phase4_assets.py"),
+    Path("scripts/run_phase5_audio.py"),
+    Path("scripts/run_phase5_alignment.py"),
+    Path("scripts/run_phase6_keyframes.py"),
+    Path("scripts/run_phase8_videos.py"),
 )
 
 
@@ -94,6 +103,22 @@ def test_controlled_gpu_runners_prewarm_and_always_stop() -> None:
         assert "finally" in text, path.name
         assert "-Action Stop" in text, path.name
         assert "-Action Status" in text, path.name
+
+
+def test_controlled_gpu_runners_preflight_r2_before_prewarm() -> None:
+    assert R2_PREFLIGHT.is_file()
+    for path in ALL_CONTROLLED_RUNNERS:
+        text = path.read_text(encoding="utf-8")
+        assert "check_r2_ready.py" in text, path.name
+        assert "R2 preflight failed; refusing to allocate" in text, path.name
+        assert text.index("& python $R2Preflight") < text.index("& $OptimizedPrewarm"), path.name
+
+
+def test_gpu_clients_use_bounded_r2_client() -> None:
+    for path in GPU_CLIENTS:
+        text = path.read_text(encoding="utf-8")
+        assert "from r2_client import create_r2_storage" in text, path.name
+        assert "R2ObjectStorage.create(" not in text, path.name
 
 
 def test_ready_before_queue_runners_keep_short_pending_deadline() -> None:
