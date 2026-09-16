@@ -1,25 +1,25 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [string]$Frames,
+    [string]$Source,
 
     [Parameter(Mandatory)]
-    [string]$Shots,
+    [string]$Narration,
 
     [Parameter(Mandatory)]
-    [string]$OutputDir,
+    [string]$Audio,
 
     [Parameter(Mandatory)]
     [string]$Output,
 
     [ValidateRange(10, 120)]
-    [int]$PrewarmTimeoutMinutes = 60,
+    [int]$PrewarmTimeoutMinutes = 30,
 
     [ValidateRange(30, 900)]
-    [int]$PendingTimeoutSeconds = 300,
+    [int]$PendingTimeoutSeconds = 180,
 
     [ValidateRange(60, 3600)]
-    [int]$RunningTimeoutSeconds = 1200,
+    [int]$RunningTimeoutSeconds = 900,
 
     [ValidateRange(1, 60)]
     [int]$PollSeconds = 5,
@@ -32,16 +32,16 @@ $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
-$Phase6Runner = Join-Path $PSScriptRoot "run_phase6_keyframes.py"
+$Runner = Join-Path $PSScriptRoot "run_phase5_alignment.py"
 
-foreach ($Path in @($Frames, $Shots)) {
+foreach ($Path in @($Source, $Narration, $Audio)) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "Required Phase 6 input not found: $Path"
+        throw "Required Phase 5 alignment input not found: $Path"
     }
 }
 
 $PrewarmArguments = @{
-    Service = "ideogram4"
+    Service = "whisper"
     TimeoutMinutes = $PrewarmTimeoutMinutes
 }
 if ($NonInteractive) {
@@ -49,36 +49,36 @@ if ($NonInteractive) {
 }
 
 try {
-    Write-Host "=== Ideogram optimized prewarm: selecting one ready node ===" -ForegroundColor Cyan
+    Write-Host "=== Whisper optimized prewarm: selecting one ready node ===" -ForegroundColor Cyan
     & $OptimizedPrewarm @PrewarmArguments
     if (-not $?) {
-        throw "Ideogram optimized prewarm failed."
+        throw "Whisper optimized prewarm failed."
     }
 
-    Write-Host "=== Phase 6 generation: ready worker before queue submission ===" -ForegroundColor Cyan
-    & python $Phase6Runner `
-        --frames $Frames `
-        --shots $Shots `
-        --output-dir $OutputDir `
+    Write-Host "=== Phase 5 alignment: ready worker before queue submission ===" -ForegroundColor Cyan
+    & python $Runner `
+        --source $Source `
+        --narration $Narration `
+        --audio $Audio `
         --output $Output `
         --poll-seconds $PollSeconds `
         --pending-timeout-seconds $PendingTimeoutSeconds `
         --timeout-seconds $RunningTimeoutSeconds
     if ($LASTEXITCODE -ne 0) {
-        throw "Phase 6 keyframe generation failed with exit code $LASTEXITCODE."
+        throw "Phase 5 alignment failed with exit code $LASTEXITCODE."
     }
 }
 finally {
     try {
         & $ValidationManager `
             -Action Stop `
-            -Service ideogram4 `
+            -Service whisper `
             -NonInteractive
     }
     finally {
         & $ValidationManager `
             -Action Status `
-            -Service ideogram4 `
+            -Service whisper `
             -NonInteractive
     }
 }

@@ -85,15 +85,18 @@ def test_ideogram_autoscaler_hard_caps_gpu_cost_during_queue_stabilization() -> 
     assert autoscaler["max_upscale_per_minute"] == 1
 
 
-def test_ideogram_deployment_pins_watchdog_profile_and_new_image_version() -> None:
+def test_ideogram_deployment_pins_throughput_watchdog_and_v3_image() -> None:
     document = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
     service = document["services"]["ideogram4"]
     environment = service["environment"]
 
-    assert service["image"].endswith("ideogram4-nf4-quality48-v2")
+    assert service["image"].endswith("ideogram4-nf4-quality48-v3")
     assert service["priority"] == "high"
     assert environment["IDEOGRAM_DOWNLOAD_STALL_TIMEOUT_SECONDS"] == "600"
     assert environment["IDEOGRAM_DOWNLOAD_HARD_TIMEOUT_SECONDS"] == "1800"
     assert environment["IDEOGRAM_DOWNLOAD_POLL_SECONDS"] == "15"
+    assert environment["IDEOGRAM_DOWNLOAD_MIN_MIBPS"] == "8"
+    assert environment["IDEOGRAM_DOWNLOAD_THROUGHPUT_GRACE_SECONDS"] == "180"
+    assert environment["IDEOGRAM_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS"] == "120"
     assert environment["HF_HUB_DOWNLOAD_TIMEOUT"] == "120"
     assert environment["HF_HUB_ETAG_TIMEOUT"] == "30"

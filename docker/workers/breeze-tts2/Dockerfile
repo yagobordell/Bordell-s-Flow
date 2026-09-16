@@ -25,8 +25,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TOKENIZERS_PARALLELISM=false \
     HF_HOME=/workspace/.cache/huggingface \
     XDG_CACHE_HOME=/workspace/.cache \
-    HF_HUB_DISABLE_XET=1 \
-    HF_HUB_ENABLE_HF_TRANSFER=0 \
+    HF_HUB_DOWNLOAD_TIMEOUT=120 \
+    HF_HUB_ETAG_TIMEOUT=30 \
     PYTHONPATH=/opt/breeze-infer \
     VIRTUAL_ENV=/opt/venv \
     PATH=/opt/venv/bin:$PATH \
@@ -91,7 +91,8 @@ COPY src /opt/factory/src
 RUN python -m pip install \
         --no-cache-dir \
         '/opt/factory[gpu]' \
-        'huggingface-hub[cli]'
+        'huggingface-hub[cli]' \
+        'hf-xet==1.6.0'
 
 COPY --from=salad-worker /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/
 COPY docker/workers/breeze-tts2/download_models.sh /usr/local/bin/download-models
@@ -114,16 +115,19 @@ RUN chmod 0755 \
 
 RUN python -c \
     "import sys, torch, torchaudio; \
+     from importlib.metadata import version; \
      assert sys.prefix == '/opt/venv', sys.prefix; \
      assert sys.version_info >= (3, 12), sys.version; \
      assert torch.__version__.startswith('2.9.1'), torch.__version__; \
      assert torch.version.cuda == '12.8', torch.version.cuda; \
      assert torchaudio.__version__.startswith('2.9.1'), torchaudio.__version__; \
+     assert version('hf-xet') == '1.6.0', version('hf-xet'); \
      import breeze_infer; \
      print('python=', sys.version); \
      print('venv=', sys.prefix); \
      print('torch=', torch.__version__); \
-     print('cuda=', torch.version.cuda)"
+     print('cuda=', torch.version.cuda); \
+     print('hf-xet=', version('hf-xet'))"
 
 USER worker
 EXPOSE 8080

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -8,9 +10,98 @@ from ai_video_factory.config import settings
 from ai_video_factory.workflows.production_runner import (
     PRODUCTION_STAGE_NAMES,
     ProductionRunner,
+    ProductionStage,
     ProductionStageBlocked,
+    SubprocessStageExecutor,
     build_production_stages,
 )
+
+
+class OptimizedGpuStageExecutor:
+    """Use ready-before-queue Salad wrappers for GPU-backed production stages."""
+
+    def __init__(self, *, repo_root: Path, output_dir: Path) -> None:
+        self._repo_root = repo_root
+        self._output_dir = output_dir
+        self._default = SubprocessStageExecutor(repo_root=repo_root)
+
+    def __call__(self, stage: ProductionStage) -> None:
+        arguments = self._controlled_arguments(stage.name)
+        if arguments is None:
+            self._default(stage)
+            return
+
+        executable = "powershell.exe" if os.name == "nt" else "pwsh"
+        command = [executable, "-NoProfile"]
+        if os.name == "nt":
+            command.extend(["-ExecutionPolicy", "Bypass"])
+        command.extend(["-File", *arguments])
+        subprocess.run(command, cwd=self._repo_root, check=True)
+
+    def _controlled_arguments(self, stage_name: str) -> list[str] | None:
+        output = self._output_dir
+        if stage_name == "phase4-reference-assets":
+            return [
+                "scripts/run_phase4_assets_controlled.ps1",
+                "-ReferencesFile",
+                str(output / "phase4" / "visual_references.json"),
+                "-OutputDir",
+                str(output / "phase4" / "reference_assets"),
+                "-Metadata",
+                str(output / "phase4" / "reference_assets.json"),
+                "-NonInteractive",
+            ]
+        if stage_name == "phase5-narration":
+            return [
+                "scripts/run_phase5_audio_controlled.ps1",
+                "-SourceFile",
+                str(output / "phase2" / "source_script.json"),
+                "-OutputDir",
+                str(output / "phase5"),
+                "-Metadata",
+                str(output / "phase5" / "narration.json"),
+                "-NonInteractive",
+            ]
+        if stage_name == "phase5-alignment":
+            return [
+                "scripts/run_phase5_alignment_controlled.ps1",
+                "-Source",
+                str(output / "phase2" / "source_script.json"),
+                "-Narration",
+                str(output / "phase5" / "narration.json"),
+                "-Audio",
+                str(output / "phase5" / "narration.wav"),
+                "-Output",
+                str(output / "phase5" / "narration_words.json"),
+                "-NonInteractive",
+            ]
+        if stage_name == "phase6-keyframes":
+            return [
+                "scripts/run_phase6_keyframes_controlled.ps1",
+                "-Frames",
+                str(output / "phase6" / "storyboard_frames.json"),
+                "-Shots",
+                str(output / "phase3" / "shots.json"),
+                "-OutputDir",
+                str(output / "phase6" / "storyboard_keyframes"),
+                "-Output",
+                str(output / "phase6" / "storyboard_keyframes.json"),
+                "-NonInteractive",
+            ]
+        if stage_name == "phase8-videos":
+            return [
+                "scripts/run_phase8_videos_controlled.ps1",
+                "-Keyframes",
+                str(output / "phase6" / "storyboard_keyframes.json"),
+                "-Prompts",
+                str(output / "phase8" / "video_prompts.json"),
+                "-Timings",
+                str(output / "phase5" / "shot_timings.json"),
+                "-OutputDir",
+                str(output / "phase8"),
+                "-NonInteractive",
+            ]
+        return None
 
 
 def parse_args() -> argparse.Namespace:
@@ -74,6 +165,10 @@ def main() -> None:
         stages,
         manifest_path=manifest_path,
         repo_root=Path("."),
+        executor=OptimizedGpuStageExecutor(
+            repo_root=Path("."),
+            output_dir=args.output_dir,
+        ),
     )
 
     if args.plan:

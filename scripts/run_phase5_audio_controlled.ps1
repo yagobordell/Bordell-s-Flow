@@ -1,19 +1,16 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [string]$Frames,
-
-    [Parameter(Mandatory)]
-    [string]$Shots,
+    [string]$SourceFile,
 
     [Parameter(Mandatory)]
     [string]$OutputDir,
 
     [Parameter(Mandatory)]
-    [string]$Output,
+    [string]$Metadata,
 
     [ValidateRange(10, 120)]
-    [int]$PrewarmTimeoutMinutes = 60,
+    [int]$PrewarmTimeoutMinutes = 45,
 
     [ValidateRange(30, 900)]
     [int]$PendingTimeoutSeconds = 300,
@@ -32,16 +29,14 @@ $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
-$Phase6Runner = Join-Path $PSScriptRoot "run_phase6_keyframes.py"
+$Runner = Join-Path $PSScriptRoot "run_phase5_audio.py"
 
-foreach ($Path in @($Frames, $Shots)) {
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "Required Phase 6 input not found: $Path"
-    }
+if (-not (Test-Path -LiteralPath $SourceFile -PathType Leaf)) {
+    throw "Phase 5 source script not found: $SourceFile"
 }
 
 $PrewarmArguments = @{
-    Service = "ideogram4"
+    Service = "breeze_tts2"
     TimeoutMinutes = $PrewarmTimeoutMinutes
 }
 if ($NonInteractive) {
@@ -49,36 +44,35 @@ if ($NonInteractive) {
 }
 
 try {
-    Write-Host "=== Ideogram optimized prewarm: selecting one ready node ===" -ForegroundColor Cyan
+    Write-Host "=== Breeze optimized prewarm: selecting one ready node ===" -ForegroundColor Cyan
     & $OptimizedPrewarm @PrewarmArguments
     if (-not $?) {
-        throw "Ideogram optimized prewarm failed."
+        throw "Breeze optimized prewarm failed."
     }
 
-    Write-Host "=== Phase 6 generation: ready worker before queue submission ===" -ForegroundColor Cyan
-    & python $Phase6Runner `
-        --frames $Frames `
-        --shots $Shots `
+    Write-Host "=== Phase 5 narration: ready worker before queue submission ===" -ForegroundColor Cyan
+    & python $Runner `
+        $SourceFile `
         --output-dir $OutputDir `
-        --output $Output `
+        --metadata $Metadata `
         --poll-seconds $PollSeconds `
         --pending-timeout-seconds $PendingTimeoutSeconds `
         --timeout-seconds $RunningTimeoutSeconds
     if ($LASTEXITCODE -ne 0) {
-        throw "Phase 6 keyframe generation failed with exit code $LASTEXITCODE."
+        throw "Phase 5 narration failed with exit code $LASTEXITCODE."
     }
 }
 finally {
     try {
         & $ValidationManager `
             -Action Stop `
-            -Service ideogram4 `
+            -Service breeze_tts2 `
             -NonInteractive
     }
     finally {
         & $ValidationManager `
             -Action Status `
-            -Service ideogram4 `
+            -Service breeze_tts2 `
             -NonInteractive
     }
 }

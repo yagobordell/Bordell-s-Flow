@@ -10,6 +10,9 @@ snapshot_dir="${IDEOGRAM_MODEL_LOCAL_SNAPSHOT:-${model_root}/snapshot}"
 stall_timeout="${IDEOGRAM_DOWNLOAD_STALL_TIMEOUT_SECONDS:-600}"
 hard_timeout="${IDEOGRAM_DOWNLOAD_HARD_TIMEOUT_SECONDS:-1800}"
 poll_seconds="${IDEOGRAM_DOWNLOAD_POLL_SECONDS:-15}"
+min_mibps="${IDEOGRAM_DOWNLOAD_MIN_MIBPS:-8}"
+throughput_grace="${IDEOGRAM_DOWNLOAD_THROUGHPUT_GRACE_SECONDS:-180}"
+throughput_window="${IDEOGRAM_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS:-120}"
 
 export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-120}"
 export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-30}"
@@ -17,15 +20,30 @@ export HF_HUB_ETAG_TIMEOUT="${HF_HUB_ETAG_TIMEOUT:-30}"
 mkdir -p "${model_root}" "${snapshot_dir}"
 rm -f "${model_root}/.ready"
 
+python3 - <<'PY'
+from importlib.metadata import PackageNotFoundError, version
+
+for package in ("huggingface-hub", "hf-xet"):
+    try:
+        print(f"HF_DOWNLOAD_RUNTIME {package}={version(package)}")
+    except PackageNotFoundError:
+        print(f"HF_DOWNLOAD_RUNTIME {package}=missing")
+PY
+
 echo "Downloading Ideogram 4 weights: ${repo}@${revision}"
-echo "Download watchdog: stall=${stall_timeout}s hard=${hard_timeout}s poll=${poll_seconds}s"
-# Keep the original HF_HUB_OFFLINE=0 hf download behavior, but execute it under a byte-progress
-# watchdog so an unhealthy host is replaced instead of holding a GPU indefinitely.
-HF_HUB_OFFLINE=0 python -m ai_video_factory.workers.ideogram4.download_watchdog \
+echo "Download watchdog: stall=${stall_timeout}s hard=${hard_timeout}s poll=${poll_seconds}s min=${min_mibps}MiB/s grace=${throughput_grace}s window=${throughput_window}s"
+# Preserve the online bootstrap contract: HF_HUB_OFFLINE=0 hf download is now executed under
+# the shared progress/throughput watchdog rather than directly.
+HF_HUB_OFFLINE=0 python -m ai_video_factory.workers.download_watchdog \
     --progress-root "${snapshot_dir}" \
     --stall-timeout-seconds "${stall_timeout}" \
     --hard-timeout-seconds "${hard_timeout}" \
     --poll-seconds "${poll_seconds}" \
+    --label ideogram4 \
+    --min-throughput-mibps "${min_mibps}" \
+    --throughput-grace-seconds "${throughput_grace}" \
+    --throughput-window-seconds "${throughput_window}" \
+    --reallocate-on-slow \
     -- \
     hf download \
         "${repo}" \

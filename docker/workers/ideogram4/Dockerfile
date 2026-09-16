@@ -24,6 +24,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/workspace/.cache/huggingface \
     XDG_CACHE_HOME=/workspace/.cache \
     HF_HUB_OFFLINE=1 \
+    HF_HUB_DOWNLOAD_TIMEOUT=120 \
+    HF_HUB_ETAG_TIMEOUT=30 \
     INFERENCE_WORKER_MODE=production \
     INFERENCE_WORKER_TEMP_DIR=/tmp/ai-video-factory \
     IDEOGRAM_MODEL_ROOT=/workspace/models/ideogram4 \
@@ -123,7 +125,8 @@ RUN python3 -m pip install \
         --break-system-packages \
         --no-cache-dir \
         '/opt/factory[gpu]' \
-        'huggingface-hub[cli]'
+        'huggingface-hub[cli]' \
+        'hf-xet==1.6.0'
 
 COPY --from=salad-worker /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/
 COPY docker/workers/ideogram4/download_models.sh /usr/local/bin/download-models
@@ -146,12 +149,15 @@ RUN chmod 0755 \
 
 RUN python3 -c \
     "import bitsandbytes, ideogram4, torch, transformers; \
+     from importlib.metadata import version; \
      assert torch.__version__.startswith('2.11.0'), torch.__version__; \
      assert torch.version.cuda == '12.8', torch.version.cuda; \
+     assert version('hf-xet') == '1.6.0', version('hf-xet'); \
      print('torch=', torch.__version__); \
      print('cuda=', torch.version.cuda); \
      print('transformers=', transformers.__version__); \
      print('bitsandbytes=', bitsandbytes.__version__); \
+     print('hf-xet=', version('hf-xet')); \
      print('ideogram4=', ideogram4.__file__)"
 
 USER worker

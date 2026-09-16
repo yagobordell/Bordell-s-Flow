@@ -21,8 +21,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DEFAULT_TIMEOUT=300 \
     HF_HOME=/workspace/.cache/huggingface \
     XDG_CACHE_HOME=/workspace/.cache \
-    HF_HUB_DISABLE_XET=1 \
-    HF_HUB_ENABLE_HF_TRANSFER=0 \
+    HF_HUB_DOWNLOAD_TIMEOUT=120 \
+    HF_HUB_ETAG_TIMEOUT=30 \
     INFERENCE_WORKER_MODE=production \
     INFERENCE_WORKER_TEMP_DIR=/tmp/ai-video-factory \
     WHISPER_MODEL_ROOT=/workspace/models/whisper-large-v3-turbo \
@@ -55,6 +55,7 @@ RUN python3 -m pip install \
         --no-cache-dir \
         '/opt/factory[gpu]' \
         'huggingface-hub[cli]' \
+        'hf-xet==1.6.0' \
         'transformers==5.5.2'
 
 COPY --from=salad-worker /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/
@@ -78,12 +79,15 @@ RUN chmod 0755 \
 
 RUN python3 -c \
     "import torch, transformers; \
+     from importlib.metadata import version; \
      assert torch.__version__.startswith('2.11.0'), torch.__version__; \
      assert torch.version.cuda == '12.8', torch.version.cuda; \
      assert transformers.__version__ == '5.5.2', transformers.__version__; \
+     assert version('hf-xet') == '1.6.0', version('hf-xet'); \
      print('torch=', torch.__version__); \
      print('cuda=', torch.version.cuda); \
-     print('transformers=', transformers.__version__)"
+     print('transformers=', transformers.__version__); \
+     print('hf-xet=', version('hf-xet'))"
 
 USER worker
 EXPOSE 8080
