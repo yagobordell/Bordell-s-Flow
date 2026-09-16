@@ -1,5 +1,6 @@
 import importlib.util
 import os
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -9,7 +10,12 @@ def _load_script() -> ModuleType:
     spec = importlib.util.spec_from_file_location("run_phase8_videos", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    scripts_dir = str(path.parent.resolve())
+    sys.path.insert(0, scripts_dir)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(scripts_dir)
     return module
 
 

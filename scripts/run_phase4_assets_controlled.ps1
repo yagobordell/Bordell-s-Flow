@@ -29,10 +29,17 @@ $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
+$R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $Phase4Runner = Join-Path $PSScriptRoot "run_phase4_assets.py"
 
 if (-not (Test-Path -LiteralPath $ReferencesFile -PathType Leaf)) {
     throw "Visual references file not found: $ReferencesFile"
+}
+
+Write-Host "=== R2 preflight: verify storage before GPU allocation ===" -ForegroundColor Cyan
+& python $R2Preflight
+if ($LASTEXITCODE -ne 0) {
+    throw "R2 preflight failed; refusing to allocate Ideogram GPU."
 }
 
 $PrewarmArguments = @{

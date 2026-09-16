@@ -2,9 +2,10 @@ import argparse
 import asyncio
 from pathlib import Path
 
+from r2_client import create_r2_storage
+
 from ai_video_factory.config import settings
 from ai_video_factory.domain import SourceScript
-from ai_video_factory.inference.storage import R2ObjectStorage
 from ai_video_factory.providers import SaladBreezeSpeechProvider
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
@@ -110,7 +111,7 @@ async def main() -> None:
         raise SystemExit(f"Source script file not found: {args.source_file}")
 
     source = SourceScript.model_validate_json(args.source_file.read_text(encoding="utf-8"))
-    storage = R2ObjectStorage.create(
+    storage = create_r2_storage(
         endpoint_url=_required_setting("R2_ENDPOINT_URL", settings.r2_endpoint_url),
         bucket=_required_setting("R2_BUCKET", settings.r2_bucket),
         access_key_id=_required_setting("R2_ACCESS_KEY_ID", settings.r2_access_key_id),

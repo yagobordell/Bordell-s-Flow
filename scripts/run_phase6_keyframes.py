@@ -5,10 +5,10 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
+from r2_client import create_r2_storage
 
 from ai_video_factory.config import settings
 from ai_video_factory.domain import Shot, StoryboardFrame
-from ai_video_factory.inference.storage import R2ObjectStorage
 from ai_video_factory.providers import SaladIdeogramImageProvider
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
@@ -98,7 +98,7 @@ async def main() -> None:
     frames = _read_models(args.frames, StoryboardFrame)
     shots = _read_models(args.shots, Shot)
 
-    storage = R2ObjectStorage.create(
+    storage = create_r2_storage(
         endpoint_url=_required_setting("R2_ENDPOINT_URL", settings.r2_endpoint_url),
         bucket=_required_setting("R2_BUCKET", settings.r2_bucket),
         access_key_id=_required_setting("R2_ACCESS_KEY_ID", settings.r2_access_key_id),

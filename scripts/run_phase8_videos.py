@@ -6,8 +6,9 @@ import os
 import threading
 from pathlib import Path
 
+from r2_client import create_r2_storage
+
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
-from ai_video_factory.gpu.storage import R2ObjectStorage
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workflows.video_generation import (
     VideoGenerationManifest,
@@ -175,7 +176,7 @@ def main() -> None:
         seed_base=args.seed_base,
     )
 
-    storage = R2ObjectStorage.create(
+    storage = create_r2_storage(
         endpoint_url=environment["R2_ENDPOINT_URL"],
         bucket=environment["R2_BUCKET"],
         access_key_id=environment["R2_ACCESS_KEY_ID"],
