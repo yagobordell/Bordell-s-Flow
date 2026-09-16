@@ -157,8 +157,6 @@ function Request-InstanceReallocation {
         -Method Post `
         -Uri "$InstancesUrl/$InstanceId/reallocate" `
         -Headers $Headers `
-        -ContentType "application/json" `
-        -Body (@{ reason = $Reason } | ConvertTo-Json -Compress) `
         -TimeoutSec 60 |
         Out-Null
 }
@@ -297,6 +295,12 @@ while ((Get-Date) -lt $Deadline) {
     $Status = [string]$Group.current_state.status
     $Attached = Test-QueueAttachment -Queue $Queue
 
+    if ([int]$Queue.current_queue_length -ne 0) {
+        throw (
+            "Optimized prewarm detected $([int]$Queue.current_queue_length) queued job(s); " +
+            "aborting so cold-start time cannot be charged to a transport job."
+        )
+    }
     if ($Status -eq "failed") {
         throw "Container group '$GroupName' entered failed state during prewarm."
     }
