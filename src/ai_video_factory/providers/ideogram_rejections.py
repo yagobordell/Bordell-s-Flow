@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from ai_video_factory.inference.contracts import InferenceJobRequest
 from ai_video_factory.inference.ports import ObjectStorage
+
+logger = logging.getLogger(__name__)
 
 _SAFETY_REJECTION_KIND = "ideogram_safety"
 _SINGLE_IMAGE_SAFETY_DETAIL = "Ideogram 4 safety filter blocked generated image"
@@ -115,9 +118,22 @@ def record_safety_rejection(
             json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")),
             encoding="utf-8",
         )
-        storage.upload(
-            source,
-            safety_rejection_key(request.job_id),
-            content_type="application/json",
-            metadata=metadata,
-        )
+        try:
+            storage.upload(
+                source,
+                safety_rejection_key(request.job_id),
+                content_type="application/json",
+                metadata=metadata,
+            )
+        except Exception as exc:
+            # The paid provider rejection is the source of truth. Negative-cache persistence
+            # is an optimization and must never replace that rejection with a transient R2 error,
+            # otherwise the safety-only fallback cannot activate.
+            logger.warning(
+                "Unable to persist Ideogram safety rejection application_job_id=%s "
+                "transport_job_id=%s error=%s: %s; preserving provider rejection",
+                request.job_id,
+                transport_job_id or "unknown",
+                type(exc).__name__,
+                exc,
+            )

@@ -93,7 +93,9 @@ if ($NonInteractive) {
 }
 
 $IdeogramTouched = $false
-$FluxTouched = $false
+# Any fresh Ideogram miss can discover a terminal safety rejection during execution and
+# dynamically enqueue FLUX even when the preflight cache plan did not know that yet.
+$FluxCleanupRequired = $IdeogramNeeded -or $FluxNeeded
 $PrimaryFailure = $null
 $CleanupFailures = @()
 try {
@@ -113,7 +115,6 @@ try {
     }
 
     if ($FluxNeeded) {
-        $FluxTouched = $true
         Write-Host (
             "=== FLUX Schnell fallback: prewarm one ready replica before queue submission ==="
         ) -ForegroundColor Cyan
@@ -167,7 +168,7 @@ finally {
             $CleanupFailures += $_
         }
     }
-    if ($FluxTouched) {
+    if ($FluxCleanupRequired) {
         try {
             & $FluxRestore -TimeoutSeconds 180 -NonInteractive
         }
