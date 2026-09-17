@@ -7,6 +7,7 @@
       "whisper",
       "breeze_tts2",
       "ideogram4",
+      "flux_schnell",
       "ltx25"
     ],
     "shared_required_environment": [
@@ -34,9 +35,7 @@
         "memory": 40960,
         "shm_size": 8192,
         "storage_amount": 137438953472,
-        "gpu_class_names": [
-          "RTX 5090 (32 GB)"
-        ]
+        "gpu_class_names": ["RTX 5090 (32 GB)"]
       },
       "environment": {
         "INFERENCE_WORKER_MODE": "production",
@@ -49,37 +48,13 @@
         "SALAD_QUEUE_ENABLED": "true",
         "SALAD_LOG_LEVEL": "info"
       },
-      "required_environment": [
-        "HF_TOKEN"
-      ],
+      "required_environment": ["HF_TOKEN"],
       "probes": {
-        "startup": {
-          "path": "/health",
-          "period_seconds": 15,
-          "timeout_seconds": 5,
-          "failure_threshold": 20
-        },
-        "readiness": {
-          "path": "/ready",
-          "period_seconds": 10,
-          "timeout_seconds": 5,
-          "failure_threshold": 6
-        },
-        "liveness": {
-          "path": "/health",
-          "period_seconds": 30,
-          "timeout_seconds": 10,
-          "failure_threshold": 20
-        }
+        "startup": {"path": "/health", "period_seconds": 15, "timeout_seconds": 5, "failure_threshold": 20},
+        "readiness": {"path": "/ready", "period_seconds": 10, "timeout_seconds": 5, "failure_threshold": 6},
+        "liveness": {"path": "/health", "period_seconds": 30, "timeout_seconds": 10, "failure_threshold": 20}
       },
-      "autoscaler": {
-        "min_replicas": 0,
-        "max_replicas": 4,
-        "desired_queue_length": 1,
-        "polling_period": 30,
-        "max_upscale_per_minute": 2,
-        "max_downscale_per_minute": 1
-      }
+      "autoscaler": {"min_replicas": 0, "max_replicas": 4, "desired_queue_length": 1, "polling_period": 30, "max_upscale_per_minute": 2, "max_downscale_per_minute": 1}
     },
     "breeze_tts2": {
       "display_name": "AI Video Factory Breeze TTS 2",
@@ -88,15 +63,7 @@
       "dockerfile": "docker/workers/breeze-tts2/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:breeze-tts2-fast-all-v2",
       "priority": "high",
-      "resources": {
-        "cpu": 8,
-        "memory": 32768,
-        "shm_size": 8192,
-        "storage_amount": 68719476736,
-        "gpu_class_names": [
-          "RTX 4090 (24 GB)"
-        ]
-      },
+      "resources": {"cpu": 8, "memory": 32768, "shm_size": 8192, "storage_amount": 68719476736, "gpu_class_names": ["RTX 4090 (24 GB)"]},
       "environment": {
         "INFERENCE_WORKER_MODE": "production",
         "INFERENCE_WORKER_LEASE_SECONDS": "900",
@@ -121,33 +88,11 @@
       },
       "required_environment": [],
       "probes": {
-        "startup": {
-          "path": "/health",
-          "period_seconds": 30,
-          "timeout_seconds": 5,
-          "failure_threshold": 20
-        },
-        "readiness": {
-          "path": "/ready",
-          "period_seconds": 10,
-          "timeout_seconds": 5,
-          "failure_threshold": 12
-        },
-        "liveness": {
-          "path": "/health",
-          "period_seconds": 30,
-          "timeout_seconds": 10,
-          "failure_threshold": 20
-        }
+        "startup": {"path": "/health", "period_seconds": 30, "timeout_seconds": 5, "failure_threshold": 20},
+        "readiness": {"path": "/ready", "period_seconds": 10, "timeout_seconds": 5, "failure_threshold": 12},
+        "liveness": {"path": "/health", "period_seconds": 30, "timeout_seconds": 10, "failure_threshold": 20}
       },
-      "autoscaler": {
-        "min_replicas": 0,
-        "max_replicas": 2,
-        "desired_queue_length": 1,
-        "polling_period": 30,
-        "max_upscale_per_minute": 1,
-        "max_downscale_per_minute": 1
-      }
+      "autoscaler": {"min_replicas": 0, "max_replicas": 2, "desired_queue_length": 1, "polling_period": 30, "max_upscale_per_minute": 1, "max_downscale_per_minute": 1}
     },
     "ideogram4": {
       "display_name": "AI Video Factory Ideogram 4 Quality",
@@ -156,15 +101,7 @@
       "dockerfile": "docker/workers/ideogram4/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:ideogram4-nf4-quality48-v4",
       "priority": "high",
-      "resources": {
-        "cpu": 8,
-        "memory": 32768,
-        "shm_size": 8192,
-        "storage_amount": 103079215104,
-        "gpu_class_names": [
-          "RTX 4090 (24 GB)"
-        ]
-      },
+      "resources": {"cpu": 8, "memory": 32768, "shm_size": 8192, "storage_amount": 103079215104, "gpu_class_names": ["RTX 4090 (24 GB)"]},
       "environment": {
         "INFERENCE_WORKER_MODE": "production",
         "INFERENCE_WORKER_LEASE_SECONDS": "900",
@@ -191,37 +128,53 @@
         "SALAD_QUEUE_ENABLED": "true",
         "SALAD_LOG_LEVEL": "info"
       },
-      "required_environment": [
-        "HF_TOKEN"
-      ],
+      "required_environment": ["HF_TOKEN"],
       "probes": {
-        "startup": {
-          "path": "/health",
-          "period_seconds": 30,
-          "timeout_seconds": 5,
-          "failure_threshold": 20
-        },
-        "readiness": {
-          "path": "/ready",
-          "period_seconds": 30,
-          "timeout_seconds": 5,
-          "failure_threshold": 20
-        },
-        "liveness": {
-          "path": "/health",
-          "period_seconds": 30,
-          "timeout_seconds": 10,
-          "failure_threshold": 20
-        }
+        "startup": {"path": "/health", "period_seconds": 30, "timeout_seconds": 5, "failure_threshold": 20},
+        "readiness": {"path": "/ready", "period_seconds": 30, "timeout_seconds": 5, "failure_threshold": 20},
+        "liveness": {"path": "/health", "period_seconds": 30, "timeout_seconds": 10, "failure_threshold": 20}
       },
-      "autoscaler": {
-        "min_replicas": 0,
-        "max_replicas": 1,
-        "desired_queue_length": 1,
-        "polling_period": 30,
-        "max_upscale_per_minute": 1,
-        "max_downscale_per_minute": 1
-      }
+      "autoscaler": {"min_replicas": 0, "max_replicas": 1, "desired_queue_length": 1, "polling_period": 30, "max_upscale_per_minute": 1, "max_downscale_per_minute": 1}
+    },
+    "flux_schnell": {
+      "display_name": "AI Video Factory FLUX.1 Schnell Safety Fallback",
+      "group_name": "ai-video-factory-flux-schnell-worker",
+      "queue_name": "ai-video-factory-flux-schnell-jobs",
+      "dockerfile": "docker/workers/flux-schnell/Dockerfile",
+      "image": "docker.io/yagobordell/ai-video-factory:flux-schnell-bnb4-nf4-v1",
+      "priority": "high",
+      "resources": {"cpu": 8, "memory": 32768, "shm_size": 8192, "storage_amount": 103079215104, "gpu_class_names": ["RTX 4090 (24 GB)"]},
+      "environment": {
+        "INFERENCE_WORKER_MODE": "production",
+        "INFERENCE_WORKER_LEASE_SECONDS": "900",
+        "INFERENCE_WORKER_HEARTBEAT_SECONDS": "30",
+        "FLUX_MODEL_ROOT": "/workspace/models/flux-schnell",
+        "FLUX_MODEL_LOCAL_SNAPSHOT": "/workspace/models/flux-schnell/snapshot",
+        "FLUX_MODEL_REPOSITORY": "black-forest-labs/FLUX.1-schnell",
+        "FLUX_MODEL_REVISION": "main",
+        "FLUX_DEVICE": "cuda",
+        "FLUX_DTYPE": "bfloat16",
+        "FLUX_QUANTIZATION": "bnb4-nf4",
+        "FLUX_INFERENCE_STEPS": "4",
+        "FLUX_MAX_SEQUENCE_LENGTH": "256",
+        "FLUX_DOWNLOAD_STALL_TIMEOUT_SECONDS": "600",
+        "FLUX_DOWNLOAD_HARD_TIMEOUT_SECONDS": "2400",
+        "FLUX_DOWNLOAD_POLL_SECONDS": "15",
+        "FLUX_DOWNLOAD_MIN_MIBPS": "8",
+        "FLUX_DOWNLOAD_THROUGHPUT_GRACE_SECONDS": "180",
+        "FLUX_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS": "120",
+        "HF_HUB_DOWNLOAD_TIMEOUT": "120",
+        "HF_HUB_ETAG_TIMEOUT": "30",
+        "SALAD_QUEUE_ENABLED": "true",
+        "SALAD_LOG_LEVEL": "info"
+      },
+      "required_environment": ["HF_TOKEN"],
+      "probes": {
+        "startup": {"path": "/health", "period_seconds": 30, "timeout_seconds": 5, "failure_threshold": 40},
+        "readiness": {"path": "/ready", "period_seconds": 30, "timeout_seconds": 5, "failure_threshold": 40},
+        "liveness": {"path": "/health", "period_seconds": 30, "timeout_seconds": 10, "failure_threshold": 20}
+      },
+      "autoscaler": {"min_replicas": 0, "max_replicas": 1, "desired_queue_length": 1, "polling_period": 30, "max_upscale_per_minute": 1, "max_downscale_per_minute": 1}
     },
     "whisper": {
       "display_name": "AI Video Factory Whisper",
@@ -230,15 +183,7 @@
       "dockerfile": "docker/workers/whisper/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:whisper-large-v3-turbo-v2",
       "priority": "medium",
-      "resources": {
-        "cpu": 4,
-        "memory": 16384,
-        "shm_size": 4096,
-        "storage_amount": 34359738368,
-        "gpu_class_names": [
-          "RTX 3090 (24 GB)"
-        ]
-      },
+      "resources": {"cpu": 4, "memory": 16384, "shm_size": 4096, "storage_amount": 34359738368, "gpu_class_names": ["RTX 3090 (24 GB)"]},
       "environment": {
         "INFERENCE_WORKER_MODE": "production",
         "INFERENCE_WORKER_LEASE_SECONDS": "300",
@@ -261,33 +206,11 @@
       },
       "required_environment": [],
       "probes": {
-        "startup": {
-          "path": "/health",
-          "period_seconds": 10,
-          "timeout_seconds": 5,
-          "failure_threshold": 18
-        },
-        "readiness": {
-          "path": "/ready",
-          "period_seconds": 10,
-          "timeout_seconds": 5,
-          "failure_threshold": 6
-        },
-        "liveness": {
-          "path": "/health",
-          "period_seconds": 30,
-          "timeout_seconds": 10,
-          "failure_threshold": 20
-        }
+        "startup": {"path": "/health", "period_seconds": 10, "timeout_seconds": 5, "failure_threshold": 18},
+        "readiness": {"path": "/ready", "period_seconds": 10, "timeout_seconds": 5, "failure_threshold": 6},
+        "liveness": {"path": "/health", "period_seconds": 30, "timeout_seconds": 10, "failure_threshold": 20}
       },
-      "autoscaler": {
-        "min_replicas": 0,
-        "max_replicas": 1,
-        "desired_queue_length": 1,
-        "polling_period": 30,
-        "max_upscale_per_minute": 1,
-        "max_downscale_per_minute": 1
-      }
+      "autoscaler": {"min_replicas": 0, "max_replicas": 1, "desired_queue_length": 1, "polling_period": 30, "max_upscale_per_minute": 1, "max_downscale_per_minute": 1}
     }
   }
 }
