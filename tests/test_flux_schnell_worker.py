@@ -98,7 +98,10 @@ def test_flux_runner_rejects_unexpected_task(tmp_path: Path) -> None:
     request = InferenceJobRequest(
         job_id="flux-reference-wrongtask",
         task="image.flux_schnell.other",
-        output=ObjectOutput(key="jobs/flux-reference-wrongtask/image.png", content_type="image/png"),
+        output=ObjectOutput(
+            key="jobs/flux-reference-wrongtask/image.png",
+            content_type="image/png",
+        ),
         parameters={
             "generation_profile": FLUX_SCHNELL_GENERATION_PROFILE,
             "model_id": FLUX_SCHNELL_MODEL_ID,
