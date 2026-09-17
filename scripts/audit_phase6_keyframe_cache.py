@@ -87,7 +87,7 @@ def audit_keyframe_cache(
             "fallback_status": "miss",
             "error": None,
         }
-        for name, request in candidates:
+        for _name, request in candidates:
             try:
                 cached = cached_inference_response(storage, request)
             except RuntimeError as exc:
