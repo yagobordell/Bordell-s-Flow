@@ -14,6 +14,9 @@ def test_salad_services_use_named_gpu_classes() -> None:
     assert document["services"]["ideogram4"]["resources"]["gpu_class_names"] == [
         "RTX 4090 (24 GB)"
     ]
+    assert document["services"]["flux_schnell"]["resources"]["gpu_class_names"] == [
+        "RTX 4090 (24 GB)"
+    ]
     assert document["services"]["whisper"]["resources"]["gpu_class_names"] == [
         "RTX 3090 (24 GB)"
     ]
@@ -83,6 +86,24 @@ def test_ideogram_autoscaler_hard_caps_gpu_cost_during_queue_stabilization() -> 
     assert autoscaler["max_replicas"] == 1
     assert autoscaler["desired_queue_length"] == 1
     assert autoscaler["max_upscale_per_minute"] == 1
+
+
+def test_flux_fallback_autoscaler_stays_scale_to_zero_and_single_gpu() -> None:
+    document = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
+    service = document["services"]["flux_schnell"]
+    autoscaler = service["autoscaler"]
+    environment = service["environment"]
+
+    assert service["queue_name"] == "ai-video-factory-flux-schnell-jobs"
+    assert service["image"].endswith("flux-schnell-bnb4-nf4-v1")
+    assert autoscaler["min_replicas"] == 0
+    assert autoscaler["max_replicas"] == 1
+    assert autoscaler["desired_queue_length"] == 1
+    assert autoscaler["max_upscale_per_minute"] == 1
+    assert environment["FLUX_MODEL_REPOSITORY"] == "black-forest-labs/FLUX.1-schnell"
+    assert environment["FLUX_QUANTIZATION"] == "bnb4-nf4"
+    assert environment["FLUX_INFERENCE_STEPS"] == "4"
+    assert environment["SALAD_QUEUE_ENABLED"] == "true"
 
 
 def test_ideogram_deployment_pins_download_and_runtime_watchdogs_and_v4_image() -> None:
