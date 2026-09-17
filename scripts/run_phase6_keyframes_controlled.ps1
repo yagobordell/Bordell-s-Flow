@@ -35,6 +35,7 @@ $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $WorkerManager = Join-Path $PSScriptRoot "manage_salad_worker.ps1"
+$ScaleToZeroArm = Join-Path $PSScriptRoot "arm_salad_scale_to_zero.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $WarmReplicaHold = Join-Path $PSScriptRoot "hold_salad_warm_replica.ps1"
 $QueueCleanup = Join-Path $PSScriptRoot "cleanup_salad_queue.ps1"
@@ -74,11 +75,11 @@ try {
         throw "Ideogram warm replica hold failed; refusing to submit Phase 6 jobs."
     }
 
-    Write-Host "=== FLUX fallback: enable scale-to-zero group without allocating a GPU ===" `
+    Write-Host "=== FLUX fallback: arm scale-to-zero group without allocating a GPU ===" `
         -ForegroundColor Cyan
-    & $WorkerManager -Action Start -Service flux_schnell -NonInteractive
+    & $ScaleToZeroArm -Service flux_schnell -NonInteractive
     if (-not $?) {
-        throw "FLUX Schnell fallback group failed to start."
+        throw "FLUX Schnell fallback group failed to arm scale-to-zero."
     }
 
     Write-Host "=== Phase 6 generation: Ideogram primary with FLUX safety fallback ===" `
