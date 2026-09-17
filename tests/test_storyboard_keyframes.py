@@ -98,6 +98,7 @@ class ParallelImageProvider:
             content=str(kwargs["prompt"]).encode("utf-8"),
             media_type="image/png",
             extension="png",
+            metadata={"provider": "fake"},
         )
 
 
@@ -147,8 +148,16 @@ def test_storyboard_keyframes_run_in_parallel_without_binary_reference_inputs(
 
     assert provider.started == 2
     assert [keyframe.model_dump() for keyframe in keyframes] == [
-        {"shot_id": 1, "uri": "storyboard_keyframes/shot_001.png"},
-        {"shot_id": 2, "uri": "storyboard_keyframes/shot_002.png"},
+        {
+            "shot_id": 1,
+            "uri": "storyboard_keyframes/shot_001.png",
+            "metadata": {"provider": "fake"},
+        },
+        {
+            "shot_id": 2,
+            "uri": "storyboard_keyframes/shot_002.png",
+            "metadata": {"provider": "fake"},
+        },
     ]
     assert [call["prompt"] for call in provider.calls] == [
         '{"caption":"Frame one"}',
