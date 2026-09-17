@@ -194,7 +194,7 @@ function Assert-QueueLogicallyEmpty {
 
     $ReportedLength = [int]$Queue.current_queue_length
     if ($ReportedLength -eq 0) {
-        return 0
+        return
     }
 
     $Snapshot = Get-QueueJobSnapshot -Deadline (Get-Date).AddSeconds($VerificationSeconds)
@@ -217,7 +217,6 @@ function Assert-QueueLogicallyEmpty {
         "$ReportedLength, but exhaustive job enumeration found no pending or running jobs. " +
         "Treating the queue as logically empty."
     )
-    return $ReportedLength
 }
 
 function Get-Instances {
@@ -288,11 +287,11 @@ $QueueUrl = "$BaseUrl/queues/$QueueName"
 $Headers = @{
     "Salad-Api-Key" = Get-SaladApiKey
     "Accept" = "application/json"
-    "User-Agent" = "ai-video-factory-optimized-prewarm/1.1"
+    "User-Agent" = "ai-video-factory-optimized-prewarm/1.2"
 }
 
 $Queue = Get-Queue
-$VerifiedEmptyQueueLength = Assert-QueueLogicallyEmpty -Queue $Queue
+$null = Assert-QueueLogicallyEmpty -Queue $Queue
 
 $Group = Get-Group
 $Status = [string]$Group.current_state.status
@@ -386,15 +385,8 @@ while ((Get-Date) -lt $Deadline) {
     $Attached = Test-QueueAttachment -Queue $Queue
 
     $ReportedQueueLength = [int]$Queue.current_queue_length
-    if ($ReportedQueueLength -gt $VerifiedEmptyQueueLength) {
-        throw (
-            "Optimized prewarm detected queue growth from verified-empty baseline " +
-            "$VerifiedEmptyQueueLength to $ReportedQueueLength job(s); aborting so cold-start " +
-            "time cannot be charged to a transport job."
-        )
-    }
-    if ($ReportedQueueLength -lt $VerifiedEmptyQueueLength) {
-        $VerifiedEmptyQueueLength = Assert-QueueLogicallyEmpty -Queue $Queue
+    if ($ReportedQueueLength -ne 0) {
+        $null = Assert-QueueLogicallyEmpty -Queue $Queue
     }
     if ($Status -eq "failed") {
         throw "Container group '$GroupName' entered failed state during prewarm."
