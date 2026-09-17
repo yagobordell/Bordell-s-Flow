@@ -86,10 +86,15 @@ $PrewarmArguments = @{
 }
 $HoldArguments = @{ Service = "ideogram4" }
 $FluxPrewarmArguments = @{ TimeoutMinutes = $PrewarmTimeoutMinutes }
+$FluxArmArguments = @{
+    Action = "Start"
+    Service = "flux_schnell"
+}
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
     $HoldArguments["NonInteractive"] = $true
     $FluxPrewarmArguments["NonInteractive"] = $true
+    $FluxArmArguments["NonInteractive"] = $true
 }
 
 $IdeogramTouched = $false
@@ -99,6 +104,36 @@ $FluxCleanupRequired = $IdeogramNeeded -or $FluxNeeded
 $PrimaryFailure = $null
 $CleanupFailures = @()
 try {
+    if ($IdeogramNeeded -and -not $FluxNeeded) {
+        Write-Host (
+            "=== FLUX Schnell fallback: arm scale-to-zero group for dynamic safety fallback ==="
+        ) -ForegroundColor Cyan
+        $FluxArmSucceeded = $false
+        for ($Attempt = 1; $Attempt -le 3; $Attempt += 1) {
+            try {
+                & $WorkerManager @FluxArmArguments
+                if (-not $?) {
+                    throw "FLUX Schnell scale-to-zero group start failed."
+                }
+                $FluxArmSucceeded = $true
+                break
+            }
+            catch {
+                if ($Attempt -ge 3) {
+                    throw
+                }
+                Write-Warning (
+                    "FLUX arm attempt $Attempt failed while Salad may still be applying the remote start: " +
+                    "$($_.Exception.Message) Retrying idempotently."
+                )
+                Start-Sleep -Seconds 15
+            }
+        }
+        if (-not $FluxArmSucceeded) {
+            throw "FLUX Schnell scale-to-zero group could not be armed for dynamic fallback."
+        }
+    }
+
     if ($IdeogramNeeded) {
         $IdeogramTouched = $true
         Write-Host "=== Ideogram optimized prewarm: selecting one ready node ===" -ForegroundColor Cyan
