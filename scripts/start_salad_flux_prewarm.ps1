@@ -66,6 +66,56 @@ function Get-Queue {
     return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
 }
 
+function Get-QueueActiveSnapshot {
+    param([Parameter(Mandatory)][datetime]$Deadline)
+
+    $Active = @()
+    $Complete = $false
+    $Pages = 0
+    for ($Page = 1; $Page -le 100; $Page += 1) {
+        if ((Get-Date) -ge $Deadline) {
+            break
+        }
+        $SecondsRemaining = [Math]::Max(
+            1,
+            [Math]::Ceiling(($Deadline - (Get-Date)).TotalSeconds)
+        )
+        $RequestTimeoutSeconds = [int][Math]::Min(30, $SecondsRemaining)
+        Write-Host (
+            "FLUX prewarm queue inspection: page $Page " +
+            "($([int]$SecondsRemaining)s remaining in safety check)..."
+        )
+        $Response = Invoke-RestMethod `
+            -Uri "$QueueUrl/jobs?page=$Page&page_size=25" `
+            -Headers $Headers `
+            -TimeoutSec $RequestTimeoutSeconds
+        $Pages += 1
+        $Items = @(
+            if ($Response.PSObject.Properties.Name -contains "items") {
+                $Response.items
+            }
+            elseif ($Response.PSObject.Properties.Name -contains "jobs") {
+                $Response.jobs
+            }
+        )
+        foreach ($Job in $Items) {
+            if ([string]$Job.status -in @("pending", "running")) {
+                $Active += $Job
+            }
+        }
+        if ($Items.Count -lt 25) {
+            $Complete = $true
+            break
+        }
+    }
+
+    return [PSCustomObject]@{
+        active_jobs = @($Active)
+        complete = $Complete
+        pages = $Pages
+    }
+}
+
 function Get-Instances {
     $Response = Invoke-RestMethod -Uri $InstancesUrl -Headers $Headers -TimeoutSec 30
     if ($Response.PSObject.Properties.Name -contains "instances") {
@@ -105,12 +155,30 @@ $QueueUrl = "$BaseUrl/queues/$QueueName"
 $Headers = @{
     "Salad-Api-Key" = Get-SaladApiKey
     "Accept" = "application/json"
-    "User-Agent" = "ai-video-factory-flux-prewarm/1.0"
+    "User-Agent" = "ai-video-factory-flux-prewarm/1.1"
 }
 
 $Queue = Get-Queue
+$QueueInspectionDeadline = (Get-Date).AddMinutes(2)
+$QueueSnapshot = Get-QueueActiveSnapshot -Deadline $QueueInspectionDeadline
+if (-not [bool]$QueueSnapshot.complete) {
+    throw (
+        "FLUX prewarm could not exhaustively inspect queue jobs before GPU allocation; " +
+        "refusing to start a replica."
+    )
+}
+$ActiveQueueJobs = @($QueueSnapshot.active_jobs)
+if ($ActiveQueueJobs.Count -gt 0) {
+    $ActiveDescription = ($ActiveQueueJobs | ForEach-Object {
+        "transport=$([string]$_.id) status=$([string]$_.status)"
+    }) -join "; "
+    throw "FLUX prewarm requires no pending/running queue jobs; found: $ActiveDescription"
+}
 if ([int]$Queue.current_queue_length -ne 0) {
-    throw "FLUX prewarm requires an empty queue; '$QueueName' contains $([int]$Queue.current_queue_length) job(s)."
+    Write-Warning (
+        "FLUX queue summary is stale: current_queue_length=$([int]$Queue.current_queue_length), " +
+        "but exhaustive enumeration found no pending or running jobs. Continuing safely."
+    )
 }
 $Attached = @(
     @($Queue.container_groups) |
@@ -166,13 +234,9 @@ $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 do {
     Start-Sleep -Seconds 5
     $Group = Get-Group
-    $Queue = Get-Queue
     $Instances = @(Get-Instances)
     $Status = [string]$Group.current_state.status
 
-    if ([int]$Queue.current_queue_length -ne 0) {
-        throw "FLUX prewarm detected queued work before readiness; refusing cold-start billing on a transport job."
-    }
     if ($Status -eq "failed") {
         throw "FLUX container group entered failed state during prewarm."
     }

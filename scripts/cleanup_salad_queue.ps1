@@ -60,10 +60,12 @@ function Get-QueueSummary {
     return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
 }
 
-function Get-ActiveQueueJobs {
+function Get-QueueJobSnapshot {
     param([Parameter(Mandatory)][datetime]$Deadline)
 
     $Active = @()
+    $Complete = $false
+    $Pages = 0
     for ($Page = 1; $Page -le 100; $Page += 1) {
         if ((Get-Date) -ge $Deadline) {
             break
@@ -82,6 +84,7 @@ function Get-ActiveQueueJobs {
             -Uri "$QueueUrl/jobs?page=$Page&page_size=25" `
             -Headers $Headers `
             -TimeoutSec $RequestTimeoutSeconds
+        $Pages += 1
         $Items = @(
             if ($Response.PSObject.Properties.Name -contains "items") {
                 $Response.items
@@ -97,10 +100,16 @@ function Get-ActiveQueueJobs {
             }
         }
         if ($Items.Count -lt 25) {
+            $Complete = $true
             break
         }
     }
-    return @($Active)
+
+    return [PSCustomObject]@{
+        active_jobs = @($Active)
+        complete = $Complete
+        pages = $Pages
+    }
 }
 
 function Format-Job {
@@ -137,7 +146,7 @@ $QueueUrl = "$BaseUrl/queues/$QueueName"
 $Headers = @{
     "Salad-Api-Key" = Get-SaladApiKey
     "Accept" = "application/json"
-    "User-Agent" = "ai-video-factory-queue-cleanup/1.1"
+    "User-Agent" = "ai-video-factory-queue-cleanup/1.2"
 }
 
 Write-Host "Inspecting $Service container group before queue cleanup..."
@@ -159,11 +168,24 @@ if ([int]$Queue.current_queue_length -eq 0) {
 }
 Write-Warning (
     "$Service queue reports $([int]$Queue.current_queue_length) queued job(s); " +
-    "enumerating active jobs within the ${TimeoutSeconds}s cleanup deadline."
+    "verifying enumerable pending/running jobs within the ${TimeoutSeconds}s cleanup deadline."
 )
 
 do {
-    $ActiveJobs = @(Get-ActiveQueueJobs -Deadline $Deadline)
+    $Snapshot = Get-QueueJobSnapshot -Deadline $Deadline
+    $ActiveJobs = @($Snapshot.active_jobs)
+    if (-not [bool]$Snapshot.complete) {
+        if ((Get-Date) -ge $Deadline) {
+            break
+        }
+        Write-Warning (
+            "$Service active-job enumeration was incomplete after $([int]$Snapshot.pages) page(s); " +
+            "retrying while cleanup time remains."
+        )
+        Start-Sleep -Seconds 5
+        continue
+    }
+
     foreach ($Job in @($ActiveJobs | Where-Object { [string]$_.status -eq "pending" })) {
         Write-Warning "Cancelling abandoned pending job: $(Format-Job -Job $Job)"
         Invoke-RestMethod `
@@ -174,9 +196,18 @@ do {
             Out-Null
     }
 
+    $Pending = @($ActiveJobs | Where-Object { [string]$_.status -eq "pending" })
     $Running = @($ActiveJobs | Where-Object { [string]$_.status -eq "running" })
     $Queue = Get-QueueSummary
-    if ($Running.Count -eq 0 -and [int]$Queue.current_queue_length -eq 0) {
+
+    if ($Pending.Count -eq 0 -and $Running.Count -eq 0) {
+        if ([int]$Queue.current_queue_length -ne 0) {
+            Write-Warning (
+                "$Service queue summary is stale: current_queue_length=" +
+                "$([int]$Queue.current_queue_length), but exhaustive job enumeration found " +
+                "no pending or running jobs. Treating the stopped queue as logically empty."
+            )
+        }
         Write-Host "$Service queue cleanup complete: no active or queued jobs." -ForegroundColor Green
         exit 0
     }
@@ -190,19 +221,23 @@ do {
             (($Running | ForEach-Object { Format-Job -Job $_ }) -join "; ")
         )
     }
-    elseif ([int]$Queue.current_queue_length -gt 0) {
+    elseif ($Pending.Count -gt 0) {
         Write-Warning (
-            "$Service queue still reports $([int]$Queue.current_queue_length) queued job(s); " +
-            "retrying active-job enumeration."
+            "Waiting for cancelled pending job(s) to become terminal: " +
+            (($Pending | ForEach-Object { Format-Job -Job $_ }) -join "; ")
         )
     }
     Start-Sleep -Seconds 5
 }
 while ((Get-Date) -lt $Deadline)
 
-$Remaining = @(Get-ActiveQueueJobs -Deadline $Deadline)
-$Description = if ($Remaining.Count -eq 0) {
-    "queue length remained non-zero with no enumerable active jobs"
+$RemainingSnapshot = Get-QueueJobSnapshot -Deadline $Deadline
+$Remaining = @($RemainingSnapshot.active_jobs)
+$Description = if (-not [bool]$RemainingSnapshot.complete) {
+    "active-job enumeration could not complete before the cleanup deadline"
+}
+elseif ($Remaining.Count -eq 0) {
+    "no enumerable active jobs remained, but cleanup could not establish a complete terminal state"
 }
 else {
     ($Remaining | ForEach-Object { Format-Job -Job $_ }) -join "; "
