@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 CLEANUP = Path("scripts/cleanup_salad_queue.ps1")
 
 
