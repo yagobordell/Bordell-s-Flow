@@ -75,7 +75,8 @@ def test_optimized_prewarm_applies_bounded_node_selection_to_every_worker() -> N
     assert "$ContainerStarted = $Started -or $ContainerObservedRunning" in text
     assert "$ContainerStarted -and" in text
     assert "$Ready" in text
-    assert "prewarm complete: exactly one started ready replica, queue still empty" in text
+    assert "prewarm complete: exactly one started ready replica" in text
+    assert "queue still empty" in text
 
 
 def test_ideogram_prewarm_has_specific_finite_runtime_and_node_budget() -> None:
@@ -126,7 +127,7 @@ def test_controlled_gpu_runners_prewarm_and_always_stop() -> None:
         assert "-Action Status" in text, path.name
 
 
-def test_ideogram_controlled_runners_hold_warm_and_clean_queue() -> None:
+def test_ideogram_controlled_runners_pin_warm_and_clean_queue() -> None:
     assert QUEUE_CLEANUP.is_file()
     cleanup = QUEUE_CLEANUP.read_text(encoding="utf-8")
     assert 'Where-Object { [string]$_.status -eq "pending" }' in cleanup
@@ -138,7 +139,8 @@ def test_ideogram_controlled_runners_hold_warm_and_clean_queue() -> None:
         Path("scripts/run_phase6_keyframes_controlled.ps1"),
     ):
         text = path.read_text(encoding="utf-8")
-        assert "hold_salad_warm_replica.ps1" in text, path.name
+        assert "HoldReadyReplica = $true" in text, path.name
+        assert "hold_salad_warm_replica.ps1" not in text, path.name
         assert "cleanup_salad_queue.ps1" in text, path.name
         assert text.index("-Action Stop") < text.index("& $QueueCleanup"), path.name
         assert text.index("& $QueueCleanup") < text.index("-Action Status"), path.name

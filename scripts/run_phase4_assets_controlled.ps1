@@ -33,7 +33,6 @@ $ErrorActionPreference = "Stop"
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $WorkerManager = Join-Path $PSScriptRoot "manage_salad_worker.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
-$WarmReplicaHold = Join-Path $PSScriptRoot "hold_salad_warm_replica.ps1"
 $FluxPrewarm = Join-Path $PSScriptRoot "start_salad_flux_prewarm.ps1"
 $FluxRestore = Join-Path $PSScriptRoot "restore_salad_flux_scale_to_zero.ps1"
 $QueueCleanup = Join-Path $PSScriptRoot "cleanup_salad_queue.ps1"
@@ -83,8 +82,8 @@ Write-Host (
 $PrewarmArguments = @{
     Service = "ideogram4"
     TimeoutMinutes = $PrewarmTimeoutMinutes
+    HoldReadyReplica = $true
 }
-$HoldArguments = @{ Service = "ideogram4" }
 $FluxPrewarmArguments = @{ TimeoutMinutes = $PrewarmTimeoutMinutes }
 $FluxArmArguments = @{
     Action = "Start"
@@ -92,7 +91,6 @@ $FluxArmArguments = @{
 }
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
-    $HoldArguments["NonInteractive"] = $true
     $FluxPrewarmArguments["NonInteractive"] = $true
     $FluxArmArguments["NonInteractive"] = $true
 }
@@ -136,16 +134,12 @@ try {
 
     if ($IdeogramNeeded) {
         $IdeogramTouched = $true
-        Write-Host "=== Ideogram optimized prewarm: selecting one ready node ===" -ForegroundColor Cyan
+        Write-Host (
+            "=== Ideogram optimized prewarm: selecting and pinning one ready node ==="
+        ) -ForegroundColor Cyan
         & $OptimizedPrewarm @PrewarmArguments
         if (-not $?) {
             throw "Ideogram optimized prewarm failed."
-        }
-        Write-Host "=== Ideogram warm hold: pin one ready replica for the Phase 4 batch ===" `
-            -ForegroundColor Cyan
-        & $WarmReplicaHold @HoldArguments
-        if (-not $?) {
-            throw "Ideogram warm replica hold failed; refusing to submit Phase 4 jobs."
         }
     }
 

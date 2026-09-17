@@ -9,6 +9,8 @@ param(
     [ValidateRange(10, 120)]
     [int]$TimeoutMinutes = 60,
 
+    [switch]$HoldReadyReplica,
+
     [switch]$NonInteractive
 )
 
@@ -299,7 +301,7 @@ $QueueUrl = "$BaseUrl/queues/$QueueName"
 $Headers = @{
     "Salad-Api-Key" = Get-SaladApiKey
     "Accept" = "application/json"
-    "User-Agent" = "ai-video-factory-optimized-prewarm/1.3"
+    "User-Agent" = "ai-video-factory-optimized-prewarm/1.4"
 }
 
 $Queue = Get-Queue
@@ -323,11 +325,12 @@ if ($Service -eq "ideogram4" -and [int]$Group.queue_autoscaler.max_replicas -ne 
     throw "Ideogram optimized prewarm refuses a remote autoscaler with max_replicas != 1."
 }
 
+$TargetMinReplicas = if ($HoldReadyReplica) { 1 } else { 0 }
 $ProfileLine = (
     (
         "Optimized prewarm profile: service={0} allocating={1}s/{2} retries " +
         "image_pull_stall={3}s/{4} retries post_pull_start={5}s/{6} retries " +
-        "running_not_ready={7}s/{8} retries max_node_changes={9}"
+        "running_not_ready={7}s/{8} retries max_node_changes={9} hold_ready={10}"
     ) -f
     $Service,
     $Profile.AllocatingSeconds,
@@ -338,16 +341,28 @@ $ProfileLine = (
     $Profile.MaxPostPullStartReallocations,
     $Profile.RunningNotReadySeconds,
     $Profile.MaxRunningNotReadyReallocations,
-    $Profile.MaxNodeChanges
+    $Profile.MaxNodeChanges,
+    [bool]$HoldReadyReplica
 )
 Write-Host $ProfileLine -ForegroundColor Cyan
 
+$PrewarmPatch = @{ replicas = 1 }
+if ($HoldReadyReplica) {
+    $PrewarmPatch["queue_autoscaler"] = @{
+        min_replicas = 1
+        max_replicas = [int]$Definition.autoscaler.max_replicas
+        desired_queue_length = [int]$Definition.autoscaler.desired_queue_length
+        polling_period = [int]$Definition.autoscaler.polling_period
+        max_upscale_per_minute = [int]$Definition.autoscaler.max_upscale_per_minute
+        max_downscale_per_minute = [int]$Definition.autoscaler.max_downscale_per_minute
+    }
+}
 Invoke-RestMethod `
     -Method Patch `
     -Uri $GroupUrl `
     -Headers $Headers `
     -ContentType "application/merge-patch+json" `
-    -Body (@{ replicas = 1 } | ConvertTo-Json -Compress) `
+    -Body ($PrewarmPatch | ConvertTo-Json -Depth 10 -Compress) `
     -TimeoutSec 60 |
     Out-Null
 
@@ -358,7 +373,7 @@ do {
     if (
         -not [bool]$Group.pending_change -and
         [int]$Group.replicas -eq 1 -and
-        [int]$Group.queue_autoscaler.min_replicas -eq 0
+        [int]$Group.queue_autoscaler.min_replicas -eq $TargetMinReplicas
     ) {
         break
     }
@@ -367,7 +382,7 @@ while ((Get-Date) -lt $PatchDeadline)
 if (
     [bool]$Group.pending_change -or
     [int]$Group.replicas -ne 1 -or
-    [int]$Group.queue_autoscaler.min_replicas -ne 0
+    [int]$Group.queue_autoscaler.min_replicas -ne $TargetMinReplicas
 ) {
     throw "Salad did not persist the one-replica prewarm state safely."
 }
@@ -522,12 +537,14 @@ while ((Get-Date) -lt $Deadline) {
     if (
         -not [bool]$Group.pending_change -and
         [int]$Group.replicas -eq 1 -and
+        [int]$Group.queue_autoscaler.min_replicas -eq $TargetMinReplicas -and
         $ObservedInstance -and
         $ContainerStarted -and
         $Ready
     ) {
+        $HoldSuffix = if ($HoldReadyReplica) { " with min_replicas=1 pinned" } else { "" }
         Write-Host (
-            "$Service prewarm complete: exactly one started ready replica, queue still empty."
+            "$Service prewarm complete: exactly one started ready replica$HoldSuffix, queue still empty."
         ) -ForegroundColor Green
         exit 0
     }
