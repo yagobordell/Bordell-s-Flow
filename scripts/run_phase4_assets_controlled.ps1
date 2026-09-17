@@ -32,9 +32,10 @@ $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $WorkerManager = Join-Path $PSScriptRoot "manage_salad_worker.ps1"
-$ScaleToZeroArm = Join-Path $PSScriptRoot "arm_salad_scale_to_zero.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $WarmReplicaHold = Join-Path $PSScriptRoot "hold_salad_warm_replica.ps1"
+$FluxPrewarm = Join-Path $PSScriptRoot "start_salad_flux_prewarm.ps1"
+$FluxRestore = Join-Path $PSScriptRoot "restore_salad_flux_scale_to_zero.ps1"
 $QueueCleanup = Join-Path $PSScriptRoot "cleanup_salad_queue.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $AuditScript = Join-Path $PSScriptRoot "audit_phase4_reference_cache.py"
@@ -84,9 +85,11 @@ $PrewarmArguments = @{
     TimeoutMinutes = $PrewarmTimeoutMinutes
 }
 $HoldArguments = @{ Service = "ideogram4" }
+$FluxPrewarmArguments = @{ TimeoutMinutes = $PrewarmTimeoutMinutes }
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
     $HoldArguments["NonInteractive"] = $true
+    $FluxPrewarmArguments["NonInteractive"] = $true
 }
 
 $IdeogramTouched = $false
@@ -110,13 +113,11 @@ try {
     if ($FluxNeeded) {
         $FluxTouched = $true
         Write-Host (
-            "=== FLUX Schnell fallback: arm scale-to-zero group before safety fallback queue work ==="
+            "=== FLUX Schnell fallback: prewarm one ready replica before queue submission ==="
         ) -ForegroundColor Cyan
-        & $ScaleToZeroArm `
-            -Service flux_schnell `
-            -NonInteractive
+        & $FluxPrewarm @FluxPrewarmArguments
         if (-not $?) {
-            throw "FLUX Schnell worker group failed to arm scale-to-zero."
+            throw "FLUX Schnell deterministic prewarm failed."
         }
     }
 
@@ -149,7 +150,7 @@ finally {
     }
     if ($FluxTouched) {
         try {
-            & $WorkerManager -Action Stop -Service flux_schnell -NonInteractive
+            & $FluxRestore -TimeoutSeconds 180 -NonInteractive
         }
         finally {
             & $QueueCleanup -Service flux_schnell -TimeoutSeconds 180 -NonInteractive

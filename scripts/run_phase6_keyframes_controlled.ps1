@@ -35,9 +35,10 @@ $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $WorkerManager = Join-Path $PSScriptRoot "manage_salad_worker.ps1"
-$ScaleToZeroArm = Join-Path $PSScriptRoot "arm_salad_scale_to_zero.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $WarmReplicaHold = Join-Path $PSScriptRoot "hold_salad_warm_replica.ps1"
+$FluxPrewarm = Join-Path $PSScriptRoot "start_salad_flux_prewarm.ps1"
+$FluxRestore = Join-Path $PSScriptRoot "restore_salad_flux_scale_to_zero.ps1"
 $QueueCleanup = Join-Path $PSScriptRoot "cleanup_salad_queue.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $Phase6Runner = Join-Path $PSScriptRoot "run_phase6_keyframes.py"
@@ -56,9 +57,11 @@ if ($LASTEXITCODE -ne 0) {
 
 $PrewarmArguments = @{ Service = "ideogram4"; TimeoutMinutes = $PrewarmTimeoutMinutes }
 $HoldArguments = @{ Service = "ideogram4" }
+$FluxPrewarmArguments = @{ TimeoutMinutes = $PrewarmTimeoutMinutes }
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
     $HoldArguments["NonInteractive"] = $true
+    $FluxPrewarmArguments["NonInteractive"] = $true
 }
 
 try {
@@ -75,11 +78,11 @@ try {
         throw "Ideogram warm replica hold failed; refusing to submit Phase 6 jobs."
     }
 
-    Write-Host "=== FLUX fallback: arm scale-to-zero group without allocating a GPU ===" `
+    Write-Host "=== FLUX fallback: prewarm one ready replica for deterministic safety fallback ===" `
         -ForegroundColor Cyan
-    & $ScaleToZeroArm -Service flux_schnell -NonInteractive
+    & $FluxPrewarm @FluxPrewarmArguments
     if (-not $?) {
-        throw "FLUX Schnell fallback group failed to arm scale-to-zero."
+        throw "FLUX Schnell deterministic prewarm failed."
     }
 
     Write-Host "=== Phase 6 generation: Ideogram primary with FLUX safety fallback ===" `
@@ -106,7 +109,7 @@ finally {
         & $ValidationManager -Action Status -Service ideogram4 -NonInteractive
     }
     try {
-        & $WorkerManager -Action Stop -Service flux_schnell -NonInteractive
+        & $FluxRestore -TimeoutSeconds 180 -NonInteractive
     }
     finally {
         & $QueueCleanup -Service flux_schnell -TimeoutSeconds 180 -NonInteractive
