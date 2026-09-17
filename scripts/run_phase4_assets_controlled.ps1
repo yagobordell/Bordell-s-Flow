@@ -32,6 +32,7 @@ $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $WorkerManager = Join-Path $PSScriptRoot "manage_salad_worker.ps1"
+$ScaleToZeroArm = Join-Path $PSScriptRoot "arm_salad_scale_to_zero.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $WarmReplicaHold = Join-Path $PSScriptRoot "hold_salad_warm_replica.ps1"
 $QueueCleanup = Join-Path $PSScriptRoot "cleanup_salad_queue.ps1"
@@ -57,7 +58,11 @@ Write-Host "=== Phase 4 cache plan: determine which GPU, if any, is needed ===" 
 if ($LASTEXITCODE -ne 0) {
     throw "Phase 4 cache planning failed."
 }
-$Plan = @(Get-Content -LiteralPath $PlanPath -Raw | ConvertFrom-Json)
+$Plan = @(
+    Get-Content -LiteralPath $PlanPath -Raw |
+        ConvertFrom-Json |
+        ForEach-Object { $_ }
+)
 Remove-Item -LiteralPath $PlanPath -Force -ErrorAction SilentlyContinue
 
 $InvalidCount = @($Plan | Where-Object { $_.status -eq "invalid" }).Count
@@ -105,14 +110,13 @@ try {
     if ($FluxNeeded) {
         $FluxTouched = $true
         Write-Host (
-            "=== FLUX Schnell fallback: start scale-to-zero group before safety fallback queue work ==="
+            "=== FLUX Schnell fallback: arm scale-to-zero group before safety fallback queue work ==="
         ) -ForegroundColor Cyan
-        & $WorkerManager `
-            -Action Start `
+        & $ScaleToZeroArm `
             -Service flux_schnell `
             -NonInteractive
         if (-not $?) {
-            throw "FLUX Schnell worker group failed to start."
+            throw "FLUX Schnell worker group failed to arm scale-to-zero."
         }
     }
 
