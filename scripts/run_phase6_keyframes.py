@@ -9,9 +9,14 @@ from r2_client import create_r2_storage
 
 from ai_video_factory.config import settings
 from ai_video_factory.domain import Shot, StoryboardFrame
-from ai_video_factory.providers import SaladIdeogramImageProvider
+from ai_video_factory.providers import (
+    SafetyFallbackImageProvider,
+    SaladFluxSchnellImageProvider,
+    SaladIdeogramImageProvider,
+)
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
+from ai_video_factory.workers.flux_schnell import FLUX_SCHNELL_KEYFRAME_TASK
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_KEYFRAME_TASK
 from ai_video_factory.workflows.storyboard_keyframes import generate_storyboard_keyframes
 
@@ -20,7 +25,7 @@ DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS = 300.0
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate Phase 6 storyboard keyframes with the Salad Ideogram 4 worker."
+        description="Generate Phase 6 keyframes with Ideogram and a FLUX safety fallback."
     )
     parser.add_argument(
         "--frames",
@@ -32,27 +37,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=settings.output_dir / "phase3" / "shots.json",
     )
-    parser.add_argument(
-        "--model",
-        default=settings.ideogram4_model,
-        help="Ideogram 4 NF4 model hosted by the dedicated Salad worker.",
-    )
-    parser.add_argument(
-        "--size",
-        default="1024x1536",
-        help="Generated keyframe size.",
-    )
-    parser.add_argument(
-        "--quality",
-        choices=("high", "auto"),
-        default="high",
-        help="Ideogram worker is fixed to the V4_QUALITY_48 preset.",
-    )
-    parser.add_argument(
-        "--queue-name",
-        default=settings.salad_ideogram4_queue_name,
-        help="Dedicated Salad queue shared by Ideogram reference and keyframe jobs.",
-    )
+    parser.add_argument("--model", default=settings.ideogram4_model)
+    parser.add_argument("--flux-model", default=settings.flux_schnell_model)
+    parser.add_argument("--size", default="1024x1536")
+    parser.add_argument("--quality", choices=("high", "auto"), default="high")
+    parser.add_argument("--queue-name", default=settings.salad_ideogram4_queue_name)
+    parser.add_argument("--flux-queue-name", default=settings.salad_flux_schnell_queue_name)
     parser.add_argument(
         "--poll-seconds",
         type=float,
@@ -62,16 +52,16 @@ def parse_args() -> argparse.Namespace:
         "--timeout-seconds",
         type=float,
         default=settings.inference_client_timeout_seconds,
-        help="Maximum seconds after Salad dispatches the job to a worker.",
     )
     parser.add_argument(
         "--pending-timeout-seconds",
         type=float,
         default=DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS,
-        help=(
-            "Maximum seconds for an already-prewarmed Ideogram worker to claim the queued job. "
-            "Use scripts/run_phase6_keyframes_controlled.ps1 for production cold starts."
-        ),
+    )
+    parser.add_argument(
+        "--flux-pending-timeout-seconds",
+        type=float,
+        default=settings.flux_fallback_pending_timeout_seconds,
     )
     parser.add_argument(
         "--output-dir",
@@ -92,6 +82,15 @@ def _required_setting(name: str, value: str | None) -> str:
     return value.strip()
 
 
+def _queue(queue_name: str) -> SaladJobQueueClient:
+    return SaladJobQueueClient(
+        organization=_required_setting("SALAD_ORGANIZATION", settings.salad_organization),
+        project=_required_setting("SALAD_PROJECT", settings.salad_project),
+        queue_name=queue_name,
+        api_key=_required_setting("SALAD_API_KEY", settings.salad_api_key),
+    )
+
+
 async def main() -> None:
     args = parse_args()
 
@@ -107,23 +106,34 @@ async def main() -> None:
             settings.r2_secret_access_key,
         ),
     )
-    queue = SaladJobQueueClient(
-        organization=_required_setting("SALAD_ORGANIZATION", settings.salad_organization),
-        project=_required_setting("SALAD_PROJECT", settings.salad_project),
-        queue_name=args.queue_name,
-        api_key=_required_setting("SALAD_API_KEY", settings.salad_api_key),
-    )
-    executor = InferenceJobExecutor(
-        queue=queue,
+    ideogram_executor = InferenceJobExecutor(
+        queue=_queue(args.queue_name),
         storage=storage,
         poll_seconds=args.poll_seconds,
         timeout_seconds=args.timeout_seconds,
         pending_timeout_seconds=args.pending_timeout_seconds,
     )
-    image_provider = SaladIdeogramImageProvider(
-        executor=executor,
+    flux_executor = InferenceJobExecutor(
+        queue=_queue(args.flux_queue_name),
+        storage=storage,
+        poll_seconds=args.poll_seconds,
+        timeout_seconds=args.timeout_seconds,
+        pending_timeout_seconds=args.flux_pending_timeout_seconds,
+    )
+    primary = SaladIdeogramImageProvider(
+        executor=ideogram_executor,
         temp_dir=settings.temp_dir / "ideogram4-keyframe-client",
         task_name=IDEOGRAM4_KEYFRAME_TASK,
+    )
+    fallback = SaladFluxSchnellImageProvider(
+        executor=flux_executor,
+        temp_dir=settings.temp_dir / "flux-schnell-keyframe-client",
+        task_name=FLUX_SCHNELL_KEYFRAME_TASK,
+    )
+    image_provider = SafetyFallbackImageProvider(
+        primary=primary,
+        fallback=fallback,
+        fallback_model=args.flux_model,
     )
     keyframes = await generate_storyboard_keyframes(
         frames,
@@ -142,8 +152,7 @@ async def main() -> None:
     )
 
     print(f"Phase 6 storyboard keyframes complete. Metadata: {args.output.resolve()}")
-    print(f"Generated {len(keyframes)} keyframe PNG files in {args.output_dir.resolve()}")
-    print(f"Generated with {args.model} via Salad queue {args.queue_name}")
+    print(f"Generated {len(keyframes)} keyframes with Ideogram + FLUX safety fallback")
 
 
 def _read_models[ModelT: BaseModel](
@@ -156,7 +165,6 @@ def _read_models[ModelT: BaseModel](
     raw: Any = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, list):
         raise SystemExit(f"JSON file must contain an array: {path}")
-
     return [model_type.model_validate(item) for item in raw]
 
 
