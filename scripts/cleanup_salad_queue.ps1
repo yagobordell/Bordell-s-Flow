@@ -63,15 +63,14 @@ function Get-ActiveQueueJobs {
             -Uri "$QueueUrl/jobs?page=$Page&page_size=25" `
             -Headers $Headers `
             -TimeoutSec 30
-        $Items = if ($Response.PSObject.Properties.Name -contains "items") {
-            @($Response.items)
-        }
-        elseif ($Response.PSObject.Properties.Name -contains "jobs") {
-            @($Response.jobs)
-        }
-        else {
-            @()
-        }
+        $Items = @(
+            if ($Response.PSObject.Properties.Name -contains "items") {
+                $Response.items
+            }
+            elseif ($Response.PSObject.Properties.Name -contains "jobs") {
+                $Response.jobs
+            }
+        )
         foreach ($Job in $Items) {
             $Status = [string]$Job.status
             if ($Status -in @("pending", "running")) {
