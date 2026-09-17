@@ -127,6 +127,34 @@ function Get-Instances {
     return @()
 }
 
+function Get-QueueConnectionName {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $ConnectionProperty = $Group.PSObject.Properties["queue_connection"]
+    if ($null -eq $ConnectionProperty -or $null -eq $ConnectionProperty.Value) {
+        return ""
+    }
+    $QueueNameProperty = $ConnectionProperty.Value.PSObject.Properties["queue_name"]
+    if ($null -eq $QueueNameProperty -or $null -eq $QueueNameProperty.Value) {
+        return ""
+    }
+    return [string]$QueueNameProperty.Value
+}
+
+function Get-VisibleAutoscalerMinReplicas {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $AutoscalerProperty = $Group.PSObject.Properties["queue_autoscaler"]
+    if ($null -eq $AutoscalerProperty -or $null -eq $AutoscalerProperty.Value) {
+        return $null
+    }
+    $MinProperty = $AutoscalerProperty.Value.PSObject.Properties["min_replicas"]
+    if ($null -eq $MinProperty -or $null -eq $MinProperty.Value) {
+        return $null
+    }
+    return [int]$MinProperty.Value
+}
+
 Import-EnvFile -Path $EnvFile
 if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
     throw "Salad stack manifest not found: $ManifestPath"
@@ -155,7 +183,7 @@ $QueueUrl = "$BaseUrl/queues/$QueueName"
 $Headers = @{
     "Salad-Api-Key" = Get-SaladApiKey
     "Accept" = "application/json"
-    "User-Agent" = "ai-video-factory-flux-prewarm/1.1"
+    "User-Agent" = "ai-video-factory-flux-prewarm/1.2"
 }
 
 $Queue = Get-Queue
@@ -180,13 +208,6 @@ if ([int]$Queue.current_queue_length -ne 0) {
         "but exhaustive enumeration found no pending or running jobs. Continuing safely."
     )
 }
-$Attached = @(
-    @($Queue.container_groups) |
-        Where-Object { [string]$_.name -eq $GroupName }
-).Count -eq 1
-if (-not $Attached) {
-    throw "FLUX queue '$QueueName' is not attached to container group '$GroupName'."
-}
 
 $Group = Get-Group
 $Status = [string]$Group.current_state.status
@@ -196,8 +217,15 @@ if ($Status -ne "stopped" -or [bool]$Group.pending_change -or [int]$Group.replic
         "status=$Status replicas=$([int]$Group.replicas) pending=$([bool]$Group.pending_change)."
     )
 }
-if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
-    throw "FLUX container group is configured for an unexpected queue."
+$AttachedQueueName = Get-QueueConnectionName -Group $Group
+if ([string]::IsNullOrWhiteSpace($AttachedQueueName)) {
+    throw "FLUX container group response does not expose queue_connection.queue_name."
+}
+if ($AttachedQueueName -ne $QueueName) {
+    throw (
+        "FLUX container group is configured for unexpected queue '$AttachedQueueName'; " +
+        "expected '$QueueName'."
+    )
 }
 
 Write-Host "FLUX prewarm: requesting exactly one replica before queue submission." -ForegroundColor Cyan
@@ -319,18 +347,30 @@ Invoke-RestMethod `
     Out-Null
 
 $HoldDeadline = (Get-Date).AddMinutes(2)
+$VisibleMinReplicas = $null
 do {
     Start-Sleep -Seconds 2
     $Group = Get-Group
     $Instances = @(Get-Instances)
+    $VisibleMinReplicas = Get-VisibleAutoscalerMinReplicas -Group $Group
+    $VisibleAutoscalerMatches = (
+        $null -eq $VisibleMinReplicas -or
+        [int]$VisibleMinReplicas -eq 1
+    )
     if (
         -not [bool]$Group.pending_change -and
-        [int]$Group.queue_autoscaler.min_replicas -eq 1 -and
+        $VisibleAutoscalerMatches -and
         [int]$Group.replicas -eq 1 -and
         $Instances.Count -eq 1 -and
         [bool]$Instances[0].started -and
         [bool]$Instances[0].ready
     ) {
+        if ($null -eq $VisibleMinReplicas) {
+            Write-Warning (
+                "Salad GET does not expose queue_autoscaler for '$GroupName'; " +
+                "warm hold is relying on the accepted autoscaler PATCH and settled group state."
+            )
+        }
         Write-Host "FLUX prewarm complete: one ready replica held for fallback queue work." -ForegroundColor Green
         exit 0
     }
