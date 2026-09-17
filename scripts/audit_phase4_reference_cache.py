@@ -108,7 +108,10 @@ def _cache_record(
             destination = Path(directory) / "image.png"
             downloaded = storage.download(request.output.key, destination)
             digest = sha256_file(destination)
-        verified = downloaded.size_bytes == response.output.size_bytes and digest == response.output.sha256
+        verified = (
+            downloaded.size_bytes == response.output.size_bytes
+            and digest == response.output.sha256
+        )
         fields["content_sha256_verified"] = verified
         if not verified:
             fields["error"] = "Downloaded content does not match cached size/SHA-256 metadata"
