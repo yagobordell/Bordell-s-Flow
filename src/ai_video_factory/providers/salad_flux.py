@@ -6,7 +6,11 @@ import logging
 import tempfile
 from pathlib import Path
 
-from ai_video_factory.inference.contracts import InferenceJobRequest, InferenceJobResponse, ObjectOutput
+from ai_video_factory.inference.contracts import (
+    InferenceJobRequest,
+    InferenceJobResponse,
+    ObjectOutput,
+)
 from ai_video_factory.providers.ideogram_caption import validate_ideogram_caption
 from ai_video_factory.workers.flux_schnell import (
     FLUX_SCHNELL_GENERATION_PROFILE,
