@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-
 DOWNLOAD = Path("docker/workers/flux-schnell/download_models.sh")
 MANIFEST = Path("deploy/salad/services.json")
 
