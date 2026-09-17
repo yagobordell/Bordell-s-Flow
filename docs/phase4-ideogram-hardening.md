@@ -1,6 +1,7 @@
 # Phase 4 — Ideogram hardening
 
-This note records the safeguards added after validating Phase 4 references through the Salad-hosted Ideogram 4 worker.
+This note records the safeguards added after validating Phase 4 references through the Salad-hosted
+Ideogram 4 worker and the final production behavior validated on 2026-09-17.
 
 ## Safety-neutral location prompts
 
@@ -9,30 +10,47 @@ This note records the safeguards added after validating Phase 4 references throu
 - `description`: rich visual identity used by the textual planning layer.
 - `safe_generation_description`: concise physical description sent to the image generator.
 
-For locations, the generation description must contain only stable visible geography, architecture, materials, layout and physical landmarks. Narrative state, history, danger, abandonment, damage, conflict, dramatization, concrete people, actions and events are excluded before GPU inference.
+For locations, the generation description must contain only stable visible geography, architecture,
+materials, layout and physical landmarks. Narrative state, history, danger, abandonment, damage,
+conflict, dramatization, concrete people, actions and events are excluded before GPU inference.
 
-The Ideogram caption template also avoids duplicating the generated location description in the background field.
+The Ideogram caption template also avoids duplicating the generated location description in the
+background field.
 
-## Deterministic fallback and cache reuse
+## Deterministic safety variants and negative cache
 
-Phase 4 location references have at most two deterministic Ideogram request variants:
+Phase 4 location references use a bounded deterministic Ideogram sequence:
 
 1. `canonical`
-2. `safe_fallback`
+2. `safe_simplified`
+3. `safe_minimal_art`
 
-The fallback is structural: it retains the concise physical location subject but replaces style/background with a fixed neutral reference profile. It does not maintain an open-ended word blacklist.
+The variants progressively reduce descriptive/style complexity while preserving the physical identity
+needed downstream. The sequence is finite; it is not an open-ended word blacklist or arbitrary retry
+loop.
 
-Before any Salad queue submission the provider checks R2 for both deterministic variants. A previously successful fallback is therefore replayed from object storage without paying for the known-blocked canonical request again.
+A terminal Ideogram safety rejection is persisted as negative cache evidence. Before any Salad queue
+submission, the workflow checks R2 for both positive artifacts and known terminal safety results.
+Therefore a later run does not pay again for already-known blocked requests.
 
-`ReferenceAsset.metadata` records the selected `prompt_variant`, application `job_id`, `request_sha256` and whether the result was replayed.
+Once all three executable Ideogram variants are terminal safety rejections, the entity becomes
+`safety_blocked` for Ideogram and is eligible for the dedicated FLUX.1-schnell safety fallback.
+Infrastructure errors do not enter this state.
 
-`audit_phase4_reference_cache.py` follows the same variant ordering. It remains R2-only, reports the matched variant and accepts UTF-8 files with or without BOM.
+`ReferenceAsset.metadata` records the selected provider/variant, application `job_id`,
+`request_sha256`, prompt identity and replay state. FLUX fallback metadata also records
+`fallback_from=ideogram4` and `fallback_reason=safety_rejection`.
+
+`audit_phase4_reference_cache.py` follows the same deterministic ordering. It can perform a metadata
+HEAD-only planning pass before GPU allocation and a full content SHA-256 verification pass for final
+closure.
 
 ## Ideogram model bootstrap watchdog
 
-Ideogram model weights remain downloaded at replica startup and `.ready` is still written only after the required safetensor files exist.
+Ideogram model weights remain downloaded at replica startup and `.ready` is written only after the
+required model files exist.
 
-The Hugging Face download now runs under a byte-progress watchdog:
+The Hugging Face download runs under a byte-progress watchdog:
 
 - network download timeout: 120 s
 - metadata/etag timeout: 30 s
@@ -40,19 +58,25 @@ The Hugging Face download now runs under a byte-progress watchdog:
 - no-byte-progress timeout: 600 s
 - absolute download timeout: 1800 s
 
-The watchdog measures bytes under the local model snapshot, not the `N/27` file counter. Large files may therefore continue downloading for as long as bytes keep increasing. A replica that makes no byte progress for ten minutes exits, allowing Salad to replace the unhealthy host instead of keeping an RTX 4090 allocated indefinitely.
+The watchdog measures bytes under the local model snapshot rather than trusting a file counter. Large
+files may therefore continue downloading while bytes keep increasing. A replica that makes no byte
+progress for ten minutes exits so Salad can replace an unhealthy host instead of keeping an RTX 4090
+allocated indefinitely.
 
 ## Ready-before-queue execution
 
-Cold start and queue wait are now separate lifecycle phases.
+Cold start and queue wait are separate lifecycle phases.
 
-Production Phase 4 and Phase 6 execution must use the controlled PowerShell runners. They first call `manage_salad_validation.ps1 -Action Prewarm -Service ideogram4`, which temporarily requests exactly one replica while keeping `queue_autoscaler.min_replicas=0`, starts the group, and waits until Salad reports one started instance with `ready=True`.
+Production Phase 4 and Phase 6 execution must use the controlled PowerShell runners. Before a provider
+needs queue work, the control plane obtains a real ready replica and waits until Salad reports
+`started=True` and `ready=True`.
 
-Only after the worker is ready does the controlled runner submit the inference job. Therefore Salad capacity wait, model download and runtime preparation no longer consume the transport job's `pending` deadline.
+Only after the worker is ready does the controlled runner submit inference. Capacity wait, model
+download and runtime preparation therefore do not consume the inference transport job's pending
+deadline.
 
-The raw Python Phase 4 and Phase 6 clients now default to a short 300-second pending timeout. If a supposedly ready worker does not claim a job within five minutes, the client fails closed instead of keeping a queued job alive for 60 or 90 minutes.
-
-The controlled runners always execute `Stop` and `Status` in `finally`, so success, rejection, timeout or bootstrap failure must all return Ideogram to stopped/zero replicas.
+The raw Python clients keep bounded pending/running deadlines and fail closed instead of leaving
+unknown queued work alive indefinitely.
 
 Canonical commands:
 
@@ -73,20 +97,59 @@ Canonical commands:
     -NonInteractive
 ```
 
-Do not manually call `Start` before these runners. `Prewarm` is the allocation/bootstrap step and deliberately keeps the job queue empty until the worker is ready.
+Do not manually allocate providers before these runners. The controlled workflow owns provider
+planning, prewarm, queue submission, cleanup and scale-to-zero restoration.
+
+## Phase 4 provider planning
+
+The Phase 4 wrapper first executes a read-only R2 audit and derives a provider plan:
+
+```text
+hit             -> replay cached positive artifact
+miss            -> Ideogram remains primary
+safety_blocked  -> FLUX fallback required
+invalid         -> fail before GPU allocation
+```
+
+This allows a fully cached run to complete with:
+
+```text
+ideogram=False
+flux_schnell=False
+cached=<all references>
+```
+
+No GPU is allocated in that case.
+
+## Controlled cleanup
+
+The controlled runners execute provider restore/cleanup in `finally` and preserve the original
+inference failure if cleanup itself encounters a secondary error.
+
+Normal FLUX cleanup requires:
+
+```text
+status=stopped
+replicas=0
+pending_change=False
+```
+
+A stale nonzero Salad queue summary is not enough to prove active work. When necessary, cleanup
+exhaustively enumerates queue jobs and considers only `pending`/`running` jobs active. Incomplete
+enumeration remains a hard failure.
+
+`Repair` is not part of the normal Phase 4 or Phase 6 lifecycle.
 
 ## Deployment
 
-The hardened worker image is versioned as:
+The current Ideogram service remains manifest-authoritative, scale-to-zero and digest-pinned. The
+service manifest uses the production Ideogram image family `ideogram4-nf4-quality48-v4`, high
+priority, `min_replicas=0` and `max_replicas=1`.
 
-```text
-docker.io/yagobordell/ai-video-factory:ideogram4-nf4-quality48-v2
-```
+A worker image/configuration change requires one intentional `Prepare`; normal generation runs should
+reuse the already prepared group.
 
-The Ideogram deployment remains scale-to-zero with `min_replicas=0`, `max_replicas=1` and high priority.
+FLUX fallback deployment and lifecycle are documented separately in
+[`flux-schnell-safety-fallback.md`](flux-schnell-safety-fallback.md).
 
-Because the worker/bootstrap code changed, this revision requires exactly one Ideogram `Prepare` after merging and pulling the change. `Prepare` must finish with the group stopped at zero replicas before any generation job is submitted.
-
-The ready-before-queue orchestration is client/control-plane only and does not require another Ideogram image build or `Prepare`.
-
-LTX is not affected by this change.
+The complete real Phase 4 closure evidence is recorded in [`phase4-closure.md`](phase4-closure.md).
