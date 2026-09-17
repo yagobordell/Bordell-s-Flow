@@ -68,6 +68,7 @@ def parse_args() -> argparse.Namespace:
         "--pending-timeout-seconds",
         type=float,
         default=DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS,
+        help="Maximum seconds for an already-prewarmed Ideogram worker to claim a queued job.",
     )
     parser.add_argument(
         "--fallback-pending-timeout-seconds",
