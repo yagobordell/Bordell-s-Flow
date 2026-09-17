@@ -139,6 +139,87 @@ function Get-Queue {
     return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
 }
 
+function Get-QueueJobSnapshot {
+    param([Parameter(Mandatory)][datetime]$Deadline)
+
+    $Active = @()
+    $Complete = $false
+    $Pages = 0
+    for ($Page = 1; $Page -le 100; $Page += 1) {
+        if ((Get-Date) -ge $Deadline) {
+            break
+        }
+
+        $SecondsRemaining = [Math]::Max(
+            1,
+            [Math]::Ceiling(($Deadline - (Get-Date)).TotalSeconds)
+        )
+        $RequestTimeoutSeconds = [int][Math]::Min(30, $SecondsRemaining)
+        $Response = Invoke-RestMethod `
+            -Uri "$QueueUrl/jobs?page=$Page&page_size=25" `
+            -Headers $Headers `
+            -TimeoutSec $RequestTimeoutSeconds
+        $Pages += 1
+        $Items = @(
+            if ($Response.PSObject.Properties.Name -contains "items") {
+                $Response.items
+            }
+            elseif ($Response.PSObject.Properties.Name -contains "jobs") {
+                $Response.jobs
+            }
+        )
+        foreach ($Job in $Items) {
+            if ([string]$Job.status -in @("pending", "running")) {
+                $Active += $Job
+            }
+        }
+        if ($Items.Count -lt 25) {
+            $Complete = $true
+            break
+        }
+    }
+
+    return [PSCustomObject]@{
+        active_jobs = @($Active)
+        complete = $Complete
+        pages = $Pages
+    }
+}
+
+function Assert-QueueLogicallyEmpty {
+    param(
+        [Parameter(Mandatory)][object]$Queue,
+        [ValidateRange(1, 120)][int]$VerificationSeconds = 30
+    )
+
+    $ReportedLength = [int]$Queue.current_queue_length
+    if ($ReportedLength -eq 0) {
+        return 0
+    }
+
+    $Snapshot = Get-QueueJobSnapshot -Deadline (Get-Date).AddSeconds($VerificationSeconds)
+    if (-not [bool]$Snapshot.complete) {
+        throw (
+            "Optimized prewarm could not verify '$QueueName' after $([int]$Snapshot.pages) page(s); " +
+            "refusing GPU allocation while queue state is ambiguous."
+        )
+    }
+    $ActiveJobs = @($Snapshot.active_jobs)
+    if ($ActiveJobs.Count -gt 0) {
+        throw (
+            "Optimized prewarm requires an empty queue; '$QueueName' has " +
+            "$($ActiveJobs.Count) enumerable pending/running job(s)."
+        )
+    }
+
+    Write-Warning (
+        "$Service queue summary is stale during optimized prewarm: current_queue_length=" +
+        "$ReportedLength, but exhaustive job enumeration found no pending or running jobs. " +
+        "Treating the queue as logically empty."
+    )
+    return $ReportedLength
+}
+
 function Get-Instances {
     $Response = Invoke-RestMethod -Uri $InstancesUrl -Headers $Headers -TimeoutSec 30
     if ($Response.PSObject.Properties.Name -contains "instances") {
@@ -207,16 +288,11 @@ $QueueUrl = "$BaseUrl/queues/$QueueName"
 $Headers = @{
     "Salad-Api-Key" = Get-SaladApiKey
     "Accept" = "application/json"
-    "User-Agent" = "ai-video-factory-optimized-prewarm/1.0"
+    "User-Agent" = "ai-video-factory-optimized-prewarm/1.1"
 }
 
 $Queue = Get-Queue
-if ([int]$Queue.current_queue_length -ne 0) {
-    throw (
-        "Optimized prewarm requires an empty queue; '$QueueName' contains " +
-        "$([int]$Queue.current_queue_length) job(s)."
-    )
-}
+$VerifiedEmptyQueueLength = Assert-QueueLogicallyEmpty -Queue $Queue
 
 $Group = Get-Group
 $Status = [string]$Group.current_state.status
@@ -309,11 +385,16 @@ while ((Get-Date) -lt $Deadline) {
     $Status = [string]$Group.current_state.status
     $Attached = Test-QueueAttachment -Queue $Queue
 
-    if ([int]$Queue.current_queue_length -ne 0) {
+    $ReportedQueueLength = [int]$Queue.current_queue_length
+    if ($ReportedQueueLength -gt $VerifiedEmptyQueueLength) {
         throw (
-            "Optimized prewarm detected $([int]$Queue.current_queue_length) queued job(s); " +
-            "aborting so cold-start time cannot be charged to a transport job."
+            "Optimized prewarm detected queue growth from verified-empty baseline " +
+            "$VerifiedEmptyQueueLength to $ReportedQueueLength job(s); aborting so cold-start " +
+            "time cannot be charged to a transport job."
         )
+    }
+    if ($ReportedQueueLength -lt $VerifiedEmptyQueueLength) {
+        $VerifiedEmptyQueueLength = Assert-QueueLogicallyEmpty -Queue $Queue
     }
     if ($Status -eq "failed") {
         throw "Container group '$GroupName' entered failed state during prewarm."
