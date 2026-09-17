@@ -76,11 +76,25 @@ $GroupUrl = "$BaseUrl/containers/$GroupName"
 $Headers = @{
     "Salad-Api-Key" = Get-SaladApiKey
     "Accept" = "application/json"
-    "User-Agent" = "ai-video-factory-flux-restore/1.0"
+    "User-Agent" = "ai-video-factory-flux-restore/1.1"
 }
 
 function Get-Group {
     return Invoke-RestMethod -Uri $GroupUrl -Headers $Headers -TimeoutSec 30
+}
+
+function Get-VisibleAutoscalerMinReplicas {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $AutoscalerProperty = $Group.PSObject.Properties["queue_autoscaler"]
+    if ($null -eq $AutoscalerProperty -or $null -eq $AutoscalerProperty.Value) {
+        return $null
+    }
+    $MinProperty = $AutoscalerProperty.Value.PSObject.Properties["min_replicas"]
+    if ($null -eq $MinProperty -or $null -eq $MinProperty.Value) {
+        return $null
+    }
+    return [int]$MinProperty.Value
 }
 
 $Autoscaler = @{
@@ -91,37 +105,45 @@ $Autoscaler = @{
     max_upscale_per_minute = [int]$Definition.autoscaler.max_upscale_per_minute
     max_downscale_per_minute = [int]$Definition.autoscaler.max_downscale_per_minute
 }
+$TargetMinReplicas = [int]$Definition.autoscaler.min_replicas
 
-$Group = Get-Group
-if ([int]$Group.queue_autoscaler.min_replicas -ne [int]$Definition.autoscaler.min_replicas) {
-    Write-Host "FLUX restore: returning queue autoscaler to manifest min_replicas=0." -ForegroundColor Cyan
-    Invoke-RestMethod `
-        -Method Patch `
-        -Uri $GroupUrl `
-        -Headers $Headers `
-        -ContentType "application/merge-patch+json" `
-        -Body (@{ queue_autoscaler = $Autoscaler } | ConvertTo-Json -Depth 10) `
-        -TimeoutSec 60 |
-        Out-Null
-}
+Write-Host "FLUX restore: applying manifest queue autoscaler settings." -ForegroundColor Cyan
+Invoke-RestMethod `
+    -Method Patch `
+    -Uri $GroupUrl `
+    -Headers $Headers `
+    -ContentType "application/merge-patch+json" `
+    -Body (@{ queue_autoscaler = $Autoscaler } | ConvertTo-Json -Depth 10) `
+    -TimeoutSec 60 |
+    Out-Null
 
 $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+$VisibleMinReplicas = $null
 do {
     Start-Sleep -Seconds 3
     $Group = Get-Group
-    if (
-        -not [bool]$Group.pending_change -and
-        [int]$Group.queue_autoscaler.min_replicas -eq [int]$Definition.autoscaler.min_replicas
-    ) {
+    $VisibleMinReplicas = Get-VisibleAutoscalerMinReplicas -Group $Group
+    $VisibleAutoscalerMatches = (
+        $null -eq $VisibleMinReplicas -or
+        [int]$VisibleMinReplicas -eq $TargetMinReplicas
+    )
+    if (-not [bool]$Group.pending_change -and $VisibleAutoscalerMatches) {
         break
     }
 }
 while ((Get-Date) -lt $Deadline)
-if (
-    [bool]$Group.pending_change -or
-    [int]$Group.queue_autoscaler.min_replicas -ne [int]$Definition.autoscaler.min_replicas
-) {
+
+if ([bool]$Group.pending_change) {
+    throw "FLUX autoscaler patch did not settle before timeout."
+}
+if ($null -ne $VisibleMinReplicas -and [int]$VisibleMinReplicas -ne $TargetMinReplicas) {
     throw "FLUX autoscaler did not return to manifest scale-to-zero settings before timeout."
+}
+if ($null -eq $VisibleMinReplicas) {
+    Write-Warning (
+        "Salad GET does not expose queue_autoscaler for '$GroupName'; " +
+        "restore is relying on the accepted autoscaler PATCH and settled pending_change=False state."
+    )
 }
 
 $Status = [string]$Group.current_state.status
