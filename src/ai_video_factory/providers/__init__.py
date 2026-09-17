@@ -11,6 +11,7 @@ from .openai import OpenAIProvider
 from .openai_images import OpenAIImageProvider
 from .openai_speech import OpenAISpeechProvider
 from .openai_transcription import OpenAITranscriptionProvider
+from .safety_fallback import SafetyFallbackImageProvider
 from .salad_breeze import SaladBreezeSpeechProvider
 from .salad_whisper import SaladWhisperTranscriptionProvider
 from .speech import GeneratedSpeech, SpeechProvider
@@ -26,7 +27,9 @@ __all__ = [
     "OpenAISpeechProvider",
     "OpenAITranscriptionProvider",
     "ReferenceAwareImageProvider",
+    "SafetyFallbackImageProvider",
     "SaladBreezeSpeechProvider",
+    "SaladFluxSchnellImageProvider",
     "SaladIdeogramImageProvider",
     "SaladWhisperTranscriptionProvider",
     "SpeechProvider",
@@ -41,4 +44,8 @@ def __getattr__(name: str):
         from .salad_ideogram import SaladIdeogramImageProvider
 
         return SaladIdeogramImageProvider
+    if name == "SaladFluxSchnellImageProvider":
+        from .salad_flux import SaladFluxSchnellImageProvider
+
+        return SaladFluxSchnellImageProvider
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

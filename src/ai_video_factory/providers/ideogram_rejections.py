@@ -12,7 +12,9 @@ from ai_video_factory.inference.ports import ObjectStorage
 _SAFETY_REJECTION_KIND = "ideogram_safety"
 _SINGLE_IMAGE_SAFETY_DETAIL = "Ideogram 4 safety filter blocked generated image"
 _LEGACY_SAFETY_DETAIL = "Ideogram 4 safety filter blocked all deterministic caption variants"
+_TERMINAL_PROVIDER_SAFETY_DETAIL = "Ideogram 4 safety filter blocked all provider caption variants"
 _SAFETY_DETAILS = frozenset({_SINGLE_IMAGE_SAFETY_DETAIL, _LEGACY_SAFETY_DETAIL})
+_TERMINAL_SAFETY_DETAILS = frozenset({*_SAFETY_DETAILS, _TERMINAL_PROVIDER_SAFETY_DETAIL})
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +37,12 @@ _HISTORICAL_SAFETY_REJECTIONS: dict[str, tuple[str | None, str | None]] = {
 
 def is_safety_rejection_detail(detail: str) -> bool:
     return detail in _SAFETY_DETAILS
+
+
+def is_terminal_safety_rejection_detail(detail: str) -> bool:
+    """Return whether Ideogram has terminally rejected an image for safety."""
+
+    return detail in _TERMINAL_SAFETY_DETAILS
 
 
 def safety_rejection_key(job_id: str) -> str:

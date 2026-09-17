@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25")]
+    [ValidateSet("whisper", "breeze_tts2", "ideogram4", "flux_schnell", "ltx25")]
     [string]$Service,
 
     [string]$EnvFile = ".env",

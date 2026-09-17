@@ -22,6 +22,7 @@ def test_salad_manifest_centralizes_stack_identity_and_shared_environment() -> N
         "whisper",
         "breeze_tts2",
         "ideogram4",
+        "flux_schnell",
         "ltx25",
     ]
     assert document["stack"]["shared_required_environment"] == [
@@ -44,12 +45,13 @@ def test_every_model_has_its_own_group_and_queue() -> None:
     groups = [service["group_name"] for service in services.values()]
     queues = [service["queue_name"] for service in services.values()]
 
-    assert len(groups) == len(set(groups)) == 4
-    assert len(queues) == len(set(queues)) == 4
+    assert len(groups) == len(set(groups)) == 5
+    assert len(queues) == len(set(queues)) == 5
     assert services["whisper"]["required_environment"] == []
     assert services["breeze_tts2"]["required_environment"] == []
     assert services["breeze_tts2"]["group_name"] == "ai-video-factory-breeze-tts2-worker-v2"
     assert services["ideogram4"]["required_environment"] == ["HF_TOKEN"]
+    assert services["flux_schnell"]["required_environment"] == ["HF_TOKEN"]
     assert services["ltx25"]["required_environment"] == ["HF_TOKEN"]
 
 
