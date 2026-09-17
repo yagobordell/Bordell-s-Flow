@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+DOCKERFILE = Path("docker/workers/flux-schnell/Dockerfile")
 DOWNLOAD = Path("docker/workers/flux-schnell/download_models.sh")
 MANIFEST = Path("deploy/salad/services.json")
 
@@ -27,9 +28,17 @@ def test_flux_download_only_fetches_diffusers_runtime_components() -> None:
     assert "FLUX Schnell Diffusers snapshot complete" in script
 
 
-def test_flux_image_tag_versions_cold_start_change() -> None:
+def test_flux_image_includes_tokenizer_runtime_dependencies() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "'sentencepiece>=0.2,<0.3'" in dockerfile
+    assert "'protobuf>=5,<7'" in dockerfile
+    assert "import bitsandbytes, diffusers, google.protobuf, sentencepiece" in dockerfile
+
+
+def test_flux_image_tag_versions_tokenizer_runtime_change() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
     assert manifest["services"]["flux_schnell"]["image"].endswith(
-        ":flux1-schnell-bnb4-v2"
+        ":flux1-schnell-bnb4-v3"
     )
