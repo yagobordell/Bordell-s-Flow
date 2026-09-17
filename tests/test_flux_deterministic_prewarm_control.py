@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 FLUX_PREWARM = Path("scripts/start_salad_flux_prewarm.ps1")
 FLUX_RESTORE = Path("scripts/restore_salad_flux_scale_to_zero.ps1")
 PHASE4 = Path("scripts/run_phase4_assets_controlled.ps1")
