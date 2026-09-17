@@ -33,13 +33,13 @@ def test_flux_restore_is_idempotent_when_queue_autoscaler_is_omitted() -> None:
     assert "pending_change=False state" in script
 
 
-def test_flux_restore_explicitly_normalizes_desired_replicas_to_zero() -> None:
+def test_flux_restore_normalizes_desired_replicas_with_separate_patch() -> None:
     script = RESTORE.read_text(encoding="utf-8")
 
-    assert "$RestoreBody = @{" in script
-    assert "replicas = 0" in script
-    assert "queue_autoscaler = $Autoscaler" in script
-    assert "desired replica count did not return to zero" in script
+    assert "normalizing desired replicas=" in script
+    assert '-Body (@{ replicas = 0 } | ConvertTo-Json -Compress)' in script
+    assert "desired replica normalization did not settle" in script
+    assert "$RestoreBody" not in script
 
 
 def test_controlled_image_runners_preserve_primary_failure_through_cleanup() -> None:

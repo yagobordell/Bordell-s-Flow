@@ -76,7 +76,7 @@ $GroupUrl = "$BaseUrl/containers/$GroupName"
 $Headers = @{
     "Salad-Api-Key" = Get-SaladApiKey
     "Accept" = "application/json"
-    "User-Agent" = "ai-video-factory-flux-restore/1.2"
+    "User-Agent" = "ai-video-factory-flux-restore/1.3"
 }
 
 function Get-Group {
@@ -107,19 +107,13 @@ $Autoscaler = @{
 }
 $TargetMinReplicas = [int]$Definition.autoscaler.min_replicas
 
-Write-Host (
-    "FLUX restore: applying manifest queue autoscaler settings and desired replicas=0."
-) -ForegroundColor Cyan
-$RestoreBody = @{
-    replicas = 0
-    queue_autoscaler = $Autoscaler
-}
+Write-Host "FLUX restore: applying manifest queue autoscaler settings." -ForegroundColor Cyan
 Invoke-RestMethod `
     -Method Patch `
     -Uri $GroupUrl `
     -Headers $Headers `
     -ContentType "application/merge-patch+json" `
-    -Body ($RestoreBody | ConvertTo-Json -Depth 10) `
+    -Body (@{ queue_autoscaler = $Autoscaler } | ConvertTo-Json -Depth 10) `
     -TimeoutSec 60 |
     Out-Null
 
@@ -133,33 +127,54 @@ do {
         $null -eq $VisibleMinReplicas -or
         [int]$VisibleMinReplicas -eq $TargetMinReplicas
     )
-    if (
-        -not [bool]$Group.pending_change -and
-        $VisibleAutoscalerMatches -and
-        [int]$Group.replicas -eq 0
-    ) {
+    if (-not [bool]$Group.pending_change -and $VisibleAutoscalerMatches) {
         break
     }
 }
 while ((Get-Date) -lt $Deadline)
 
 if ([bool]$Group.pending_change) {
-    throw "FLUX scale-to-zero patch did not settle before timeout."
+    throw "FLUX autoscaler patch did not settle before timeout."
 }
 if ($null -ne $VisibleMinReplicas -and [int]$VisibleMinReplicas -ne $TargetMinReplicas) {
     throw "FLUX autoscaler did not return to manifest scale-to-zero settings before timeout."
-}
-if ([int]$Group.replicas -ne 0) {
-    throw (
-        "FLUX desired replica count did not return to zero before timeout; " +
-        "replicas=$([int]$Group.replicas)."
-    )
 }
 if ($null -eq $VisibleMinReplicas) {
     Write-Warning (
         "Salad GET does not expose queue_autoscaler for '$GroupName'; " +
         "restore is relying on the accepted autoscaler PATCH and settled pending_change=False state."
     )
+}
+
+if ([int]$Group.replicas -ne 0) {
+    Write-Host (
+        "FLUX restore: normalizing desired replicas=$([int]$Group.replicas) to zero in a separate patch."
+    ) -ForegroundColor Cyan
+    Invoke-RestMethod `
+        -Method Patch `
+        -Uri $GroupUrl `
+        -Headers $Headers `
+        -ContentType "application/merge-patch+json" `
+        -Body (@{ replicas = 0 } | ConvertTo-Json -Compress) `
+        -TimeoutSec 60 |
+        Out-Null
+
+    $ReplicaDeadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        Start-Sleep -Seconds 3
+        $Group = Get-Group
+        if (-not [bool]$Group.pending_change -and [int]$Group.replicas -eq 0) {
+            break
+        }
+    }
+    while ((Get-Date) -lt $ReplicaDeadline)
+
+    if ([bool]$Group.pending_change -or [int]$Group.replicas -ne 0) {
+        throw (
+            "FLUX desired replica normalization did not settle before timeout; " +
+            "replicas=$([int]$Group.replicas) pending=$([bool]$Group.pending_change)."
+        )
+    }
 }
 
 $Status = [string]$Group.current_state.status
