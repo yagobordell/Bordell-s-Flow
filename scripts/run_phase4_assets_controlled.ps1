@@ -94,6 +94,8 @@ if ($NonInteractive) {
 
 $IdeogramTouched = $false
 $FluxTouched = $false
+$PrimaryFailure = $null
+$CleanupFailures = @()
 try {
     if ($IdeogramNeeded) {
         $IdeogramTouched = $true
@@ -138,23 +140,67 @@ try {
         throw "Phase 4 asset generation failed with exit code $LASTEXITCODE."
     }
 }
+catch {
+    $PrimaryFailure = $_
+}
 finally {
     if ($IdeogramTouched) {
         try {
             & $ValidationManager -Action Stop -Service ideogram4 -NonInteractive
         }
-        finally {
+        catch {
+            Write-Warning "Ideogram stop failed during cleanup: $($_.Exception.Message)"
+            $CleanupFailures += $_
+        }
+        try {
             & $QueueCleanup -Service ideogram4 -TimeoutSeconds 180 -NonInteractive
+        }
+        catch {
+            Write-Warning "Ideogram queue cleanup failed: $($_.Exception.Message)"
+            $CleanupFailures += $_
+        }
+        try {
             & $ValidationManager -Action Status -Service ideogram4 -NonInteractive
+        }
+        catch {
+            Write-Warning "Ideogram status verification failed: $($_.Exception.Message)"
+            $CleanupFailures += $_
         }
     }
     if ($FluxTouched) {
         try {
             & $FluxRestore -TimeoutSeconds 180 -NonInteractive
         }
-        finally {
+        catch {
+            Write-Warning "FLUX restore failed during cleanup: $($_.Exception.Message)"
+            $CleanupFailures += $_
+        }
+        try {
             & $QueueCleanup -Service flux_schnell -TimeoutSeconds 180 -NonInteractive
+        }
+        catch {
+            Write-Warning "FLUX queue cleanup failed: $($_.Exception.Message)"
+            $CleanupFailures += $_
+        }
+        try {
             & $WorkerManager -Action Status -Service flux_schnell -NonInteractive
         }
+        catch {
+            Write-Warning "FLUX status verification failed: $($_.Exception.Message)"
+            $CleanupFailures += $_
+        }
     }
+}
+
+if ($null -ne $PrimaryFailure) {
+    if ($CleanupFailures.Count -gt 0) {
+        Write-Warning (
+            "Cleanup also reported $($CleanupFailures.Count) failure(s); " +
+            "preserving the original Phase 4 failure as the terminating error."
+        )
+    }
+    throw $PrimaryFailure
+}
+if ($CleanupFailures.Count -gt 0) {
+    throw $CleanupFailures[0]
 }
