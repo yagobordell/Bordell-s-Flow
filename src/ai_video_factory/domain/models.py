@@ -143,6 +143,7 @@ class StoryboardKeyframe(BaseModel):
 
     shot_id: int = Field(ge=1)
     uri: str = Field(min_length=1)
+    metadata: dict[str, str] = Field(default_factory=dict)
 
 
 class StoryboardGrid(BaseModel):
