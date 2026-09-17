@@ -495,11 +495,14 @@ while ((Get-Date) -lt $Deadline) {
     )
     Write-Host $StatusLine
 
+    $ContainerObservedRunning = $InstanceState -eq "running"
+    $ContainerStarted = $Started -or $ContainerObservedRunning
+
     if (
         -not [bool]$Group.pending_change -and
         [int]$Group.replicas -eq 1 -and
         $Instances.Count -eq 1 -and
-        $Started -and
+        $ContainerStarted -and
         $Ready
     ) {
         Write-Host (
@@ -584,7 +587,8 @@ while ((Get-Date) -lt $Deadline) {
 
     $ImagePulledButNotStarted = (
         $null -ne $PullingProgress -and
-        $PullingProgress -ge 1.0 -and -not $Started
+        $PullingProgress -ge 1.0 -and
+        -not $ContainerStarted
     )
     if ($ImagePulledButNotStarted) {
         if ($null -eq $PostPullStartSince) {
@@ -619,7 +623,7 @@ while ((Get-Date) -lt $Deadline) {
         $PostPullStartSince = $null
     }
 
-    if ($Started -and $InstanceState -eq "running" -and -not $Ready) {
+    if ($ContainerStarted -and $InstanceState -eq "running" -and -not $Ready) {
         if ($null -eq $RunningNotReadySince) {
             $RunningNotReadySince = Get-Date
         }

@@ -10,7 +10,7 @@ param(
     [string]$Metadata,
 
     [ValidateRange(10, 120)]
-    [int]$PrewarmTimeoutMinutes = 45,
+    [int]$PrewarmTimeoutMinutes = 90,
 
     [ValidateRange(30, 900)]
     [int]$PendingTimeoutSeconds = 300,

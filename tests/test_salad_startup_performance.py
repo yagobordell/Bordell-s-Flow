@@ -72,7 +72,8 @@ def test_optimized_prewarm_applies_bounded_node_selection_to_every_worker() -> N
     assert "current_queue_length" in text
     assert "@{ replicas = 1 }" in text
     assert "$Instances.Count -gt 1" in text
-    assert "$Started -and" in text
+    assert "$ContainerStarted = $Started -or $ContainerObservedRunning" in text
+    assert "$ContainerStarted -and" in text
     assert "$Ready" in text
     assert "prewarm complete: exactly one started ready replica, queue still empty" in text
 
