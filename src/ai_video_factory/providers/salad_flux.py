@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import tempfile
@@ -106,6 +107,24 @@ class SaladFluxSchnellImageProvider:
         self._task_name = task_name
 
     async def generate_image(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        size: str,
+        quality: ImageQuality,
+        output_format: ImageFormat,
+    ) -> GeneratedImage:
+        return await asyncio.to_thread(
+            self._generate_image_sync,
+            prompt=prompt,
+            model=model,
+            size=size,
+            quality=quality,
+            output_format=output_format,
+        )
+
+    def _generate_image_sync(
         self,
         *,
         prompt: str,
