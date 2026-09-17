@@ -50,7 +50,7 @@ foreach ($Path in @($Frames, $Shots)) {
 Write-Host "=== R2 preflight: verify storage before GPU allocation ===" -ForegroundColor Cyan
 & python $R2Preflight
 if ($LASTEXITCODE -ne 0) {
-    throw "R2 preflight failed; refusing image-generation GPU allocation."
+    throw "R2 preflight failed; refusing to allocate image-generation GPU."
 }
 
 $PrewarmArguments = @{ Service = "ideogram4"; TimeoutMinutes = $PrewarmTimeoutMinutes }
