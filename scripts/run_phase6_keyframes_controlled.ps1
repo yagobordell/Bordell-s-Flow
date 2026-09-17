@@ -64,7 +64,12 @@ if ($NonInteractive) {
     $FluxPrewarmArguments["NonInteractive"] = $true
 }
 
+$IdeogramTouched = $false
+$FluxTouched = $false
+$PrimaryFailure = $null
+$CleanupFailures = @()
 try {
+    $IdeogramTouched = $true
     Write-Host "=== Ideogram optimized prewarm: selecting one ready node ===" -ForegroundColor Cyan
     & $OptimizedPrewarm @PrewarmArguments
     if (-not $?) {
@@ -78,6 +83,7 @@ try {
         throw "Ideogram warm replica hold failed; refusing to submit Phase 6 jobs."
     }
 
+    $FluxTouched = $true
     Write-Host "=== FLUX fallback: prewarm one ready replica for deterministic safety fallback ===" `
         -ForegroundColor Cyan
     & $FluxPrewarm @FluxPrewarmArguments
@@ -100,19 +106,67 @@ try {
         throw "Phase 6 keyframe generation failed with exit code $LASTEXITCODE."
     }
 }
+catch {
+    $PrimaryFailure = $_
+}
 finally {
-    try {
-        & $ValidationManager -Action Stop -Service ideogram4 -NonInteractive
+    if ($IdeogramTouched) {
+        try {
+            & $ValidationManager -Action Stop -Service ideogram4 -NonInteractive
+        }
+        catch {
+            Write-Warning "Ideogram stop failed during cleanup: $($_.Exception.Message)"
+            $CleanupFailures += $_
+        }
+        try {
+            & $QueueCleanup -Service ideogram4 -TimeoutSeconds 180 -NonInteractive
+        }
+        catch {
+            Write-Warning "Ideogram queue cleanup failed: $($_.Exception.Message)"
+            $CleanupFailures += $_
+        }
+        try {
+            & $ValidationManager -Action Status -Service ideogram4 -NonInteractive
+        }
+        catch {
+            Write-Warning "Ideogram status verification failed: $($_.Exception.Message)"
+            $CleanupFailures += $_
+        }
     }
-    finally {
-        & $QueueCleanup -Service ideogram4 -TimeoutSeconds 180 -NonInteractive
-        & $ValidationManager -Action Status -Service ideogram4 -NonInteractive
+    if ($FluxTouched) {
+        try {
+            & $FluxRestore -TimeoutSeconds 180 -NonInteractive
+        }
+        catch {
+            Write-Warning "FLUX restore failed during cleanup: $($_.Exception.Message)"
+            $CleanupFailures += $_
+        }
+        try {
+            & $QueueCleanup -Service flux_schnell -TimeoutSeconds 180 -NonInteractive
+        }
+        catch {
+            Write-Warning "FLUX queue cleanup failed: $($_.Exception.Message)"
+            $CleanupFailures += $_
+        }
+        try {
+            & $WorkerManager -Action Status -Service flux_schnell -NonInteractive
+        }
+        catch {
+            Write-Warning "FLUX status verification failed: $($_.Exception.Message)"
+            $CleanupFailures += $_
+        }
     }
-    try {
-        & $FluxRestore -TimeoutSeconds 180 -NonInteractive
+}
+
+if ($null -ne $PrimaryFailure) {
+    if ($CleanupFailures.Count -gt 0) {
+        Write-Warning (
+            "Cleanup also reported $($CleanupFailures.Count) failure(s); " +
+            "preserving the original Phase 6 failure as the terminating error."
+        )
     }
-    finally {
-        & $QueueCleanup -Service flux_schnell -TimeoutSeconds 180 -NonInteractive
-        & $WorkerManager -Action Status -Service flux_schnell -NonInteractive
-    }
+    throw $PrimaryFailure
+}
+if ($CleanupFailures.Count -gt 0) {
+    throw $CleanupFailures[0]
 }
