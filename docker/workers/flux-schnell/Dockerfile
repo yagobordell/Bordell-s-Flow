@@ -48,6 +48,8 @@ RUN python3 -m pip install \
         'transformers>=4.55,<5' \
         'accelerate>=1.10,<2' \
         'bitsandbytes>=0.47,<0.49' \
+        'sentencepiece>=0.2,<0.3' \
+        'protobuf>=5,<7' \
         'huggingface-hub[cli]' \
         'hf-xet==1.6.0'
 
@@ -71,11 +73,13 @@ RUN chmod 0755 \
         /opt/factory/data
 
 RUN python3 -c \
-    "import bitsandbytes, diffusers, torch, transformers; \
+    "import bitsandbytes, diffusers, google.protobuf, sentencepiece, torch, transformers; \
      print('torch=', torch.__version__); \
      print('cuda=', torch.version.cuda); \
      print('diffusers=', diffusers.__version__); \
      print('transformers=', transformers.__version__); \
+     print('sentencepiece=', sentencepiece.__version__); \
+     print('protobuf=', google.protobuf.__version__); \
      print('bitsandbytes=', bitsandbytes.__version__)"
 
 USER worker

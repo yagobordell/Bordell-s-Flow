@@ -67,7 +67,7 @@
       "group_name": "ai-video-factory-flux-schnell-worker",
       "queue_name": "ai-video-factory-flux-schnell-jobs",
       "dockerfile": "docker/workers/flux-schnell/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:flux1-schnell-bnb4-v2",
+      "image": "docker.io/yagobordell/ai-video-factory:flux1-schnell-bnb4-v3",
       "priority": "high",
       "resources": {"cpu": 8, "memory": 32768, "shm_size": 8192, "storage_amount": 103079215104, "gpu_class_names": ["RTX 4090 (24 GB)"]},
       "environment": {"INFERENCE_WORKER_MODE": "production", "INFERENCE_WORKER_LEASE_SECONDS": "900", "INFERENCE_WORKER_HEARTBEAT_SECONDS": "30", "FLUX_MODEL_ROOT": "/workspace/models/flux-schnell", "FLUX_MODEL_REPOSITORY": "black-forest-labs/FLUX.1-schnell", "FLUX_MODEL_REVISION": "main", "FLUX_DEVICE": "cuda", "HF_HUB_DOWNLOAD_TIMEOUT": "120", "HF_HUB_ETAG_TIMEOUT": "30", "SALAD_QUEUE_ENABLED": "true", "SALAD_LOG_LEVEL": "info"},
