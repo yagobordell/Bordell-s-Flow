@@ -76,8 +76,12 @@ def _verify_cached_content(
         destination = Path(directory) / "image.png"
         downloaded = storage.download(request.output.key, destination)
         digest = sha256_file(destination)
-    valid = downloaded.size_bytes == response.output.size_bytes and digest == response.output.sha256
-    return valid, None if valid else "Downloaded content does not match cached size/SHA-256 metadata"
+    valid = (
+        downloaded.size_bytes == response.output.size_bytes
+        and digest == response.output.sha256
+    )
+    error = None if valid else "Downloaded content does not match cached size/SHA-256 metadata"
+    return valid, error
 
 
 def audit_reference_cache(
