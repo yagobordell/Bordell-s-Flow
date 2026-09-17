@@ -9,7 +9,11 @@ PHASE6 = Path("scripts/run_phase6_keyframes_controlled.ps1")
 def test_flux_prewarm_allocates_one_ready_replica_before_queue_work() -> None:
     script = FLUX_PREWARM.read_text(encoding="utf-8")
 
-    assert 'current_queue_length -ne 0' in script
+    assert "Get-QueueActiveSnapshot" in script
+    assert '$Job.status -in @("pending", "running")' in script
+    assert "could not exhaustively inspect queue jobs before GPU allocation" in script
+    assert "queue summary is stale" in script
+    assert "Continuing safely" in script
     assert '@{ replicas = 1 }' in script
     assert '"$GroupUrl/start"' in script
     assert "$Started -and" in script
