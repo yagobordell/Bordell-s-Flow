@@ -20,7 +20,7 @@ fi
 rm -rf "${snapshot}"
 mkdir -p "${snapshot}"
 
-python - <<'PY'
+HF_HUB_OFFLINE=0 python - <<'PY'
 import os
 from huggingface_hub import snapshot_download
 
