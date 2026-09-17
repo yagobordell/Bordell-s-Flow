@@ -445,6 +445,11 @@ while ((Get-Date) -lt $Deadline) {
         }
     }
 
+    $ObservedInstance = (
+        $Instances.Count -eq 1 -and
+        -not [string]::IsNullOrWhiteSpace($InstanceId)
+    )
+
     if (-not [string]::IsNullOrWhiteSpace($MachineId)) {
         if (
             -not [string]::IsNullOrWhiteSpace($LastObservedNonEmptyMachineId) -and
@@ -465,14 +470,30 @@ while ((Get-Date) -lt $Deadline) {
         $LastObservedNonEmptyMachineId = $MachineId
     }
 
-    if ($InstanceId -ne $CurrentInstanceId -or $MachineId -ne $CurrentMachineId) {
+    if ($ObservedInstance) {
+        $IdentityChanged = $false
+        if (
+            -not [string]::IsNullOrWhiteSpace($CurrentMachineId) -and
+            -not [string]::IsNullOrWhiteSpace($MachineId)
+        ) {
+            $IdentityChanged = $MachineId -ne $CurrentMachineId
+        }
+        elseif (-not [string]::IsNullOrWhiteSpace($CurrentInstanceId)) {
+            $IdentityChanged = $InstanceId -ne $CurrentInstanceId
+        }
+
+        if ($IdentityChanged) {
+            $AllocatingSince = $null
+            $ImagePullSince = $null
+            $ImagePullBaseline = $null
+            $PostPullStartSince = $null
+            $RunningNotReadySince = $null
+        }
+
         $CurrentInstanceId = $InstanceId
-        $CurrentMachineId = $MachineId
-        $AllocatingSince = $null
-        $ImagePullSince = $null
-        $ImagePullBaseline = $null
-        $PostPullStartSince = $null
-        $RunningNotReadySince = $null
+        if (-not [string]::IsNullOrWhiteSpace($MachineId)) {
+            $CurrentMachineId = $MachineId
+        }
     }
 
     $PullRendered = if ($null -eq $PullingProgress) { "-" } else { $PullingProgress }
@@ -501,7 +522,7 @@ while ((Get-Date) -lt $Deadline) {
     if (
         -not [bool]$Group.pending_change -and
         [int]$Group.replicas -eq 1 -and
-        $Instances.Count -eq 1 -and
+        $ObservedInstance -and
         $ContainerStarted -and
         $Ready
     ) {
@@ -511,11 +532,16 @@ while ((Get-Date) -lt $Deadline) {
         exit 0
     }
 
-    if ($Instances.Count -ne 1 -or [string]::IsNullOrWhiteSpace($InstanceId)) {
+    if (-not $ObservedInstance) {
         continue
     }
 
-    if ($InstanceState -eq "allocating") {
+    $PrePullPending = (
+        -not $ContainerStarted -and
+        $InstanceState -in @("allocating", "creating") -and
+        ($null -eq $PullingProgress -or $PullingProgress -le 0.0)
+    )
+    if ($PrePullPending) {
         if ($null -eq $AllocatingSince) {
             $AllocatingSince = Get-Date
         }
@@ -527,12 +553,18 @@ while ((Get-Date) -lt $Deadline) {
         }
         if (((Get-Date) - $AllocatingSince).TotalSeconds -ge $Limit) {
             if ($AllocatingReallocations -ge $Profile.MaxAllocatingReallocations) {
-                throw "$Service could not allocate an acceptable node within the final ${Limit}s window."
+                throw (
+                    "$Service could not make allocation/container-creation progress " +
+                    "within the final ${Limit}s window."
+                )
             }
             $AllocatingReallocations += 1
             Request-InstanceReallocation `
                 -InstanceId $InstanceId `
-                -Reason "Allocation remained pending for at least ${Limit}s"
+                -Reason (
+                    "Allocation/container creation made no image-pull progress " +
+                    "for at least ${Limit}s"
+                )
             $AllocatingSince = $null
             continue
         }
@@ -542,7 +574,7 @@ while ((Get-Date) -lt $Deadline) {
     }
 
     $FractionalImagePull = (
-        $InstanceState -eq "downloading" -and
+        $InstanceState -in @("downloading", "creating") -and
         $null -ne $PullingProgress -and
         $PullingProgress -gt 0.0 -and
         $PullingProgress -lt 1.0
