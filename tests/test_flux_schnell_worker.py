@@ -126,7 +126,7 @@ def test_flux_parameters_require_16_pixel_alignment() -> None:
 
 
 def test_flux_settings_pin_open_schnell_model_and_nf4() -> None:
-    settings = FluxSchnellWorkerSettings(_env_file=None)
+    settings = FluxSchnellWorkerSettings(_env_file=None, worker_mode="local")
 
     assert settings.model_repository == FLUX_SCHNELL_MODEL_ID
     assert settings.quantization == "bnb4-nf4"
