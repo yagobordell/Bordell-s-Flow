@@ -56,13 +56,32 @@ function Get-SaladApiKey {
     return ([PSCredential]::new("salad-queue-cleanup", $SecureValue)).GetNetworkCredential().Password
 }
 
+function Get-QueueSummary {
+    return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
+}
+
 function Get-ActiveQueueJobs {
+    param([Parameter(Mandatory)][datetime]$Deadline)
+
     $Active = @()
     for ($Page = 1; $Page -le 100; $Page += 1) {
+        if ((Get-Date) -ge $Deadline) {
+            break
+        }
+
+        $SecondsRemaining = [Math]::Max(
+            1,
+            [Math]::Ceiling(($Deadline - (Get-Date)).TotalSeconds)
+        )
+        $RequestTimeoutSeconds = [int][Math]::Min(30, $SecondsRemaining)
+        Write-Host (
+            "Inspecting $Service queue jobs page $Page for active work " +
+            "(cleanup deadline in $([int]$SecondsRemaining)s)..."
+        )
         $Response = Invoke-RestMethod `
             -Uri "$QueueUrl/jobs?page=$Page&page_size=25" `
             -Headers $Headers `
-            -TimeoutSec 30
+            -TimeoutSec $RequestTimeoutSeconds
         $Items = @(
             if ($Response.PSObject.Properties.Name -contains "items") {
                 $Response.items
@@ -118,9 +137,10 @@ $QueueUrl = "$BaseUrl/queues/$QueueName"
 $Headers = @{
     "Salad-Api-Key" = Get-SaladApiKey
     "Accept" = "application/json"
-    "User-Agent" = "ai-video-factory-queue-cleanup/1.0"
+    "User-Agent" = "ai-video-factory-queue-cleanup/1.1"
 }
 
+Write-Host "Inspecting $Service container group before queue cleanup..."
 $Group = Invoke-RestMethod -Uri $GroupUrl -Headers $Headers -TimeoutSec 30
 $Status = [string]$Group.current_state.status
 if ($Status -ne "stopped" -or [bool]$Group.pending_change -or [int]$Group.replicas -ne 0) {
@@ -131,8 +151,19 @@ if ($Status -ne "stopped" -or [bool]$Group.pending_change -or [int]$Group.replic
 }
 
 $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+Write-Host "Inspecting $Service queue summary before historical job pagination..."
+$Queue = Get-QueueSummary
+if ([int]$Queue.current_queue_length -eq 0) {
+    Write-Host "$Service queue cleanup complete: no active or queued jobs." -ForegroundColor Green
+    exit 0
+}
+Write-Warning (
+    "$Service queue reports $([int]$Queue.current_queue_length) queued job(s); " +
+    "enumerating active jobs within the ${TimeoutSeconds}s cleanup deadline."
+)
+
 do {
-    $ActiveJobs = @(Get-ActiveQueueJobs)
+    $ActiveJobs = @(Get-ActiveQueueJobs -Deadline $Deadline)
     foreach ($Job in @($ActiveJobs | Where-Object { [string]$_.status -eq "pending" })) {
         Write-Warning "Cancelling abandoned pending job: $(Format-Job -Job $Job)"
         Invoke-RestMethod `
@@ -144,12 +175,10 @@ do {
     }
 
     $Running = @($ActiveJobs | Where-Object { [string]$_.status -eq "running" })
-    if ($Running.Count -eq 0) {
-        $Queue = Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
-        if ([int]$Queue.current_queue_length -eq 0) {
-            Write-Host "$Service queue cleanup complete: no active or queued jobs." -ForegroundColor Green
-            exit 0
-        }
+    $Queue = Get-QueueSummary
+    if ($Running.Count -eq 0 -and [int]$Queue.current_queue_length -eq 0) {
+        Write-Host "$Service queue cleanup complete: no active or queued jobs." -ForegroundColor Green
+        exit 0
     }
 
     if ((Get-Date) -ge $Deadline) {
@@ -161,11 +190,17 @@ do {
             (($Running | ForEach-Object { Format-Job -Job $_ }) -join "; ")
         )
     }
+    elseif ([int]$Queue.current_queue_length -gt 0) {
+        Write-Warning (
+            "$Service queue still reports $([int]$Queue.current_queue_length) queued job(s); " +
+            "retrying active-job enumeration."
+        )
+    }
     Start-Sleep -Seconds 5
 }
 while ((Get-Date) -lt $Deadline)
 
-$Remaining = @(Get-ActiveQueueJobs)
+$Remaining = @(Get-ActiveQueueJobs -Deadline $Deadline)
 $Description = if ($Remaining.Count -eq 0) {
     "queue length remained non-zero with no enumerable active jobs"
 }
