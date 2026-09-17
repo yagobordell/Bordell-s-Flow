@@ -1,6 +1,7 @@
 """External model and API providers."""
 
 from .base import StructuredTextProvider
+from .image_fallback import SafetyFallbackImageProvider
 from .images import (
     GeneratedImage,
     ImageProvider,
@@ -26,7 +27,9 @@ __all__ = [
     "OpenAISpeechProvider",
     "OpenAITranscriptionProvider",
     "ReferenceAwareImageProvider",
+    "SafetyFallbackImageProvider",
     "SaladBreezeSpeechProvider",
+    "SaladFluxSchnellImageProvider",
     "SaladIdeogramImageProvider",
     "SaladWhisperTranscriptionProvider",
     "SpeechProvider",
@@ -41,4 +44,8 @@ def __getattr__(name: str):
         from .salad_ideogram import SaladIdeogramImageProvider
 
         return SaladIdeogramImageProvider
+    if name == "SaladFluxSchnellImageProvider":
+        from .salad_flux import SaladFluxSchnellImageProvider
+
+        return SaladFluxSchnellImageProvider
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
