@@ -26,6 +26,9 @@ $Profiles = @{
         ImagePullStallSeconds = 120
         FinalImagePullStallSeconds = 360
         MaxImagePullReallocations = 2
+        PostPullStartSeconds = 180
+        FinalPostPullStartSeconds = 360
+        MaxPostPullStartReallocations = 1
         RunningNotReadySeconds = 480
         FinalRunningNotReadySeconds = 900
         MaxRunningNotReadyReallocations = 1
@@ -38,6 +41,9 @@ $Profiles = @{
         ImagePullStallSeconds = 180
         FinalImagePullStallSeconds = 480
         MaxImagePullReallocations = 2
+        PostPullStartSeconds = 240
+        FinalPostPullStartSeconds = 480
+        MaxPostPullStartReallocations = 1
         RunningNotReadySeconds = 900
         FinalRunningNotReadySeconds = 1500
         MaxRunningNotReadyReallocations = 1
@@ -50,6 +56,9 @@ $Profiles = @{
         ImagePullStallSeconds = 180
         FinalImagePullStallSeconds = 480
         MaxImagePullReallocations = 2
+        PostPullStartSeconds = 180
+        FinalPostPullStartSeconds = 300
+        MaxPostPullStartReallocations = 1
         RunningNotReadySeconds = 900
         FinalRunningNotReadySeconds = 900
         MaxRunningNotReadyReallocations = 1
@@ -62,6 +71,9 @@ $Profiles = @{
         ImagePullStallSeconds = 300
         FinalImagePullStallSeconds = 900
         MaxImagePullReallocations = 2
+        PostPullStartSeconds = 300
+        FinalPostPullStartSeconds = 600
+        MaxPostPullStartReallocations = 1
         RunningNotReadySeconds = 1800
         FinalRunningNotReadySeconds = 3600
         MaxRunningNotReadyReallocations = 1
@@ -287,7 +299,7 @@ $QueueUrl = "$BaseUrl/queues/$QueueName"
 $Headers = @{
     "Salad-Api-Key" = Get-SaladApiKey
     "Accept" = "application/json"
-    "User-Agent" = "ai-video-factory-optimized-prewarm/1.2"
+    "User-Agent" = "ai-video-factory-optimized-prewarm/1.3"
 }
 
 $Queue = Get-Queue
@@ -311,19 +323,24 @@ if ($Service -eq "ideogram4" -and [int]$Group.queue_autoscaler.max_replicas -ne 
     throw "Ideogram optimized prewarm refuses a remote autoscaler with max_replicas != 1."
 }
 
-Write-Host (
-    "Optimized prewarm profile: service={0} allocating={1}s/{2} retries " +
-    "image_pull_stall={3}s/{4} retries running_not_ready={5}s/{6} retries " +
-    "max_node_changes={7}" -f
+$ProfileLine = (
+    (
+        "Optimized prewarm profile: service={0} allocating={1}s/{2} retries " +
+        "image_pull_stall={3}s/{4} retries post_pull_start={5}s/{6} retries " +
+        "running_not_ready={7}s/{8} retries max_node_changes={9}"
+    ) -f
     $Service,
     $Profile.AllocatingSeconds,
     $Profile.MaxAllocatingReallocations,
     $Profile.ImagePullStallSeconds,
     $Profile.MaxImagePullReallocations,
+    $Profile.PostPullStartSeconds,
+    $Profile.MaxPostPullStartReallocations,
     $Profile.RunningNotReadySeconds,
     $Profile.MaxRunningNotReadyReallocations,
     $Profile.MaxNodeChanges
-) -ForegroundColor Cyan
+)
+Write-Host $ProfileLine -ForegroundColor Cyan
 
 Invoke-RestMethod `
     -Method Patch `
@@ -370,9 +387,11 @@ $NodeChanges = 0
 $AllocatingSince = $null
 $ImagePullSince = $null
 $ImagePullBaseline = $null
+$PostPullStartSince = $null
 $RunningNotReadySince = $null
 $AllocatingReallocations = 0
 $ImagePullReallocations = 0
+$PostPullStartReallocations = 0
 $RunningNotReadyReallocations = 0
 $ImagePullProgressThreshold = 0.005
 
@@ -452,13 +471,16 @@ while ((Get-Date) -lt $Deadline) {
         $AllocatingSince = $null
         $ImagePullSince = $null
         $ImagePullBaseline = $null
+        $PostPullStartSince = $null
         $RunningNotReadySince = $null
     }
 
     $PullRendered = if ($null -eq $PullingProgress) { "-" } else { $PullingProgress }
-    Write-Host (
-        "{0} service={1} status={2} state={3} started={4} ready={5} " +
-        "pulling_progress={6} machine={7} attached={8} node_changes={9}/{10}" -f
+    $StatusLine = (
+        (
+            "{0} service={1} status={2} state={3} started={4} ready={5} " +
+            "pulling_progress={6} machine={7} attached={8} node_changes={9}/{10}"
+        ) -f
         (Get-Date -Format "HH:mm:ss"),
         $Service,
         $Status,
@@ -471,6 +493,7 @@ while ((Get-Date) -lt $Deadline) {
         $NodeChanges,
         $Profile.MaxNodeChanges
     )
+    Write-Host $StatusLine
 
     if (
         -not [bool]$Group.pending_change -and
@@ -557,6 +580,43 @@ while ((Get-Date) -lt $Deadline) {
     else {
         $ImagePullSince = $null
         $ImagePullBaseline = $null
+    }
+
+    $ImagePulledButNotStarted = (
+        $null -ne $PullingProgress -and
+        $PullingProgress -ge 1.0 -and -not $Started
+    )
+    if ($ImagePulledButNotStarted) {
+        if ($null -eq $PostPullStartSince) {
+            $PostPullStartSince = Get-Date
+        }
+        $Limit = if (
+            $PostPullStartReallocations -lt $Profile.MaxPostPullStartReallocations
+        ) {
+            [int]$Profile.PostPullStartSeconds
+        }
+        else {
+            [int]$Profile.FinalPostPullStartSeconds
+        }
+        if (((Get-Date) - $PostPullStartSince).TotalSeconds -ge $Limit) {
+            if (
+                $PostPullStartReallocations -ge $Profile.MaxPostPullStartReallocations
+            ) {
+                throw (
+                    "$Service image pull completed but the container never started during " +
+                    "the final ${Limit}s window."
+                )
+            }
+            $PostPullStartReallocations += 1
+            Request-InstanceReallocation `
+                -InstanceId $InstanceId `
+                -Reason "Image pull completed but the container did not start within ${Limit}s"
+            $PostPullStartSince = $null
+            continue
+        }
+    }
+    else {
+        $PostPullStartSince = $null
     }
 
     if ($Started -and $InstanceState -eq "running" -and -not $Ready) {
