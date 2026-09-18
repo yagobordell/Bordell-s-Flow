@@ -31,6 +31,7 @@ $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
+$CacheAudit = Join-Path $PSScriptRoot "audit_phase8_video_cache.py"
 $Runner = Join-Path $PSScriptRoot "run_phase8_videos.py"
 $ServicesPath = Join-Path (Split-Path $PSScriptRoot -Parent) "deploy\salad\services.json"
 
@@ -77,6 +78,37 @@ if ($LASTEXITCODE -ne 0) {
     throw "R2 preflight failed; refusing to allocate LTX GPU."
 }
 
+$CachePlanPath = Join-Path ([IO.Path]::GetTempPath()) (
+    "ai-video-factory-phase8-plan-{0}.json" -f ([Guid]::NewGuid().ToString("N"))
+)
+Write-Host "=== Phase 8 cache plan: resolve R2 replay before LTX allocation ===" -ForegroundColor Cyan
+& python $CacheAudit `
+    --keyframes $Keyframes `
+    --prompts $Prompts `
+    --timings $Timings `
+    --json-output $CachePlanPath
+if ($LASTEXITCODE -ne 0) {
+    Remove-Item -LiteralPath $CachePlanPath -Force -ErrorAction SilentlyContinue
+    throw "Phase 8 cache planning failed; refusing LTX GPU allocation."
+}
+$CachePlan = @(
+    Get-Content -LiteralPath $CachePlanPath -Raw |
+        ConvertFrom-Json |
+        ForEach-Object { $_ }
+)
+Remove-Item -LiteralPath $CachePlanPath -Force -ErrorAction SilentlyContinue
+$InvalidCache = @($CachePlan | Where-Object { $_.status -eq "invalid" }).Count
+if ($InvalidCache -gt 0) {
+    throw "Phase 8 cache contains $InvalidCache invalid artifact(s); refusing GPU allocation."
+}
+$LtxNeeded = @($CachePlan | Where-Object { $_.status -eq "miss" }).Count -gt 0
+Write-Host (
+    "Phase 8 GPU plan: ltx25={0} cached={1} misses={2}" -f `
+    $LtxNeeded,
+    @($CachePlan | Where-Object { $_.status -eq "hit" }).Count,
+    @($CachePlan | Where-Object { $_.status -eq "miss" }).Count
+) -ForegroundColor Green
+
 $PrewarmArguments = @{
     Service = "ltx25"
     TimeoutMinutes = $PrewarmTimeoutMinutes
@@ -86,7 +118,12 @@ if ($NonInteractive) {
 }
 
 try {
-    if ($ResumeSubmittedJobs) {
+    if (-not $LtxNeeded) {
+        Write-Host (
+            "All Phase 8 clips are valid R2 replays; LTX GPU allocation is skipped."
+        ) -ForegroundColor Green
+    }
+    elseif ($ResumeSubmittedJobs) {
         Write-Host (
             "=== LTX resume: start scale-to-zero group for existing transport jobs ==="
         ) -ForegroundColor Cyan
