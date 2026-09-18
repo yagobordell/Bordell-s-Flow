@@ -14,6 +14,9 @@ def test_salad_services_use_named_gpu_classes() -> None:
     assert document["services"]["ideogram4"]["resources"]["gpu_class_names"] == [
         "RTX 4090 (24 GB)"
     ]
+    assert document["services"]["flux2_klein"]["resources"]["gpu_class_names"] == [
+        "RTX 4090 (24 GB)"
+    ]
     assert document["services"]["whisper"]["resources"]["gpu_class_names"] == [
         "RTX 3090 (24 GB)"
     ]
