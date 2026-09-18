@@ -232,3 +232,14 @@ def test_phase8_resume_detection_happens_before_gpu_allocation() -> None:
     assert text.index("if ($ResumeSubmittedJobs)") < text.index(
         "=== Phase 8 video generation: worker group available; resume/fanout active ==="
     )
+
+
+def test_phase8_resume_hard_guards_queue_before_scale_to_zero_start() -> None:
+    text = Path("scripts/run_phase8_videos_controlled.ps1").read_text(encoding="utf-8")
+
+    assert 'check_salad_queue_ready.py' in text
+    assert '& python $QueueGuard ltx25 --output-dir $OutputDir' in text
+    assert 'LTX resume queue ownership guard failed; refusing GPU allocation.' in text
+    assert text.index('& python $QueueGuard ltx25 --output-dir $OutputDir') < text.index(
+        '& $ScaleToZeroStarter @StartArguments'
+    )
