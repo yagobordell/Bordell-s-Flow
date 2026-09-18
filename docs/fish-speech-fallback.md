@@ -124,7 +124,7 @@ fishaudio/s2-pro@1de9996b6be38b745688de084d87a5633f714e4e|runtime@214da3cd841bda
 Breeze's `voice` remains a natural-language delivery description. Fish's voice is a
 separate reference identity and is never inferred from that string.
 
-Production Fish fallback requires these settings:
+Production Fish fallback requires these persistent deployment settings. Configure them once; they only change when the reference voice asset changes:
 
 ```text
 FISH_SPEECH_REFERENCE_PROFILE=project-narrator-v1
@@ -274,9 +274,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File \
 
 ## Real benchmark gate
 
-Do not fill this section from estimates. After `Prepare` pins the deployed image by
-digest and the protected smoke succeeds, record the actual values here from Salad and the
-generated reports:
+The values below come from the completed reference-conditioned Salad smoke and generated reports; none are estimates:
 
 | Measurement | Validated value |
 | --- | --- |
