@@ -22,7 +22,7 @@ def test_phase4_flux_arm_retries_transient_control_plane_failures() -> None:
     assert "for ($Attempt = 1; $Attempt -le 3; $Attempt += 1)" in text
     assert "Retrying idempotently" in text
     assert "Start-Sleep -Seconds 15" in text
-    assert "FLUX Schnell scale-to-zero group could not be armed" in text
+    assert "FLUX.2 Klein scale-to-zero group could not be armed" in text
 
 
 def test_phase4_keeps_deterministic_flux_prewarm_for_known_safety_blocks() -> None:
