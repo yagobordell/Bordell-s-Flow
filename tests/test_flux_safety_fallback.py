@@ -24,7 +24,7 @@ def _image() -> GeneratedImage:
         content=b"png",
         media_type="image/png",
         extension="png",
-        metadata={"provider": "flux1_schnell"},
+        metadata={"provider": "flux2_klein"},
     )
 
 
@@ -48,10 +48,10 @@ def test_terminal_ideogram_safety_rejection_uses_flux() -> None:
         )
     )
 
-    assert result.metadata["provider"] == "flux1_schnell"
+    assert result.metadata["provider"] == "flux2_klein"
     assert result.metadata["fallback_from"] == "ideogram4"
     assert result.metadata["fallback_reason"] == "safety_rejection"
-    assert fallback.calls[0]["model"] == "black-forest-labs/FLUX.1-schnell"
+    assert fallback.calls[0]["model"] == "black-forest-labs/FLUX.2-klein-4B"
 
 
 def test_non_safety_rejection_does_not_use_flux() -> None:
