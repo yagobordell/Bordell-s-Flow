@@ -11,8 +11,8 @@ from PIL import Image
 from r2_client import create_r2_storage
 
 from ai_video_factory.config import settings
-from ai_video_factory.providers.salad_flux import SaladFlux2KleinImageProvider
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
+from ai_video_factory.providers.salad_flux import SaladFlux2KleinImageProvider
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.flux2_klein import (
     FLUX2_KLEIN_MODEL_ID,
