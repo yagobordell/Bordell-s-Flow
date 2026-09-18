@@ -33,12 +33,20 @@ class Settings(BaseSettings):
     breeze_tts_cfg_scale: float = 4.0
     breeze_tts_seed: int = 42
 
+    fish_speech_model: str = "fishaudio/s2-pro"
+    fish_speech_seed: int = 42
+    fish_speech_reference_profile: str | None = None
+    fish_speech_reference_audio_key: str | None = None
+    fish_speech_reference_audio_sha256: str | None = None
+    fish_speech_reference_transcript: str | None = None
+
     whisper_model: str = "openai/whisper-large-v3-turbo"
 
     salad_api_key: str | None = None
     salad_organization: str | None = None
     salad_project: str | None = None
     salad_breeze_tts2_queue_name: str = "ai-video-factory-breeze-tts2-jobs"
+    salad_fish_speech_queue_name: str = "ai-video-factory-fish-speech-jobs"
     salad_ideogram4_queue_name: str = "ai-video-factory-ideogram4-jobs"
     salad_flux2_klein_queue_name: str = "ai-video-factory-flux2-klein-jobs"
     salad_whisper_queue_name: str = "ai-video-factory-whisper-jobs"
