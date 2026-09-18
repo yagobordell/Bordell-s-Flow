@@ -29,6 +29,7 @@ class FakeStorage:
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
         self.metadata: dict[str, dict[str, str]] = {}
+        self.content_types: dict[str, str] = {}
 
     def download(self, key: str, destination: Path) -> StoredObject:
         content = self.objects[key]
@@ -46,6 +47,7 @@ class FakeStorage:
     ) -> StoredObject:
         self.objects[key] = source.read_bytes()
         self.metadata[key] = dict(metadata)
+        self.content_types[key] = content_type
         return self._stored(key, content_type=content_type)
 
     def stat(self, key: str) -> StoredObject | None:
@@ -56,11 +58,19 @@ class FakeStorage:
     def ping(self) -> None:
         return None
 
-    def _stored(self, key: str, *, content_type: str = "application/octet-stream") -> StoredObject:
+    def _stored(
+        self,
+        key: str,
+        *,
+        content_type: str | None = None,
+    ) -> StoredObject:
         content = self.objects[key]
         return StoredObject(
             key=key,
-            content_type=content_type,
+            content_type=content_type or self.content_types.get(
+                key,
+                "application/octet-stream",
+            ),
             size_bytes=len(content),
             etag=hashlib.md5(content, usedforsecurity=False).hexdigest(),
             metadata=self.metadata.get(key, {}),
@@ -99,6 +109,12 @@ class FakeQueue:
             content = f"video:{request.job_id}".encode()
             self.storage.objects[request.output.key] = content
             digest = hashlib.sha256(content).hexdigest()
+            self.storage.content_types[request.output.key] = request.output.content_type
+            self.storage.metadata[request.output.key] = {
+                "job-id": request.job_id,
+                "request-sha256": request.fingerprint(),
+                "artifact-sha256": digest,
+            }
             output = GPUJobResponse(
                 job_id=request.job_id,
                 request_sha256=request.fingerprint(),
@@ -455,3 +471,77 @@ def test_manifest_replace_retries_transient_windows_sharing_violation(
         manifest_path.read_text(encoding="utf-8")
     )
     assert saved == manifest
+
+
+
+def test_r2_replay_is_resolved_before_any_queue_operation(tmp_path: Path) -> None:
+    base, keyframes, prompts, timings = _inputs(tmp_path)
+    plan = build_video_generation_plan(
+        keyframes,
+        prompts,
+        timings,
+        keyframe_base_dir=base,
+    )
+    storage = FakeStorage()
+    queue = FakeQueue(storage)
+    for item in plan:
+        content = f"cached:{item.request.job_id}".encode()
+        digest = hashlib.sha256(content).hexdigest()
+        storage.objects[item.request.output.key] = content
+        storage.content_types[item.request.output.key] = "video/mp4"
+        storage.metadata[item.request.output.key] = {
+            "job-id": item.request.job_id,
+            "request-sha256": item.request.fingerprint(),
+            "artifact-sha256": digest,
+        }
+
+    manifest, clips = run_video_generation(
+        plan,
+        queue=queue,
+        storage=storage,
+        manifest_path=tmp_path / "manifest.json",
+        clips_dir=tmp_path / "clips",
+        poll_seconds=0.001,
+        timeout_seconds=1,
+    )
+
+    assert queue.operations == []
+    assert queue.submit_counts == {}
+    assert [clip.shot_id for clip in clips] == [1, 2]
+    assert all(state.submission_count == 0 for state in manifest.jobs)
+    assert all(state.response is not None for state in manifest.jobs)
+    assert all(state.response.replayed for state in manifest.jobs if state.response)
+
+
+def test_invalid_r2_replay_metadata_fails_before_queue_submission(tmp_path: Path) -> None:
+    base, keyframes, prompts, timings = _inputs(tmp_path)
+    plan = build_video_generation_plan(
+        keyframes,
+        prompts,
+        timings,
+        keyframe_base_dir=base,
+    )
+    storage = FakeStorage()
+    queue = FakeQueue(storage)
+    item = plan[0]
+    content = b"corrupt-metadata"
+    storage.objects[item.request.output.key] = content
+    storage.content_types[item.request.output.key] = "video/mp4"
+    storage.metadata[item.request.output.key] = {
+        "job-id": item.request.job_id,
+        "request-sha256": "0" * 64,
+        "artifact-sha256": hashlib.sha256(content).hexdigest(),
+    }
+
+    with pytest.raises(RuntimeError, match="metadata does not match"):
+        run_video_generation(
+            plan,
+            queue=queue,
+            storage=storage,
+            manifest_path=tmp_path / "manifest.json",
+            clips_dir=tmp_path / "clips",
+            wait=False,
+        )
+
+    assert queue.operations == []
+    assert queue.submit_counts == {}
