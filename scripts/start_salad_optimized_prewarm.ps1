@@ -442,7 +442,7 @@ function Get-QueueJobSnapshot {
 function Assert-QueueLogicallyEmpty {
     param(
         [Parameter(Mandatory)][object]$Queue,
-        [ValidateRange(1, 120)][int]$VerificationSeconds = 30
+        [ValidateRange(1, 300)][int]$VerificationSeconds = 180
     )
 
     $ReportedLength = [int]$Queue.current_queue_length
@@ -591,6 +591,7 @@ $Headers = @{
 
 $Queue = Get-Queue
 $null = Assert-QueueLogicallyEmpty -Queue $Queue
+$VerifiedInitialQueueLength = [int]$Queue.current_queue_length
 
 $Group = Get-Group
 $Status = [string]$Group.current_state.status
@@ -738,8 +739,23 @@ while ((Get-Date) -lt $Deadline) {
     $Attached = Test-QueueAttachment -Queue $Queue
 
     $ReportedQueueLength = [int]$Queue.current_queue_length
-    if ($ReportedQueueLength -ne 0) {
-        $null = Assert-QueueLogicallyEmpty -Queue $Queue
+    if (
+        $ReportedQueueLength -gt 0 -and
+        $VerifiedInitialQueueLength -eq 0
+    ) {
+        throw (
+            "Optimized prewarm observed new queued work after the pre-allocation empty-queue " +
+            "verification; refusing to continue while the worker is bootstrapping."
+        )
+    }
+    if (
+        $ReportedQueueLength -gt $VerifiedInitialQueueLength -and
+        $VerifiedInitialQueueLength -gt 0
+    ) {
+        throw (
+            "Optimized prewarm observed queue growth beyond the already-verified stale summary; " +
+            "refusing to continue while the worker is bootstrapping."
+        )
     }
     if ($Status -eq "failed") {
         throw "Container group '$GroupName' entered failed state during prewarm."
@@ -875,6 +891,12 @@ while ((Get-Date) -lt $Deadline) {
         $ContainerStarted -and
         $Ready
     ) {
+        # The queue is dedicated to this service. Avoid repeatedly paginating historical
+        # jobs while the image/model boots; re-establish the invariant once, immediately
+        # before releasing the ready worker to the stage that will submit new work.
+        $Queue = Get-Queue
+        $null = Assert-QueueLogicallyEmpty -Queue $Queue -VerificationSeconds 180
+
         if ($Service -eq "fish_speech") {
             $ImagePullAndStartSeconds = $ContainerStartedSeconds - $AssignmentSeconds
             $BootstrapAfterStartSeconds = $ReadySeconds - $ContainerStartedSeconds
