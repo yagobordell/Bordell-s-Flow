@@ -323,15 +323,30 @@ python scripts/run_phase4_assets.py --quality medium
 
 ### Fase 5 — Audio y timing
 
+En producción, la narración usa Breeze TTS 2 como proveedor principal y Fish Speech S2 Pro
+self-hosted en Salad como fallback conservador. Fish solo se enciende ante fallos terminales
+clasificados de Breeze y usa una referencia de voz autorizada persistida en R2.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+    .\scripts\run_phase5_audio_controlled.ps1 `
+    -SourceFile .\data\output\phase2\source_script.json `
+    -OutputDir .\data\output\phase5 `
+    -Metadata .\data\output\phase5\narration.json `
+    -NonInteractive
+```
+
+Después:
+
 ```bash
-python scripts/run_phase5_audio.py
 python scripts/run_phase5_alignment.py --language es
 python scripts/run_phase5_beat_timing.py
 python scripts/run_phase5_shot_timing.py
 ```
 
 La validación real produjo narración canónica de 45.0 s, 105 palabras alineadas, 11 beats y 8 shots
-cubriendo la timeline completa sin huecos ni solapes.
+cubriendo la timeline completa sin huecos ni solapes. El fallback Fish también ha sido validado en
+Salad con referencia condicionada, replay desde R2 a replicas=0 y cleanup final.
 
 ### Fase 6 — Storyboard
 
