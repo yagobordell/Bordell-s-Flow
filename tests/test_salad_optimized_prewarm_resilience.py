@@ -61,3 +61,10 @@ def test_reallocation_verifies_instance_state_before_retrying_lost_response() ->
     assert "$ObservedMachine -ne $MachineId" in block
     assert "treating the request as accepted" in block
     assert "-MaxAttempts 1" in block
+
+
+def test_all_reallocation_paths_pass_machine_identity_for_lost_response_verification() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+
+    assert text.count("Request-InstanceReallocation `") == 4
+    assert text.count("-MachineId $MachineId `") == 4
