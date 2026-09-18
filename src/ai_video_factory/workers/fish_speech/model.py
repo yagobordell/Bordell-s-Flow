@@ -250,7 +250,11 @@ class FishSpeechBackend:
                 bindings.torch.cuda.reset_peak_memory_stats()
                 bindings.torch.cuda.synchronize()
             started = time.monotonic()
-            native_rate = int(manager.tts_inference_engine.decoder_model.sample_rate)
+            decoder = manager.tts_inference_engine.decoder_model
+            if hasattr(decoder, "spec_transform"):
+                native_rate = int(decoder.spec_transform.sample_rate)
+            else:
+                native_rate = int(decoder.sample_rate)
             pause_frames = round(native_rate * self._inter_chunk_pause_ms / 1000)
             generated: list[Any] = []
             for index, text_chunk in enumerate(chunks):
