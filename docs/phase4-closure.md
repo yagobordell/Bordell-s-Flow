@@ -4,7 +4,7 @@ Status: **CLOSED**
 
 Phase 4 converts canonical continuity entities into reusable visual references and persisted PNG assets.
 The phase is formally closed after production validation of the Ideogram 4 primary path, the
-FLUX.1-schnell safety-only fallback, deterministic R2 replay, zero-GPU cache execution and safe
+FLUX.2 Klein 4B safety-only fallback, deterministic R2 replay, zero-GPU cache execution and safe
 Salad scale-to-zero cleanup.
 
 Validation date: **2026-09-17**.
@@ -15,7 +15,7 @@ Validation date: **2026-09-17**.
 4.1  VisualReference planning                         CLOSED
 4.2  Ideogram 4 production generation               CLOSED
 4.3  deterministic negative safety cache            CLOSED
-4.4  FLUX.1-schnell safety-only fallback             CLOSED
+4.4  FLUX.2 Klein 4B safety-only fallback             CLOSED
 4.5  R2 content-integrity audit                      CLOSED
 4.6  ready-before-queue GPU lifecycle                CLOSED
 4.7  scale-to-zero restore + stale queue handling    CLOSED
@@ -45,7 +45,7 @@ metadata and do not expand the canonical domain model.
 
 Ideogram 4 is the primary reference-image provider.
 
-FLUX.1-schnell is a fallback **only** when all executable Ideogram variants for one entity have
+FLUX.2 Klein 4B is a fallback **only** when all executable Ideogram variants for one entity have
 already reached confirmed terminal safety rejection. It is not used for network errors, timeouts,
 OOMs, bootstrap failures, queue failures or capacity problems.
 
@@ -72,7 +72,7 @@ The final reference set contains nine PNGs:
 
 ```text
 8 references -> Ideogram 4
-1 reference  -> FLUX.1-schnell safety fallback
+1 reference  -> FLUX.2 Klein 4B safety fallback
 9/9          -> persisted and SHA-256 verified in R2
 ```
 
@@ -80,8 +80,8 @@ The only fallback entity was:
 
 ```text
 entity:       location_004
-provider:     flux1_schnell
-model:        black-forest-labs/FLUX.1-schnell
+provider:     flux2_klein
+model:        black-forest-labs/FLUX.2 Klein 4B
 fallback_from: ideogram4
 fallback_reason: safety_rejection
 job_id:       flux-reference-e7b14bc64f8943ee07421a17ac155257
@@ -143,7 +143,7 @@ The planning stage reported:
 
 ```text
 hits=9 misses=0 safety_blocked=0 invalid=0 total=9
-Phase 4 GPU plan: ideogram=False flux_schnell=False cached=9
+Phase 4 GPU plan: ideogram=False flux2_klein=False cached=9
 All Phase 4 references are cached; no GPU allocation required.
 ```
 
@@ -159,11 +159,11 @@ inputs produce the same artifacts without allocating a GPU or resubmitting compl
 The production fallback worker is:
 
 ```text
-service:        flux_schnell
-queue:          ai-video-factory-flux-schnell-jobs
-model:          black-forest-labs/FLUX.1-schnell
+service:        flux2_klein
+queue:          ai-video-factory-flux2-klein-jobs
+model:          black-forest-labs/FLUX.2 Klein 4B
 GPU:            RTX 4090 (24 GB)
-image tag:      flux1-schnell-bnb4-v3
+image tag:      flux2-klein-4b-bf16-v1
 image digest:   sha256:de8caee7704e92c4f519b66cb8ed32c11069488ae30557d78b4fe3cfe1d1c2e5
 min replicas:   0
 max replicas:   1
@@ -259,7 +259,7 @@ FLUX image/config preparation is an upgrade operation, not a per-run step:
 
 ```powershell
 .\scripts\prepare_salad_worker_manifest.ps1 `
-  -Service flux_schnell `
+  -Service flux2_klein `
   -PrepareTimeoutMinutes 120 `
   -NonInteractive
 ```
