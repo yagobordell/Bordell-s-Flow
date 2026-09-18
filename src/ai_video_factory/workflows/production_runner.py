@@ -259,7 +259,8 @@ class ProductionRunner:
                         self._record_stage(stage, manifest, origin="adopted")
                         self._write_manifest(manifest)
                         print(
-                            f"ADOPT {stage.name}: existing artifacts recorded in production manifest"
+                            "ADOPT "
+                            f"{stage.name}: existing artifacts recorded in production manifest"
                         )
                         adopted.append(stage.name)
                         metrics.append(
