@@ -1,3 +1,5 @@
+> **Migration note (2026-09-18):** the FLUX.1 Schnell fallback described in this historical Phase 4 closure evidence has been replaced operationally by FLUX.2 Klein 4B. The original measurements below are retained as historical evidence; current runtime identity and commands are documented in [FLUX.2 Klein 4B safety fallback](flux2-klein-safety-fallback.md).
+
 # Phase 4 — Formal production closure
 
 Status: **CLOSED**
