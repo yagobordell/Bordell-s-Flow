@@ -26,6 +26,8 @@ def test_flux2_download_fetches_only_pinned_diffusers_runtime_components() -> No
     assert "FLUX.2 Klein Diffusers snapshot complete" in script
     assert "download_watchdog" in script
     assert "--reallocate-on-slow" in script
+    assert "-- env HF_HUB_OFFLINE=0 python -" in script
+    assert 'download_root="${model_root}"' in script
 
 
 def test_flux2_image_uses_native_diffusers_pipeline_without_bnb() -> None:
