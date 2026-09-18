@@ -1,7 +1,7 @@
 from pathlib import Path
 
-FLUX_PREWARM = Path("scripts/start_salad_flux_prewarm.ps1")
-FLUX_RESTORE = Path("scripts/restore_salad_flux_scale_to_zero.ps1")
+FLUX_PREWARM = Path("scripts/start_salad_flux2_klein_prewarm.ps1")
+FLUX_RESTORE = Path("scripts/restore_salad_flux2_klein_scale_to_zero.ps1")
 PHASE4 = Path("scripts/run_phase4_assets_controlled.ps1")
 PHASE6 = Path("scripts/run_phase6_keyframes_controlled.ps1")
 
@@ -36,8 +36,8 @@ def test_flux_restore_returns_manifest_scale_to_zero_and_stops() -> None:
 def test_phase4_uses_ready_flux_prewarm_instead_of_zero_replica_arm() -> None:
     script = PHASE4.read_text(encoding="utf-8")
 
-    assert '"start_salad_flux_prewarm.ps1"' in script
-    assert '"restore_salad_flux_scale_to_zero.ps1"' in script
+    assert '"start_salad_flux2_klein_prewarm.ps1"' in script
+    assert '"restore_salad_flux2_klein_scale_to_zero.ps1"' in script
     assert "prewarm one ready replica before queue submission" in script
     assert "arm_salad_scale_to_zero.ps1" not in script
 
@@ -45,7 +45,7 @@ def test_phase4_uses_ready_flux_prewarm_instead_of_zero_replica_arm() -> None:
 def test_phase6_keeps_flux_ready_for_single_safety_fallback() -> None:
     script = PHASE6.read_text(encoding="utf-8")
 
-    assert '"start_salad_flux_prewarm.ps1"' in script
-    assert '"restore_salad_flux_scale_to_zero.ps1"' in script
+    assert '"start_salad_flux2_klein_prewarm.ps1"' in script
+    assert '"restore_salad_flux2_klein_scale_to_zero.ps1"' in script
     assert "prewarm one ready replica for deterministic safety fallback" in script
     assert "arm_salad_scale_to_zero.ps1" not in script
