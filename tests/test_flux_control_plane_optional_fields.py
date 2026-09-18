@@ -26,7 +26,7 @@ def test_flux_prewarm_tolerates_hidden_queue_autoscaler_after_patch() -> None:
 def test_flux_restore_is_idempotent_when_queue_autoscaler_is_omitted() -> None:
     script = RESTORE.read_text(encoding="utf-8")
 
-    assert "FLUX restore: applying manifest queue autoscaler settings" in script
+    assert "FLUX.2 Klein restore: applying manifest queue autoscaler settings" in script
     assert '$Group.PSObject.Properties["queue_autoscaler"]' in script
     assert "Salad GET does not expose queue_autoscaler" in script
     assert "$Group.queue_autoscaler.min_replicas" not in script
