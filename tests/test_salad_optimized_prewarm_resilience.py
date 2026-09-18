@@ -68,3 +68,12 @@ def test_all_reallocation_paths_pass_machine_identity_for_lost_response_verifica
 
     assert text.count("Request-InstanceReallocation `") == 4
     assert text.count("-MachineId $MachineId `") == 4
+
+
+def test_stale_queue_retry_budget_uses_absolute_deadline() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+
+    assert "[datetime]$Deadline = [datetime]::MaxValue" in text
+    assert "exceeded its deadline" in text
+    assert "-Deadline $Deadline" in text
+    assert "$EffectiveTimeoutSeconds" in text
