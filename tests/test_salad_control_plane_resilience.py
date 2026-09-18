@@ -39,7 +39,9 @@ def test_stack_stop_runs_zero_replica_guard_after_stop_request_error() -> None:
 
     assert "$StopFailures = @()" in text
     assert "$StopError = $null" in text
-    assert "the zero-replica guard will still verify the terminal state" in text
+    assert "Salad Stop request failed for '$Name'" in text
+    assert "zero-replica guard will still" in text
+    assert "verify the terminal state" in text
     assert "Invoke-ZeroReplicaGuard -Name $Name" in text
     assert "treating cleanup as successful" in text
     assert "could not verify terminal zero-replica state" in text
