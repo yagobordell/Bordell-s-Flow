@@ -159,7 +159,11 @@ def audit_keyframe_cache(
         status, error = _cache_status(storage, fallback_request)
         record.update(
             provider="flux2_klein",
-            status="hit" if status == "hit" else ("invalid" if status == "invalid" else "safety_blocked"),
+            status=(
+                "hit"
+                if status == "hit"
+                else ("invalid" if status == "invalid" else "safety_blocked")
+            ),
             matched_variant="flux2_klein",
             job_id=fallback_request.job_id,
             object_key=fallback_request.output.key,
