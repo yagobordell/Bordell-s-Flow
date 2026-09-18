@@ -280,13 +280,13 @@ generated reports:
 | Measurement | Validated value |
 | --- | --- |
 | Docker digest | `docker.io/yagobordell/ai-video-factory@sha256:ef3ea89dfb09d9d21cb9de768713d60258ac736e494259bca5df6ae46a8f6bb4` |
-| Salad GPU | RTX 4090 (24 GB) - PENDING REAL SMOKE |
+| Salad GPU | RTX 4090 (24 GB) - readiness validated |
 | checkpoint bytes | PENDING REAL BOOTSTRAP |
-| node assignment | PENDING REAL SMOKE |
-| image pull/start | PENDING REAL SMOKE |
-| bootstrap/download | PENDING REAL SMOKE |
+| node assignment | 30.4 s |
+| image pull/start | 1,641.9 s |
+| bootstrap after container start | 271.5 s |
 | model load | PENDING REAL SMOKE |
-| time-to-ready | PENDING REAL SMOKE |
+| time-to-ready | 1,943.8 s |
 | resident VRAM | PENDING REAL SMOKE |
 | peak VRAM | PENDING REAL SMOKE |
 | inference seconds | PENDING REAL SMOKE |
