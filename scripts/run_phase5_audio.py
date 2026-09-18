@@ -144,6 +144,11 @@ def parse_args() -> argparse.Namespace:
         default=settings.output_dir / "phase5" / "fallback-state.json",
     )
     parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="Validate provider configuration without submitting an inference job.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=settings.output_dir / "phase5",
@@ -249,6 +254,10 @@ async def main() -> None:
         )
         model = args.fallback_model
         voice = reference.profile if reference is not None else "unconditioned"
+
+    if args.preflight_only:
+        print(f"PHASE5_PROVIDER_PREFLIGHT provider={args.provider} ok=true")
+        return
 
     capturing = CapturingSpeechProvider(
         provider,
