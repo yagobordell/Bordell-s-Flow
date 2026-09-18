@@ -30,11 +30,11 @@ def test_controlled_flux2_klein_smoke_always_restores_scale_to_zero() -> None:
     assert "finally {" in text
     assert "$PrimaryFailure" in text
     assert "preserving the original FLUX.2 Klein smoke failure" in text
-    assert "/log-entries" in text
-    assert 'log contains "FLUX2_KLEIN_RUNTIME_READY"' in text
-    assert 'log contains "FLUX2_KLEIN_INFERENCE_METRIC"' in text
-    assert 'sort_order = "desc"' in text
-    assert "SALAD_LOG_METRIC" in text
+    assert '"collect_flux2_klein_salad_metrics.ps1"' in text
+    assert "-StartTimeUtc" in text
+    assert "-EndTimeUtc" in text
+    assert "-WindowMinutes 2" in text
+    assert "-RetryCount 3" in text
 
 
 def test_flux2_klein_prewarm_reports_pull_and_bootstrap_timings() -> None:
@@ -55,6 +55,10 @@ def test_flux2_klein_historical_metric_collector_never_starts_gpu() -> None:
     assert 'log contains "FLUX2_KLEIN_RUNTIME_READY"' in text
     assert 'log contains "FLUX2_KLEIN_INFERENCE_METRIC"' in text
     assert 'sort_order = "desc"' in text
+    assert "WindowMinutes = 2" in text
+    assert "RetryCount = 3" in text
+    assert "page_size = 25" in text
+    assert "Invoke-SaladMarkerQuery" in text
     assert "FLUX2_KLEIN_HISTORICAL_METRICS" in text
     assert "FLUX2_KLEIN_SMOKE_REPORT" in text
     assert "/start" not in text
