@@ -34,6 +34,7 @@ $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $WorkerManager = Join-Path $PSScriptRoot "manage_salad_worker.ps1"
+$ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $FluxPrewarm = Join-Path $PSScriptRoot "start_salad_flux_prewarm.ps1"
 $FluxRestore = Join-Path $PSScriptRoot "restore_salad_flux_scale_to_zero.ps1"
@@ -88,7 +89,6 @@ $PrewarmArguments = @{
 }
 $FluxPrewarmArguments = @{ TimeoutMinutes = $PrewarmTimeoutMinutes }
 $FluxArmArguments = @{
-    Action = "Start"
     Service = "flux2_klein"
 }
 if ($NonInteractive) {
@@ -111,7 +111,7 @@ try {
         $FluxArmSucceeded = $false
         for ($Attempt = 1; $Attempt -le 3; $Attempt += 1) {
             try {
-                & $WorkerManager @FluxArmArguments
+                & $ScaleToZeroStarter @FluxArmArguments
                 if (-not $?) {
                     throw "FLUX.2 Klein scale-to-zero group start failed."
                 }
