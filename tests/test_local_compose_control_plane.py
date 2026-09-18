@@ -83,9 +83,10 @@ def test_local_manager_exposes_safe_one_shot_actions() -> None:
     assert 'Invoke-Compose -Arguments @("config", "--quiet")' in text
     assert '"build"' in text
     assert '"scripts/local_container_smoke.py"' in text
-    assert '"scripts/run_production.py"' in text
-    assert 'Invoke-Compose -Arguments @("run", "--rm", "renderer")' in text
-    assert "Production source script must live below data/" in text
+    assert '"run_video_factory.ps1"' in text
+    assert 'if ($Action -ne "Production")' in text
+    assert "& $VideoFactory @Arguments" in text
+    assert "NonInteractive = $true" in text
     assert "manage_salad_stack" not in text
 
 
