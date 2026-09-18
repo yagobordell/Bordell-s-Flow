@@ -35,10 +35,7 @@ def _environment() -> dict[str, str]:
 
 
 def _default_queue_name() -> str:
-    return os.getenv(
-        "SALAD_LTX25_QUEUE_NAME",
-        os.getenv("SALAD_QUEUE_NAME", "ai-video-factory-ltx25-jobs"),
-    )
+    return os.getenv("SALAD_LTX25_QUEUE_NAME", "ai-video-factory-ltx25-jobs")
 
 
 def _read_models[ModelT](path: Path, model_type: type[ModelT]) -> list[ModelT]:
