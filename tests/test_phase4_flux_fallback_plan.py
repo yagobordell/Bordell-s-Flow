@@ -157,3 +157,8 @@ def test_phase4_planner_replays_cached_flux_fallback_without_gpu_work() -> None:
     assert record["status"] == "hit"
     assert record["provider"] == "flux2_klein"
     assert record["job_id"] == flux_request.job_id
+
+
+def test_phase4_runner_honors_configured_flux2_model() -> None:
+    script = Path("scripts/run_phase4_assets.py").read_text(encoding="utf-8")
+    assert "fallback_model=args.fallback_model" in script
