@@ -397,15 +397,17 @@ def _check_salad_queues(
                 f"Salad queue {queue_name} has active jobs not owned by the local "
                 f"resume manifest: {rendered}"
             )
-        result[service_name] = {
-            "verification": verification,
-            "active_jobs": len(active_ids) if verification == "verified" else None,
-            "recognized_resume_jobs": (
-                len(active_ids.intersection(allowed))
-                if verification == "verified"
-                else None
-            ),
-        }
+        if verification == "verified":
+            result[service_name] = {
+                "active_jobs": len(active_ids),
+                "recognized_resume_jobs": len(active_ids.intersection(allowed)),
+            }
+        else:
+            result[service_name] = {
+                "verification": verification,
+                "active_jobs": None,
+                "recognized_resume_jobs": None,
+            }
     return result
 
 
