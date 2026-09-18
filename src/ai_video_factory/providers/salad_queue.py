@@ -11,9 +11,6 @@ from typing import Any
 
 from ai_video_factory.inference.contracts import InferenceJobRequest
 
-logger = logging.getLogger(__name__)
-
-
 from .job_queue import (
     JobQueueClient,
     QueueJobNotFoundError,
@@ -21,6 +18,8 @@ from .job_queue import (
     QueueJobStatus,
     TransientQueueError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SaladJobQueueClient(JobQueueClient):
