@@ -8,7 +8,6 @@ from pathlib import Path
 from ai_video_factory.config import settings
 from ai_video_factory.providers.fallback_speech import BreezeThenFishSpeechProvider
 from ai_video_factory.providers.salad_breeze import BreezeFallbackEligibleError
-from ai_video_factory.providers.speech import SpeechProvider
 from ai_video_factory.workers.fish_speech import FISH_SPEECH_MODEL_ID
 
 from run_fish_speech_smoke import build_provider, build_reference
