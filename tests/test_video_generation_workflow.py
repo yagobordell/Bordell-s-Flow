@@ -7,12 +7,15 @@ from pathlib import Path
 
 import pytest
 
+import ai_video_factory.workflows.video_generation as video_generation
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
 from ai_video_factory.gpu.contracts import GPUJobRequest, GPUJobResponse, OutputArtifact
 from ai_video_factory.gpu.ports import StoredObject
 from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
 from ai_video_factory.workflows.video_generation import (
     VideoGenerationIncompleteError,
+    VideoGenerationJobState,
+    VideoGenerationManifest,
     build_video_generation_plan,
     run_video_generation,
 )
@@ -356,3 +359,41 @@ def test_manifest_rejects_changed_generation_plan(tmp_path: Path) -> None:
             clips_dir=tmp_path / "clips",
             wait=False,
         )
+
+
+
+def test_manifest_replace_retries_transient_windows_sharing_violation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "video_generation_manifest.json"
+    manifest = VideoGenerationManifest(
+        run_fingerprint="fingerprint",
+        jobs=[
+            VideoGenerationJobState(
+                shot_id=1,
+                application_job_id="job-1",
+                request_sha256="request-1",
+            )
+        ],
+    )
+    original_replace = video_generation.os.replace
+    attempts = 0
+
+    def flaky_replace(source: Path, destination: Path) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError(5, "Access is denied")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(video_generation.os, "replace", flaky_replace)
+    monkeypatch.setattr(video_generation.time, "sleep", lambda _: None)
+
+    video_generation._write_manifest(manifest_path, manifest)
+
+    assert attempts == 3
+    saved = VideoGenerationManifest.model_validate_json(
+        manifest_path.read_text(encoding="utf-8")
+    )
+    assert saved == manifest
