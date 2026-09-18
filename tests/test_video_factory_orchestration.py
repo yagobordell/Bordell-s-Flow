@@ -21,7 +21,6 @@ def test_one_command_runner_preflights_before_production_and_always_cleans_up() 
     assert "Manual intervention: 0" in text
 
 
-
 def test_one_command_runner_avoids_powershell_automatic_input_collision() -> None:
     text = _read("scripts/run_video_factory.ps1")
 
@@ -41,17 +40,20 @@ def test_phase5_checks_breeze_cache_before_primary_prewarm() -> None:
     assert "Fish consumed zero GPU-seconds" in text
 
 
-def test_flux_dynamic_fallback_uses_scale_to_zero_starter_in_phase4_and_phase6() -> None:
+def test_flux_dynamic_fallback_prewarms_on_first_confirmed_safety_rejection() -> None:
     phase4 = _read("scripts/run_phase4_assets_controlled.ps1")
     phase6 = _read("scripts/run_phase6_keyframes_controlled.ps1")
-    starter = _read("scripts/start_salad_scale_to_zero.ps1")
+    phase4_runner = _read("scripts/run_phase4_assets.py")
+    phase6_runner = _read("scripts/run_phase6_keyframes.py")
 
     for text in (phase4, phase6):
-        assert '"start_salad_scale_to_zero.ps1"' in text
-        assert "& $ScaleToZeroStarter @FluxArmArguments" in text
-        assert "& $WorkerManager @FluxArmArguments" not in text
+        assert "--prewarm-fallback-on-demand" in text
+        assert '"start_salad_scale_to_zero.ps1"' not in text
+        assert "$OnDemandFluxPrewarm = $IdeogramNeeded -and -not $FluxNeeded" in text
 
-    assert '"flux2_klein"' in starter
+    for text in (phase4_runner, phase6_runner):
+        assert "Ideogram safety rejection confirmed; prewarming FLUX" in text
+        assert '"start_salad_flux_prewarm.ps1"' in text
 
 
 def test_phase6_checks_cache_before_ideogram_and_does_not_eager_prewarm_flux() -> None:
@@ -62,7 +64,7 @@ def test_phase6_checks_cache_before_ideogram_and_does_not_eager_prewarm_flux() -
     flux = text.index("FLUX fallback: prewarm only because cached safety evidence requires it")
     assert audit < ideogram
     assert audit < flux
-    assert "arm scale-to-zero group without allocating a GPU" in text
+    assert "--prewarm-fallback-on-demand" in text
     assert "if ($FluxNeeded)" in text
 
 
@@ -85,7 +87,6 @@ def test_shared_ideogram_hold_is_explicitly_bounded_to_end_to_end_mode() -> None
     assert "[switch]$KeepIdeogramWarm" in phase4
     assert "[switch]$ReleaseSharedIdeogram" in phase6
     assert "outer orchestration owns cleanup" in phase4
-
 
 
 def test_phase5_alignment_checks_cache_before_whisper_prewarm() -> None:
