@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--expect-replay", action="store_true")
     parser.add_argument("--allow-unconditioned", action="store_true")
+    parser.add_argument("--preflight-only", action="store_true")
     return parser.parse_args()
 
 
@@ -111,6 +112,13 @@ async def main() -> None:
         )
 
     provider = build_provider(allow_unconditioned=args.allow_unconditioned)
+    if args.preflight_only:
+        print(
+            "FISH_SPEECH_SMOKE_PREFLIGHT "
+            f"reference_conditioned={str(reference is not None).lower()} ok=true"
+        )
+        return
+
     voice = reference.profile if reference is not None else "unconditioned"
     text = (
         "Fish Speech Salad smoke session "
