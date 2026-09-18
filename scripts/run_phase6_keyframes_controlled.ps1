@@ -27,6 +27,8 @@ param(
     [ValidateRange(1, 60)]
     [int]$PollSeconds = 5,
 
+    [switch]$ReleaseSharedIdeogram,
+
     [switch]$NonInteractive
 )
 
@@ -182,7 +184,7 @@ catch {
     $PrimaryFailure = $_
 }
 finally {
-    if ($IdeogramTouched) {
+    if ($IdeogramTouched -or $ReleaseSharedIdeogram) {
         try {
             & $ValidationManager -Action Stop -Service ideogram4 -NonInteractive
         }
