@@ -37,7 +37,6 @@ $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $WorkerManager = Join-Path $PSScriptRoot "manage_salad_worker.ps1"
-$ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $FluxPrewarm = Join-Path $PSScriptRoot "start_salad_flux_prewarm.ps1"
 $FluxRestore = Join-Path $PSScriptRoot "restore_salad_flux_scale_to_zero.ps1"
@@ -93,52 +92,19 @@ $PrewarmArguments = @{
     HoldReadyReplica = $true
 }
 $FluxPrewarmArguments = @{ TimeoutMinutes = $PrewarmTimeoutMinutes }
-$FluxArmArguments = @{
-    Service = "flux2_klein"
-}
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
     $FluxPrewarmArguments["NonInteractive"] = $true
-    $FluxArmArguments["NonInteractive"] = $true
 }
 
 $IdeogramTouched = $false
 # Fresh Ideogram work can discover a safety rejection not yet represented in R2.
 # Arm FLUX at scale-to-zero for that case, but do not allocate its GPU preemptively.
+$OnDemandFluxPrewarm = $IdeogramNeeded -and -not $FluxNeeded
 $FluxCleanupRequired = $IdeogramNeeded -or $FluxNeeded
 $PrimaryFailure = $null
 $CleanupFailures = @()
 try {
-    if ($IdeogramNeeded -and -not $FluxNeeded) {
-        Write-Host (
-            "=== FLUX fallback: arm scale-to-zero group without allocating a GPU ==="
-        ) -ForegroundColor Cyan
-        $FluxArmSucceeded = $false
-        for ($Attempt = 1; $Attempt -le 3; $Attempt += 1) {
-            try {
-                & $ScaleToZeroStarter @FluxArmArguments
-                if (-not $?) {
-                    throw "FLUX.2 Klein scale-to-zero group start failed."
-                }
-                $FluxArmSucceeded = $true
-                break
-            }
-            catch {
-                if ($Attempt -ge 3) {
-                    throw
-                }
-                Write-Warning (
-                    "FLUX arm attempt $Attempt failed while Salad may still be applying the remote start: " +
-                    "$($_.Exception.Message) Retrying idempotently."
-                )
-                Start-Sleep -Seconds 15
-            }
-        }
-        if (-not $FluxArmSucceeded) {
-            throw "FLUX.2 Klein scale-to-zero group could not be armed for dynamic fallback."
-        }
-    }
-
     if ($IdeogramNeeded) {
         $IdeogramTouched = $true
         Write-Host (
@@ -167,15 +133,23 @@ try {
 
     Write-Host "=== Phase 6 generation: replay plus required Ideogram/FLUX work ===" `
         -ForegroundColor Cyan
-    & python $Phase6Runner `
-        --frames $Frames `
-        --shots $Shots `
-        --output-dir $OutputDir `
-        --output $Output `
-        --poll-seconds $PollSeconds `
-        --pending-timeout-seconds $PendingTimeoutSeconds `
-        --fallback-pending-timeout-seconds $FluxPendingTimeoutSeconds `
-        --timeout-seconds $RunningTimeoutSeconds
+    $Phase6Arguments = @(
+        "--frames", $Frames,
+        "--shots", $Shots,
+        "--output-dir", $OutputDir,
+        "--output", $Output,
+        "--poll-seconds", $PollSeconds,
+        "--pending-timeout-seconds", $PendingTimeoutSeconds,
+        "--fallback-pending-timeout-seconds", $FluxPendingTimeoutSeconds,
+        "--timeout-seconds", $RunningTimeoutSeconds
+    )
+    if ($OnDemandFluxPrewarm) {
+        $Phase6Arguments += @(
+            "--prewarm-fallback-on-demand",
+            "--fallback-prewarm-timeout-minutes", $PrewarmTimeoutMinutes
+        )
+    }
+    & python $Phase6Runner @Phase6Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "Phase 6 keyframe generation failed with exit code $LASTEXITCODE."
     }
