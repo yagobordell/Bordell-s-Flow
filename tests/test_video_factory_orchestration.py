@@ -21,6 +21,16 @@ def test_one_command_runner_preflights_before_production_and_always_cleans_up() 
     assert "Manual intervention: 0" in text
 
 
+
+def test_one_command_runner_avoids_powershell_automatic_input_collision() -> None:
+    text = _read("scripts/run_video_factory.ps1")
+
+    assert '[Alias("Input")]' in text
+    assert "[string]$ScriptFile" in text
+    assert "$ResolvedInput = Resolve-InputPath -Path $ScriptFile" in text
+    assert "[string]$Input" not in text
+
+
 def test_phase5_checks_breeze_cache_before_primary_prewarm() -> None:
     text = _read("scripts/run_phase5_audio_controlled.ps1")
 
