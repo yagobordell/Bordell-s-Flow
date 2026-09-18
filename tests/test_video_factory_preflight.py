@@ -216,7 +216,9 @@ def test_salad_queue_preflight_falls_back_to_jobs_when_summary_is_unavailable(
     monkeypatch.setattr(preflight.settings, "salad_api_key", "test-key")
 
     def fail_summary(**_):
-        raise preflight.TransientSaladPreflightError("Salad queue summary preflight failed: timed out")
+        raise preflight.TransientSaladPreflightError(
+            "Salad queue summary preflight failed: timed out"
+        )
 
     monkeypatch.setattr(preflight, "_queue_summary", fail_summary)
     monkeypatch.setattr(preflight, "_queue_jobs", lambda **_: [])
