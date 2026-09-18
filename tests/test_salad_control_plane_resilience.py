@@ -2,6 +2,7 @@ from pathlib import Path
 
 FLUX_PREWARM = Path("scripts/start_salad_flux_prewarm.ps1")
 FLUX_RESTORE = Path("scripts/restore_salad_flux_scale_to_zero.ps1")
+GENERIC_RESTORE = Path("scripts/restore_salad_scale_to_zero.ps1")
 WORKER_MANAGER = Path("scripts/manage_salad_worker.ps1")
 ZERO_REPLICA_GUARD = Path("scripts/ensure_salad_zero_replicas.ps1")
 QUEUE_CLEANUP = Path("scripts/cleanup_salad_queue.ps1")
@@ -12,6 +13,7 @@ def test_critical_salad_control_plane_paths_retry_transient_failures() -> None:
     for path in (
         FLUX_PREWARM,
         FLUX_RESTORE,
+        GENERIC_RESTORE,
         WORKER_MANAGER,
         ZERO_REPLICA_GUARD,
         QUEUE_CLEANUP,
@@ -54,3 +56,11 @@ def test_queue_cleanup_retries_control_plane_and_cancels_active_jobs() -> None:
     assert 'Operation "read queue summary"' in text
     assert 'Operation "inspect queue jobs page $Page"' in text
     assert 'Operation "cancel active queue job $([string]$Job.id)"' in text
+
+
+def test_generic_scale_to_zero_restore_retries_transient_control_plane_failures() -> None:
+    text = GENERIC_RESTORE.read_text(encoding="utf-8")
+
+    assert 'Operation "read container group"' in text
+    assert 'Operation "restore manifest autoscaler"' in text
+    assert "Test-TransientSaladFailure" in text
