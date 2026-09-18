@@ -333,9 +333,7 @@ def _check_salad_queues(document: dict[str, Any], output_dir: Path) -> dict[str,
         reported_length = int(summary["current_queue_length"])
 
         active_ids: set[str] = set()
-        enumerated_jobs = False
         if reported_length > 0:
-            enumerated_jobs = True
             jobs = _queue_jobs(
                 base_url=base_url,
                 queue_name=queue_name,
@@ -361,8 +359,6 @@ def _check_salad_queues(document: dict[str, Any], output_dir: Path) -> dict[str,
                 f"resume manifest: {rendered}"
             )
         result[service_name] = {
-            "reported_queue_length": reported_length,
-            "enumerated_jobs": enumerated_jobs,
             "active_jobs": len(active_ids),
             "recognized_resume_jobs": len(active_ids.intersection(allowed)),
         }
