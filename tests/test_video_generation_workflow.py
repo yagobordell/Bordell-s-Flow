@@ -11,7 +11,11 @@ import ai_video_factory.workflows.video_generation as video_generation
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
 from ai_video_factory.gpu.contracts import GPUJobRequest, GPUJobResponse, OutputArtifact
 from ai_video_factory.gpu.ports import StoredObject
-from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
+from ai_video_factory.providers.job_queue import (
+    QueueJobNotFoundError,
+    QueueJobSnapshot,
+    QueueJobStatus,
+)
 from ai_video_factory.workflows.video_generation import (
     VideoGenerationIncompleteError,
     VideoGenerationJobState,
@@ -231,6 +235,60 @@ def test_fanout_submits_all_jobs_before_polling_and_resume_skips_successes(
     )
     assert sum(queue.submit_counts.values()) == 2
     assert queue.operations == []
+
+
+def test_resume_resubmits_purged_transport_with_same_application_id(
+    tmp_path: Path,
+) -> None:
+    base, keyframes, prompts, timings = _inputs(tmp_path)
+    plan = build_video_generation_plan(
+        keyframes,
+        prompts,
+        timings,
+        keyframe_base_dir=base,
+    )
+    storage = FakeStorage()
+    queue = FakeQueue(storage)
+    manifest_path = tmp_path / "manifest.json"
+    clips_dir = tmp_path / "clips"
+
+    manifest, _ = run_video_generation(
+        plan,
+        queue=queue,
+        storage=storage,
+        manifest_path=manifest_path,
+        clips_dir=clips_dir,
+        wait=False,
+    )
+    purged_transport = manifest.jobs[0].transport_job_id
+    retained_transport = manifest.jobs[1].transport_job_id
+    assert purged_transport is not None
+    assert retained_transport is not None
+
+    original_get = queue.get
+
+    def get_with_purged_transport(transport_job_id: str) -> QueueJobSnapshot:
+        if transport_job_id == purged_transport:
+            raise QueueJobNotFoundError("transport was purged")
+        return original_get(transport_job_id)
+
+    queue.get = get_with_purged_transport  # type: ignore[method-assign]
+
+    resumed, _ = run_video_generation(
+        plan,
+        queue=queue,
+        storage=storage,
+        manifest_path=manifest_path,
+        clips_dir=clips_dir,
+        wait=False,
+    )
+
+    assert resumed.jobs[0].submission_count == 2
+    assert resumed.jobs[0].application_job_id == plan[0].request.job_id
+    assert resumed.jobs[0].transport_job_id != purged_transport
+    assert resumed.jobs[0].transport_status == "pending"
+    assert resumed.jobs[1].submission_count == 1
+    assert resumed.jobs[1].transport_job_id == retained_transport
 
 
 def test_resume_resubmits_only_terminal_failure_with_same_application_id(

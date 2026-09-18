@@ -10,6 +10,7 @@ from ai_video_factory.inference.contracts import InferenceJobRequest
 
 from .job_queue import (
     JobQueueClient,
+    QueueJobNotFoundError,
     QueueJobSnapshot,
     QueueJobStatus,
     TransientQueueError,
@@ -87,6 +88,8 @@ class SaladJobQueueClient(JobQueueClient):
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             message = f"Salad API returned HTTP {exc.code}: {detail}"
+            if method == "GET" and exc.code == 404:
+                raise QueueJobNotFoundError(message) from exc
             if method == "GET" and (exc.code == 429 or 500 <= exc.code < 600):
                 raise TransientQueueError(message) from exc
             raise RuntimeError(message) from exc

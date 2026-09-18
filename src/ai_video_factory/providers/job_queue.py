@@ -20,6 +20,10 @@ class TransientQueueError(RuntimeError):
     """Queue transport/API failure that is safe to retry while polling an existing job."""
 
 
+class QueueJobNotFoundError(RuntimeError):
+    """A previously persisted transport job no longer exists in the queue provider."""
+
+
 @dataclass(frozen=True, slots=True)
 class QueueJobSnapshot:
     id: str
