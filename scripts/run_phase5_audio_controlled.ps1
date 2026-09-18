@@ -171,6 +171,29 @@ Write-Host (
     "=== Fish fallback eligible: reason=$FallbackReason; Breeze is stopped at replicas=0 ==="
 ) -ForegroundColor Yellow
 
+$FishArguments = @(
+    $SourceFile,
+    "--provider", "fish",
+    "--output-dir", $OutputDir,
+    "--metadata", $Metadata,
+    "--provenance", $Provenance,
+    "--fallback-state", $FallbackState,
+    "--fallback-reason", $FallbackReason,
+    "--poll-seconds", $PollSeconds,
+    "--pending-timeout-seconds", $PendingTimeoutSeconds,
+    "--timeout-seconds", $RunningTimeoutSeconds
+)
+if ($AllowUnconditionedFish) {
+    $FishArguments += "--allow-unconditioned-fish"
+}
+
+Write-Host "=== Fish fallback configuration preflight: before GPU allocation ===" -ForegroundColor Cyan
+$FishPreflightArguments = $FishArguments + "--preflight-only"
+& python $Runner @FishPreflightArguments
+if ($LASTEXITCODE -ne 0) {
+    throw "Fish fallback configuration preflight failed; refusing Fish GPU allocation."
+}
+
 & $ValidationManager -Action Status -Service fish_speech -NonInteractive
 if (-not $?) {
     throw "Fish Salad control-plane status preflight failed."
@@ -179,22 +202,6 @@ if (-not $?) {
 try {
     Write-Host "=== Fish prewarm: exactly one ready fallback replica ===" -ForegroundColor Cyan
     Invoke-Prewarm -Service fish_speech
-
-    $FishArguments = @(
-        $SourceFile,
-        "--provider", "fish",
-        "--output-dir", $OutputDir,
-        "--metadata", $Metadata,
-        "--provenance", $Provenance,
-        "--fallback-state", $FallbackState,
-        "--fallback-reason", $FallbackReason,
-        "--poll-seconds", $PollSeconds,
-        "--pending-timeout-seconds", $PendingTimeoutSeconds,
-        "--timeout-seconds", $RunningTimeoutSeconds
-    )
-    if ($AllowUnconditionedFish) {
-        $FishArguments += "--allow-unconditioned-fish"
-    }
 
     Write-Host "=== Phase 5 fallback narration: Fish Speech ===" -ForegroundColor Cyan
     & python $Runner @FishArguments
