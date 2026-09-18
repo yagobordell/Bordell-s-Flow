@@ -168,6 +168,29 @@ function Get-Queue {
     return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
 }
 
+function Get-RemoteQueueAutoscaler {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $Property = $Group.PSObject.Properties["queue_autoscaler"]
+    if ($null -eq $Property -or $null -eq $Property.Value) {
+        return $null
+    }
+    return $Property.Value
+}
+
+function Test-RemoteAutoscalerMinReplicas {
+    param(
+        [Parameter(Mandatory)][object]$Group,
+        [Parameter(Mandatory)][int]$ExpectedMinReplicas
+    )
+
+    $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $Autoscaler) {
+        return $false
+    }
+    return [int]$Autoscaler.min_replicas -eq $ExpectedMinReplicas
+}
+
 function Get-QueueJobSnapshot {
     param([Parameter(Mandatory)][datetime]$Deadline)
 
@@ -333,11 +356,30 @@ if ($Status -ne "stopped" -or [bool]$Group.pending_change -or [int]$Group.replic
 if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
     throw "Container group '$GroupName' is configured for an unexpected queue."
 }
-if ([int]$Group.queue_autoscaler.min_replicas -ne 0) {
-    throw "Optimized prewarm refuses a remote autoscaler with min_replicas != 0."
+$RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
+$AutoscalerObservable = $null -ne $RemoteAutoscaler
+if ($AutoscalerObservable) {
+    if ([int]$RemoteAutoscaler.min_replicas -ne 0) {
+        throw "Optimized prewarm refuses a remote autoscaler with min_replicas != 0."
+    }
+    if (
+        $Service -in @("ideogram4", "fish_speech") -and
+        [int]$RemoteAutoscaler.max_replicas -ne 1
+    ) {
+        throw "$Service optimized prewarm refuses a remote autoscaler with max_replicas != 1."
+    }
 }
-if ($Service -in @("ideogram4", "fish_speech") -and [int]$Group.queue_autoscaler.max_replicas -ne 1) {
-    throw "$Service optimized prewarm refuses a remote autoscaler with max_replicas != 1."
+elseif ($HoldReadyReplica) {
+    throw (
+        "Optimized prewarm cannot use -HoldReadyReplica because Salad did not expose " +
+        "queue_autoscaler on container group '$GroupName'."
+    )
+}
+else {
+    Write-Host (
+        "Salad did not expose queue_autoscaler for '$GroupName'; " +
+        "continuing prewarm using explicit replicas=1 and the one-instance guard."
+    ) -ForegroundColor Yellow
 }
 
 $TargetMinReplicas = if ($HoldReadyReplica) { 1 } else { 0 }
@@ -390,19 +432,27 @@ $PatchDeadline = (Get-Date).AddMinutes(2)
 do {
     Start-Sleep -Seconds 5
     $Group = Get-Group
+    $AutoscalerStateReady = (
+        -not $AutoscalerObservable -or
+        (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas $TargetMinReplicas)
+    )
     if (
         -not [bool]$Group.pending_change -and
         [int]$Group.replicas -eq 1 -and
-        [int]$Group.queue_autoscaler.min_replicas -eq $TargetMinReplicas
+        $AutoscalerStateReady
     ) {
         break
     }
 }
 while ((Get-Date) -lt $PatchDeadline)
+$AutoscalerStateReady = (
+    -not $AutoscalerObservable -or
+    (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas $TargetMinReplicas)
+)
 if (
     [bool]$Group.pending_change -or
     [int]$Group.replicas -ne 1 -or
-    [int]$Group.queue_autoscaler.min_replicas -ne $TargetMinReplicas
+    -not $AutoscalerStateReady
 ) {
     throw "Salad did not persist the one-replica prewarm state safely."
 }
@@ -564,10 +614,14 @@ while ((Get-Date) -lt $Deadline) {
         $ReadySeconds = ((Get-Date) - $PrewarmStartedAt).TotalSeconds
     }
 
+    $AutoscalerStateReady = (
+        -not $AutoscalerObservable -or
+        (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas $TargetMinReplicas)
+    )
     if (
         -not [bool]$Group.pending_change -and
         [int]$Group.replicas -eq 1 -and
-        [int]$Group.queue_autoscaler.min_replicas -eq $TargetMinReplicas -and
+        $AutoscalerStateReady -and
         $ObservedInstance -and
         $ContainerStarted -and
         $Ready
