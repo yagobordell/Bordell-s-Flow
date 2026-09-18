@@ -241,11 +241,34 @@ def main() -> None:
 
     metrics_path = args.metrics or args.output_dir / "production_metrics.json"
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    elapsed_by_stage = {
+        metric.stage_name: metric.elapsed_seconds
+        for metric in summary.metrics
+    }
+    critical_path_by_stage: dict[str, float] = {}
+    for stage in stages:
+        if stage.name not in elapsed_by_stage:
+            continue
+        dependency_path = max(
+            (critical_path_by_stage.get(name, 0.0) for name in stage.dependencies),
+            default=0.0,
+        )
+        critical_path_by_stage[stage.name] = (
+            dependency_path + elapsed_by_stage[stage.name]
+        )
+    serial_stage_seconds = sum(elapsed_by_stage.values())
+    critical_path_seconds = max(critical_path_by_stage.values(), default=0.0)
     metrics_path.write_text(
         json.dumps(
             {
                 "schema_version": "1",
                 "total_elapsed_seconds": summary.total_elapsed_seconds,
+                "serial_stage_seconds": serial_stage_seconds,
+                "critical_path_seconds": critical_path_seconds,
+                "dag_overlap_saved_seconds": max(
+                    0.0,
+                    serial_stage_seconds - summary.total_elapsed_seconds,
+                ),
                 "max_parallel_stages": max_workers,
                 "max_parallel_gpu_stages": max_gpu_stages,
                 "stages": [
