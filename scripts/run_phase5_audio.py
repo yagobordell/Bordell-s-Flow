@@ -1,6 +1,8 @@
 import argparse
 import asyncio
+import hashlib
 import json
+import tempfile
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -195,6 +197,33 @@ def _build_reference(args: argparse.Namespace) -> FishSpeechReference | None:
     )
 
 
+def _validate_reference_object(storage: Any, reference: FishSpeechReference | None) -> None:
+    if reference is None:
+        return
+
+    settings.temp_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=settings.temp_dir) as directory:
+        destination = Path(directory) / "fish-reference.wav"
+        try:
+            stored = storage.download(reference.audio_key, destination)
+        except FileNotFoundError as exc:
+            raise SystemExit(
+                f"Fish reference R2 object does not exist: {reference.audio_key}"
+            ) from exc
+
+        digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+        if digest != reference.audio_sha256.lower():
+            raise SystemExit(
+                "Fish reference R2 SHA-256 mismatch: "
+                f"expected={reference.audio_sha256.lower()} actual={digest}"
+            )
+        if stored.content_type not in {"audio/wav", "audio/x-wav"}:
+            raise SystemExit(
+                "Fish reference R2 object must have WAV content type; "
+                f"got {stored.content_type!r}"
+            )
+
+
 def _executor(
     *,
     queue_name: str,
@@ -244,6 +273,7 @@ async def main() -> None:
         voice = args.primary_voice
     else:
         reference = _build_reference(args)
+        _validate_reference_object(storage, reference)
         executor = _executor(queue_name=args.fallback_queue_name, storage=storage, args=args)
         provider = SaladFishSpeechProvider(
             executor=executor,
