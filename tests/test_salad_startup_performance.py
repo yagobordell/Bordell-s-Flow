@@ -207,6 +207,16 @@ def test_phase8_resume_starts_scale_to_zero_group_for_existing_jobs() -> None:
     assert "start_salad_optimized_prewarm.ps1" in text
 
 
+def test_phase8_controlled_runner_pins_canonical_salad_route() -> None:
+    text = Path("scripts/run_phase8_videos_controlled.ps1").read_text(encoding="utf-8")
+
+    assert "deploy\\salad\\services.json" in text
+    assert "$env:SALAD_ORGANIZATION = [string]$Services.stack.organization" in text
+    assert "$env:SALAD_PROJECT = [string]$Services.stack.project" in text
+    assert "$env:SALAD_LTX25_QUEUE_NAME = [string]$LtxService.queue_name" in text
+    assert "Phase 8 canonical Salad route" in text
+
+
 def test_phase8_resume_detection_happens_before_gpu_allocation() -> None:
     text = Path("scripts/run_phase8_videos_controlled.ps1").read_text(encoding="utf-8")
 
