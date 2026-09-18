@@ -89,6 +89,7 @@ Useful commands:
 pwsh scripts/prepare_salad_worker_manifest.ps1 -Service flux2_klein -NonInteractive
 pwsh scripts/start_salad_flux2_klein_prewarm.ps1 -NonInteractive
 python scripts/run_salad_smoke_suite.py --service flux2_klein
+python scripts/run_flux2_fallback_smoke.py
 pwsh scripts/restore_salad_flux2_klein_scale_to_zero.ps1 -NonInteractive
 pwsh scripts/cleanup_salad_queue.ps1 -Service flux2_klein -NonInteractive
 ```
