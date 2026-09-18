@@ -84,7 +84,7 @@ try {
         -ForegroundColor Cyan
     & $FluxPrewarm @FluxPrewarmArguments
     if (-not $?) {
-        throw "FLUX Schnell deterministic prewarm failed."
+        throw "FLUX.2 Klein deterministic prewarm failed."
     }
 
     Write-Host "=== Phase 6 generation: Ideogram primary with FLUX safety fallback ===" `
@@ -138,14 +138,14 @@ finally {
             $CleanupFailures += $_
         }
         try {
-            & $QueueCleanup -Service flux_schnell -TimeoutSeconds 180 -NonInteractive
+            & $QueueCleanup -Service flux2_klein -TimeoutSeconds 180 -NonInteractive
         }
         catch {
             Write-Warning "FLUX queue cleanup failed: $($_.Exception.Message)"
             $CleanupFailures += $_
         }
         try {
-            & $WorkerManager -Action Status -Service flux_schnell -NonInteractive
+            & $WorkerManager -Action Status -Service flux2_klein -NonInteractive
         }
         catch {
             Write-Warning "FLUX status verification failed: $($_.Exception.Message)"

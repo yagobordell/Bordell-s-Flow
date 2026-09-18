@@ -17,9 +17,9 @@ from ai_video_factory.providers.salad_ideogram import (
     parse_ideogram_size,
     reference_caption_variants,
 )
-from ai_video_factory.workers.flux_schnell import (
-    FLUX_SCHNELL_MODEL_ID,
-    FLUX_SCHNELL_REFERENCE_TASK,
+from ai_video_factory.workers.flux2_klein import (
+    FLUX2_KLEIN_MODEL_ID,
+    FLUX2_KLEIN_REFERENCE_TASK,
 )
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_REFERENCE_TASK
 
@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
         default=settings.output_dir / "phase4" / "visual_references.json",
     )
     parser.add_argument("--model", default=settings.ideogram4_model)
-    parser.add_argument("--fallback-model", default=settings.flux_schnell_model)
+    parser.add_argument("--fallback-model", default=settings.flux2_klein_model)
     parser.add_argument("--size", default=DEFAULT_SIZE)
     parser.add_argument("--verify-content-sha256", action="store_true")
     parser.add_argument("--json-output", type=Path)
@@ -124,7 +124,7 @@ def audit_reference_cache(
     *,
     storage: R2ObjectStorage,
     model_id: str,
-    fallback_model_id: str = FLUX_SCHNELL_MODEL_ID,
+    fallback_model_id: str = FLUX2_KLEIN_MODEL_ID,
     size: str,
     verify_content_sha256: bool = False,
 ) -> list[dict[str, Any]]:
@@ -222,16 +222,16 @@ def audit_reference_cache(
             continue
 
         fallback_request = build_flux_job_request(
-            task_name=FLUX_SCHNELL_REFERENCE_TASK,
+            task_name=FLUX2_KLEIN_REFERENCE_TASK,
             prompt=reference.prompt,
             model_id=fallback_model_id,
             width=width,
             height=height,
         )
         record.update(
-            provider="flux1_schnell",
+            provider="flux2_klein",
             status="safety_blocked",
-            matched_variant="flux_schnell",
+            matched_variant="flux2_klein",
             fallback_job_id=fallback_request.job_id,
             fallback_object_key=fallback_request.output.key,
             job_id=fallback_request.job_id,

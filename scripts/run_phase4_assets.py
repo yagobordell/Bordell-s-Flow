@@ -10,12 +10,12 @@ from ai_video_factory.config import settings
 from ai_video_factory.domain import VisualReference
 from ai_video_factory.providers import (
     SafetyFallbackImageProvider,
-    SaladFluxSchnellImageProvider,
+    SaladFlux2KleinImageProvider,
     SaladIdeogramImageProvider,
 )
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
-from ai_video_factory.workers.flux_schnell import FLUX_SCHNELL_REFERENCE_TASK
+from ai_video_factory.workers.flux2_klein import FLUX2_KLEIN_REFERENCE_TASK
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_REFERENCE_TASK
 from ai_video_factory.workflows.reference_assets import generate_reference_assets
 
@@ -28,7 +28,7 @@ DEFAULT_FLUX_PENDING_TIMEOUT_SECONDS = 1800.0
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate canonical Phase 4 references with Ideogram 4 and FLUX.1-schnell "
+            "Generate canonical Phase 4 references with Ideogram 4 and FLUX.2 Klein 4B "
             "as a safety-only fallback."
         )
     )
@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
         default=settings.output_dir / "phase4" / "visual_references.json",
     )
     parser.add_argument("--model", default=settings.ideogram4_model)
-    parser.add_argument("--fallback-model", default=settings.flux_schnell_model)
+    parser.add_argument("--fallback-model", default=settings.flux2_klein_model)
     parser.add_argument("--size", default=DEFAULT_SIZE)
     parser.add_argument(
         "--quality",
@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--fallback-queue-name",
-        default=settings.salad_flux_schnell_queue_name,
+        default=settings.salad_flux2_klein_queue_name,
     )
     parser.add_argument(
         "--poll-seconds",
@@ -139,10 +139,10 @@ async def main() -> None:
         temp_dir=settings.temp_dir / "ideogram4-reference-client",
         task_name=IDEOGRAM4_REFERENCE_TASK,
     )
-    fallback = SaladFluxSchnellImageProvider(
+    fallback = SaladFlux2KleinImageProvider(
         executor=flux_executor,
-        temp_dir=settings.temp_dir / "flux-schnell-reference-client",
-        task_name=FLUX_SCHNELL_REFERENCE_TASK,
+        temp_dir=settings.temp_dir / "flux2-klein-reference-client",
+        task_name=FLUX2_KLEIN_REFERENCE_TASK,
     )
     provider = SafetyFallbackImageProvider(primary=primary, fallback=fallback)
 

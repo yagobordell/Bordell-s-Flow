@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from ai_video_factory.workers.flux_schnell import FLUX_SCHNELL_MODEL_ID
+from ai_video_factory.workers.flux2_klein import FLUX2_KLEIN_MODEL_ID
 
 from .ideogram_rejections import is_terminal_safety_rejection_detail
 from .images import GeneratedImage, ImageFormat, ImageProvider, ImageQuality
@@ -17,7 +17,7 @@ class SafetyFallbackImageProvider:
         *,
         primary: ImageProvider,
         fallback: ImageProvider,
-        fallback_model: str = FLUX_SCHNELL_MODEL_ID,
+        fallback_model: str = FLUX2_KLEIN_MODEL_ID,
     ) -> None:
         self._primary = primary
         self._fallback = fallback

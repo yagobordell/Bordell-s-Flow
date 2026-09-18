@@ -73,7 +73,7 @@ if ($InvalidCount -gt 0) {
 }
 
 Write-Host (
-    "Phase 4 GPU plan: ideogram={0} flux_schnell={1} cached={2}" -f `
+    "Phase 4 GPU plan: ideogram={0} flux2_klein={1} cached={2}" -f `
     $IdeogramNeeded,
     $FluxNeeded,
     @($Plan | Where-Object { $_.status -eq "hit" }).Count
@@ -87,7 +87,7 @@ $PrewarmArguments = @{
 $FluxPrewarmArguments = @{ TimeoutMinutes = $PrewarmTimeoutMinutes }
 $FluxArmArguments = @{
     Action = "Start"
-    Service = "flux_schnell"
+    Service = "flux2_klein"
 }
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
@@ -104,14 +104,14 @@ $CleanupFailures = @()
 try {
     if ($IdeogramNeeded -and -not $FluxNeeded) {
         Write-Host (
-            "=== FLUX Schnell fallback: arm scale-to-zero group for dynamic safety fallback ==="
+            "=== FLUX.2 Klein fallback: arm scale-to-zero group for dynamic safety fallback ==="
         ) -ForegroundColor Cyan
         $FluxArmSucceeded = $false
         for ($Attempt = 1; $Attempt -le 3; $Attempt += 1) {
             try {
                 & $WorkerManager @FluxArmArguments
                 if (-not $?) {
-                    throw "FLUX Schnell scale-to-zero group start failed."
+                    throw "FLUX.2 Klein scale-to-zero group start failed."
                 }
                 $FluxArmSucceeded = $true
                 break
@@ -128,7 +128,7 @@ try {
             }
         }
         if (-not $FluxArmSucceeded) {
-            throw "FLUX Schnell scale-to-zero group could not be armed for dynamic fallback."
+            throw "FLUX.2 Klein scale-to-zero group could not be armed for dynamic fallback."
         }
     }
 
@@ -145,11 +145,11 @@ try {
 
     if ($FluxNeeded) {
         Write-Host (
-            "=== FLUX Schnell fallback: prewarm one ready replica before queue submission ==="
+            "=== FLUX.2 Klein fallback: prewarm one ready replica before queue submission ==="
         ) -ForegroundColor Cyan
         & $FluxPrewarm @FluxPrewarmArguments
         if (-not $?) {
-            throw "FLUX Schnell deterministic prewarm failed."
+            throw "FLUX.2 Klein deterministic prewarm failed."
         }
     }
 
@@ -206,14 +206,14 @@ finally {
             $CleanupFailures += $_
         }
         try {
-            & $QueueCleanup -Service flux_schnell -TimeoutSeconds 180 -NonInteractive
+            & $QueueCleanup -Service flux2_klein -TimeoutSeconds 180 -NonInteractive
         }
         catch {
             Write-Warning "FLUX queue cleanup failed: $($_.Exception.Message)"
             $CleanupFailures += $_
         }
         try {
-            & $WorkerManager -Action Status -Service flux_schnell -NonInteractive
+            & $WorkerManager -Action Status -Service flux2_klein -NonInteractive
         }
         catch {
             Write-Warning "FLUX status verification failed: $($_.Exception.Message)"

@@ -13,7 +13,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $ManifestPath = Join-Path $RepoRoot "deploy\salad\services.json"
-$Service = "flux_schnell"
+$Service = "flux2_klein"
 
 function Import-EnvFile {
     param([Parameter(Mandatory)][string]$Path)

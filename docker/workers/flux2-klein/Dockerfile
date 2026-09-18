@@ -24,12 +24,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HUB_OFFLINE=1 \
     HF_HUB_DOWNLOAD_TIMEOUT=120 \
     HF_HUB_ETAG_TIMEOUT=30 \
+    HF_XET_HIGH_PERFORMANCE=1 \
     INFERENCE_WORKER_MODE=production \
     INFERENCE_WORKER_TEMP_DIR=/tmp/ai-video-factory \
-    FLUX_MODEL_ROOT=/workspace/models/flux-schnell \
-    FLUX_MODEL_REPOSITORY=black-forest-labs/FLUX.1-schnell \
-    FLUX_MODEL_REVISION=main \
-    FLUX_DEVICE=cuda \
+    FLUX2_KLEIN_MODEL_ROOT=/workspace/models/flux2-klein-4b \
+    FLUX2_KLEIN_MODEL_REPOSITORY=black-forest-labs/FLUX.2-klein-4B \
+    FLUX2_KLEIN_MODEL_REVISION=e7b7dc27f91deacad38e78976d1f2b499d76a294 \
+    FLUX2_KLEIN_DEVICE=cuda \
     SALAD_QUEUE_ENABLED=false
 
 RUN apt-get update \
@@ -44,18 +45,17 @@ RUN python3 -m pip install \
         --break-system-packages \
         --no-cache-dir \
         '/opt/factory[gpu]' \
-        'diffusers>=0.35,<0.38' \
-        'transformers>=4.55,<5' \
-        'accelerate>=1.10,<2' \
-        'bitsandbytes>=0.47,<0.49' \
+        'diffusers==0.40.0' \
+        'transformers==5.16.1' \
+        'accelerate>=1.11,<2' \
         'sentencepiece>=0.2,<0.3' \
         'protobuf>=5,<7' \
-        'huggingface-hub[cli]' \
+        'huggingface-hub==1.32.0' \
         'hf-xet==1.6.0'
 
 COPY --from=salad-worker /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/
-COPY docker/workers/flux-schnell/download_models.sh /usr/local/bin/download-models
-COPY docker/workers/flux-schnell/entrypoint.sh /usr/local/bin/worker-entrypoint
+COPY docker/workers/flux2-klein/download_models.sh /usr/local/bin/download-models
+COPY docker/workers/flux2-klein/entrypoint.sh /usr/local/bin/worker-entrypoint
 
 RUN chmod 0755 \
         /usr/local/bin/salad-http-job-queue-worker \
@@ -63,7 +63,7 @@ RUN chmod 0755 \
         /usr/local/bin/worker-entrypoint \
     && useradd --create-home --uid 10001 worker \
     && mkdir --parents \
-        /workspace/models/flux-schnell \
+        /workspace/models/flux2-klein-4b \
         /workspace/.cache/huggingface \
         /tmp/ai-video-factory \
         /opt/factory/data/inference-local \
@@ -73,14 +73,14 @@ RUN chmod 0755 \
         /opt/factory/data
 
 RUN python3 -c \
-    "import bitsandbytes, diffusers, google.protobuf, sentencepiece, torch, transformers; \
+    "import diffusers, huggingface_hub, torch, transformers; \
+     from diffusers import Flux2KleinPipeline; \
      print('torch=', torch.__version__); \
      print('cuda=', torch.version.cuda); \
      print('diffusers=', diffusers.__version__); \
      print('transformers=', transformers.__version__); \
-     print('sentencepiece=', sentencepiece.__version__); \
-     print('protobuf=', google.protobuf.__version__); \
-     print('bitsandbytes=', bitsandbytes.__version__)"
+     print('huggingface_hub=', huggingface_hub.__version__); \
+     print('pipeline=', Flux2KleinPipeline.__name__)"
 
 USER worker
 EXPOSE 8080
