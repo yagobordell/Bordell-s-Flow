@@ -91,3 +91,15 @@ def test_fish_preflights_verify_reference_object_before_gpu() -> None:
     assert "_validate_reference_object(storage, reference)" in phase5
     assert "SHA-256 mismatch" in smoke
     assert "SHA-256 mismatch" in phase5
+
+
+
+def test_phase5_breeze_prewarm_does_not_fallback_on_arbitrary_errors() -> None:
+    content = (ROOT / "scripts/run_phase5_audio_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "Test-BreezePrewarmFallbackEligible" in content
+    assert 'if (-not (Test-BreezePrewarmFallbackEligible -Message $PrewarmError))' in content
+    assert "throw" in content
+    assert "entered failed state during prewarm" in content
+    assert "remained running but not ready during the final" in content
