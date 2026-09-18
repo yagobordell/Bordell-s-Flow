@@ -87,7 +87,7 @@ class OptimizedGpuStageExecutor:
                 "-NonInteractive",
             ]
         if stage_name == "phase6-keyframes":
-            return [
+            arguments = [
                 "scripts/run_phase6_keyframes_controlled.ps1",
                 "-Frames",
                 str(output / "phase6" / "storyboard_frames.json"),
@@ -99,6 +99,9 @@ class OptimizedGpuStageExecutor:
                 str(output / "phase6" / "storyboard_keyframes.json"),
                 "-NonInteractive",
             ]
+            if self._hold_shared_workers:
+                arguments.append("-ReleaseSharedIdeogram")
+            return arguments
         if stage_name == "phase8-videos":
             return [
                 "scripts/run_phase8_videos_controlled.ps1",
