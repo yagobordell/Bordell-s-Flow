@@ -1,5 +1,6 @@
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping, Protocol
+from typing import Any, Literal, Protocol
 
 type SpeechFormat = Literal["wav"]
 
