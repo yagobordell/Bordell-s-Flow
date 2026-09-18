@@ -80,7 +80,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fish-reference-profile",
         default=settings.fish_speech_reference_profile,
-        help="Authorized Fish reference identity/profile ID; never a natural-language voice prompt.",
+        help=(
+            "Authorized Fish reference identity/profile ID; "
+            "never a natural-language voice prompt."
+        ),
     )
     parser.add_argument(
         "--fish-reference-audio-key",
