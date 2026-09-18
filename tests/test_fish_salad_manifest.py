@@ -112,3 +112,14 @@ def test_zero_replica_guard_covers_every_stack_service() -> None:
 
     for service_name in manifest["stack"]["service_order"]:
         assert f'"{service_name}"' in guard, service_name
+
+
+
+def test_unified_salad_control_plane_covers_every_stack_service() -> None:
+    manifest = json.loads((ROOT / "deploy/salad/services.json").read_text(encoding="utf-8"))
+    validation = (ROOT / "scripts/manage_salad_validation.ps1").read_text(encoding="utf-8")
+    cleanup = (ROOT / "scripts/cleanup_salad_queue.ps1").read_text(encoding="utf-8")
+
+    for service_name in manifest["stack"]["service_order"]:
+        assert f'"{service_name}"' in validation, service_name
+        assert f'"{service_name}"' in cleanup, service_name
