@@ -207,3 +207,40 @@ def test_salad_queue_preflight_enumerates_stale_positive_summary(
 
     assert result["whisper"]["active_jobs"] == 0
     assert result["ltx25"]["active_jobs"] == 0
+
+
+def test_salad_queue_preflight_falls_back_to_jobs_when_summary_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(preflight.settings, "salad_api_key", "test-key")
+
+    def fail_summary(**_):
+        raise RuntimeError("Salad queue summary preflight failed: timed out")
+
+    monkeypatch.setattr(preflight, "_queue_summary", fail_summary)
+    monkeypatch.setattr(preflight, "_queue_jobs", lambda **_: [])
+
+    result = preflight._check_salad_queues(_services(), tmp_path)
+
+    assert result["whisper"]["active_jobs"] == 0
+    assert result["ltx25"]["active_jobs"] == 0
+
+
+def test_salad_queue_preflight_fails_when_summary_and_job_enumeration_are_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(preflight.settings, "salad_api_key", "test-key")
+
+    def fail_summary(**_):
+        raise RuntimeError("summary timed out")
+
+    def fail_jobs(**_):
+        raise RuntimeError("jobs timed out")
+
+    monkeypatch.setattr(preflight, "_queue_summary", fail_summary)
+    monkeypatch.setattr(preflight, "_queue_jobs", fail_jobs)
+
+    with pytest.raises(RuntimeError, match="jobs timed out"):
+        preflight._check_salad_queues(_services(), tmp_path)
