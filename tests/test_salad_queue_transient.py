@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import io
+import urllib.error
 import urllib.request
 from typing import Any
 
 import pytest
 
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectOutput
-from ai_video_factory.providers.job_queue import TransientQueueError
+from ai_video_factory.providers.job_queue import QueueJobNotFoundError, TransientQueueError
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 
 
@@ -29,6 +31,24 @@ def _request() -> InferenceJobRequest:
             content_type="image/png",
         ),
     )
+
+
+def test_queue_get_classifies_404_as_missing_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(*args: object, **kwargs: object) -> object:
+        raise urllib.error.HTTPError(
+            url="https://example.invalid/jobs/transport-404",
+            code=404,
+            msg="Not Found",
+            hdrs=None,
+            fp=io.BytesIO(b'{"title":"Not Found"}'),
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fail)
+
+    with pytest.raises(QueueJobNotFoundError, match="HTTP 404"):
+        _client().get("transport-404")
 
 
 def test_queue_get_classifies_read_timeout_as_transient(monkeypatch: pytest.MonkeyPatch) -> None:
