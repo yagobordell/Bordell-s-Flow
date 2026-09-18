@@ -251,6 +251,7 @@ def _salad_json_get_with_retry(
 
     raise RuntimeError(f"{operation}: retry loop exhausted")
 
+
 def _queue_summary(
     *,
     base_url: str,
@@ -276,6 +277,7 @@ def _queue_summary(
     if queue_length < 0:
         raise RuntimeError(f"Salad queue {queue_name} returned negative current_queue_length")
     return payload
+
 
 def _queue_jobs(
     *,
