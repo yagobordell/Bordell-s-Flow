@@ -16,6 +16,7 @@ from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
 from ai_video_factory.inference.storage import R2ObjectStorage, sha256_file
 from ai_video_factory.providers import (
     SaladBreezeSpeechProvider,
+    SaladFlux2KleinImageProvider,
     SaladIdeogramImageProvider,
     SaladWhisperTranscriptionProvider,
 )
@@ -28,6 +29,10 @@ from ai_video_factory.providers.ideogram_caption import (
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.breeze_tts2 import BREEZE_TTS2_MODEL_ID
+from ai_video_factory.workers.flux2_klein import (
+    FLUX2_KLEIN_MODEL_ID,
+    FLUX2_KLEIN_REFERENCE_TASK,
+)
 from ai_video_factory.workers.ideogram4 import (
     IDEOGRAM4_KEYFRAME_TASK,
     IDEOGRAM4_MODEL_ID,
@@ -36,6 +41,7 @@ from ai_video_factory.workers.ideogram4 import (
 from ai_video_factory.workers.whisper import WHISPER_MODEL_ID
 
 _SERVICE_ORDER = ("breeze_tts2", "whisper", "ideogram4", "ltx25")
+_REPORT_SERVICES = (*_SERVICE_ORDER, "flux2_klein")
 _DEFAULT_OUTPUT_DIR = Path("data/output/deployment-validation")
 
 
@@ -48,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--service",
-        choices=(*_SERVICE_ORDER, "all"),
+        choices=(*_SERVICE_ORDER, "flux2_klein", "all"),
         default="all",
         help="Worker to validate. 'all' executes the complete dependency chain.",
     )
@@ -138,7 +144,7 @@ def _write_report(output_dir: Path, service: str, payload: dict[str, Any]) -> Pa
 
 def _update_summary(output_dir: Path) -> None:
     entries: dict[str, Any] = {}
-    for service in _SERVICE_ORDER:
+    for service in _REPORT_SERVICES:
         path = output_dir / f"{service}-smoke.json"
         if path.is_file():
             entries[service] = json.loads(path.read_text(encoding="utf-8"))
@@ -323,6 +329,51 @@ async def _smoke_ideogram(args: argparse.Namespace) -> None:
     print(path)
 
 
+async def _smoke_flux2_klein(args: argparse.Namespace) -> None:
+    started = time.monotonic()
+    executor = _executor(
+        settings.salad_flux2_klein_queue_name,
+        timeout_seconds=args.timeout_seconds,
+        poll_seconds=args.poll_seconds,
+    )
+    provider = SaladFlux2KleinImageProvider(
+        executor=executor,
+        temp_dir=settings.temp_dir / "deployment-validation-flux2-klein",
+        task_name=FLUX2_KLEIN_REFERENCE_TASK,
+    )
+    prompt = (
+        "A cinematic documentary photograph of a compact robotic camera on a dark studio "
+        "table, soft directional light, realistic materials, centered composition."
+    )
+    image = await provider.generate_image(
+        prompt=prompt,
+        model=FLUX2_KLEIN_MODEL_ID,
+        size="1024x1024",
+        quality="high",
+        output_format="png",
+    )
+    destination = args.output_dir / "flux2-klein-smoke.png"
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(image.content)
+    if destination.stat().st_size <= 8 or not image.content.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+        raise RuntimeError("FLUX.2 Klein smoke returned an invalid PNG")
+    report = {
+        "status": "succeeded",
+        "service": "flux2_klein",
+        "model": FLUX2_KLEIN_MODEL_ID,
+        "wall_seconds": round(time.monotonic() - started, 3),
+        "artifact": destination.as_posix(),
+        "size_bytes": destination.stat().st_size,
+        "sha256": sha256_file(destination),
+        "metadata": image.metadata,
+        "width": 1024,
+        "height": 1024,
+    }
+    path = _write_report(args.output_dir, "flux2_klein", report)
+    print(f"FLUX.2 Klein smoke: OK -> {destination}")
+    print(path)
+
+
 def _ltx_environment() -> dict[str, str]:
     organization, project = _stack_identity()
     values = {
@@ -464,6 +515,8 @@ async def main() -> None:
                 await _smoke_whisper(args)
             elif service == "ideogram4":
                 await _smoke_ideogram(args)
+            elif service == "flux2_klein":
+                await _smoke_flux2_klein(args)
             elif service == "ltx25":
                 _smoke_ltx25(args)
             else:  # pragma: no cover - argparse prevents this branch
