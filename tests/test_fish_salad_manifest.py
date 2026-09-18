@@ -52,6 +52,7 @@ def test_fish_smoke_control_scripts_tolerate_omitted_remote_autoscaler() -> None
     for relative in (
         "scripts/start_salad_optimized_prewarm.ps1",
         "scripts/start_salad_protected_smoke.ps1",
+        "scripts/start_salad_scale_to_zero.ps1",
         "scripts/restore_salad_scale_to_zero.ps1",
     ):
         content = (ROOT / relative).read_text(encoding="utf-8")
