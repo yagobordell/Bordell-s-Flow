@@ -102,7 +102,7 @@ function Invoke-SaladMarkerQuery {
                 }
                 Write-Warning (
                     "Salad log query retry marker='$Marker' window=$($WindowStart.ToString('o')).." +
-                    "$($WindowEnd.ToString('o')) attempt=$Attempt/$RetryCount: $($_.Exception.Message)"
+                    "$($WindowEnd.ToString('o')) attempt=$Attempt/${RetryCount}: $($_.Exception.Message)"
                 )
                 Start-Sleep -Seconds ([Math]::Min(10, 2 * $Attempt))
             }
