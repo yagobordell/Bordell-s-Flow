@@ -5,7 +5,10 @@ from ai_video_factory.inference.contracts import InferenceJobResponse, OutputArt
 from ai_video_factory.inference.storage import LocalObjectStorage, sha256_file
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
-from ai_video_factory.providers.salad_whisper import SaladWhisperTranscriptionProvider
+from ai_video_factory.providers.salad_whisper import (
+    SaladWhisperTranscriptionProvider,
+    build_whisper_job_request,
+)
 from ai_video_factory.workers.whisper import WHISPER_MODEL_ID, WhisperTranscript, WhisperWord
 
 
@@ -118,3 +121,66 @@ def test_salad_whisper_provider_rejects_wrong_model(tmp_path: Path) -> None:
         assert WHISPER_MODEL_ID in str(exc)
     else:  # pragma: no cover - explicit failure diagnostic
         raise AssertionError("expected wrong Whisper model to be rejected")
+
+
+
+def test_salad_whisper_provider_replays_cache_before_queue_submission(
+    tmp_path: Path,
+) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    queue = CompletingQueue(storage, tmp_path)
+    executor = InferenceJobExecutor(
+        queue=queue,
+        storage=storage,
+        poll_seconds=0.01,
+        timeout_seconds=1,
+    )
+    audio = b"cached-wav"
+    audio_path = tmp_path / "audio.wav"
+    audio_path.write_bytes(audio)
+    request = build_whisper_job_request(
+        audio_sha256=sha256_file(audio_path),
+        filename="narration.wav",
+        model=WHISPER_MODEL_ID,
+        prompt="Hello world",
+        language="en",
+    )
+    transcript = WhisperTranscript(
+        model_id=WHISPER_MODEL_ID,
+        words=[
+            WhisperWord(text="Hello", start_seconds=0.1, end_seconds=0.5),
+            WhisperWord(text="world", start_seconds=0.6, end_seconds=1.0),
+        ],
+    )
+    source = tmp_path / "cached-words.json"
+    source.write_text(transcript.model_dump_json(), encoding="utf-8")
+    digest = sha256_file(source)
+    storage.upload(
+        source,
+        request.output.key,
+        content_type="application/json",
+        metadata={
+            "job-id": request.job_id,
+            "request-sha256": request.fingerprint(),
+            "artifact-sha256": digest,
+        },
+    )
+    provider = SaladWhisperTranscriptionProvider(
+        executor=executor,
+        temp_dir=tmp_path / "client",
+    )
+
+    words = asyncio.run(
+        provider.transcribe_words(
+            audio,
+            filename="narration.wav",
+            model=WHISPER_MODEL_ID,
+            prompt="Hello world",
+            language="en",
+        )
+    )
+
+    assert [word.text for word in words] == ["Hello", "world"]
+    assert queue.last_request is None
+    input_key = request.inputs[0].key
+    assert storage.stat(input_key) is None
