@@ -58,3 +58,14 @@ def test_fish_smoke_control_scripts_tolerate_omitted_remote_autoscaler() -> None
         content = (ROOT / relative).read_text(encoding="utf-8")
         assert "$Group.queue_autoscaler" not in content, relative
         assert 'PSObject.Properties["queue_autoscaler"]' in content, relative
+
+
+
+def test_fish_controlled_smoke_validates_reference_before_prewarm() -> None:
+    content = (ROOT / "scripts/run_fish_speech_smoke_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    preflight = content.index("Fish configuration preflight: before GPU allocation")
+    prewarm = content.index("Fish real prewarm: one RTX 4090 replica maximum")
+    assert preflight < prewarm
+    assert "--preflight-only" in content
