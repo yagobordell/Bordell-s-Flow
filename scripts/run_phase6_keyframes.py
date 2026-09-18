@@ -3,6 +3,7 @@ import asyncio
 import json
 import shutil
 import subprocess
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -109,8 +110,6 @@ def _queue(name: str) -> SaladJobQueueClient:
     )
 
 
-
-
 async def _prewarm_flux_fallback(timeout_minutes: int) -> None:
     executable = shutil.which("powershell.exe") or shutil.which("pwsh")
     if executable is None:
@@ -166,10 +165,11 @@ async def main() -> None:
         temp_dir=settings.temp_dir / "flux2-klein-keyframe-client",
         task_name=FLUX2_KLEIN_KEYFRAME_TASK,
     )
-    before_fallback = None
-    if args.prewarm_fallback_on_demand:
-        async def before_fallback() -> None:
-            await _prewarm_flux_fallback(args.fallback_prewarm_timeout_minutes)
+    before_fallback = (
+        partial(_prewarm_flux_fallback, args.fallback_prewarm_timeout_minutes)
+        if args.prewarm_fallback_on_demand
+        else None
+    )
 
     image_provider = SafetyFallbackImageProvider(
         primary=primary,
