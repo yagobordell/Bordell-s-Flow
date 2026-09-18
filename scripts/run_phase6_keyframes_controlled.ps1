@@ -99,7 +99,7 @@ if ($NonInteractive) {
 
 $IdeogramTouched = $false
 # Fresh Ideogram work can discover a safety rejection not yet represented in R2.
-# Arm FLUX at scale-to-zero for that case, but do not allocate its GPU preemptively.
+# Prewarm FLUX only after that rejection is confirmed; do not allocate it speculatively.
 $OnDemandFluxPrewarm = $IdeogramNeeded -and -not $FluxNeeded
 $FluxCleanupRequired = $IdeogramNeeded -or $FluxNeeded
 $PrimaryFailure = $null
