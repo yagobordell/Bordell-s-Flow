@@ -68,8 +68,8 @@ def _parameters(**updates):
 
 def test_fish_settings_pin_model_revision_and_runtime(tmp_path: Path) -> None:
     settings = FishSpeechWorkerSettings(
-        INFERENCE_WORKER_MODE="local",
-        FISH_SPEECH_MODEL_ROOT=str(tmp_path),
+        worker_mode="local",
+        model_root=tmp_path,
     )
     assert settings.model_repository == FISH_SPEECH_MODEL_ID
     assert settings.model_revision == FISH_SPEECH_MODEL_REVISION
