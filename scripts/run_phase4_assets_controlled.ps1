@@ -34,7 +34,6 @@ $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $WorkerManager = Join-Path $PSScriptRoot "manage_salad_worker.ps1"
-$ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $FluxPrewarm = Join-Path $PSScriptRoot "start_salad_flux_prewarm.ps1"
 $FluxRestore = Join-Path $PSScriptRoot "restore_salad_flux_scale_to_zero.ps1"
@@ -88,52 +87,19 @@ $PrewarmArguments = @{
     HoldReadyReplica = $true
 }
 $FluxPrewarmArguments = @{ TimeoutMinutes = $PrewarmTimeoutMinutes }
-$FluxArmArguments = @{
-    Service = "flux2_klein"
-}
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
     $FluxPrewarmArguments["NonInteractive"] = $true
-    $FluxArmArguments["NonInteractive"] = $true
 }
 
 $IdeogramTouched = $false
 # Any fresh Ideogram miss can discover a terminal safety rejection during execution and
 # dynamically enqueue FLUX even when the preflight cache plan did not know that yet.
+$OnDemandFluxPrewarm = $IdeogramNeeded -and -not $FluxNeeded
 $FluxCleanupRequired = $IdeogramNeeded -or $FluxNeeded
 $PrimaryFailure = $null
 $CleanupFailures = @()
 try {
-    if ($IdeogramNeeded -and -not $FluxNeeded) {
-        Write-Host (
-            "=== FLUX.2 Klein fallback: arm scale-to-zero group for dynamic safety fallback ==="
-        ) -ForegroundColor Cyan
-        $FluxArmSucceeded = $false
-        for ($Attempt = 1; $Attempt -le 3; $Attempt += 1) {
-            try {
-                & $ScaleToZeroStarter @FluxArmArguments
-                if (-not $?) {
-                    throw "FLUX.2 Klein scale-to-zero group start failed."
-                }
-                $FluxArmSucceeded = $true
-                break
-            }
-            catch {
-                if ($Attempt -ge 3) {
-                    throw
-                }
-                Write-Warning (
-                    "FLUX arm attempt $Attempt failed while Salad may still be applying the remote start: " +
-                    "$($_.Exception.Message) Retrying idempotently."
-                )
-                Start-Sleep -Seconds 15
-            }
-        }
-        if (-not $FluxArmSucceeded) {
-            throw "FLUX.2 Klein scale-to-zero group could not be armed for dynamic fallback."
-        }
-    }
-
     if ($IdeogramNeeded) {
         $IdeogramTouched = $true
         Write-Host (
@@ -160,14 +126,22 @@ try {
     }
 
     Write-Host "=== Phase 4 generation: cache replay plus required queue work ===" -ForegroundColor Cyan
-    & python $Phase4Runner `
-        $ReferencesFile `
-        --output-dir $OutputDir `
-        --metadata $Metadata `
-        --poll-seconds $PollSeconds `
-        --pending-timeout-seconds $PendingTimeoutSeconds `
-        --fallback-pending-timeout-seconds $FluxPendingTimeoutSeconds `
-        --timeout-seconds $RunningTimeoutSeconds
+    $Phase4Arguments = @(
+        $ReferencesFile,
+        "--output-dir", $OutputDir,
+        "--metadata", $Metadata,
+        "--poll-seconds", $PollSeconds,
+        "--pending-timeout-seconds", $PendingTimeoutSeconds,
+        "--fallback-pending-timeout-seconds", $FluxPendingTimeoutSeconds,
+        "--timeout-seconds", $RunningTimeoutSeconds
+    )
+    if ($OnDemandFluxPrewarm) {
+        $Phase4Arguments += @(
+            "--prewarm-fallback-on-demand",
+            "--fallback-prewarm-timeout-minutes", $PrewarmTimeoutMinutes
+        )
+    }
+    & python $Phase4Runner @Phase4Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "Phase 4 asset generation failed with exit code $LASTEXITCODE."
     }
