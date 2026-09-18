@@ -7,6 +7,7 @@ WORKER_MANAGER = Path("scripts/manage_salad_worker.ps1")
 ZERO_REPLICA_GUARD = Path("scripts/ensure_salad_zero_replicas.ps1")
 QUEUE_CLEANUP = Path("scripts/cleanup_salad_queue.ps1")
 STACK_MANAGER = Path("scripts/manage_salad_stack.ps1")
+SCALE_TO_ZERO_STARTER = Path("scripts/start_salad_scale_to_zero.ps1")
 
 
 def test_critical_salad_control_plane_paths_retry_transient_failures() -> None:
@@ -17,6 +18,7 @@ def test_critical_salad_control_plane_paths_retry_transient_failures() -> None:
         WORKER_MANAGER,
         ZERO_REPLICA_GUARD,
         QUEUE_CLEANUP,
+        SCALE_TO_ZERO_STARTER,
     ):
         text = path.read_text(encoding="utf-8")
         assert "Test-TransientSaladFailure" in text, path.name
@@ -64,3 +66,14 @@ def test_generic_scale_to_zero_restore_retries_transient_control_plane_failures(
     assert 'Operation "read container group"' in text
     assert 'Operation "restore manifest autoscaler"' in text
     assert "Test-TransientSaladFailure" in text
+
+
+def test_scale_to_zero_starter_routes_reads_and_writes_through_retry_wrapper() -> None:
+    text = SCALE_TO_ZERO_STARTER.read_text(encoding="utf-8")
+
+    assert 'Operation "read container group"' in text
+    assert 'Operation "read queue summary"' in text
+    assert 'Operation "start container group"' in text
+    assert 'Operation "request protected bootstrap replica"' in text
+    direct_calls = [line for line in text.splitlines() if "Invoke-RestMethod" in line]
+    assert direct_calls == ["            return Invoke-RestMethod @Arguments"]
