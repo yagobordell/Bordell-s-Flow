@@ -106,6 +106,29 @@ function Get-Queue {
     return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
 }
 
+function Get-RemoteQueueAutoscaler {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $Property = $Group.PSObject.Properties["queue_autoscaler"]
+    if ($null -eq $Property -or $null -eq $Property.Value) {
+        return $null
+    }
+    return $Property.Value
+}
+
+function Test-RemoteAutoscalerMinReplicas {
+    param(
+        [Parameter(Mandatory)][object]$Group,
+        [Parameter(Mandatory)][int]$ExpectedMinReplicas
+    )
+
+    $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $Autoscaler) {
+        return $true
+    }
+    return [int]$Autoscaler.min_replicas -eq $ExpectedMinReplicas
+}
+
 function Get-Instances {
     $Response = Invoke-RestMethod -Uri $InstancesUrl -Headers $Headers -TimeoutSec 30
     if ($Response.PSObject.Properties.Name -contains "instances") {
@@ -188,11 +211,18 @@ if ($Status -ne "stopped" -or [bool]$Group.pending_change -or [int]$Group.replic
 if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
     throw "Container group '$GroupName' is configured for an unexpected queue."
 }
-if ([int]$Group.queue_autoscaler.min_replicas -ne 0) {
+$RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
+if ($null -ne $RemoteAutoscaler -and [int]$RemoteAutoscaler.min_replicas -ne 0) {
     throw (
         "Protected smoke bootstrap requires the remote autoscaler to remain at " +
         "min_replicas=0 before requesting a manual replica."
     )
+}
+if ($null -eq $RemoteAutoscaler) {
+    Write-Host (
+        "Salad did not expose queue_autoscaler for '$GroupName'; " +
+        "continuing protected smoke with explicit replicas=1."
+    ) -ForegroundColor Yellow
 }
 
 $Body = @{ replicas = 1 } | ConvertTo-Json -Depth 10
@@ -216,7 +246,7 @@ do {
     if (
         -not [bool]$Group.pending_change -and
         [int]$Group.replicas -eq 1 -and
-        [int]$Group.queue_autoscaler.min_replicas -eq 0
+        (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas 0)
     ) {
         break
     }
@@ -225,7 +255,7 @@ while ((Get-Date) -lt $PatchDeadline)
 if (
     [int]$Group.replicas -ne 1 -or
     [bool]$Group.pending_change -or
-    [int]$Group.queue_autoscaler.min_replicas -ne 0
+    -not (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas 0)
 ) {
     throw (
         "Salad did not persist protected smoke replicas=1 with " +
@@ -528,7 +558,7 @@ do {
     if (
         -not [bool]$Group.pending_change -and
         [int]$Group.replicas -eq 1 -and
-        [int]$Group.queue_autoscaler.min_replicas -eq 0 -and
+        (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas 0) -and
         $Instances.Count -eq 1 -and
         $StartedInstances.Count -eq 1 -and
         $Ready
