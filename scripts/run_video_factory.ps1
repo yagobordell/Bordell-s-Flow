@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [string]$Input,
+    [Alias("Input")]
+    [string]$ScriptFile,
 
     [ValidateRange(1, 16)]
     [int]$MaxParallelStages = 4,
@@ -150,7 +151,7 @@ function Invoke-FinalCleanup {
 }
 
 Import-EnvFile -Path $EnvFile
-$ResolvedInput = Resolve-InputPath -Path $Input
+$ResolvedInput = Resolve-InputPath -Path $ScriptFile
 $Document = Get-Content -LiteralPath $ServicesPath -Raw | ConvertFrom-Json
 $Services = @($Document.stack.service_order | ForEach-Object { [string]$_ })
 $OutputDir = Join-Path $RepoRoot "data\output"
