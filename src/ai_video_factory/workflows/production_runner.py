@@ -454,9 +454,6 @@ class ProductionRunner:
             "script": stage.script.as_posix(),
             "script_sha256": _sha256_file(script_path),
             "arguments": list(stage.arguments),
-            "dependencies": list(stage.dependencies),
-            "resource": stage.resource,
-            "resource_key": stage.resource_key,
             "inputs": [path.as_posix() for path in stage.inputs],
             "outputs": [path.as_posix() for path in stage.outputs],
         }
