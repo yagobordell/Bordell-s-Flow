@@ -216,7 +216,7 @@ def test_salad_queue_preflight_falls_back_to_jobs_when_summary_is_unavailable(
     monkeypatch.setattr(preflight.settings, "salad_api_key", "test-key")
 
     def fail_summary(**_):
-        raise RuntimeError("Salad queue summary preflight failed: timed out")
+        raise preflight.TransientSaladPreflightError("Salad queue summary preflight failed: timed out")
 
     monkeypatch.setattr(preflight, "_queue_summary", fail_summary)
     monkeypatch.setattr(preflight, "_queue_jobs", lambda **_: [])
@@ -227,23 +227,50 @@ def test_salad_queue_preflight_falls_back_to_jobs_when_summary_is_unavailable(
     assert result["ltx25"]["active_jobs"] == 0
 
 
-def test_salad_queue_preflight_fails_when_summary_and_job_enumeration_are_unavailable(
+def test_salad_queue_preflight_defers_when_both_transient_routes_are_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(preflight.settings, "salad_api_key", "test-key")
 
     def fail_summary(**_):
-        raise RuntimeError("summary timed out")
+        raise preflight.TransientSaladPreflightError("summary timed out")
 
     def fail_jobs(**_):
-        raise RuntimeError("jobs timed out")
+        raise preflight.TransientSaladPreflightError("jobs timed out")
 
     monkeypatch.setattr(preflight, "_queue_summary", fail_summary)
     monkeypatch.setattr(preflight, "_queue_jobs", fail_jobs)
 
-    with pytest.raises(RuntimeError, match="jobs timed out"):
-        preflight._check_salad_queues(_services(), tmp_path)
+    result = preflight._check_salad_queues(_services(), tmp_path)
+
+    assert result["whisper"]["verification"] == "deferred_transient"
+    assert result["ltx25"]["verification"] == "deferred_transient"
+    assert result["ltx25"]["active_jobs"] is None
+
+
+def test_hard_salad_queue_guard_refuses_transient_defer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(preflight.settings, "salad_api_key", "test-key")
+
+    def fail_summary(**_):
+        raise preflight.TransientSaladPreflightError("summary timed out")
+
+    def fail_jobs(**_):
+        raise preflight.TransientSaladPreflightError("jobs timed out")
+
+    monkeypatch.setattr(preflight, "_queue_summary", fail_summary)
+    monkeypatch.setattr(preflight, "_queue_jobs", fail_jobs)
+
+    with pytest.raises(preflight.TransientSaladPreflightError, match="jobs timed out"):
+        preflight._check_salad_queues(
+            _services(),
+            tmp_path,
+            service_names={"ltx25"},
+            allow_transient_defer=False,
+        )
 
 
 def test_salad_queue_summary_fails_over_after_two_short_attempts(
@@ -270,3 +297,20 @@ def test_salad_queue_summary_fails_over_after_two_short_attempts(
 
     assert attempts == 2
     assert sleeps == [2]
+
+
+def test_transient_salad_retry_exhaustion_uses_distinct_exception_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_urlopen(request, timeout):
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(preflight.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(preflight.time, "sleep", lambda _: None)
+
+    with pytest.raises(preflight.TransientSaladPreflightError):
+        preflight._queue_summary(
+            base_url="https://api.salad.com/api/public/organizations/org/projects/project",
+            queue_name="ltx-q",
+            api_key="test-key",
+        )
