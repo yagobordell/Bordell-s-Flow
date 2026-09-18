@@ -145,7 +145,8 @@ class Flux2KleinBackend:
                     "FLUX2_KLEIN_INFERENCE_METRIC "
                     f"elapsed_seconds={elapsed:.3f} seed={parameters.seed} "
                     f"width={parameters.width} height={parameters.height} "
-                    f"steps={parameters.num_inference_steps} guidance={parameters.guidance_scale:g} "
+                    f"steps={parameters.num_inference_steps} "
+                    f"guidance={parameters.guidance_scale:g} "
                     f"peak_allocated_bytes={peak_allocated} peak_reserved_bytes={peak_reserved}",
                     flush=True,
                 )
