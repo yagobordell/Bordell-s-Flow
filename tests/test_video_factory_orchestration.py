@@ -62,3 +62,13 @@ def test_shared_ideogram_hold_is_explicitly_bounded_to_end_to_end_mode() -> None
     assert "[switch]$KeepIdeogramWarm" in phase4
     assert "[switch]$ReleaseSharedIdeogram" in phase6
     assert "outer orchestration owns cleanup" in phase4
+
+
+
+def test_phase5_alignment_checks_cache_before_whisper_prewarm() -> None:
+    text = _read("scripts/run_phase5_alignment_controlled.ps1")
+
+    audit = text.index("Phase 5 alignment cache")
+    prewarm = text.index("Whisper optimized prewarm")
+    assert audit < prewarm
+    assert "no Whisper GPU allocation required" in text
