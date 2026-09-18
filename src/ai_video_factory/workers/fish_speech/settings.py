@@ -8,6 +8,8 @@ from pydantic import Field, model_validator
 from ai_video_factory.inference.settings import InferenceWorkerSettings
 
 from .model import (
+    FISH_SPEECH_INTER_CHUNK_PAUSE_MS,
+    FISH_SPEECH_MAX_CHUNK_BYTES,
     FISH_SPEECH_MODEL_ID,
     FISH_SPEECH_MODEL_REVISION,
     FISH_SPEECH_RUNTIME_COMMIT,
@@ -35,13 +37,13 @@ class FishSpeechWorkerSettings(InferenceWorkerSettings):
     )
     device: str = Field(default="cuda", validation_alias="FISH_SPEECH_DEVICE")
     max_chunk_bytes: int = Field(
-        default=800,
+        default=FISH_SPEECH_MAX_CHUNK_BYTES,
         ge=200,
         le=4000,
         validation_alias="FISH_SPEECH_MAX_CHUNK_BYTES",
     )
     inter_chunk_pause_ms: int = Field(
-        default=80,
+        default=FISH_SPEECH_INTER_CHUNK_PAUSE_MS,
         ge=0,
         le=2000,
         validation_alias="FISH_SPEECH_INTER_CHUNK_PAUSE_MS",
@@ -57,4 +59,12 @@ class FishSpeechWorkerSettings(InferenceWorkerSettings):
             raise ValueError("FISH_SPEECH_RUNTIME_COMMIT must match the pinned runtime")
         if not self.device.strip():
             raise ValueError("FISH_SPEECH_DEVICE must be non-empty")
+        if self.max_chunk_bytes != FISH_SPEECH_MAX_CHUNK_BYTES:
+            raise ValueError(
+                "FISH_SPEECH_MAX_CHUNK_BYTES is part of the pinned generation profile"
+            )
+        if self.inter_chunk_pause_ms != FISH_SPEECH_INTER_CHUNK_PAUSE_MS:
+            raise ValueError(
+                "FISH_SPEECH_INTER_CHUNK_PAUSE_MS is part of the pinned generation profile"
+            )
         return self
