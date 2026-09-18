@@ -28,7 +28,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
-$WorkerManager = Join-Path $PSScriptRoot "manage_salad_worker.ps1"
+$ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $Runner = Join-Path $PSScriptRoot "run_phase8_videos.py"
@@ -81,15 +81,14 @@ try {
             "=== LTX resume: start scale-to-zero group for existing transport jobs ==="
         ) -ForegroundColor Cyan
         $StartArguments = @{
-            Action = "Start"
             Service = "ltx25"
         }
         if ($NonInteractive) {
             $StartArguments["NonInteractive"] = $true
         }
-        & $WorkerManager @StartArguments
+        & $ScaleToZeroStarter @StartArguments
         if (-not $?) {
-            throw "LTX resume start failed."
+            throw "LTX resume scale-to-zero start failed."
         }
     }
     else {

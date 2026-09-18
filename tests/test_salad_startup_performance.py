@@ -200,10 +200,10 @@ def test_phase8_resume_starts_scale_to_zero_group_for_existing_jobs() -> None:
 
     assert "video_generation_manifest.json" in text
     assert "$ResumeSubmittedJobs = $SubmittedJobs.Count -gt 0" in text
-    assert "manage_salad_worker.ps1" in text
-    assert 'Action = "Start"' in text
+    assert "start_salad_scale_to_zero.ps1" in text
     assert 'Service = "ltx25"' in text
     assert "if ($ResumeSubmittedJobs)" in text
+    assert "manage_salad_worker.ps1" not in text
     assert "start_salad_optimized_prewarm.ps1" in text
 
 
