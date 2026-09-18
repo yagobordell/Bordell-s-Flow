@@ -14,6 +14,9 @@ def test_salad_services_use_named_gpu_classes() -> None:
     assert document["services"]["ideogram4"]["resources"]["gpu_class_names"] == [
         "RTX 4090 (24 GB)"
     ]
+    assert document["services"]["flux2_klein"]["resources"]["gpu_class_names"] == [
+        "RTX 4090 (24 GB)"
+    ]
     assert document["services"]["whisper"]["resources"]["gpu_class_names"] == [
         "RTX 3090 (24 GB)"
     ]
@@ -104,3 +107,33 @@ def test_ideogram_deployment_pins_download_and_runtime_watchdogs_and_v4_image() 
     assert environment["IDEOGRAM_BOOTSTRAP_REALLOCATE_ON_STALL"] == "true"
     assert environment["HF_HUB_DOWNLOAD_TIMEOUT"] == "120"
     assert environment["HF_HUB_ETAG_TIMEOUT"] == "30"
+
+
+def test_flux2_klein_deployment_keeps_bounded_4090_profile_and_watchdog() -> None:
+    document = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
+    service = document["services"]["flux2_klein"]
+    resources = service["resources"]
+    environment = service["environment"]
+    autoscaler = service["autoscaler"]
+
+    assert service["group_name"] == "ai-video-factory-flux2-klein-worker"
+    assert service["queue_name"] == "ai-video-factory-flux2-klein-jobs"
+    assert service["dockerfile"] == "docker/workers/flux2-klein/Dockerfile"
+    assert service["image"].endswith(":flux2-klein-4b-bf16-diffusers040-v1")
+    assert resources["cpu"] == 8
+    assert resources["memory"] == 32768
+    assert resources["storage_amount"] == 103079215104
+    assert resources["gpu_class_names"] == ["RTX 4090 (24 GB)"]
+    assert autoscaler["min_replicas"] == 0
+    assert autoscaler["max_replicas"] == 1
+    assert environment["FLUX2_KLEIN_MODEL_REPOSITORY"] == "black-forest-labs/FLUX.2-klein-4B"
+    assert (
+        environment["FLUX2_KLEIN_MODEL_REVISION"]
+        == "e7b7dc27f91deacad38e78976d1f2b499d76a294"
+    )
+    assert environment["FLUX2_KLEIN_DTYPE"] == "bfloat16"
+    assert environment["FLUX2_KLEIN_DOWNLOAD_STALL_TIMEOUT_SECONDS"] == "600"
+    assert environment["FLUX2_KLEIN_DOWNLOAD_HARD_TIMEOUT_SECONDS"] == "2400"
+    assert environment["FLUX2_KLEIN_DOWNLOAD_MIN_MIBPS"] == "6"
+    assert environment["FLUX2_KLEIN_DOWNLOAD_REALLOCATE_ON_SLOW"] == "true"
+    assert service["required_environment"] == []
