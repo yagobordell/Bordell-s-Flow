@@ -2,6 +2,7 @@ from pathlib import Path
 
 PYTHON_SMOKE = Path("scripts/run_flux2_klein_smoke.py")
 CONTROLLED_SMOKE = Path("scripts/run_flux2_klein_smoke_controlled.ps1")
+PREWARM = Path("scripts/start_salad_flux_prewarm.ps1")
 
 
 def test_flux2_klein_smoke_exercises_queue_r2_and_png_contract() -> None:
@@ -28,3 +29,18 @@ def test_controlled_flux2_klein_smoke_always_restores_scale_to_zero() -> None:
     assert "finally {" in text
     assert "$PrimaryFailure" in text
     assert "preserving the original FLUX.2 Klein smoke failure" in text
+    assert "/log-entries" in text
+    assert 'log contains "FLUX2_KLEIN_"' in text
+    assert 'log contains "FLUX.2 Klein"' in text
+    assert "SALAD_LOG_METRIC" in text
+
+
+def test_flux2_klein_prewarm_reports_pull_and_bootstrap_timings() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+
+    assert "FLUX2_KLEIN_PREWARM_METRIC" in text
+    assert "assignment_seconds=" in text
+    assert "container_started_seconds=" in text
+    assert "image_pull_and_start_seconds=" in text
+    assert "ready_seconds=" in text
+    assert "bootstrap_after_start_seconds=" in text
