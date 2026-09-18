@@ -32,3 +32,16 @@ def test_fish_prepare_and_control_plane_scripts_accept_service() -> None:
     ):
         content = (ROOT / relative).read_text(encoding="utf-8")
         assert "fish_speech" in content, relative
+
+
+
+def test_salad_probe_failure_thresholds_fit_api_contract() -> None:
+    manifest = json.loads((ROOT / "deploy/salad/services.json").read_text(encoding="utf-8"))
+
+    for service_name, service in manifest["services"].items():
+        for probe_name, probe in service["probes"].items():
+            threshold = probe["failure_threshold"]
+            assert 1 <= threshold <= 20, (
+                f"{service_name}.{probe_name}.failure_threshold={threshold} "
+                "must satisfy Salad API range 1..20"
+            )
