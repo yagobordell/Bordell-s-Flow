@@ -42,10 +42,11 @@ def test_phase4_uses_ready_flux_prewarm_instead_of_zero_replica_arm() -> None:
     assert "arm_salad_scale_to_zero.ps1" not in script
 
 
-def test_phase6_keeps_flux_ready_for_single_safety_fallback() -> None:
+def test_phase6_avoids_speculative_flux_gpu_but_keeps_deterministic_fallback() -> None:
     script = PHASE6.read_text(encoding="utf-8")
 
     assert '"start_salad_flux_prewarm.ps1"' in script
     assert '"restore_salad_flux_scale_to_zero.ps1"' in script
-    assert "prewarm one ready replica for deterministic safety fallback" in script
+    assert "arm scale-to-zero group without allocating a GPU" in script
+    assert "prewarm only because cached safety evidence requires it" in script
     assert "arm_salad_scale_to_zero.ps1" not in script
