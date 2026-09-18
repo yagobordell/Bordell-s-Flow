@@ -35,6 +35,12 @@ def parse_args() -> argparse.Namespace:
         default=Path("data/output/preflight_report.json"),
     )
     parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=settings.output_dir,
+        help="Output root used to recognize legitimate Phase 8 resume transports.",
+    )
+    parser.add_argument(
         "--skip-network",
         action="store_true",
         help="Run only local/config checks. Intended for CI and unit tests.",
@@ -85,11 +91,10 @@ def _check_local_tools() -> list[str]:
     remotion_cli = Path("remotion/node_modules/.bin") / (
         "remotion.cmd" if __import__("os").name == "nt" else "remotion"
     )
-    if not remotion_cli.is_file():
-        raise RuntimeError(
-            "Remotion CLI is not installed. Run npm ci in remotion/ before production."
-        )
-    found.append(f"remotion={remotion_cli}")
+    if remotion_cli.is_file():
+        found.append(f"remotion={remotion_cli}")
+    else:
+        found.append("remotion=missing-local-cache; runner will execute npm ci after preflight")
     return found
 
 
@@ -153,6 +158,116 @@ def _check_postgres() -> str:
     return "postgres=ok"
 
 
+def _active_resume_transport_ids(output_dir: Path) -> set[str]:
+    manifest_path = output_dir / "phase8" / "video_generation_manifest.json"
+    if not manifest_path.is_file():
+        return set()
+    try:
+        document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"Phase 8 resume manifest is unreadable: {manifest_path}"
+        ) from exc
+    jobs = document.get("jobs")
+    if not isinstance(jobs, list):
+        raise RuntimeError(f"Phase 8 resume manifest has invalid jobs: {manifest_path}")
+
+    allowed: set[str] = set()
+    for job in jobs:
+        if not isinstance(job, dict):
+            raise RuntimeError(f"Phase 8 resume manifest has invalid job entry: {manifest_path}")
+        transport_id = job.get("transport_job_id")
+        status = job.get("transport_status")
+        if (
+            isinstance(transport_id, str)
+            and transport_id.strip()
+            and status in {"pending", "running"}
+        ):
+            allowed.add(transport_id.strip())
+    return allowed
+
+
+def _queue_jobs(
+    *,
+    base_url: str,
+    queue_name: str,
+    api_key: str,
+) -> list[dict[str, Any]]:
+    jobs: list[dict[str, Any]] = []
+    for page in range(1, 101):
+        query = urllib.parse.urlencode({"page": page, "page_size": 25})
+        request = urllib.request.Request(
+            f"{base_url}/queues/{queue_name}/jobs?{query}",
+            headers={
+                "Salad-Api-Key": api_key,
+                "Accept": "application/json",
+                "User-Agent": "ai-video-factory-preflight/1.0",
+            },
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(
+                f"Salad queue preflight failed for {queue_name}: HTTP {exc.code}"
+            ) from exc
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"Salad queue preflight failed for {queue_name}: {exc}"
+            ) from exc
+
+        raw_items = payload.get("items", payload.get("jobs", []))
+        if not isinstance(raw_items, list):
+            raise RuntimeError(f"Salad queue {queue_name} returned an invalid jobs payload")
+        page_items = [item for item in raw_items if isinstance(item, dict)]
+        jobs.extend(page_items)
+        if len(page_items) < 25:
+            break
+    return jobs
+
+
+def _check_salad_queues(document: dict[str, Any], output_dir: Path) -> dict[str, Any]:
+    api_key = _required("SALAD_API_KEY", settings.salad_api_key)
+    organization = str(document["stack"]["organization"])
+    project = str(document["stack"]["project"])
+    base_url = (
+        "https://api.salad.com/api/public/organizations/"
+        f"{organization}/projects/{project}"
+    )
+    allowed_ltx = _active_resume_transport_ids(output_dir)
+    result: dict[str, Any] = {}
+
+    for service_name, service in document["services"].items():
+        queue_name = service.get("queue_name")
+        if not isinstance(queue_name, str) or not queue_name.strip():
+            raise RuntimeError(f"Salad service {service_name} is missing queue_name")
+        jobs = _queue_jobs(base_url=base_url, queue_name=queue_name, api_key=api_key)
+        active = [
+            job
+            for job in jobs
+            if str(job.get("status", "")).lower() in {"pending", "running"}
+        ]
+        active_ids = {
+            str(job.get("id", "")).strip()
+            for job in active
+            if str(job.get("id", "")).strip()
+        }
+        allowed = allowed_ltx if service_name == "ltx25" else set()
+        unexpected = sorted(active_ids.difference(allowed))
+        if unexpected:
+            rendered = ", ".join(unexpected[:10])
+            raise RuntimeError(
+                f"Salad queue {queue_name} has active jobs not owned by the local "
+                f"resume manifest: {rendered}"
+            )
+        result[service_name] = {
+            "active_jobs": len(active_ids),
+            "recognized_resume_jobs": len(active_ids.intersection(allowed)),
+        }
+    return result
+
+
 def _check_openai() -> str:
     api_key = _required("OPENAI_API_KEY", settings.openai_api_key)
     client = OpenAI(api_key=api_key, timeout=15.0, max_retries=1)
@@ -214,6 +329,7 @@ def main() -> None:
             checks["postgres"] = _check_postgres()
             checks["openai"] = _check_openai()
             checks["hugging_face"] = _check_hugging_face(services)
+            checks["salad_queues"] = _check_salad_queues(services, args.output_dir)
         else:
             checks["network"] = "skipped"
     except (OSError, RuntimeError, ValueError) as exc:
