@@ -31,6 +31,80 @@ $Cleanup = Join-Path $PSScriptRoot "cleanup_salad_queue.ps1"
 $WorkerManager = Join-Path $PSScriptRoot "manage_salad_worker.ps1"
 $Smoke = Join-Path $PSScriptRoot "run_flux2_klein_smoke.py"
 
+function Write-Flux2KleinSaladMetrics {
+    param([Parameter(Mandatory)][datetime]$StartedAt)
+
+    try {
+        if ([string]::IsNullOrWhiteSpace($env:SALAD_API_KEY)) {
+            Write-Warning "SALAD_API_KEY is unavailable; skipping Salad log metric collection."
+            return
+        }
+
+        $Manifest = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\\salad\\services.json") -Raw |
+            ConvertFrom-Json
+        $Organization = [string]$Manifest.stack.organization
+        $Project = [string]$Manifest.stack.project
+        $GroupName = [string]$Manifest.services.flux2_klein.group_name
+        $LogsUrl = "https://api.salad.com/api/public/organizations/$Organization/log-entries"
+        $Headers = @{
+            "Salad-Api-Key" = $env:SALAD_API_KEY
+            "Accept" = "application/json"
+            "User-Agent" = "ai-video-factory-flux2-klein-smoke/1.0"
+        }
+        $Query = (
+            'resource.type = "container" and ' +
+            'resource.labels.project_name = "' + $Project + '" and ' +
+            'resource.labels.container_group_name = "' + $GroupName + '" and ' +
+            '(log contains "FLUX2_KLEIN_" or log contains "FLUX.2 Klein")'
+        )
+        $StartTime = $StartedAt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        $Items = @()
+
+        for ($Attempt = 1; $Attempt -le 6; $Attempt += 1) {
+            $EndTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            $Body = @{
+                start_time = $StartTime
+                end_time = $EndTime
+                page_size = 100
+                sort_order = "asc"
+                query = $Query
+            } | ConvertTo-Json -Depth 5
+            $Response = Invoke-RestMethod \
+                -Method Post \
+                -Uri $LogsUrl \
+                -Headers $Headers \
+                -ContentType "application/json" \
+                -Body $Body \
+                -TimeoutSec 30
+            $Items = @($Response.items)
+            $HasRuntime = @($Items | Where-Object {
+                [string]$_.text_log -like "*FLUX2_KLEIN_RUNTIME_READY*"
+            }).Count -gt 0
+            $HasInference = @($Items | Where-Object {
+                [string]$_.text_log -like "*FLUX2_KLEIN_INFERENCE_METRIC*"
+            }).Count -gt 0
+            if ($HasRuntime -and $HasInference) {
+                break
+            }
+            if ($Attempt -lt 6) {
+                Start-Sleep -Seconds 5
+            }
+        }
+
+        foreach ($Item in $Items) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$Item.text_log)) {
+                Write-Host ("SALAD_LOG_METRIC time={0} {1}" -f $Item.time, $Item.text_log)
+            }
+        }
+        if ($Items.Count -eq 0) {
+            Write-Warning "No FLUX.2 Klein container metrics were returned by the Salad log API."
+        }
+    }
+    catch {
+        Write-Warning "Salad log metric collection failed: $($_.Exception.Message)"
+    }
+}
+
 $PrewarmArguments = @{
     EnvFile = $EnvFile
     TimeoutMinutes = $PrewarmTimeoutMinutes
@@ -47,6 +121,7 @@ if ($NonInteractive) {
 $PrimaryFailure = $null
 $CleanupFailures = @()
 $Touched = $false
+$BenchmarkStartedAt = (Get-Date).ToUniversalTime().AddMinutes(-1)
 Set-Location $RepoRoot
 
 try {
@@ -68,6 +143,7 @@ catch {
 }
 finally {
     if ($Touched) {
+        Write-Flux2KleinSaladMetrics -StartedAt $BenchmarkStartedAt
         try {
             & $Restore @RestoreArguments
         }
