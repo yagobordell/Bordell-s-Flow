@@ -4,8 +4,15 @@ import io
 import wave
 from pathlib import Path
 
+import pytest
+
 from ai_video_factory.inference.contracts import InferenceJobResponse, OutputArtifact
-from ai_video_factory.providers.salad_breeze import SaladBreezeSpeechProvider
+from ai_video_factory.providers.inference_jobs import InferenceTransportFailedError
+from ai_video_factory.providers.job_queue import QueueJobStatus
+from ai_video_factory.providers.salad_breeze import (
+    BreezeFallbackEligibleError,
+    SaladBreezeSpeechProvider,
+)
 from ai_video_factory.workers.breeze_tts2 import BREEZE_TTS2_MODEL_ID, BREEZE_TTS2_TASK
 
 
@@ -109,3 +116,59 @@ def test_salad_breeze_provider_job_identity_changes_with_voice(tmp_path: Path) -
     second_job_id = executor.request.job_id
 
     assert first_job_id != second_job_id
+
+
+class FailingExecutor:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def execute(self, request, *, metadata):
+        raise self.error
+
+
+def test_salad_breeze_cancelled_job_is_not_fallback_eligible(tmp_path: Path) -> None:
+    error = InferenceTransportFailedError(
+        "user cancelled",
+        status=QueueJobStatus.CANCELLED,
+    )
+    provider = SaladBreezeSpeechProvider(
+        executor=FailingExecutor(error),  # type: ignore[arg-type]
+        temp_dir=tmp_path,
+    )
+
+    with pytest.raises(InferenceTransportFailedError) as captured:
+        asyncio.run(
+            provider.generate_speech(
+                text="Narration.",
+                model=BREEZE_TTS2_MODEL_ID,
+                voice="Voice A",
+                instructions="Measured.",
+                speed=1.0,
+                output_format="wav",
+            )
+        )
+    assert captured.value.status is QueueJobStatus.CANCELLED
+
+
+def test_salad_breeze_failed_job_is_explicitly_fallback_eligible(tmp_path: Path) -> None:
+    error = InferenceTransportFailedError(
+        "worker failed",
+        status=QueueJobStatus.FAILED,
+    )
+    provider = SaladBreezeSpeechProvider(
+        executor=FailingExecutor(error),  # type: ignore[arg-type]
+        temp_dir=tmp_path,
+    )
+
+    with pytest.raises(BreezeFallbackEligibleError) as captured:
+        asyncio.run(
+            provider.generate_speech(
+                text="Narration.",
+                model=BREEZE_TTS2_MODEL_ID,
+                voice="Voice A",
+                instructions="Measured.",
+                speed=1.0,
+                output_format="wav",
+            )
+        )
+    assert captured.value.reason == "breeze_terminal_transport_failure"
