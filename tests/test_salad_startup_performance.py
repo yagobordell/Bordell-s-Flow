@@ -152,7 +152,12 @@ def test_controlled_gpu_runners_preflight_r2_before_prewarm() -> None:
         text = path.read_text(encoding="utf-8")
         assert "check_r2_ready.py" in text, path.name
         assert "R2 preflight failed; refusing to allocate" in text, path.name
-        assert text.index("& python $R2Preflight") < text.index("& $OptimizedPrewarm"), path.name
+        prewarm_call = (
+            "Invoke-Prewarm -Service breeze_tts2"
+            if path.name == "run_phase5_audio_controlled.ps1"
+            else "& $OptimizedPrewarm"
+        )
+        assert text.index("& python $R2Preflight") < text.index(prewarm_call), path.name
 
 
 def test_gpu_clients_use_bounded_r2_client() -> None:

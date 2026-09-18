@@ -9,7 +9,11 @@ def test_ideogram_phases_pin_replica_before_readiness() -> None:
     assert '$PrewarmPatch["queue_autoscaler"]' in prewarm
     assert "min_replicas = 1" in prewarm
     assert prewarm.index("$PrewarmPatch") < prewarm.index('"$GroupUrl/start"')
-    assert "queue_autoscaler.min_replicas -eq $TargetMinReplicas" in prewarm
+    assert "Test-RemoteAutoscalerMinReplicas" in prewarm
+    assert "-ExpectedMinReplicas $TargetMinReplicas" in prewarm
+    assert "Optimized prewarm cannot use -HoldReadyReplica because Salad did not expose" in prewarm
+    assert '$Group.PSObject.Properties["queue_autoscaler"]' in prewarm
+    assert "$Group.queue_autoscaler" not in prewarm
 
     for runner_path, phase_runner in (
         (Path("scripts/run_phase4_assets_controlled.ps1"), "run_phase4_assets.py"),

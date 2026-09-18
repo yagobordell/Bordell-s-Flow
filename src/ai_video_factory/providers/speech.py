@@ -1,5 +1,6 @@
-from dataclasses import dataclass
-from typing import Literal, Protocol
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any, Literal, Protocol
 
 type SpeechFormat = Literal["wav"]
 
@@ -11,6 +12,7 @@ class GeneratedSpeech:
     content: bytes
     media_type: str
     extension: SpeechFormat
+    metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 class SpeechProvider(Protocol):

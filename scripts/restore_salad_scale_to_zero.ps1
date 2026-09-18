@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25")]
+    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "ltx25")]
     [string]$Service,
 
     [string]$EnvFile = ".env",
@@ -121,17 +121,32 @@ function New-ManifestAutoscaler {
     }
 }
 
+function Get-RemoteQueueAutoscaler {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $Property = $Group.PSObject.Properties["queue_autoscaler"]
+    if ($null -eq $Property -or $null -eq $Property.Value) {
+        return $null
+    }
+    return $Property.Value
+}
+
 function Test-ManifestAutoscaler {
     param([Parameter(Mandatory)][object]$Group)
 
+    $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $Autoscaler) {
+        return $false
+    }
+
     return (
-        [int]$Group.queue_autoscaler.min_replicas -eq [int]$Definition.autoscaler.min_replicas -and
-        [int]$Group.queue_autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
-        [int]$Group.queue_autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
-        [int]$Group.queue_autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period -and
-        [int]$Group.queue_autoscaler.max_upscale_per_minute -eq `
+        [int]$Autoscaler.min_replicas -eq [int]$Definition.autoscaler.min_replicas -and
+        [int]$Autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
+        [int]$Autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
+        [int]$Autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period -and
+        [int]$Autoscaler.max_upscale_per_minute -eq `
             [int]$Definition.autoscaler.max_upscale_per_minute -and
-        [int]$Group.queue_autoscaler.max_downscale_per_minute -eq `
+        [int]$Autoscaler.max_downscale_per_minute -eq `
             [int]$Definition.autoscaler.max_downscale_per_minute
     )
 }
@@ -166,6 +181,14 @@ $Group = Try-Get-Group
 if ($null -eq $Group) {
     Write-Host "$Service worker group does not exist; scale-to-zero restore not needed." `
         -ForegroundColor Green
+    exit 0
+}
+$RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
+if ($null -eq $RemoteAutoscaler) {
+    Write-Host (
+        "$Service API response omits queue_autoscaler; skipping legacy autoscaler restore. " +
+        "The Stop path and zero-replica guard remain authoritative for cleanup."
+    ) -ForegroundColor Yellow
     exit 0
 }
 if (Test-ManifestAutoscaler -Group $Group) {

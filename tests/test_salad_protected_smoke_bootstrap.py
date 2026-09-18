@@ -11,7 +11,10 @@ def test_bootstrap_uses_manual_replica_with_scale_to_zero_autoscaler() -> None:
     assert "@{ replicas = 1 }" in script
     assert "min_replicas = 1" not in script
     assert "New-BootstrapAutoscaler" not in script
-    assert "[int]$Group.queue_autoscaler.min_replicas -eq 0" in script
+    assert '$Group.PSObject.Properties["queue_autoscaler"]' in script
+    assert "Test-RemoteAutoscalerMinReplicas" in script
+    assert "-ExpectedMinReplicas 0" in script
+    assert "$Group.queue_autoscaler" not in script
     assert '"$GroupUrl/instances"' in script
     assert "$Instances.Count -eq 1" in script
     assert "$StartedInstances.Count -eq 1" in script

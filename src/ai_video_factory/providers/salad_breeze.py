@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import tempfile
+import wave
 from pathlib import Path
 
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectOutput
@@ -12,8 +14,22 @@ from ai_video_factory.workers.breeze_tts2 import (
     breeze_application_job_id,
 )
 
-from .inference_jobs import InferenceJobExecutor
+from .inference_jobs import (
+    InferenceJobExecutor,
+    InferenceJobTimeoutError,
+    InferenceTransportFailedError,
+    RemoteInferenceRejectedError,
+)
+from .job_queue import QueueJobStatus
 from .speech import GeneratedSpeech, SpeechFormat
+
+
+class BreezeFallbackEligibleError(RuntimeError):
+    """Terminal Breeze failure that the Phase 5 policy explicitly allows to fall through."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        self.reason = reason
+        super().__init__(message)
 
 
 class SaladBreezeSpeechProvider:
@@ -98,10 +114,28 @@ class SaladBreezeSpeechProvider:
                 "seed": self._seed,
             },
         )
-        response = self._executor.execute(
-            request,
-            metadata={"phase": "5", "provider": "breeze-tts2"},
-        )
+        try:
+            response = self._executor.execute(
+                request,
+                metadata={"phase": "5", "provider": "breeze-tts2"},
+            )
+        except InferenceJobTimeoutError as exc:
+            raise BreezeFallbackEligibleError(
+                f"breeze_{exc.phase}_timeout",
+                str(exc),
+            ) from exc
+        except InferenceTransportFailedError as exc:
+            if exc.status is QueueJobStatus.CANCELLED:
+                raise
+            raise BreezeFallbackEligibleError(
+                "breeze_terminal_transport_failure",
+                str(exc),
+            ) from exc
+        except RemoteInferenceRejectedError as exc:
+            raise BreezeFallbackEligibleError(
+                "breeze_worker_inference_rejection",
+                str(exc),
+            ) from exc
 
         self._temp_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=self._temp_dir) as directory:
@@ -109,10 +143,46 @@ class SaladBreezeSpeechProvider:
             self._executor.download_output(response, destination)
             content = destination.read_bytes()
 
-        if not content:
-            raise RuntimeError("Breeze TTS 2 worker returned an empty WAV artifact")
+        try:
+            duration_seconds = _validate_wav(content)
+        except ValueError as exc:
+            raise BreezeFallbackEligibleError(
+                "breeze_invalid_wav_output",
+                str(exc),
+            ) from exc
+
         return GeneratedSpeech(
             content=content,
             media_type="audio/wav",
             extension="wav",
+            metadata={
+                "provider": "breeze_tts2",
+                "model": model,
+                "generation_profile": BREEZE_TTS2_GENERATION_PROFILE,
+                "job_id": job_id,
+                "request_sha256": response.request_sha256,
+                "output_sha256": response.output.sha256,
+                "duration_seconds": duration_seconds,
+                "replayed": response.replayed,
+            },
         )
+
+
+def _validate_wav(content: bytes) -> float:
+    if len(content) <= 44:
+        raise ValueError("Breeze TTS 2 worker returned an empty WAV artifact")
+    try:
+        with wave.open(io.BytesIO(content), "rb") as wav_file:
+            sample_rate = wav_file.getframerate()
+            channels = wav_file.getnchannels()
+            sample_width = wav_file.getsampwidth()
+            frame_count = wav_file.getnframes()
+            frames = wav_file.readframes(frame_count)
+    except (EOFError, wave.Error) as exc:
+        raise ValueError("Breeze TTS 2 worker returned corrupt WAV data") from exc
+    if sample_rate <= 0 or channels <= 0 or sample_width <= 0 or frame_count <= 0:
+        raise ValueError("Breeze TTS 2 worker returned invalid WAV metadata")
+    frame_size = channels * sample_width
+    if not frames or len(frames) % frame_size:
+        raise ValueError("Breeze TTS 2 worker returned incomplete WAV frames")
+    return (len(frames) // frame_size) / sample_rate

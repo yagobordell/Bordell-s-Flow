@@ -190,3 +190,14 @@ Breeze's inference source is Apache-2.0. The open-weight model and self-hosted o
 BreezeBlue Research and Non-Commercial License, which matches this project's declared noncommercial
 use. A future commercial deployment must revisit the model/provider choice rather than assuming the
 open-weight license permits commercial use.
+
+
+## Phase 5 fallback relationship
+
+Breeze TTS 2 remains the Phase 5 primary provider. Fish Speech S2 Pro is a separate,
+self-hosted Salad service used only after an explicitly eligible terminal Breeze failure.
+The controlled Phase 5 wrapper releases Breeze and verifies `replicas=0` before Fish is
+prewarmed, so a successful Breeze run does not allocate the Fish GPU at all.
+
+The complete fallback policy, voice-reference strategy, model/runtime pins and real-smoke
+gate are documented in [fish-speech-fallback.md](fish-speech-fallback.md).

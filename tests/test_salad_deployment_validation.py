@@ -50,7 +50,11 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     )
 
     assert action_set in text
-    assert 'ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25", "all")' in text
+    service_set = (
+        'ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", '
+        '"ltx25", "all")'
+    )
+    assert service_set in text
     assert 'python scripts/run_salad_smoke_suite.py' in text
     assert "manage_salad_stack.ps1" in text
     assert "start_salad_scale_to_zero.ps1" in text
@@ -85,7 +89,10 @@ def test_protected_smoke_bootstraps_through_manual_replica_and_real_instance() -
 
     assert "@{ replicas = 1 }" in bootstrap
     assert "min_replicas = 1" not in bootstrap
-    assert "[int]$Group.queue_autoscaler.min_replicas -eq 0" in bootstrap
+    assert '$Group.PSObject.Properties["queue_autoscaler"]' in bootstrap
+    assert "Test-RemoteAutoscalerMinReplicas" in bootstrap
+    assert "-ExpectedMinReplicas 0" in bootstrap
+    assert "$Group.queue_autoscaler" not in bootstrap
     assert '"$GroupUrl/start"' in bootstrap
     assert '"$GroupUrl/instances"' in bootstrap
     assert "Test-QueueAttachment" in bootstrap

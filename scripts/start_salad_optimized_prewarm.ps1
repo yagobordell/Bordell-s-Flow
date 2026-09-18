@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25")]
+    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "ltx25")]
     [string]$Service,
 
     [string]$EnvFile = ".env",
@@ -48,6 +48,21 @@ $Profiles = @{
         MaxPostPullStartReallocations = 1
         RunningNotReadySeconds = 900
         FinalRunningNotReadySeconds = 1500
+        MaxRunningNotReadyReallocations = 1
+        MaxNodeChanges = 6
+    }
+    fish_speech = @{
+        AllocatingSeconds = 300
+        FinalAllocatingSeconds = 900
+        MaxAllocatingReallocations = 2
+        ImagePullStallSeconds = 240
+        FinalImagePullStallSeconds = 600
+        MaxImagePullReallocations = 2
+        PostPullStartSeconds = 240
+        FinalPostPullStartSeconds = 600
+        MaxPostPullStartReallocations = 1
+        RunningNotReadySeconds = 1200
+        FinalRunningNotReadySeconds = 1800
         MaxRunningNotReadyReallocations = 1
         MaxNodeChanges = 6
     }
@@ -151,6 +166,29 @@ function Get-Group {
 
 function Get-Queue {
     return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
+}
+
+function Get-RemoteQueueAutoscaler {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $Property = $Group.PSObject.Properties["queue_autoscaler"]
+    if ($null -eq $Property -or $null -eq $Property.Value) {
+        return $null
+    }
+    return $Property.Value
+}
+
+function Test-RemoteAutoscalerMinReplicas {
+    param(
+        [Parameter(Mandatory)][object]$Group,
+        [Parameter(Mandatory)][int]$ExpectedMinReplicas
+    )
+
+    $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $Autoscaler) {
+        return $false
+    }
+    return [int]$Autoscaler.min_replicas -eq $ExpectedMinReplicas
 }
 
 function Get-QueueJobSnapshot {
@@ -286,8 +324,8 @@ if ([int]$Definition.autoscaler.min_replicas -ne 0) {
 if ([int]$Definition.autoscaler.max_replicas -lt 1) {
     throw "Optimized prewarm requires max_replicas>=1 for '$Service'."
 }
-if ($Service -eq "ideogram4" -and [int]$Definition.autoscaler.max_replicas -ne 1) {
-    throw "Ideogram optimized prewarm requires max_replicas=1."
+if ($Service -in @("ideogram4", "fish_speech") -and [int]$Definition.autoscaler.max_replicas -ne 1) {
+    throw "$Service optimized prewarm requires max_replicas=1."
 }
 
 $Organization = [string]$Document.stack.organization
@@ -318,11 +356,30 @@ if ($Status -ne "stopped" -or [bool]$Group.pending_change -or [int]$Group.replic
 if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
     throw "Container group '$GroupName' is configured for an unexpected queue."
 }
-if ([int]$Group.queue_autoscaler.min_replicas -ne 0) {
-    throw "Optimized prewarm refuses a remote autoscaler with min_replicas != 0."
+$RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
+$AutoscalerObservable = $null -ne $RemoteAutoscaler
+if ($AutoscalerObservable) {
+    if ([int]$RemoteAutoscaler.min_replicas -ne 0) {
+        throw "Optimized prewarm refuses a remote autoscaler with min_replicas != 0."
+    }
+    if (
+        $Service -in @("ideogram4", "fish_speech") -and
+        [int]$RemoteAutoscaler.max_replicas -ne 1
+    ) {
+        throw "$Service optimized prewarm refuses a remote autoscaler with max_replicas != 1."
+    }
 }
-if ($Service -eq "ideogram4" -and [int]$Group.queue_autoscaler.max_replicas -ne 1) {
-    throw "Ideogram optimized prewarm refuses a remote autoscaler with max_replicas != 1."
+elseif ($HoldReadyReplica) {
+    throw (
+        "Optimized prewarm cannot use -HoldReadyReplica because Salad did not expose " +
+        "queue_autoscaler on container group '$GroupName'."
+    )
+}
+else {
+    Write-Host (
+        "Salad did not expose queue_autoscaler for '$GroupName'; " +
+        "continuing prewarm using explicit replicas=1 and the one-instance guard."
+    ) -ForegroundColor Yellow
 }
 
 $TargetMinReplicas = if ($HoldReadyReplica) { 1 } else { 0 }
@@ -345,6 +402,11 @@ $ProfileLine = (
     [bool]$HoldReadyReplica
 )
 Write-Host $ProfileLine -ForegroundColor Cyan
+
+$PrewarmStartedAt = Get-Date
+$AssignmentSeconds = $null
+$ContainerStartedSeconds = $null
+$ReadySeconds = $null
 
 $PrewarmPatch = @{ replicas = 1 }
 if ($HoldReadyReplica) {
@@ -370,19 +432,27 @@ $PatchDeadline = (Get-Date).AddMinutes(2)
 do {
     Start-Sleep -Seconds 5
     $Group = Get-Group
+    $AutoscalerStateReady = (
+        -not $AutoscalerObservable -or
+        (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas $TargetMinReplicas)
+    )
     if (
         -not [bool]$Group.pending_change -and
         [int]$Group.replicas -eq 1 -and
-        [int]$Group.queue_autoscaler.min_replicas -eq $TargetMinReplicas
+        $AutoscalerStateReady
     ) {
         break
     }
 }
 while ((Get-Date) -lt $PatchDeadline)
+$AutoscalerStateReady = (
+    -not $AutoscalerObservable -or
+    (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas $TargetMinReplicas)
+)
 if (
     [bool]$Group.pending_change -or
     [int]$Group.replicas -ne 1 -or
-    [int]$Group.queue_autoscaler.min_replicas -ne $TargetMinReplicas
+    -not $AutoscalerStateReady
 ) {
     throw "Salad did not persist the one-replica prewarm state safely."
 }
@@ -439,6 +509,10 @@ while ((Get-Date) -lt $Deadline) {
     $Ready = $false
     $Started = $false
     if ($Instances.Count -eq 1) {
+        $ElapsedSeconds = ((Get-Date) - $PrewarmStartedAt).TotalSeconds
+        if ($null -eq $AssignmentSeconds) {
+            $AssignmentSeconds = $ElapsedSeconds
+        }
         $Instance = $Instances[0]
         if ($Instance.PSObject.Properties.Name -contains "id") {
             $InstanceId = [string]$Instance.id
@@ -533,15 +607,42 @@ while ((Get-Date) -lt $Deadline) {
 
     $ContainerObservedRunning = $InstanceState -eq "running"
     $ContainerStarted = $Started -or $ContainerObservedRunning
+    if ($ContainerStarted -and $null -eq $ContainerStartedSeconds) {
+        $ContainerStartedSeconds = ((Get-Date) - $PrewarmStartedAt).TotalSeconds
+    }
+    if ($Ready -and $null -eq $ReadySeconds) {
+        $ReadySeconds = ((Get-Date) - $PrewarmStartedAt).TotalSeconds
+    }
 
+    $AutoscalerStateReady = (
+        -not $AutoscalerObservable -or
+        (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas $TargetMinReplicas)
+    )
     if (
         -not [bool]$Group.pending_change -and
         [int]$Group.replicas -eq 1 -and
-        [int]$Group.queue_autoscaler.min_replicas -eq $TargetMinReplicas -and
+        $AutoscalerStateReady -and
         $ObservedInstance -and
         $ContainerStarted -and
         $Ready
     ) {
+        if ($Service -eq "fish_speech") {
+            $ImagePullAndStartSeconds = $ContainerStartedSeconds - $AssignmentSeconds
+            $BootstrapAfterStartSeconds = $ReadySeconds - $ContainerStartedSeconds
+            Write-Host (
+                (
+                    "FISH_SPEECH_PREWARM_METRIC assignment_seconds={0:N1} " +
+                    "container_started_seconds={1:N1} image_pull_and_start_seconds={2:N1} " +
+                    "ready_seconds={3:N1} bootstrap_after_start_seconds={4:N1}"
+                ) -f @(
+                    [double]$AssignmentSeconds,
+                    [double]$ContainerStartedSeconds,
+                    [double]$ImagePullAndStartSeconds,
+                    [double]$ReadySeconds,
+                    [double]$BootstrapAfterStartSeconds
+                )
+            )
+        }
         $HoldSuffix = if ($HoldReadyReplica) { " with min_replicas=1 pinned" } else { "" }
         Write-Host (
             "$Service prewarm complete: exactly one started ready replica$HoldSuffix, queue still empty."

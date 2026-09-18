@@ -19,6 +19,22 @@ from .job_queue import JobQueueClient, QueueJobStatus, TransientQueueError
 logger = logging.getLogger(__name__)
 
 
+class InferenceJobTimeoutError(TimeoutError):
+    """A queued inference job exceeded a bounded pending or running budget."""
+
+    def __init__(self, message: str, *, phase: str) -> None:
+        self.phase = phase
+        super().__init__(message)
+
+
+class InferenceTransportFailedError(RuntimeError):
+    """A queue transport reached a terminal non-success status."""
+
+    def __init__(self, message: str, *, status: QueueJobStatus) -> None:
+        self.status = status
+        super().__init__(message)
+
+
 class RemoteInferenceRejectedError(RuntimeError):
     """Terminal application-level rejection returned through a succeeded transport job."""
 
@@ -176,9 +192,10 @@ class InferenceJobExecutor:
                 continue
 
         if snapshot.status != QueueJobStatus.SUCCEEDED:
-            raise RuntimeError(
+            raise InferenceTransportFailedError(
                 f"Inference job {request.job_id} finished with transport status "
-                f"{snapshot.status.value}; transport_job_id={snapshot.id}"
+                f"{snapshot.status.value}; transport_job_id={snapshot.id}",
+                status=snapshot.status,
             )
         rejection = _terminal_rejection_detail(snapshot.output)
         if rejection is not None:
@@ -234,10 +251,10 @@ class InferenceJobExecutor:
 
         if last_poll_error is not None:
             message += f"; last queue polling error: {last_poll_error}"
-            raise TimeoutError(message) from last_poll_error
+            raise InferenceJobTimeoutError(message, phase=phase) from last_poll_error
         if cancellation_error is not None:
-            raise TimeoutError(message) from cancellation_error
-        raise TimeoutError(message)
+            raise InferenceJobTimeoutError(message, phase=phase) from cancellation_error
+        raise InferenceJobTimeoutError(message, phase=phase)
 
     def download_output(self, response: InferenceJobResponse, destination: Path) -> None:
         stored = self._storage.download(response.output.key, destination)
