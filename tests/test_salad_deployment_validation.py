@@ -25,7 +25,11 @@ def _load_smoke_module() -> ModuleType:
 def test_smoke_suite_uses_dependency_order_and_real_workers() -> None:
     text = SMOKE_SCRIPT.read_text(encoding="utf-8")
 
-    assert '_SERVICE_ORDER = ("breeze_tts2", "whisper", "ideogram4", "flux2_klein", "ltx25")' in text
+    service_order = (
+        '_SERVICE_ORDER = ("breeze_tts2", "whisper", "ideogram4", '
+        '"flux2_klein", "ltx25")'
+    )
+    assert service_order in text
     assert "SaladBreezeSpeechProvider" in text
     assert "SaladWhisperTranscriptionProvider" in text
     assert "SaladIdeogramImageProvider" in text
@@ -51,7 +55,11 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     )
 
     assert action_set in text
-    assert 'ValidateSet("whisper", "breeze_tts2", "ideogram4", "flux2_klein", "ltx25", "all")' in text
+    service_set = (
+        'ValidateSet("whisper", "breeze_tts2", "ideogram4", '
+        '"flux2_klein", "ltx25", "all")'
+    )
+    assert service_set in text
     assert 'python scripts/run_salad_smoke_suite.py' in text
     assert "manage_salad_stack.ps1" in text
     assert "start_salad_scale_to_zero.ps1" in text
