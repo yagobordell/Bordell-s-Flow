@@ -7,7 +7,7 @@ def test_phase4_arms_flux_group_before_fresh_ideogram_work() -> None:
     text = SCRIPT.read_text(encoding="utf-8")
 
     arm_guard = "if ($IdeogramNeeded -and -not $FluxNeeded)"
-    arm_action = 'Action = "Start"\n    Service = "flux_schnell"'
+    arm_action = 'Action = "Start"\n    Service = "flux2_klein"'
     ideogram_prewarm = 'if ($IdeogramNeeded) {\n        $IdeogramTouched = $true'
 
     assert arm_guard in text
