@@ -30,6 +30,7 @@ $ErrorActionPreference = "Stop"
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
+$QueueGuard = Join-Path $PSScriptRoot "check_salad_queue_ready.py"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $CacheAudit = Join-Path $PSScriptRoot "audit_phase8_video_cache.py"
 $Runner = Join-Path $PSScriptRoot "run_phase8_videos.py"
@@ -124,6 +125,14 @@ try {
         ) -ForegroundColor Green
     }
     elseif ($ResumeSubmittedJobs) {
+        Write-Host (
+            "=== LTX resume: verify queue ownership before any GPU allocation ==="
+        ) -ForegroundColor Cyan
+        & python $QueueGuard ltx25 --output-dir $OutputDir
+        if ($LASTEXITCODE -ne 0) {
+            throw "LTX resume queue ownership guard failed; refusing GPU allocation."
+        }
+
         Write-Host (
             "=== LTX resume: start scale-to-zero group for existing transport jobs ==="
         ) -ForegroundColor Cyan
