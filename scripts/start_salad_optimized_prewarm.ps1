@@ -188,7 +188,12 @@ function Test-TransientSaladReadFailure {
     if ($Exception -is [System.TimeoutException]) {
         return $true
     }
-    if ([string]$Exception.Message -match '(?i)timed out|timeout') {
+    if (
+        [string]$Exception.Message -match (
+            '(?i)timed out|timeout|upstream connect error|disconnect/reset|' +
+            'remote connection failure|server unavailable|gateway timeout'
+        )
+    ) {
         return $true
     }
 
@@ -402,10 +407,11 @@ function Get-QueueJobSnapshot {
             [Math]::Ceiling(($Deadline - (Get-Date)).TotalSeconds)
         )
         $RequestTimeoutSeconds = [int][Math]::Min(30, $SecondsRemaining)
-        $Response = Invoke-RestMethod `
+        $Response = Invoke-SaladRead `
             -Uri "$QueueUrl/jobs?page=$Page&page_size=25" `
-            -Headers $Headers `
-            -TimeoutSec $RequestTimeoutSeconds
+            -Operation "queue jobs page $Page" `
+            -TimeoutSeconds $RequestTimeoutSeconds `
+            -MaxAttempts 6
         $Pages += 1
         $Items = @(
             if ($Response.PSObject.Properties.Name -contains "items") {
@@ -480,16 +486,62 @@ function Get-Instances {
 function Request-InstanceReallocation {
     param(
         [Parameter(Mandatory)][string]$InstanceId,
+        [string]$MachineId = "",
         [Parameter(Mandatory)][string]$Reason
     )
 
     Write-Warning "$Service requesting Salad node reallocation: $Reason"
-    Invoke-RestMethod `
-        -Method Post `
-        -Uri "$InstancesUrl/$InstanceId/reallocate" `
-        -Headers $Headers `
-        -TimeoutSec 60 |
-        Out-Null
+    for ($Attempt = 1; $Attempt -le 3; $Attempt += 1) {
+        try {
+            Invoke-SaladMutation `
+                -Method "Post" `
+                -Uri "$InstancesUrl/$InstanceId/reallocate" `
+                -Operation "reallocate instance $InstanceId" `
+                -TimeoutSeconds 60 `
+                -MaxAttempts 1 |
+                Out-Null
+            return
+        }
+        catch {
+            if (-not (Test-TransientSaladReadFailure -ErrorRecord $_) -or $Attempt -ge 3) {
+                throw
+            }
+
+            Start-Sleep -Seconds 5
+            $Instances = @(Get-Instances)
+            $Matching = @($Instances | Where-Object { [string]$_.id -eq $InstanceId })
+            if ($Matching.Count -eq 0) {
+                Write-Warning (
+                    "$Service reallocation response was lost, but instance $InstanceId is no longer " +
+                    "present; treating the request as accepted."
+                )
+                return
+            }
+
+            $ObservedMachine = ""
+            if ($Matching[0].PSObject.Properties.Name -contains "machine_id") {
+                $ObservedMachine = [string]$Matching[0].machine_id
+            }
+            if (
+                -not [string]::IsNullOrWhiteSpace($MachineId) -and
+                -not [string]::IsNullOrWhiteSpace($ObservedMachine) -and
+                $ObservedMachine -ne $MachineId
+            ) {
+                Write-Warning (
+                    "$Service reallocation response was lost, but the instance moved from " +
+                    "$MachineId to $ObservedMachine; treating the request as accepted."
+                )
+                return
+            }
+
+            $DelaySeconds = [Math]::Min(10, 2 * $Attempt)
+            Write-Warning (
+                "$Service reallocation request failed transiently and no node move is visible yet " +
+                "(attempt $Attempt/3): $($_.Exception.Message). Retrying in ${DelaySeconds}s."
+            )
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
 }
 
 function Test-QueueAttachment {
@@ -616,13 +668,13 @@ if ($HoldReadyReplica) {
         max_downscale_per_minute = [int]$Definition.autoscaler.max_downscale_per_minute
     }
 }
-Invoke-RestMethod `
-    -Method Patch `
+Invoke-SaladMutation `
+    -Method "Patch" `
     -Uri $GroupUrl `
-    -Headers $Headers `
+    -Operation "persist one-replica prewarm state" `
     -ContentType "application/merge-patch+json" `
     -Body ($PrewarmPatch | ConvertTo-Json -Depth 10 -Compress) `
-    -TimeoutSec 60 |
+    -TimeoutSeconds 60 |
     Out-Null
 
 $PatchDeadline = (Get-Date).AddMinutes(2)
@@ -654,11 +706,11 @@ if (
     throw "Salad did not persist the one-replica prewarm state safely."
 }
 
-Invoke-RestMethod `
-    -Method Post `
+Invoke-SaladMutation `
+    -Method "Post" `
     -Uri "$GroupUrl/start" `
-    -Headers $Headers `
-    -TimeoutSec 60 |
+    -Operation "start prewarmed container group" `
+    -TimeoutSeconds 60 |
     Out-Null
 
 $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
@@ -876,6 +928,7 @@ while ((Get-Date) -lt $Deadline) {
             $AllocatingReallocations += 1
             Request-InstanceReallocation `
                 -InstanceId $InstanceId `
+                -MachineId $MachineId `
                 -Reason (
                     "Allocation/container creation made no image-pull progress " +
                     "for at least ${Limit}s"
@@ -961,6 +1014,7 @@ while ((Get-Date) -lt $Deadline) {
             $PostPullStartReallocations += 1
             Request-InstanceReallocation `
                 -InstanceId $InstanceId `
+                -MachineId $MachineId `
                 -Reason "Image pull completed but the container did not start within ${Limit}s"
             $PostPullStartSince = $null
             continue
@@ -991,6 +1045,7 @@ while ((Get-Date) -lt $Deadline) {
             $RunningNotReadyReallocations += 1
             Request-InstanceReallocation `
                 -InstanceId $InstanceId `
+                -MachineId $MachineId `
                 -Reason "Model bootstrap remained running but not ready for ${Limit}s"
             $RunningNotReadySince = $null
             continue
