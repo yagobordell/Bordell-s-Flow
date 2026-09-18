@@ -31,7 +31,7 @@ def test_flux2_download_fetches_only_pinned_diffusers_runtime_components() -> No
 def test_flux2_image_uses_native_diffusers_pipeline_without_bnb() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
 
-    assert "'diffusers>=0.37,<0.39'" in dockerfile
+    assert "'diffusers==0.40.0'" in dockerfile
     assert "Flux2KleinPipeline" in dockerfile
     assert "bitsandbytes" not in dockerfile
     assert "HF_XET_HIGH_PERFORMANCE=1" in dockerfile
