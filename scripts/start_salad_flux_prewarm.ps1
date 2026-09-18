@@ -390,7 +390,7 @@ do {
         if ($null -ne $ReadySeconds -and $null -ne $ContainerStartedSeconds) {
             $BootstrapAfterStartSeconds = $ReadySeconds - $ContainerStartedSeconds
         }
-        Write-Host (
+        $PrewarmMetric = (
             "FLUX2_KLEIN_PREWARM_METRIC assignment_seconds={0:N1} " +
             "container_started_seconds={1:N1} ready_seconds={2:N1} " +
             "bootstrap_after_start_seconds={3:N1}"
@@ -400,6 +400,7 @@ do {
             [double]$ReadySeconds,
             [double]$BootstrapAfterStartSeconds
         )
+        Write-Host $PrewarmMetric
         Write-Host "FLUX prewarm complete: one ready replica held for fallback queue work." -ForegroundColor Green
         exit 0
     }
