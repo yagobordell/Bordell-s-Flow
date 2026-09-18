@@ -6,7 +6,7 @@ repository="${FLUX2_KLEIN_MODEL_REPOSITORY:-black-forest-labs/FLUX.2-klein-4B}"
 revision="${FLUX2_KLEIN_MODEL_REVISION:-e7b7dc27f91deacad38e78976d1f2b499d76a294}"
 snapshot="${model_root}/snapshot"
 marker="${model_root}/.ready"
-download_root="${HF_HOME:-/workspace/.cache/huggingface}"
+download_root="${model_root}"
 
 expected="${repository}@${revision}"
 if [[ -f "${marker}" ]] && [[ "$(cat "${marker}")" == "${expected}" ]] && [[ -d "${snapshot}" ]]; then
@@ -18,7 +18,7 @@ rm -rf "${snapshot}"
 mkdir -p "${snapshot}" "${download_root}"
 
 echo "FLUX.2 Klein bootstrap: downloading pinned Diffusers runtime components once"
-python -m ai_video_factory.workers.download_watchdog   --progress-root "${download_root}"   --stall-timeout-seconds "${FLUX2_KLEIN_DOWNLOAD_STALL_TIMEOUT_SECONDS:-600}"   --hard-timeout-seconds "${FLUX2_KLEIN_DOWNLOAD_HARD_TIMEOUT_SECONDS:-2400}"   --poll-seconds "${FLUX2_KLEIN_DOWNLOAD_POLL_SECONDS:-15}"   --label "flux2-klein-4b"   --min-throughput-mibps "${FLUX2_KLEIN_DOWNLOAD_MIN_MIBPS:-6}"   --throughput-grace-seconds "${FLUX2_KLEIN_DOWNLOAD_THROUGHPUT_GRACE_SECONDS:-180}"   --throughput-window-seconds "${FLUX2_KLEIN_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS:-120}"   --reallocate-on-slow   -- python - <<'PY'
+python -m ai_video_factory.workers.download_watchdog   --progress-root "${download_root}"   --stall-timeout-seconds "${FLUX2_KLEIN_DOWNLOAD_STALL_TIMEOUT_SECONDS:-600}"   --hard-timeout-seconds "${FLUX2_KLEIN_DOWNLOAD_HARD_TIMEOUT_SECONDS:-2400}"   --poll-seconds "${FLUX2_KLEIN_DOWNLOAD_POLL_SECONDS:-15}"   --label "flux2-klein-4b"   --min-throughput-mibps "${FLUX2_KLEIN_DOWNLOAD_MIN_MIBPS:-6}"   --throughput-grace-seconds "${FLUX2_KLEIN_DOWNLOAD_THROUGHPUT_GRACE_SECONDS:-180}"   --throughput-window-seconds "${FLUX2_KLEIN_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS:-120}"   --reallocate-on-slow   -- env HF_HUB_OFFLINE=0 python - <<'PY'
 import os
 from pathlib import Path
 
