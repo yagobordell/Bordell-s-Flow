@@ -5,6 +5,8 @@ param(
     [ValidateRange(10, 120)]
     [int]$TimeoutMinutes = 60,
 
+    [string]$MetricsOutput = "",
+
     [switch]$NonInteractive
 )
 
@@ -14,6 +16,11 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $ManifestPath = Join-Path $RepoRoot "deploy\salad\services.json"
 $Service = "flux2_klein"
+$BenchmarkStarted = Get-Date
+$FirstInstanceAt = $null
+$DownloadStartedAt = $null
+$ContainerStartedAt = $null
+$ReadyAt = $null
 
 function Import-EnvFile {
     param([Parameter(Mandatory)][string]$Path)
@@ -296,6 +303,21 @@ do {
         }
     }
 
+    if ($Instances.Count -eq 1) {
+        if ($null -eq $FirstInstanceAt) {
+            $FirstInstanceAt = Get-Date
+        }
+        if ($State -eq "downloading" -and $null -eq $DownloadStartedAt) {
+            $DownloadStartedAt = Get-Date
+        }
+        if ($Started -and $null -eq $ContainerStartedAt) {
+            $ContainerStartedAt = Get-Date
+        }
+        if ($Ready -and $null -eq $ReadyAt) {
+            $ReadyAt = Get-Date
+        }
+    }
+
     Write-Host (
         "{0} service=flux2_klein status={1} state={2} started={3} ready={4} pulling_progress={5} machine={6}" -f `
         (Get-Date -Format "HH:mm:ss"),
@@ -370,6 +392,56 @@ do {
                 "Salad GET does not expose queue_autoscaler for '$GroupName'; " +
                 "warm hold is relying on the accepted autoscaler PATCH and settled group state."
             )
+        }
+        if (-not [string]::IsNullOrWhiteSpace($MetricsOutput)) {
+            $ResolvedMetrics = $MetricsOutput
+            if (-not [IO.Path]::IsPathRooted($ResolvedMetrics)) {
+                $ResolvedMetrics = Join-Path $RepoRoot $ResolvedMetrics
+            }
+            $MetricsDir = Split-Path -Parent $ResolvedMetrics
+            if (-not [string]::IsNullOrWhiteSpace($MetricsDir)) {
+                New-Item -ItemType Directory -Force -Path $MetricsDir | Out-Null
+            }
+            $ReadyTimestamp = if ($null -ne $ReadyAt) { $ReadyAt } else { Get-Date }
+            $FirstTimestamp = if ($null -ne $FirstInstanceAt) { $FirstInstanceAt } else { $ReadyTimestamp }
+            $ContainerTimestamp = if ($null -ne $ContainerStartedAt) {
+                $ContainerStartedAt
+            }
+            else {
+                $ReadyTimestamp
+            }
+            $DownloadTimestamp = if ($null -ne $DownloadStartedAt) {
+                $DownloadStartedAt
+            }
+            else {
+                $FirstTimestamp
+            }
+            $Metrics = [ordered]@{
+                schema_version = "1"
+                service = $Service
+                benchmark_started_utc = $BenchmarkStarted.ToUniversalTime().ToString("o")
+                node_assignment_seconds = [Math]::Round(
+                    ($FirstTimestamp - $BenchmarkStarted).TotalSeconds,
+                    3
+                )
+                image_download_seconds = [Math]::Round(
+                    ($ContainerTimestamp - $DownloadTimestamp).TotalSeconds,
+                    3
+                )
+                image_download_state_observed = ($null -ne $DownloadStartedAt)
+                model_bootstrap_seconds = [Math]::Round(
+                    ($ReadyTimestamp - $ContainerTimestamp).TotalSeconds,
+                    3
+                )
+                time_to_ready_seconds = [Math]::Round(
+                    ($ReadyTimestamp - $BenchmarkStarted).TotalSeconds,
+                    3
+                )
+                machine_id = if ($Instances.Count -eq 1) { [string]$Instances[0].machine_id } else { "" }
+            }
+            $Metrics | ConvertTo-Json -Depth 5 |
+                Set-Content -LiteralPath $ResolvedMetrics -Encoding utf8
+            Write-Host "FLUX.2 Klein prewarm metrics: $ResolvedMetrics" -ForegroundColor Green
         }
         Write-Host "FLUX.2 Klein prewarm complete: one ready replica held for fallback queue work." -ForegroundColor Green
         exit 0
