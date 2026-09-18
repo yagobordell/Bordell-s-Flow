@@ -36,6 +36,7 @@ $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $QueueCleanup = Join-Path $PSScriptRoot "cleanup_salad_queue.ps1"
 $ZeroReplicaGuard = Join-Path $PSScriptRoot "ensure_salad_zero_replicas.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
+$CacheAudit = Join-Path $PSScriptRoot "audit_phase5_audio_cache.py"
 $Runner = Join-Path $PSScriptRoot "run_phase5_audio.py"
 $FallbackState = Join-Path $OutputDir "fallback-state.json"
 
@@ -120,6 +121,48 @@ if (-not $?) {
     throw "Breeze Salad control-plane status preflight failed."
 }
 
+$CachePlanPath = Join-Path ([IO.Path]::GetTempPath()) (
+    "ai-video-factory-phase5-plan-{0}.json" -f ([Guid]::NewGuid().ToString("N"))
+)
+Write-Host "=== Phase 5 cache plan: resolve Breeze replay before GPU allocation ===" -ForegroundColor Cyan
+& python $CacheAudit $SourceFile --json-output $CachePlanPath
+if ($LASTEXITCODE -ne 0) {
+    Remove-Item -LiteralPath $CachePlanPath -Force -ErrorAction SilentlyContinue
+    throw "Phase 5 Breeze cache planning failed; refusing speech GPU allocation."
+}
+$CachePlan = Get-Content -LiteralPath $CachePlanPath -Raw | ConvertFrom-Json
+Remove-Item -LiteralPath $CachePlanPath -Force -ErrorAction SilentlyContinue
+$BreezeCacheHit = [string]$CachePlan.status -eq "hit"
+
+$PrimaryArguments = @(
+    $SourceFile,
+    "--provider", "breeze",
+    "--output-dir", $OutputDir,
+    "--metadata", $Metadata,
+    "--provenance", $Provenance,
+    "--fallback-state", $FallbackState,
+    "--poll-seconds", $PollSeconds,
+    "--pending-timeout-seconds", $PendingTimeoutSeconds,
+    "--timeout-seconds", $RunningTimeoutSeconds
+)
+
+if ($BreezeCacheHit) {
+    Write-Host (
+        "Breeze narration is a verified R2 replay; no Breeze or Fish GPU allocation required."
+    ) -ForegroundColor Green
+    & python $Runner @PrimaryArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw (
+            "Verified Breeze replay failed to materialize locally; " +
+            "Fish fallback is not eligible for storage/application errors."
+        )
+    }
+    Invoke-ServiceStopAndVerify -Service breeze_tts2
+    Write-Host "Phase 5 complete from Breeze cache; Fish consumed zero GPU-seconds." `
+        -ForegroundColor Green
+    exit 0
+}
+
 $FallbackReason = $null
 $BreezeSucceeded = $false
 
@@ -142,17 +185,6 @@ try {
 
     if ($null -eq $FallbackReason) {
         Write-Host "=== Phase 5 primary narration: Breeze ===" -ForegroundColor Cyan
-        $PrimaryArguments = @(
-            $SourceFile,
-            "--provider", "breeze",
-            "--output-dir", $OutputDir,
-            "--metadata", $Metadata,
-            "--provenance", $Provenance,
-            "--fallback-state", $FallbackState,
-            "--poll-seconds", $PollSeconds,
-            "--pending-timeout-seconds", $PendingTimeoutSeconds,
-            "--timeout-seconds", $RunningTimeoutSeconds
-        )
         & python $Runner @PrimaryArguments
         $PrimaryExitCode = $LASTEXITCODE
 
