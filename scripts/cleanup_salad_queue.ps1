@@ -56,6 +56,21 @@ function Get-SaladApiKey {
     return ([PSCredential]::new("salad-queue-cleanup", $SecureValue)).GetNetworkCredential().Password
 }
 
+function Get-HttpStatusCode {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    $Response = $ErrorRecord.Exception.Response
+    if ($null -eq $Response) {
+        return $null
+    }
+    try {
+        return [int]$Response.StatusCode
+    }
+    catch {
+        return $null
+    }
+}
+
 function Get-QueueSummary {
     return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
 }
@@ -186,14 +201,21 @@ do {
         continue
     }
 
-    foreach ($Job in @($ActiveJobs | Where-Object { [string]$_.status -eq "pending" })) {
-        Write-Warning "Cancelling abandoned pending job: $(Format-Job -Job $Job)"
-        Invoke-RestMethod `
-            -Method Delete `
-            -Uri "$QueueUrl/jobs/$([string]$Job.id)" `
-            -Headers $Headers `
-            -TimeoutSec 30 |
-            Out-Null
+    foreach ($Job in $ActiveJobs) {
+        Write-Warning "Cancelling abandoned active job after group stop: $(Format-Job -Job $Job)"
+        try {
+            Invoke-RestMethod `
+                -Method Delete `
+                -Uri "$QueueUrl/jobs/$([string]$Job.id)" `
+                -Headers $Headers `
+                -TimeoutSec 30 |
+                Out-Null
+        }
+        catch {
+            if ((Get-HttpStatusCode -ErrorRecord $_) -ne 404) {
+                throw
+            }
+        }
     }
 
     $Pending = @($ActiveJobs | Where-Object { [string]$_.status -eq "pending" })
@@ -217,7 +239,7 @@ do {
     }
     if ($Running.Count -gt 0) {
         Write-Warning (
-            "Waiting for dispatched job(s) to become terminal after group stop: " +
+            "Waiting for cancelled running job(s) to become terminal after group stop: " +
             (($Running | ForEach-Object { Format-Job -Job $_ }) -join "; ")
         )
     }
