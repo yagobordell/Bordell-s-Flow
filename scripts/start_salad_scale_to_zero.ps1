@@ -112,11 +112,7 @@ function Test-GroupQueueConfiguration {
     param([Parameter(Mandatory)][object]$Group)
 
     $Connection = $Group.PSObject.Properties["queue_connection"]
-    $Autoscaler = $Group.PSObject.Properties["queue_autoscaler"]
-    if (
-        $null -eq $Connection -or $null -eq $Connection.Value -or
-        $null -eq $Autoscaler -or $null -eq $Autoscaler.Value
-    ) {
+    if ($null -eq $Connection -or $null -eq $Connection.Value) {
         return $false
     }
 
@@ -125,19 +121,30 @@ function Test-GroupQueueConfiguration {
         return $false
     }
 
+    $ConnectionMatches = (
+        [string]$Connection.Value.queue_name -eq $QueueName -and
+        [string]$Connection.Value.path -eq [string]$Document.stack.queue_path -and
+        [int]$Connection.Value.port -eq [int]$Document.stack.container_port
+    )
+    if (-not $ConnectionMatches) {
+        return $false
+    }
+
+    $Autoscaler = $Group.PSObject.Properties["queue_autoscaler"]
+    if ($null -eq $Autoscaler -or $null -eq $Autoscaler.Value) {
+        return $true
+    }
+
     return (
-        [string]$Group.queue_connection.queue_name -eq $QueueName -and
-        [string]$Group.queue_connection.path -eq [string]$Document.stack.queue_path -and
-        [int]$Group.queue_connection.port -eq [int]$Document.stack.container_port -and
-        [int]$Group.queue_autoscaler.min_replicas -eq [int]$Definition.autoscaler.min_replicas -and
-        [int]$Group.queue_autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
-        [int]$Group.queue_autoscaler.desired_queue_length -eq `
+        [int]$Autoscaler.Value.min_replicas -eq [int]$Definition.autoscaler.min_replicas -and
+        [int]$Autoscaler.Value.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
+        [int]$Autoscaler.Value.desired_queue_length -eq `
             [int]$Definition.autoscaler.desired_queue_length -and
-        [int]$Group.queue_autoscaler.polling_period -eq `
+        [int]$Autoscaler.Value.polling_period -eq `
             [int]$Definition.autoscaler.polling_period -and
-        [int]$Group.queue_autoscaler.max_upscale_per_minute -eq `
+        [int]$Autoscaler.Value.max_upscale_per_minute -eq `
             [int]$Definition.autoscaler.max_upscale_per_minute -and
-        [int]$Group.queue_autoscaler.max_downscale_per_minute -eq `
+        [int]$Autoscaler.Value.max_downscale_per_minute -eq `
             [int]$Definition.autoscaler.max_downscale_per_minute
     )
 }
@@ -222,6 +229,13 @@ if ($AllowBootstrapReplica) {
 }
 
 $Group = Get-Group
+$RemoteAutoscalerProperty = $Group.PSObject.Properties["queue_autoscaler"]
+if ($null -eq $RemoteAutoscalerProperty -or $null -eq $RemoteAutoscalerProperty.Value) {
+    Write-Warning (
+        "Salad did not expose queue_autoscaler for '$GroupName'; " +
+        "validating queue connection and explicit replica state only."
+    )
+}
 Assert-GroupQueueConfiguration -Group $Group
 if (-not $AllowBootstrapReplica -and (Test-ScaleToZeroActive -Group $Group)) {
     Write-Host (
