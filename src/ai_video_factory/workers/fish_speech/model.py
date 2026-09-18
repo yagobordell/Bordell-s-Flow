@@ -26,6 +26,8 @@ FISH_SPEECH_RUNTIME_COMMIT = "214da3cd841bda85da2496b96cd3c4d7edb1337e"
 FISH_SPEECH_GENERATION_PROFILE = "fish-s2-pro-bf16-v1"
 FISH_SPEECH_CHUNKING_PROFILE = "sentence-utf8-v1"
 FISH_SPEECH_OUTPUT_SAMPLE_RATE = 24_000
+FISH_SPEECH_MAX_CHUNK_BYTES = 800
+FISH_SPEECH_INTER_CHUNK_PAUSE_MS = 80
 
 
 class FishSpeechParameters(BaseModel):
@@ -44,7 +46,7 @@ class FishSpeechParameters(BaseModel):
     seed: int = Field(default=42, ge=0, le=2_147_483_647)
     reference_profile: str | None = Field(default=None, max_length=128)
     reference_audio_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
-    reference_transcript: str | None = Field(default=None, max_length=20_000)
+    reference_transcript: str | None = Field(default=None, min_length=1, max_length=20_000)
     reference_transcript_sha256: str | None = Field(
         default=None,
         pattern=r"^[0-9a-f]{64}$",
@@ -71,7 +73,9 @@ class FishSpeechParameters(BaseModel):
         )
         has_reference = any(value is not None for value in reference_values)
         if has_reference and not all(value is not None for value in reference_values):
-            raise ValueError("Fish reference conditioning requires profile, audio hash and transcript")
+            raise ValueError(
+                "Fish reference conditioning requires profile, audio hash and transcript"
+            )
         if self.reference_transcript is not None:
             transcript_hash = hashlib.sha256(
                 self.reference_transcript.encode("utf-8")
@@ -174,8 +178,8 @@ class FishSpeechBackend:
         model_revision: str = FISH_SPEECH_MODEL_REVISION,
         runtime_commit: str = FISH_SPEECH_RUNTIME_COMMIT,
         device: str = "cuda",
-        max_chunk_bytes: int = 800,
-        inter_chunk_pause_ms: int = 80,
+        max_chunk_bytes: int = FISH_SPEECH_MAX_CHUNK_BYTES,
+        inter_chunk_pause_ms: int = FISH_SPEECH_INTER_CHUNK_PAUSE_MS,
     ) -> None:
         if max_chunk_bytes < 200:
             raise ValueError("Fish max_chunk_bytes must be at least 200")
@@ -272,7 +276,9 @@ class FishSpeechBackend:
                     if result.code == "final" and result.audio is not None:
                         result_rate, audio = result.audio
                         if int(result_rate) != native_rate:
-                            raise RuntimeError("Fish Speech returned inconsistent native sample rate")
+                            raise RuntimeError(
+                                "Fish Speech returned inconsistent native sample rate"
+                            )
                         final_audio = audio
                 if final_audio is None or len(final_audio) == 0:
                     raise RuntimeError("Fish Speech returned no audio for a narration chunk")
@@ -412,6 +418,15 @@ class FishSpeechTaskRunner:
         if has_reference:
             if set(inputs) != {"reference_audio"} or len(request.inputs) != 1:
                 raise ValueError("conditioned Fish jobs require exactly reference_audio")
+            reference_input = request.inputs[0]
+            if reference_input.name != "reference_audio":
+                raise ValueError("Fish reference input must be named reference_audio")
+            if reference_input.sha256 != parameters.reference_audio_sha256:
+                raise ValueError(
+                    "Fish reference input SHA-256 must match the deterministic request identity"
+                )
+            if reference_input.content_type != "audio/wav":
+                raise ValueError("Fish reference input must be audio/wav")
         elif inputs or request.inputs:
             raise ValueError("unconditioned Fish jobs do not accept object inputs")
 
