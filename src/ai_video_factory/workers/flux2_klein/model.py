@@ -136,7 +136,7 @@ class Flux2KleinBackend:
             torch = self._torch
             if torch is None:
                 raise RuntimeError("FLUX.2 Klein torch runtime is unavailable")
-            generator = torch.Generator(device="cpu").manual_seed(parameters.seed)
+            generator = torch.Generator(device=self._device).manual_seed(parameters.seed)
             try:
                 result = pipeline(
                     prompt=parameters.prompt,
