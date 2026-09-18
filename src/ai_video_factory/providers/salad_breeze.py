@@ -14,6 +14,7 @@ from ai_video_factory.workers.breeze_tts2 import (
     breeze_application_job_id,
 )
 
+from .job_queue import QueueJobStatus
 from .inference_jobs import (
     InferenceJobExecutor,
     InferenceJobTimeoutError,
@@ -124,6 +125,8 @@ class SaladBreezeSpeechProvider:
                 str(exc),
             ) from exc
         except InferenceTransportFailedError as exc:
+            if exc.status is QueueJobStatus.CANCELLED:
+                raise
             raise BreezeFallbackEligibleError(
                 "breeze_terminal_transport_failure",
                 str(exc),
