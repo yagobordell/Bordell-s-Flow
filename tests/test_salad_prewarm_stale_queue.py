@@ -14,13 +14,15 @@ def test_optimized_prewarm_verifies_stale_queue_summary_by_job_enumeration() -> 
     assert "$null = Assert-QueueLogicallyEmpty -Queue $Queue" in text
 
 
-def test_optimized_prewarm_reverifies_positive_summary_instead_of_using_growth_baseline() -> None:
+def test_optimized_prewarm_rechecks_stale_queue_only_at_safe_boundaries() -> None:
     text = PREWARM.read_text(encoding="utf-8")
 
-    assert "$VerifiedEmptyQueueLength" not in text
-    assert "queue growth from verified-empty baseline" not in text
+    assert "$VerifiedInitialQueueLength" in text
+    assert "observed new queued work after the pre-allocation empty-queue verification" in text
+    assert "observed queue growth beyond the already-verified stale summary" in text
     assert "refusing GPU allocation while queue state is ambiguous" in text
     assert "enumerable pending/running job(s)" in text
+    assert "-VerificationSeconds 180" in text
 
 
 def test_optimized_prewarm_does_not_treat_stale_summary_as_active_work() -> None:
@@ -32,3 +34,13 @@ def test_optimized_prewarm_does_not_treat_stale_summary_as_active_work() -> None
         '        "Optimized prewarm requires an empty queue;'
     )
     assert legacy_guard not in text
+
+
+def test_optimized_prewarm_does_not_paginate_stale_history_on_every_poll() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+
+    loop = text.split("while ((Get-Date) -lt $Deadline)", maxsplit=1)[1]
+    ready = loop.split("$Queue = Get-Queue", maxsplit=1)[1]
+    assert "$null = Assert-QueueLogicallyEmpty -Queue $Queue" in ready
+    poll_prefix = loop.split("# The queue is dedicated to this service.", maxsplit=1)[0]
+    assert "Assert-QueueLogicallyEmpty -Queue $Queue" not in poll_prefix
