@@ -14,9 +14,9 @@ from ai_video_factory.providers.salad_ideogram import (
     build_ideogram_job_request,
     reference_caption_variants,
 )
-from ai_video_factory.workers.flux_schnell import (
-    FLUX_SCHNELL_MODEL_ID,
-    FLUX_SCHNELL_REFERENCE_TASK,
+from ai_video_factory.workers.flux2_klein import (
+    FLUX2_KLEIN_MODEL_ID,
+    FLUX2_KLEIN_REFERENCE_TASK,
 )
 from ai_video_factory.workers.ideogram4 import (
     IDEOGRAM4_MODEL_ID,
@@ -110,9 +110,9 @@ def _blocked_storage(*, include_flux_output: bool) -> tuple[FakeStorage, Any]:
         objects[safety_rejection_key(request.job_id)] = _safety_object(request)
 
     flux_request = build_flux_job_request(
-        task_name=FLUX_SCHNELL_REFERENCE_TASK,
+        task_name=FLUX2_KLEIN_REFERENCE_TASK,
         prompt=prompt,
-        model_id=FLUX_SCHNELL_MODEL_ID,
+        model_id=FLUX2_KLEIN_MODEL_ID,
         width=1024,
         height=1024,
     )
@@ -133,8 +133,8 @@ def test_phase4_planner_routes_fully_safety_blocked_reference_to_flux() -> None:
 
     record = records[0]
     assert record["status"] == "safety_blocked"
-    assert record["provider"] == "flux1_schnell"
-    assert record["matched_variant"] == "flux_schnell"
+    assert record["provider"] == "flux2_klein"
+    assert record["matched_variant"] == "flux2_klein"
     assert record["fallback_job_id"] == flux_request.job_id
     assert set(record["safety_rejected_variants"]) == {
         "canonical",
@@ -155,5 +155,5 @@ def test_phase4_planner_replays_cached_flux_fallback_without_gpu_work() -> None:
 
     record = records[0]
     assert record["status"] == "hit"
-    assert record["provider"] == "flux1_schnell"
+    assert record["provider"] == "flux2_klein"
     assert record["job_id"] == flux_request.job_id
