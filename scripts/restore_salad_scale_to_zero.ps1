@@ -98,9 +98,67 @@ function Get-HttpStatusCode {
     }
 }
 
+function Test-TransientSaladFailure {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    $StatusCode = Get-HttpStatusCode -ErrorRecord $ErrorRecord
+    if ($StatusCode -in @(408, 429, 500, 502, 503, 504)) {
+        return $true
+    }
+    $Message = [string]$ErrorRecord.Exception.Message
+    return $Message -match (
+        "(?i)timed out|timeout|upstream connect error|disconnect/reset|" +
+        "remote connection failure|server unavailable|gateway timeout"
+    )
+}
+
+function Invoke-SaladRequest {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$Operation,
+        [string]$Method = "Get",
+        [string]$ContentType = "",
+        [string]$Body = "",
+        [ValidateRange(1, 120)][int]$TimeoutSec = 30,
+        [ValidateRange(1, 10)][int]$MaxAttempts = 6
+    )
+
+    for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
+        try {
+            $Arguments = @{
+                Method = $Method
+                Uri = $Uri
+                Headers = $Headers
+                TimeoutSec = $TimeoutSec
+            }
+            if (-not [string]::IsNullOrWhiteSpace($ContentType)) {
+                $Arguments["ContentType"] = $ContentType
+            }
+            if (-not [string]::IsNullOrWhiteSpace($Body)) {
+                $Arguments["Body"] = $Body
+            }
+            return Invoke-RestMethod @Arguments
+        }
+        catch {
+            if (-not (Test-TransientSaladFailure -ErrorRecord $_) -or $Attempt -ge $MaxAttempts) {
+                throw
+            }
+            $DelaySeconds = [Math]::Min(15, 2 * $Attempt)
+            Write-Warning (
+                "$Service scale-to-zero restore operation '$Operation' failed transiently " +
+                "(attempt $Attempt/$MaxAttempts): $($_.Exception.Message). " +
+                "Retrying in ${DelaySeconds}s."
+            )
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+
+    throw "Unreachable Salad retry state for '$Operation'."
+}
+
 function Try-Get-Group {
     try {
-        return Invoke-RestMethod -Uri $GroupUrl -Headers $Headers -TimeoutSec 30
+        return Invoke-SaladRequest -Uri $GroupUrl -Operation "read container group"
     }
     catch {
         if ((Get-HttpStatusCode -ErrorRecord $_) -eq 404) {
@@ -201,10 +259,10 @@ Write-Host (
     "$Service restoring queue autoscaler to manifest min_replicas=$([int]$Definition.autoscaler.min_replicas)."
 ) -ForegroundColor Cyan
 $Body = @{ queue_autoscaler = New-ManifestAutoscaler } | ConvertTo-Json -Depth 10
-Invoke-RestMethod `
-    -Method Patch `
+Invoke-SaladRequest `
+    -Method "Patch" `
     -Uri $GroupUrl `
-    -Headers $Headers `
+    -Operation "restore manifest autoscaler" `
     -ContentType "application/merge-patch+json" `
     -Body $Body `
     -TimeoutSec 60 |
