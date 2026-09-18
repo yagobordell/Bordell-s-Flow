@@ -130,8 +130,9 @@ def test_controlled_gpu_runners_prewarm_and_always_stop() -> None:
 def test_ideogram_controlled_runners_pin_warm_and_clean_queue() -> None:
     assert QUEUE_CLEANUP.is_file()
     cleanup = QUEUE_CLEANUP.read_text(encoding="utf-8")
-    assert 'Where-Object { [string]$_.status -eq "pending" }' in cleanup
-    assert "Waiting for dispatched job(s)" in cleanup
+    assert "foreach ($Job in $ActiveJobs)" in cleanup
+    assert "Cancelling abandoned active job after group stop" in cleanup
+    assert "Waiting for cancelled running job(s)" in cleanup
     assert "requires '$GroupName' fully stopped first" in cleanup
 
     for path in (
