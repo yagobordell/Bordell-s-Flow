@@ -228,6 +228,11 @@ if ($AttachedQueueName -ne $QueueName) {
     )
 }
 
+$PrewarmStartedAt = Get-Date
+$AssignmentSeconds = $null
+$ContainerStartedSeconds = $null
+$ReadySeconds = $null
+
 Write-Host "FLUX prewarm: requesting exactly one replica before queue submission." -ForegroundColor Cyan
 Invoke-RestMethod `
     -Method Patch `
@@ -278,6 +283,10 @@ do {
     $Pulling = "-"
     $Machine = ""
     if ($Instances.Count -eq 1) {
+        $ElapsedSeconds = ((Get-Date) - $PrewarmStartedAt).TotalSeconds
+        if ($null -eq $AssignmentSeconds) {
+            $AssignmentSeconds = $ElapsedSeconds
+        }
         $Instance = $Instances[0]
         if ($Instance.PSObject.Properties.Name -contains "state") {
             $State = [string]$Instance.state
@@ -293,6 +302,12 @@ do {
         }
         if ($Instance.PSObject.Properties.Name -contains "machine_id") {
             $Machine = [string]$Instance.machine_id
+        }
+        if ($Started -and $null -eq $ContainerStartedSeconds) {
+            $ContainerStartedSeconds = $ElapsedSeconds
+        }
+        if ($Ready -and $null -eq $ReadySeconds) {
+            $ReadySeconds = $ElapsedSeconds
         }
     }
 
@@ -371,6 +386,20 @@ do {
                 "warm hold is relying on the accepted autoscaler PATCH and settled group state."
             )
         }
+        $BootstrapAfterStartSeconds = $null
+        if ($null -ne $ReadySeconds -and $null -ne $ContainerStartedSeconds) {
+            $BootstrapAfterStartSeconds = $ReadySeconds - $ContainerStartedSeconds
+        }
+        Write-Host (
+            "FLUX2_KLEIN_PREWARM_METRIC assignment_seconds={0:N1} " +
+            "container_started_seconds={1:N1} ready_seconds={2:N1} " +
+            "bootstrap_after_start_seconds={3:N1}"
+        ) -f @(
+            [double]$AssignmentSeconds,
+            [double]$ContainerStartedSeconds,
+            [double]$ReadySeconds,
+            [double]$BootstrapAfterStartSeconds
+        )
         Write-Host "FLUX prewarm complete: one ready replica held for fallback queue work." -ForegroundColor Green
         exit 0
     }
