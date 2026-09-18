@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-import io
 import json
-import math
 import re
 import shutil
 import subprocess
@@ -430,7 +428,9 @@ class FishSpeechTaskRunner:
 def split_narration_text(text: str, max_bytes: int) -> list[str]:
     """Split without truncation, preferring sentence/whitespace boundaries."""
 
-    value = text.strip()
+    if not text.strip():
+        raise ValueError("Fish narration text must be non-empty")
+    value = text
     if not value:
         raise ValueError("Fish narration text must be non-empty")
     if len(value.encode("utf-8")) <= max_bytes:
