@@ -234,6 +234,51 @@ function Invoke-SaladRead {
     throw "Unreachable Salad read retry state for '$Operation'."
 }
 
+function Invoke-SaladMutation {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$Operation,
+        [Parameter(Mandatory)][string]$Method,
+        [string]$ContentType = "",
+        [string]$Body = "",
+        [ValidateRange(1, 120)][int]$TimeoutSeconds = 60,
+        [ValidateRange(1, 10)][int]$MaxAttempts = 6
+    )
+
+    for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
+        try {
+            $Arguments = @{
+                Method = $Method
+                Uri = $Uri
+                Headers = $Headers
+                TimeoutSec = $TimeoutSeconds
+            }
+            if (-not [string]::IsNullOrWhiteSpace($ContentType)) {
+                $Arguments["ContentType"] = $ContentType
+            }
+            if (-not [string]::IsNullOrWhiteSpace($Body)) {
+                $Arguments["Body"] = $Body
+            }
+            return Invoke-RestMethod @Arguments
+        }
+        catch {
+            $Transient = Test-TransientSaladReadFailure -ErrorRecord $_
+            if (-not $Transient -or $Attempt -ge $MaxAttempts) {
+                throw
+            }
+            $DelaySeconds = [Math]::Min(15, 2 * $Attempt)
+            Write-Warning (
+                "$Service Salad control-plane mutation '$Operation' failed transiently " +
+                "(attempt $Attempt/$MaxAttempts): $($_.Exception.Message). " +
+                "Retrying in ${DelaySeconds}s."
+            )
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+
+    throw "Unreachable Salad mutation retry state for '$Operation'."
+}
+
 function Get-Group {
     return Invoke-SaladRead -Uri $GroupUrl -Operation "container group"
 }
@@ -263,6 +308,82 @@ function Test-RemoteAutoscalerMinReplicas {
         return $false
     }
     return [int]$Autoscaler.min_replicas -eq $ExpectedMinReplicas
+}
+
+function New-ManifestAutoscaler {
+    return @{
+        min_replicas = [int]$Definition.autoscaler.min_replicas
+        max_replicas = [int]$Definition.autoscaler.max_replicas
+        desired_queue_length = [int]$Definition.autoscaler.desired_queue_length
+        polling_period = [int]$Definition.autoscaler.polling_period
+        max_upscale_per_minute = [int]$Definition.autoscaler.max_upscale_per_minute
+        max_downscale_per_minute = [int]$Definition.autoscaler.max_downscale_per_minute
+    }
+}
+
+function Test-RemoteAutoscalerMatchesManifestExceptMinReplicas {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $Autoscaler) {
+        return $false
+    }
+    return (
+        [int]$Autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
+        [int]$Autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
+        [int]$Autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period -and
+        [int]$Autoscaler.max_upscale_per_minute -eq `
+            [int]$Definition.autoscaler.max_upscale_per_minute -and
+        [int]$Autoscaler.max_downscale_per_minute -eq `
+            [int]$Definition.autoscaler.max_downscale_per_minute
+    )
+}
+
+function Repair-ResidualHeldAutoscaler {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $Autoscaler -or [int]$Autoscaler.min_replicas -eq 0) {
+        return $Group
+    }
+    if (-not (Test-RemoteAutoscalerMatchesManifestExceptMinReplicas -Group $Group)) {
+        throw (
+            "Optimized prewarm refuses unexpected remote autoscaler drift; " +
+            "only a residual warm-hold min_replicas override can be repaired automatically."
+        )
+    }
+
+    Write-Warning (
+        "$Service found a residual warm-hold autoscaler with " +
+        "min_replicas=$([int]$Autoscaler.min_replicas) while the group is safely stopped at zero. " +
+        "Restoring the manifest autoscaler before prewarm."
+    )
+    $Body = @{ queue_autoscaler = New-ManifestAutoscaler } | ConvertTo-Json -Depth 10 -Compress
+    Invoke-SaladMutation `
+        -Method "Patch" `
+        -Uri $GroupUrl `
+        -Operation "restore residual warm-hold autoscaler" `
+        -ContentType "application/merge-patch+json" `
+        -Body $Body |
+        Out-Null
+
+    $RepairDeadline = (Get-Date).AddMinutes(2)
+    do {
+        Start-Sleep -Seconds 3
+        $Group = Get-Group
+        if (
+            -not [bool]$Group.pending_change -and
+            (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas 0) -and
+            (Test-RemoteAutoscalerMatchesManifestExceptMinReplicas -Group $Group)
+        ) {
+            Write-Host "$Service residual warm-hold autoscaler restored to scale-to-zero." `
+                -ForegroundColor Green
+            return $Group
+        }
+    }
+    while ((Get-Date) -lt $RepairDeadline)
+
+    throw "Optimized prewarm could not restore the residual warm-hold autoscaler before timeout."
 }
 
 function Get-QueueJobSnapshot {
@@ -433,8 +554,10 @@ if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
 $RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
 $AutoscalerObservable = $null -ne $RemoteAutoscaler
 if ($AutoscalerObservable) {
+    $Group = Repair-ResidualHeldAutoscaler -Group $Group
+    $RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
     if ([int]$RemoteAutoscaler.min_replicas -ne 0) {
-        throw "Optimized prewarm refuses a remote autoscaler with min_replicas != 0."
+        throw "Optimized prewarm requires remote autoscaler min_replicas=0 after normalization."
     }
     if (
         $Service -in @("ideogram4", "fish_speech") -and
