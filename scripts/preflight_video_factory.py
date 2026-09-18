@@ -251,6 +251,32 @@ def _salad_json_get_with_retry(
 
     raise RuntimeError(f"{operation}: retry loop exhausted")
 
+def _queue_summary(
+    *,
+    base_url: str,
+    queue_name: str,
+    api_key: str,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        f"{base_url}/queues/{queue_name}",
+        headers={
+            "Salad-Api-Key": api_key,
+            "Accept": "application/json",
+            "User-Agent": "ai-video-factory-preflight/1.1",
+        },
+        method="GET",
+    )
+    payload = _salad_json_get_with_retry(
+        request,
+        operation=f"Salad queue summary preflight failed for {queue_name}",
+    )
+    queue_length = payload.get("current_queue_length")
+    if isinstance(queue_length, bool) or not isinstance(queue_length, int):
+        raise RuntimeError(f"Salad queue {queue_name} returned invalid current_queue_length")
+    if queue_length < 0:
+        raise RuntimeError(f"Salad queue {queue_name} returned negative current_queue_length")
+    return payload
+
 def _queue_jobs(
     *,
     base_url: str,
@@ -299,17 +325,33 @@ def _check_salad_queues(document: dict[str, Any], output_dir: Path) -> dict[str,
         queue_name = service.get("queue_name")
         if not isinstance(queue_name, str) or not queue_name.strip():
             raise RuntimeError(f"Salad service {service_name} is missing queue_name")
-        jobs = _queue_jobs(base_url=base_url, queue_name=queue_name, api_key=api_key)
-        active = [
-            job
-            for job in jobs
-            if str(job.get("status", "")).lower() in {"pending", "running"}
-        ]
-        active_ids = {
-            str(job.get("id", "")).strip()
-            for job in active
-            if str(job.get("id", "")).strip()
-        }
+        summary = _queue_summary(
+            base_url=base_url,
+            queue_name=queue_name,
+            api_key=api_key,
+        )
+        reported_length = int(summary["current_queue_length"])
+
+        active_ids: set[str] = set()
+        enumerated_jobs = False
+        if reported_length > 0:
+            enumerated_jobs = True
+            jobs = _queue_jobs(
+                base_url=base_url,
+                queue_name=queue_name,
+                api_key=api_key,
+            )
+            active = [
+                job
+                for job in jobs
+                if str(job.get("status", "")).lower() in {"pending", "running"}
+            ]
+            active_ids = {
+                str(job.get("id", "")).strip()
+                for job in active
+                if str(job.get("id", "")).strip()
+            }
+
         allowed = allowed_ltx if service_name == "ltx25" else set()
         unexpected = sorted(active_ids.difference(allowed))
         if unexpected:
@@ -319,6 +361,8 @@ def _check_salad_queues(document: dict[str, Any], output_dir: Path) -> dict[str,
                 f"resume manifest: {rendered}"
             )
         result[service_name] = {
+            "reported_queue_length": reported_length,
+            "enumerated_jobs": enumerated_jobs,
             "active_jobs": len(active_ids),
             "recognized_resume_jobs": len(active_ids.intersection(allowed)),
         }
