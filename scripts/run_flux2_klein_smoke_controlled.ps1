@@ -40,7 +40,7 @@ function Write-Flux2KleinSaladMetrics {
             return
         }
 
-        $Manifest = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\\salad\\services.json") -Raw |
+        $Manifest = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\salad\services.json") -Raw |
             ConvertFrom-Json
         $Organization = [string]$Manifest.stack.organization
         $Project = [string]$Manifest.stack.project
@@ -69,13 +69,15 @@ function Write-Flux2KleinSaladMetrics {
                 sort_order = "asc"
                 query = $Query
             } | ConvertTo-Json -Depth 5
-            $Response = Invoke-RestMethod \
-                -Method Post \
-                -Uri $LogsUrl \
-                -Headers $Headers \
-                -ContentType "application/json" \
-                -Body $Body \
-                -TimeoutSec 30
+            $LogRequest = @{
+                Method = "Post"
+                Uri = $LogsUrl
+                Headers = $Headers
+                ContentType = "application/json"
+                Body = $Body
+                TimeoutSec = 30
+            }
+            $Response = Invoke-RestMethod @LogRequest
             $Items = @($Response.items)
             $HasRuntime = @($Items | Where-Object {
                 [string]$_.text_log -like "*FLUX2_KLEIN_RUNTIME_READY*"
