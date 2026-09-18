@@ -186,7 +186,7 @@ def test_fish_task_runner_rejects_unexpected_inputs(tmp_path: Path) -> None:
 
 class BadOutputBackend(FakeBackend):
     def synthesize(self, *, parameters, reference_audio, output_path: Path) -> None:
-        output_path.write_bytes(b"not-a-wave")
+        output_path.write_bytes(b"not-a-wave" * 8)
 
 
 def test_fish_task_runner_rejects_bad_worker_wav(tmp_path: Path) -> None:
