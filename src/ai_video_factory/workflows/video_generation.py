@@ -333,7 +333,20 @@ def _write_manifest(path: Path, manifest: VideoGenerationManifest) -> None:
         json.dumps(manifest.model_dump(mode="json"), indent=2) + "\n",
         encoding="utf-8",
     )
-    os.replace(temporary, path)
+
+    # Windows can transiently deny an atomic replace while another thread or process
+    # has the destination open for reading. Phase 8's progress watcher intentionally
+    # reads this manifest while generation is running, so tolerate short sharing
+    # violations without giving up atomic persistence or losing resumability.
+    replace_attempts = 100
+    for attempt in range(replace_attempts):
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError:
+            if attempt == replace_attempts - 1:
+                raise
+            time.sleep(0.05)
 
 
 def _ensure_keyframe(storage: ObjectStorage, item: VideoGenerationPlanItem) -> None:
