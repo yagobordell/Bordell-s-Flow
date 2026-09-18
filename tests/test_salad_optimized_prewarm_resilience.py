@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 PREWARM = Path("scripts/start_salad_optimized_prewarm.ps1")
 
 
