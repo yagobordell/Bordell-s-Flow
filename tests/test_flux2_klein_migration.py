@@ -96,5 +96,14 @@ def test_no_operational_flux1_schnell_references_remain() -> None:
                 offenders.append(str(path))
 
     assert offenders == []
-    assert not Path("src/ai_video_factory/workers/flux_schnell").exists()
-    assert not Path("docker/workers/flux-schnell").exists()
+
+    legacy_operational_files = (
+        Path("src/ai_video_factory/workers/flux_schnell/__init__.py"),
+        Path("src/ai_video_factory/workers/flux_schnell/model.py"),
+        Path("src/ai_video_factory/workers/flux_schnell/runtime.py"),
+        Path("src/ai_video_factory/workers/flux_schnell/settings.py"),
+        Path("docker/workers/flux-schnell/Dockerfile"),
+        Path("docker/workers/flux-schnell/download_models.sh"),
+        Path("docker/workers/flux-schnell/entrypoint.sh"),
+    )
+    assert [str(path) for path in legacy_operational_files if path.is_file()] == []
