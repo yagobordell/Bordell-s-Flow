@@ -9,6 +9,8 @@ param(
     [ValidateRange(1, 8)]
     [int]$MaxParallelGpuStages = 2,
 
+    [string[]]$ForceStage = @(),
+
     [string]$EnvFile = ".env",
 
     [switch]$NonInteractive
@@ -180,7 +182,7 @@ try {
 
         Write-Host "=== VIDEO FACTORY DAG: cache/resume + bounded parallel execution ===" `
             -ForegroundColor Cyan
-        Invoke-Python -Arguments @(
+        $ProductionArguments = @(
             $ProductionRunner,
             $ResolvedInput,
             "--end-to-end",
@@ -191,6 +193,10 @@ try {
             "--metrics",
             $ProductionMetrics
         )
+        foreach ($Stage in $ForceStage) {
+            $ProductionArguments += @("--force-stage", $Stage)
+        }
+        Invoke-Python -Arguments $ProductionArguments
 
         Write-Host "=== PHASE 9: composition, Remotion render, stream-copy final mux ===" `
             -ForegroundColor Cyan
