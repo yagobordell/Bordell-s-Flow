@@ -9,6 +9,7 @@ def test_phase6_routes_safety_fallback_to_flux2_klein_keyframe_queue() -> None:
     assert "settings.salad_flux2_klein_queue_name" in script
     assert "settings.flux2_klein_model" in script
     assert "flux2-klein-keyframe-client" in script
+    assert "fallback_model=args.fallback_model" in script
 
 
 def test_phase6_controlled_cleanup_restores_flux2_scale_to_zero() -> None:
