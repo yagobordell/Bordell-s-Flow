@@ -5,6 +5,9 @@ import json
 import time
 from pathlib import Path
 
+from run_fish_speech_smoke import build_provider, build_reference
+
+
 from ai_video_factory.config import settings
 from ai_video_factory.providers.fallback_speech import BreezeThenFishSpeechProvider
 from ai_video_factory.providers.salad_breeze import BreezeFallbackEligibleError
