@@ -327,30 +327,40 @@ def _check_salad_queues(document: dict[str, Any], output_dir: Path) -> dict[str,
         queue_name = service.get("queue_name")
         if not isinstance(queue_name, str) or not queue_name.strip():
             raise RuntimeError(f"Salad service {service_name} is missing queue_name")
-        summary = _queue_summary(
-            base_url=base_url,
-            queue_name=queue_name,
-            api_key=api_key,
-        )
-        reported_length = int(summary["current_queue_length"])
+        jobs: list[dict[str, Any]] = []
+        should_enumerate_jobs = False
+        try:
+            summary = _queue_summary(
+                base_url=base_url,
+                queue_name=queue_name,
+                api_key=api_key,
+            )
+            should_enumerate_jobs = int(summary["current_queue_length"]) > 0
+        except RuntimeError as summary_error:
+            should_enumerate_jobs = True
+            print(
+                "VIDEO_FACTORY_PREFLIGHT_FALLBACK "
+                f"queue={queue_name!r} strategy='enumerate-jobs' "
+                f"reason={summary_error}"
+            )
 
-        active_ids: set[str] = set()
-        if reported_length > 0:
+        if should_enumerate_jobs:
             jobs = _queue_jobs(
                 base_url=base_url,
                 queue_name=queue_name,
                 api_key=api_key,
             )
-            active = [
-                job
-                for job in jobs
-                if str(job.get("status", "")).lower() in {"pending", "running"}
-            ]
-            active_ids = {
-                str(job.get("id", "")).strip()
-                for job in active
-                if str(job.get("id", "")).strip()
-            }
+
+        active = [
+            job
+            for job in jobs
+            if str(job.get("status", "")).lower() in {"pending", "running"}
+        ]
+        active_ids: set[str] = {
+            str(job.get("id", "")).strip()
+            for job in active
+            if str(job.get("id", "")).strip()
+        }
 
         allowed = allowed_ltx if service_name == "ltx25" else set()
         unexpected = sorted(active_ids.difference(allowed))
