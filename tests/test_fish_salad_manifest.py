@@ -80,3 +80,14 @@ def test_phase5_fish_fallback_validates_config_before_prewarm() -> None:
     prewarm = content.index("Fish prewarm: exactly one ready fallback replica")
     assert preflight < prewarm
     assert "--preflight-only" in content
+
+
+
+def test_fish_preflights_verify_reference_object_before_gpu() -> None:
+    smoke = (ROOT / "scripts/run_fish_speech_smoke.py").read_text(encoding="utf-8")
+    phase5 = (ROOT / "scripts/run_phase5_audio.py").read_text(encoding="utf-8")
+
+    assert "validate_reference_object(reference)" in smoke
+    assert "_validate_reference_object(storage, reference)" in phase5
+    assert "SHA-256 mismatch" in smoke
+    assert "SHA-256 mismatch" in phase5
