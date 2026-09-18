@@ -55,7 +55,12 @@ function Write-Flux2KleinSaladMetrics {
             'resource.type = "container" and ' +
             'resource.labels.project_name = "' + $Project + '" and ' +
             'resource.labels.container_group_name = "' + $GroupName + '" and ' +
-            '(log contains "FLUX2_KLEIN_" or log contains "FLUX.2 Klein")'
+            '(' +
+            'log contains "FLUX2_KLEIN_RUNTIME_READY" or ' +
+            'log contains "FLUX2_KLEIN_INFERENCE_METRIC" or ' +
+            'log contains "Diffusers snapshot complete" or ' +
+            'log contains "model bootstrap complete"' +
+            ')'
         )
         $StartTime = $StartedAt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
         $Items = @()
@@ -66,7 +71,7 @@ function Write-Flux2KleinSaladMetrics {
                 start_time = $StartTime
                 end_time = $EndTime
                 page_size = 100
-                sort_order = "asc"
+                sort_order = "desc"
                 query = $Query
             } | ConvertTo-Json -Depth 5
             $LogRequest = @{
