@@ -24,6 +24,10 @@ except ImportError:  # Direct execution: python scripts/preflight_video_factory.
 REQUIRED_TOOLS = ("ffmpeg", "ffprobe", "node", "npm")
 
 
+class TransientSaladPreflightError(RuntimeError):
+    """Salad control-plane/queue state could not be read after bounded transient retries."""
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Fail-fast whole-video preflight. This script never allocates a GPU."
@@ -233,12 +237,14 @@ def _salad_json_get_with_retry(
                 raise RuntimeError(f"{operation} returned a non-object JSON payload")
             return payload
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
-            if not _is_transient_salad_error(exc) or attempt >= max_attempts:
+            transient = _is_transient_salad_error(exc)
+            if not transient or attempt >= max_attempts:
                 if isinstance(exc, urllib.error.HTTPError):
                     detail = f"HTTP {exc.code}"
                 else:
                     detail = str(exc)
-                raise RuntimeError(f"{operation}: {detail}") from exc
+                error_type = TransientSaladPreflightError if transient else RuntimeError
+                raise error_type(f"{operation}: {detail}") from exc
             delay_seconds = min(10, 2 * attempt)
             print(
                 "VIDEO_FACTORY_PREFLIGHT_RETRY "
@@ -314,7 +320,13 @@ def _queue_jobs(
     return jobs
 
 
-def _check_salad_queues(document: dict[str, Any], output_dir: Path) -> dict[str, Any]:
+def _check_salad_queues(
+    document: dict[str, Any],
+    output_dir: Path,
+    *,
+    service_names: set[str] | None = None,
+    allow_transient_defer: bool = True,
+) -> dict[str, Any]:
     api_key = _required("SALAD_API_KEY", settings.salad_api_key)
     organization = str(document["stack"]["organization"])
     project = str(document["stack"]["project"])
@@ -326,11 +338,14 @@ def _check_salad_queues(document: dict[str, Any], output_dir: Path) -> dict[str,
     result: dict[str, Any] = {}
 
     for service_name, service in document["services"].items():
+        if service_names is not None and service_name not in service_names:
+            continue
         queue_name = service.get("queue_name")
         if not isinstance(queue_name, str) or not queue_name.strip():
             raise RuntimeError(f"Salad service {service_name} is missing queue_name")
         jobs: list[dict[str, Any]] = []
         should_enumerate_jobs = False
+        verification = "verified"
         try:
             summary = _queue_summary(
                 base_url=base_url,
@@ -338,7 +353,7 @@ def _check_salad_queues(document: dict[str, Any], output_dir: Path) -> dict[str,
                 api_key=api_key,
             )
             should_enumerate_jobs = int(summary["current_queue_length"]) > 0
-        except RuntimeError as summary_error:
+        except TransientSaladPreflightError as summary_error:
             should_enumerate_jobs = True
             print(
                 "VIDEO_FACTORY_PREFLIGHT_FALLBACK "
@@ -347,11 +362,21 @@ def _check_salad_queues(document: dict[str, Any], output_dir: Path) -> dict[str,
             )
 
         if should_enumerate_jobs:
-            jobs = _queue_jobs(
-                base_url=base_url,
-                queue_name=queue_name,
-                api_key=api_key,
-            )
+            try:
+                jobs = _queue_jobs(
+                    base_url=base_url,
+                    queue_name=queue_name,
+                    api_key=api_key,
+                )
+            except TransientSaladPreflightError as jobs_error:
+                if not allow_transient_defer:
+                    raise
+                verification = "deferred_transient"
+                print(
+                    "VIDEO_FACTORY_PREFLIGHT_DEFERRED "
+                    f"queue={queue_name!r} reason={jobs_error} "
+                    "enforcement='stage-pre-gpu-guard'"
+                )
 
         active = [
             job
@@ -373,8 +398,13 @@ def _check_salad_queues(document: dict[str, Any], output_dir: Path) -> dict[str,
                 f"resume manifest: {rendered}"
             )
         result[service_name] = {
-            "active_jobs": len(active_ids),
-            "recognized_resume_jobs": len(active_ids.intersection(allowed)),
+            "verification": verification,
+            "active_jobs": len(active_ids) if verification == "verified" else None,
+            "recognized_resume_jobs": (
+                len(active_ids.intersection(allowed))
+                if verification == "verified"
+                else None
+            ),
         }
     return result
 
