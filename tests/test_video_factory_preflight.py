@@ -244,3 +244,29 @@ def test_salad_queue_preflight_fails_when_summary_and_job_enumeration_are_unavai
 
     with pytest.raises(RuntimeError, match="jobs timed out"):
         preflight._check_salad_queues(_services(), tmp_path)
+
+
+def test_salad_queue_summary_fails_over_after_two_short_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    sleeps: list[int] = []
+
+    def fake_urlopen(request, timeout):
+        nonlocal attempts
+        attempts += 1
+        assert timeout == 10.0
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(preflight.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(preflight.time, "sleep", sleeps.append)
+
+    with pytest.raises(RuntimeError, match="Salad queue summary preflight failed for ltx-q"):
+        preflight._queue_summary(
+            base_url="https://api.salad.com/api/public/organizations/org/projects/project",
+            queue_name="ltx-q",
+            api_key="test-key",
+        )
+
+    assert attempts == 2
+    assert sleeps == [2]
