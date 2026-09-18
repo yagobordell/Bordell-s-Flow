@@ -84,7 +84,7 @@ function Invoke-Python {
 
     & python @Arguments
     if ($LASTEXITCODE -ne 0) {
-        throw "Python command failed with exit code $LASTEXITCODE: python $($Arguments -join ' ')"
+        throw "Python command failed with exit code ${LASTEXITCODE}: python $($Arguments -join ' ')"
     }
 }
 
@@ -141,7 +141,7 @@ function Invoke-FinalCleanup {
         }
         catch {
             $Failures += $_
-            Write-Warning "Final queue cleanup failed for $Service: $($_.Exception.Message)"
+            Write-Warning "Final queue cleanup failed for ${Service}: $($_.Exception.Message)"
         }
     }
     if ($Failures.Count -gt 0) {
