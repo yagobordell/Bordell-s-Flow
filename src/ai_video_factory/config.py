@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     salad_ideogram4_queue_name: str = "ai-video-factory-ideogram4-jobs"
     salad_flux2_klein_queue_name: str = "ai-video-factory-flux2-klein-jobs"
     salad_whisper_queue_name: str = "ai-video-factory-whisper-jobs"
+    hf_token: str | None = None
+    postgres_dsn: str | None = None
 
     r2_endpoint_url: str | None = None
     r2_bucket: str | None = None
