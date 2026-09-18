@@ -24,6 +24,8 @@ param(
     [ValidateRange(1, 60)]
     [int]$PollSeconds = 5,
 
+    [switch]$KeepIdeogramWarm,
+
     [switch]$NonInteractive
 )
 
@@ -174,7 +176,7 @@ catch {
     $PrimaryFailure = $_
 }
 finally {
-    if ($IdeogramTouched) {
+    if ($IdeogramTouched -and (-not $KeepIdeogramWarm -or $null -ne $PrimaryFailure)) {
         try {
             & $ValidationManager -Action Stop -Service ideogram4 -NonInteractive
         }
@@ -196,6 +198,11 @@ finally {
             Write-Warning "Ideogram status verification failed: $($_.Exception.Message)"
             $CleanupFailures += $_
         }
+    }
+    elseif ($IdeogramTouched -and $KeepIdeogramWarm) {
+        Write-Host (
+            "Ideogram remains warm for the next end-to-end stage; outer orchestration owns cleanup."
+        ) -ForegroundColor Green
     }
     if ($FluxCleanupRequired) {
         try {
