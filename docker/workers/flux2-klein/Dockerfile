@@ -45,7 +45,7 @@ RUN python3 -m pip install \
         --break-system-packages \
         --no-cache-dir \
         '/opt/factory[gpu]' \
-        'diffusers>=0.37,<0.39' \
+        'diffusers==0.40.0' \
         'transformers>=4.57,<5' \
         'accelerate>=1.11,<2' \
         'sentencepiece>=0.2,<0.3' \
