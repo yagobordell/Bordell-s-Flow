@@ -31,6 +31,16 @@ def test_flux2_klein_salad_manifest_contract() -> None:
     assert service["environment"]["FLUX2_KLEIN_READY_TIMEOUT_SECONDS"] == "1200"
 
 
+def test_flux2_klein_docker_dependencies_are_resolver_compatible() -> None:
+    dockerfile = Path("docker/workers/flux2-klein/Dockerfile").read_text(encoding="utf-8")
+
+    assert "'diffusers==0.40.0'" in dockerfile
+    assert "'transformers==5.16.1'" in dockerfile
+    assert "'huggingface-hub==1.32.0'" in dockerfile
+    assert "'transformers>=4.57,<5'" not in dockerfile
+    assert "'huggingface-hub[cli]>=0.36,<1'" not in dockerfile
+
+
 def test_flux2_klein_health_and_readiness_are_separate() -> None:
     entrypoint = Path("docker/workers/flux2-klein/entrypoint.sh").read_text(encoding="utf-8")
 
