@@ -387,16 +387,21 @@ do {
             )
         }
         $BootstrapAfterStartSeconds = $null
+        $ImagePullAndStartSeconds = $null
         if ($null -ne $ReadySeconds -and $null -ne $ContainerStartedSeconds) {
             $BootstrapAfterStartSeconds = $ReadySeconds - $ContainerStartedSeconds
         }
+        if ($null -ne $ContainerStartedSeconds -and $null -ne $AssignmentSeconds) {
+            $ImagePullAndStartSeconds = $ContainerStartedSeconds - $AssignmentSeconds
+        }
         $PrewarmMetric = (
             "FLUX2_KLEIN_PREWARM_METRIC assignment_seconds={0:N1} " +
-            "container_started_seconds={1:N1} ready_seconds={2:N1} " +
-            "bootstrap_after_start_seconds={3:N1}"
+            "container_started_seconds={1:N1} image_pull_and_start_seconds={2:N1} " +
+            "ready_seconds={3:N1} bootstrap_after_start_seconds={4:N1}"
         ) -f @(
             [double]$AssignmentSeconds,
             [double]$ContainerStartedSeconds,
+            [double]$ImagePullAndStartSeconds,
             [double]$ReadySeconds,
             [double]$BootstrapAfterStartSeconds
         )
