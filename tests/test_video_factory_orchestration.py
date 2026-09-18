@@ -68,6 +68,14 @@ def test_phase6_checks_cache_before_ideogram_and_does_not_eager_prewarm_flux() -
     assert "if ($FluxNeeded)" in text
 
 
+def test_queue_cleanup_cancels_orphaned_active_jobs_after_group_stop() -> None:
+    text = _read("scripts/cleanup_salad_queue.ps1")
+
+    assert "Cancelling abandoned active job after group stop" in text
+    assert "foreach ($Job in $ActiveJobs)" in text
+    assert "Get-HttpStatusCode" in text
+
+
 def test_phase8_checks_r2_replay_before_ltx_prewarm() -> None:
     text = _read("scripts/run_phase8_videos_controlled.ps1")
 
