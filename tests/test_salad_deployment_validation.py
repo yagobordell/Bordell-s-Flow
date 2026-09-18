@@ -25,10 +25,11 @@ def _load_smoke_module() -> ModuleType:
 def test_smoke_suite_uses_dependency_order_and_real_workers() -> None:
     text = SMOKE_SCRIPT.read_text(encoding="utf-8")
 
-    assert '_SERVICE_ORDER = ("breeze_tts2", "whisper", "ideogram4", "ltx25")' in text
+    assert '_SERVICE_ORDER = ("breeze_tts2", "whisper", "ideogram4", "flux2_klein", "ltx25")' in text
     assert "SaladBreezeSpeechProvider" in text
     assert "SaladWhisperTranscriptionProvider" in text
     assert "SaladIdeogramImageProvider" in text
+    assert "SaladFlux2KleinImageProvider" in text
     assert '"scripts/submit_ltx25_smoke.py"' in text
     assert '"1024x1536"' in text
     assert 'quality="high"' in text
@@ -50,7 +51,7 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     )
 
     assert action_set in text
-    assert 'ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25", "all")' in text
+    assert 'ValidateSet("whisper", "breeze_tts2", "ideogram4", "flux2_klein", "ltx25", "all")' in text
     assert 'python scripts/run_salad_smoke_suite.py' in text
     assert "manage_salad_stack.ps1" in text
     assert "start_salad_scale_to_zero.ps1" in text
@@ -134,6 +135,6 @@ def test_scale_to_zero_restore_reinstates_manifest_autoscaler() -> None:
 def test_smoke_suite_persists_evidence_for_each_worker() -> None:
     text = SMOKE_SCRIPT.read_text(encoding="utf-8")
 
-    for service in ("breeze_tts2", "whisper", "ideogram4", "ltx25"):
+    for service in ("breeze_tts2", "whisper", "ideogram4", "flux2_klein", "ltx25"):
         assert f'_write_report(args.output_dir, "{service}"' in text
     assert '"smoke-summary.json"' in text
