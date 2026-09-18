@@ -88,6 +88,27 @@ function Invoke-Prewarm {
     }
 }
 
+
+function Test-BreezePrewarmFallbackEligible {
+    param([Parameter(Mandatory)][string]$Message)
+
+    $Patterns = @(
+        "entered failed state during prewarm",
+        "exceeded the global node-change budget",
+        "could not make allocation/container-creation progress",
+        "image pull remained stalled during the final",
+        "image pull completed but the container never started during",
+        "remained running but not ready during the final",
+        "did not become ready within the overall"
+    )
+    foreach ($Pattern in $Patterns) {
+        if ($Message.Contains($Pattern, [StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
+}
+
 Write-Host "=== R2 preflight: verify storage before GPU allocation ===" -ForegroundColor Cyan
 & python $R2Preflight
 if ($LASTEXITCODE -ne 0) {
@@ -108,10 +129,14 @@ try {
         Invoke-Prewarm -Service breeze_tts2
     }
     catch {
+        $PrewarmError = [string]$_.Exception.Message
+        if (-not (Test-BreezePrewarmFallbackEligible -Message $PrewarmError)) {
+            throw
+        }
         $FallbackReason = "breeze_prewarm_terminal_failure"
         Write-Warning (
-            "Breeze prewarm failed after Salad/R2 preflight; this is eligible for Fish fallback. " +
-            "Error: $($_.Exception.Message)"
+            "Breeze prewarm reached a classified terminal operational failure; " +
+            "this is eligible for Fish fallback. Error: $PrewarmError"
         )
     }
 
