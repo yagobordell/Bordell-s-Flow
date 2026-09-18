@@ -32,12 +32,22 @@ $ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $Runner = Join-Path $PSScriptRoot "run_phase8_videos.py"
+$ServicesPath = Join-Path (Split-Path $PSScriptRoot -Parent) "deploy\salad\services.json"
 
 foreach ($Path in @($Keyframes, $Prompts, $Timings)) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "Required Phase 8 input not found: $Path"
     }
 }
+
+$Services = Get-Content -LiteralPath $ServicesPath -Raw | ConvertFrom-Json
+$LtxService = $Services.services.ltx25
+$env:SALAD_ORGANIZATION = [string]$Services.stack.organization
+$env:SALAD_PROJECT = [string]$Services.stack.project
+$env:SALAD_LTX25_QUEUE_NAME = [string]$LtxService.queue_name
+Write-Host (
+    "Phase 8 canonical Salad route: queue={0}" -f $env:SALAD_LTX25_QUEUE_NAME
+) -ForegroundColor DarkGray
 
 $ManifestPath = Join-Path $OutputDir "video_generation_manifest.json"
 $ResumeSubmittedJobs = $false
