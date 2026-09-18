@@ -1,5 +1,12 @@
 # Phase 4 — Formal production closure
 
+> **Current fallback (2026-09-18):** the operational fallback has migrated from the historical
+> FLUX.1 Schnell deployment documented below to FLUX.2 Klein 4B. See
+> `docs/flux2-klein-safety-fallback.md` for the current model, cache identity, worker and Salad
+> lifecycle. Historical FLUX.1 measurements below are retained as closure evidence and must not be
+> interpreted as the current deployment.
+
+
 Status: **CLOSED**
 
 Phase 4 converts canonical continuity entities into reusable visual references and persisted PNG assets.
