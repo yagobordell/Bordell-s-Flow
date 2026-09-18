@@ -71,8 +71,53 @@ function Get-HttpStatusCode {
     }
 }
 
+function Test-TransientSaladFailure {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    $StatusCode = Get-HttpStatusCode -ErrorRecord $ErrorRecord
+    if ($StatusCode -in @(408, 429, 500, 502, 503, 504)) { return $true }
+    $Message = [string]$ErrorRecord.Exception.Message
+    return $Message -match (
+        "(?i)timed out|timeout|upstream connect error|disconnect/reset|" +
+        "remote connection failure|server unavailable|gateway timeout"
+    )
+}
+
+function Invoke-SaladRequest {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$Operation,
+        [string]$Method = "Get",
+        [ValidateRange(1, 120)][int]$TimeoutSec = 30,
+        [ValidateRange(1, 10)][int]$MaxAttempts = 6
+    )
+
+    for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
+        try {
+            return Invoke-RestMethod `
+                -Method $Method `
+                -Uri $Uri `
+                -Headers $Headers `
+                -TimeoutSec $TimeoutSec
+        }
+        catch {
+            if (-not (Test-TransientSaladFailure -ErrorRecord $_) -or $Attempt -ge $MaxAttempts) {
+                throw
+            }
+            $DelaySeconds = [Math]::Min(15, 2 * $Attempt)
+            Write-Warning (
+                "$Service queue cleanup operation '$Operation' failed transiently " +
+                "(attempt $Attempt/$MaxAttempts): $($_.Exception.Message). " +
+                "Retrying in ${DelaySeconds}s."
+            )
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+    throw "Unreachable Salad retry state for '$Operation'."
+}
+
 function Get-QueueSummary {
-    return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
+    return Invoke-SaladRequest -Uri $QueueUrl -Operation "read queue summary"
 }
 
 function Get-QueueJobSnapshot {
@@ -95,9 +140,9 @@ function Get-QueueJobSnapshot {
             "Inspecting $Service queue jobs page $Page for active work " +
             "(cleanup deadline in $([int]$SecondsRemaining)s)..."
         )
-        $Response = Invoke-RestMethod `
+        $Response = Invoke-SaladRequest `
             -Uri "$QueueUrl/jobs?page=$Page&page_size=25" `
-            -Headers $Headers `
+            -Operation "inspect queue jobs page $Page" `
             -TimeoutSec $RequestTimeoutSeconds
         $Pages += 1
         $Items = @(
@@ -165,7 +210,7 @@ $Headers = @{
 }
 
 Write-Host "Inspecting $Service container group before queue cleanup..."
-$Group = Invoke-RestMethod -Uri $GroupUrl -Headers $Headers -TimeoutSec 30
+$Group = Invoke-SaladRequest -Uri $GroupUrl -Operation "read stopped container group"
 $Status = [string]$Group.current_state.status
 if ($Status -ne "stopped" -or [bool]$Group.pending_change -or [int]$Group.replicas -ne 0) {
     throw (
@@ -204,10 +249,10 @@ do {
     foreach ($Job in $ActiveJobs) {
         Write-Warning "Cancelling abandoned active job after group stop: $(Format-Job -Job $Job)"
         try {
-            Invoke-RestMethod `
-                -Method Delete `
+            Invoke-SaladRequest `
+                -Method "Delete" `
                 -Uri "$QueueUrl/jobs/$([string]$Job.id)" `
-                -Headers $Headers `
+                -Operation "cancel active queue job $([string]$Job.id)" `
                 -TimeoutSec 30 |
                 Out-Null
         }
