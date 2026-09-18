@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import json
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -82,3 +84,75 @@ def test_resume_transport_reader_rejects_malformed_manifest(tmp_path: Path) -> N
 
     with pytest.raises(RuntimeError, match="invalid jobs"):
         preflight._active_resume_transport_ids(tmp_path)
+
+
+class _FakeResponse:
+    def __init__(self, payload: dict) -> None:
+        self._body = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def test_salad_queue_preflight_retries_transient_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    sleeps: list[int] = []
+
+    def fake_urlopen(request, timeout):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise TimeoutError("The read operation timed out")
+        return _FakeResponse({"items": []})
+
+    monkeypatch.setattr(preflight.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(preflight.time, "sleep", sleeps.append)
+
+    jobs = preflight._queue_jobs(
+        base_url="https://api.salad.com/api/public/organizations/org/projects/project",
+        queue_name="ltx-q",
+        api_key="test-key",
+    )
+
+    assert jobs == []
+    assert attempts == 2
+    assert sleeps == [2]
+
+
+def test_salad_queue_preflight_retries_503_then_fails_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    sleeps: list[int] = []
+
+    def fake_urlopen(request, timeout):
+        nonlocal attempts
+        attempts += 1
+        raise urllib.error.HTTPError(
+            request.full_url,
+            503,
+            "Server Unavailable",
+            hdrs=None,
+            fp=io.BytesIO(b"unavailable"),
+        )
+
+    monkeypatch.setattr(preflight.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(preflight.time, "sleep", sleeps.append)
+
+    with pytest.raises(RuntimeError, match="Salad queue preflight failed for ltx-q: HTTP 503"):
+        preflight._queue_jobs(
+            base_url="https://api.salad.com/api/public/organizations/org/projects/project",
+            queue_name="ltx-q",
+            api_key="test-key",
+        )
+
+    assert attempts == 6
+    assert sleeps == [2, 4, 6, 8, 10]
