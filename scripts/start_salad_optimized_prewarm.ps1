@@ -160,12 +160,86 @@ function Get-SaladApiKey {
     return $Value.Trim()
 }
 
+function Get-HttpStatusCode {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    $Response = $ErrorRecord.Exception.Response
+    if ($null -eq $Response) {
+        return $null
+    }
+    try {
+        return [int]$Response.StatusCode
+    }
+    catch {
+        return $null
+    }
+}
+
+function Test-TransientSaladReadFailure {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    $Exception = $ErrorRecord.Exception
+    if (
+        $Exception -is [System.Net.WebException] -and
+        $Exception.Status -eq [System.Net.WebExceptionStatus]::Timeout
+    ) {
+        return $true
+    }
+    if ($Exception -is [System.TimeoutException]) {
+        return $true
+    }
+    if ([string]$Exception.Message -match '(?i)timed out|timeout') {
+        return $true
+    }
+
+    $StatusCode = Get-HttpStatusCode -ErrorRecord $ErrorRecord
+    return (
+        $StatusCode -eq 408 -or
+        $StatusCode -eq 429 -or
+        ($null -ne $StatusCode -and $StatusCode -ge 500 -and $StatusCode -le 599)
+    )
+}
+
+function Invoke-SaladRead {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$Operation,
+        [ValidateRange(1, 60)][int]$TimeoutSeconds = 20,
+        [ValidateRange(1, 10)][int]$MaxAttempts = 4
+    )
+
+    for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
+        try {
+            return Invoke-RestMethod `
+                -Uri $Uri `
+                -Headers $Headers `
+                -TimeoutSec $TimeoutSeconds
+        }
+        catch {
+            $Transient = Test-TransientSaladReadFailure -ErrorRecord $_
+            if (-not $Transient -or $Attempt -ge $MaxAttempts) {
+                throw
+            }
+
+            $DelaySeconds = [Math]::Min(10, 2 * $Attempt)
+            Write-Warning (
+                "$Service Salad control-plane read '$Operation' failed transiently " +
+                "(attempt $Attempt/$MaxAttempts): $($_.Exception.Message). " +
+                "Retrying in ${DelaySeconds}s without reallocating the worker."
+            )
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+
+    throw "Unreachable Salad read retry state for '$Operation'."
+}
+
 function Get-Group {
-    return Invoke-RestMethod -Uri $GroupUrl -Headers $Headers -TimeoutSec 30
+    return Invoke-SaladRead -Uri $GroupUrl -Operation "container group"
 }
 
 function Get-Queue {
-    return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
+    return Invoke-SaladRead -Uri $QueueUrl -Operation "queue"
 }
 
 function Get-RemoteQueueAutoscaler {
@@ -272,7 +346,7 @@ function Assert-QueueLogicallyEmpty {
 }
 
 function Get-Instances {
-    $Response = Invoke-RestMethod -Uri $InstancesUrl -Headers $Headers -TimeoutSec 30
+    $Response = Invoke-SaladRead -Uri $InstancesUrl -Operation "container instances"
     if ($Response.PSObject.Properties.Name -contains "instances") {
         return @($Response.instances)
     }
