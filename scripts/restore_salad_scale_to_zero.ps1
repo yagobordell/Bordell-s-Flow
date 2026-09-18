@@ -185,20 +185,11 @@ if ($null -eq $Group) {
 }
 $RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
 if ($null -eq $RemoteAutoscaler) {
-    $Status = [string]$Group.current_state.status
-    $Replicas = [int]$Group.replicas
-    $Pending = [bool]$Group.pending_change
-    if ($Status -eq "stopped" -and $Replicas -eq 0 -and -not $Pending) {
-        Write-Host (
-            "$Service API response omits queue_autoscaler; group is already " +
-            "stopped at replicas=0/pending=False, so no autoscaler restore is required."
-        ) -ForegroundColor Yellow
-        exit 0
-    }
-    throw (
-        "Salad omitted queue_autoscaler while '$GroupName' is not safely at zero: " +
-        "status=$Status replicas=$Replicas pending=$Pending."
-    )
+    Write-Host (
+        "$Service API response omits queue_autoscaler; skipping legacy autoscaler restore. " +
+        "The Stop path and zero-replica guard remain authoritative for cleanup."
+    ) -ForegroundColor Yellow
+    exit 0
 }
 if (Test-ManifestAutoscaler -Group $Group) {
     Write-Host "$Service queue autoscaler already matches the scale-to-zero manifest." `
