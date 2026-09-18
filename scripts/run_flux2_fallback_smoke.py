@@ -60,7 +60,11 @@ def parse_args() -> argparse.Namespace:
             "table, realistic materials, soft neutral directional lighting, no text or logos."
         ),
     )
-    parser.add_argument("--poll-seconds", type=float, default=settings.inference_client_poll_seconds)
+    parser.add_argument(
+        "--poll-seconds",
+        type=float,
+        default=settings.inference_client_poll_seconds,
+    )
     parser.add_argument(
         "--timeout-seconds",
         type=float,
@@ -115,7 +119,9 @@ async def main() -> None:
         output_format="png",
     )
     if primary.calls != 1:
-        raise RuntimeError(f"Primary provider was called {primary.calls} times; expected exactly one")
+        raise RuntimeError(
+            f"Primary provider was called {primary.calls} times; expected exactly one"
+        )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     png_path = args.output_dir / "flux2-fallback-e2e.png"
