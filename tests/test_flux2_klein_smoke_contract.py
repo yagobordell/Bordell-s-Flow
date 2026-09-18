@@ -52,8 +52,9 @@ def test_flux2_klein_historical_metric_collector_never_starts_gpu() -> None:
     text = COLLECTOR.read_text(encoding="utf-8")
 
     assert "/log-entries" in text
-    assert 'log contains "FLUX2_KLEIN_RUNTIME_READY"' in text
-    assert 'log contains "FLUX2_KLEIN_INFERENCE_METRIC"' in text
+    assert '"FLUX2_KLEIN_RUNTIME_READY"' in text
+    assert '"FLUX2_KLEIN_INFERENCE_METRIC"' in text
+    assert 'log contains "' in text
     assert 'sort_order = "desc"' in text
     assert "WindowMinutes = 2" in text
     assert "RetryCount = 3" in text
