@@ -6,6 +6,6 @@ The Ideogram worker correctly rejected a reference for safety, but the client th
 
 The negative rejection cache is an optimization, not the source of truth. The paid provider rejection is authoritative. Phase 4 therefore now treats failures while persisting a confirmed safety rejection as non-fatal: it logs the storage failure, preserves the provider rejection, continues through the remaining deterministic Ideogram variants, and can still activate FLUX when all executable variants are terminally safety-rejected.
 
-The controlled Phase 4 wrapper also performs FLUX restore/queue cleanup whenever fresh Ideogram work is planned, because a previously unknown safety rejection can dynamically enqueue FLUX even when the preflight cache plan reported `flux_schnell=False`.
+The controlled Phase 4 wrapper also performs FLUX restore/queue cleanup whenever fresh Ideogram work is planned, because a previously unknown safety rejection can dynamically enqueue FLUX even when the preflight cache plan reported `flux2_klein=False`.
 
 Regression coverage verifies both behaviors.
