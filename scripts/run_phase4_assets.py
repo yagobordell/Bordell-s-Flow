@@ -144,7 +144,11 @@ async def main() -> None:
         temp_dir=settings.temp_dir / "flux2-klein-reference-client",
         task_name=FLUX2_KLEIN_REFERENCE_TASK,
     )
-    provider = SafetyFallbackImageProvider(primary=primary, fallback=fallback)
+    provider = SafetyFallbackImageProvider(
+        primary=primary,
+        fallback=fallback,
+        fallback_model=args.fallback_model,
+    )
 
     assets = await generate_reference_assets(
         references,
