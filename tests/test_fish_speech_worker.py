@@ -9,6 +9,7 @@ from ai_video_factory.inference.contracts import (
     ObjectInput,
     ObjectOutput,
 )
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.workers.fish_speech import (
     FISH_SPEECH_CHUNKING_PROFILE,
     FISH_SPEECH_GENERATION_PROFILE,
@@ -22,7 +23,6 @@ from ai_video_factory.workers.fish_speech import (
     FishSpeechWorkerSettings,
     fish_speech_application_job_id,
 )
-from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.workers.fish_speech.model import _atempo_chain, split_narration_text
 
 
@@ -182,7 +182,6 @@ def test_fish_task_runner_rejects_unexpected_inputs(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="do not accept object inputs"):
         runner.run(request, {"unexpected": unexpected}, tmp_path)
-
 
 
 class BadOutputBackend(FakeBackend):
