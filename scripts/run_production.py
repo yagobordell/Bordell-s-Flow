@@ -191,7 +191,10 @@ def parse_args() -> argparse.Namespace:
         "--metrics",
         type=Path,
         default=None,
-        help="Write stage wall-clock metrics JSON. Defaults to <output-dir>/production_metrics.json.",
+        help=(
+            "Write stage wall-clock metrics JSON. "
+            "Defaults to <output-dir>/production_metrics.json."
+        ),
     )
     return parser.parse_args()
 
