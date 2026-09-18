@@ -33,7 +33,7 @@ phase2-narrative
   -> phase3-shots
   -> phase4-reference-prompts
   -> phase4-reference-assets       [Ideogram 4 Quality]
-  -> phase5-narration              [Breeze TTS 2]
+  -> phase5-narration              [Breeze TTS 2 -> Fish Speech fallback]
   -> phase5-alignment              [Whisper]
   -> phase5-beat-timing
   -> phase5-shot-timing
@@ -85,6 +85,22 @@ does not unnecessarily invalidate every keyframe.
 
 Generation fans out through the shared Ideogram Job Queue. Parallelism comes from independent Salad
 container replicas; each replica keeps one Ideogram runtime resident on its RTX 4090.
+
+## Phase 5 speech fallback
+
+Phase 5 keeps Breeze TTS 2 as the primary provider. The controlled PowerShell wrapper starts
+Fish Speech only after an explicitly classified terminal Breeze failure and only after Breeze
+has been stopped and verified at zero replicas. A successful Breeze run therefore consumes zero
+Fish GPU-seconds.
+
+Fish uses its own queue and container group, plus one persistent authorized reference voice in R2.
+The `FISH_SPEECH_REFERENCE_*` values are deployment configuration, not per-video inputs. Before
+Fish GPU allocation, the wrapper validates the reference configuration, verifies the R2 object and
+checks its SHA-256. Fish output is normalized to the same PCM16 mono 24 kHz WAV contract consumed by
+Whisper.
+
+The fallback implementation and real Salad validation evidence are documented in
+`docs/fish-speech-fallback.md`.
 
 ## Resume model
 
@@ -179,7 +195,8 @@ orchestrator container
          v
 remote model-specific Salad workers
   Whisper       -> RTX 3090
-  Breeze TTS 2  -> RTX 4090
+  Breeze TTS 2  -> RTX 4090, Phase 5 primary
+  Fish Speech   -> RTX 4090, Phase 5 fallback only
   Ideogram 4    -> RTX 4090, shared Phase 4 + Phase 6 queue
   LTX 2.5       -> RTX 5090
          |
