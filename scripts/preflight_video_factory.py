@@ -270,6 +270,8 @@ def _queue_summary(
     payload = _salad_json_get_with_retry(
         request,
         operation=f"Salad queue summary preflight failed for {queue_name}",
+        timeout_seconds=10.0,
+        max_attempts=2,
     )
     queue_length = payload.get("current_queue_length")
     if isinstance(queue_length, bool) or not isinstance(queue_length, int):
