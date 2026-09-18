@@ -121,17 +121,32 @@ function New-ManifestAutoscaler {
     }
 }
 
+function Get-RemoteQueueAutoscaler {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $Property = $Group.PSObject.Properties["queue_autoscaler"]
+    if ($null -eq $Property -or $null -eq $Property.Value) {
+        return $null
+    }
+    return $Property.Value
+}
+
 function Test-ManifestAutoscaler {
     param([Parameter(Mandatory)][object]$Group)
 
+    $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $Autoscaler) {
+        return $false
+    }
+
     return (
-        [int]$Group.queue_autoscaler.min_replicas -eq [int]$Definition.autoscaler.min_replicas -and
-        [int]$Group.queue_autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
-        [int]$Group.queue_autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
-        [int]$Group.queue_autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period -and
-        [int]$Group.queue_autoscaler.max_upscale_per_minute -eq `
+        [int]$Autoscaler.min_replicas -eq [int]$Definition.autoscaler.min_replicas -and
+        [int]$Autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
+        [int]$Autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
+        [int]$Autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period -and
+        [int]$Autoscaler.max_upscale_per_minute -eq `
             [int]$Definition.autoscaler.max_upscale_per_minute -and
-        [int]$Group.queue_autoscaler.max_downscale_per_minute -eq `
+        [int]$Autoscaler.max_downscale_per_minute -eq `
             [int]$Definition.autoscaler.max_downscale_per_minute
     )
 }
@@ -167,6 +182,23 @@ if ($null -eq $Group) {
     Write-Host "$Service worker group does not exist; scale-to-zero restore not needed." `
         -ForegroundColor Green
     exit 0
+}
+$RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
+if ($null -eq $RemoteAutoscaler) {
+    $Status = [string]$Group.current_state.status
+    $Replicas = [int]$Group.replicas
+    $Pending = [bool]$Group.pending_change
+    if ($Status -eq "stopped" -and $Replicas -eq 0 -and -not $Pending) {
+        Write-Host (
+            "$Service API response omits queue_autoscaler; group is already " +
+            "stopped at replicas=0/pending=False, so no autoscaler restore is required."
+        ) -ForegroundColor Yellow
+        exit 0
+    }
+    throw (
+        "Salad omitted queue_autoscaler while '$GroupName' is not safely at zero: " +
+        "status=$Status replicas=$Replicas pending=$Pending."
+    )
 }
 if (Test-ManifestAutoscaler -Group $Group) {
     Write-Host "$Service queue autoscaler already matches the scale-to-zero manifest." `
