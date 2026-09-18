@@ -1,6 +1,7 @@
 """External model and API providers."""
 
 from .base import StructuredTextProvider
+from .fallback_speech import BreezeThenFishSpeechProvider, SpeechFallbackFailedError
 from .images import (
     GeneratedImage,
     ImageProvider,
@@ -12,12 +13,16 @@ from .openai_images import OpenAIImageProvider
 from .openai_speech import OpenAISpeechProvider
 from .openai_transcription import OpenAITranscriptionProvider
 from .safety_fallback import SafetyFallbackImageProvider
-from .salad_breeze import SaladBreezeSpeechProvider
+from .salad_breeze import BreezeFallbackEligibleError, SaladBreezeSpeechProvider
+from .salad_fish_speech import FishSpeechReference, SaladFishSpeechProvider
 from .salad_whisper import SaladWhisperTranscriptionProvider
 from .speech import GeneratedSpeech, SpeechProvider
 from .transcription import TranscribedWord, TranscriptionProvider
 
 __all__ = [
+    "BreezeFallbackEligibleError",
+    "BreezeThenFishSpeechProvider",
+    "FishSpeechReference",
     "GeneratedImage",
     "GeneratedSpeech",
     "ImageProvider",
@@ -29,9 +34,11 @@ __all__ = [
     "ReferenceAwareImageProvider",
     "SafetyFallbackImageProvider",
     "SaladBreezeSpeechProvider",
+    "SaladFishSpeechProvider",
     "SaladFlux2KleinImageProvider",
     "SaladIdeogramImageProvider",
     "SaladWhisperTranscriptionProvider",
+    "SpeechFallbackFailedError",
     "SpeechProvider",
     "StructuredTextProvider",
     "TranscribedWord",
