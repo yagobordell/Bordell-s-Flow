@@ -13,10 +13,10 @@ def test_queue_cleanup_keeps_paginated_items_array_shaped() -> None:
     assert "$Items = if (" not in script
 
 
-def test_queue_cleanup_supports_flux_schnell() -> None:
+def test_queue_cleanup_supports_flux2_klein() -> None:
     script = CLEANUP.read_text(encoding="utf-8")
 
-    assert '"flux_schnell"' in script
+    assert '"flux2_klein"' in script
     assert "Queue cleanup requires" in script
     assert "queue cleanup complete: no active or queued jobs" in script
 
