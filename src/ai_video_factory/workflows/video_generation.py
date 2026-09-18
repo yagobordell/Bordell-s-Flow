@@ -20,6 +20,7 @@ from ai_video_factory.gpu.ltx_video import (
 )
 from ai_video_factory.gpu.ports import ObjectStorage
 from ai_video_factory.gpu.storage import sha256_file
+from ai_video_factory.providers.inference_jobs import cached_inference_response
 from ai_video_factory.providers.job_queue import (
     JobQueueClient,
     QueueJobNotFoundError,
@@ -181,6 +182,18 @@ def run_video_generation(
 
     for item in plan:
         _ensure_keyframe(storage, item)
+
+    # Resolve deterministic R2 replay before touching queue transport state. This is
+    # deliberately earlier than resume reconciliation so a complete cached artifact
+    # never requires a running Salad worker or a new transport submission.
+    for item in plan:
+        state = state_by_shot[item.shot_id]
+        cached = cached_inference_response(storage, item.request)
+        if cached is None:
+            continue
+        state.transport_status = "succeeded"
+        state.response = cached
+        _write_manifest(manifest_path, manifest)
 
     # Refresh known transports before deciding whether a resume needs a new submission.
     for item in plan:
