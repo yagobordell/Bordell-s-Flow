@@ -69,3 +69,14 @@ def test_fish_controlled_smoke_validates_reference_before_prewarm() -> None:
     prewarm = content.index("Fish real prewarm: one RTX 4090 replica maximum")
     assert preflight < prewarm
     assert "--preflight-only" in content
+
+
+
+def test_phase5_fish_fallback_validates_config_before_prewarm() -> None:
+    content = (ROOT / "scripts/run_phase5_audio_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    preflight = content.index("Fish fallback configuration preflight: before GPU allocation")
+    prewarm = content.index("Fish prewarm: exactly one ready fallback replica")
+    assert preflight < prewarm
+    assert "--preflight-only" in content
