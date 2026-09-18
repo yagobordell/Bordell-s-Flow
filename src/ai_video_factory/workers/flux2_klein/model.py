@@ -1,0 +1,251 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import threading
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any, Self
+
+from PIL import Image
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from ai_video_factory.inference.contracts import InferenceJobRequest
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
+from ai_video_factory.inference.ports import LocalArtifact
+
+from .bootstrap_progress import Flux2KleinBootstrapProgress
+
+FLUX2_KLEIN_REFERENCE_TASK = "image.flux2_klein.reference"
+FLUX2_KLEIN_KEYFRAME_TASK = "image.flux2_klein.keyframe"
+FLUX2_KLEIN_MODEL_ID = "black-forest-labs/FLUX.2-klein-4B"
+FLUX2_KLEIN_MODEL_REVISION = "e7b7dc27f91deacad38e78976d1f2b499d76a294"
+FLUX2_KLEIN_GENERATION_PROFILE = "flux2-klein-4b-bf16-v1"
+_SUPPORTED_TASKS = frozenset({FLUX2_KLEIN_REFERENCE_TASK, FLUX2_KLEIN_KEYFRAME_TASK})
+
+
+class Flux2KleinImageParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    generation_profile: str
+    model_id: str
+    model_revision: str
+    prompt: str = Field(min_length=1, max_length=100_000)
+    width: int = Field(ge=256, le=2048)
+    height: int = Field(ge=256, le=2048)
+    seed: int = Field(ge=0, le=2_147_483_647)
+    num_inference_steps: int = Field(default=4, ge=1, le=50)
+    guidance_scale: float = Field(default=1.0, ge=0.0, le=20.0)
+    max_sequence_length: int = Field(default=512, ge=64, le=512)
+
+    @model_validator(mode="after")
+    def validate_flux2_klein(self) -> Self:
+        if self.generation_profile != FLUX2_KLEIN_GENERATION_PROFILE:
+            raise ValueError("Unexpected FLUX.2 Klein generation profile")
+        if self.model_id != FLUX2_KLEIN_MODEL_ID:
+            raise ValueError(f"FLUX.2 Klein worker requires model {FLUX2_KLEIN_MODEL_ID!r}")
+        if self.model_revision != FLUX2_KLEIN_MODEL_REVISION:
+            raise ValueError(
+                f"FLUX.2 Klein worker requires revision {FLUX2_KLEIN_MODEL_REVISION!r}"
+            )
+        if self.width % 16 or self.height % 16:
+            raise ValueError("FLUX.2 Klein width and height must be divisible by 16")
+        if self.width * self.height > 4_194_304:
+            raise ValueError("FLUX.2 Klein output must not exceed 4 megapixels")
+        if self.num_inference_steps != 4:
+            raise ValueError("Distilled FLUX.2 Klein 4B requires exactly 4 inference steps")
+        if self.guidance_scale != 1.0:
+            raise ValueError("Distilled FLUX.2 Klein 4B requires guidance_scale=1.0")
+        return self
+
+
+def flux2_klein_application_job_id(
+    *,
+    task_name: str,
+    prompt: str,
+    width: int,
+    height: int,
+    model_id: str = FLUX2_KLEIN_MODEL_ID,
+    model_revision: str = FLUX2_KLEIN_MODEL_REVISION,
+) -> str:
+    if task_name not in _SUPPORTED_TASKS:
+        raise ValueError(f"Unsupported FLUX.2 Klein application task: {task_name}")
+    purpose = "reference" if task_name == FLUX2_KLEIN_REFERENCE_TASK else "keyframe"
+    payload = {
+        "generation_profile": FLUX2_KLEIN_GENERATION_PROFILE,
+        "height": height,
+        "model_id": model_id,
+        "model_revision": model_revision,
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "purpose": purpose,
+        "width": width,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"flux2-klein-{purpose}-{hashlib.sha256(canonical).hexdigest()[:32]}"
+
+
+def flux2_klein_seed_for_job(job_id: str) -> int:
+    digest = hashlib.sha256(job_id.encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
+
+
+class Flux2KleinBackend:
+    def __init__(
+        self,
+        *,
+        model_root: Path,
+        model_repository: str,
+        model_revision: str,
+        bootstrap_status_path: Path,
+        device: str = "cuda",
+    ) -> None:
+        self._model_root = model_root
+        self._model_repository = model_repository
+        self._model_revision = model_revision
+        self._device = device
+        self._pipeline: Any | None = None
+        self._torch: Any | None = None
+        self._lock = threading.Lock()
+        self._progress = Flux2KleinBootstrapProgress(bootstrap_status_path)
+
+    @property
+    def bootstrap_marker(self) -> Path:
+        return self._model_root / ".ready"
+
+    @property
+    def snapshot_root(self) -> Path:
+        return self._model_root / "snapshot"
+
+    def prepare(self) -> None:
+        with self._lock:
+            self._validate_bootstrap()
+            self._get_or_build_pipeline()
+
+    def ready(self) -> None:
+        with self._lock:
+            self._validate_bootstrap()
+            if self._pipeline is None:
+                raise RuntimeError("FLUX.2 Klein runtime has not been prepared")
+            self._progress.record("worker_ready")
+
+    def generate(self, *, parameters: Flux2KleinImageParameters, output_path: Path) -> None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.unlink(missing_ok=True)
+        with self._lock:
+            pipeline = self._get_or_build_pipeline()
+            torch = self._torch
+            if torch is None:
+                raise RuntimeError("FLUX.2 Klein torch runtime is unavailable")
+            generator = torch.Generator(device="cpu").manual_seed(parameters.seed)
+            try:
+                result = pipeline(
+                    prompt=parameters.prompt,
+                    width=parameters.width,
+                    height=parameters.height,
+                    guidance_scale=parameters.guidance_scale,
+                    num_inference_steps=parameters.num_inference_steps,
+                    max_sequence_length=parameters.max_sequence_length,
+                    generator=generator,
+                )
+                images = result.images
+                if len(images) != 1:
+                    raise RuntimeError("FLUX.2 Klein did not return exactly one image")
+                image = images[0]
+                if image.size != (parameters.width, parameters.height):
+                    raise RuntimeError("FLUX.2 Klein returned unexpected image dimensions")
+                image.save(output_path, format="PNG")
+                self._validate_png(
+                    output_path,
+                    expected_size=(parameters.width, parameters.height),
+                )
+            finally:
+                del generator
+                if self._device.startswith("cuda") and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+    def _validate_bootstrap(self) -> None:
+        self._progress.record("validating_model_files")
+        if not self.bootstrap_marker.is_file() or not self.snapshot_root.is_dir():
+            raise ModelBootstrapPendingError("FLUX.2 Klein model snapshot is not ready")
+        marker = self.bootstrap_marker.read_text(encoding="utf-8").strip()
+        expected = f"{self._model_repository}@{self._model_revision}"
+        if marker != expected:
+            raise RuntimeError(
+                f"FLUX.2 Klein bootstrap marker {marker!r} does not match {expected!r}"
+            )
+        self._progress.record("model_files_validated")
+
+    def _get_or_build_pipeline(self) -> Any:
+        if self._pipeline is not None:
+            return self._pipeline
+
+        self._progress.record("importing_runtime")
+        try:
+            import torch
+            from diffusers import Flux2KleinPipeline
+        except ImportError as exc:
+            raise RuntimeError("FLUX.2 Klein runtime dependencies are not installed") from exc
+        self._progress.record("runtime_imported")
+
+        if self._device.startswith("cuda") and not torch.cuda.is_available():
+            raise RuntimeError("CUDA is not available for the FLUX.2 Klein runtime")
+
+        self._progress.record("from_pretrained")
+        pipeline = Flux2KleinPipeline.from_pretrained(
+            str(self.snapshot_root),
+            torch_dtype=torch.bfloat16,
+            device_map=self._device,
+            local_files_only=True,
+        )
+        self._progress.record("pipeline_loaded")
+        if self._device.startswith("cuda"):
+            torch.cuda.synchronize()
+        self._torch = torch
+        self._pipeline = pipeline
+        self._progress.record("pipeline_ready")
+        return pipeline
+
+    @staticmethod
+    def _validate_png(path: Path, *, expected_size: tuple[int, int]) -> None:
+        try:
+            with Image.open(path) as image:
+                if image.format != "PNG":
+                    raise RuntimeError("FLUX.2 Klein output is not a PNG")
+                if image.size != expected_size:
+                    raise RuntimeError("FLUX.2 Klein PNG has unexpected dimensions")
+                image.verify()
+        except OSError as exc:
+            raise RuntimeError("FLUX.2 Klein produced an invalid PNG") from exc
+
+
+class Flux2KleinImageTaskRunner:
+    def __init__(self, *, backend: Flux2KleinBackend, task_name: str) -> None:
+        if task_name not in _SUPPORTED_TASKS:
+            raise ValueError(f"Unsupported FLUX.2 Klein task runner: {task_name}")
+        self._backend = backend
+        self.task_name = task_name
+
+    def prepare(self) -> None:
+        self._backend.prepare()
+
+    def ready(self) -> None:
+        self._backend.ready()
+
+    def run(
+        self,
+        request: InferenceJobRequest,
+        inputs: Mapping[str, Path],
+        work_dir: Path,
+    ) -> LocalArtifact:
+        if request.task != self.task_name:
+            raise ValueError(f"FLUX.2 Klein runner cannot execute task {request.task!r}")
+        if inputs or request.inputs:
+            raise ValueError("FLUX.2 Klein fallback tasks do not accept object inputs")
+        if request.output.content_type != "image/png":
+            raise ValueError("FLUX.2 Klein output must be image/png")
+        parameters = Flux2KleinImageParameters.model_validate(request.parameters)
+        output = work_dir / "image.png"
+        self._backend.generate(parameters=parameters, output_path=output)
+        if not output.is_file() or output.stat().st_size <= 8:
+            raise RuntimeError("FLUX.2 Klein produced no usable PNG output")
+        return LocalArtifact(path=output, content_type="image/png")
