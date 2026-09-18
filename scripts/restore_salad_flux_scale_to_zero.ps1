@@ -79,8 +79,67 @@ $Headers = @{
     "User-Agent" = "ai-video-factory-flux-restore/1.3"
 }
 
+function Get-HttpStatusCode {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    $Response = $ErrorRecord.Exception.Response
+    if ($null -eq $Response) { return $null }
+    try { return [int]$Response.StatusCode }
+    catch { return $null }
+}
+
+function Test-TransientSaladFailure {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    $StatusCode = Get-HttpStatusCode -ErrorRecord $ErrorRecord
+    if ($StatusCode -in @(408, 429, 500, 502, 503, 504)) { return $true }
+    $Message = [string]$ErrorRecord.Exception.Message
+    return $Message -match (
+        "(?i)timed out|timeout|upstream connect error|disconnect/reset|" +
+        "remote connection failure|server unavailable|gateway timeout"
+    )
+}
+
+function Invoke-SaladRequest {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$Operation,
+        [string]$Method = "Get",
+        [string]$ContentType = "",
+        [string]$Body = "",
+        [ValidateRange(1, 120)][int]$TimeoutSec = 30,
+        [ValidateRange(1, 10)][int]$MaxAttempts = 6
+    )
+
+    for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
+        try {
+            $Arguments = @{ Method = $Method; Uri = $Uri; Headers = $Headers; TimeoutSec = $TimeoutSec }
+            if (-not [string]::IsNullOrWhiteSpace($ContentType)) {
+                $Arguments["ContentType"] = $ContentType
+            }
+            if (-not [string]::IsNullOrWhiteSpace($Body)) {
+                $Arguments["Body"] = $Body
+            }
+            return Invoke-RestMethod @Arguments
+        }
+        catch {
+            if (-not (Test-TransientSaladFailure -ErrorRecord $_) -or $Attempt -ge $MaxAttempts) {
+                throw
+            }
+            $DelaySeconds = [Math]::Min(15, 2 * $Attempt)
+            Write-Warning (
+                "FLUX restore operation '$Operation' failed transiently " +
+                "(attempt $Attempt/$MaxAttempts): $($_.Exception.Message). " +
+                "Retrying in ${DelaySeconds}s."
+            )
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+    throw "Unreachable Salad retry state for '$Operation'."
+}
+
 function Get-Group {
-    return Invoke-RestMethod -Uri $GroupUrl -Headers $Headers -TimeoutSec 30
+    return Invoke-SaladRequest -Uri $GroupUrl -Operation "read FLUX container group"
 }
 
 function Get-VisibleAutoscalerMinReplicas {
@@ -108,10 +167,10 @@ $Autoscaler = @{
 $TargetMinReplicas = [int]$Definition.autoscaler.min_replicas
 
 Write-Host "FLUX restore: applying manifest queue autoscaler settings." -ForegroundColor Cyan
-Invoke-RestMethod `
-    -Method Patch `
+Invoke-SaladRequest `
+    -Method "Patch" `
     -Uri $GroupUrl `
-    -Headers $Headers `
+    -Operation "restore FLUX autoscaler" `
     -ContentType "application/merge-patch+json" `
     -Body (@{ queue_autoscaler = $Autoscaler } | ConvertTo-Json -Depth 10) `
     -TimeoutSec 60 |
@@ -150,10 +209,10 @@ if ([int]$Group.replicas -ne 0) {
     Write-Host (
         "FLUX restore: normalizing desired replicas=$([int]$Group.replicas) to zero in a separate patch."
     ) -ForegroundColor Cyan
-    Invoke-RestMethod `
-        -Method Patch `
+    Invoke-SaladRequest `
+        -Method "Patch" `
         -Uri $GroupUrl `
-        -Headers $Headers `
+        -Operation "normalize FLUX replicas to zero" `
         -ContentType "application/merge-patch+json" `
         -Body (@{ replicas = 0 } | ConvertTo-Json -Compress) `
         -TimeoutSec 60 |
@@ -180,10 +239,10 @@ if ([int]$Group.replicas -ne 0) {
 $Status = [string]$Group.current_state.status
 if ($Status -ne "stopped") {
     Write-Host "FLUX restore: stopping fallback worker group." -ForegroundColor Cyan
-    Invoke-RestMethod `
-        -Method Post `
+    Invoke-SaladRequest `
+        -Method "Post" `
         -Uri "$GroupUrl/stop" `
-        -Headers $Headers `
+        -Operation "stop FLUX container group" `
         -TimeoutSec 60 |
         Out-Null
 }
