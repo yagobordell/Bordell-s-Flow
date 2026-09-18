@@ -44,6 +44,11 @@ def test_salad_queue_preflight_allows_only_manifest_owned_ltx_resume(
     )
     monkeypatch.setattr(preflight.settings, "salad_api_key", "test-key")
 
+    def fake_summary(*, base_url: str, queue_name: str, api_key: str):
+        assert base_url.endswith("/organizations/org/projects/project")
+        assert api_key == "test-key"
+        return {"current_queue_length": 1 if queue_name == "ltx-q" else 0}
+
     def fake_jobs(*, base_url: str, queue_name: str, api_key: str):
         assert base_url.endswith("/organizations/org/projects/project")
         assert api_key == "test-key"
@@ -51,6 +56,7 @@ def test_salad_queue_preflight_allows_only_manifest_owned_ltx_resume(
             return [{"id": "transport-owned", "status": "running"}]
         return []
 
+    monkeypatch.setattr(preflight, "_queue_summary", fake_summary)
     monkeypatch.setattr(preflight, "_queue_jobs", fake_jobs)
 
     result = preflight._check_salad_queues(_services(), tmp_path)
@@ -67,6 +73,11 @@ def test_salad_queue_preflight_rejects_unowned_active_job(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(preflight.settings, "salad_api_key", "test-key")
+    monkeypatch.setattr(
+        preflight,
+        "_queue_summary",
+        lambda **_: {"current_queue_length": 1},
+    )
     monkeypatch.setattr(
         preflight,
         "_queue_jobs",
@@ -156,3 +167,43 @@ def test_salad_queue_preflight_retries_503_then_fails_bounded(
 
     assert attempts == 6
     assert sleeps == [2, 4, 6, 8, 10]
+
+
+def test_salad_queue_preflight_skips_job_history_for_empty_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(preflight.settings, "salad_api_key", "test-key")
+    monkeypatch.setattr(
+        preflight,
+        "_queue_summary",
+        lambda **_: {"current_queue_length": 0},
+    )
+
+    def fail_jobs(**_):
+        raise AssertionError("job history must not be read for an empty queue summary")
+
+    monkeypatch.setattr(preflight, "_queue_jobs", fail_jobs)
+
+    result = preflight._check_salad_queues(_services(), tmp_path)
+
+    assert result["whisper"]["active_jobs"] == 0
+    assert result["ltx25"]["active_jobs"] == 0
+
+
+def test_salad_queue_preflight_enumerates_stale_positive_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(preflight.settings, "salad_api_key", "test-key")
+    monkeypatch.setattr(
+        preflight,
+        "_queue_summary",
+        lambda **_: {"current_queue_length": 1},
+    )
+    monkeypatch.setattr(preflight, "_queue_jobs", lambda **_: [])
+
+    result = preflight._check_salad_queues(_services(), tmp_path)
+
+    assert result["whisper"]["active_jobs"] == 0
+    assert result["ltx25"]["active_jobs"] == 0
