@@ -3,7 +3,7 @@ param(
     [ValidateSet("Validate", "Prepare", "Start", "Prewarm", "Status", "Smoke", "ProtectedSmoke", "Stop")]
     [string]$Action = "Status",
 
-    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "ltx25", "all")]
+    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "flux2_klein", "ltx25", "all")]
     [string]$Service = "all",
 
     [string]$EnvFile = ".env",
