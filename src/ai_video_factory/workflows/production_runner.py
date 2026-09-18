@@ -5,6 +5,8 @@ import json
 import os
 import subprocess
 import sys
+import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
@@ -13,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 StageStatus = Literal["current", "adoptable", "pending", "stale", "blocked"]
 RecordOrigin = Literal["executed", "adopted"]
+StageResource = Literal["cpu", "gpu"]
 
 PRODUCTION_STAGE_NAMES = (
     "phase2-narrative",
@@ -41,6 +44,9 @@ class ProductionStage:
     outputs: tuple[Path, ...]
     script: Path
     arguments: tuple[str, ...] = ()
+    dependencies: tuple[str, ...] = ()
+    resource: StageResource = "cpu"
+    resource_key: str | None = None
 
     def command(self, python_executable: str = sys.executable) -> tuple[str, ...]:
         return (python_executable, self.script.as_posix(), *self.arguments)
@@ -79,10 +85,20 @@ class StageInspection:
 
 
 @dataclass(frozen=True, slots=True)
+class ProductionStageMetric:
+    stage_name: str
+    outcome: Literal["executed", "adopted", "skipped"]
+    resource: StageResource
+    elapsed_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
 class ProductionRunSummary:
     executed: tuple[str, ...]
     adopted: tuple[str, ...]
     skipped: tuple[str, ...]
+    metrics: tuple[ProductionStageMetric, ...] = ()
+    total_elapsed_seconds: float = 0.0
 
 
 class StageExecutor(Protocol):
@@ -122,17 +138,35 @@ class ProductionRunner:
         manifest_path: Path,
         repo_root: Path = Path("."),
         executor: StageExecutor | None = None,
+        max_workers: int = 1,
+        max_gpu_stages: int = 1,
     ) -> None:
         if not stages:
             raise ValueError("Production runner requires at least one stage")
+        if max_workers < 1:
+            raise ValueError("Production runner max_workers must be at least 1")
+        if max_gpu_stages < 1:
+            raise ValueError("Production runner max_gpu_stages must be at least 1")
         names = [stage.name for stage in stages]
         if len(names) != len(set(names)):
             raise ValueError("Production stage names must be unique")
+        known_names = set(names)
+        for stage in stages:
+            unknown = set(stage.dependencies).difference(known_names)
+            if unknown:
+                rendered = ", ".join(sorted(unknown))
+                raise ValueError(f"Stage {stage.name} has unknown dependencies: {rendered}")
+            if stage.name in stage.dependencies:
+                raise ValueError(f"Stage {stage.name} cannot depend on itself")
+            if stage.resource_key is not None and not stage.resource_key.strip():
+                raise ValueError(f"Stage {stage.name} has an empty resource_key")
 
         self._stages = stages
         self._manifest_path = manifest_path
         self._repo_root = repo_root
         self._executor = executor or SubprocessStageExecutor(repo_root=repo_root)
+        self._max_workers = max_workers
+        self._max_gpu_stages = max_gpu_stages
 
     @property
     def stages(self) -> tuple[ProductionStage, ...]:
@@ -148,51 +182,164 @@ class ProductionRunner:
         through: str | None = None,
         force_stages: set[str] | None = None,
     ) -> ProductionRunSummary:
+        """Run the selected production DAG with bounded, dependency-aware concurrency."""
+
+        started_at = time.monotonic()
         force = force_stages or set()
         unknown_force = force.difference(stage.name for stage in self._stages)
         if unknown_force:
             rendered = ", ".join(sorted(unknown_force))
             raise ValueError(f"Unknown forced production stages: {rendered}")
 
+        selected = self._selected_stages(through)
+        selected_names = {stage.name for stage in selected}
+        for stage in selected:
+            outside = set(stage.dependencies).difference(selected_names)
+            if outside:
+                rendered = ", ".join(sorted(outside))
+                raise ValueError(
+                    f"Selected run excludes dependencies required by {stage.name}: {rendered}"
+                )
+
         manifest = self._load_manifest()
         executed: list[str] = []
         adopted: list[str] = []
         skipped: list[str] = []
+        metrics: list[ProductionStageMetric] = []
+        completed: set[str] = set()
+        pending = {stage.name: stage for stage in selected}
+        running: dict[Future[None], tuple[ProductionStage, float]] = {}
+        running_resource_keys: set[str] = set()
+        running_gpu_stages = 0
 
-        for stage in self._selected_stages(through):
-            inspection = self._inspect(stage, manifest)
-            if inspection.status == "blocked":
-                missing = tuple(path for path in stage.inputs if not path.exists())
-                raise ProductionStageBlocked(stage, missing)
+        with ThreadPoolExecutor(
+            max_workers=self._max_workers,
+            thread_name_prefix="production-stage",
+        ) as pool:
+            while pending or running:
+                made_progress = False
 
-            if stage.name not in force and inspection.status == "current":
-                print(f"SKIP  {stage.name}: {inspection.reason}")
-                skipped.append(stage.name)
-                continue
+                for stage in selected:
+                    if stage.name not in pending:
+                        continue
+                    if not set(stage.dependencies).issubset(completed):
+                        continue
+                    if len(running) >= self._max_workers:
+                        break
+                    if stage.resource == "gpu" and running_gpu_stages >= self._max_gpu_stages:
+                        continue
+                    if (
+                        stage.resource_key is not None
+                        and stage.resource_key in running_resource_keys
+                    ):
+                        continue
 
-            if stage.name not in force and inspection.status == "adoptable":
-                self._record_stage(stage, manifest, origin="adopted")
-                self._write_manifest(manifest)
-                print(f"ADOPT {stage.name}: existing artifacts recorded in production manifest")
-                adopted.append(stage.name)
-                continue
+                    inspection = self._inspect(stage, manifest)
+                    if inspection.status == "blocked":
+                        missing = tuple(path for path in stage.inputs if not path.exists())
+                        raise ProductionStageBlocked(stage, missing)
 
-            print(f"RUN   {stage.name}: {stage.description}")
-            self._executor(stage)
-            missing_outputs = tuple(path for path in stage.outputs if not path.exists())
-            if missing_outputs:
-                rendered = ", ".join(path.as_posix() for path in missing_outputs)
-                raise RuntimeError(
-                    f"Stage {stage.name} completed without required outputs: {rendered}"
-                )
-            self._record_stage(stage, manifest, origin="executed")
-            self._write_manifest(manifest)
-            executed.append(stage.name)
+                    if stage.name not in force and inspection.status == "current":
+                        print(f"SKIP  {stage.name}: {inspection.reason}")
+                        skipped.append(stage.name)
+                        metrics.append(
+                            ProductionStageMetric(
+                                stage_name=stage.name,
+                                outcome="skipped",
+                                resource=stage.resource,
+                                elapsed_seconds=0.0,
+                            )
+                        )
+                        completed.add(stage.name)
+                        pending.pop(stage.name)
+                        made_progress = True
+                        continue
+
+                    if stage.name not in force and inspection.status == "adoptable":
+                        self._record_stage(stage, manifest, origin="adopted")
+                        self._write_manifest(manifest)
+                        print(
+                            f"ADOPT {stage.name}: existing artifacts recorded in production manifest"
+                        )
+                        adopted.append(stage.name)
+                        metrics.append(
+                            ProductionStageMetric(
+                                stage_name=stage.name,
+                                outcome="adopted",
+                                resource=stage.resource,
+                                elapsed_seconds=0.0,
+                            )
+                        )
+                        completed.add(stage.name)
+                        pending.pop(stage.name)
+                        made_progress = True
+                        continue
+
+                    print(f"RUN   {stage.name}: {stage.description}")
+                    stage_started = time.monotonic()
+                    future = pool.submit(self._executor, stage)
+                    running[future] = (stage, stage_started)
+                    pending.pop(stage.name)
+                    if stage.resource == "gpu":
+                        running_gpu_stages += 1
+                    if stage.resource_key is not None:
+                        running_resource_keys.add(stage.resource_key)
+                    made_progress = True
+
+                if not running:
+                    if pending and not made_progress:
+                        unresolved = ", ".join(pending)
+                        raise RuntimeError(
+                            "Production DAG cannot make progress; unresolved stages: "
+                            f"{unresolved}"
+                        )
+                    continue
+
+                done, _ = wait(running, return_when=FIRST_COMPLETED)
+                for future in done:
+                    stage, stage_started = running.pop(future)
+                    if stage.resource == "gpu":
+                        running_gpu_stages -= 1
+                    if stage.resource_key is not None:
+                        running_resource_keys.discard(stage.resource_key)
+
+                    try:
+                        future.result()
+                    except BaseException:
+                        for outstanding in running:
+                            outstanding.cancel()
+                        raise
+
+                    missing_outputs = tuple(
+                        path for path in stage.outputs if not path.exists()
+                    )
+                    if missing_outputs:
+                        rendered = ", ".join(path.as_posix() for path in missing_outputs)
+                        raise RuntimeError(
+                            f"Stage {stage.name} completed without required outputs: {rendered}"
+                        )
+
+                    elapsed = time.monotonic() - stage_started
+                    self._record_stage(stage, manifest, origin="executed")
+                    self._write_manifest(manifest)
+                    executed.append(stage.name)
+                    metrics.append(
+                        ProductionStageMetric(
+                            stage_name=stage.name,
+                            outcome="executed",
+                            resource=stage.resource,
+                            elapsed_seconds=elapsed,
+                        )
+                    )
+                    completed.add(stage.name)
+                    print(f"DONE  {stage.name}: {elapsed:.1f} s")
 
         return ProductionRunSummary(
             executed=tuple(executed),
             adopted=tuple(adopted),
             skipped=tuple(skipped),
+            metrics=tuple(metrics),
+            total_elapsed_seconds=time.monotonic() - started_at,
         )
 
     def _selected_stages(self, through: str | None) -> list[ProductionStage]:
@@ -307,6 +454,9 @@ class ProductionRunner:
             "script": stage.script.as_posix(),
             "script_sha256": _sha256_file(script_path),
             "arguments": list(stage.arguments),
+            "dependencies": list(stage.dependencies),
+            "resource": stage.resource,
+            "resource_key": stage.resource_key,
             "inputs": [path.as_posix() for path in stage.inputs],
             "outputs": [path.as_posix() for path in stage.outputs],
         }
@@ -378,6 +528,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
         ProductionStage(
             name="phase3-continuity",
             description="build the stateful continuity registry",
+            dependencies=("phase2-narrative",),
             script=Path("scripts/run_phase3.py"),
             arguments=(str(narrative_blocks), "--output", str(phase3)),
             inputs=(narrative_blocks,),
@@ -386,6 +537,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
         ProductionStage(
             name="phase3-shots",
             description="plan ordered shots from scenes and continuity",
+            dependencies=("phase3-continuity",),
             script=Path("scripts/run_phase3_shots.py"),
             arguments=(
                 "--beats", str(beats),
@@ -400,6 +552,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
         ProductionStage(
             name="phase4-reference-prompts",
             description="build canonical visual reference prompts",
+            dependencies=("phase3-continuity",),
             script=Path("scripts/run_phase4.py"),
             arguments=(
                 str(entities),
@@ -413,6 +566,9 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
         ProductionStage(
             name="phase4-reference-assets",
             description="generate reference images through the Ideogram 4 Salad worker",
+            dependencies=("phase4-reference-prompts",),
+            resource="gpu",
+            resource_key="ideogram4",
             script=Path("scripts/run_phase4_assets.py"),
             arguments=(
                 str(visual_references),
@@ -425,6 +581,9 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
         ProductionStage(
             name="phase5-narration",
             description="generate canonical narration through the Breeze TTS 2 Salad worker",
+            dependencies=("phase2-narrative",),
+            resource="gpu",
+            resource_key="speech",
             script=Path("scripts/run_phase5_audio.py"),
             arguments=(
                 str(source_script),
@@ -437,6 +596,9 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
         ProductionStage(
             name="phase5-alignment",
             description="align narration words through the Whisper Salad worker",
+            dependencies=("phase5-narration",),
+            resource="gpu",
+            resource_key="whisper",
             script=Path("scripts/run_phase5_alignment.py"),
             arguments=(
                 "--source", str(source_script),
@@ -450,6 +612,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
         ProductionStage(
             name="phase5-beat-timing",
             description="map beats to aligned narration words",
+            dependencies=("phase5-alignment",),
             script=Path("scripts/run_phase5_beat_timing.py"),
             arguments=(
                 "--source", str(source_script),
@@ -464,6 +627,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
         ProductionStage(
             name="phase5-shot-timing",
             description="derive deterministic shot timing",
+            dependencies=("phase3-shots", "phase5-beat-timing"),
             script=Path("scripts/run_phase5_shot_timing.py"),
             arguments=(
                 "--shots", str(shots),
@@ -476,6 +640,11 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
         ProductionStage(
             name="phase6-storyboard",
             description="build provider-neutral storyboard frame prompts",
+            dependencies=(
+                "phase3-shots",
+                "phase5-shot-timing",
+                "phase4-reference-prompts",
+            ),
             script=Path("scripts/run_phase6_storyboard.py"),
             arguments=(
                 "--shots", str(shots),
@@ -489,6 +658,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
         ProductionStage(
             name="phase8-video-prompts",
             description="prepare motion prompts from the storyboard plan",
+            dependencies=("phase6-storyboard",),
             script=Path("scripts/run_phase8_video_prompts.py"),
             arguments=(
                 "--shots", str(shots),
@@ -502,6 +672,9 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
         ProductionStage(
             name="phase6-keyframes",
             description="generate storyboard keyframes through Ideogram 4 Quality",
+            dependencies=("phase6-storyboard",),
+            resource="gpu",
+            resource_key="ideogram4",
             script=Path("scripts/run_phase6_keyframes.py"),
             arguments=(
                 "--frames", str(storyboard_frames),
@@ -517,6 +690,13 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
         ProductionStage(
             name="phase8-videos",
             description="fan out, resume, verify, and download LTX 2.5 video clips",
+            dependencies=(
+                "phase8-video-prompts",
+                "phase6-keyframes",
+                "phase5-shot-timing",
+            ),
+            resource="gpu",
+            resource_key="ltx25",
             script=Path("scripts/run_phase8_videos.py"),
             arguments=(
                 "--keyframes", str(storyboard_keyframes),
