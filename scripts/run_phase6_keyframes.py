@@ -11,12 +11,12 @@ from ai_video_factory.config import settings
 from ai_video_factory.domain import Shot, StoryboardFrame
 from ai_video_factory.providers import (
     SafetyFallbackImageProvider,
-    SaladFluxSchnellImageProvider,
+    SaladFlux2KleinImageProvider,
     SaladIdeogramImageProvider,
 )
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
-from ai_video_factory.workers.flux_schnell import FLUX_SCHNELL_KEYFRAME_TASK
+from ai_video_factory.workers.flux2_klein import FLUX2_KLEIN_KEYFRAME_TASK
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_KEYFRAME_TASK
 from ai_video_factory.workflows.storyboard_keyframes import generate_storyboard_keyframes
 
@@ -39,13 +39,13 @@ def parse_args() -> argparse.Namespace:
         default=settings.output_dir / "phase3" / "shots.json",
     )
     parser.add_argument("--model", default=settings.ideogram4_model)
-    parser.add_argument("--fallback-model", default=settings.flux_schnell_model)
+    parser.add_argument("--fallback-model", default=settings.flux2_klein_model)
     parser.add_argument("--size", default="1024x1536")
     parser.add_argument("--quality", choices=("high", "auto"), default="high")
     parser.add_argument("--queue-name", default=settings.salad_ideogram4_queue_name)
     parser.add_argument(
         "--fallback-queue-name",
-        default=settings.salad_flux_schnell_queue_name,
+        default=settings.salad_flux2_klein_queue_name,
     )
     parser.add_argument(
         "--poll-seconds",
@@ -127,10 +127,10 @@ async def main() -> None:
         temp_dir=settings.temp_dir / "ideogram4-keyframe-client",
         task_name=IDEOGRAM4_KEYFRAME_TASK,
     )
-    fallback = SaladFluxSchnellImageProvider(
+    fallback = SaladFlux2KleinImageProvider(
         executor=flux_executor,
-        temp_dir=settings.temp_dir / "flux-schnell-keyframe-client",
-        task_name=FLUX_SCHNELL_KEYFRAME_TASK,
+        temp_dir=settings.temp_dir / "flux2-klein-keyframe-client",
+        task_name=FLUX2_KLEIN_KEYFRAME_TASK,
     )
     image_provider = SafetyFallbackImageProvider(primary=primary, fallback=fallback)
 
