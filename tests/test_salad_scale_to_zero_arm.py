@@ -17,10 +17,10 @@ def test_scale_to_zero_arm_accepts_deploying_without_waiting_for_running() -> No
 def test_controlled_image_runners_use_deterministic_flux_prewarm() -> None:
     for path in (PHASE4, PHASE6):
         text = path.read_text(encoding="utf-8")
-        assert '"start_salad_flux_prewarm.ps1"' in text
-        assert '"restore_salad_flux_scale_to_zero.ps1"' in text
+        assert '"start_salad_flux2_klein_prewarm.ps1"' in text
+        assert '"restore_salad_flux2_klein_scale_to_zero.ps1"' in text
         assert '"arm_salad_scale_to_zero.ps1"' not in text
-        assert "-Action Start -Service flux_schnell" not in text
+        assert "-Action Start -Service flux2_klein" not in text
 
 
 def test_phase4_plan_flattens_json_array_before_counting_hits() -> None:
