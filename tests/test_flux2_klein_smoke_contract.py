@@ -3,6 +3,7 @@ from pathlib import Path
 PYTHON_SMOKE = Path("scripts/run_flux2_klein_smoke.py")
 CONTROLLED_SMOKE = Path("scripts/run_flux2_klein_smoke_controlled.ps1")
 PREWARM = Path("scripts/start_salad_flux_prewarm.ps1")
+COLLECTOR = Path("scripts/collect_flux2_klein_salad_metrics.ps1")
 
 
 def test_flux2_klein_smoke_exercises_queue_r2_and_png_contract() -> None:
@@ -30,8 +31,9 @@ def test_controlled_flux2_klein_smoke_always_restores_scale_to_zero() -> None:
     assert "$PrimaryFailure" in text
     assert "preserving the original FLUX.2 Klein smoke failure" in text
     assert "/log-entries" in text
-    assert 'log contains "FLUX2_KLEIN_"' in text
-    assert 'log contains "FLUX.2 Klein"' in text
+    assert 'log contains "FLUX2_KLEIN_RUNTIME_READY"' in text
+    assert 'log contains "FLUX2_KLEIN_INFERENCE_METRIC"' in text
+    assert 'sort_order = "desc"' in text
     assert "SALAD_LOG_METRIC" in text
 
 
@@ -44,3 +46,16 @@ def test_flux2_klein_prewarm_reports_pull_and_bootstrap_timings() -> None:
     assert "image_pull_and_start_seconds=" in text
     assert "ready_seconds=" in text
     assert "bootstrap_after_start_seconds=" in text
+
+
+def test_flux2_klein_historical_metric_collector_never_starts_gpu() -> None:
+    text = COLLECTOR.read_text(encoding="utf-8")
+
+    assert "/log-entries" in text
+    assert 'log contains "FLUX2_KLEIN_RUNTIME_READY"' in text
+    assert 'log contains "FLUX2_KLEIN_INFERENCE_METRIC"' in text
+    assert 'sort_order = "desc"' in text
+    assert "FLUX2_KLEIN_HISTORICAL_METRICS" in text
+    assert "FLUX2_KLEIN_SMOKE_REPORT" in text
+    assert "/start" not in text
+    assert "replicas = 1" not in text
