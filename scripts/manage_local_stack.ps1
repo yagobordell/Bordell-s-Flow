@@ -119,7 +119,7 @@ switch ($Action) {
 
     "Production" {
         $Arguments = @{
-            Input = $ScriptFile
+            ScriptFile = $ScriptFile
             ForceStage = $ForceStage
             NonInteractive = $true
         }
