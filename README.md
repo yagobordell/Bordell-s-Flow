@@ -108,7 +108,7 @@ El cierre formal de Fase 9 está en [`docs/phase9-closure.md`](docs/phase9-closu
 - Pillow para composición local de storyboard grids.
 - FFmpeg/ffprobe para validación de media y mux final.
 - Node.js 22+ para el renderer aislado de Remotion.
-- Docker para los workers GPU.
+- Docker para build/prepare/smokes de workers; no es necesario para el run end-to-end normal con workers Salad ya preparados.
 - Acceso a Salad, Cloudflare R2 y Supabase/Postgres para la ruta cloud.
 
 Instalación local con `uv`:
@@ -148,6 +148,54 @@ Pop-Location
 - Los guiones de `data/input/` y artefactos de `data/output/`/`data/tmp/` no se versionan.
 - Los scripts PowerShell piden secretos mediante `Read-Host -AsSecureString` cuando no existen ya en
   el entorno del proceso.
+
+## Ejecución end-to-end optimizada
+
+El camino normal de producción es un único comando en Windows PowerShell:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+    .\scripts\run_video_factory.ps1 `
+    -Input .\data\input\script.txt `
+    -NonInteractive
+```
+
+Este runner ejecuta preflight global **antes de reservar GPU**, resuelve cache/resume, planifica el
+pipeline como DAG con concurrencia acotada, controla prewarm/cleanup de Salad, aplica fallbacks
+clasificados, genera los clips, ejecuta Remotion/FFmpeg y termina en:
+
+```text
+data/output/phase9/final_video.mp4
+```
+
+Las optimizaciones no cambian modelos, revisiones, resolución, fps, seeds, perfiles de generación ni
+contratos audiovisuales. El ahorro viene de dependencias reales, solapamiento seguro, replay
+determinista antes de GPU y reducción de cold starts evitables.
+
+Puntos clave:
+
+- Breeze puede arrancar/trabajar en paralelo con la rama de continuidad;
+- shots y prompts de referencias se desacoplan cuando sus dependencias lo permiten;
+- prompts de movimiento y keyframes parten en paralelo desde el storyboard;
+- Phase 4 y Phase 6 comparten Ideogram sin ejecutarse simultáneamente sobre el recurso limitado;
+- un Ideogram ya listo puede conservarse temporalmente hasta su último uso en el vídeo;
+- Breeze, keyframes y LTX auditan R2 antes de prewarm/submission;
+- Fish no se prewarmea de forma especulativa y sigue consumiendo cero GPU-seconds si Breeze funciona;
+- FLUX se mantiene como fallback de seguridad y no se prewarmea salvo evidencia que lo requiera;
+- el `finally` end-to-end detiene los servicios del proyecto, aplica guard de replicas=0 y limpia
+  las queues.
+
+Métricas de cada run:
+
+```text
+data/output/preflight_report.json
+data/output/production_metrics.json
+data/output/video_factory_metrics.json
+```
+
+Consulta [`docs/production-runner.md`](docs/production-runner.md) y
+[`docs/end-to-end-performance.md`](docs/end-to-end-performance.md) para el DAG, políticas de
+recursos/cache y protocolo de benchmark.
 
 ## Pipeline de producción
 
@@ -203,7 +251,7 @@ Shot[] + ShotTiming[] + VisualReference[]
                   ↓
           StoryboardFrame[]
                   ↓
-ReferenceAsset[] + StoryboardFrame[]
+StoryboardFrame[] + Shot[]
                   ↓
           StoryboardKeyframe[]
                   ↓
@@ -318,7 +366,7 @@ data/output/phase3/
 
 ```bash
 python scripts/run_phase4.py
-python scripts/run_phase4_assets.py --quality medium
+python scripts/run_phase4_assets.py --quality high
 ```
 
 ### Fase 5 — Audio y timing
