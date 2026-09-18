@@ -45,3 +45,15 @@ def test_salad_probe_failure_thresholds_fit_api_contract() -> None:
                 f"{service_name}.{probe_name}.failure_threshold={threshold} "
                 "must satisfy Salad API range 1..20"
             )
+
+
+
+def test_fish_smoke_control_scripts_tolerate_omitted_remote_autoscaler() -> None:
+    for relative in (
+        "scripts/start_salad_optimized_prewarm.ps1",
+        "scripts/start_salad_protected_smoke.ps1",
+        "scripts/restore_salad_scale_to_zero.ps1",
+    ):
+        content = (ROOT / relative).read_text(encoding="utf-8")
+        assert "$Group.queue_autoscaler" not in content, relative
+        assert 'PSObject.Properties["queue_autoscaler"]' in content, relative
