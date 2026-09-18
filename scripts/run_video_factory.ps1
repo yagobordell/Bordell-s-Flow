@@ -164,8 +164,6 @@ $PrimaryFailure = $null
 $CleanupFailure = $null
 
 try {
-    Ensure-RemotionDependencies
-
     Write-Host "=== VIDEO FACTORY PREFLIGHT: no GPU allocation ===" -ForegroundColor Cyan
     Push-Location $RepoRoot
     try {
@@ -180,6 +178,8 @@ try {
             throw "Salad control-plane preflight failed."
         }
         $SaladPreflightPassed = $true
+
+        Ensure-RemotionDependencies
 
         Write-Host "=== VIDEO FACTORY DAG: cache/resume + bounded parallel execution ===" `
             -ForegroundColor Cyan
