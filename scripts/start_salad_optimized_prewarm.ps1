@@ -995,6 +995,7 @@ while ((Get-Date) -lt $Deadline) {
                 $ImagePullReallocations += 1
                 Request-InstanceReallocation `
                     -InstanceId $InstanceId `
+                    -MachineId $MachineId `
                     -Reason "Container image pull made less than 0.5% progress for ${Limit}s"
                 $ImagePullSince = $null
                 $ImagePullBaseline = $null
