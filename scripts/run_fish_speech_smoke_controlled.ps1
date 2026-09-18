@@ -81,6 +81,13 @@ if ($AllowUnconditionedFish) {
     $RoutingArguments += "--allow-unconditioned"
 }
 
+Write-Host "=== Fish configuration preflight: before GPU allocation ===" -ForegroundColor Cyan
+$PreflightArguments = $SmokeArguments + "--preflight-only"
+& python $Smoke @PreflightArguments
+if ($LASTEXITCODE -ne 0) {
+    throw "Fish smoke configuration preflight failed; refusing Fish GPU allocation."
+}
+
 try {
     Write-Host "=== Fish real prewarm: one RTX 4090 replica maximum ===" -ForegroundColor Cyan
     & $Prewarm @PrewarmArguments
