@@ -13,7 +13,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $ManifestPath = Join-Path $RepoRoot "deploy\salad\services.json"
-$Service = "flux_schnell"
+$Service = "flux2_klein"
 
 function Import-EnvFile {
     param([Parameter(Mandatory)][string]$Path)
@@ -297,7 +297,7 @@ do {
     }
 
     Write-Host (
-        "{0} service=flux_schnell status={1} state={2} started={3} ready={4} pulling_progress={5} machine={6}" -f `
+        "{0} service=flux2_klein status={1} state={2} started={3} ready={4} pulling_progress={5} machine={6}" -f `
         (Get-Date -Format "HH:mm:ss"),
         $Status,
         $State,
