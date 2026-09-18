@@ -33,7 +33,7 @@ def _request(seed: int = 1234) -> InferenceJobRequest:
     return InferenceJobRequest(
         job_id="flux2-klein-worker-test",
         task=FLUX2_KLEIN_REFERENCE_TASK,
-        output=ObjectOutput(key="jobs/test/image.png", content_type="image/png"),
+        output=ObjectOutput(key="jobs/flux2-klein-worker-test/image.png", content_type="image/png"),
         parameters={
             "generation_profile": FLUX2_KLEIN_GENERATION_PROFILE,
             "model_id": FLUX2_KLEIN_MODEL_ID,
