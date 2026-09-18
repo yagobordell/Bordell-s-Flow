@@ -25,9 +25,10 @@ Breeze TTS 2 (primary, Salad)
              narration.wav
 ```
 
-The implementation is intentionally **not considered production-validated until the real
-Salad smoke, authorized-reference routing smoke, replay test and benchmark are recorded**.
-The code and validation harnesses may be merged only after those gates pass.
+Production validation completed on 2026-09-18 with an authorized/reference-conditioned
+real Salad smoke. The same run proved real Fish inference, fake eligible Breeze -> real Fish
+routing, replay with Fish stopped at zero replicas, canonical WAV output, and final queue/GPU
+cleanup. The recorded measurements are below.
 
 ## No Fish cloud dependency
 
@@ -280,25 +281,34 @@ generated reports:
 | Measurement | Validated value |
 | --- | --- |
 | Docker digest | `docker.io/yagobordell/ai-video-factory@sha256:ef3ea89dfb09d9d21cb9de768713d60258ac736e494259bca5df6ae46a8f6bb4` |
-| Salad GPU | RTX 4090 (24 GB) - readiness validated |
-| checkpoint bytes | PENDING REAL BOOTSTRAP |
-| node assignment | 30.4 s |
-| image pull/start | 1,641.9 s |
-| bootstrap after container start | 271.5 s |
-| model load | PENDING REAL SMOKE |
-| time-to-ready | 1,943.8 s |
-| resident VRAM | PENDING REAL SMOKE |
-| peak VRAM | PENDING REAL SMOKE |
-| inference seconds | PENDING REAL SMOKE |
-| audio seconds | PENDING REAL SMOKE |
-| real-time factor | PENDING REAL SMOKE |
-| R2 roundtrip | PENDING REAL SMOKE |
-| output bytes | PENDING REAL SMOKE |
-| sample format | PCM16 mono 24 kHz - MUST BE RECONFIRMED |
-| replay | PENDING REAL REPLAY |
-| final replicas/queue | PENDING REAL CLEANUP |
+| Salad GPU | RTX 4090 (24 GB) |
+| checkpoint bytes | 11,008,069,054 |
+| node assignment | 20.9 s |
+| image pull/start | 1,884.0 s |
+| bootstrap after container start | 1,540.1 s |
+| model load/runtime ready | 32.370 s |
+| time-to-ready | 3,445.1 s |
+| resident VRAM | 20,033,039,872 B allocated / 20,065,550,336 B reserved |
+| peak VRAM | 21,672,088,576 B allocated / 22,299,017,216 B reserved |
+| inference seconds | 25.479 s worker / 35.031 s client roundtrip |
+| audio seconds | 16.992 s |
+| real-time factor | 1.499503 |
+| R2 roundtrip | succeeded in the real conditioned smoke |
+| output bytes | 815,690 |
+| sample format | PCM16 mono 24 kHz |
+| replay | 0.502 s with Fish stopped; identical SHA-256 |
+| fallback routing | fake eligible Breeze -> real Fish succeeded; Breeze GPU unused |
+| final replicas/queue | stopped, replicas=0, pending=false, no active/queued jobs |
 
-The RTX 4090 decision is provisional until those measurements show stable headroom.
+The complete smoke peaked at about 21.67 GB allocated and 22.30 GB reserved on a 24 GB
+RTX 4090, so the selected GPU is validated but has limited VRAM headroom. Keep the current
+single-job-per-replica policy and re-benchmark before increasing concurrency or changing the
+generation profile.
+
+Cold-start time is materially variable. An earlier readiness-only run on the same immutable
+image observed 30.4 s assignment, 1,641.9 s image pull/start, 271.5 s bootstrap after start,
+and 1,943.8 s total time-to-ready. The complete production smoke observed the slower values
+recorded in the table, so orchestration timeouts must continue to accommodate the slower path.
 
 ## License
 
