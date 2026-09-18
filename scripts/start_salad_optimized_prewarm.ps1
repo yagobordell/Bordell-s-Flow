@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25")]
+    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "ltx25")]
     [string]$Service,
 
     [string]$EnvFile = ".env",
@@ -48,6 +48,21 @@ $Profiles = @{
         MaxPostPullStartReallocations = 1
         RunningNotReadySeconds = 900
         FinalRunningNotReadySeconds = 1500
+        MaxRunningNotReadyReallocations = 1
+        MaxNodeChanges = 6
+    }
+    fish_speech = @{
+        AllocatingSeconds = 300
+        FinalAllocatingSeconds = 900
+        MaxAllocatingReallocations = 2
+        ImagePullStallSeconds = 240
+        FinalImagePullStallSeconds = 600
+        MaxImagePullReallocations = 2
+        PostPullStartSeconds = 240
+        FinalPostPullStartSeconds = 600
+        MaxPostPullStartReallocations = 1
+        RunningNotReadySeconds = 1200
+        FinalRunningNotReadySeconds = 1800
         MaxRunningNotReadyReallocations = 1
         MaxNodeChanges = 6
     }
@@ -286,8 +301,8 @@ if ([int]$Definition.autoscaler.min_replicas -ne 0) {
 if ([int]$Definition.autoscaler.max_replicas -lt 1) {
     throw "Optimized prewarm requires max_replicas>=1 for '$Service'."
 }
-if ($Service -eq "ideogram4" -and [int]$Definition.autoscaler.max_replicas -ne 1) {
-    throw "Ideogram optimized prewarm requires max_replicas=1."
+if ($Service -in @("ideogram4", "fish_speech") -and [int]$Definition.autoscaler.max_replicas -ne 1) {
+    throw "$Service optimized prewarm requires max_replicas=1."
 }
 
 $Organization = [string]$Document.stack.organization
@@ -321,8 +336,8 @@ if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
 if ([int]$Group.queue_autoscaler.min_replicas -ne 0) {
     throw "Optimized prewarm refuses a remote autoscaler with min_replicas != 0."
 }
-if ($Service -eq "ideogram4" -and [int]$Group.queue_autoscaler.max_replicas -ne 1) {
-    throw "Ideogram optimized prewarm refuses a remote autoscaler with max_replicas != 1."
+if ($Service -in @("ideogram4", "fish_speech") -and [int]$Group.queue_autoscaler.max_replicas -ne 1) {
+    throw "$Service optimized prewarm refuses a remote autoscaler with max_replicas != 1."
 }
 
 $TargetMinReplicas = if ($HoldReadyReplica) { 1 } else { 0 }
@@ -345,6 +360,11 @@ $ProfileLine = (
     [bool]$HoldReadyReplica
 )
 Write-Host $ProfileLine -ForegroundColor Cyan
+
+$PrewarmStartedAt = Get-Date
+$AssignmentSeconds = $null
+$ContainerStartedSeconds = $null
+$ReadySeconds = $null
 
 $PrewarmPatch = @{ replicas = 1 }
 if ($HoldReadyReplica) {
@@ -439,6 +459,10 @@ while ((Get-Date) -lt $Deadline) {
     $Ready = $false
     $Started = $false
     if ($Instances.Count -eq 1) {
+        $ElapsedSeconds = ((Get-Date) - $PrewarmStartedAt).TotalSeconds
+        if ($null -eq $AssignmentSeconds) {
+            $AssignmentSeconds = $ElapsedSeconds
+        }
         $Instance = $Instances[0]
         if ($Instance.PSObject.Properties.Name -contains "id") {
             $InstanceId = [string]$Instance.id
@@ -533,6 +557,12 @@ while ((Get-Date) -lt $Deadline) {
 
     $ContainerObservedRunning = $InstanceState -eq "running"
     $ContainerStarted = $Started -or $ContainerObservedRunning
+    if ($ContainerStarted -and $null -eq $ContainerStartedSeconds) {
+        $ContainerStartedSeconds = ((Get-Date) - $PrewarmStartedAt).TotalSeconds
+    }
+    if ($Ready -and $null -eq $ReadySeconds) {
+        $ReadySeconds = ((Get-Date) - $PrewarmStartedAt).TotalSeconds
+    }
 
     if (
         -not [bool]$Group.pending_change -and
@@ -542,6 +572,21 @@ while ((Get-Date) -lt $Deadline) {
         $ContainerStarted -and
         $Ready
     ) {
+        if ($Service -eq "fish_speech") {
+            $ImagePullAndStartSeconds = $ContainerStartedSeconds - $AssignmentSeconds
+            $BootstrapAfterStartSeconds = $ReadySeconds - $ContainerStartedSeconds
+            Write-Host (
+                "FISH_SPEECH_PREWARM_METRIC assignment_seconds={0:N1} " +
+                "container_started_seconds={1:N1} image_pull_and_start_seconds={2:N1} " +
+                "ready_seconds={3:N1} bootstrap_after_start_seconds={4:N1}" -f @(
+                    [double]$AssignmentSeconds,
+                    [double]$ContainerStartedSeconds,
+                    [double]$ImagePullAndStartSeconds,
+                    [double]$ReadySeconds,
+                    [double]$BootstrapAfterStartSeconds
+                )
+            )
+        }
         $HoldSuffix = if ($HoldReadyReplica) { " with min_replicas=1 pinned" } else { "" }
         Write-Host (
             "$Service prewarm complete: exactly one started ready replica$HoldSuffix, queue still empty."
