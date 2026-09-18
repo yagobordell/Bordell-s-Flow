@@ -37,8 +37,10 @@ def test_flux2_klein_health_and_readiness_are_separate() -> None:
     assert "wait_for_health" in entrypoint
     assert "download-models" in entrypoint
     assert "wait_for_ready" in entrypoint
-    assert entrypoint.index("wait_for_health") < entrypoint.index("download-models")
-    assert entrypoint.index("download-models") < entrypoint.index("wait_for_ready")
+    health_call = entrypoint.index("if ! wait_for_health")
+    download_call = entrypoint.index("\ndownload-models\n")
+    ready_call = entrypoint.index("if ! wait_for_ready")
+    assert health_call < download_call < ready_call
     assert "request_reallocation" in entrypoint
 
 
