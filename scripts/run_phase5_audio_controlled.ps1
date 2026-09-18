@@ -102,7 +102,7 @@ function Test-BreezePrewarmFallbackEligible {
         "did not become ready within the overall"
     )
     foreach ($Pattern in $Patterns) {
-        if ($Message.Contains($Pattern, [StringComparison]::OrdinalIgnoreCase)) {
+        if ($Message.IndexOf($Pattern, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
             return $true
         }
     }
