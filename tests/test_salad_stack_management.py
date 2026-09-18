@@ -51,7 +51,7 @@ def test_every_model_has_its_own_group_and_queue() -> None:
     assert services["breeze_tts2"]["required_environment"] == []
     assert services["breeze_tts2"]["group_name"] == "ai-video-factory-breeze-tts2-worker-v2"
     assert services["ideogram4"]["required_environment"] == ["HF_TOKEN"]
-    assert services["flux2_klein"]["required_environment"] == ["HF_TOKEN"]
+    assert services["flux2_klein"]["required_environment"] == []
     assert services["ltx25"]["required_environment"] == ["HF_TOKEN"]
 
 
