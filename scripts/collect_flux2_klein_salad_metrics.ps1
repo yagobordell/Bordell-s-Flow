@@ -3,7 +3,17 @@ param(
     [string]$EnvFile = ".env",
 
     [ValidateRange(1, 1440)]
-    [int]$SinceMinutes = 60
+    [int]$SinceMinutes = 60,
+
+    [string]$StartTimeUtc = "",
+
+    [string]$EndTimeUtc = "",
+
+    [ValidateRange(1, 15)]
+    [int]$WindowMinutes = 2,
+
+    [ValidateRange(1, 5)]
+    [int]$RetryCount = 3
 )
 
 Set-StrictMode -Version Latest
@@ -40,6 +50,73 @@ function Import-EnvFile {
     }
 }
 
+function Invoke-SaladMarkerQuery {
+    param(
+        [Parameter(Mandatory)][string]$Marker,
+        [Parameter(Mandatory)][datetime]$RangeStart,
+        [Parameter(Mandatory)][datetime]$RangeEnd
+    )
+
+    $Query = (
+        'resource.type = "container" and ' +
+        'resource.labels.project_name = "' + $Project + '" and ' +
+        'resource.labels.container_group_name = "' + $GroupName + '" and ' +
+        'log contains "' + $Marker + '"'
+    )
+    $Collected = @()
+    $WindowStart = $RangeStart
+
+    while ($WindowStart -lt $RangeEnd) {
+        $WindowEnd = $WindowStart.AddMinutes($WindowMinutes)
+        if ($WindowEnd -gt $RangeEnd) {
+            $WindowEnd = $RangeEnd
+        }
+
+        $Succeeded = $false
+        for ($Attempt = 1; $Attempt -le $RetryCount; $Attempt += 1) {
+            $Body = @{
+                start_time = $WindowStart.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+                end_time = $WindowEnd.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+                page_size = 25
+                sort_order = "desc"
+                query = $Query
+            } | ConvertTo-Json -Depth 5
+            $LogRequest = @{
+                Method = "Post"
+                Uri = $LogsUrl
+                Headers = $Headers
+                ContentType = "application/json"
+                Body = $Body
+                TimeoutSec = 20
+            }
+
+            try {
+                $Response = Invoke-RestMethod @LogRequest
+                $Collected += @($Response.items)
+                $Succeeded = $true
+                break
+            }
+            catch {
+                if ($Attempt -ge $RetryCount) {
+                    throw
+                }
+                Write-Warning (
+                    "Salad log query retry marker='$Marker' window=$($WindowStart.ToString('o')).." +
+                    "$($WindowEnd.ToString('o')) attempt=$Attempt/$RetryCount: $($_.Exception.Message)"
+                )
+                Start-Sleep -Seconds ([Math]::Min(10, 2 * $Attempt))
+            }
+        }
+
+        if (-not $Succeeded) {
+            throw "Salad log query did not complete for marker '$Marker'."
+        }
+        $WindowStart = $WindowEnd
+    }
+
+    return @($Collected)
+}
+
 Import-EnvFile -Path $EnvFile
 
 if ([string]::IsNullOrWhiteSpace($env:SALAD_API_KEY)) {
@@ -47,6 +124,12 @@ if ([string]::IsNullOrWhiteSpace($env:SALAD_API_KEY)) {
 }
 if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
     throw "Salad manifest not found: $ManifestPath"
+}
+if (
+    [string]::IsNullOrWhiteSpace($StartTimeUtc) -xor
+    [string]::IsNullOrWhiteSpace($EndTimeUtc)
+) {
+    throw "Provide both -StartTimeUtc and -EndTimeUtc, or neither."
 }
 
 $Manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
@@ -57,40 +140,37 @@ $LogsUrl = "https://api.salad.com/api/public/organizations/$Organization/log-ent
 $Headers = @{
     "Salad-Api-Key" = $env:SALAD_API_KEY
     "Accept" = "application/json"
-    "User-Agent" = "ai-video-factory-flux2-klein-metrics/1.0"
+    "User-Agent" = "ai-video-factory-flux2-klein-metrics/1.1"
 }
-$Query = (
-    'resource.type = "container" and ' +
-    'resource.labels.project_name = "' + $Project + '" and ' +
-    'resource.labels.container_group_name = "' + $GroupName + '" and ' +
-    '(' +
-    'log contains "FLUX2_KLEIN_RUNTIME_READY" or ' +
-    'log contains "FLUX2_KLEIN_INFERENCE_METRIC" or ' +
-    'log contains "Diffusers snapshot complete" or ' +
-    'log contains "model bootstrap complete"' +
-    ')'
+
+if (-not [string]::IsNullOrWhiteSpace($StartTimeUtc)) {
+    $Start = [DateTimeOffset]::Parse($StartTimeUtc).UtcDateTime
+    $End = [DateTimeOffset]::Parse($EndTimeUtc).UtcDateTime
+}
+else {
+    $End = (Get-Date).ToUniversalTime()
+    $Start = $End.AddMinutes(-$SinceMinutes)
+}
+if ($End -le $Start) {
+    throw "End time must be later than start time."
+}
+
+$Markers = @(
+    "FLUX2_KLEIN_RUNTIME_READY",
+    "FLUX2_KLEIN_INFERENCE_METRIC",
+    "Diffusers snapshot complete",
+    "model bootstrap complete"
 )
-
-$End = (Get-Date).ToUniversalTime()
-$Start = $End.AddMinutes(-$SinceMinutes)
-$Body = @{
-    start_time = $Start.ToString("yyyy-MM-ddTHH:mm:ssZ")
-    end_time = $End.ToString("yyyy-MM-ddTHH:mm:ssZ")
-    page_size = 100
-    sort_order = "desc"
-    query = $Query
-} | ConvertTo-Json -Depth 5
-
-$LogRequest = @{
-    Method = "Post"
-    Uri = $LogsUrl
-    Headers = $Headers
-    ContentType = "application/json"
-    Body = $Body
-    TimeoutSec = 30
+$AllItems = @()
+foreach ($Marker in $Markers) {
+    Write-Host (
+        "Collecting Salad marker '$Marker' in $WindowMinutes-minute windows " +
+        "from $($Start.ToString('o')) to $($End.ToString('o'))..."
+    )
+    $AllItems += @(Invoke-SaladMarkerQuery -Marker $Marker -RangeStart $Start -RangeEnd $End)
 }
-$Response = Invoke-RestMethod @LogRequest
-$Items = @($Response.items) | Sort-Object time
+
+$Items = @($AllItems | Sort-Object -Property time, text_log -Unique)
 
 foreach ($Item in $Items) {
     if (-not [string]::IsNullOrWhiteSpace([string]$Item.text_log)) {
@@ -113,10 +193,12 @@ if ($InferenceItems.Count -eq 0) {
 }
 
 Write-Host (
-    "FLUX2_KLEIN_HISTORICAL_METRICS runtime_count={0} inference_count={1} since_minutes={2}" -f
+    "FLUX2_KLEIN_HISTORICAL_METRICS runtime_count={0} inference_count={1} " +
+    "start={2} end={3}" -f
     $RuntimeItems.Count,
     $InferenceItems.Count,
-    $SinceMinutes
+    $Start.ToString("o"),
+    $End.ToString("o")
 ) -ForegroundColor Green
 
 if (Test-Path -LiteralPath $ReportPath -PathType Leaf) {
