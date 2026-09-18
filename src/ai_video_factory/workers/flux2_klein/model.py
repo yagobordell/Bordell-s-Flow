@@ -4,6 +4,7 @@ import gc
 import hashlib
 import json
 import threading
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Self
@@ -116,6 +117,10 @@ class Flux2KleinBackend:
             if torch is None:
                 raise RuntimeError("FLUX.2 Klein torch runtime is unavailable")
             generator = torch.Generator(device=self._device).manual_seed(parameters.seed)
+            is_cuda = self._device.startswith("cuda") and torch.cuda.is_available()
+            if is_cuda:
+                torch.cuda.reset_peak_memory_stats()
+            started = time.monotonic()
             result = None
             try:
                 result = pipeline(
@@ -133,6 +138,17 @@ class Flux2KleinBackend:
                 if image.size != (parameters.width, parameters.height):
                     raise RuntimeError("FLUX.2 Klein returned unexpected image dimensions")
                 image.save(output_path, format="PNG")
+                elapsed = time.monotonic() - started
+                peak_allocated = torch.cuda.max_memory_allocated() if is_cuda else 0
+                peak_reserved = torch.cuda.max_memory_reserved() if is_cuda else 0
+                print(
+                    "FLUX2_KLEIN_INFERENCE_METRIC "
+                    f"elapsed_seconds={elapsed:.3f} seed={parameters.seed} "
+                    f"width={parameters.width} height={parameters.height} "
+                    f"steps={parameters.num_inference_steps} guidance={parameters.guidance_scale:g} "
+                    f"peak_allocated_bytes={peak_allocated} peak_reserved_bytes={peak_reserved}",
+                    flush=True,
+                )
             finally:
                 del result
                 gc.collect()
@@ -161,12 +177,30 @@ class Flux2KleinBackend:
         if self._device.startswith("cuda") and not torch.cuda.is_available():
             raise RuntimeError("CUDA is not available for the FLUX.2 Klein runtime")
 
+        started = time.monotonic()
         pipeline = Flux2KleinPipeline.from_pretrained(
             str(self.snapshot_root),
             torch_dtype=torch.bfloat16,
             local_files_only=True,
         )
         pipeline.to(self._device)
+        elapsed = time.monotonic() - started
+        allocated = (
+            torch.cuda.memory_allocated()
+            if self._device.startswith("cuda") and torch.cuda.is_available()
+            else 0
+        )
+        reserved = (
+            torch.cuda.memory_reserved()
+            if self._device.startswith("cuda") and torch.cuda.is_available()
+            else 0
+        )
+        print(
+            "FLUX2_KLEIN_RUNTIME_READY "
+            f"elapsed_seconds={elapsed:.3f} device={self._device} "
+            f"allocated_bytes={allocated} reserved_bytes={reserved}",
+            flush=True,
+        )
         self._torch = torch
         self._pipeline = pipeline
         return pipeline
