@@ -210,15 +210,28 @@ function Invoke-SaladRead {
         [Parameter(Mandatory)][string]$Uri,
         [Parameter(Mandatory)][string]$Operation,
         [ValidateRange(1, 60)][int]$TimeoutSeconds = 20,
-        [ValidateRange(1, 10)][int]$MaxAttempts = 4
+        [ValidateRange(1, 10)][int]$MaxAttempts = 4,
+        [datetime]$Deadline = [datetime]::MaxValue
     )
 
     for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
+        $EffectiveTimeoutSeconds = $TimeoutSeconds
+        if ($Deadline -ne [datetime]::MaxValue) {
+            $SecondsRemaining = [Math]::Ceiling(($Deadline - (Get-Date)).TotalSeconds)
+            if ($SecondsRemaining -le 0) {
+                throw "Salad control-plane read '$Operation' exceeded its deadline."
+            }
+            $EffectiveTimeoutSeconds = [int][Math]::Max(
+                1,
+                [Math]::Min($TimeoutSeconds, $SecondsRemaining)
+            )
+        }
+
         try {
             return Invoke-RestMethod `
                 -Uri $Uri `
                 -Headers $Headers `
-                -TimeoutSec $TimeoutSeconds
+                -TimeoutSec $EffectiveTimeoutSeconds
         }
         catch {
             $Transient = Test-TransientSaladReadFailure -ErrorRecord $_
@@ -227,12 +240,21 @@ function Invoke-SaladRead {
             }
 
             $DelaySeconds = [Math]::Min(10, 2 * $Attempt)
+            if ($Deadline -ne [datetime]::MaxValue) {
+                $SecondsRemaining = [Math]::Floor(($Deadline - (Get-Date)).TotalSeconds)
+                if ($SecondsRemaining -le 0) {
+                    throw "Salad control-plane read '$Operation' exceeded its deadline."
+                }
+                $DelaySeconds = [int][Math]::Min($DelaySeconds, $SecondsRemaining)
+            }
             Write-Warning (
                 "$Service Salad control-plane read '$Operation' failed transiently " +
                 "(attempt $Attempt/$MaxAttempts): $($_.Exception.Message). " +
                 "Retrying in ${DelaySeconds}s without reallocating the worker."
             )
-            Start-Sleep -Seconds $DelaySeconds
+            if ($DelaySeconds -gt 0) {
+                Start-Sleep -Seconds $DelaySeconds
+            }
         }
     }
 
@@ -411,7 +433,8 @@ function Get-QueueJobSnapshot {
             -Uri "$QueueUrl/jobs?page=$Page&page_size=25" `
             -Operation "queue jobs page $Page" `
             -TimeoutSeconds $RequestTimeoutSeconds `
-            -MaxAttempts 6
+            -MaxAttempts 6 `
+            -Deadline $Deadline
         $Pages += 1
         $Items = @(
             if ($Response.PSObject.Properties.Name -contains "items") {
