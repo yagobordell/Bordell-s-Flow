@@ -9,9 +9,8 @@ def test_optimized_prewarm_verifies_stale_queue_summary_by_job_enumeration() -> 
     assert "function Get-QueueJobSnapshot" in text
     assert '"pending", "running"' in text
     assert "exhaustive job enumeration found no pending or running jobs" in text
-    assert "$null = Assert-QueueLogicallyEmpty -Queue $Queue" in text
-    assert "if ($ReportedQueueLength -ne 0)" in text
-    assert "$null = Assert-QueueLogicallyEmpty -Queue $Queue" in text
+    assert text.count("$null = Assert-QueueLogicallyEmpty -Queue $Queue") == 2
+    assert "$VerifiedInitialQueueLength = [int]$Queue.current_queue_length" in text
 
 
 def test_optimized_prewarm_rechecks_stale_queue_only_at_safe_boundaries() -> None:
@@ -39,8 +38,9 @@ def test_optimized_prewarm_does_not_treat_stale_summary_as_active_work() -> None
 def test_optimized_prewarm_does_not_paginate_stale_history_on_every_poll() -> None:
     text = PREWARM.read_text(encoding="utf-8")
 
-    loop = text.split("while ((Get-Date) -lt $Deadline)", maxsplit=1)[1]
-    ready = loop.split("$Queue = Get-Queue", maxsplit=1)[1]
-    assert "$null = Assert-QueueLogicallyEmpty -Queue $Queue" in ready
-    poll_prefix = loop.split("# The queue is dedicated to this service.", maxsplit=1)[0]
+    loop = text.split("$ImagePullProgressThreshold = 0.005", maxsplit=1)[1]
+    poll_prefix, ready_suffix = loop.split(
+        "# The queue is dedicated to this service.", maxsplit=1
+    )
     assert "Assert-QueueLogicallyEmpty -Queue $Queue" not in poll_prefix
+    assert "$null = Assert-QueueLogicallyEmpty -Queue $Queue" in ready_suffix
