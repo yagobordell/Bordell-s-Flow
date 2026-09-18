@@ -106,7 +106,8 @@ function Ensure-RemotionDependencies {
         -ForegroundColor Cyan
     Push-Location (Join-Path $RepoRoot "remotion")
     try {
-        & $Npm.Source ci
+        $NpmExecutable = [string]$Npm.Source
+        & $NpmExecutable ci
         if ($LASTEXITCODE -ne 0) {
             throw "npm ci failed with exit code $LASTEXITCODE."
         }
@@ -249,14 +250,14 @@ $ProductionDocument = $null
 if (Test-Path -LiteralPath $ProductionMetrics -PathType Leaf) {
     $ProductionDocument = Get-Content -LiteralPath $ProductionMetrics -Raw | ConvertFrom-Json
 }
+$ProductionSeconds = $null
+if ($null -ne $ProductionDocument) {
+    $ProductionSeconds = [double]$ProductionDocument.total_elapsed_seconds
+}
 $Metrics = [ordered]@{
     schema_version = "1"
     total_wall_clock_seconds = $Overall.Elapsed.TotalSeconds
-    production_phases_2_8_seconds = if ($null -ne $ProductionDocument) {
-        [double]$ProductionDocument.total_elapsed_seconds
-    } else {
-        $null
-    }
+    production_phases_2_8_seconds = $ProductionSeconds
     phase9_seconds = $Phase9Seconds
     final_video = $FinalVideo
     manual_intervention = 0
