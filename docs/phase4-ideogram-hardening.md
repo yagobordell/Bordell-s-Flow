@@ -34,7 +34,7 @@ submission, the workflow checks R2 for both positive artifacts and known termina
 Therefore a later run does not pay again for already-known blocked requests.
 
 Once all three executable Ideogram variants are terminal safety rejections, the entity becomes
-`safety_blocked` for Ideogram and is eligible for the dedicated FLUX.1-schnell safety fallback.
+`safety_blocked` for Ideogram and is eligible for the dedicated FLUX.2 Klein 4B safety fallback.
 Infrastructure errors do not enter this state.
 
 `ReferenceAsset.metadata` records the selected provider/variant, application `job_id`,
@@ -115,7 +115,7 @@ This allows a fully cached run to complete with:
 
 ```text
 ideogram=False
-flux_schnell=False
+flux2_klein=False
 cached=<all references>
 ```
 
@@ -150,6 +150,6 @@ A worker image/configuration change requires one intentional `Prepare`; normal g
 reuse the already prepared group.
 
 FLUX fallback deployment and lifecycle are documented separately in
-[`flux-schnell-safety-fallback.md`](flux-schnell-safety-fallback.md).
+[`flux2-klein-safety-fallback.md`](flux2-klein-safety-fallback.md).
 
 The complete real Phase 4 closure evidence is recorded in [`phase4-closure.md`](phase4-closure.md).
