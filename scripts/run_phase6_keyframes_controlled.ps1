@@ -36,8 +36,8 @@ $ErrorActionPreference = "Stop"
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $WorkerManager = Join-Path $PSScriptRoot "manage_salad_worker.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
-$FluxPrewarm = Join-Path $PSScriptRoot "start_salad_flux_prewarm.ps1"
-$FluxRestore = Join-Path $PSScriptRoot "restore_salad_flux_scale_to_zero.ps1"
+$FluxPrewarm = Join-Path $PSScriptRoot "start_salad_flux2_klein_prewarm.ps1"
+$FluxRestore = Join-Path $PSScriptRoot "restore_salad_flux2_klein_scale_to_zero.ps1"
 $QueueCleanup = Join-Path $PSScriptRoot "cleanup_salad_queue.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $Phase6Runner = Join-Path $PSScriptRoot "run_phase6_keyframes.py"
@@ -84,7 +84,7 @@ try {
         -ForegroundColor Cyan
     & $FluxPrewarm @FluxPrewarmArguments
     if (-not $?) {
-        throw "FLUX Schnell deterministic prewarm failed."
+        throw "FLUX.2 Klein deterministic prewarm failed."
     }
 
     Write-Host "=== Phase 6 generation: Ideogram primary with FLUX safety fallback ===" `
@@ -138,14 +138,14 @@ finally {
             $CleanupFailures += $_
         }
         try {
-            & $QueueCleanup -Service flux_schnell -TimeoutSeconds 180 -NonInteractive
+            & $QueueCleanup -Service flux2_klein -TimeoutSeconds 180 -NonInteractive
         }
         catch {
             Write-Warning "FLUX queue cleanup failed: $($_.Exception.Message)"
             $CleanupFailures += $_
         }
         try {
-            & $WorkerManager -Action Status -Service flux_schnell -NonInteractive
+            & $WorkerManager -Action Status -Service flux2_klein -NonInteractive
         }
         catch {
             Write-Warning "FLUX status verification failed: $($_.Exception.Message)"
