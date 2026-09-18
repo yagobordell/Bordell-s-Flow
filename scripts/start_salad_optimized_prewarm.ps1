@@ -576,9 +576,11 @@ while ((Get-Date) -lt $Deadline) {
             $ImagePullAndStartSeconds = $ContainerStartedSeconds - $AssignmentSeconds
             $BootstrapAfterStartSeconds = $ReadySeconds - $ContainerStartedSeconds
             Write-Host (
-                "FISH_SPEECH_PREWARM_METRIC assignment_seconds={0:N1} " +
-                "container_started_seconds={1:N1} image_pull_and_start_seconds={2:N1} " +
-                "ready_seconds={3:N1} bootstrap_after_start_seconds={4:N1}" -f @(
+                (
+                    "FISH_SPEECH_PREWARM_METRIC assignment_seconds={0:N1} " +
+                    "container_started_seconds={1:N1} image_pull_and_start_seconds={2:N1} " +
+                    "ready_seconds={3:N1} bootstrap_after_start_seconds={4:N1}"
+                ) -f @(
                     [double]$AssignmentSeconds,
                     [double]$ContainerStartedSeconds,
                     [double]$ImagePullAndStartSeconds,
