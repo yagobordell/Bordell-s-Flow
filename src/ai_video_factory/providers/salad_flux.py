@@ -7,19 +7,19 @@ import tempfile
 from pathlib import Path
 
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectOutput
-from ai_video_factory.workers.flux_schnell import (
-    FLUX_SCHNELL_GENERATION_PROFILE,
-    FLUX_SCHNELL_KEYFRAME_TASK,
-    FLUX_SCHNELL_MODEL_ID,
-    FLUX_SCHNELL_REFERENCE_TASK,
-    flux_application_job_id,
-    flux_seed_for_job,
+from ai_video_factory.workers.flux2_klein import (
+    FLUX2_KLEIN_GENERATION_PROFILE,
+    FLUX2_KLEIN_KEYFRAME_TASK,
+    FLUX2_KLEIN_MODEL_ID,
+    FLUX2_KLEIN_REFERENCE_TASK,
+    flux2_klein_application_job_id,
+    flux2_klein_seed_for_job,
 )
 
 from .images import GeneratedImage, ImageFormat, ImageQuality
 from .inference_jobs import InferenceJobExecutor, cached_inference_response
 
-_SUPPORTED_TASKS = frozenset({FLUX_SCHNELL_REFERENCE_TASK, FLUX_SCHNELL_KEYFRAME_TASK})
+_SUPPORTED_TASKS = frozenset({FLUX2_KLEIN_REFERENCE_TASK, FLUX2_KLEIN_KEYFRAME_TASK})
 
 
 def render_flux_prompt(prompt: str) -> str:
@@ -63,10 +63,10 @@ def build_flux_job_request(
 ) -> InferenceJobRequest:
     if task_name not in _SUPPORTED_TASKS:
         raise ValueError(f"Unsupported FLUX provider task: {task_name}")
-    if model_id != FLUX_SCHNELL_MODEL_ID:
-        raise ValueError(f"FLUX provider requires model {FLUX_SCHNELL_MODEL_ID!r}")
+    if model_id != FLUX2_KLEIN_MODEL_ID:
+        raise ValueError(f"FLUX provider requires model {FLUX2_KLEIN_MODEL_ID!r}")
     rendered = render_flux_prompt(prompt)
-    job_id = flux_application_job_id(
+    job_id = flux2_klein_application_job_id(
         task_name=task_name,
         prompt=rendered,
         width=width,
@@ -81,18 +81,19 @@ def build_flux_job_request(
             content_type="image/png",
         ),
         parameters={
-            "generation_profile": FLUX_SCHNELL_GENERATION_PROFILE,
+            "generation_profile": FLUX2_KLEIN_GENERATION_PROFILE,
             "model_id": model_id,
             "prompt": rendered,
             "width": width,
             "height": height,
-            "seed": flux_seed_for_job(job_id),
+            "seed": flux2_klein_seed_for_job(job_id),
             "num_inference_steps": 4,
+            "guidance_scale": 1.0,
         },
     )
 
 
-class SaladFluxSchnellImageProvider:
+class SaladFlux2KleinImageProvider:
     def __init__(
         self,
         *,
@@ -133,8 +134,8 @@ class SaladFluxSchnellImageProvider:
         quality: ImageQuality,
         output_format: ImageFormat,
     ) -> GeneratedImage:
-        if model != FLUX_SCHNELL_MODEL_ID:
-            raise ValueError(f"FLUX provider requires model {FLUX_SCHNELL_MODEL_ID!r}")
+        if model != FLUX2_KLEIN_MODEL_ID:
+            raise ValueError(f"FLUX provider requires model {FLUX2_KLEIN_MODEL_ID!r}")
         if quality not in {"high", "auto"}:
             raise ValueError("FLUX fallback supports quality='high' or 'auto'")
         if output_format != "png":
@@ -149,12 +150,12 @@ class SaladFluxSchnellImageProvider:
         )
         response = cached_inference_response(self._executor.storage, request)
         if response is None:
-            purpose = "reference" if self._task_name == FLUX_SCHNELL_REFERENCE_TASK else "keyframe"
+            purpose = "reference" if self._task_name == FLUX2_KLEIN_REFERENCE_TASK else "keyframe"
             response = self._executor.execute(
                 request,
                 metadata={
                     "phase": "4" if purpose == "reference" else "6",
-                    "provider": "flux1_schnell",
+                    "provider": "flux2_klein",
                     "purpose": purpose,
                     "fallback_from": "ideogram4",
                 },
@@ -171,8 +172,8 @@ class SaladFluxSchnellImageProvider:
             media_type="image/png",
             extension="png",
             metadata={
-                "provider": "flux1_schnell",
-                "model": FLUX_SCHNELL_MODEL_ID,
+                "provider": "flux2_klein",
+                "model": FLUX2_KLEIN_MODEL_ID,
                 "fallback_from": "ideogram4",
                 "fallback_reason": "safety_rejection",
                 "job_id": response.job_id,
