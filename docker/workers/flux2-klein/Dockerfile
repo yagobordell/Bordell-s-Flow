@@ -46,11 +46,11 @@ RUN python3 -m pip install \
         --no-cache-dir \
         '/opt/factory[gpu]' \
         'diffusers==0.40.0' \
-        'transformers>=4.57,<5' \
+        'transformers==5.16.1' \
         'accelerate>=1.11,<2' \
         'sentencepiece>=0.2,<0.3' \
         'protobuf>=5,<7' \
-        'huggingface-hub[cli]>=0.36,<1' \
+        'huggingface-hub==1.32.0' \
         'hf-xet==1.6.0'
 
 COPY --from=salad-worker /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/
@@ -73,12 +73,13 @@ RUN chmod 0755 \
         /opt/factory/data
 
 RUN python3 -c \
-    "import diffusers, torch, transformers; \
+    "import diffusers, huggingface_hub, torch, transformers; \
      from diffusers import Flux2KleinPipeline; \
      print('torch=', torch.__version__); \
      print('cuda=', torch.version.cuda); \
      print('diffusers=', diffusers.__version__); \
      print('transformers=', transformers.__version__); \
+     print('huggingface_hub=', huggingface_hub.__version__); \
      print('pipeline=', Flux2KleinPipeline.__name__)"
 
 USER worker
