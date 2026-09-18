@@ -20,7 +20,12 @@ from ai_video_factory.gpu.ltx_video import (
 )
 from ai_video_factory.gpu.ports import ObjectStorage
 from ai_video_factory.gpu.storage import sha256_file
-from ai_video_factory.providers.job_queue import JobQueueClient, QueueJobSnapshot, QueueJobStatus
+from ai_video_factory.providers.job_queue import (
+    JobQueueClient,
+    QueueJobNotFoundError,
+    QueueJobSnapshot,
+    QueueJobStatus,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +191,14 @@ def run_video_generation(
             continue
         if state.transport_status in {"failed", "cancelled"}:
             continue
-        snapshot = queue.get(state.transport_job_id)
+        try:
+            snapshot = queue.get(state.transport_job_id)
+        except QueueJobNotFoundError:
+            state.transport_job_id = None
+            state.transport_status = "unsubmitted"
+            state.response = None
+            _write_manifest(manifest_path, manifest)
+            continue
         _apply_snapshot(state, item, snapshot)
         _write_manifest(manifest_path, manifest)
 
