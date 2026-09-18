@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import tempfile
 import time
 import wave
 from pathlib import Path
@@ -57,13 +58,45 @@ def build_reference() -> FishSpeechReference | None:
     )
 
 
-def build_provider(*, allow_unconditioned: bool) -> SaladFishSpeechProvider:
-    storage = create_r2_storage(
+def build_storage():
+    return create_r2_storage(
         endpoint_url=required("R2_ENDPOINT_URL", settings.r2_endpoint_url),
         bucket=required("R2_BUCKET", settings.r2_bucket),
         access_key_id=required("R2_ACCESS_KEY_ID", settings.r2_access_key_id),
         secret_access_key=required("R2_SECRET_ACCESS_KEY", settings.r2_secret_access_key),
     )
+
+
+def validate_reference_object(reference: FishSpeechReference | None) -> None:
+    if reference is None:
+        return
+
+    storage = build_storage()
+    settings.temp_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=settings.temp_dir) as directory:
+        destination = Path(directory) / "fish-reference.wav"
+        try:
+            stored = storage.download(reference.audio_key, destination)
+        except FileNotFoundError as exc:
+            raise SystemExit(
+                f"Fish reference R2 object does not exist: {reference.audio_key}"
+            ) from exc
+
+        digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+        if digest != reference.audio_sha256.lower():
+            raise SystemExit(
+                "Fish reference R2 SHA-256 mismatch: "
+                f"expected={reference.audio_sha256.lower()} actual={digest}"
+            )
+        if stored.content_type not in {"audio/wav", "audio/x-wav"}:
+            raise SystemExit(
+                "Fish reference R2 object must have WAV content type; "
+                f"got {stored.content_type!r}"
+            )
+
+
+def build_provider(*, allow_unconditioned: bool) -> SaladFishSpeechProvider:
+    storage = build_storage()
     queue = SaladJobQueueClient(
         organization=required("SALAD_ORGANIZATION", settings.salad_organization),
         project=required("SALAD_PROJECT", settings.salad_project),
@@ -111,6 +144,7 @@ async def main() -> None:
             "or use --allow-unconditioned only for a technical runtime smoke."
         )
 
+    validate_reference_object(reference)
     provider = build_provider(allow_unconditioned=args.allow_unconditioned)
     if args.preflight_only:
         print(
