@@ -52,7 +52,7 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     assert action_set in text
     service_set = (
         'ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", '
-        '"ltx25", "all")'
+        '"flux2_klein", "ltx25", "all")'
     )
     assert service_set in text
     assert 'python scripts/run_salad_smoke_suite.py' in text
