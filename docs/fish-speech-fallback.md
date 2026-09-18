@@ -279,7 +279,7 @@ generated reports:
 
 | Measurement | Validated value |
 | --- | --- |
-| Docker digest | PENDING REAL PREPARE |
+| Docker digest | `docker.io/yagobordell/ai-video-factory@sha256:ef3ea89dfb09d9d21cb9de768713d60258ac736e494259bca5df6ae46a8f6bb4` |
 | Salad GPU | RTX 4090 (24 GB) - PENDING REAL SMOKE |
 | checkpoint bytes | PENDING REAL BOOTSTRAP |
 | node assignment | PENDING REAL SMOKE |
