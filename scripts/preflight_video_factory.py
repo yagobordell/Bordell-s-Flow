@@ -5,6 +5,7 @@ import hashlib
 import json
 import shutil
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -191,6 +192,65 @@ def _active_resume_transport_ids(output_dir: Path) -> set[str]:
     return allowed
 
 
+def _is_transient_salad_error(exc: BaseException) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in {408, 429} or 500 <= exc.code < 600
+    if isinstance(exc, TimeoutError):
+        return True
+    if isinstance(exc, urllib.error.URLError):
+        reason = exc.reason
+        if isinstance(reason, TimeoutError):
+            return True
+        message = str(reason).lower()
+    else:
+        message = str(exc).lower()
+    return any(
+        token in message
+        for token in (
+            "timed out",
+            "timeout",
+            "upstream connect error",
+            "disconnect/reset",
+            "remote connection failure",
+            "server unavailable",
+            "gateway timeout",
+        )
+    )
+
+
+def _salad_json_get_with_retry(
+    request: urllib.request.Request,
+    *,
+    operation: str,
+    timeout_seconds: float = 15.0,
+    max_attempts: int = 6,
+) -> dict[str, Any]:
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise RuntimeError(f"{operation} returned a non-object JSON payload")
+            return payload
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
+            if not _is_transient_salad_error(exc) or attempt >= max_attempts:
+                if isinstance(exc, urllib.error.HTTPError):
+                    detail = f"HTTP {exc.code}"
+                else:
+                    detail = str(exc)
+                raise RuntimeError(f"{operation}: {detail}") from exc
+            delay_seconds = min(10, 2 * attempt)
+            print(
+                "VIDEO_FACTORY_PREFLIGHT_RETRY "
+                f"operation={operation!r} attempt={attempt}/{max_attempts} "
+                f"delay_seconds={delay_seconds} error={exc}"
+            )
+            time.sleep(delay_seconds)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"{operation}: invalid JSON response") from exc
+
+    raise RuntimeError(f"{operation}: retry loop exhausted")
+
 def _queue_jobs(
     *,
     base_url: str,
@@ -209,17 +269,10 @@ def _queue_jobs(
             },
             method="GET",
         )
-        try:
-            with urllib.request.urlopen(request, timeout=15) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            raise RuntimeError(
-                f"Salad queue preflight failed for {queue_name}: HTTP {exc.code}"
-            ) from exc
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError(
-                f"Salad queue preflight failed for {queue_name}: {exc}"
-            ) from exc
+        payload = _salad_json_get_with_retry(
+            request,
+            operation=f"Salad queue preflight failed for {queue_name}",
+        )
 
         raw_items = payload.get("items", payload.get("jobs", []))
         if not isinstance(raw_items, list):
