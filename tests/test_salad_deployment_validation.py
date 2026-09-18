@@ -125,7 +125,8 @@ def test_scale_to_zero_restore_reinstates_manifest_autoscaler() -> None:
     assert "function Test-ManifestAutoscaler" in restorer
     assert "Definition.autoscaler.min_replicas" in restorer
     assert "queue_autoscaler = New-ManifestAutoscaler" in restorer
-    assert "-Method Patch" in restorer
+    assert '-Method "Patch"' in restorer
+    assert 'Operation "restore manifest autoscaler"' in restorer
 
     safe_stop = manager.split("function Invoke-SafeStop", maxsplit=1)[1].split(
         "switch ($Action)", maxsplit=1
