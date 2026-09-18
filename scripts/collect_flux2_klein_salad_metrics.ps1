@@ -81,7 +81,7 @@ $Body = @{
     query = $Query
 } | ConvertTo-Json -Depth 5
 
-$Response = Invoke-RestMethod @{
+$LogRequest = @{
     Method = "Post"
     Uri = $LogsUrl
     Headers = $Headers
@@ -89,6 +89,7 @@ $Response = Invoke-RestMethod @{
     Body = $Body
     TimeoutSec = 30
 }
+$Response = Invoke-RestMethod @LogRequest
 $Items = @($Response.items) | Sort-Object time
 
 foreach ($Item in $Items) {
