@@ -12,9 +12,13 @@ from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
-from r2_client import create_r2_storage
 
 from ai_video_factory.config import settings
+
+try:
+    from .r2_client import create_r2_storage
+except ImportError:  # Direct execution: python scripts/preflight_video_factory.py
+    from r2_client import create_r2_storage
 
 REQUIRED_TOOLS = ("ffmpeg", "ffprobe", "node", "npm")
 
