@@ -16,10 +16,7 @@ from ai_video_factory.providers.salad_ideogram import (
     parse_ideogram_size,
     reference_caption_variants,
 )
-from ai_video_factory.workers.flux2_klein import (
-    FLUX2_KLEIN_KEYFRAME_TASK,
-    FLUX2_KLEIN_MODEL_ID,
-)
+from ai_video_factory.workers.flux2_klein import FLUX2_KLEIN_KEYFRAME_TASK
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_KEYFRAME_TASK
 
 DEFAULT_SIZE = "1024x1536"
