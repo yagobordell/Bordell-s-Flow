@@ -16,6 +16,7 @@ from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
 from ai_video_factory.inference.storage import R2ObjectStorage, sha256_file
 from ai_video_factory.providers import (
     SaladBreezeSpeechProvider,
+    SaladFlux2KleinImageProvider,
     SaladIdeogramImageProvider,
     SaladWhisperTranscriptionProvider,
 )
@@ -28,6 +29,10 @@ from ai_video_factory.providers.ideogram_caption import (
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.breeze_tts2 import BREEZE_TTS2_MODEL_ID
+from ai_video_factory.workers.flux2_klein import (
+    FLUX2_KLEIN_KEYFRAME_TASK,
+    FLUX2_KLEIN_MODEL_ID,
+)
 from ai_video_factory.workers.ideogram4 import (
     IDEOGRAM4_KEYFRAME_TASK,
     IDEOGRAM4_MODEL_ID,
@@ -35,7 +40,7 @@ from ai_video_factory.workers.ideogram4 import (
 )
 from ai_video_factory.workers.whisper import WHISPER_MODEL_ID
 
-_SERVICE_ORDER = ("breeze_tts2", "whisper", "ideogram4", "ltx25")
+_SERVICE_ORDER = ("breeze_tts2", "whisper", "ideogram4", "flux2_klein", "ltx25")
 _DEFAULT_OUTPUT_DIR = Path("data/output/deployment-validation")
 
 
@@ -43,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run one real Salad worker smoke test or the complete Breeze -> Whisper -> "
-            "Ideogram -> LTX validation chain."
+            "Ideogram -> FLUX.2 Klein fallback -> LTX validation chain."
         )
     )
     parser.add_argument(
@@ -323,6 +328,51 @@ async def _smoke_ideogram(args: argparse.Namespace) -> None:
     print(path)
 
 
+async def _smoke_flux2_klein(args: argparse.Namespace) -> None:
+    started = time.monotonic()
+    executor = _executor(
+        settings.salad_flux2_klein_queue_name,
+        timeout_seconds=args.timeout_seconds,
+        poll_seconds=args.poll_seconds,
+    )
+    provider = SaladFlux2KleinImageProvider(
+        executor=executor,
+        temp_dir=settings.temp_dir / "deployment-validation-flux2-klein",
+        task_name=FLUX2_KLEIN_KEYFRAME_TASK,
+    )
+    prompt = (
+        "Cinematic documentary still of a compact robotic camera on a clean studio table, "
+        "realistic materials, soft neutral directional lighting, no text or logos."
+    )
+    image = await provider.generate_image(
+        prompt=prompt,
+        model=FLUX2_KLEIN_MODEL_ID,
+        size="1024x1024",
+        quality="high",
+        output_format="png",
+    )
+    destination = args.output_dir / "flux2-klein-smoke.png"
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(image.content)
+    if destination.stat().st_size <= 8:
+        raise RuntimeError("FLUX.2 Klein smoke returned an empty PNG")
+    report = {
+        "status": "succeeded",
+        "service": "flux2_klein",
+        "model": FLUX2_KLEIN_MODEL_ID,
+        "wall_seconds": round(time.monotonic() - started, 3),
+        "artifact": destination.as_posix(),
+        "size": "1024x1024",
+        "size_bytes": destination.stat().st_size,
+        "sha256": sha256_file(destination),
+        "provider_metadata": dict(image.metadata),
+        "prompt": prompt,
+    }
+    path = _write_report(args.output_dir, "flux2_klein", report)
+    print(f"FLUX.2 Klein smoke: OK -> {destination}")
+    print(path)
+
+
 def _ltx_environment() -> dict[str, str]:
     organization, project = _stack_identity()
     values = {
@@ -464,6 +514,8 @@ async def main() -> None:
                 await _smoke_whisper(args)
             elif service == "ideogram4":
                 await _smoke_ideogram(args)
+            elif service == "flux2_klein":
+                await _smoke_flux2_klein(args)
             elif service == "ltx25":
                 _smoke_ltx25(args)
             else:  # pragma: no cover - argparse prevents this branch
