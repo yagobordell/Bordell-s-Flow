@@ -140,7 +140,7 @@ async def main() -> None:
     }
     report_path = args.output_dir / "flux2-fallback-e2e.json"
     report_path.write_text(
-        json.dumps(report, indent=2, ensure_ascii=False) + "\\n",
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     print(json.dumps(report, indent=2, ensure_ascii=False))
