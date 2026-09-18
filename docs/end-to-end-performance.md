@@ -104,6 +104,7 @@ profile.
 | --- | --- | --- | --- |
 | Explicit dependency DAG | overlaps independent CPU/LLM/GPU stages | none | total/GPU stage limits |
 | Breeze cache audit before prewarm | removes speech cold start on valid replay | none | zero Breeze/Fish GPU on hit |
+| Whisper cache audit before prewarm | removes alignment cold start on valid replay | none | zero Whisper GPU on hit |
 | Keyframe cache audit before prewarm | removes image cold start on complete replay | none | invalid cache fails early |
 | LTX R2 replay before queue | avoids allocation/submission after local-state loss | none | zero LTX GPU on full hit |
 | Temporary Ideogram hold Phase 4 -> 6 | avoids stop/restart inside one video | none | bounded to end-to-end mode |
