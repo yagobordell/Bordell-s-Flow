@@ -17,7 +17,8 @@ def test_optimized_prewarm_rechecks_stale_queue_only_at_safe_boundaries() -> Non
     text = PREWARM.read_text(encoding="utf-8")
 
     assert "$VerifiedInitialQueueLength" in text
-    assert "observed new queued work after the pre-allocation empty-queue verification" in text
+    assert "observed new queued work after the pre-allocation empty-queue " in text
+    assert "verification; refusing to continue while the worker is bootstrapping." in text
     assert "observed queue growth beyond the already-verified stale summary" in text
     assert "refusing GPU allocation while queue state is ambiguous" in text
     assert "enumerable pending/running job(s)" in text
