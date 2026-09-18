@@ -58,12 +58,86 @@ function Get-SaladApiKey {
     return $Value.Trim()
 }
 
+function Get-HttpStatusCode {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    $Response = $ErrorRecord.Exception.Response
+    if ($null -eq $Response) {
+        return $null
+    }
+    try {
+        return [int]$Response.StatusCode
+    }
+    catch {
+        return $null
+    }
+}
+
+function Test-TransientSaladFailure {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    $StatusCode = Get-HttpStatusCode -ErrorRecord $ErrorRecord
+    if ($StatusCode -in @(408, 429, 500, 502, 503, 504)) {
+        return $true
+    }
+
+    $Message = [string]$ErrorRecord.Exception.Message
+    return $Message -match (
+        "(?i)timed out|timeout|upstream connect error|disconnect/reset|" +
+        "remote connection failure|server unavailable|gateway timeout"
+    )
+}
+
+function Invoke-SaladRequest {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$Operation,
+        [string]$Method = "Get",
+        [string]$ContentType = "",
+        [string]$Body = "",
+        [ValidateRange(1, 120)][int]$TimeoutSec = 30,
+        [ValidateRange(1, 10)][int]$MaxAttempts = 6
+    )
+
+    for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
+        try {
+            $Arguments = @{
+                Method = $Method
+                Uri = $Uri
+                Headers = $Headers
+                TimeoutSec = $TimeoutSec
+            }
+            if (-not [string]::IsNullOrWhiteSpace($ContentType)) {
+                $Arguments["ContentType"] = $ContentType
+            }
+            if (-not [string]::IsNullOrWhiteSpace($Body)) {
+                $Arguments["Body"] = $Body
+            }
+            return Invoke-RestMethod @Arguments
+        }
+        catch {
+            if (-not (Test-TransientSaladFailure -ErrorRecord $_) -or $Attempt -ge $MaxAttempts) {
+                throw
+            }
+            $DelaySeconds = [Math]::Min(15, 2 * $Attempt)
+            Write-Warning (
+                "FLUX Salad control-plane operation '$Operation' failed transiently " +
+                "(attempt $Attempt/$MaxAttempts): $($_.Exception.Message). " +
+                "Retrying in ${DelaySeconds}s without reallocating the worker."
+            )
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+
+    throw "Unreachable Salad retry state for '$Operation'."
+}
+
 function Get-Group {
-    return Invoke-RestMethod -Uri $GroupUrl -Headers $Headers -TimeoutSec 30
+    return Invoke-SaladRequest -Uri $GroupUrl -Operation "read container group"
 }
 
 function Get-Queue {
-    return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
+    return Invoke-SaladRequest -Uri $QueueUrl -Operation "read queue"
 }
 
 function Get-QueueActiveSnapshot {
@@ -85,9 +159,9 @@ function Get-QueueActiveSnapshot {
             "FLUX prewarm queue inspection: page $Page " +
             "($([int]$SecondsRemaining)s remaining in safety check)..."
         )
-        $Response = Invoke-RestMethod `
+        $Response = Invoke-SaladRequest `
             -Uri "$QueueUrl/jobs?page=$Page&page_size=25" `
-            -Headers $Headers `
+            -Operation "inspect queue jobs page $Page" `
             -TimeoutSec $RequestTimeoutSeconds
         $Pages += 1
         $Items = @(
@@ -117,7 +191,7 @@ function Get-QueueActiveSnapshot {
 }
 
 function Get-Instances {
-    $Response = Invoke-RestMethod -Uri $InstancesUrl -Headers $Headers -TimeoutSec 30
+    $Response = Invoke-SaladRequest -Uri $InstancesUrl -Operation "read container instances"
     if ($Response.PSObject.Properties.Name -contains "instances") {
         return @($Response.instances)
     }
@@ -234,10 +308,10 @@ $ContainerStartedSeconds = $null
 $ReadySeconds = $null
 
 Write-Host "FLUX prewarm: requesting exactly one replica before queue submission." -ForegroundColor Cyan
-Invoke-RestMethod `
-    -Method Patch `
+Invoke-SaladRequest `
+    -Method "Patch" `
     -Uri $GroupUrl `
-    -Headers $Headers `
+    -Operation "request one FLUX replica" `
     -ContentType "application/merge-patch+json" `
     -Body (@{ replicas = 1 } | ConvertTo-Json -Compress) `
     -TimeoutSec 60 |
@@ -256,10 +330,10 @@ if ([bool]$Group.pending_change -or [int]$Group.replicas -ne 1) {
     throw "Salad did not persist the one-replica FLUX prewarm state."
 }
 
-Invoke-RestMethod `
-    -Method Post `
+Invoke-SaladRequest `
+    -Method "Post" `
     -Uri "$GroupUrl/start" `
-    -Headers $Headers `
+    -Operation "start FLUX container group" `
     -TimeoutSec 60 |
     Out-Null
 
@@ -352,10 +426,10 @@ $Autoscaler = @{
     max_upscale_per_minute = [int]$Definition.autoscaler.max_upscale_per_minute
     max_downscale_per_minute = [int]$Definition.autoscaler.max_downscale_per_minute
 }
-Invoke-RestMethod `
-    -Method Patch `
+Invoke-SaladRequest `
+    -Method "Patch" `
     -Uri $GroupUrl `
-    -Headers $Headers `
+    -Operation "hold ready FLUX replica" `
     -ContentType "application/merge-patch+json" `
     -Body (@{ queue_autoscaler = $Autoscaler } | ConvertTo-Json -Depth 10) `
     -TimeoutSec 60 |
