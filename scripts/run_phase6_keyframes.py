@@ -132,7 +132,11 @@ async def main() -> None:
         temp_dir=settings.temp_dir / "flux2-klein-keyframe-client",
         task_name=FLUX2_KLEIN_KEYFRAME_TASK,
     )
-    image_provider = SafetyFallbackImageProvider(primary=primary, fallback=fallback)
+    image_provider = SafetyFallbackImageProvider(
+        primary=primary,
+        fallback=fallback,
+        fallback_model=args.fallback_model,
+    )
 
     keyframes = await generate_storyboard_keyframes(
         frames,
