@@ -192,14 +192,16 @@ if ($InferenceItems.Count -eq 0) {
     throw "No FLUX2_KLEIN_INFERENCE_METRIC metric found in the requested Salad log window."
 }
 
-Write-Host (
+$HistoricalMetric = (
     "FLUX2_KLEIN_HISTORICAL_METRICS runtime_count={0} inference_count={1} " +
-    "start={2} end={3}" -f
+    "start={2} end={3}"
+) -f @(
     $RuntimeItems.Count,
     $InferenceItems.Count,
     $Start.ToString("o"),
     $End.ToString("o")
-) -ForegroundColor Green
+)
+Write-Host $HistoricalMetric -ForegroundColor Green
 
 if (Test-Path -LiteralPath $ReportPath -PathType Leaf) {
     $Report = Get-Content -LiteralPath $ReportPath -Raw
