@@ -6,6 +6,7 @@
     "service_order": [
       "whisper",
       "breeze_tts2",
+      "fish_speech",
       "ideogram4",
       "flux2_klein",
       "ltx25"
@@ -340,6 +341,78 @@
           "period_seconds": 30,
           "timeout_seconds": 5,
           "failure_threshold": 20
+        },
+        "liveness": {
+          "path": "/health",
+          "period_seconds": 30,
+          "timeout_seconds": 10,
+          "failure_threshold": 20
+        }
+      },
+      "autoscaler": {
+        "min_replicas": 0,
+        "max_replicas": 1,
+        "desired_queue_length": 1,
+        "polling_period": 30,
+        "max_upscale_per_minute": 1,
+        "max_downscale_per_minute": 1
+      }
+    },
+    "fish_speech": {
+      "display_name": "AI Video Factory Fish Speech S2 Pro Fallback",
+      "group_name": "ai-video-factory-fish-speech-worker",
+      "queue_name": "ai-video-factory-fish-speech-jobs",
+      "dockerfile": "docker/workers/fish-speech/Dockerfile",
+      "image": "docker.io/yagobordell/ai-video-factory:fish-s2-pro-bf16-v1",
+      "priority": "high",
+      "resources": {
+        "cpu": 8,
+        "memory": 32768,
+        "shm_size": 8192,
+        "storage_amount": 68719476736,
+        "gpu_class_names": [
+          "RTX 4090 (24 GB)"
+        ]
+      },
+      "environment": {
+        "INFERENCE_WORKER_MODE": "production",
+        "INFERENCE_WORKER_LEASE_SECONDS": "900",
+        "INFERENCE_WORKER_HEARTBEAT_SECONDS": "30",
+        "FISH_SPEECH_MODEL_ROOT": "/workspace/models/fish-s2-pro",
+        "FISH_SPEECH_MODEL_REPOSITORY": "fishaudio/s2-pro",
+        "FISH_SPEECH_MODEL_REVISION": "1de9996b6be38b745688de084d87a5633f714e4e",
+        "FISH_SPEECH_RUNTIME_COMMIT": "214da3cd841bda85da2496b96cd3c4d7edb1337e",
+        "FISH_SPEECH_DEVICE": "cuda",
+        "FISH_SPEECH_MAX_CHUNK_BYTES": "800",
+        "FISH_SPEECH_INTER_CHUNK_PAUSE_MS": "80",
+        "FISH_SPEECH_DOWNLOAD_STALL_TIMEOUT_SECONDS": "600",
+        "FISH_SPEECH_DOWNLOAD_HARD_TIMEOUT_SECONDS": "2400",
+        "FISH_SPEECH_DOWNLOAD_POLL_SECONDS": "15",
+        "FISH_SPEECH_DOWNLOAD_MIN_MIBPS": "6",
+        "FISH_SPEECH_DOWNLOAD_THROUGHPUT_GRACE_SECONDS": "180",
+        "FISH_SPEECH_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS": "120",
+        "FISH_SPEECH_READY_TIMEOUT_SECONDS": "1800",
+        "HF_HUB_DOWNLOAD_TIMEOUT": "120",
+        "HF_HUB_ETAG_TIMEOUT": "30",
+        "HF_XET_HIGH_PERFORMANCE": "1",
+        "SALAD_QUEUE_ENABLED": "true",
+        "SALAD_LOG_LEVEL": "info"
+      },
+      "required_environment": [
+        "HF_TOKEN"
+      ],
+      "probes": {
+        "startup": {
+          "path": "/health",
+          "period_seconds": 30,
+          "timeout_seconds": 5,
+          "failure_threshold": 20
+        },
+        "readiness": {
+          "path": "/ready",
+          "period_seconds": 30,
+          "timeout_seconds": 5,
+          "failure_threshold": 30
         },
         "liveness": {
           "path": "/health",
