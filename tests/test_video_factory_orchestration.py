@@ -41,6 +41,19 @@ def test_phase5_checks_breeze_cache_before_primary_prewarm() -> None:
     assert "Fish consumed zero GPU-seconds" in text
 
 
+def test_flux_dynamic_fallback_uses_scale_to_zero_starter_in_phase4_and_phase6() -> None:
+    phase4 = _read("scripts/run_phase4_assets_controlled.ps1")
+    phase6 = _read("scripts/run_phase6_keyframes_controlled.ps1")
+    starter = _read("scripts/start_salad_scale_to_zero.ps1")
+
+    for text in (phase4, phase6):
+        assert '"start_salad_scale_to_zero.ps1"' in text
+        assert "& $ScaleToZeroStarter @FluxArmArguments" in text
+        assert "& $WorkerManager @FluxArmArguments" not in text
+
+    assert '"flux2_klein"' in starter
+
+
 def test_phase6_checks_cache_before_ideogram_and_does_not_eager_prewarm_flux() -> None:
     text = _read("scripts/run_phase6_keyframes_controlled.ps1")
 
