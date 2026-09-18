@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-DOCKERFILE = Path("docker/workers/flux-schnell/Dockerfile")
-DOWNLOAD = Path("docker/workers/flux-schnell/download_models.sh")
+DOCKERFILE = Path("docker/workers/flux2-klein/Dockerfile")
+DOWNLOAD = Path("docker/workers/flux2-klein/download_models.sh")
 MANIFEST = Path("deploy/salad/services.json")
 
 
@@ -39,6 +39,6 @@ def test_flux_image_includes_tokenizer_runtime_dependencies() -> None:
 def test_flux_image_tag_versions_tokenizer_runtime_change() -> None:
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
 
-    assert manifest["services"]["flux_schnell"]["image"].endswith(
-        ":flux1-schnell-bnb4-v3"
+    assert manifest["services"]["flux2_klein"]["image"].endswith(
+        ":flux2-klein-4b-bf16-v1"
     )
