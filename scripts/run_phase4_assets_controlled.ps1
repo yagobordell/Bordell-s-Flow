@@ -93,8 +93,8 @@ if ($NonInteractive) {
 }
 
 $IdeogramTouched = $false
-# Any fresh Ideogram miss can discover a terminal safety rejection during execution and
-# dynamically enqueue FLUX even when the preflight cache plan did not know that yet.
+# Fresh Ideogram work can discover a terminal safety rejection not known by the cache audit.
+# In that case Python prewarms FLUX on demand before submitting the first fallback job.
 $OnDemandFluxPrewarm = $IdeogramNeeded -and -not $FluxNeeded
 $FluxCleanupRequired = $IdeogramNeeded -or $FluxNeeded
 $PrimaryFailure = $null
