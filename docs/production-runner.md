@@ -55,6 +55,10 @@ Python-only orchestrator image.
 - access to the configured OpenAI model;
 - authenticated Hugging Face access for model repositories declared by the Salad manifest.
 
+The Python preflight also reads every Salad queue. Active jobs are rejected unless they are LTX
+`pending/running` transport IDs explicitly owned by the local Phase 8 resume manifest. This prevents
+a new video from colliding with orphaned or foreign work while preserving interrupted-run resume.
+
 After the Python preflight, `manage_salad_stack.ps1 -Action Status` verifies that the Salad control
 plane is reachable for every configured service. A failure here happens before a worker is prewarmed.
 
@@ -153,6 +157,14 @@ model/generation profile
 The R2 object must match application job ID, request SHA-256, content type, non-zero size and artifact
 SHA metadata. A valid hit is materialized locally with no Breeze allocation and no Fish allocation.
 Invalid metadata fails before GPU and is not classified as a TTS fallback condition.
+
+### Phase 5 alignment
+
+Before Whisper prewarm, `audit_phase5_alignment_cache.py` derives the request identity from the
+canonical narration WAV SHA-256, source-script prompt, language, model and generation profile.
+A verified `words.json` object is downloaded and validated without uploading the WAV, submitting a
+queue job or allocating a Whisper GPU. The provider repeats the same cache check internally before
+`ensure_input()`, so cache-before-GPU remains true even when the controlled wrapper is bypassed.
 
 ### Phase 6 keyframes
 
