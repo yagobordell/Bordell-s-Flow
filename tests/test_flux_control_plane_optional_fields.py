@@ -1,7 +1,7 @@
 from pathlib import Path
 
-PREWARM = Path("scripts/start_salad_flux_prewarm.ps1")
-RESTORE = Path("scripts/restore_salad_flux_scale_to_zero.ps1")
+PREWARM = Path("scripts/start_salad_flux2_klein_prewarm.ps1")
+RESTORE = Path("scripts/restore_salad_flux2_klein_scale_to_zero.ps1")
 PHASE4 = Path("scripts/run_phase4_assets_controlled.ps1")
 PHASE6 = Path("scripts/run_phase6_keyframes_controlled.ps1")
 
