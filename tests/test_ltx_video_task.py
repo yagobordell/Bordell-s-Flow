@@ -55,8 +55,8 @@ def parameters(**updates: Any) -> dict[str, Any]:
         "generation_profile": LTX_GENERATION_PROFILE,
         "prompt": "A deliberate samurai motion shot.",
         "seed": 43,
-        "width": 768,
-        "height": 1280,
+        "width": 1280,
+        "height": 720,
         "fps": 24,
         "num_frames": 121,
     }
@@ -109,8 +109,8 @@ def test_ltx_num_frames_rejects_invalid_duration_or_fps() -> None:
 def test_ltx_parameters_enforce_generation_profile_and_shape() -> None:
     validated = LTXVideoParameters.model_validate(parameters())
     assert validated.generation_profile == LTX_GENERATION_PROFILE
-    assert validated.width == 768
-    assert validated.height == 1280
+    assert validated.width == 1280
+    assert validated.height == 720
     assert validated.num_frames == 121
 
     with pytest.raises(ValidationError, match="generation_profile"):
@@ -213,6 +213,13 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
         "conditionings": [],
     }
 
+    class FakeVideo:
+        shape = (1, 3, 121, 768, 1280)
+
+        def __getitem__(self, item: Any) -> str:
+            state["video_crop"] = item
+            return "cropped-video"
+
     class FakePipeline:
         def __init__(self, **kwargs: Any) -> None:
             state["pipeline_builds"] += 1
@@ -220,7 +227,7 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
 
         def __call__(self, **kwargs: Any) -> Any:
             state["pipeline_calls"].append(kwargs)
-            return SimpleNamespace(video="decoded-video", num_frames=121, tiling_config="tiling")
+            return SimpleNamespace(video=FakeVideo(), num_frames=121, tiling_config="tiling")
 
     class FakeModelPaths:
         @classmethod
@@ -296,6 +303,11 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     assert state["pipeline_init"]["device"] == "device:cuda"
     assert state["conditionings"][0]["frame_idx"] == 0
     assert state["conditionings"][0]["strength"] == 1.0
+    assert state["pipeline_calls"][0]["width"] == 1280
+    assert state["pipeline_calls"][0]["height"] == 768
+    assert state["encodes"][0]["video"] == "cropped-video"
+    spatial_crop = state["video_crop"][-2:]
+    assert spatial_crop == (slice(24, 744), slice(0, 1280))
     assert len(state["encodes"]) == 2
     assert all(call["audio"] is None for call in state["encodes"])
 
