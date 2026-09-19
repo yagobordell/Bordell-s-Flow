@@ -77,3 +77,24 @@ def test_stale_queue_retry_budget_uses_absolute_deadline() -> None:
     assert "exceeded its deadline" in text
     assert "-Deadline $Deadline" in text
     assert "$EffectiveTimeoutSeconds" in text
+
+
+def test_optimized_prewarm_requires_runtime_queue_attachment_before_success() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+
+    success_block = text.split("$AutoscalerStateReady = (", maxsplit=2)[-1]
+    success_block = success_block.split(
+        "# The queue is dedicated to this service.",
+        maxsplit=1,
+    )[0]
+    assert "$Ready -and" in success_block
+    assert "$Attached" in success_block
+    assert "queue attached and still empty" in text
+
+    adopt_block = text.split("$AdoptReadyReplica -and", maxsplit=1)[1]
+    adopt_block = adopt_block.split(
+        "Optimized prewarm requires '$GroupName' stopped",
+        maxsplit=1,
+    )[0]
+    assert "Test-QueueAttachment -Queue $Queue" in adopt_block
+    assert "refuses to adopt the ready replica" in adopt_block
