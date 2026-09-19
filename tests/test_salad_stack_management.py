@@ -206,3 +206,15 @@ def test_stack_manager_forwards_explicit_pinned_image_only_to_targeted_service()
     assert "[string]$PinnedImage" in script
     assert '$WorkerArguments["PinnedImage"] = $PinnedImage' in script
     assert "-PinnedImage requires exactly one selected service." in script
+
+
+
+def test_worker_create_retries_transient_name_conflict_after_delete() -> None:
+    script = WORKER_MANAGER.read_text(encoding="utf-8")
+
+    assert "function Test-NameConflictFailure" in script
+    assert "$CreateDeadline = (Get-Date).AddMinutes(5)" in script
+    assert "name_conflict attempt $CreateAttempt" in script
+    assert "Try-Get-Group -Headers $Headers" in script
+    assert "Continuing with normal post-create validation." in script
+    assert "refusing unbounded recreate retries" in script
