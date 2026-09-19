@@ -439,3 +439,56 @@ def test_real_production_dag_exposes_safe_parallel_branches(tmp_path: Path) -> N
     assert by_name["phase8-upscale"].dependencies == ("phase8-videos",)
     assert by_name["phase8-upscale"].resource_key == "realesrgan"
     assert by_name["phase8-upscale"].outputs[0].name == "upscaled_clips.json"
+
+
+
+class FailFastExecutor:
+    def __init__(self) -> None:
+        self.release = threading.Event()
+        self.sibling_started = threading.Event()
+        self.cancel_calls = 0
+
+    def __call__(self, stage: ProductionStage) -> None:
+        if stage.name == "failing":
+            assert self.sibling_started.wait(timeout=2)
+            raise RuntimeError("boom")
+        self.sibling_started.set()
+        assert self.release.wait(timeout=2)
+
+    def cancel_running(self) -> None:
+        self.cancel_calls += 1
+        self.release.set()
+
+
+def test_dag_failure_cancels_active_sibling_before_waiting_for_pool(tmp_path: Path) -> None:
+    source = tmp_path / "source.txt"
+    source.write_text("source", encoding="utf-8")
+    executor = FailFastExecutor()
+    runner = ProductionRunner(
+        [
+            ProductionStage(
+                name="failing",
+                description="failing",
+                script=_script(tmp_path, "failing.py"),
+                inputs=(source,),
+                outputs=(tmp_path / "failing.json",),
+            ),
+            ProductionStage(
+                name="sibling",
+                description="sibling",
+                script=_script(tmp_path, "sibling.py"),
+                inputs=(source,),
+                outputs=(tmp_path / "sibling.json",),
+            ),
+        ],
+        manifest_path=tmp_path / "manifest.json",
+        repo_root=tmp_path,
+        executor=executor,
+        max_workers=2,
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        runner.run()
+
+    assert executor.cancel_calls == 1
+    assert executor.release.is_set()
