@@ -6,6 +6,7 @@ PREWARM = Path("scripts/start_salad_optimized_prewarm.ps1")
 PRODUCTION_RUNNER = Path("scripts/run_production.py")
 R2_PREFLIGHT = Path("scripts/check_r2_ready.py")
 QUEUE_CLEANUP = Path("scripts/cleanup_salad_queue.ps1")
+CONFIG = Path("src/ai_video_factory/config.py")
 
 WORKERS = {
     "ideogram4": Path("docker/workers/ideogram4/download_models.sh"),
@@ -357,3 +358,12 @@ def test_phase5_alignment_pins_canonical_salad_route() -> None:
     assert "$env:SALAD_WHISPER_QUEUE_NAME = [string]$WhisperService.queue_name" in text
     assert '"--queue-name", $env:SALAD_WHISPER_QUEUE_NAME' in text
     assert "Phase 5 canonical Salad route" in text
+
+
+
+def test_whisper_default_queue_matches_manifest() -> None:
+    services = json.loads(MANIFEST.read_text(encoding="utf-8"))["services"]
+    config = CONFIG.read_text(encoding="utf-8")
+
+    expected = services["whisper"]["queue_name"]
+    assert f'salad_whisper_queue_name: str = "{expected}"' in config
