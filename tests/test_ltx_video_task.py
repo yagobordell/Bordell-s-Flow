@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from PIL import Image
 from pydantic import ValidationError
 
 import ai_video_factory.gpu.ltx_video as ltx_video
@@ -204,7 +205,7 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     model_root = tmp_path / "models"
     _seed_model_files(model_root)
     keyframe = tmp_path / "keyframe.png"
-    keyframe.write_bytes(b"png")
+    Image.new("RGB", (1280, 720), (32, 64, 96)).save(keyframe, format="PNG")
 
     state: dict[str, Any] = {
         "pipeline_builds": 0,
