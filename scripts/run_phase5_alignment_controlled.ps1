@@ -35,6 +35,16 @@ $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $CacheAudit = Join-Path $PSScriptRoot "audit_phase5_alignment_cache.py"
 $Runner = Join-Path $PSScriptRoot "run_phase5_alignment.py"
+$ServicesPath = Join-Path (Split-Path $PSScriptRoot -Parent) "deploy\salad\services.json"
+
+$Services = Get-Content -LiteralPath $ServicesPath -Raw | ConvertFrom-Json
+$WhisperService = $Services.services.whisper
+$env:SALAD_ORGANIZATION = [string]$Services.stack.organization
+$env:SALAD_PROJECT = [string]$Services.stack.project
+$env:SALAD_WHISPER_QUEUE_NAME = [string]$WhisperService.queue_name
+Write-Host (
+    "Phase 5 canonical Salad route: queue={0}" -f $env:SALAD_WHISPER_QUEUE_NAME
+) -ForegroundColor DarkGray
 
 foreach ($Path in @($Source, $Narration, $Audio)) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -70,6 +80,7 @@ $RunnerArguments = @(
     "--narration", $Narration,
     "--audio", $Audio,
     "--output", $Output,
+    "--queue-name", $env:SALAD_WHISPER_QUEUE_NAME,
     "--poll-seconds", $PollSeconds,
     "--pending-timeout-seconds", $PendingTimeoutSeconds,
     "--timeout-seconds", $RunningTimeoutSeconds
