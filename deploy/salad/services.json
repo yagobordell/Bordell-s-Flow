@@ -291,7 +291,7 @@
         "max_upscale_per_minute": 1,
         "max_downscale_per_minute": 1
       },
-      "autostart_policy": true
+      "autostart_policy": false
     },
     "flux2_klein": {
       "display_name": "AI Video Factory FLUX.2 Klein 4B Fallback",
