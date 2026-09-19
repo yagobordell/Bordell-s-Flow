@@ -331,3 +331,13 @@ def test_phase6_emits_inference_progress_logs() -> None:
     assert "Inference transport submitted" in executor
     assert "Inference transport progress" in executor
     assert "elapsed_seconds=%.1f" in executor
+
+
+
+def test_whisper_alignment_prewarm_budget_matches_cold_start_profile() -> None:
+    text = Path("scripts/run_phase5_alignment_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "[int]$PrewarmTimeoutMinutes = 60" in text
+    assert "TimeoutMinutes = $PrewarmTimeoutMinutes" in text
