@@ -18,6 +18,8 @@ param(
 
     [switch]$SkipBuild,
 
+    [switch]$Recreate,
+
     [switch]$SkipLocalBuild,
 
     [switch]$NonInteractive
@@ -100,6 +102,9 @@ function Invoke-StackAction {
     }
     if ($SkipBuild) {
         $Arguments["SkipBuild"] = $true
+    }
+    if ($Recreate -and $StackAction -eq "Prepare") {
+        $Arguments["Recreate"] = $true
     }
     if ($NonInteractive) {
         $Arguments["NonInteractive"] = $true
@@ -310,6 +315,13 @@ function Invoke-SafeStop {
             Invoke-ZeroReplicaFallback -StopFailure $_
         }
     }
+}
+
+if ($Recreate -and $Action -ne "Prepare") {
+    throw "-Recreate is only valid with -Action Prepare."
+}
+if ($Recreate -and $Service -eq "all") {
+    throw "-Recreate requires one explicit service; refusing to recreate the full stack."
 }
 
 switch ($Action) {
