@@ -197,10 +197,10 @@ $SucceededJobCount = 0
 try {
     $Jobs = Invoke-RestMethod `
         -Method Get `
-        -Uri "$QueueUrl/jobs?page=1&page_size=10" `
+        -Uri "$QueueUrl/jobs?page=1&page_size=25" `
         -Headers $Headers `
         -TimeoutSec 30
-    $RecentJobs = @(@($Jobs.items) | Select-Object -First 10)
+    $RecentJobs = @(@($Jobs.items) | Select-Object -First 25)
     $SucceededJobCount = @(
         $RecentJobs | Where-Object { [string]$_.status -eq "succeeded" }
     ).Count
@@ -211,6 +211,37 @@ try {
         $RecentJobs |
             Select-Object id, status, create_time, update_time |
             Format-Table -AutoSize
+
+        $FailedJobs = @($RecentJobs | Where-Object { [string]$_.status -eq "failed" })
+        if ($FailedJobs.Count -gt 0) {
+            Write-Host "=== Failed queue job details ===" -ForegroundColor Cyan
+            foreach ($Job in $FailedJobs) {
+                Write-Host ("job.id={0}" -f [string]$Job.id)
+                $Events = Get-OptionalProperty -Object $Job -Name "events"
+                if ($null -ne $Events) {
+                    Write-Host (
+                        "job.events={0}" -f (
+                            @($Events) |
+                                ForEach-Object {
+                                    "{0}@{1}" -f [string]$_.action, [string]$_.time
+                                } |
+                                Join-String -Separator ","
+                        )
+                    )
+                }
+                $Output = Get-OptionalProperty -Object $Job -Name "output"
+                if ($null -ne $Output) {
+                    Write-Host (
+                        "job.output={0}" -f (
+                            $Output | ConvertTo-Json -Depth 10 -Compress
+                        )
+                    )
+                }
+                else {
+                    Write-Host "job.output=<none>"
+                }
+            }
+        }
     }
 }
 catch {
@@ -263,7 +294,7 @@ try {
         -Body $LogBody `
         -TimeoutSec 60
 
-    $InterestingPattern = "(?i)queue|salad|heartbeat|worker|connect|ready|error|grpc|transport"
+    $InterestingPattern = "(?i)queue|salad|worker|connect|ready|error|grpc|transport|exception|traceback|cuda|oom|out of memory|shape|dimension|frame|invalid|failed|job execution"
     $Relevant = @()
     foreach ($Entry in @($Logs.items)) {
         $Text = Get-LogText -Entry $Entry
