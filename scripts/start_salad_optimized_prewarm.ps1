@@ -824,29 +824,6 @@ $PatchDeadline = (Get-Date).AddMinutes(2)
 do {
     Start-Sleep -Seconds 5
     $Group = Get-Group
-    if ($Ready -and -not $Attached) {
-        if ($null -eq $ReadyUnattachedSince) {
-            $ReadyUnattachedSince = Get-Date
-            Write-Warning (
-                "$Service is ready but is not yet attached to queue '$QueueName'; " +
-                "waiting up to ${ReadyUnattachedTimeoutSeconds}s before failing safely."
-            )
-        }
-        elseif (
-            ((Get-Date) - $ReadyUnattachedSince).TotalSeconds -ge
-            $ReadyUnattachedTimeoutSeconds
-        ) {
-            throw (
-                "$Service reached ready state but Salad did not attach container group " +
-                "'$GroupName' to queue '$QueueName' within " +
-                "${ReadyUnattachedTimeoutSeconds}s."
-            )
-        }
-    }
-    else {
-        $ReadyUnattachedSince = $null
-    }
-
     $AutoscalerStateReady = (
         -not $AutoscalerObservable -or
         (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas $TargetMinReplicas)
@@ -1032,6 +1009,29 @@ while ((Get-Date) -lt $Deadline) {
     }
     if ($Ready -and $null -eq $ReadySeconds) {
         $ReadySeconds = ((Get-Date) - $PrewarmStartedAt).TotalSeconds
+    }
+
+    if ($Ready -and -not $Attached) {
+        if ($null -eq $ReadyUnattachedSince) {
+            $ReadyUnattachedSince = Get-Date
+            Write-Warning (
+                "$Service is ready but is not yet attached to queue '$QueueName'; " +
+                "waiting up to ${ReadyUnattachedTimeoutSeconds}s before failing safely."
+            )
+        }
+        elseif (
+            ((Get-Date) - $ReadyUnattachedSince).TotalSeconds -ge
+            $ReadyUnattachedTimeoutSeconds
+        ) {
+            throw (
+                "$Service reached ready state but Salad did not attach container group " +
+                "'$GroupName' to queue '$QueueName' within " +
+                "${ReadyUnattachedTimeoutSeconds}s."
+            )
+        }
+    }
+    else {
+        $ReadyUnattachedSince = $null
     }
 
     $AutoscalerStateReady = (
