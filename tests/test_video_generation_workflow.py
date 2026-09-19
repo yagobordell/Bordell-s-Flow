@@ -172,6 +172,9 @@ def test_plan_is_deterministic_and_preserves_ltx_frame_rules(tmp_path: Path) -> 
     assert [item.request.job_id for item in first] == [item.request.job_id for item in second]
     assert [item.request.parameters["num_frames"] for item in first] == [89, 65]
     assert [item.request.parameters["seed"] for item in first] == [43, 44]
+    assert first[0].request.parameters["width"] == 1280
+    assert first[0].request.parameters["height"] == 720
+    assert first[0].request.parameters["fps"] == 24
     assert first[0].request.output.key.endswith("/shot_001.mp4")
     assert first[1].request.output.key.endswith("/shot_002.mp4")
 
