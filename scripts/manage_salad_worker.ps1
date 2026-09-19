@@ -680,6 +680,20 @@ function New-QueueConnectionConfiguration {
     }
 }
 
+function Test-NameConflictFailure {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    if ((Get-HttpStatusCode -ErrorRecord $ErrorRecord) -ne 400) {
+        return $false
+    }
+    $Details = [string]$ErrorRecord.ErrorDetails.Message
+    $Message = [string]$ErrorRecord.Exception.Message
+    return (
+        $Details -match '"type"\s*:\s*"name_conflict"' -or
+        $Message -match 'name_conflict'
+    )
+}
+
 function New-ContainerGroup {
     param(
         [Parameter(Mandatory)][hashtable]$Headers,
@@ -708,14 +722,50 @@ function New-ContainerGroup {
     } | ConvertTo-Json -Depth 20
 
     Write-Host "Creating container group: $GroupName" -ForegroundColor Cyan
-    Invoke-RestMethod `
-        -Method Post `
-        -Uri $ContainersBase `
-        -Headers $Headers `
-        -ContentType "application/json" `
-        -Body $CreateBody `
-        -TimeoutSec 60 |
-        Out-Null
+    $CreateDeadline = (Get-Date).AddMinutes(5)
+    $CreateAttempt = 0
+    while ($true) {
+        $CreateAttempt += 1
+        try {
+            Invoke-RestMethod `
+                -Method Post `
+                -Uri $ContainersBase `
+                -Headers $Headers `
+                -ContentType "application/json" `
+                -Body $CreateBody `
+                -TimeoutSec 60 |
+                Out-Null
+            return
+        }
+        catch {
+            if (-not (Test-NameConflictFailure -ErrorRecord $_)) {
+                throw
+            }
+
+            $VisibleGroup = Try-Get-Group -Headers $Headers
+            if ($null -ne $VisibleGroup) {
+                Write-Warning (
+                    "Create returned name_conflict, but '$GroupName' is visible again. " +
+                    "Continuing with normal post-create validation."
+                )
+                return
+            }
+
+            if ((Get-Date) -ge $CreateDeadline) {
+                throw (
+                    "Salad kept container-group name '$GroupName' reserved for more than " +
+                    "5 minutes after deletion; refusing unbounded recreate retries."
+                )
+            }
+
+            $DelaySeconds = [Math]::Min(30, 5 + (5 * $CreateAttempt))
+            Write-Warning (
+                "Salad still reserves deleted container-group name '$GroupName' " +
+                "(name_conflict attempt $CreateAttempt). Retrying in ${DelaySeconds}s."
+            )
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
 }
 
 function Update-ContainerGroup {
