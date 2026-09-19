@@ -76,7 +76,7 @@ def test_optimized_prewarm_applies_bounded_node_selection_to_every_worker() -> N
     assert "$ContainerStarted -and" in text
     assert "$Ready" in text
     assert "prewarm complete: exactly one started ready replica" in text
-    assert "queue attached and still empty" in text
+    assert "queue transport ready and still empty" in text
 
 
 def test_ideogram_prewarm_has_specific_finite_runtime_and_node_budget() -> None:
@@ -97,7 +97,7 @@ def test_manifest_versions_and_download_profiles_are_explicit() -> None:
     assert services["breeze_tts2"]["image"].endswith("breeze-tts2-fast-all-v2")
     assert services["whisper"]["image"].endswith("whisper-large-v3-turbo-v2")
     assert services["whisper"]["environment"]["SALAD_LOG_LEVEL"] == "debug"
-    assert services["whisper"]["autostart_policy"] is True
+    assert services["whisper"]["autostart_policy"] is False
     assert services["ltx25"]["image"].endswith("ltx25-torch211-cu128-natten0216-xet-v3")
 
     assert services["ideogram4"]["autoscaler"]["max_replicas"] == 1
@@ -343,3 +343,17 @@ def test_whisper_alignment_prewarm_budget_matches_cold_start_profile() -> None:
 
     assert "[int]$PrewarmTimeoutMinutes = 60" in text
     assert "TimeoutMinutes = $PrewarmTimeoutMinutes" in text
+
+
+
+def test_phase5_alignment_pins_canonical_salad_route() -> None:
+    text = Path("scripts/run_phase5_alignment_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "deploy\\salad\\services.json" in text
+    assert "$env:SALAD_ORGANIZATION = [string]$Services.stack.organization" in text
+    assert "$env:SALAD_PROJECT = [string]$Services.stack.project" in text
+    assert "$env:SALAD_WHISPER_QUEUE_NAME = [string]$WhisperService.queue_name" in text
+    assert '"--queue-name", $env:SALAD_WHISPER_QUEUE_NAME' in text
+    assert "Phase 5 canonical Salad route" in text
