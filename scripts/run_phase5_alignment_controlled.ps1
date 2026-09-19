@@ -13,7 +13,7 @@ param(
     [string]$Output,
 
     [ValidateRange(10, 120)]
-    [int]$PrewarmTimeoutMinutes = 30,
+    [int]$PrewarmTimeoutMinutes = 60,
 
     [ValidateRange(30, 900)]
     [int]$PendingTimeoutSeconds = 180,
