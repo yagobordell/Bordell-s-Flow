@@ -79,7 +79,7 @@ def test_stale_queue_retry_budget_uses_absolute_deadline() -> None:
     assert "$EffectiveTimeoutSeconds" in text
 
 
-def test_optimized_prewarm_accepts_verified_whisper_queue_transport_before_success() -> None:
+def test_optimized_prewarm_accepts_verified_debug_queue_transport_before_success() -> None:
     text = PREWARM.read_text(encoding="utf-8")
 
     success_block = text.split("$AutoscalerStateReady = (", maxsplit=2)[-1]
@@ -95,6 +95,7 @@ def test_optimized_prewarm_accepts_verified_whisper_queue_transport_before_succe
     assert "function Test-QueueTransportHeartbeat" in text
     assert 'log contains "received heartbeat"' in text
     assert 'resource.labels.instance_id = "' in text
+    assert '$Service -in @("whisper", "ideogram4")' in text
 
     adopt_block = text.split("$AdoptReadyReplica -and", maxsplit=1)[1]
     adopt_block = adopt_block.split(
