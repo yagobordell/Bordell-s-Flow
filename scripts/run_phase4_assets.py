@@ -22,7 +22,7 @@ from ai_video_factory.workers.flux2_klein import FLUX2_KLEIN_REFERENCE_TASK
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_REFERENCE_TASK
 from ai_video_factory.workflows.reference_assets import generate_reference_assets
 
-DEFAULT_SIZE = "1024x1024"
+DEFAULT_SIZE = "1536x864"
 DEFAULT_QUALITY = "high"
 DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS = 300.0
 DEFAULT_FLUX_PENDING_TIMEOUT_SECONDS = 1800.0
