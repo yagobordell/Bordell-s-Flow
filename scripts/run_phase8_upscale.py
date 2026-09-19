@@ -53,6 +53,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--poll-seconds", type=float, default=10.0)
     parser.add_argument("--timeout-seconds", type=float, default=7200.0)
+    parser.add_argument("--dispatch-timeout-seconds", type=float, default=300.0)
     parser.add_argument("--no-retry-terminal", action="store_true")
     return parser.parse_args()
 
@@ -89,6 +90,7 @@ def main() -> None:
         retry_terminal=not args.no_retry_terminal,
         poll_seconds=args.poll_seconds,
         timeout_seconds=args.timeout_seconds,
+        dispatch_timeout_seconds=args.dispatch_timeout_seconds,
     )
     metadata_path = args.output_dir / "upscaled_clips.json"
     metadata_path.write_text(
