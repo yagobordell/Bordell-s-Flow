@@ -49,7 +49,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--model", default=settings.ideogram4_model)
     parser.add_argument("--fallback-model", default=settings.flux2_klein_model)
-    parser.add_argument("--size", default="1024x1536")
+    parser.add_argument("--size", default="1536x864")
     parser.add_argument("--quality", choices=("high", "auto"), default="high")
     parser.add_argument("--queue-name", default=settings.salad_ideogram4_queue_name)
     parser.add_argument(
