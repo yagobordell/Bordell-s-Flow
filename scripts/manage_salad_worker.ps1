@@ -786,7 +786,6 @@ function Update-ContainerGroup {
         startup_probe = New-Probe -Probe $Definition.probes.startup
         readiness_probe = New-Probe -Probe $Definition.probes.readiness
         liveness_probe = New-Probe -Probe $Definition.probes.liveness
-        queue_connection = New-QueueConnectionConfiguration
         queue_autoscaler = New-QueueAutoscalerConfiguration
     } | ConvertTo-Json -Depth 20
 
