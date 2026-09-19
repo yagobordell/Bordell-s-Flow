@@ -77,7 +77,7 @@ def test_optimized_prewarm_applies_bounded_node_selection_to_every_worker() -> N
     assert "$ContainerStarted -and" in text
     assert "$Ready" in text
     assert "prewarm complete: exactly one started ready replica" in text
-    assert "queue transport ready and still empty" in text
+    assert "first real job will prove transport" in text
 
 
 def test_ideogram_prewarm_has_specific_finite_runtime_and_node_budget() -> None:
@@ -97,8 +97,8 @@ def test_manifest_versions_and_download_profiles_are_explicit() -> None:
     assert services["ideogram4"]["image"].endswith("ideogram4-nf4-quality48-v4")
     assert services["breeze_tts2"]["image"].endswith("breeze-tts2-fast-all-v2")
     assert services["whisper"]["image"].endswith("whisper-large-v3-turbo-v2")
-    assert services["ideogram4"]["environment"]["SALAD_LOG_LEVEL"] == "debug"
-    assert services["whisper"]["environment"]["SALAD_LOG_LEVEL"] == "debug"
+    assert services["ideogram4"]["environment"]["SALAD_LOG_LEVEL"] == "info"
+    assert services["whisper"]["environment"]["SALAD_LOG_LEVEL"] == "info"
     assert services["whisper"]["autostart_policy"] is False
     assert services["ltx25"]["image"].endswith("ltx25-torch211-cu128-natten0216-xet-v3")
 
@@ -402,3 +402,35 @@ def test_image_queue_defaults_match_manifest() -> None:
     flux = services["flux2_klein"]["queue_name"]
     assert f'salad_ideogram4_queue_name: str = "{ideogram}"' in config
     assert f'salad_flux2_klein_queue_name: str = "{flux}"' in config
+
+
+
+def test_phase8_transport_proof_is_bounded_by_first_dispatch_timeout() -> None:
+    ltx_controlled = Path("scripts/run_phase8_videos_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    ltx_runner = Path("scripts/run_phase8_videos.py").read_text(encoding="utf-8")
+    ltx_workflow = Path(
+        "src/ai_video_factory/workflows/video_generation.py"
+    ).read_text(encoding="utf-8")
+    upscale_controlled = Path(
+        "scripts/run_phase8_upscale_controlled.ps1"
+    ).read_text(encoding="utf-8")
+    upscale_runner = Path("scripts/run_phase8_upscale.py").read_text(encoding="utf-8")
+    upscale_workflow = Path(
+        "src/ai_video_factory/workflows/video_upscale.py"
+    ).read_text(encoding="utf-8")
+
+    for text in (ltx_controlled, upscale_controlled):
+        assert "$DispatchTimeoutSeconds = 300" in text
+        assert "--dispatch-timeout-seconds $DispatchTimeoutSeconds" in text
+
+    for text in (ltx_runner, upscale_runner):
+        assert '"--dispatch-timeout-seconds"' in text
+        assert "dispatch_timeout_seconds=args.dispatch_timeout_seconds" in text
+
+    for text in (ltx_workflow, upscale_workflow):
+        assert "dispatch_timeout_seconds: float = 300.0" in text
+        assert "transport_probe_ids" in text
+        assert "dispatch_proven" in text
+        assert "queue.cancel(state.transport_job_id)" in text
