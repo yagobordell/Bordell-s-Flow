@@ -30,7 +30,8 @@ def test_zero_replica_group_can_repair_autoscaler_in_place() -> None:
     assert "does not support changing queue_connection by PATCH" in script
     assert "function Wait-ForQueueAssociation" not in script
     assert "non-authoritative for zero-replica/stopped workers" in script
-    assert "real transport execution are the acceptance signals" in script
+    assert "queue_connection and real " in script
+    assert "transport execution are the acceptance signals." in script
 
 
 
