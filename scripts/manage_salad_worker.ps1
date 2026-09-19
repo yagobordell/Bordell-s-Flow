@@ -687,7 +687,7 @@ function New-ContainerGroup {
         restart_policy = $RestartPolicy
         scheduled_scaling_enabled = $false
         container = New-ContainerConfiguration `
-            -PinnedImage $ResolvedPinnedImage `
+            -PinnedImage $PinnedImage `
             -WorkerEnvironment $WorkerEnvironment `
             -GpuClassIds $GpuClassIds `
             -IncludePriority
@@ -720,7 +720,7 @@ function Update-ContainerGroup {
     $PatchBody = @{
         replicas = 0
         container = New-ContainerConfiguration `
-            -PinnedImage $ResolvedPinnedImage `
+            -PinnedImage $PinnedImage `
             -WorkerEnvironment $WorkerEnvironment `
             -GpuClassIds $GpuClassIds `
             -IncludePriority
