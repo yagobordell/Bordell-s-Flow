@@ -367,7 +367,11 @@ def _ensure_source(storage: ObjectStorage, item: VideoUpscalePlanItem) -> None:
         if stored.size_bytes != item.source_path.stat().st_size:
             raise ValueError(f"Existing R2 upscale source size mismatch for shot {item.shot_id}")
         source_sha = stored.metadata.get("artifact-sha256") or stored.metadata.get("sha256")
-        if source_sha is not None and source_sha != item.source_sha256:
+        if source_sha is None:
+            raise ValueError(
+                f"Existing R2 upscale source has no SHA metadata for shot {item.shot_id}"
+            )
+        if source_sha != item.source_sha256:
             raise ValueError(f"Existing R2 upscale source SHA mismatch for shot {item.shot_id}")
         return
     storage.upload(
