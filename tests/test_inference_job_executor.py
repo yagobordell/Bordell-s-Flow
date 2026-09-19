@@ -9,6 +9,7 @@ from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectOutp
 from ai_video_factory.inference.ports import StoredObject
 from ai_video_factory.providers.inference_jobs import (
     InferenceJobExecutor,
+    InferenceJobTimeoutError,
     RemoteInferenceRejectedError,
 )
 from ai_video_factory.providers.job_queue import (
@@ -279,8 +280,14 @@ def test_executor_does_not_cancel_transport_after_running_timeout() -> None:
         pending_timeout_seconds=1,
     )
 
-    with pytest.raises(TimeoutError, match="already dispatched and was not cancelled"):
+    with pytest.raises(
+        InferenceJobTimeoutError,
+        match="already dispatched and was not cancelled",
+    ) as captured:
         executor.execute(_request(), metadata={"phase": "4"})
 
+    assert captured.value.phase == "running"
+    assert captured.value.job_id == "image-test-001"
+    assert captured.value.transport_job_id == "transport-running"
     assert queue.submits == 1
     assert queue.cancellations == []
