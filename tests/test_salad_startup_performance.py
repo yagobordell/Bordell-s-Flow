@@ -97,6 +97,7 @@ def test_manifest_versions_and_download_profiles_are_explicit() -> None:
     assert services["ideogram4"]["image"].endswith("ideogram4-nf4-quality48-v4")
     assert services["breeze_tts2"]["image"].endswith("breeze-tts2-fast-all-v2")
     assert services["whisper"]["image"].endswith("whisper-large-v3-turbo-v2")
+    assert services["ideogram4"]["environment"]["SALAD_LOG_LEVEL"] == "debug"
     assert services["whisper"]["environment"]["SALAD_LOG_LEVEL"] == "debug"
     assert services["whisper"]["autostart_policy"] is False
     assert services["ltx25"]["image"].endswith("ltx25-torch211-cu128-natten0216-xet-v3")
@@ -367,3 +368,37 @@ def test_whisper_default_queue_matches_manifest() -> None:
 
     expected = services["whisper"]["queue_name"]
     assert f'salad_whisper_queue_name: str = "{expected}"' in config
+
+
+
+def test_ideogram_controlled_runners_pin_canonical_salad_routes() -> None:
+    for path in (
+        Path("scripts/run_phase4_assets_controlled.ps1"),
+        Path("scripts/run_phase6_keyframes_controlled.ps1"),
+    ):
+        text = path.read_text(encoding="utf-8")
+        assert "deploy\\salad\\services.json" in text, path.name
+        assert "$env:SALAD_ORGANIZATION = [string]$Services.stack.organization" in text
+        assert "$env:SALAD_PROJECT = [string]$Services.stack.project" in text
+        assert (
+            "$env:SALAD_IDEOGRAM4_QUEUE_NAME = [string]$IdeogramService.queue_name"
+            in text
+        )
+        assert (
+            "$env:SALAD_FLUX2_KLEIN_QUEUE_NAME = [string]$FluxService.queue_name"
+            in text
+        )
+        assert '"--queue-name", $env:SALAD_IDEOGRAM4_QUEUE_NAME' in text
+        assert '"--fallback-queue-name", $env:SALAD_FLUX2_KLEIN_QUEUE_NAME' in text
+        assert "canonical Salad routes: ideogram={0} flux={1}" in text
+
+
+
+def test_image_queue_defaults_match_manifest() -> None:
+    services = json.loads(MANIFEST.read_text(encoding="utf-8"))["services"]
+    config = CONFIG.read_text(encoding="utf-8")
+
+    ideogram = services["ideogram4"]["queue_name"]
+    flux = services["flux2_klein"]["queue_name"]
+    assert f'salad_ideogram4_queue_name: str = "{ideogram}"' in config
+    assert f'salad_flux2_klein_queue_name: str = "{flux}"' in config
