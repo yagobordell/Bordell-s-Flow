@@ -1026,7 +1026,9 @@ while ((Get-Date) -lt $Deadline) {
             throw (
                 "$Service reached ready state but Salad did not attach container group " +
                 "'$GroupName' to queue '$QueueName' within " +
-                "${ReadyUnattachedTimeoutSeconds}s."
+                "${ReadyUnattachedTimeoutSeconds}s. Recreate the stopped group with " +
+                "manage_salad_validation.ps1 -Action Prepare -Service $Service " +
+                "-SkipBuild -Recreate before retrying."
             )
         }
     }
