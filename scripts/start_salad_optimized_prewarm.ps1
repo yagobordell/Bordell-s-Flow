@@ -633,101 +633,6 @@ function Test-QueueAttachment {
     ).Count -eq 1
 }
 
-function Test-QueueTransportHeartbeat {
-    param([Parameter(Mandatory)][string]$InstanceId)
-
-    if ([string]::IsNullOrWhiteSpace($InstanceId)) {
-        return $false
-    }
-
-    $End = (Get-Date).ToUniversalTime()
-    $Start = $End.AddMinutes(-10)
-    $Query = (
-        'resource.type = "container" and ' +
-        'resource.labels.project_name = "' + $Project + '" and ' +
-        'resource.labels.container_group_name = "' + $GroupName + '" and ' +
-        'resource.labels.instance_id = "' + $InstanceId + '" and ' +
-        'log contains "received heartbeat"'
-    )
-    $Body = @{
-        start_time = $Start.ToString("yyyy-MM-ddTHH:mm:ssZ")
-        end_time = $End.ToString("yyyy-MM-ddTHH:mm:ssZ")
-        page_size = 1
-        sort_order = "desc"
-        query = $Query
-    } | ConvertTo-Json -Depth 5 -Compress
-
-    try {
-        $Response = Invoke-SaladMutation `
-            -Method "Post" `
-            -Uri $LogsUrl `
-            -Operation "query queue transport heartbeat" `
-            -ContentType "application/json" `
-            -Body $Body `
-            -TimeoutSeconds 30 `
-            -MaxAttempts 3
-        return @($Response.items).Count -gt 0
-    }
-    catch {
-        Write-Warning (
-            "$Service could not query queue transport heartbeat logs yet: " +
-            $_.Exception.Message
-        )
-        return $false
-    }
-}
-
-function Test-QueueRuntimeReady {
-    param(
-        [Parameter(Mandatory)][object]$Queue,
-        [Parameter(Mandatory)][string]$InstanceId
-    )
-
-    if (Test-QueueAttachment -Queue $Queue) {
-        return $true
-    }
-    if ($Service -in @("whisper", "ideogram4")) {
-        return Test-QueueTransportHeartbeat -InstanceId $InstanceId
-    }
-    return $false
-}
-
-function Get-RemoteEnvironmentValue {
-    param(
-        [Parameter(Mandatory)][object]$Group,
-        [Parameter(Mandatory)][string]$Name
-    )
-
-    if ($null -eq $Group.container) {
-        return ""
-    }
-    $Environment = $Group.container.environment_variables
-    if ($null -eq $Environment) {
-        return ""
-    }
-    $Property = $Environment.PSObject.Properties[$Name]
-    if ($null -eq $Property) {
-        return ""
-    }
-    return [string]$Property.Value
-}
-
-function Assert-QueueTransportLoggingReady {
-    param([Parameter(Mandatory)][object]$Group)
-
-    if ($Service -notin @("whisper", "ideogram4")) {
-        return
-    }
-
-    $RemoteLogLevel = (Get-RemoteEnvironmentValue -Group $Group -Name "SALAD_LOG_LEVEL").Trim()
-    if ($RemoteLogLevel -ne "debug") {
-        throw (
-            "$Service optimized prewarm requires remote SALAD_LOG_LEVEL=debug to verify the " +
-            "Job Queue heartbeat before GPU work, but the deployed group reports " +
-            "'$RemoteLogLevel'. Run Salad Prepare for '$Service' before prewarming."
-        )
-    }
-}
 Import-EnvFile -Path $EnvFile
 if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
     throw "Salad stack manifest not found: $ManifestPath"
@@ -774,7 +679,6 @@ $Status = [string]$Group.current_state.status
 if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
     throw "Container group '$GroupName' is configured for an unexpected queue."
 }
-Assert-QueueTransportLoggingReady -Group $Group
 
 if (
     $AdoptReadyReplica -and
@@ -824,19 +728,10 @@ if (
 
     $Queue = Get-Queue
     $null = Assert-QueueLogicallyEmpty -Queue $Queue -VerificationSeconds 180
-    $HeldInstanceId = ""
-    if ($HeldInstance.PSObject.Properties.Name -contains "id") {
-        $HeldInstanceId = [string]$HeldInstance.id
-    }
-    if (-not (Test-QueueRuntimeReady -Queue $Queue -InstanceId $HeldInstanceId)) {
-        throw (
-            "Optimized prewarm refuses to adopt the ready replica because no reliable " +
-            "runtime Job Queue transport signal is available for '$GroupName'."
-        )
-    }
     Write-Host (
         "$Service prewarm adopted one already started+ready shared replica with " +
-        "min_replicas=1 pinned; queue transport ready and still empty."
+        "min_replicas=1 pinned; queue config verified and still empty. " +
+        "The first real job will prove runtime transport."
     ) -ForegroundColor Green
     exit 0
 }
@@ -984,8 +879,6 @@ $ImagePullSince = $null
 $ImagePullBaseline = $null
 $PostPullStartSince = $null
 $RunningNotReadySince = $null
-$ReadyUnattachedSince = $null
-$ReadyUnattachedTimeoutSeconds = 120
 $AllocatingReallocations = 0
 $ImagePullReallocations = 0
 $PostPullStartReallocations = 0
@@ -999,7 +892,6 @@ while ((Get-Date) -lt $Deadline) {
     $Instances = @(Get-Instances)
     $Status = [string]$Group.current_state.status
     $Attached = Test-QueueAttachment -Queue $Queue
-    $TransportReady = $Attached
 
     $ReportedQueueLength = [int]$Queue.current_queue_length
     if ($ReportedQueueLength -gt $VerifiedInitialQueueLength) {
@@ -1101,15 +993,11 @@ while ((Get-Date) -lt $Deadline) {
         }
     }
 
-    if ($Ready -and -not $TransportReady) {
-        $TransportReady = Test-QueueRuntimeReady -Queue $Queue -InstanceId $InstanceId
-    }
-
     $PullRendered = if ($null -eq $PullingProgress) { "-" } else { $PullingProgress }
     $StatusLine = (
         (
             "{0} service={1} status={2} state={3} started={4} ready={5} " +
-            "pulling_progress={6} machine={7} attached={8} transport_ready={9} node_changes={10}/{11}"
+            "pulling_progress={6} machine={7} attached={8} node_changes={9}/{10}"
         ) -f
         (Get-Date -Format "HH:mm:ss"),
         $Service,
@@ -1120,7 +1008,6 @@ while ((Get-Date) -lt $Deadline) {
         $PullRendered,
         $MachineId,
         $Attached,
-        $TransportReady,
         $NodeChanges,
         $Profile.MaxNodeChanges
     )
@@ -1135,29 +1022,6 @@ while ((Get-Date) -lt $Deadline) {
         $ReadySeconds = ((Get-Date) - $PrewarmStartedAt).TotalSeconds
     }
 
-    if ($Ready -and -not $TransportReady) {
-        if ($null -eq $ReadyUnattachedSince) {
-            $ReadyUnattachedSince = Get-Date
-            Write-Warning (
-                "$Service is ready but has no verified Job Queue transport yet for '$QueueName'; " +
-                "waiting up to ${ReadyUnattachedTimeoutSeconds}s before failing safely."
-            )
-        }
-        elseif (
-            ((Get-Date) - $ReadyUnattachedSince).TotalSeconds -ge
-            $ReadyUnattachedTimeoutSeconds
-        ) {
-            throw (
-                "$Service reached ready state but no Job Queue runtime signal was verified for " +
-                "'$GroupName' and queue '$QueueName' within " +
-                "${ReadyUnattachedTimeoutSeconds}s."
-            )
-        }
-    }
-    else {
-        $ReadyUnattachedSince = $null
-    }
-
     $AutoscalerStateReady = (
         -not $AutoscalerObservable -or
         (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas $TargetMinReplicas)
@@ -1168,8 +1032,7 @@ while ((Get-Date) -lt $Deadline) {
         $AutoscalerStateReady -and
         $ObservedInstance -and
         $ContainerStarted -and
-        $Ready -and
-        $TransportReady
+        $Ready
     ) {
         # The queue is dedicated to this service. Avoid repeatedly paginating historical
         # jobs while the image/model boots; re-establish the invariant once, immediately
@@ -1197,7 +1060,7 @@ while ((Get-Date) -lt $Deadline) {
         $HoldSuffix = if ($HoldReadyReplica) { " with min_replicas=1 pinned" } else { "" }
         Write-Host (
             "$Service prewarm complete: exactly one started ready replica$HoldSuffix, " +
-            "queue transport ready and still empty."
+            "queue config verified and still empty; first real job will prove transport."
         ) -ForegroundColor Green
         exit 0
     }
