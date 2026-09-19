@@ -193,6 +193,60 @@ function Test-QueueAttachment {
     ).Count -eq 1
 }
 
+function Wait-ForQueueAssociation {
+    param([Parameter(Mandatory)][object]$InitialGroup)
+
+    $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    $Group = $InitialGroup
+    do {
+        if ($null -eq $Group) {
+            throw "Container group '$GroupName' disappeared while waiting for queue association."
+        }
+        if ([int]$Group.replicas -ne 0) {
+            throw (
+                "Queue verification requires '$GroupName' at zero replicas while waiting for " +
+                "association; current replicas=$([int]$Group.replicas)."
+            )
+        }
+
+        $Status = [string]$Group.current_state.status
+        if ($Status -eq "failed") {
+            throw "Container group '$GroupName' entered failed state while waiting for queue association."
+        }
+        if ($Status -notin @("stopped", "running", "deploying")) {
+            throw (
+                "Queue verification found unsupported zero-replica status '$Status' for '$GroupName'."
+            )
+        }
+
+        $Queue = Get-Queue
+        $Attached = Test-QueueAttachment -Queue $Queue
+        Write-Host (
+            "{0} service={1} status={2} replicas={3} attached={4}" -f
+            (Get-Date -Format "HH:mm:ss"),
+            $Service,
+            $Status,
+            [int]$Group.replicas,
+            $Attached
+        )
+        if ($Attached) {
+            return @{
+                Group = $Group
+                Queue = $Queue
+            }
+        }
+
+        Start-Sleep -Seconds 5
+        $Group = Try-Get-Group
+    }
+    while ((Get-Date) -lt $Deadline)
+
+    throw (
+        "Salad did not expose '$GroupName' in queue.container_groups for '$QueueName' " +
+        "within $TimeoutMinutes minute(s); refusing GPU allocation or job submission."
+    )
+}
+
 function New-QueueConnection {
     return @{
         path = $QueuePath
@@ -415,9 +469,9 @@ if ($null -eq $Group) {
 }
 
 $GroupStatus = [string]$Group.current_state.status
-if ($GroupStatus -notin @("stopped", "running")) {
+if ($GroupStatus -notin @("stopped", "running", "deploying")) {
     throw (
-        "Queue verification requires '$GroupName' stopped or running at zero replicas. " +
+        "Queue verification requires '$GroupName' stopped, running, or deploying at zero replicas. " +
         "Current status=$GroupStatus."
     )
 }
@@ -432,14 +486,9 @@ if (-not (Test-GroupConfiguration -Group $Group)) {
     $Group = Repair-GroupConfiguration -Group $Group
 }
 
-$Queue = Get-Queue
-if (-not (Test-QueueAttachment -Queue $Queue)) {
-    throw (
-        "$Service queue_connection is configured on '$GroupName', but Salad does not list " +
-        "that group in queue.container_groups for '$QueueName'. Refusing GPU allocation or " +
-        "job submission until the control-plane association is visible."
-    )
-}
+$Association = Wait-ForQueueAssociation -InitialGroup $Group
+$Group = $Association.Group
+$Queue = $Association.Queue
 
 Write-Host "$Service queue autoscaling and queue listing verified." -ForegroundColor Green
 Write-Host (
