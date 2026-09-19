@@ -458,7 +458,7 @@ video.ltx25.generate
 Perfil validado:
 
 ```text
-ltx25-distilled-a95ab856-fp8cpu-v1
+ltx25-distilled-a95ab856-fp8cpu-gridpad-v2
 ```
 
 Las duraciones de `ShotTiming` se redondean al siguiente frame count válido de LTX (`8k + 1`) sin
