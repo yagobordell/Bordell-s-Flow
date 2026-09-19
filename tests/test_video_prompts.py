@@ -69,6 +69,9 @@ def test_video_prompt_instructions_define_motion_only_single_shot_boundary() -> 
         VIDEO_PROMPT_INSTRUCTIONS
     )
     assert "no menciones LTX, seeds, frames, FPS" in VIDEO_PROMPT_INSTRUCTIONS
+    assert "horizontal 16:9" in VIDEO_PROMPT_INSTRUCTIONS
+    assert "landscape 16:9" in VIDEO_PROMPT_INSTRUCTIONS
+    assert "documental vertical" not in VIDEO_PROMPT_INSTRUCTIONS
 
 
 def test_video_prompt_workflow_is_serial_and_carries_previous_prompt() -> None:
@@ -82,7 +85,7 @@ def test_video_prompt_workflow_is_serial_and_carries_previous_prompt() -> None:
             _storyboard_frames(),
             prompt_bot=bot,
             visual_style="cinematic documentary",
-            aspect_ratio="9:16",
+            aspect_ratio="16:9",
         )
     )
 
@@ -108,7 +111,7 @@ def test_video_prompt_workflow_resets_previous_prompt_on_new_scene() -> None:
             _storyboard_frames(),
             prompt_bot=bot,
             visual_style="cinematic documentary",
-            aspect_ratio="9:16",
+            aspect_ratio="16:9",
         )
     )
 
@@ -127,7 +130,7 @@ def test_video_prompt_bot_receives_action_duration_and_starting_storyboard() -> 
             _storyboard_frames(),
             prompt_bot=bot,
             visual_style="cinematic documentary",
-            aspect_ratio="9:16",
+            aspect_ratio="16:9",
         )
     )
 
@@ -136,7 +139,7 @@ def test_video_prompt_bot_receives_action_duration_and_starting_storyboard() -> 
     assert "Samurai warriors hold formation" in first_input
     assert "STARTING STORYBOARD KEYFRAME:\nSamurai formation" in first_input
     assert "visual_style: cinematic documentary" in first_input
-    assert "aspect_ratio: 9:16" in first_input
+    assert "aspect_ratio: 16:9" in first_input
 
 
 def test_video_prompt_workflow_rejects_misaligned_storyboard_frames() -> None:
@@ -153,7 +156,7 @@ def test_video_prompt_workflow_rejects_misaligned_storyboard_frames() -> None:
                 frames,
                 prompt_bot=bot,
                 visual_style="cinematic documentary",
-                aspect_ratio="9:16",
+                aspect_ratio="16:9",
             )
         )
 
@@ -176,7 +179,7 @@ def test_video_prompt_workflow_rejects_noncontiguous_timings() -> None:
                 _storyboard_frames(),
                 prompt_bot=bot,
                 visual_style="cinematic documentary",
-                aspect_ratio="9:16",
+                aspect_ratio="16:9",
             )
         )
 
@@ -194,7 +197,7 @@ def test_video_prompt_bot_rejects_mismatched_storyboard_id() -> None:
                 _timings()[0],
                 StoryboardFrame(shot_id=2, prompt="Wrong frame"),
                 visual_style="cinematic documentary",
-                aspect_ratio="9:16",
+                aspect_ratio="16:9",
                 previous_prompt=None,
             )
         )
