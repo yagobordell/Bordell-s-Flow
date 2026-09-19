@@ -47,6 +47,7 @@ def test_queue_binding_diagnostic_is_read_only_and_exposes_both_sides() -> None:
     assert '"queue_autoscaler"' in script
     assert '"container_groups"' in script
     assert "binding.attached" in script
+    assert "group.environment.SALAD_LOG_LEVEL=" in script
     assert "DIAGNOSIS=queue_listing_non_authoritative_routing_proven" in script
     assert "DIAGNOSIS=queue_listing_absent_runtime_unproven" in script
     assert '/log-entries' in script
