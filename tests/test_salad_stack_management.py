@@ -160,3 +160,24 @@ def test_queue_repair_patches_autoscaling_without_reusing_group_name() -> None:
     assert "Recreating stopped container group" not in script
     assert "Runtime attachment will be validated after Start/Smoke." in script
     assert "Test-QueueAttachment" in script
+
+
+def test_worker_prepare_can_recreate_stopped_group_for_queue_rebind() -> None:
+    script = WORKER_MANAGER.read_text(encoding="utf-8")
+
+    assert "[switch]$Recreate" in script
+    assert "function Remove-StoppedContainerGroup" in script
+    assert "must be stopped before -Recreate" in script
+    assert "must have replicas=0 before -Recreate" in script
+    assert "-Method Delete" in script
+    assert "fresh Job Queue attachment" in script
+    assert "$ExistingGroup = $null" in script
+    assert "New-ContainerGroup" in script
+
+
+def test_stack_prepare_forwards_targeted_recreate() -> None:
+    script = STACK_MANAGER.read_text(encoding="utf-8")
+
+    assert "[switch]$Recreate" in script
+    assert '$WorkerArguments["Recreate"] = $true' in script
+    assert '-Recreate is only valid with -Action Prepare.' in script
