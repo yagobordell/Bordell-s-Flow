@@ -70,8 +70,8 @@ def build_video_generation_plan(
     timings: list[ShotTiming],
     *,
     keyframe_base_dir: Path,
-    width: int = 768,
-    height: int = 1280,
+    width: int = 1280,
+    height: int = 720,
     fps: int = 24,
     seed_base: int = 42,
 ) -> list[VideoGenerationPlanItem]:
