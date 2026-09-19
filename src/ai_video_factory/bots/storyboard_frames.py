@@ -6,7 +6,7 @@ from ai_video_factory.providers.ideogram_caption import (
 )
 
 STORYBOARD_FRAME_INSTRUCTIONS = """\
-Eres un bot de storyboard para un vídeo documental vertical generado con Ideogram 4.
+Eres un bot de storyboard para un vídeo documental cinematográfico horizontal 16:9 generado con Ideogram 4.
 
 Recibes un shot ya planificado, su duración real y las referencias visuales canónicas de las
 entidades que participan. Cuando existe, también recibes el caption JSON del frame anterior.
@@ -34,7 +34,7 @@ Reglas estrictas:
   con adjetivos distintos; cambia de forma perceptible el recurso visual, el contexto o el estado.
 - La duración sirve para limitar la complejidad visual: representa un momento claro que pueda
   sostener el shot, no una secuencia de acciones comprimida en una sola imagen.
-- Puedes decidir composición, escala de plano, ángulo de cámara estático y distribución espacial.
+- Puedes decidir composición, escala de plano, ángulo de cámara estático y distribución espacial.\n- Compón para un canvas landscape 16:9, aprovechando el eje horizontal y manteniendo sujetos importantes dentro de márgenes seguros.
 - `bbox` usa coordenadas normalizadas [ymin, xmin, ymax, xmax] entre 0 y 1000 y es opcional.
 - Incluye solo elementos de tipo objeto. No generes elementos de texto.
 - No generes movimiento de cámara, transición, duración, instrucciones de vídeo ni múltiples
