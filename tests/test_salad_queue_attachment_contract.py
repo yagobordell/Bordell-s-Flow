@@ -79,3 +79,5 @@ def test_queue_binding_diagnostic_shows_recent_queue_job_history() -> None:
     assert "=== Failed queue job details ===" in script
     assert "job.events=" in script
     assert "job.output=" in script
+    assert "Join-String" not in script
+    assert ') -join ","' in script
