@@ -1,8 +1,10 @@
 import argparse
 import asyncio
 import json
+import logging
 import shutil
 import subprocess
+import sys
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -17,7 +19,10 @@ from ai_video_factory.providers import (
     SaladFlux2KleinImageProvider,
     SaladIdeogramImageProvider,
 )
-from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
+from ai_video_factory.providers.inference_jobs import (
+    InferenceJobExecutor,
+    InferenceJobTimeoutError,
+)
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.flux2_klein import FLUX2_KLEIN_KEYFRAME_TASK
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_KEYFRAME_TASK
@@ -25,6 +30,7 @@ from ai_video_factory.workflows.storyboard_keyframes import generate_storyboard_
 
 DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS = 300.0
 DEFAULT_FLUX_PENDING_TIMEOUT_SECONDS = 1800.0
+IDEOGRAM_RUNNING_TIMEOUT_EXIT_CODE = 75
 
 
 def parse_args() -> argparse.Namespace:
@@ -131,6 +137,10 @@ async def _prewarm_flux_fallback(timeout_minutes: int) -> None:
 
 
 async def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     args = parse_args()
     frames = _read_models(args.frames, StoryboardFrame)
     shots = _read_models(args.shots, Shot)
@@ -209,4 +219,18 @@ def _read_models[ModelT: BaseModel](
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except InferenceJobTimeoutError as exc:
+        if exc.phase == "running" and exc.job_id.startswith("ideogram-keyframe-"):
+            print(
+                (
+                    "PHASE6_IDEOGRAM_RUNNING_TIMEOUT "
+                    f"application_job_id={exc.job_id} "
+                    f"transport_job_id={exc.transport_job_id} "
+                    f"detail={exc}"
+                ),
+                file=sys.stderr,
+            )
+            raise SystemExit(IDEOGRAM_RUNNING_TIMEOUT_EXIT_CODE) from exc
+        raise
