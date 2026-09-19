@@ -130,6 +130,14 @@ class FakeQueue:
             ).model_dump(mode="json")
         return QueueJobSnapshot(id=transport_job_id, status=status, output=output)
 
+    def cancel(self, transport_job_id: str) -> QueueJobSnapshot:
+        self.operations.append(("cancel", transport_job_id))
+        self.statuses[transport_job_id] = QueueJobStatus.CANCELLED
+        return QueueJobSnapshot(
+            id=transport_job_id,
+            status=QueueJobStatus.CANCELLED,
+        )
+
 
 def _inputs(tmp_path: Path):
     keyframes_dir = tmp_path / "phase6"
@@ -254,6 +262,39 @@ def test_fanout_submits_all_jobs_before_polling_and_resume_skips_successes(
     )
     assert sum(queue.submit_counts.values()) == 2
     assert queue.operations == []
+
+
+def test_first_dispatch_timeout_cancels_stuck_pending_transports(
+    tmp_path: Path,
+) -> None:
+    base, keyframes, prompts, timings = _inputs(tmp_path)
+    plan = build_video_generation_plan(
+        keyframes,
+        prompts,
+        timings,
+        keyframe_base_dir=base,
+    )
+    storage = FakeStorage()
+    queue = FakeQueue(storage)
+    manifest_path = tmp_path / "phase8" / "video_generation_manifest.json"
+
+    with pytest.raises(TimeoutError, match="did not dispatch any queued job"):
+        run_video_generation(
+            plan,
+            queue=queue,
+            storage=storage,
+            manifest_path=manifest_path,
+            clips_dir=tmp_path / "phase8" / "video_clips",
+            poll_seconds=0.001,
+            timeout_seconds=1.0,
+            dispatch_timeout_seconds=0.002,
+        )
+
+    assert [op for op, _ in queue.operations].count("cancel") == 2
+    saved = VideoGenerationManifest.model_validate_json(
+        manifest_path.read_text(encoding="utf-8")
+    )
+    assert all(state.transport_status == "cancelled" for state in saved.jobs)
 
 
 def test_resume_resubmits_purged_transport_with_same_application_id(
