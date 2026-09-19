@@ -191,7 +191,7 @@ try {
         -Uri "$QueueUrl/jobs?page=1&page_size=10" `
         -Headers $Headers `
         -TimeoutSec 30
-    $RecentJobs = @($Jobs.items) | Select-Object -First 10
+    $RecentJobs = @(@($Jobs.items) | Select-Object -First 10)
     if ($RecentJobs.Count -eq 0) {
         Write-Host "queue.jobs=<none>"
     }
