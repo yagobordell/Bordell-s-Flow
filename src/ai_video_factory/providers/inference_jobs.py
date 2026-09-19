@@ -157,13 +157,20 @@ class InferenceJobExecutor:
             return cached
 
         snapshot = self._queue.submit(request, metadata=metadata)
+        submitted_at = time.monotonic()
+        last_status = snapshot.status
+        last_progress_log = submitted_at
         logger.info(
-            "Inference transport submitted application_job_id=%s transport_job_id=%s metadata=%s",
+            (
+                "Inference transport submitted application_job_id=%s transport_job_id=%s "
+                "status=%s metadata=%s"
+            ),
             request.job_id,
             snapshot.id,
+            snapshot.status.value,
             dict(metadata),
         )
-        pending_deadline = time.monotonic() + self._pending_timeout_seconds
+        pending_deadline = submitted_at + self._pending_timeout_seconds
         running_deadline: float | None = None
         last_poll_error: TransientQueueError | None = None
 
@@ -196,6 +203,23 @@ class InferenceJobExecutor:
             try:
                 snapshot = self._queue.get(snapshot.id)
                 last_poll_error = None
+                observed_at = time.monotonic()
+                if (
+                    snapshot.status != last_status
+                    or observed_at - last_progress_log >= 30.0
+                ):
+                    logger.info(
+                        (
+                            "Inference transport progress application_job_id=%s "
+                            "transport_job_id=%s status=%s elapsed_seconds=%.1f"
+                        ),
+                        request.job_id,
+                        snapshot.id,
+                        snapshot.status.value,
+                        observed_at - submitted_at,
+                    )
+                    last_status = snapshot.status
+                    last_progress_log = observed_at
             except TransientQueueError as exc:
                 last_poll_error = exc
                 continue
