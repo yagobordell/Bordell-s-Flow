@@ -286,7 +286,7 @@ def run_video_generation(
             _apply_snapshot(state, item, snapshot)
             if (
                 state.transport_job_id in transport_probe_ids
-                and state.transport_status in {"running", "succeeded"}
+                and state.transport_status in {"running", "succeeded", "failed"}
             ):
                 dispatch_proven = True
             _write_manifest(manifest_path, manifest)
