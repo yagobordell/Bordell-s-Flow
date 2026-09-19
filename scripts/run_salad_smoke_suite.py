@@ -9,6 +9,8 @@ import sys
 import time
 import wave
 from pathlib import Path
+
+from PIL import Image
 from typing import Any
 
 from ai_video_factory.config import settings
@@ -349,6 +351,30 @@ def _write_model_list(path: Path, values: list[Any]) -> None:
     )
 
 
+def _prepare_ltx_landscape_keyframe(source: Path, destination: Path) -> Path:
+    """Create a deterministic 16:9 conditioning image for the LTX landscape smoke."""
+
+    with Image.open(source) as opened:
+        image = opened.convert("RGB")
+    target_ratio = 16 / 9
+    source_ratio = image.width / image.height
+    if source_ratio > target_ratio:
+        crop_width = round(image.height * target_ratio)
+        left = (image.width - crop_width) // 2
+        image = image.crop((left, 0, left + crop_width, image.height))
+    elif source_ratio < target_ratio:
+        crop_height = round(image.width / target_ratio)
+        top = (image.height - crop_height) // 2
+        image = image.crop((0, top, image.width, top + crop_height))
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    image.resize((1280, 720), Image.Resampling.LANCZOS).save(
+        destination,
+        format="PNG",
+    )
+    return destination
+
+
 def _smoke_ltx25(args: argparse.Namespace) -> None:
     started = time.monotonic()
     keyframe_path = args.ltx_keyframe or (args.output_dir / "ideogram-keyframe.png")
@@ -360,9 +386,10 @@ def _smoke_ltx25(args: argparse.Namespace) -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     inputs_dir = args.output_dir / "ltx-inputs"
     inputs_dir.mkdir(parents=True, exist_ok=True)
-    local_keyframe = inputs_dir / "ideogram-keyframe.png"
-    if keyframe_path.resolve() != local_keyframe.resolve():
-        local_keyframe.write_bytes(keyframe_path.read_bytes())
+    local_keyframe = _prepare_ltx_landscape_keyframe(
+        keyframe_path,
+        inputs_dir / "ltx-keyframe-16x9.png",
+    )
 
     keyframes_path = inputs_dir / "storyboard_keyframes.json"
     prompts_path = inputs_dir / "video_prompts.json"
@@ -401,9 +428,9 @@ def _smoke_ltx25(args: argparse.Namespace) -> None:
         "--timings",
         str(timings_path),
         "--width",
-        "768",
-        "--height",
         "1280",
+        "--height",
+        "720",
         "--fps",
         "24",
         "--timeout-seconds",
