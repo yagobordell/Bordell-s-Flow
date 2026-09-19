@@ -162,6 +162,14 @@ Write-Host ("group.status={0}" -f $Status)
 Write-Host ("group.replicas={0}" -f [int]$Group.replicas)
 Write-Host ("group.pending_change={0}" -f [bool]$Group.pending_change)
 Write-Host ("group.autostart_policy={0}" -f $Autostart)
+$RemoteLogLevel = ""
+if ($null -ne $Group.container -and $null -ne $Group.container.environment_variables) {
+    $LogLevelProperty = $Group.container.environment_variables.PSObject.Properties["SALAD_LOG_LEVEL"]
+    if ($null -ne $LogLevelProperty) {
+        $RemoteLogLevel = [string]$LogLevelProperty.Value
+    }
+}
+Write-Host ("group.environment.SALAD_LOG_LEVEL={0}" -f $RemoteLogLevel)
 Write-Host ("group.queue_connection.queue_name={0}" -f $ConnectionQueue)
 Write-Host ("group.queue_connection.path={0}" -f $ConnectionPath)
 Write-Host ("group.queue_connection.port={0}" -f $ConnectionPort)
