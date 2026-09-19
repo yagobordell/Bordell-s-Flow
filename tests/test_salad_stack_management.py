@@ -235,3 +235,18 @@ def test_whisper_queue_rebind_uses_fresh_group_and_fresh_queue_pair() -> None:
 
     assert whisper["group_name"] == "ai-video-factory-whisper-worker-v3"
     assert whisper["queue_name"] == "ai-video-factory-whisper-jobs-v2"
+
+
+def test_worker_update_does_not_patch_immutable_queue_connection() -> None:
+    script = WORKER_MANAGER.read_text(encoding="utf-8")
+
+    create_block = script.split("function New-ContainerGroup", maxsplit=1)[1].split(
+        "function Update-ContainerGroup", maxsplit=1
+    )[0]
+    update_block = script.split("function Update-ContainerGroup", maxsplit=1)[1].split(
+        "function Ensure-PreparedZeroReplicas", maxsplit=1
+    )[0]
+
+    assert "queue_connection = New-QueueConnectionConfiguration" in create_block
+    assert "queue_connection = New-QueueConnectionConfiguration" not in update_block
+    assert "queue_autoscaler = New-QueueAutoscalerConfiguration" in update_block
