@@ -275,3 +275,38 @@ def test_shared_ideogram_adoption_precedes_cold_state_requirement() -> None:
         "Optimized prewarm requires '$GroupName' stopped at replicas=0/pending=False"
     )
     assert adopt < cold_requirement
+
+
+
+def test_phase6_recovers_once_from_hung_ideogram_inference() -> None:
+    text = Path("scripts/run_phase6_keyframes_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    runner = Path("scripts/run_phase6_keyframes.py").read_text(encoding="utf-8")
+
+    assert "[int]$RunningTimeoutSeconds = 600" in text
+    assert "[int]$IdeogramRecoveryRetries = 1" in text
+    assert "$MaxPhase6Attempts = 1 + $IdeogramRecoveryRetries" in text
+    assert "$Phase6ExitCode -eq 75" in text
+    assert "Recycling the worker" in text
+    assert text.index("-Action Stop -Service ideogram4") < text.index(
+        "=== Ideogram recovery prewarm: start one fresh ready replica ==="
+    )
+    assert text.index("& $QueueCleanup -Service ideogram4") < text.index(
+        "=== Ideogram recovery prewarm: start one fresh ready replica ==="
+    )
+    assert "PHASE6_IDEOGRAM_RUNNING_TIMEOUT" in runner
+    assert 'exc.job_id.startswith("ideogram-keyframe-")' in runner
+    assert "IDEOGRAM_RUNNING_TIMEOUT_EXIT_CODE = 75" in runner
+
+
+def test_phase6_emits_inference_progress_logs() -> None:
+    runner = Path("scripts/run_phase6_keyframes.py").read_text(encoding="utf-8")
+    executor = Path(
+        "src/ai_video_factory/providers/inference_jobs.py"
+    ).read_text(encoding="utf-8")
+
+    assert "logging.basicConfig(" in runner
+    assert "Inference transport submitted" in executor
+    assert "Inference transport progress" in executor
+    assert "elapsed_seconds=%.1f" in executor
