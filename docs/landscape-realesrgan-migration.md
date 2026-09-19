@@ -12,6 +12,14 @@ Phase 6 landscape keyframes
 
 The original LTX clips remain canonical Phase 8 intermediate artifacts. Upscaled clips are separate deterministic artifacts and are the only clip set consumed by the production Phase 9 path.
 
+## LTX 720p grid compatibility
+
+The pinned LTX-2.5 `DistilledPipeline` is a two-stage pipeline whose official code rejects target dimensions that are not multiples of 64. Therefore a literal two-stage model call with height 720 is impossible (`720 % 64 != 0`).
+
+The public production contract remains exactly `1280x720 @ 24 fps`. Inside the LTX worker only, the canonical 16:9 keyframe is resized without aspect distortion to 1280x720, extended vertically with deterministic edge padding to the nearest valid two-stage canvas (1280x768), passed to the unchanged validated LTX pipeline, and the decoded pixels are center-cropped by 24 px at the top and bottom back to exactly 1280x720 before H.264 encoding. No temporal samples, seeds, steps or model settings are changed.
+
+This compatibility behavior is part of `ltx25-distilled-a95ab856-fp8cpu-gridpad-v2`, so the previous vertical/profile cache cannot be reused accidentally.
+
 ## Minimal architecture change
 
 The existing Phase 8 manifest/resume design and generic Salad inference core are reused. A dedicated `realesrgan` worker/task is added with its own queue, service entry and deterministic application job identity. The upscaler stage performs cache/R2 validation before queue submission and persists a separate manifest.
