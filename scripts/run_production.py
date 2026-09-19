@@ -44,7 +44,10 @@ class OptimizedGpuStageExecutor:
         if os.name == "nt":
             command.extend(["-ExecutionPolicy", "Bypass"])
         command.extend(["-File", *arguments])
-        subprocess.run(command, cwd=self._repo_root, check=True)
+        self._default.run_command(command)
+
+    def cancel_running(self) -> None:
+        self._default.cancel_running()
 
     def _controlled_arguments(self, stage_name: str) -> list[str] | None:
         output = self._output_dir
