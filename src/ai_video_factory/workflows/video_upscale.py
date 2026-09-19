@@ -441,7 +441,9 @@ def _download_completed_clips(
 
         media = probe_video(destination)
         source_media = probe_video(item.source_path)
-        source_frames = source_media.frame_count or round(source_media.duration_seconds * UPSCALE_FPS)
+        source_frames = source_media.frame_count or round(
+            source_media.duration_seconds * UPSCALE_FPS
+        )
         output_frames = media.frame_count or round(media.duration_seconds * UPSCALE_FPS)
         if (media.width, media.height) != (TARGET_WIDTH, TARGET_HEIGHT):
             raise ValueError(f"Upscaled shot {item.shot_id} is not 2560x1440")
