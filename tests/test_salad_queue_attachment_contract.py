@@ -62,7 +62,9 @@ def test_queue_binding_diagnostic_is_read_only_and_exposes_both_sides() -> None:
 def test_queue_binding_diagnostic_filters_queue_transport_logs() -> None:
     script = DIAGNOSTIC_SCRIPT.read_text(encoding="utf-8")
 
-    assert "queue|salad|heartbeat|worker|connect|ready|error|grpc|transport" in script
+    assert "queue|salad|worker|connect|ready|error|grpc|transport" in script
+    assert "exception|traceback|cuda|oom|out of memory" in script
+    assert "shape|dimension|frame|invalid|failed|job execution" in script
     assert "SALAD_API_KEY" in script
     assert 'Write-Host $Headers["Salad-Api-Key"]' not in script
 
