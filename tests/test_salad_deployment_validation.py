@@ -145,3 +145,12 @@ def test_smoke_suite_persists_evidence_for_each_worker() -> None:
     for service in ("breeze_tts2", "whisper", "ideogram4", "ltx25"):
         assert f'_write_report(args.output_dir, "{service}"' in text
     assert '"smoke-summary.json"' in text
+
+
+def test_validation_manager_exposes_targeted_prepare_recreate() -> None:
+    text = VALIDATION_MANAGER.read_text(encoding="utf-8")
+
+    assert "[switch]$Recreate" in text
+    assert '$Arguments["Recreate"] = $true' in text
+    assert "-Recreate is only valid with -Action Prepare." in text
+    assert "-Recreate requires one explicit service" in text
