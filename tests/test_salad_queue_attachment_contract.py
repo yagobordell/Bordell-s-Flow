@@ -28,9 +28,9 @@ def test_zero_replica_group_can_repair_autoscaler_in_place() -> None:
     assert "-Method Delete" not in script
     assert "missing or incorrect immutable queue_connection" in script
     assert "does not support changing queue_connection by PATCH" in script
-    assert "function Wait-ForQueueAssociation" in script
-    assert '$Status -notin @("stopped", "running", "deploying")' in script
-    assert "within $TimeoutMinutes minute(s); refusing GPU allocation or job submission." in script
+    assert "function Wait-ForQueueAssociation" not in script
+    assert "non-authoritative for zero-replica/stopped workers" in script
+    assert "real transport execution are the acceptance signals" in script
 
 
 
@@ -71,3 +71,4 @@ def test_queue_binding_diagnostic_shows_recent_queue_job_history() -> None:
     assert "=== Recent queue jobs ===" in script
     assert '"$QueueUrl/jobs?page=1&page_size=10"' in script
     assert "Select-Object id, status, create_time, update_time" in script
+    assert "$RecentJobs = @(@($Jobs.items) | Select-Object -First 10)" in script
