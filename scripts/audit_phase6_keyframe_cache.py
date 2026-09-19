@@ -19,7 +19,7 @@ from ai_video_factory.providers.salad_ideogram import (
 from ai_video_factory.workers.flux2_klein import FLUX2_KLEIN_KEYFRAME_TASK
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_KEYFRAME_TASK
 
-DEFAULT_SIZE = "1024x1536"
+DEFAULT_SIZE = "1536x864"
 _LEGACY_CACHE_ONLY_VARIANT = "safe_fallback"
 
 
