@@ -30,9 +30,9 @@ const CaptionCueView = ({
     <div
       style={{
         position: "absolute",
-        left: "7%",
-        right: "7%",
-        bottom: 118,
+        left: "12%",
+        right: "12%",
+        bottom: 84,
         display: "flex",
         justifyContent: "center",
         pointerEvents: "none",
@@ -43,16 +43,16 @@ const CaptionCueView = ({
       <div
         style={{
           maxWidth: "100%",
-          padding: "18px 24px 20px",
-          borderRadius: 22,
+          padding: "22px 34px 24px",
+          borderRadius: 26,
           backgroundColor: "rgba(0, 0, 0, 0.68)",
           boxShadow: "0 8px 28px rgba(0, 0, 0, 0.28)",
           color: "white",
           fontFamily: "Arial, Helvetica, sans-serif",
-          fontSize: 54,
+          fontSize: 64,
           fontWeight: 800,
           lineHeight: 1.12,
-          letterSpacing: -1.1,
+          letterSpacing: -1.0,
           textAlign: "center",
           textShadow: "0 2px 5px rgba(0, 0, 0, 0.72)",
         }}
