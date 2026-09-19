@@ -162,7 +162,7 @@ def test_production_dag_automates_ideogram_keyframes(tmp_path: Path) -> None:
     assert "--quality" in keyframe.arguments
     assert "high" in keyframe.arguments
     assert "--size" in keyframe.arguments
-    assert "1024x1536" in keyframe.arguments
+    assert "1536x864" in keyframe.arguments
     assert {path.name for path in keyframe.inputs} == {
         "storyboard_frames.json",
         "shots.json",
@@ -436,3 +436,6 @@ def test_real_production_dag_exposes_safe_parallel_branches(tmp_path: Path) -> N
     assert by_name["phase6-keyframes"].dependencies == ("phase6-storyboard",)
     assert by_name["phase4-reference-assets"].resource_key == "ideogram4"
     assert by_name["phase6-keyframes"].resource_key == "ideogram4"
+    assert by_name["phase8-upscale"].dependencies == ("phase8-videos",)
+    assert by_name["phase8-upscale"].resource_key == "realesrgan"
+    assert by_name["phase8-upscale"].outputs[0].name == "upscaled_clips.json"
