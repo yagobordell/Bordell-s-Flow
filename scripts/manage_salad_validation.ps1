@@ -10,6 +10,8 @@ param(
 
     [string]$ComposeFile = "compose.yaml",
 
+    [string]$PinnedImage = "",
+
     [ValidateRange(10, 180)]
     [int]$PrepareTimeoutMinutes = 120,
 
@@ -96,6 +98,12 @@ function Invoke-StackAction {
         Action = $StackAction
         EnvFile = $EnvFile
         PrepareTimeoutMinutes = $PrepareTimeoutMinutes
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PinnedImage)) {
+        if ($Service -eq "all") {
+            throw "-PinnedImage requires one explicit service."
+        }
+        $Arguments["PinnedImage"] = $PinnedImage
     }
     if ($Service -ne "all") {
         $Arguments["Services"] = @($Service)
