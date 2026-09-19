@@ -11,8 +11,8 @@ def _probe(
     duration_seconds: float = 1.0,
     frame_count: int | None = 24,
     codec_name: str = "h264",
-    width: int = 768,
-    height: int = 1280,
+    width: int = 2560,
+    height: int = 1440,
     fps: float = 24.0,
     audio_stream_count: int = 0,
 ):
