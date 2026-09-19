@@ -691,6 +691,43 @@ function Test-QueueRuntimeReady {
     }
     return $false
 }
+
+function Get-RemoteEnvironmentValue {
+    param(
+        [Parameter(Mandatory)][object]$Group,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    if ($null -eq $Group.container) {
+        return ""
+    }
+    $Environment = $Group.container.environment_variables
+    if ($null -eq $Environment) {
+        return ""
+    }
+    $Property = $Environment.PSObject.Properties[$Name]
+    if ($null -eq $Property) {
+        return ""
+    }
+    return [string]$Property.Value
+}
+
+function Assert-QueueTransportLoggingReady {
+    param([Parameter(Mandatory)][object]$Group)
+
+    if ($Service -notin @("whisper", "ideogram4")) {
+        return
+    }
+
+    $RemoteLogLevel = (Get-RemoteEnvironmentValue -Group $Group -Name "SALAD_LOG_LEVEL").Trim()
+    if ($RemoteLogLevel -ne "debug") {
+        throw (
+            "$Service optimized prewarm requires remote SALAD_LOG_LEVEL=debug to verify the " +
+            "Job Queue heartbeat before GPU work, but the deployed group reports " +
+            "'$RemoteLogLevel'. Run Salad Prepare for '$Service' before prewarming."
+        )
+    }
+}
 Import-EnvFile -Path $EnvFile
 if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
     throw "Salad stack manifest not found: $ManifestPath"
@@ -737,6 +774,7 @@ $Status = [string]$Group.current_state.status
 if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
     throw "Container group '$GroupName' is configured for an unexpected queue."
 }
+Assert-QueueTransportLoggingReady -Group $Group
 
 if (
     $AdoptReadyReplica -and
