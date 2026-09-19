@@ -28,7 +28,7 @@ def test_zero_replica_group_can_repair_autoscaler_in_place() -> None:
     assert "-Method Delete" not in script
     assert "missing or incorrect immutable queue_connection" in script
     assert "does not support changing queue_connection by PATCH" in script
-    assert "A real queued job must not be submitted until the" in script
+    assert "Refusing GPU allocation or" in script
 
 
 
@@ -60,3 +60,4 @@ def test_queue_binding_diagnostic_filters_queue_transport_logs() -> None:
     assert "queue|salad|heartbeat|worker|connect|ready|error|grpc|transport" in script
     assert "SALAD_API_KEY" in script
     assert 'Write-Host $Headers["Salad-Api-Key"]' not in script
+
