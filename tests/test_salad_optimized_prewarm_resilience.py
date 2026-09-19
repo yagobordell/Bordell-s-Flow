@@ -79,7 +79,7 @@ def test_stale_queue_retry_budget_uses_absolute_deadline() -> None:
     assert "$EffectiveTimeoutSeconds" in text
 
 
-def test_optimized_prewarm_requires_runtime_queue_transport_before_success() -> None:
+def test_optimized_prewarm_requires_visible_queue_attachment_before_success() -> None:
     text = PREWARM.read_text(encoding="utf-8")
 
     success_block = text.split("$AutoscalerStateReady = (", maxsplit=2)[-1]
@@ -89,28 +89,35 @@ def test_optimized_prewarm_requires_runtime_queue_transport_before_success() -> 
     )[0]
     assert "$Ready -and" in success_block
     assert "$TransportReady" in success_block
-    assert "queue transport ready and still empty" in text
+    assert "queue attached and still empty" in text
 
     assert "function Test-QueueRuntimeReady" in text
-    assert "function Test-QueueTransportHeartbeat" in text
-    assert 'log contains "received heartbeat"' in text
-    assert 'resource.labels.instance_id = "' in text
-    assert 'Operation "query queue transport heartbeat"' in text
+    assert "function Test-QueueTransportHeartbeat" not in text
+    assert 'log contains "received heartbeat"' not in text
 
     adopt_block = text.split("$AdoptReadyReplica -and", maxsplit=1)[1]
     adopt_block = adopt_block.split(
-        "Optimized prewarm requires '$GroupName' stopped",
+        "Optimized prewarm requires '$GroupName' stopped or running",
         maxsplit=1,
     )[0]
     assert "Test-QueueRuntimeReady" in adopt_block
-    assert "runtime Job Queue transport signal" in adopt_block
+    assert "Job Queue association" in adopt_block
 
 
-def test_optimized_prewarm_bounds_ready_without_transport_gpu_time() -> None:
+def test_optimized_prewarm_bounds_ready_without_attachment_gpu_time() -> None:
     text = PREWARM.read_text(encoding="utf-8")
 
     assert "$ReadyUnattachedTimeoutSeconds = 120" in text
     assert "$Ready -and -not $TransportReady" in text
     assert "$ReadyUnattachedSince = Get-Date" in text
     assert "waiting up to ${ReadyUnattachedTimeoutSeconds}s before failing safely" in text
-    assert "no Job Queue runtime signal was verified" in text
+    assert "Salad did not expose the Job Queue association" in text
+
+
+def test_optimized_prewarm_accepts_active_scale_to_zero_group_without_restarting() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+
+    assert '$Status -notin @("stopped", "running")' in text
+    assert '$GroupWasRunning = $Status -eq "running"' in text
+    assert "if (-not $GroupWasRunning)" in text
+    assert 'Operation "start prewarmed container group"' in text
