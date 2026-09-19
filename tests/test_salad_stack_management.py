@@ -181,3 +181,28 @@ def test_stack_prepare_forwards_targeted_recreate() -> None:
     assert "[switch]$Recreate" in script
     assert '$WorkerArguments["Recreate"] = $true' in script
     assert '-Recreate is only valid with -Action Prepare.' in script
+
+
+
+def test_worker_recreate_preserves_or_accepts_pinned_image_before_delete() -> None:
+    script = WORKER_MANAGER.read_text(encoding="utf-8")
+
+    prepare = script.split('"Prepare" {', maxsplit=1)[1]
+    assert "[string]$PinnedImage" in script
+    assert "Using explicit pinned image: $ResolvedPinnedImage" in prepare
+    assert "Reusing existing immutable image before any group recreation" in prepare
+    assert "$ResolvedPinnedImage = [string]$ExistingGroup.container.image" in prepare
+    assert "Remove-StoppedContainerGroup -Headers $Headers" in prepare
+    assert prepare.index("$ResolvedPinnedImage =") < prepare.index(
+        "Remove-StoppedContainerGroup -Headers $Headers"
+    )
+    assert "-PinnedImage $ResolvedPinnedImage" in prepare
+    assert "Assert-PreparedGroup -Group $Group -PinnedImage $ResolvedPinnedImage" in prepare
+
+
+def test_stack_manager_forwards_explicit_pinned_image_only_to_targeted_service() -> None:
+    script = STACK_MANAGER.read_text(encoding="utf-8")
+
+    assert "[string]$PinnedImage" in script
+    assert '$WorkerArguments["PinnedImage"] = $PinnedImage' in script
+    assert "-PinnedImage requires exactly one selected service." in script
