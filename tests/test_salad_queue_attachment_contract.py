@@ -28,7 +28,9 @@ def test_zero_replica_group_can_repair_autoscaler_in_place() -> None:
     assert "-Method Delete" not in script
     assert "missing or incorrect immutable queue_connection" in script
     assert "does not support changing queue_connection by PATCH" in script
-    assert "Refusing GPU allocation or" in script
+    assert "function Wait-ForQueueAssociation" in script
+    assert '$Status -notin @("stopped", "running", "deploying")' in script
+    assert "within $TimeoutMinutes minute(s); refusing GPU allocation or job submission." in script
 
 
 
