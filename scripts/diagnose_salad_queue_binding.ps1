@@ -216,18 +216,17 @@ try {
         if ($FailedJobs.Count -gt 0) {
             Write-Host "=== Failed queue job details ===" -ForegroundColor Cyan
             foreach ($Job in $FailedJobs) {
+                try {
                 Write-Host ("job.id={0}" -f [string]$Job.id)
                 $Events = Get-OptionalProperty -Object $Job -Name "events"
                 if ($null -ne $Events) {
-                    Write-Host (
-                        "job.events={0}" -f (
-                            @($Events) |
-                                ForEach-Object {
-                                    "{0}@{1}" -f [string]$_.action, [string]$_.time
-                                } |
-                                Join-String -Separator ","
-                        )
-                    )
+                    $RenderedEvents = @(
+                        @($Events) |
+                            ForEach-Object {
+                                "{0}@{1}" -f [string]$_.action, [string]$_.time
+                            }
+                    ) -join ","
+                    Write-Host ("job.events={0}" -f $RenderedEvents)
                 }
                 $Output = Get-OptionalProperty -Object $Job -Name "output"
                 if ($null -ne $Output) {
@@ -239,6 +238,14 @@ try {
                 }
                 else {
                     Write-Host "job.output=<none>"
+                }
+                }
+                catch {
+                    Write-Warning (
+                        "Could not render failed job details for " +
+                        ([string](Get-OptionalProperty -Object $Job -Name "id")) +
+                        ": " + $_.Exception.Message
+                    )
                 }
             }
         }
