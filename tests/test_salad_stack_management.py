@@ -157,8 +157,8 @@ def test_queue_repair_patches_autoscaling_without_reusing_group_name() -> None:
     assert "-Method Patch" in script
     assert "-Method Delete" not in script
     assert "Recreating stopped container group" not in script
-    assert "Wait-ForQueueAssociation -InitialGroup $Group" in script
-    assert "refusing GPU allocation or job submission" in script
+    assert "Wait-ForQueueAssociation" not in script
+    assert "non-authoritative for zero-replica/stopped workers" in script
     assert "Test-QueueAttachment" in script
 
 
@@ -252,13 +252,13 @@ def test_worker_update_does_not_patch_immutable_queue_connection() -> None:
     assert "queue_autoscaler = New-QueueAutoscalerConfiguration" in update_block
 
 
-def test_whisper_overrides_stack_autostart_for_job_queue_scale_to_zero() -> None:
+def test_whisper_uses_manual_prewarm_lifecycle_consistently() -> None:
     document = _document()
     whisper = document["services"]["whisper"]
     script = WORKER_MANAGER.read_text(encoding="utf-8")
 
     assert document["stack"]["autostart_policy"] is False
-    assert whisper["autostart_policy"] is True
+    assert whisper["autostart_policy"] is False
     assert whisper["group_name"] == "ai-video-factory-whisper-worker-v4"
     assert whisper["queue_name"] == "ai-video-factory-whisper-jobs-v2"
     assert '$ServiceAutostartProperty = $Definition.PSObject.Properties["autostart_policy"]' in script
