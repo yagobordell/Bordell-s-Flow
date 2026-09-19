@@ -123,6 +123,7 @@ class DirectRealESRGANBackend:
         self._device = device
         self._bindings: _Bindings | None = None
         self._upsampler: Any | None = None
+        self._upsampler_signature: tuple[int, int, int, bool] | None = None
         self._lock = threading.Lock()
 
     @property
@@ -297,7 +298,8 @@ class DirectRealESRGANBackend:
         pre_pad: int = 0,
         fp32: bool = False,
     ) -> Any:
-        if self._upsampler is not None:
+        signature = (tile, tile_pad, pre_pad, fp32)
+        if self._upsampler is not None and self._upsampler_signature == signature:
             return self._upsampler
         bindings = self._get_bindings()
         if self._device.startswith("cuda") and not bindings.torch.cuda.is_available():
@@ -321,6 +323,7 @@ class DirectRealESRGANBackend:
             half=not fp32,
             gpu_id=gpu_id,
         )
+        self._upsampler_signature = signature
         return self._upsampler
 
     def _validate_bootstrap(self) -> None:
