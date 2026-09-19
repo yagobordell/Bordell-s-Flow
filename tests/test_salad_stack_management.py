@@ -143,22 +143,21 @@ def test_queue_repair_patches_autoscaling_without_reusing_group_name() -> None:
     assert "Cancel pending jobs and allow " in script
     assert "running jobs to finish before changing the container group." in script
     assert "Terminal queue history will" in script
-    assert 'current_state.status -ne "stopped"' in script
+    assert '$GroupStatus -notin @("stopped", "running")' in script
     assert "function Set-ZeroReplicas" in script
     assert "function Repair-GroupConfiguration" in script
-    assert "Repairing Job Queue autoscaling in place" in script
+    assert "Repairing Job Queue autoscaler in place" in script
     assert "Normalizing group" in script
-    assert "Forcing replicas back to zero now." in script
-    assert "$Updated = Set-ZeroReplicas -Group $Updated" in script
+        assert "$Updated = Set-ZeroReplicas -Group $Updated" in script
     assert '@{ replicas = 0 }' in script
     assert "function New-Networking" not in script
     assert "networking = New-Networking" not in script
-    assert "queue_connection = New-QueueConnection" in script
+    assert "queue_connection = New-QueueConnection" not in script
     assert "queue_autoscaler = New-QueueAutoscaler" in script
     assert "-Method Patch" in script
     assert "-Method Delete" not in script
     assert "Recreating stopped container group" not in script
-    assert "Runtime attachment will be validated after Start/Smoke." in script
+    assert "A real queued job must not be submitted until the" in script
     assert "Test-QueueAttachment" in script
 
 
@@ -224,7 +223,7 @@ def test_worker_create_retries_transient_name_conflict_after_delete() -> None:
 def test_whisper_uses_fresh_versioned_group_after_queue_rebind_failure() -> None:
     services = _document()["services"]
 
-    assert services["whisper"]["group_name"] == "ai-video-factory-whisper-worker-v3"
+    assert services["whisper"]["group_name"] == "ai-video-factory-whisper-worker-v4"
     assert services["whisper"]["queue_name"] == "ai-video-factory-whisper-jobs-v2"
 
 
@@ -233,7 +232,7 @@ def test_whisper_queue_rebind_uses_fresh_group_and_fresh_queue_pair() -> None:
     services = _document()["services"]
     whisper = services["whisper"]
 
-    assert whisper["group_name"] == "ai-video-factory-whisper-worker-v3"
+    assert whisper["group_name"] == "ai-video-factory-whisper-worker-v4"
     assert whisper["queue_name"] == "ai-video-factory-whisper-jobs-v2"
 
 
@@ -250,3 +249,16 @@ def test_worker_update_does_not_patch_immutable_queue_connection() -> None:
     assert "queue_connection = New-QueueConnectionConfiguration" in create_block
     assert "queue_connection = New-QueueConnectionConfiguration" not in update_block
     assert "queue_autoscaler = New-QueueAutoscalerConfiguration" in update_block
+
+
+def test_whisper_overrides_stack_autostart_for_job_queue_scale_to_zero() -> None:
+    document = _document()
+    whisper = document["services"]["whisper"]
+    script = WORKER_MANAGER.read_text(encoding="utf-8")
+
+    assert document["stack"]["autostart_policy"] is False
+    assert whisper["autostart_policy"] is True
+    assert whisper["group_name"] == "ai-video-factory-whisper-worker-v4"
+    assert whisper["queue_name"] == "ai-video-factory-whisper-jobs-v2"
+    assert '$ServiceAutostartProperty = $Definition.PSObject.Properties["autostart_policy"]' in script
+    assert "$AutostartPolicy = [bool]$ServiceAutostartProperty.Value" in script
