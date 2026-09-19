@@ -121,8 +121,8 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("data/output/phase5/shot_timings.json"),
     )
-    parser.add_argument("--width", type=int, default=768)
-    parser.add_argument("--height", type=int, default=1280)
+    parser.add_argument("--width", type=int, default=1280)
+    parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed-base", type=int, default=42)
     parser.add_argument(
