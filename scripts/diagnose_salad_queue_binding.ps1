@@ -184,6 +184,27 @@ Write-Host ("queue.container_groups.count={0}" -f $AssociatedGroups.Count)
 Write-Host ("queue.container_groups={0}" -f ($AssociatedGroups -join ","))
 Write-Host ("binding.attached={0}" -f $Attached)
 
+Write-Host "=== Recent queue jobs ===" -ForegroundColor Cyan
+try {
+    $Jobs = Invoke-RestMethod `
+        -Method Get `
+        -Uri "$QueueUrl/jobs?page=1&page_size=10" `
+        -Headers $Headers `
+        -TimeoutSec 30
+    $RecentJobs = @($Jobs.items) | Select-Object -First 10
+    if ($RecentJobs.Count -eq 0) {
+        Write-Host "queue.jobs=<none>"
+    }
+    else {
+        $RecentJobs |
+            Select-Object id, status, create_time, update_time |
+            Format-Table -AutoSize
+    }
+}
+catch {
+    Write-Warning ("Could not list recent queue jobs: " + $_.Exception.Message)
+}
+
 if ($null -eq $Connection) {
     Write-Host "DIAGNOSIS=group_queue_connection_missing" -ForegroundColor Red
 }
