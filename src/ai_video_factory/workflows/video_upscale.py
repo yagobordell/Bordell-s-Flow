@@ -217,11 +217,14 @@ def run_video_upscale(
     retry_terminal: bool = True,
     poll_seconds: float = 10.0,
     timeout_seconds: float = 7200.0,
+    dispatch_timeout_seconds: float = 300.0,
 ) -> tuple[VideoUpscaleManifest, list[VideoClip]]:
     if not plan:
         raise ValueError("Video upscale plan cannot be empty")
     if poll_seconds <= 0 or timeout_seconds <= 0:
         raise ValueError("poll_seconds and timeout_seconds must be positive")
+    if dispatch_timeout_seconds <= 0:
+        raise ValueError("dispatch_timeout_seconds must be positive")
 
     manifest = _load_or_create_manifest(plan, manifest_path)
     state_by_shot = {state.shot_id: state for state in manifest.jobs}
@@ -277,8 +280,36 @@ def run_video_upscale(
         _apply_snapshot(state, item, snapshot)
         _write_manifest(manifest_path, manifest)
 
+    transport_probe_ids = {
+        state.transport_job_id
+        for state in manifest.jobs
+        if state.transport_job_id is not None
+        and state.transport_status in {"pending", "running"}
+    }
+    dispatch_proven = any(
+        state.transport_job_id in transport_probe_ids
+        and state.transport_status == "running"
+        for state in manifest.jobs
+    )
+    dispatch_deadline = time.monotonic() + dispatch_timeout_seconds
     deadline = time.monotonic() + timeout_seconds
     while any(state.transport_status in {"pending", "running"} for state in manifest.jobs):
+        if not dispatch_proven and time.monotonic() >= dispatch_deadline:
+            pending_probe_states = [
+                state
+                for state in manifest.jobs
+                if state.transport_job_id in transport_probe_ids
+                and state.transport_status == "pending"
+            ]
+            for state in pending_probe_states:
+                assert state.transport_job_id is not None
+                queue.cancel(state.transport_job_id)
+                state.transport_status = "cancelled"
+            _write_manifest(manifest_path, manifest)
+            raise TimeoutError(
+                f"Real-ESRGAN upscale did not dispatch any queued job within "
+                f"{dispatch_timeout_seconds} seconds"
+            )
         if time.monotonic() >= deadline:
             raise TimeoutError(
                 f"Real-ESRGAN upscale did not finish within {timeout_seconds} seconds"
@@ -291,6 +322,11 @@ def run_video_upscale(
                 raise RuntimeError(f"Shot {item.shot_id} has no transport job id")
             snapshot = queue.get(state.transport_job_id)
             _apply_snapshot(state, item, snapshot)
+            if (
+                state.transport_job_id in transport_probe_ids
+                and state.transport_status in {"running", "succeeded"}
+            ):
+                dispatch_proven = True
             _write_manifest(manifest_path, manifest)
         if any(state.transport_status in {"pending", "running"} for state in manifest.jobs):
             time.sleep(poll_seconds)
