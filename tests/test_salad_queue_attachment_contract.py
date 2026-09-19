@@ -27,3 +27,34 @@ def test_stopped_group_can_repair_autoscaler_in_place() -> None:
     assert "-Method Patch" in script
     assert "-Method Delete" not in script
     assert "Runtime attachment will be validated after Start/Smoke." in script
+
+
+
+DIAGNOSTIC_SCRIPT = Path("scripts/diagnose_salad_queue_binding.ps1")
+
+
+def test_queue_binding_diagnostic_is_read_only_and_exposes_both_sides() -> None:
+    script = DIAGNOSTIC_SCRIPT.read_text(encoding="utf-8")
+
+    assert "-Method Get -Uri $GroupUrl" in script
+    assert "-Method Get -Uri $QueueUrl" in script
+    assert '"queue_connection"' in script
+    assert '"queue_autoscaler"' in script
+    assert '"container_groups"' in script
+    assert "binding.attached" in script
+    assert "DIAGNOSIS=control_plane_association_mismatch" in script
+    assert '/log-entries' in script
+    assert 'resource.labels.container_group_name' in script
+    assert "Diagnostic complete; no Salad resources were mutated." in script
+    assert '-Method Delete' not in script
+    assert '-Method Patch' not in script
+    assert '"/start"' not in script
+    assert '"/stop"' not in script
+
+
+def test_queue_binding_diagnostic_filters_queue_transport_logs() -> None:
+    script = DIAGNOSTIC_SCRIPT.read_text(encoding="utf-8")
+
+    assert "queue|salad|heartbeat|worker|connect|ready|error|grpc|transport" in script
+    assert "SALAD_API_KEY" in script
+    assert 'Write-Host $Headers["Salad-Api-Key"]' not in script
