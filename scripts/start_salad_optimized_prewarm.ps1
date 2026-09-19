@@ -1101,7 +1101,7 @@ while ((Get-Date) -lt $Deadline) {
         if ($null -eq $ReadyUnattachedSince) {
             $ReadyUnattachedSince = Get-Date
             Write-Warning (
-                "$Service is ready but has has no verified Job Queue transport yet for '$QueueName'; " +
+                "$Service is ready but has no verified Job Queue transport yet for '$QueueName'; " +
                 "waiting up to ${ReadyUnattachedTimeoutSeconds}s before failing safely."
             )
         }
