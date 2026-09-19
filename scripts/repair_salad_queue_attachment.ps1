@@ -433,17 +433,15 @@ if (-not (Test-GroupConfiguration -Group $Group)) {
 }
 
 $Queue = Get-Queue
-if (Test-QueueAttachment -Queue $Queue) {
-    Write-Host "$Service queue autoscaling and queue listing verified." -ForegroundColor Green
-}
-else {
-    Write-Warning (
-        "$Service queue_connection is configured, but Salad does not list '$GroupName' " +
-        "in queue.container_groups. A real queued job must not be submitted until the " +
-        "association is visible."
+if (-not (Test-QueueAttachment -Queue $Queue)) {
+    throw (
+        "$Service queue_connection is configured on '$GroupName', but Salad does not list " +
+        "that group in queue.container_groups for '$QueueName'. Refusing GPU allocation or " +
+        "job submission until the control-plane association is visible."
     )
 }
 
+Write-Host "$Service queue autoscaling and queue listing verified." -ForegroundColor Green
 Write-Host (
     "$Service Job Queue configuration verified; group is at zero replicas."
 ) -ForegroundColor Green
