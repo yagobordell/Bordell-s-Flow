@@ -117,7 +117,9 @@ def test_optimized_prewarm_bounds_ready_without_attachment_gpu_time() -> None:
 def test_optimized_prewarm_accepts_active_scale_to_zero_group_without_restarting() -> None:
     text = PREWARM.read_text(encoding="utf-8")
 
-    assert '$Status -notin @("stopped", "running")' in text
-    assert '$GroupWasRunning = $Status -eq "running"' in text
-    assert "if (-not $GroupWasRunning)" in text
+    assert '$AllowedInitialStatuses = @("stopped", "running")' in text
+    assert '$AllowedInitialStatuses += "deploying"' in text
+    assert "$AutostartEnabled" in text
+    assert '$GroupAlreadyActive = $Status -in @("running", "deploying")' in text
+    assert "if (-not $GroupAlreadyActive)" in text
     assert 'Operation "start prewarmed container group"' in text
