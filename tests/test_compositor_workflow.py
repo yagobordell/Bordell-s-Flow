@@ -53,6 +53,9 @@ def test_builds_frame_exact_plan_from_phase8_clips(tmp_path: Path) -> None:
         probe=_probe(),
     )
 
+    assert plan.width == 2560
+    assert plan.height == 1440
+    assert plan.fps == 24
     assert plan.total_frames == 3
     assert [(shot.start_frame, shot.end_frame) for shot in plan.shots] == [(0, 2), (2, 3)]
     assert [shot.duration_frames for shot in plan.shots] == [2, 1]
