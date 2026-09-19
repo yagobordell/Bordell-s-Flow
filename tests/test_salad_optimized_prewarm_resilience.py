@@ -79,7 +79,7 @@ def test_stale_queue_retry_budget_uses_absolute_deadline() -> None:
     assert "$EffectiveTimeoutSeconds" in text
 
 
-def test_optimized_prewarm_requires_runtime_queue_attachment_before_success() -> None:
+def test_optimized_prewarm_requires_runtime_queue_transport_before_success() -> None:
     text = PREWARM.read_text(encoding="utf-8")
 
     success_block = text.split("$AutoscalerStateReady = (", maxsplit=2)[-1]
@@ -88,23 +88,29 @@ def test_optimized_prewarm_requires_runtime_queue_attachment_before_success() ->
         maxsplit=1,
     )[0]
     assert "$Ready -and" in success_block
-    assert "$Attached" in success_block
-    assert "queue attached and still empty" in text
+    assert "$TransportReady" in success_block
+    assert "queue transport ready and still empty" in text
+
+    assert "function Test-QueueRuntimeReady" in text
+    assert "function Test-QueueTransportHeartbeat" in text
+    assert 'log contains "received heartbeat"' in text
+    assert 'resource.labels.instance_id = "' in text
+    assert 'Operation "query queue transport heartbeat"' in text
 
     adopt_block = text.split("$AdoptReadyReplica -and", maxsplit=1)[1]
     adopt_block = adopt_block.split(
         "Optimized prewarm requires '$GroupName' stopped",
         maxsplit=1,
     )[0]
-    assert "Test-QueueAttachment -Queue $Queue" in adopt_block
-    assert "refuses to adopt the ready replica" in adopt_block
+    assert "Test-QueueRuntimeReady" in adopt_block
+    assert "runtime Job Queue transport signal" in adopt_block
 
 
-def test_optimized_prewarm_bounds_ready_but_unattached_gpu_time() -> None:
+def test_optimized_prewarm_bounds_ready_without_transport_gpu_time() -> None:
     text = PREWARM.read_text(encoding="utf-8")
 
     assert "$ReadyUnattachedTimeoutSeconds = 120" in text
-    assert "$Ready -and -not $Attached" in text
+    assert "$Ready -and -not $TransportReady" in text
     assert "$ReadyUnattachedSince = Get-Date" in text
     assert "waiting up to ${ReadyUnattachedTimeoutSeconds}s before failing safely" in text
-    assert "Salad did not attach container group" in text
+    assert "no Job Queue runtime signal was verified" in text
