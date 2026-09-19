@@ -19,8 +19,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--clips",
         type=Path,
-        default=settings.output_dir / "phase8" / "video_clips.json",
-        help="Phase 8 video_clips.json file.",
+        default=settings.output_dir / "phase8" / "upscaled_clips.json",
+        help="Phase 8 Real-ESRGAN upscaled_clips.json file.",
     )
     parser.add_argument(
         "--timings",
@@ -40,8 +40,8 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Base directory used to resolve VideoClip.uri. Defaults to the clips JSON directory.",
     )
-    parser.add_argument("--width", type=int, default=768)
-    parser.add_argument("--height", type=int, default=1280)
+    parser.add_argument("--width", type=int, default=2560)
+    parser.add_argument("--height", type=int, default=1440)
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--caption-max-words", type=int, default=5)
     parser.add_argument("--caption-max-chars", type=int, default=36)
