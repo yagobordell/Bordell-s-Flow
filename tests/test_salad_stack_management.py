@@ -25,6 +25,7 @@ def test_salad_manifest_centralizes_stack_identity_and_shared_environment() -> N
         "ideogram4",
         "flux2_klein",
         "ltx25",
+        "realesrgan",
     ]
     assert document["stack"]["shared_required_environment"] == [
         "POSTGRES_DSN",
@@ -46,8 +47,8 @@ def test_every_model_has_its_own_group_and_queue() -> None:
     groups = [service["group_name"] for service in services.values()]
     queues = [service["queue_name"] for service in services.values()]
 
-    assert len(groups) == len(set(groups)) == 6
-    assert len(queues) == len(set(queues)) == 6
+    assert len(groups) == len(set(groups)) == 7
+    assert len(queues) == len(set(queues)) == 7
     assert services["whisper"]["required_environment"] == []
     assert services["breeze_tts2"]["required_environment"] == []
     assert services["breeze_tts2"]["group_name"] == "ai-video-factory-breeze-tts2-worker-v2"
@@ -56,6 +57,7 @@ def test_every_model_has_its_own_group_and_queue() -> None:
     assert services["ideogram4"]["required_environment"] == ["HF_TOKEN"]
     assert services["flux2_klein"]["required_environment"] == []
     assert services["ltx25"]["required_environment"] == ["HF_TOKEN"]
+    assert services["realesrgan"]["required_environment"] == []
 
 
 def test_worker_queue_display_names_match_salad_api_contract() -> None:
