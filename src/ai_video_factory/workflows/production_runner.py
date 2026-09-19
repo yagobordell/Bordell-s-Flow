@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
@@ -115,18 +117,78 @@ class ProductionStageBlocked(RuntimeError):
 
 
 class SubprocessStageExecutor:
-    """Execute existing phase scripts without duplicating their validated business logic."""
+    """Execute stage subprocesses and make active process trees cancellable."""
 
     def __init__(self, *, repo_root: Path, python_executable: str = sys.executable) -> None:
         self._repo_root = repo_root
         self._python_executable = python_executable
+        self._processes: set[subprocess.Popen[bytes]] = set()
+        self._process_lock = threading.Lock()
 
     def __call__(self, stage: ProductionStage) -> None:
-        subprocess.run(
-            stage.command(self._python_executable),
-            cwd=self._repo_root,
-            check=True,
-        )
+        self.run_command(stage.command(self._python_executable))
+
+    def run_command(self, command: tuple[str, ...] | list[str]) -> None:
+        kwargs: dict[str, object] = {
+            "cwd": self._repo_root,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+
+        process = subprocess.Popen(command, **kwargs)
+        with self._process_lock:
+            self._processes.add(process)
+        try:
+            returncode = process.wait()
+            if returncode != 0:
+                raise subprocess.CalledProcessError(returncode, command)
+        finally:
+            with self._process_lock:
+                self._processes.discard(process)
+
+    def cancel_running(self) -> None:
+        """Terminate every active stage process tree so DAG failures are fail-fast."""
+
+        with self._process_lock:
+            processes = tuple(self._processes)
+
+        for process in processes:
+            if process.poll() is not None:
+                continue
+            if os.name == "nt":
+                subprocess.run(
+                    [
+                        "taskkill",
+                        "/PID",
+                        str(process.pid),
+                        "/T",
+                        "/F",
+                    ],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                except ProcessLookupError:
+                    continue
+
+        for process in processes:
+            if process.poll() is not None:
+                continue
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                if os.name == "nt":
+                    process.kill()
+                else:
+                    try:
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
 
 class ProductionRunner:
@@ -213,10 +275,11 @@ class ProductionRunner:
         running_resource_keys: set[str] = set()
         running_gpu_stages = 0
 
-        with ThreadPoolExecutor(
+        pool = ThreadPoolExecutor(
             max_workers=self._max_workers,
             thread_name_prefix="production-stage",
-        ) as pool:
+        )
+        try:
             while pending or running:
                 made_progress = False
 
@@ -305,12 +368,7 @@ class ProductionRunner:
                     if stage.resource_key is not None:
                         running_resource_keys.discard(stage.resource_key)
 
-                    try:
-                        future.result()
-                    except BaseException:
-                        for outstanding in running:
-                            outstanding.cancel()
-                        raise
+                    future.result()
 
                     missing_outputs = tuple(
                         path for path in stage.outputs if not path.exists()
@@ -335,6 +393,16 @@ class ProductionRunner:
                     )
                     completed.add(stage.name)
                     print(f"DONE  {stage.name}: {elapsed:.1f} s")
+        except BaseException:
+            for outstanding in running:
+                outstanding.cancel()
+            cancel_running = getattr(self._executor, "cancel_running", None)
+            if callable(cancel_running):
+                cancel_running()
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
+        else:
+            pool.shutdown(wait=True)
 
         return ProductionRunSummary(
             executed=tuple(executed),
