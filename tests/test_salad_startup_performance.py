@@ -201,11 +201,13 @@ def test_full_production_routes_every_gpu_stage_through_controlled_runner() -> N
 
 
 
-def test_phase8_resume_starts_scale_to_zero_group_for_existing_jobs() -> None:
+def test_phase8_resume_starts_scale_to_zero_group_only_for_active_current_jobs() -> None:
     text = Path("scripts/run_phase8_videos_controlled.ps1").read_text(encoding="utf-8")
 
     assert "video_generation_manifest.json" in text
-    assert "$ResumeSubmittedJobs = $SubmittedJobs.Count -gt 0" in text
+    assert "inspect_phase8_manifest.py" in text
+    assert '[string]$ManifestState.status -eq "matching"' in text
+    assert "[int]$ManifestState.active_resume_jobs -gt 0" in text
     assert "start_salad_scale_to_zero.ps1" in text
     assert 'Service = "ltx25"' in text
     assert "if ($ResumeSubmittedJobs)" in text
@@ -229,6 +231,9 @@ def test_phase8_resume_detection_happens_before_gpu_allocation() -> None:
     assert text.index("$ManifestPath = Join-Path $OutputDir") < text.index(
         "=== R2 preflight: verify storage before GPU allocation ==="
     )
+    assert text.index("& python $ManifestInspector") < text.index(
+        "=== R2 preflight: verify storage before GPU allocation ==="
+    )
     assert text.index("if ($ResumeSubmittedJobs)") < text.index(
         "=== Phase 8 video generation: worker group available; resume/fanout active ==="
     )
@@ -237,12 +242,28 @@ def test_phase8_resume_detection_happens_before_gpu_allocation() -> None:
 def test_phase8_resume_hard_guards_queue_before_scale_to_zero_start() -> None:
     text = Path("scripts/run_phase8_videos_controlled.ps1").read_text(encoding="utf-8")
 
-    assert 'check_salad_queue_ready.py' in text
-    assert '& python $QueueGuard ltx25 --output-dir $OutputDir' in text
-    assert 'LTX resume queue ownership guard failed; refusing GPU allocation.' in text
-    assert text.index('& python $QueueGuard ltx25 --output-dir $OutputDir') < text.index(
-        '& $ScaleToZeroStarter @StartArguments'
+    assert "check_salad_queue_ready.py" in text
+    assert "& python $QueueGuard ltx25 --output-dir $ProductionOutputRoot" in text
+    assert "LTX resume queue ownership guard failed; refusing GPU allocation." in text
+    assert text.index(
+        "& python $QueueGuard ltx25 --output-dir $ProductionOutputRoot"
+    ) < text.index("& $ScaleToZeroStarter @StartArguments")
+
+
+def test_phase8_archives_stale_manifest_only_after_idle_queue_guard() -> None:
+    text = Path("scripts/run_phase8_videos_controlled.ps1").read_text(encoding="utf-8")
+
+    stale_branch = text.index(
+        'if ([string]$ManifestState.status -eq "different_plan")'
     )
+    idle_guard = text.index("& python $QueueGuard ltx25 --output-dir $EmptyGuardRoot")
+    archive = text.index("--archive-mismatch")
+    r2_preflight = text.index(
+        "=== R2 preflight: verify storage before GPU allocation ==="
+    )
+
+    assert stale_branch < idle_guard < archive < r2_preflight
+    assert "is not provably idle; refusing to archive it or allocate GPU." in text
 
 
 
