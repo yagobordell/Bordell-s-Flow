@@ -14,10 +14,10 @@ def test_queue_attachment_repair_contract() -> None:
     assert "Method Patch" in text
     assert "replicas -ne 0" in text
     assert "Repair-GroupConfiguration" in text
-    assert "Forcing replicas back to zero now." in text
+    assert "Normalizing group {0} replicas from {1} to 0." in text
     assert "$Updated = Set-ZeroReplicas -Group $Updated" in text
-    assert "Runtime attachment will be validated after Start/Smoke." in text
-    assert "did not persist the complete Job Queue autoscaling configuration after PATCH" in text
+    assert "non-authoritative for zero-replica/stopped workers" in text
+    assert "Salad did not persist the Job Queue autoscaler after PATCH." in text
 
 
 def test_queue_attachment_preflight_allows_missing_queue() -> None:
