@@ -19,7 +19,10 @@ param(
     [int]$PendingTimeoutSeconds = 300,
 
     [ValidateRange(60, 3600)]
-    [int]$RunningTimeoutSeconds = 1200,
+    [int]$RunningTimeoutSeconds = 600,
+
+    [ValidateRange(0, 2)]
+    [int]$IdeogramRecoveryRetries = 1,
 
     [ValidateRange(300, 3600)]
     [int]$FluxPendingTimeoutSeconds = 1800,
@@ -152,9 +155,74 @@ try {
             "--fallback-prewarm-timeout-minutes", $PrewarmTimeoutMinutes
         )
     }
-    & python $Phase6Runner @Phase6Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Phase 6 keyframe generation failed with exit code $LASTEXITCODE."
+
+    $Phase6Attempt = 0
+    $MaxPhase6Attempts = 1 + $IdeogramRecoveryRetries
+    while ($true) {
+        $Phase6Attempt += 1
+        Write-Host (
+            "Phase 6 generation attempt $Phase6Attempt/$MaxPhase6Attempts " +
+            "(Ideogram running timeout=${RunningTimeoutSeconds}s)."
+        ) -ForegroundColor Cyan
+
+        & python $Phase6Runner @Phase6Arguments
+        $Phase6ExitCode = $LASTEXITCODE
+        if ($Phase6ExitCode -eq 0) {
+            break
+        }
+
+        $CanRecoverIdeogram = (
+            $Phase6ExitCode -eq 75 -and
+            $Phase6Attempt -lt $MaxPhase6Attempts
+        )
+        if (-not $CanRecoverIdeogram) {
+            throw "Phase 6 keyframe generation failed with exit code $Phase6ExitCode."
+        }
+
+        Write-Warning (
+            "Phase 6 detected a bounded Ideogram running-timeout. Recycling the worker " +
+            "and retrying the same deterministic keyframe once."
+        )
+
+        & $ValidationManager -Action Stop -Service ideogram4 -NonInteractive
+        if (-not $?) {
+            throw "Ideogram recovery stop failed."
+        }
+        & $QueueCleanup -Service ideogram4 -TimeoutSeconds 180 -NonInteractive
+        if (-not $?) {
+            throw "Ideogram recovery queue cleanup failed."
+        }
+        & $ValidationManager -Action Status -Service ideogram4 -NonInteractive
+        if (-not $?) {
+            throw "Ideogram recovery status verification failed."
+        }
+
+        & $FluxRestore -TimeoutSeconds 180 -NonInteractive
+        if (-not $?) {
+            throw "FLUX recovery restore failed."
+        }
+        & $QueueCleanup -Service flux2_klein -TimeoutSeconds 180 -NonInteractive
+        if (-not $?) {
+            throw "FLUX recovery queue cleanup failed."
+        }
+
+        Write-Host (
+            "=== Ideogram recovery prewarm: start one fresh ready replica ==="
+        ) -ForegroundColor Cyan
+        & $OptimizedPrewarm @PrewarmArguments
+        if (-not $?) {
+            throw "Ideogram recovery prewarm failed."
+        }
+
+        if ($FluxNeeded) {
+            Write-Host (
+                "=== FLUX recovery prewarm: cached safety evidence still requires fallback ==="
+            ) -ForegroundColor Cyan
+            & $FluxPrewarm @FluxPrewarmArguments
+            if (-not $?) {
+                throw "FLUX recovery prewarm failed."
+            }
+        }
     }
 }
 catch {
