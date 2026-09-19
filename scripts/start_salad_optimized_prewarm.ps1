@@ -753,17 +753,27 @@ if (
     exit 0
 }
 
+$AutostartProperty = $Definition.PSObject.Properties["autostart_policy"]
+$AutostartEnabled = (
+    $null -ne $AutostartProperty -and
+    [bool]$AutostartProperty.Value
+)
+$AllowedInitialStatuses = @("stopped", "running")
+if ($AutostartEnabled) {
+    $AllowedInitialStatuses += "deploying"
+}
 if (
-    $Status -notin @("stopped", "running") -or
+    $Status -notin $AllowedInitialStatuses -or
     [bool]$Group.pending_change -or
     [int]$Group.replicas -ne 0
 ) {
     throw (
-        "Optimized prewarm requires '$GroupName' stopped or running at replicas=0/pending=False; " +
-        "status=$Status replicas=$([int]$Group.replicas) pending=$([bool]$Group.pending_change)."
+        "Optimized prewarm requires '$GroupName' at replicas=0/pending=False in an allowed " +
+        "lifecycle state; status=$Status autostart=$AutostartEnabled " +
+        "replicas=$([int]$Group.replicas) pending=$([bool]$Group.pending_change)."
     )
 }
-$GroupWasRunning = $Status -eq "running"
+$GroupAlreadyActive = $Status -in @("running", "deploying")
 $RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
 $AutoscalerObservable = $null -ne $RemoteAutoscaler
 if ($AutoscalerObservable) {
@@ -867,7 +877,7 @@ if (
     throw "Salad did not persist the one-replica prewarm state safely."
 }
 
-if (-not $GroupWasRunning) {
+if (-not $GroupAlreadyActive) {
     Invoke-SaladMutation `
         -Method "Post" `
         -Uri "$GroupUrl/start" `
