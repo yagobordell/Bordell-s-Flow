@@ -54,6 +54,63 @@ def _archive_path(manifest_path: Path, fingerprint: str) -> Path:
     return archive_dir / f"video_generation_manifest.{safe_fingerprint}.json"
 
 
+def inspect_manifest_state(
+    plan,
+    manifest_path: Path,
+    *,
+    archive_mismatch: bool = False,
+) -> dict[str, object]:
+    expected_fingerprint = video_generation_run_fingerprint(plan)
+    state: dict[str, object] = {
+        "status": "missing",
+        "expected_fingerprint": expected_fingerprint,
+        "existing_fingerprint": None,
+        "active_resume_jobs": 0,
+        "submitted_jobs": 0,
+        "archived_path": None,
+    }
+
+    if not manifest_path.is_file():
+        return state
+
+    try:
+        manifest = VideoGenerationManifest.model_validate_json(
+            manifest_path.read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as exc:
+        raise ValueError(
+            f"Existing Phase 8 video generation manifest is unreadable: "
+            f"{manifest_path}: {exc}"
+        ) from exc
+
+    state["existing_fingerprint"] = manifest.run_fingerprint
+    state["submitted_jobs"] = sum(
+        job.transport_job_id is not None for job in manifest.jobs
+    )
+    state["active_resume_jobs"] = sum(
+        job.transport_job_id is not None
+        and job.transport_status in {"pending", "running"}
+        for job in manifest.jobs
+    )
+
+    if manifest.run_fingerprint == expected_fingerprint:
+        _validate_manifest_against_plan(
+            manifest,
+            plan,
+            expected_fingerprint,
+        )
+        state["status"] = "matching"
+        return state
+
+    state["status"] = "different_plan"
+    if archive_mismatch:
+        archived = _archive_path(manifest_path, manifest.run_fingerprint)
+        os.replace(manifest_path, archived)
+        state["archived_path"] = str(archived)
+        state["status"] = "archived_different_plan"
+    return state
+
+
 def main() -> None:
     args = parse_args()
     keyframes = _read_models(args.keyframes, StoryboardKeyframe)
@@ -69,58 +126,15 @@ def main() -> None:
         fps=args.fps,
         seed_base=args.seed_base,
     )
-    expected_fingerprint = video_generation_run_fingerprint(plan)
-
-    state: dict[str, object] = {
-        "status": "missing",
-        "expected_fingerprint": expected_fingerprint,
-        "existing_fingerprint": None,
-        "active_resume_jobs": 0,
-        "submitted_jobs": 0,
-        "archived_path": None,
-    }
-
-    if args.manifest.is_file():
-        try:
-            manifest = VideoGenerationManifest.model_validate_json(
-                args.manifest.read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError) as exc:
-            raise SystemExit(
-                f"Existing Phase 8 video generation manifest is unreadable: "
-                f"{args.manifest}: {exc}"
-            ) from exc
-
-        state["existing_fingerprint"] = manifest.run_fingerprint
-        state["submitted_jobs"] = sum(
-            job.transport_job_id is not None for job in manifest.jobs
+    try:
+        state = inspect_manifest_state(
+            plan,
+            args.manifest,
+            archive_mismatch=args.archive_mismatch,
         )
-        state["active_resume_jobs"] = sum(
-            job.transport_job_id is not None
-            and job.transport_status in {"pending", "running"}
-            for job in manifest.jobs
-        )
-
-        if manifest.run_fingerprint == expected_fingerprint:
-            try:
-                _validate_manifest_against_plan(
-                    manifest,
-                    plan,
-                    expected_fingerprint,
-                )
-            except ValueError as exc:
-                raise SystemExit(
-                    f"Existing Phase 8 manifest matches the run fingerprint but is "
-                    f"structurally inconsistent: {exc}"
-                ) from exc
-            state["status"] = "matching"
-        else:
-            state["status"] = "different_plan"
-            if args.archive_mismatch:
-                archived = _archive_path(args.manifest, manifest.run_fingerprint)
-                os.replace(args.manifest, archived)
-                state["archived_path"] = str(archived)
-                state["status"] = "archived_different_plan"
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    expected_fingerprint = str(state["expected_fingerprint"])
 
     args.json_output.parent.mkdir(parents=True, exist_ok=True)
     args.json_output.write_text(
