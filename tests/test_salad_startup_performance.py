@@ -76,7 +76,7 @@ def test_optimized_prewarm_applies_bounded_node_selection_to_every_worker() -> N
     assert "$ContainerStarted -and" in text
     assert "$Ready" in text
     assert "prewarm complete: exactly one started ready replica" in text
-    assert "queue still empty" in text
+    assert "queue attached and still empty" in text
 
 
 def test_ideogram_prewarm_has_specific_finite_runtime_and_node_budget() -> None:
