@@ -295,7 +295,7 @@ def test_shared_ideogram_adoption_precedes_cold_state_requirement() -> None:
 
     adopt = text.index("if (\n    $AdoptReadyReplica -and")
     cold_requirement = text.index(
-        "Optimized prewarm requires '$GroupName' stopped or running at replicas=0/pending=False"
+        "Optimized prewarm requires '$GroupName' at replicas=0/pending=False in an allowed"
     )
     assert adopt < cold_requirement
 
