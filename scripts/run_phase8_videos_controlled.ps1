@@ -18,6 +18,9 @@ param(
     [ValidateRange(60, 43200)]
     [int]$TimeoutSeconds = 21600,
 
+    [ValidateRange(30, 1800)]
+    [int]$DispatchTimeoutSeconds = 300,
+
     [ValidateRange(1, 60)]
     [int]$PollSeconds = 15,
 
@@ -215,7 +218,8 @@ try {
         --timings $Timings `
         --output-dir $OutputDir `
         --poll-seconds $PollSeconds `
-        --timeout-seconds $TimeoutSeconds
+        --timeout-seconds $TimeoutSeconds `
+        --dispatch-timeout-seconds $DispatchTimeoutSeconds
     if ($LASTEXITCODE -ne 0) {
         throw "Phase 8 video generation failed with exit code $LASTEXITCODE."
     }
