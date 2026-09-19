@@ -47,7 +47,8 @@ def test_queue_binding_diagnostic_is_read_only_and_exposes_both_sides() -> None:
     assert '"queue_autoscaler"' in script
     assert '"container_groups"' in script
     assert "binding.attached" in script
-    assert "DIAGNOSIS=control_plane_association_mismatch" in script
+    assert "DIAGNOSIS=queue_listing_non_authoritative_routing_proven" in script
+    assert "DIAGNOSIS=queue_listing_absent_runtime_unproven" in script
     assert '/log-entries' in script
     assert 'resource.labels.container_group_name' in script
     assert "Diagnostic complete; no Salad resources were mutated." in script
@@ -73,3 +74,4 @@ def test_queue_binding_diagnostic_shows_recent_queue_job_history() -> None:
     assert '"$QueueUrl/jobs?page=1&page_size=10"' in script
     assert "Select-Object id, status, create_time, update_time" in script
     assert "$RecentJobs = @(@($Jobs.items) | Select-Object -First 10)" in script
+    assert "$SucceededJobCount" in script
