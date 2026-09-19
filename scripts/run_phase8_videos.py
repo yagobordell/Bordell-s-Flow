@@ -142,6 +142,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument("--timeout-seconds", type=float, default=21600.0)
+    parser.add_argument("--dispatch-timeout-seconds", type=float, default=300.0)
     parser.add_argument(
         "--progress-seconds",
         type=float,
@@ -212,6 +213,7 @@ def main() -> None:
             retry_terminal=not args.no_retry_terminal,
             poll_seconds=args.poll_seconds,
             timeout_seconds=args.timeout_seconds,
+            dispatch_timeout_seconds=args.dispatch_timeout_seconds,
         )
     finally:
         if progress_thread is not None:
