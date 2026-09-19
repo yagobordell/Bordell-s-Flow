@@ -143,7 +143,7 @@ def test_queue_repair_patches_autoscaling_without_reusing_group_name() -> None:
     assert "Cancel pending jobs and allow " in script
     assert "running jobs to finish before changing the container group." in script
     assert "Terminal queue history will" in script
-    assert '$GroupStatus -notin @("stopped", "running")' in script
+    assert '$GroupStatus -notin @("stopped", "running", "deploying")' in script
     assert "function Set-ZeroReplicas" in script
     assert "function Repair-GroupConfiguration" in script
     assert "Repairing Job Queue autoscaler in place" in script
@@ -157,7 +157,8 @@ def test_queue_repair_patches_autoscaling_without_reusing_group_name() -> None:
     assert "-Method Patch" in script
     assert "-Method Delete" not in script
     assert "Recreating stopped container group" not in script
-    assert "Refusing GPU allocation or" in script
+    assert "Wait-ForQueueAssociation -InitialGroup $Group" in script
+    assert "refusing GPU allocation or job submission" in script
     assert "Test-QueueAttachment" in script
 
 
