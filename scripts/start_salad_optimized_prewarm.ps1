@@ -633,13 +633,63 @@ function Test-QueueAttachment {
     ).Count -eq 1
 }
 
+function Test-QueueTransportHeartbeat {
+    param([Parameter(Mandatory)][string]$InstanceId)
+
+    if ([string]::IsNullOrWhiteSpace($InstanceId)) {
+        return $false
+    }
+
+    $End = (Get-Date).ToUniversalTime()
+    $Start = $End.AddMinutes(-10)
+    $Query = (
+        'resource.type = "container" and ' +
+        'resource.labels.project_name = "' + $Project + '" and ' +
+        'resource.labels.container_group_name = "' + $GroupName + '" and ' +
+        'resource.labels.instance_id = "' + $InstanceId + '" and ' +
+        'log contains "received heartbeat"'
+    )
+    $Body = @{
+        start_time = $Start.ToString("yyyy-MM-ddTHH:mm:ssZ")
+        end_time = $End.ToString("yyyy-MM-ddTHH:mm:ssZ")
+        page_size = 1
+        sort_order = "desc"
+        query = $Query
+    } | ConvertTo-Json -Depth 5 -Compress
+
+    try {
+        $Response = Invoke-SaladMutation `
+            -Method "Post" `
+            -Uri $LogsUrl `
+            -Operation "query queue transport heartbeat" `
+            -ContentType "application/json" `
+            -Body $Body `
+            -TimeoutSeconds 30 `
+            -MaxAttempts 3
+        return @($Response.items).Count -gt 0
+    }
+    catch {
+        Write-Warning (
+            "$Service could not query queue transport heartbeat logs yet: " +
+            $_.Exception.Message
+        )
+        return $false
+    }
+}
+
 function Test-QueueRuntimeReady {
     param(
         [Parameter(Mandatory)][object]$Queue,
         [Parameter(Mandatory)][string]$InstanceId
     )
 
-    return Test-QueueAttachment -Queue $Queue
+    if (Test-QueueAttachment -Queue $Queue) {
+        return $true
+    }
+    if ($Service -eq "whisper") {
+        return Test-QueueTransportHeartbeat -InstanceId $InstanceId
+    }
+    return $false
 }
 Import-EnvFile -Path $EnvFile
 if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
@@ -743,12 +793,12 @@ if (
     if (-not (Test-QueueRuntimeReady -Queue $Queue -InstanceId $HeldInstanceId)) {
         throw (
             "Optimized prewarm refuses to adopt the ready replica because no reliable " +
-            "Job Queue association is available for '$GroupName'."
+            "runtime Job Queue transport signal is available for '$GroupName'."
         )
     }
     Write-Host (
         "$Service prewarm adopted one already started+ready shared replica with " +
-        "min_replicas=1 pinned; queue attached and still empty."
+        "min_replicas=1 pinned; queue transport ready and still empty."
     ) -ForegroundColor Green
     exit 0
 }
@@ -1051,7 +1101,7 @@ while ((Get-Date) -lt $Deadline) {
         if ($null -eq $ReadyUnattachedSince) {
             $ReadyUnattachedSince = Get-Date
             Write-Warning (
-                "$Service is ready but has not yet attached to the Job Queue for '$QueueName'; " +
+                "$Service is ready but has has no verified Job Queue transport yet for '$QueueName'; " +
                 "waiting up to ${ReadyUnattachedTimeoutSeconds}s before failing safely."
             )
         }
@@ -1060,7 +1110,7 @@ while ((Get-Date) -lt $Deadline) {
             $ReadyUnattachedTimeoutSeconds
         ) {
             throw (
-                "$Service reached ready state but Salad did not expose the Job Queue association for " +
+                "$Service reached ready state but no Job Queue runtime signal was verified for " +
                 "'$GroupName' and queue '$QueueName' within " +
                 "${ReadyUnattachedTimeoutSeconds}s."
             )
@@ -1109,7 +1159,7 @@ while ((Get-Date) -lt $Deadline) {
         $HoldSuffix = if ($HoldReadyReplica) { " with min_replicas=1 pinned" } else { "" }
         Write-Host (
             "$Service prewarm complete: exactly one started ready replica$HoldSuffix, " +
-            "queue attached and still empty."
+            "queue transport ready and still empty."
         ) -ForegroundColor Green
         exit 0
     }
