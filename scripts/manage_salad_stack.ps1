@@ -7,6 +7,8 @@ param(
 
     [string]$EnvFile = ".env",
 
+    [string]$PinnedImage = "",
+
     [ValidateRange(10, 180)]
     [int]$PrepareTimeoutMinutes = 120,
 
@@ -222,6 +224,12 @@ function Invoke-WorkerAction {
         Action = $WorkerAction
         EnvFile = $EnvFile
         PrepareTimeoutMinutes = $PrepareTimeoutMinutes
+    }
+    if (-not [string]::IsNullOrWhiteSpace($PinnedImage)) {
+        if ($Selected.Count -ne 1) {
+            throw "-PinnedImage requires exactly one selected service."
+        }
+        $WorkerArguments["PinnedImage"] = $PinnedImage
     }
     if ($SkipBuild) {
         $WorkerArguments["SkipBuild"] = $true
