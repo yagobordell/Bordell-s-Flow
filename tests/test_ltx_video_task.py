@@ -110,6 +110,7 @@ def test_ltx_num_frames_rejects_invalid_duration_or_fps() -> None:
 def test_ltx_parameters_enforce_generation_profile_and_shape() -> None:
     validated = LTXVideoParameters.model_validate(parameters())
     assert validated.generation_profile == LTX_GENERATION_PROFILE
+    assert LTX_GENERATION_PROFILE.endswith("gridpad-v3")
     assert validated.width == 1280
     assert validated.height == 720
     assert validated.num_frames == 121
