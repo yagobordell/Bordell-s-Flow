@@ -1081,7 +1081,7 @@ while ((Get-Date) -lt $Deadline) {
         $ReadySeconds = ((Get-Date) - $PrewarmStartedAt).TotalSeconds
     }
 
-    if ($Ready -and -not $Attached) {
+    if ($Ready -and -not $TransportReady) {
         if ($null -eq $ReadyUnattachedSince) {
             $ReadyUnattachedSince = Get-Date
             Write-Warning (
