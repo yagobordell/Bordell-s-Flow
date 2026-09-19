@@ -214,12 +214,12 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
         "conditionings": [],
     }
 
-    class FakeVideo:
-        shape = (1, 3, 121, 768, 1280)
+    class FakeChunk:
+        shape = (61, 768, 1280, 3)
 
         def __getitem__(self, item: Any) -> str:
-            state["video_crop"] = item
-            return "cropped-video"
+            state.setdefault("video_crops", []).append(item)
+            return "cropped-chunk"
 
     class FakePipeline:
         def __init__(self, **kwargs: Any) -> None:
@@ -228,7 +228,11 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
 
         def __call__(self, **kwargs: Any) -> Any:
             state["pipeline_calls"].append(kwargs)
-            return SimpleNamespace(video=FakeVideo(), num_frames=121, tiling_config="tiling")
+            return SimpleNamespace(
+                video=iter([FakeChunk(), FakeChunk()]),
+                num_frames=121,
+                tiling_config="tiling",
+            )
 
     class FakeModelPaths:
         @classmethod
@@ -306,9 +310,12 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     assert state["conditionings"][0]["strength"] == 1.0
     assert state["pipeline_calls"][0]["width"] == 1280
     assert state["pipeline_calls"][0]["height"] == 768
-    assert state["encodes"][0]["video"] == "cropped-video"
-    spatial_crop = state["video_crop"][-2:]
-    assert spatial_crop == (slice(24, 744), slice(0, 1280))
+    cropped_video = state["encodes"][0]["video"]
+    assert list(cropped_video) == ["cropped-chunk", "cropped-chunk"]
+    assert state["video_crops"] == [
+        (Ellipsis, slice(24, 744), slice(0, 1280), slice(None)),
+        (Ellipsis, slice(24, 744), slice(0, 1280), slice(None)),
+    ]
     assert len(state["encodes"]) == 2
     assert all(call["audio"] is None for call in state["encodes"])
 
