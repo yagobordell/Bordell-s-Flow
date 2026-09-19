@@ -228,7 +228,7 @@
     },
     "whisper": {
       "display_name": "AI Video Factory Whisper",
-      "group_name": "ai-video-factory-whisper-worker-v3",
+      "group_name": "ai-video-factory-whisper-worker-v4",
       "queue_name": "ai-video-factory-whisper-jobs-v2",
       "dockerfile": "docker/workers/whisper/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:whisper-large-v3-turbo-v2",
@@ -290,7 +290,8 @@
         "polling_period": 30,
         "max_upscale_per_minute": 1,
         "max_downscale_per_minute": 1
-      }
+      },
+      "autostart_policy": true
     },
     "flux2_klein": {
       "display_name": "AI Video Factory FLUX.2 Klein 4B Fallback",
