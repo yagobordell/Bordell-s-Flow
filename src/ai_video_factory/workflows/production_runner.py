@@ -31,6 +31,7 @@ PRODUCTION_STAGE_NAMES = (
     "phase8-video-prompts",
     "phase6-keyframes",
     "phase8-videos",
+    "phase8-upscale",
 )
 
 
@@ -513,6 +514,8 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
     video_prompts = phase8 / "video_prompts.json"
     video_clips = phase8 / "video_clips.json"
     video_clips_dir = phase8 / "video_clips"
+    upscaled_clips = phase8 / "upscaled_clips.json"
+    upscaled_clips_dir = phase8 / "upscaled_clips"
 
     return [
         ProductionStage(
@@ -677,7 +680,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
             arguments=(
                 "--frames", str(storyboard_frames),
                 "--shots", str(shots),
-                "--size", "1024x1536",
+                "--size", "1536x864",
                 "--quality", "high",
                 "--output-dir", str(storyboard_keyframes_dir),
                 "--output", str(storyboard_keyframes),
@@ -687,7 +690,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
         ),
         ProductionStage(
             name="phase8-videos",
-            description="fan out, resume, verify, and download LTX 2.5 video clips",
+            description="fan out, resume, verify, and download LTX 2.5 720p video clips",
             dependencies=(
                 "phase8-video-prompts",
                 "phase6-keyframes",
@@ -704,6 +707,20 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
             ),
             inputs=(storyboard_keyframes, storyboard_keyframes_dir, video_prompts, shot_timings),
             outputs=(video_clips, video_clips_dir),
+        ),
+        ProductionStage(
+            name="phase8-upscale",
+            description="upscale LTX clips 2x with self-hosted Real-ESRGAN",
+            dependencies=("phase8-videos",),
+            resource="gpu",
+            resource_key="realesrgan",
+            script=Path("scripts/run_phase8_upscale.py"),
+            arguments=(
+                "--clips", str(video_clips),
+                "--output-dir", str(phase8),
+            ),
+            inputs=(video_clips, video_clips_dir),
+            outputs=(upscaled_clips, upscaled_clips_dir),
         ),
     ]
 
