@@ -79,7 +79,7 @@ def test_stale_queue_retry_budget_uses_absolute_deadline() -> None:
     assert "$EffectiveTimeoutSeconds" in text
 
 
-def test_optimized_prewarm_accepts_verified_debug_queue_transport_before_success() -> None:
+def test_optimized_prewarm_defers_runtime_transport_proof_to_real_job() -> None:
     text = PREWARM.read_text(encoding="utf-8")
 
     success_block = text.split("$AutoscalerStateReady = (", maxsplit=2)[-1]
@@ -87,33 +87,20 @@ def test_optimized_prewarm_accepts_verified_debug_queue_transport_before_success
         "# The queue is dedicated to this service.",
         maxsplit=1,
     )[0]
-    assert "$Ready -and" in success_block
-    assert "$TransportReady" in success_block
-    assert "queue transport ready and still empty" in text
-
-    assert "function Test-QueueRuntimeReady" in text
-    assert "function Test-QueueTransportHeartbeat" in text
-    assert 'log contains "received heartbeat"' in text
-    assert 'resource.labels.instance_id = "' in text
-    assert '$Service -in @("whisper", "ideogram4")' in text
+    assert "$Ready" in success_block
+    assert "$TransportReady" not in success_block
+    assert "function Test-QueueTransportHeartbeat" not in text
+    assert 'log contains "received heartbeat"' not in text
+    assert "Assert-QueueTransportLoggingReady" not in text
+    assert "first real job will prove transport" in text
 
     adopt_block = text.split("$AdoptReadyReplica -and", maxsplit=1)[1]
     adopt_block = adopt_block.split(
-        "Optimized prewarm requires '$GroupName' stopped or running",
+        "Optimized prewarm requires '$GroupName' at replicas=0/pending=False",
         maxsplit=1,
     )[0]
-    assert "Test-QueueRuntimeReady" in adopt_block
-    assert "runtime Job Queue transport signal" in adopt_block
-
-
-def test_optimized_prewarm_bounds_ready_without_transport_gpu_time() -> None:
-    text = PREWARM.read_text(encoding="utf-8")
-
-    assert "$ReadyUnattachedTimeoutSeconds = 120" in text
-    assert "$Ready -and -not $TransportReady" in text
-    assert "$ReadyUnattachedSince = Get-Date" in text
-    assert "waiting up to ${ReadyUnattachedTimeoutSeconds}s before failing safely" in text
-    assert "no Job Queue runtime signal was verified" in text
+    assert "Test-QueueRuntimeReady" not in adopt_block
+    assert "queue config verified and still empty" in adopt_block
 
 
 def test_optimized_prewarm_accepts_active_scale_to_zero_group_without_restarting() -> None:
