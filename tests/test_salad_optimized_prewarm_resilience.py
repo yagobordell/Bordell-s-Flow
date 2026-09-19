@@ -114,12 +114,11 @@ def test_optimized_prewarm_accepts_active_scale_to_zero_group_without_restarting
     assert 'Operation "start prewarmed container group"' in text
 
 
-def test_debug_transport_services_fail_fast_on_stale_remote_logging() -> None:
+def test_optimized_prewarm_does_not_depend_on_debug_transport_logs() -> None:
     text = PREWARM.read_text(encoding="utf-8")
 
-    assert "function Assert-QueueTransportLoggingReady" in text
-    assert '$Service -notin @("whisper", "ideogram4")' in text
-    assert 'Get-RemoteEnvironmentValue -Group $Group -Name "SALAD_LOG_LEVEL"' in text
-    assert "requires remote SALAD_LOG_LEVEL=debug" in text
-    assert "Run Salad Prepare for '$Service' before prewarming." in text
-    assert "Assert-QueueTransportLoggingReady -Group $Group" in text
+    assert "function Assert-QueueTransportLoggingReady" not in text
+    assert "function Test-QueueTransportHeartbeat" not in text
+    assert 'log contains "received heartbeat"' not in text
+    assert "requires remote SALAD_LOG_LEVEL=debug" not in text
+    assert "first real job will prove transport" in text
