@@ -14,15 +14,17 @@ def test_optimized_prewarm_verifies_stale_queue_summary_by_job_enumeration() -> 
     assert "prewarm adopted one already started+ready shared replica" in text
 
 
-def test_optimized_prewarm_rechecks_stale_queue_only_at_safe_boundaries() -> None:
+def test_optimized_prewarm_rechecks_summary_growth_without_trusting_stale_count() -> None:
     text = PREWARM.read_text(encoding="utf-8")
 
     assert "$VerifiedInitialQueueLength" in text
-    assert "observed new queued work after the pre-allocation empty-queue " in text
-    assert "verification; refusing to continue while the worker is bootstrapping." in text
-    assert "observed queue growth beyond the already-verified stale summary" in text
-    assert "refusing GPU allocation while queue state is ambiguous" in text
-    assert "enumerable pending/running job(s)" in text
+    assert "function Resolve-QueueSummaryGrowth" in text
+    assert "$ReportedQueueLength -gt $VerifiedInitialQueueLength" in text
+    assert "Verifying enumerable jobs before treating the growth as new active work." in text
+    assert "refusing to continue while queue state is ambiguous" in text
+    assert "enumerable pending/running job(s); refusing to continue" in text
+    assert "Rebasing the verified stale summary." in text
+    assert "-VerificationSeconds 60" in text
     assert "-VerificationSeconds 180" in text
 
 
@@ -45,4 +47,19 @@ def test_optimized_prewarm_does_not_paginate_stale_history_on_every_poll() -> No
         "# The queue is dedicated to this service.", maxsplit=1
     )
     assert "Assert-QueueLogicallyEmpty -Queue $Queue" not in poll_prefix
+    assert "if ($ReportedQueueLength -gt $VerifiedInitialQueueLength)" in poll_prefix
+    assert "Resolve-QueueSummaryGrowth" in poll_prefix
     assert "$null = Assert-QueueLogicallyEmpty -Queue $Queue" in ready_suffix
+
+
+
+def test_optimized_prewarm_rebases_only_verified_stale_summary_growth() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+
+    helper = text.split("function Resolve-QueueSummaryGrowth", maxsplit=1)[1].split(
+        "function Get-Instances", maxsplit=1
+    )[0]
+    assert "Get-QueueJobSnapshot" in helper
+    assert "if (-not [bool]$Snapshot.complete)" in helper
+    assert "$ActiveJobs.Count -gt 0" in helper
+    assert "return $ReportedLength" in helper
