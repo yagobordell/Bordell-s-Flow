@@ -16,7 +16,7 @@ from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.ports import LocalArtifact
 
 LTX_VIDEO_TASK = "video.ltx25.generate"
-LTX_GENERATION_PROFILE = "ltx25-distilled-a95ab856-fp8cpu-gridpad-v2"
+LTX_GENERATION_PROFILE = "ltx25-distilled-a95ab856-fp8cpu-gridpad-v3"
 _CANONICAL_LANDSCAPE_SIZE = (1280, 720)
 _LTX_TWO_STAGE_SPATIAL_GRID = 64
 
@@ -139,30 +139,52 @@ def _prepare_grid_keyframe(
     return destination
 
 
+def _crop_video_chunk_to_requested(
+    chunk: Any,
+    *,
+    requested_width: int,
+    requested_height: int,
+) -> Any:
+    """Center-crop one upstream decoded [F, H, W, C] video chunk."""
+
+    shape = getattr(chunk, "shape", None)
+    if shape is None or len(shape) < 4:
+        raise RuntimeError(
+            "LTX decoded video chunk does not expose [F, H, W, C] dimensions"
+        )
+    source_height = int(shape[-3])
+    source_width = int(shape[-2])
+    if source_width < requested_width or source_height < requested_height:
+        raise RuntimeError(
+            "LTX decoded video chunk is smaller than the requested output dimensions"
+        )
+    left = (source_width - requested_width) // 2
+    top = (source_height - requested_height) // 2
+    return chunk[
+        ...,
+        top : top + requested_height,
+        left : left + requested_width,
+        :,
+    ]
+
+
 def _crop_video_to_requested(
     video: Any,
     *,
     requested_width: int,
     requested_height: int,
 ) -> Any:
-    """Center-crop decoded LTX pixels back to the exact public 1280x720 contract."""
+    """Stream-center-crop upstream LTX [F, H, W, C] decoded chunks."""
 
-    shape = getattr(video, "shape", None)
-    if shape is None or len(shape) < 2:
-        raise RuntimeError("LTX decoded video does not expose spatial dimensions")
-    source_height = int(shape[-2])
-    source_width = int(shape[-1])
-    if source_width < requested_width or source_height < requested_height:
-        raise RuntimeError(
-            "LTX decoded video is smaller than the requested output dimensions"
-        )
-    left = (source_width - requested_width) // 2
-    top = (source_height - requested_height) // 2
-    return video[
-        ...,
-        top : top + requested_height,
-        left : left + requested_width,
-    ]
+    def cropped_chunks():
+        for chunk in video:
+            yield _crop_video_chunk_to_requested(
+                chunk,
+                requested_width=requested_width,
+                requested_height=requested_height,
+            )
+
+    return cropped_chunks()
 
 
 def ltx_num_frames_for_duration(duration_seconds: float, *, fps: int = 24) -> int:
