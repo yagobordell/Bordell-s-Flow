@@ -20,6 +20,9 @@ def test_salad_services_use_named_gpu_classes() -> None:
     assert document["services"]["whisper"]["resources"]["gpu_class_names"] == [
         "RTX 3090 (24 GB)"
     ]
+    assert document["services"]["realesrgan"]["resources"]["gpu_class_names"] == [
+        "RTX 3090 (24 GB)"
+    ]
     for service in document["services"].values():
         assert "gpu_classes" not in service["resources"]
 
