@@ -76,6 +76,7 @@ def _load_services(path: Path) -> dict[str, Any]:
         "ideogram4",
         "flux2_klein",
         "ltx25",
+        "realesrgan",
     }
     services = document.get("services")
     if not isinstance(services, dict):
@@ -167,24 +168,29 @@ def _check_postgres() -> str:
     return "postgres=ok"
 
 
-def _active_resume_transport_ids(output_dir: Path) -> set[str]:
-    manifest_path = output_dir / "phase8" / "video_generation_manifest.json"
+def _active_resume_transport_ids(
+    output_dir: Path,
+    *,
+    manifest_name: str = "video_generation_manifest.json",
+    label: str = "Phase 8",
+) -> set[str]:
+    manifest_path = output_dir / "phase8" / manifest_name
     if not manifest_path.is_file():
         return set()
     try:
         document = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(
-            f"Phase 8 resume manifest is unreadable: {manifest_path}"
+            f"{label} resume manifest is unreadable: {manifest_path}"
         ) from exc
     jobs = document.get("jobs")
     if not isinstance(jobs, list):
-        raise RuntimeError(f"Phase 8 resume manifest has invalid jobs: {manifest_path}")
+        raise RuntimeError(f"{label} resume manifest has invalid jobs: {manifest_path}")
 
     allowed: set[str] = set()
     for job in jobs:
         if not isinstance(job, dict):
-            raise RuntimeError(f"Phase 8 resume manifest has invalid job entry: {manifest_path}")
+            raise RuntimeError(f"{label} resume manifest has invalid job entry: {manifest_path}")
         transport_id = job.get("transport_job_id")
         status = job.get("transport_status")
         if (
@@ -334,7 +340,14 @@ def _check_salad_queues(
         "https://api.salad.com/api/public/organizations/"
         f"{organization}/projects/{project}"
     )
-    allowed_ltx = _active_resume_transport_ids(output_dir)
+    allowed_resume = {
+        "ltx25": _active_resume_transport_ids(output_dir),
+        "realesrgan": _active_resume_transport_ids(
+            output_dir,
+            manifest_name="video_upscale_manifest.json",
+            label="Phase 8 Real-ESRGAN",
+        ),
+    }
     result: dict[str, Any] = {}
 
     for service_name, service in document["services"].items():
@@ -389,7 +402,7 @@ def _check_salad_queues(
             if str(job.get("id", "")).strip()
         }
 
-        allowed = allowed_ltx if service_name == "ltx25" else set()
+        allowed = allowed_resume.get(service_name, set())
         unexpected = sorted(active_ids.difference(allowed))
         if unexpected:
             rendered = ", ".join(unexpected[:10])
