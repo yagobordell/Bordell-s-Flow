@@ -72,7 +72,10 @@ def test_queue_binding_diagnostic_shows_recent_queue_job_history() -> None:
     script = DIAGNOSTIC_SCRIPT.read_text(encoding="utf-8")
 
     assert "=== Recent queue jobs ===" in script
-    assert '"$QueueUrl/jobs?page=1&page_size=10"' in script
+    assert '"$QueueUrl/jobs?page=1&page_size=25"' in script
     assert "Select-Object id, status, create_time, update_time" in script
-    assert "$RecentJobs = @(@($Jobs.items) | Select-Object -First 10)" in script
+    assert "$RecentJobs = @(@($Jobs.items) | Select-Object -First 25)" in script
     assert "$SucceededJobCount" in script
+    assert "=== Failed queue job details ===" in script
+    assert "job.events=" in script
+    assert "job.output=" in script
