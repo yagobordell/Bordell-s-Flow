@@ -312,6 +312,7 @@ model-specific Salad workers
   Ideogram 4    -> RTX 4090 shared Phase 4/6
   FLUX.2 Klein  -> safety fallback
   LTX-2.5       -> RTX 5090
+  Real-ESRGAN x2 -> provisional RTX 3090, scale-to-zero
           |
           v
 persisted data/output
