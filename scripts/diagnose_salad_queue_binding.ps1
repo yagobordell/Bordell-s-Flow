@@ -185,6 +185,7 @@ Write-Host ("queue.container_groups={0}" -f ($AssociatedGroups -join ","))
 Write-Host ("binding.attached={0}" -f $Attached)
 
 Write-Host "=== Recent queue jobs ===" -ForegroundColor Cyan
+$SucceededJobCount = 0
 try {
     $Jobs = Invoke-RestMethod `
         -Method Get `
@@ -192,6 +193,9 @@ try {
         -Headers $Headers `
         -TimeoutSec 30
     $RecentJobs = @(@($Jobs.items) | Select-Object -First 10)
+    $SucceededJobCount = @(
+        $RecentJobs | Where-Object { [string]$_.status -eq "succeeded" }
+    ).Count
     if ($RecentJobs.Count -eq 0) {
         Write-Host "queue.jobs=<none>"
     }
@@ -214,8 +218,11 @@ elseif ($ConnectionQueue -ne $QueueName) {
 elseif ($Attached) {
     Write-Host "DIAGNOSIS=association_visible" -ForegroundColor Green
 }
+elseif ($SucceededJobCount -gt 0) {
+    Write-Host "DIAGNOSIS=queue_listing_non_authoritative_routing_proven" -ForegroundColor Green
+}
 else {
-    Write-Host "DIAGNOSIS=control_plane_association_mismatch" -ForegroundColor Yellow
+    Write-Host "DIAGNOSIS=queue_listing_absent_runtime_unproven" -ForegroundColor Yellow
 }
 
 Write-Host "=== Recent container logs relevant to queue transport ===" -ForegroundColor Cyan
