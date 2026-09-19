@@ -145,6 +145,11 @@ if ($null -ne $Stack) {
     }
 }
 
+$ServiceAutostartProperty = $Definition.PSObject.Properties["autostart_policy"]
+if ($null -ne $ServiceAutostartProperty) {
+    $AutostartPolicy = [bool]$ServiceAutostartProperty.Value
+}
+
 $OrganizationApiBase = "https://api.salad.com/api/public/organizations/$Organization"
 $GpuClassesBase = "$OrganizationApiBase/gpu-classes"
 $ApiBase = "$OrganizationApiBase/projects/$Project"
@@ -1004,11 +1009,20 @@ switch ($Action) {
     "Prepare" {
         Ensure-Queue -Headers $Headers
         $ExistingGroup = Try-Get-Group -Headers $Headers
-        if ($null -ne $ExistingGroup -and (Get-GroupStatus -Group $ExistingGroup) -ne "stopped") {
-            throw "Container group must be stopped before Prepare. Run -Action Stop first."
-        }
-        if ($null -ne $ExistingGroup -and [int]$ExistingGroup.replicas -ne 0) {
-            throw "Container group must have replicas=0 before Prepare."
+        if ($null -ne $ExistingGroup) {
+            $ExistingStatus = Get-GroupStatus -Group $ExistingGroup
+            if ($ExistingStatus -notin @("stopped", "running")) {
+                throw (
+                    "Container group must be stopped or running at zero replicas before Prepare. " +
+                    "Current status=$ExistingStatus."
+                )
+            }
+            if ([int]$ExistingGroup.replicas -ne 0) {
+                throw "Container group must have replicas=0 before Prepare."
+            }
+            if ($Recreate -and $ExistingStatus -ne "stopped") {
+                throw "Container group must be stopped before -Recreate."
+            }
         }
         $ResolvedPinnedImage = ""
         if (-not [string]::IsNullOrWhiteSpace($PinnedImage)) {
@@ -1085,7 +1099,7 @@ switch ($Action) {
         $WorkerEnvironment = $null
         $GpuClassIds = $null
 
-        Write-Host "$Service worker image/config prepared; group remains stopped at zero replicas." `
+        Write-Host "$Service worker image/config prepared; group remains at zero replicas." `
             -ForegroundColor Green
         Show-Status -Headers $Headers
     }
