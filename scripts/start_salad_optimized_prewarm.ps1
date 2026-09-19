@@ -11,6 +11,8 @@ param(
 
     [switch]$HoldReadyReplica,
 
+    [switch]$AdoptReadyReplica,
+
     [switch]$NonInteractive
 )
 
@@ -618,14 +620,70 @@ $VerifiedInitialQueueLength = [int]$Queue.current_queue_length
 
 $Group = Get-Group
 $Status = [string]$Group.current_state.status
+if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
+    throw "Container group '$GroupName' is configured for an unexpected queue."
+}
+
+if (
+    $AdoptReadyReplica -and
+    $Status -eq "running" -and
+    -not [bool]$Group.pending_change -and
+    [int]$Group.replicas -eq 1
+) {
+    $HeldAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $HeldAutoscaler) {
+        throw (
+            "Optimized prewarm cannot adopt a shared ready replica because Salad did not expose " +
+            "queue_autoscaler on container group '$GroupName'."
+        )
+    }
+    if (
+        [int]$HeldAutoscaler.min_replicas -ne 1 -or
+        -not (Test-RemoteAutoscalerMatchesManifestExceptMinReplicas -Group $Group)
+    ) {
+        throw (
+            "Optimized prewarm refuses to adopt a running replica unless it matches the " +
+            "intentional min_replicas=1 shared-worker hold."
+        )
+    }
+
+    $HeldInstances = @(Get-Instances)
+    if ($HeldInstances.Count -ne 1) {
+        throw (
+            "Optimized prewarm expected exactly one instance while adopting the shared " +
+            "ready replica; found $($HeldInstances.Count)."
+        )
+    }
+    $HeldInstance = $HeldInstances[0]
+    $HeldReady = (
+        $HeldInstance.PSObject.Properties.Name -contains "ready" -and
+        [bool]$HeldInstance.ready
+    )
+    $HeldStarted = (
+        $HeldInstance.PSObject.Properties.Name -contains "started" -and
+        [bool]$HeldInstance.started
+    )
+    if (-not $HeldStarted -or -not $HeldReady) {
+        throw (
+            "Optimized prewarm found the shared replica running but not started+ready; " +
+            "refusing to submit new queue work."
+        )
+    }
+
+    $Queue = Get-Queue
+    $null = Assert-QueueLogicallyEmpty -Queue $Queue -VerificationSeconds 180
+    Write-Host (
+        "$Service prewarm adopted one already started+ready shared replica with " +
+        "min_replicas=1 pinned; queue still empty."
+    ) -ForegroundColor Green
+    exit 0
+}
+
 if ($Status -ne "stopped" -or [bool]$Group.pending_change -or [int]$Group.replicas -ne 0) {
     throw (
         "Optimized prewarm requires '$GroupName' stopped at replicas=0/pending=False; " +
         "status=$Status replicas=$([int]$Group.replicas) pending=$([bool]$Group.pending_change)."
     )
-}
-if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
-    throw "Container group '$GroupName' is configured for an unexpected queue."
 }
 $RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
 $AutoscalerObservable = $null -ne $RemoteAutoscaler
