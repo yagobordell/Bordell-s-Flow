@@ -52,3 +52,14 @@ def test_phase8_smoke_exposes_safe_stage_markers_and_pending_guard() -> None:
     assert '"--pending-timeout-seconds"' in text
     assert "verify queue attachment/routing" in text
     assert '_event("SMOKE_START", shot_id=args.shot_id, queue=args.queue_name)' in text
+
+
+
+def test_phase8_smoke_defaults_to_canonical_landscape_contract() -> None:
+    text = PHASE8_SMOKE.read_text(encoding="utf-8")
+
+    assert 'parser.add_argument("--width", type=int, default=1280)' in text
+    assert 'parser.add_argument("--height", type=int, default=720)' in text
+    assert 'parser.add_argument("--fps", type=int, default=24)' in text
+    assert "MP4 dimensions do not match the requested contract" in text
+    assert "MP4 fps" in text
