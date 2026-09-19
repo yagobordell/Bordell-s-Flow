@@ -218,3 +218,11 @@ def test_worker_create_retries_transient_name_conflict_after_delete() -> None:
     assert "Try-Get-Group -Headers $Headers" in script
     assert "Continuing with normal post-create validation." in script
     assert "refusing unbounded recreate retries" in script
+
+
+
+def test_whisper_uses_fresh_versioned_group_after_queue_rebind_failure() -> None:
+    services = _document()["services"]
+
+    assert services["whisper"]["group_name"] == "ai-video-factory-whisper-worker-v2"
+    assert services["whisper"]["queue_name"] == "ai-video-factory-whisper-jobs"
