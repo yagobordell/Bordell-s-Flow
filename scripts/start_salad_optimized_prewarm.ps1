@@ -686,7 +686,7 @@ function Test-QueueRuntimeReady {
     if (Test-QueueAttachment -Queue $Queue) {
         return $true
     }
-    if ($Service -eq "whisper") {
+    if ($Service -in @("whisper", "ideogram4")) {
         return Test-QueueTransportHeartbeat -InstanceId $InstanceId
     }
     return $false
