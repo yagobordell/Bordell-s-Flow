@@ -89,6 +89,9 @@ def test_storyboard_instructions_require_action_visibility_and_visual_progressio
     assert "evidencia visual concreta o una metáfora física" in STORYBOARD_FRAME_INSTRUCTIONS
     assert "no recibe las imágenes de referencia" in STORYBOARD_FRAME_INSTRUCTIONS
     assert "solo elementos de tipo objeto" in STORYBOARD_FRAME_INSTRUCTIONS
+    assert "horizontal 16:9" in STORYBOARD_FRAME_INSTRUCTIONS
+    assert "landscape 16:9" in STORYBOARD_FRAME_INSTRUCTIONS
+    assert "documental vertical" not in STORYBOARD_FRAME_INSTRUCTIONS
 
 
 def test_storyboard_workflow_is_serial_and_carries_previous_frame() -> None:
@@ -104,7 +107,7 @@ def test_storyboard_workflow_is_serial_and_carries_previous_frame() -> None:
             _references(),
             frame_bot=bot,
             visual_style="cinematic documentary",
-            aspect_ratio="9:16",
+            aspect_ratio="16:9",
         )
     )
 
@@ -138,7 +141,7 @@ def test_storyboard_workflow_resets_previous_frame_on_new_scene() -> None:
             _references(),
             frame_bot=bot,
             visual_style="cinematic documentary",
-            aspect_ratio="9:16",
+            aspect_ratio="16:9",
         )
     )
 
@@ -158,7 +161,7 @@ def test_storyboard_bot_receives_duration_and_only_relevant_references() -> None
             _references(),
             frame_bot=bot,
             visual_style="cinematic documentary",
-            aspect_ratio="9:16",
+            aspect_ratio="16:9",
         )
     )
 
@@ -192,7 +195,7 @@ def test_storyboard_workflow_rejects_unknown_visual_entity() -> None:
                 _references(),
                 frame_bot=bot,
                 visual_style="cinematic documentary",
-                aspect_ratio="9:16",
+                aspect_ratio="16:9",
             )
         )
 
@@ -215,7 +218,7 @@ def test_storyboard_workflow_rejects_noncontiguous_timings() -> None:
                 _references(),
                 frame_bot=bot,
                 visual_style="cinematic documentary",
-                aspect_ratio="9:16",
+                aspect_ratio="16:9",
             )
         )
 
