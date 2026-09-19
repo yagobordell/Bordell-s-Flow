@@ -76,7 +76,7 @@ def test_optimized_prewarm_applies_bounded_node_selection_to_every_worker() -> N
     assert "$ContainerStarted -and" in text
     assert "$Ready" in text
     assert "prewarm complete: exactly one started ready replica" in text
-    assert "queue transport ready and still empty" in text
+    assert "queue attached and still empty" in text
 
 
 def test_ideogram_prewarm_has_specific_finite_runtime_and_node_budget() -> None:
@@ -97,6 +97,7 @@ def test_manifest_versions_and_download_profiles_are_explicit() -> None:
     assert services["breeze_tts2"]["image"].endswith("breeze-tts2-fast-all-v2")
     assert services["whisper"]["image"].endswith("whisper-large-v3-turbo-v2")
     assert services["whisper"]["environment"]["SALAD_LOG_LEVEL"] == "debug"
+    assert services["whisper"]["autostart_policy"] is True
     assert services["ltx25"]["image"].endswith("ltx25-torch211-cu128-natten0216-xet-v3")
 
     assert services["ideogram4"]["autoscaler"]["max_replicas"] == 1
@@ -294,7 +295,7 @@ def test_shared_ideogram_adoption_precedes_cold_state_requirement() -> None:
 
     adopt = text.index("if (\n    $AdoptReadyReplica -and")
     cold_requirement = text.index(
-        "Optimized prewarm requires '$GroupName' stopped at replicas=0/pending=False"
+        "Optimized prewarm requires '$GroupName' stopped or running at replicas=0/pending=False"
     )
     assert adopt < cold_requirement
 
