@@ -22,8 +22,17 @@ logger = logging.getLogger(__name__)
 class InferenceJobTimeoutError(TimeoutError):
     """A queued inference job exceeded a bounded pending or running budget."""
 
-    def __init__(self, message: str, *, phase: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        phase: str,
+        job_id: str,
+        transport_job_id: str,
+    ) -> None:
         self.phase = phase
+        self.job_id = job_id
+        self.transport_job_id = transport_job_id
         super().__init__(message)
 
 
@@ -251,10 +260,25 @@ class InferenceJobExecutor:
 
         if last_poll_error is not None:
             message += f"; last queue polling error: {last_poll_error}"
-            raise InferenceJobTimeoutError(message, phase=phase) from last_poll_error
+            raise InferenceJobTimeoutError(
+                message,
+                phase=phase,
+                job_id=request.job_id,
+                transport_job_id=transport_job_id,
+            ) from last_poll_error
         if cancellation_error is not None:
-            raise InferenceJobTimeoutError(message, phase=phase) from cancellation_error
-        raise InferenceJobTimeoutError(message, phase=phase)
+            raise InferenceJobTimeoutError(
+                message,
+                phase=phase,
+                job_id=request.job_id,
+                transport_job_id=transport_job_id,
+            ) from cancellation_error
+        raise InferenceJobTimeoutError(
+            message,
+            phase=phase,
+            job_id=request.job_id,
+            transport_job_id=transport_job_id,
+        )
 
     def download_output(self, response: InferenceJobResponse, destination: Path) -> None:
         stored = self._storage.download(response.output.key, destination)
