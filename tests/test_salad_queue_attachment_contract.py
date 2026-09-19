@@ -12,7 +12,7 @@ def test_queue_attachment_verifies_without_enabling_networking() -> None:
     assert "networking = New-Networking" not in script
 
 
-def test_stopped_group_can_repair_autoscaler_in_place() -> None:
+def test_zero_replica_group_can_repair_autoscaler_in_place() -> None:
     script = REPAIR_SCRIPT.read_text(encoding="utf-8")
 
     assert "[switch]$AllowMissing" in script
@@ -21,12 +21,14 @@ def test_stopped_group_can_repair_autoscaler_in_place() -> None:
     assert "running jobs to finish before changing the container group." in script
     assert "Terminal queue history will" in script
     assert "function Repair-GroupConfiguration" in script
-    assert "Repairing Job Queue autoscaling in place" in script
-    assert "queue_connection = New-QueueConnection" in script
+    assert "Repairing Job Queue autoscaler in place" in script
+    assert "queue_connection = New-QueueConnection" not in script
     assert "queue_autoscaler = New-QueueAutoscaler" in script
     assert "-Method Patch" in script
     assert "-Method Delete" not in script
-    assert "Runtime attachment will be validated after Start/Smoke." in script
+    assert "missing or incorrect immutable queue_connection" in script
+    assert "does not support changing queue_connection by PATCH" in script
+    assert "A real queued job must not be submitted until the" in script
 
 
 
