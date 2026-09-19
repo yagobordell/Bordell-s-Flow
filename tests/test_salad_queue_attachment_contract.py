@@ -63,3 +63,11 @@ def test_queue_binding_diagnostic_filters_queue_transport_logs() -> None:
     assert "SALAD_API_KEY" in script
     assert 'Write-Host $Headers["Salad-Api-Key"]' not in script
 
+
+
+def test_queue_binding_diagnostic_shows_recent_queue_job_history() -> None:
+    script = DIAGNOSTIC_SCRIPT.read_text(encoding="utf-8")
+
+    assert "=== Recent queue jobs ===" in script
+    assert '"$QueueUrl/jobs?page=1&page_size=10"' in script
+    assert "Select-Object id, status, create_time, update_time" in script
