@@ -727,9 +727,15 @@ if (
 
     $Queue = Get-Queue
     $null = Assert-QueueLogicallyEmpty -Queue $Queue -VerificationSeconds 180
+    if (-not (Test-QueueAttachment -Queue $Queue)) {
+        throw (
+            "Optimized prewarm refuses to adopt the ready replica because Salad has not " +
+            "attached container group '$GroupName' to queue '$QueueName'."
+        )
+    }
     Write-Host (
         "$Service prewarm adopted one already started+ready shared replica with " +
-        "min_replicas=1 pinned; queue still empty."
+        "min_replicas=1 pinned; queue attached and still empty."
     ) -ForegroundColor Green
     exit 0
 }
@@ -1013,7 +1019,8 @@ while ((Get-Date) -lt $Deadline) {
         $AutoscalerStateReady -and
         $ObservedInstance -and
         $ContainerStarted -and
-        $Ready
+        $Ready -and
+        $Attached
     ) {
         # The queue is dedicated to this service. Avoid repeatedly paginating historical
         # jobs while the image/model boots; re-establish the invariant once, immediately
@@ -1040,7 +1047,8 @@ while ((Get-Date) -lt $Deadline) {
         }
         $HoldSuffix = if ($HoldReadyReplica) { " with min_replicas=1 pinned" } else { "" }
         Write-Host (
-            "$Service prewarm complete: exactly one started ready replica$HoldSuffix, queue still empty."
+            "$Service prewarm complete: exactly one started ready replica$HoldSuffix, " +
+            "queue attached and still empty."
         ) -ForegroundColor Green
         exit 0
     }
