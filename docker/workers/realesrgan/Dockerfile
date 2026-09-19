@@ -44,9 +44,11 @@ RUN python3 -m pip install \
         'realesrgan==0.3.0' \
     && python3 - <<'PY'
 from pathlib import Path
-import basicsr
-root = Path(basicsr.__file__).parent
-path = root / "data" / "degradations.py"
+import site
+candidates = [Path(root) / "basicsr" / "data" / "degradations.py" for root in site.getsitepackages()]
+path = next((candidate for candidate in candidates if candidate.is_file()), None)
+if path is None:
+    raise SystemExit("BasicSR degradations.py not found")
 text = path.read_text()
 text = text.replace(
     "from torchvision.transforms.functional_tensor import rgb_to_grayscale",
