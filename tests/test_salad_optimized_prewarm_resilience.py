@@ -98,3 +98,13 @@ def test_optimized_prewarm_requires_runtime_queue_attachment_before_success() ->
     )[0]
     assert "Test-QueueAttachment -Queue $Queue" in adopt_block
     assert "refuses to adopt the ready replica" in adopt_block
+
+
+def test_optimized_prewarm_bounds_ready_but_unattached_gpu_time() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+
+    assert "$ReadyUnattachedTimeoutSeconds = 120" in text
+    assert "$Ready -and -not $Attached" in text
+    assert "$ReadyUnattachedSince = Get-Date" in text
+    assert "waiting up to ${ReadyUnattachedTimeoutSeconds}s before failing safely" in text
+    assert "Salad did not attach container group" in text
