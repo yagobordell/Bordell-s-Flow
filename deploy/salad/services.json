@@ -192,7 +192,7 @@
         "HF_HUB_DOWNLOAD_TIMEOUT": "120",
         "HF_HUB_ETAG_TIMEOUT": "30",
         "SALAD_QUEUE_ENABLED": "true",
-        "SALAD_LOG_LEVEL": "info"
+        "SALAD_LOG_LEVEL": "debug"
       },
       "required_environment": [
         "HF_TOKEN"
