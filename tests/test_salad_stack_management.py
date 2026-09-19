@@ -261,6 +261,9 @@ def test_whisper_uses_manual_prewarm_lifecycle_consistently() -> None:
     assert whisper["autostart_policy"] is False
     assert whisper["group_name"] == "ai-video-factory-whisper-worker-v4"
     assert whisper["queue_name"] == "ai-video-factory-whisper-jobs-v2"
-    assert '$ServiceAutostartProperty = $Definition.PSObject.Properties["autostart_policy"]' in script
+    assert (
+        '$ServiceAutostartProperty = $Definition.PSObject.Properties["autostart_policy"]'
+        in script
+    )
     assert "$AutostartPolicy = [bool]$ServiceAutostartProperty.Value" in script
 
