@@ -16,6 +16,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$VideoFactory = Join-Path $PSScriptRoot "run_video_factory.ps1"
 $ComposePath = $ComposeFile
 if (-not [IO.Path]::IsPathRooted($ComposePath)) {
     $ComposePath = Join-Path $RepoRoot $ComposePath
@@ -72,7 +73,9 @@ if (-not (Test-Path -LiteralPath $ComposePath -PathType Leaf)) {
 }
 
 Set-Location $RepoRoot
-Assert-Docker
+if ($Action -ne "Production") {
+    Assert-Docker
+}
 
 switch ($Action) {
     "Validate" {
@@ -115,21 +118,15 @@ switch ($Action) {
     }
 
     "Production" {
-        $ContainerScript = Resolve-ContainerScriptPath -Path $ScriptFile
-        $Arguments = @(
-            "run",
-            "--rm",
-            "orchestrator",
-            "python",
-            "scripts/run_production.py",
-            $ContainerScript
-        )
-        foreach ($Stage in $ForceStage) {
-            $Arguments += @("--force-stage", $Stage)
+        $Arguments = @{
+            ScriptFile = $ScriptFile
+            ForceStage = $ForceStage
+            NonInteractive = $true
         }
-
-        Invoke-Compose -Arguments $Arguments
-        Invoke-Compose -Arguments @("run", "--rm", "renderer")
-        Write-Host "Full local production pipeline completed." -ForegroundColor Green
+        & $VideoFactory @Arguments
+        if (-not $?) {
+            throw "End-to-end Video Factory runner failed."
+        }
+        Write-Host "Full host-orchestrated production pipeline completed." -ForegroundColor Green
     }
 }

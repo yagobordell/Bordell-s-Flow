@@ -348,6 +348,8 @@ if ($Action -eq "Stop") {
     [array]::Reverse($ExecutionOrder)
 }
 
+$StopFailures = @()
+
 foreach ($Name in $ExecutionOrder) {
     Write-Host "=== Salad $Action : $Name ===" -ForegroundColor Cyan
 
@@ -364,13 +366,55 @@ foreach ($Name in $ExecutionOrder) {
             Invoke-WorkerAction -Name $Name -WorkerAction "Status"
         }
         "Stop" {
-            Invoke-WorkerAction -Name $Name -WorkerAction "Stop"
-            Invoke-ZeroReplicaGuard -Name $Name
+            $StopError = $null
+            try {
+                Invoke-WorkerAction -Name $Name -WorkerAction "Stop"
+            }
+            catch {
+                $StopError = $_
+                Write-Warning (
+                    "Salad Stop request failed for '$Name'; the zero-replica guard will still " +
+                    "verify the terminal state. Error: $($_.Exception.Message)"
+                )
+            }
+
+            try {
+                Invoke-ZeroReplicaGuard -Name $Name
+                if ($null -ne $StopError) {
+                    Write-Warning (
+                        "Salad Stop request for '$Name' reported an error, but the zero-replica " +
+                        "guard confirmed stopped/replicas=0; treating cleanup as successful."
+                    )
+                }
+            }
+            catch {
+                $StopFailures += $_
+                if ($null -ne $StopError) {
+                    Write-Warning (
+                        "Salad Stop and zero-replica guard both failed for '$Name'. " +
+                        "Stop error: $($StopError.Exception.Message). " +
+                        "Guard error: $($_.Exception.Message)"
+                    )
+                }
+                else {
+                    Write-Warning (
+                        "Salad zero-replica guard failed for '$Name': $($_.Exception.Message)"
+                    )
+                }
+            }
         }
         default {
             throw "Unsupported Salad stack action '$Action'."
         }
     }
+}
+
+if ($Action -eq "Stop" -and $StopFailures.Count -gt 0) {
+    throw (
+        "Salad stack Stop could not verify terminal zero-replica state for " +
+        "$($StopFailures.Count) service(s). First error: " +
+        "$($StopFailures[0].Exception.Message)"
+    )
 }
 
 Write-Host (

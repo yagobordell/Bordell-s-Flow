@@ -11,6 +11,8 @@ param(
 
     [switch]$HoldReadyReplica,
 
+    [switch]$AdoptReadyReplica,
+
     [switch]$NonInteractive
 )
 
@@ -160,12 +162,158 @@ function Get-SaladApiKey {
     return $Value.Trim()
 }
 
+function Get-HttpStatusCode {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    $Response = $ErrorRecord.Exception.Response
+    if ($null -eq $Response) {
+        return $null
+    }
+    try {
+        return [int]$Response.StatusCode
+    }
+    catch {
+        return $null
+    }
+}
+
+function Test-TransientSaladReadFailure {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    $Exception = $ErrorRecord.Exception
+    if (
+        $Exception -is [System.Net.WebException] -and
+        $Exception.Status -eq [System.Net.WebExceptionStatus]::Timeout
+    ) {
+        return $true
+    }
+    if ($Exception -is [System.TimeoutException]) {
+        return $true
+    }
+    if (
+        [string]$Exception.Message -match (
+            '(?i)timed out|timeout|upstream connect error|disconnect/reset|' +
+            'remote connection failure|server unavailable|gateway timeout'
+        )
+    ) {
+        return $true
+    }
+
+    $StatusCode = Get-HttpStatusCode -ErrorRecord $ErrorRecord
+    return (
+        $StatusCode -eq 408 -or
+        $StatusCode -eq 429 -or
+        ($null -ne $StatusCode -and $StatusCode -ge 500 -and $StatusCode -le 599)
+    )
+}
+
+function Invoke-SaladRead {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$Operation,
+        [ValidateRange(1, 60)][int]$TimeoutSeconds = 20,
+        [ValidateRange(1, 10)][int]$MaxAttempts = 4,
+        [datetime]$Deadline = [datetime]::MaxValue
+    )
+
+    for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
+        $EffectiveTimeoutSeconds = $TimeoutSeconds
+        if ($Deadline -ne [datetime]::MaxValue) {
+            $SecondsRemaining = [Math]::Ceiling(($Deadline - (Get-Date)).TotalSeconds)
+            if ($SecondsRemaining -le 0) {
+                throw "Salad control-plane read '$Operation' exceeded its deadline."
+            }
+            $EffectiveTimeoutSeconds = [int][Math]::Max(
+                1,
+                [Math]::Min($TimeoutSeconds, $SecondsRemaining)
+            )
+        }
+
+        try {
+            return Invoke-RestMethod `
+                -Uri $Uri `
+                -Headers $Headers `
+                -TimeoutSec $EffectiveTimeoutSeconds
+        }
+        catch {
+            $Transient = Test-TransientSaladReadFailure -ErrorRecord $_
+            if (-not $Transient -or $Attempt -ge $MaxAttempts) {
+                throw
+            }
+
+            $DelaySeconds = [Math]::Min(10, 2 * $Attempt)
+            if ($Deadline -ne [datetime]::MaxValue) {
+                $SecondsRemaining = [Math]::Floor(($Deadline - (Get-Date)).TotalSeconds)
+                if ($SecondsRemaining -le 0) {
+                    throw "Salad control-plane read '$Operation' exceeded its deadline."
+                }
+                $DelaySeconds = [int][Math]::Min($DelaySeconds, $SecondsRemaining)
+            }
+            Write-Warning (
+                "$Service Salad control-plane read '$Operation' failed transiently " +
+                "(attempt $Attempt/$MaxAttempts): $($_.Exception.Message). " +
+                "Retrying in ${DelaySeconds}s without reallocating the worker."
+            )
+            if ($DelaySeconds -gt 0) {
+                Start-Sleep -Seconds $DelaySeconds
+            }
+        }
+    }
+
+    throw "Unreachable Salad read retry state for '$Operation'."
+}
+
+function Invoke-SaladMutation {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$Operation,
+        [Parameter(Mandatory)][string]$Method,
+        [string]$ContentType = "",
+        [string]$Body = "",
+        [ValidateRange(1, 120)][int]$TimeoutSeconds = 60,
+        [ValidateRange(1, 10)][int]$MaxAttempts = 6
+    )
+
+    for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
+        try {
+            $Arguments = @{
+                Method = $Method
+                Uri = $Uri
+                Headers = $Headers
+                TimeoutSec = $TimeoutSeconds
+            }
+            if (-not [string]::IsNullOrWhiteSpace($ContentType)) {
+                $Arguments["ContentType"] = $ContentType
+            }
+            if (-not [string]::IsNullOrWhiteSpace($Body)) {
+                $Arguments["Body"] = $Body
+            }
+            return Invoke-RestMethod @Arguments
+        }
+        catch {
+            $Transient = Test-TransientSaladReadFailure -ErrorRecord $_
+            if (-not $Transient -or $Attempt -ge $MaxAttempts) {
+                throw
+            }
+            $DelaySeconds = [Math]::Min(15, 2 * $Attempt)
+            Write-Warning (
+                "$Service Salad control-plane mutation '$Operation' failed transiently " +
+                "(attempt $Attempt/$MaxAttempts): $($_.Exception.Message). " +
+                "Retrying in ${DelaySeconds}s."
+            )
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+
+    throw "Unreachable Salad mutation retry state for '$Operation'."
+}
+
 function Get-Group {
-    return Invoke-RestMethod -Uri $GroupUrl -Headers $Headers -TimeoutSec 30
+    return Invoke-SaladRead -Uri $GroupUrl -Operation "container group"
 }
 
 function Get-Queue {
-    return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
+    return Invoke-SaladRead -Uri $QueueUrl -Operation "queue"
 }
 
 function Get-RemoteQueueAutoscaler {
@@ -191,6 +339,82 @@ function Test-RemoteAutoscalerMinReplicas {
     return [int]$Autoscaler.min_replicas -eq $ExpectedMinReplicas
 }
 
+function New-ManifestAutoscaler {
+    return @{
+        min_replicas = [int]$Definition.autoscaler.min_replicas
+        max_replicas = [int]$Definition.autoscaler.max_replicas
+        desired_queue_length = [int]$Definition.autoscaler.desired_queue_length
+        polling_period = [int]$Definition.autoscaler.polling_period
+        max_upscale_per_minute = [int]$Definition.autoscaler.max_upscale_per_minute
+        max_downscale_per_minute = [int]$Definition.autoscaler.max_downscale_per_minute
+    }
+}
+
+function Test-RemoteAutoscalerMatchesManifestExceptMinReplicas {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $Autoscaler) {
+        return $false
+    }
+    return (
+        [int]$Autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
+        [int]$Autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
+        [int]$Autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period -and
+        [int]$Autoscaler.max_upscale_per_minute -eq `
+            [int]$Definition.autoscaler.max_upscale_per_minute -and
+        [int]$Autoscaler.max_downscale_per_minute -eq `
+            [int]$Definition.autoscaler.max_downscale_per_minute
+    )
+}
+
+function Repair-ResidualHeldAutoscaler {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $Autoscaler -or [int]$Autoscaler.min_replicas -eq 0) {
+        return $Group
+    }
+    if (-not (Test-RemoteAutoscalerMatchesManifestExceptMinReplicas -Group $Group)) {
+        throw (
+            "Optimized prewarm refuses unexpected remote autoscaler drift; " +
+            "only a residual warm-hold min_replicas override can be repaired automatically."
+        )
+    }
+
+    Write-Warning (
+        "$Service found a residual warm-hold autoscaler with " +
+        "min_replicas=$([int]$Autoscaler.min_replicas) while the group is safely stopped at zero. " +
+        "Restoring the manifest autoscaler before prewarm."
+    )
+    $Body = @{ queue_autoscaler = New-ManifestAutoscaler } | ConvertTo-Json -Depth 10 -Compress
+    Invoke-SaladMutation `
+        -Method "Patch" `
+        -Uri $GroupUrl `
+        -Operation "restore residual warm-hold autoscaler" `
+        -ContentType "application/merge-patch+json" `
+        -Body $Body |
+        Out-Null
+
+    $RepairDeadline = (Get-Date).AddMinutes(2)
+    do {
+        Start-Sleep -Seconds 3
+        $Group = Get-Group
+        if (
+            -not [bool]$Group.pending_change -and
+            (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas 0) -and
+            (Test-RemoteAutoscalerMatchesManifestExceptMinReplicas -Group $Group)
+        ) {
+            Write-Host "$Service residual warm-hold autoscaler restored to scale-to-zero." `
+                -ForegroundColor Green
+            return $Group
+        }
+    }
+    while ((Get-Date) -lt $RepairDeadline)
+
+    throw "Optimized prewarm could not restore the residual warm-hold autoscaler before timeout."
+}
+
 function Get-QueueJobSnapshot {
     param([Parameter(Mandatory)][datetime]$Deadline)
 
@@ -207,10 +431,12 @@ function Get-QueueJobSnapshot {
             [Math]::Ceiling(($Deadline - (Get-Date)).TotalSeconds)
         )
         $RequestTimeoutSeconds = [int][Math]::Min(30, $SecondsRemaining)
-        $Response = Invoke-RestMethod `
+        $Response = Invoke-SaladRead `
             -Uri "$QueueUrl/jobs?page=$Page&page_size=25" `
-            -Headers $Headers `
-            -TimeoutSec $RequestTimeoutSeconds
+            -Operation "queue jobs page $Page" `
+            -TimeoutSeconds $RequestTimeoutSeconds `
+            -MaxAttempts 6 `
+            -Deadline $Deadline
         $Pages += 1
         $Items = @(
             if ($Response.PSObject.Properties.Name -contains "items") {
@@ -241,7 +467,7 @@ function Get-QueueJobSnapshot {
 function Assert-QueueLogicallyEmpty {
     param(
         [Parameter(Mandatory)][object]$Queue,
-        [ValidateRange(1, 120)][int]$VerificationSeconds = 30
+        [ValidateRange(1, 300)][int]$VerificationSeconds = 180
     )
 
     $ReportedLength = [int]$Queue.current_queue_length
@@ -271,8 +497,48 @@ function Assert-QueueLogicallyEmpty {
     )
 }
 
+function Resolve-QueueSummaryGrowth {
+    param(
+        [Parameter(Mandatory)][object]$Queue,
+        [Parameter(Mandatory)][int]$VerifiedLength,
+        [ValidateRange(1, 300)][int]$VerificationSeconds = 60
+    )
+
+    $ReportedLength = [int]$Queue.current_queue_length
+    if ($ReportedLength -le $VerifiedLength) {
+        return $VerifiedLength
+    }
+
+    Write-Warning (
+        "$Service queue summary grew from $VerifiedLength to $ReportedLength during optimized " +
+        "prewarm. Verifying enumerable jobs before treating the growth as new active work."
+    )
+    $Snapshot = Get-QueueJobSnapshot -Deadline (Get-Date).AddSeconds($VerificationSeconds)
+    if (-not [bool]$Snapshot.complete) {
+        throw (
+            "Optimized prewarm could not verify queue-summary growth for '$QueueName' after " +
+            "$([int]$Snapshot.pages) page(s); refusing to continue while queue state is ambiguous."
+        )
+    }
+
+    $ActiveJobs = @($Snapshot.active_jobs)
+    if ($ActiveJobs.Count -gt 0) {
+        throw (
+            "Optimized prewarm observed queue-summary growth with " +
+            "$($ActiveJobs.Count) enumerable pending/running job(s); refusing to continue " +
+            "while the worker is bootstrapping."
+        )
+    }
+
+    Write-Warning (
+        "$Service queue summary growth is stale: current_queue_length=$ReportedLength, but " +
+        "enumeration found no pending or running jobs. Rebasing the verified stale summary."
+    )
+    return $ReportedLength
+}
+
 function Get-Instances {
-    $Response = Invoke-RestMethod -Uri $InstancesUrl -Headers $Headers -TimeoutSec 30
+    $Response = Invoke-SaladRead -Uri $InstancesUrl -Operation "container instances"
     if ($Response.PSObject.Properties.Name -contains "instances") {
         return @($Response.instances)
     }
@@ -285,16 +551,62 @@ function Get-Instances {
 function Request-InstanceReallocation {
     param(
         [Parameter(Mandatory)][string]$InstanceId,
+        [string]$MachineId = "",
         [Parameter(Mandatory)][string]$Reason
     )
 
     Write-Warning "$Service requesting Salad node reallocation: $Reason"
-    Invoke-RestMethod `
-        -Method Post `
-        -Uri "$InstancesUrl/$InstanceId/reallocate" `
-        -Headers $Headers `
-        -TimeoutSec 60 |
-        Out-Null
+    for ($Attempt = 1; $Attempt -le 3; $Attempt += 1) {
+        try {
+            Invoke-SaladMutation `
+                -Method "Post" `
+                -Uri "$InstancesUrl/$InstanceId/reallocate" `
+                -Operation "reallocate instance $InstanceId" `
+                -TimeoutSeconds 60 `
+                -MaxAttempts 1 |
+                Out-Null
+            return
+        }
+        catch {
+            if (-not (Test-TransientSaladReadFailure -ErrorRecord $_) -or $Attempt -ge 3) {
+                throw
+            }
+
+            Start-Sleep -Seconds 5
+            $Instances = @(Get-Instances)
+            $Matching = @($Instances | Where-Object { [string]$_.id -eq $InstanceId })
+            if ($Matching.Count -eq 0) {
+                Write-Warning (
+                    "$Service reallocation response was lost, but instance $InstanceId is no longer " +
+                    "present; treating the request as accepted."
+                )
+                return
+            }
+
+            $ObservedMachine = ""
+            if ($Matching[0].PSObject.Properties.Name -contains "machine_id") {
+                $ObservedMachine = [string]$Matching[0].machine_id
+            }
+            if (
+                -not [string]::IsNullOrWhiteSpace($MachineId) -and
+                -not [string]::IsNullOrWhiteSpace($ObservedMachine) -and
+                $ObservedMachine -ne $MachineId
+            ) {
+                Write-Warning (
+                    "$Service reallocation response was lost, but the instance moved from " +
+                    "$MachineId to $ObservedMachine; treating the request as accepted."
+                )
+                return
+            }
+
+            $DelaySeconds = [Math]::Min(10, 2 * $Attempt)
+            Write-Warning (
+                "$Service reallocation request failed transiently and no node move is visible yet " +
+                "(attempt $Attempt/3): $($_.Exception.Message). Retrying in ${DelaySeconds}s."
+            )
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
 }
 
 function Test-QueueAttachment {
@@ -344,23 +656,82 @@ $Headers = @{
 
 $Queue = Get-Queue
 $null = Assert-QueueLogicallyEmpty -Queue $Queue
+$VerifiedInitialQueueLength = [int]$Queue.current_queue_length
 
 $Group = Get-Group
 $Status = [string]$Group.current_state.status
+if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
+    throw "Container group '$GroupName' is configured for an unexpected queue."
+}
+
+if (
+    $AdoptReadyReplica -and
+    $Status -eq "running" -and
+    -not [bool]$Group.pending_change -and
+    [int]$Group.replicas -eq 1
+) {
+    $HeldAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $HeldAutoscaler) {
+        throw (
+            "Optimized prewarm cannot adopt a shared ready replica because Salad did not expose " +
+            "queue_autoscaler on container group '$GroupName'."
+        )
+    }
+    if (
+        [int]$HeldAutoscaler.min_replicas -ne 1 -or
+        -not (Test-RemoteAutoscalerMatchesManifestExceptMinReplicas -Group $Group)
+    ) {
+        throw (
+            "Optimized prewarm refuses to adopt a running replica unless it matches the " +
+            "intentional min_replicas=1 shared-worker hold."
+        )
+    }
+
+    $HeldInstances = @(Get-Instances)
+    if ($HeldInstances.Count -ne 1) {
+        throw (
+            "Optimized prewarm expected exactly one instance while adopting the shared " +
+            "ready replica; found $($HeldInstances.Count)."
+        )
+    }
+    $HeldInstance = $HeldInstances[0]
+    $HeldReady = (
+        $HeldInstance.PSObject.Properties.Name -contains "ready" -and
+        [bool]$HeldInstance.ready
+    )
+    $HeldStarted = (
+        $HeldInstance.PSObject.Properties.Name -contains "started" -and
+        [bool]$HeldInstance.started
+    )
+    if (-not $HeldStarted -or -not $HeldReady) {
+        throw (
+            "Optimized prewarm found the shared replica running but not started+ready; " +
+            "refusing to submit new queue work."
+        )
+    }
+
+    $Queue = Get-Queue
+    $null = Assert-QueueLogicallyEmpty -Queue $Queue -VerificationSeconds 180
+    Write-Host (
+        "$Service prewarm adopted one already started+ready shared replica with " +
+        "min_replicas=1 pinned; queue still empty."
+    ) -ForegroundColor Green
+    exit 0
+}
+
 if ($Status -ne "stopped" -or [bool]$Group.pending_change -or [int]$Group.replicas -ne 0) {
     throw (
         "Optimized prewarm requires '$GroupName' stopped at replicas=0/pending=False; " +
         "status=$Status replicas=$([int]$Group.replicas) pending=$([bool]$Group.pending_change)."
     )
 }
-if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
-    throw "Container group '$GroupName' is configured for an unexpected queue."
-}
 $RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
 $AutoscalerObservable = $null -ne $RemoteAutoscaler
 if ($AutoscalerObservable) {
+    $Group = Repair-ResidualHeldAutoscaler -Group $Group
+    $RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
     if ([int]$RemoteAutoscaler.min_replicas -ne 0) {
-        throw "Optimized prewarm refuses a remote autoscaler with min_replicas != 0."
+        throw "Optimized prewarm requires remote autoscaler min_replicas=0 after normalization."
     }
     if (
         $Service -in @("ideogram4", "fish_speech") -and
@@ -419,13 +790,13 @@ if ($HoldReadyReplica) {
         max_downscale_per_minute = [int]$Definition.autoscaler.max_downscale_per_minute
     }
 }
-Invoke-RestMethod `
-    -Method Patch `
+Invoke-SaladMutation `
+    -Method "Patch" `
     -Uri $GroupUrl `
-    -Headers $Headers `
+    -Operation "persist one-replica prewarm state" `
     -ContentType "application/merge-patch+json" `
     -Body ($PrewarmPatch | ConvertTo-Json -Depth 10 -Compress) `
-    -TimeoutSec 60 |
+    -TimeoutSeconds 60 |
     Out-Null
 
 $PatchDeadline = (Get-Date).AddMinutes(2)
@@ -457,11 +828,11 @@ if (
     throw "Salad did not persist the one-replica prewarm state safely."
 }
 
-Invoke-RestMethod `
-    -Method Post `
+Invoke-SaladMutation `
+    -Method "Post" `
     -Uri "$GroupUrl/start" `
-    -Headers $Headers `
-    -TimeoutSec 60 |
+    -Operation "start prewarmed container group" `
+    -TimeoutSeconds 60 |
     Out-Null
 
 $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
@@ -489,8 +860,11 @@ while ((Get-Date) -lt $Deadline) {
     $Attached = Test-QueueAttachment -Queue $Queue
 
     $ReportedQueueLength = [int]$Queue.current_queue_length
-    if ($ReportedQueueLength -ne 0) {
-        $null = Assert-QueueLogicallyEmpty -Queue $Queue
+    if ($ReportedQueueLength -gt $VerifiedInitialQueueLength) {
+        $VerifiedInitialQueueLength = Resolve-QueueSummaryGrowth `
+            -Queue $Queue `
+            -VerifiedLength $VerifiedInitialQueueLength `
+            -VerificationSeconds 60
     }
     if ($Status -eq "failed") {
         throw "Container group '$GroupName' entered failed state during prewarm."
@@ -626,6 +1000,12 @@ while ((Get-Date) -lt $Deadline) {
         $ContainerStarted -and
         $Ready
     ) {
+        # The queue is dedicated to this service. Avoid repeatedly paginating historical
+        # jobs while the image/model boots; re-establish the invariant once, immediately
+        # before releasing the ready worker to the stage that will submit new work.
+        $Queue = Get-Queue
+        $null = Assert-QueueLogicallyEmpty -Queue $Queue -VerificationSeconds 180
+
         if ($Service -eq "fish_speech") {
             $ImagePullAndStartSeconds = $ContainerStartedSeconds - $AssignmentSeconds
             $BootstrapAfterStartSeconds = $ReadySeconds - $ContainerStartedSeconds
@@ -679,6 +1059,7 @@ while ((Get-Date) -lt $Deadline) {
             $AllocatingReallocations += 1
             Request-InstanceReallocation `
                 -InstanceId $InstanceId `
+                -MachineId $MachineId `
                 -Reason (
                     "Allocation/container creation made no image-pull progress " +
                     "for at least ${Limit}s"
@@ -723,6 +1104,7 @@ while ((Get-Date) -lt $Deadline) {
                 $ImagePullReallocations += 1
                 Request-InstanceReallocation `
                     -InstanceId $InstanceId `
+                    -MachineId $MachineId `
                     -Reason "Container image pull made less than 0.5% progress for ${Limit}s"
                 $ImagePullSince = $null
                 $ImagePullBaseline = $null
@@ -764,6 +1146,7 @@ while ((Get-Date) -lt $Deadline) {
             $PostPullStartReallocations += 1
             Request-InstanceReallocation `
                 -InstanceId $InstanceId `
+                -MachineId $MachineId `
                 -Reason "Image pull completed but the container did not start within ${Limit}s"
             $PostPullStartSince = $null
             continue
@@ -794,6 +1177,7 @@ while ((Get-Date) -lt $Deadline) {
             $RunningNotReadyReallocations += 1
             Request-InstanceReallocation `
                 -InstanceId $InstanceId `
+                -MachineId $MachineId `
                 -Reason "Model bootstrap remained running but not ready for ${Limit}s"
             $RunningNotReadySince = $null
             continue

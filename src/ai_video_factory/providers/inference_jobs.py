@@ -22,8 +22,17 @@ logger = logging.getLogger(__name__)
 class InferenceJobTimeoutError(TimeoutError):
     """A queued inference job exceeded a bounded pending or running budget."""
 
-    def __init__(self, message: str, *, phase: str) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        phase: str,
+        job_id: str,
+        transport_job_id: str,
+    ) -> None:
         self.phase = phase
+        self.job_id = job_id
+        self.transport_job_id = transport_job_id
         super().__init__(message)
 
 
@@ -148,13 +157,20 @@ class InferenceJobExecutor:
             return cached
 
         snapshot = self._queue.submit(request, metadata=metadata)
+        submitted_at = time.monotonic()
+        last_status = snapshot.status
+        last_progress_log = submitted_at
         logger.info(
-            "Inference transport submitted application_job_id=%s transport_job_id=%s metadata=%s",
+            (
+                "Inference transport submitted application_job_id=%s transport_job_id=%s "
+                "status=%s metadata=%s"
+            ),
             request.job_id,
             snapshot.id,
+            snapshot.status.value,
             dict(metadata),
         )
-        pending_deadline = time.monotonic() + self._pending_timeout_seconds
+        pending_deadline = submitted_at + self._pending_timeout_seconds
         running_deadline: float | None = None
         last_poll_error: TransientQueueError | None = None
 
@@ -187,6 +203,23 @@ class InferenceJobExecutor:
             try:
                 snapshot = self._queue.get(snapshot.id)
                 last_poll_error = None
+                observed_at = time.monotonic()
+                if (
+                    snapshot.status != last_status
+                    or observed_at - last_progress_log >= 30.0
+                ):
+                    logger.info(
+                        (
+                            "Inference transport progress application_job_id=%s "
+                            "transport_job_id=%s status=%s elapsed_seconds=%.1f"
+                        ),
+                        request.job_id,
+                        snapshot.id,
+                        snapshot.status.value,
+                        observed_at - submitted_at,
+                    )
+                    last_status = snapshot.status
+                    last_progress_log = observed_at
             except TransientQueueError as exc:
                 last_poll_error = exc
                 continue
@@ -251,10 +284,25 @@ class InferenceJobExecutor:
 
         if last_poll_error is not None:
             message += f"; last queue polling error: {last_poll_error}"
-            raise InferenceJobTimeoutError(message, phase=phase) from last_poll_error
+            raise InferenceJobTimeoutError(
+                message,
+                phase=phase,
+                job_id=request.job_id,
+                transport_job_id=transport_job_id,
+            ) from last_poll_error
         if cancellation_error is not None:
-            raise InferenceJobTimeoutError(message, phase=phase) from cancellation_error
-        raise InferenceJobTimeoutError(message, phase=phase)
+            raise InferenceJobTimeoutError(
+                message,
+                phase=phase,
+                job_id=request.job_id,
+                transport_job_id=transport_job_id,
+            ) from cancellation_error
+        raise InferenceJobTimeoutError(
+            message,
+            phase=phase,
+            job_id=request.job_id,
+            transport_job_id=transport_job_id,
+        )
 
     def download_output(self, response: InferenceJobResponse, destination: Path) -> None:
         stored = self._storage.download(response.output.key, destination)

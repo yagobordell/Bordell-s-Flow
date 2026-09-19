@@ -34,11 +34,11 @@ def test_controlled_ideogram_runners_use_optimized_prewarm_before_queue() -> Non
         assert 'start_salad_optimized_prewarm.ps1' in text
         assert 'Service = "ideogram4"' in text
         assert 'TimeoutMinutes = $PrewarmTimeoutMinutes' in text
-        assert '--pending-timeout-seconds $PendingTimeoutSeconds' in text
+        assert '"--pending-timeout-seconds", $PendingTimeoutSeconds' in text
         assert '[int]$PendingTimeoutSeconds = 300' in text
         assert 'finally {' in text
         assert '-Action Stop' in text
         assert '-Action Status' in text
         assert text.index('start_salad_optimized_prewarm.ps1') < text.index(
-            '--pending-timeout-seconds'
+            '"--pending-timeout-seconds"'
         )

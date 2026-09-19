@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -20,9 +21,16 @@ from ai_video_factory.workflows.production_runner import (
 class OptimizedGpuStageExecutor:
     """Use ready-before-queue Salad wrappers for GPU-backed production stages."""
 
-    def __init__(self, *, repo_root: Path, output_dir: Path) -> None:
+    def __init__(
+        self,
+        *,
+        repo_root: Path,
+        output_dir: Path,
+        hold_shared_workers: bool = False,
+    ) -> None:
         self._repo_root = repo_root
         self._output_dir = output_dir
+        self._hold_shared_workers = hold_shared_workers
         self._default = SubprocessStageExecutor(repo_root=repo_root)
 
     def __call__(self, stage: ProductionStage) -> None:
@@ -41,7 +49,7 @@ class OptimizedGpuStageExecutor:
     def _controlled_arguments(self, stage_name: str) -> list[str] | None:
         output = self._output_dir
         if stage_name == "phase4-reference-assets":
-            return [
+            arguments = [
                 "scripts/run_phase4_assets_controlled.ps1",
                 "-ReferencesFile",
                 str(output / "phase4" / "visual_references.json"),
@@ -51,6 +59,9 @@ class OptimizedGpuStageExecutor:
                 str(output / "phase4" / "reference_assets.json"),
                 "-NonInteractive",
             ]
+            if self._hold_shared_workers:
+                arguments.append("-KeepIdeogramWarm")
+            return arguments
         if stage_name == "phase5-narration":
             return [
                 "scripts/run_phase5_audio_controlled.ps1",
@@ -76,7 +87,7 @@ class OptimizedGpuStageExecutor:
                 "-NonInteractive",
             ]
         if stage_name == "phase6-keyframes":
-            return [
+            arguments = [
                 "scripts/run_phase6_keyframes_controlled.ps1",
                 "-Frames",
                 str(output / "phase6" / "storyboard_frames.json"),
@@ -88,6 +99,9 @@ class OptimizedGpuStageExecutor:
                 str(output / "phase6" / "storyboard_keyframes.json"),
                 "-NonInteractive",
             ]
+            if self._hold_shared_workers:
+                arguments.append("-ReleaseSharedIdeogram")
+            return arguments
         if stage_name == "phase8-videos":
             return [
                 "scripts/run_phase8_videos_controlled.ps1",
@@ -148,6 +162,40 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Inspect current stage state without executing or adopting anything.",
     )
+    parser.add_argument(
+        "--max-parallel-stages",
+        type=int,
+        default=4,
+        help="Maximum concurrently executing DAG stages. Defaults to 4.",
+    )
+    parser.add_argument(
+        "--max-parallel-gpu-stages",
+        type=int,
+        default=2,
+        help="Maximum different GPU-backed stages active at once. Defaults to 2.",
+    )
+    parser.add_argument(
+        "--serial",
+        action="store_true",
+        help="Disable DAG concurrency for debugging and regression isolation.",
+    )
+    parser.add_argument(
+        "--end-to-end",
+        action="store_true",
+        help=(
+            "Enable whole-video lifecycle optimizations such as temporarily retaining "
+            "a shared Ideogram worker until its final use. Requires outer cleanup."
+        ),
+    )
+    parser.add_argument(
+        "--metrics",
+        type=Path,
+        default=None,
+        help=(
+            "Write stage wall-clock metrics JSON. "
+            "Defaults to <output-dir>/production_metrics.json."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -161,6 +209,8 @@ def main() -> None:
         script_file=args.script_file,
         output_dir=args.output_dir,
     )
+    max_workers = 1 if args.serial else args.max_parallel_stages
+    max_gpu_stages = 1 if args.serial else args.max_parallel_gpu_stages
     runner = ProductionRunner(
         stages,
         manifest_path=manifest_path,
@@ -168,7 +218,10 @@ def main() -> None:
         executor=OptimizedGpuStageExecutor(
             repo_root=Path("."),
             output_dir=args.output_dir,
+            hold_shared_workers=args.end_to_end,
         ),
+        max_workers=max_workers,
+        max_gpu_stages=max_gpu_stages,
     )
 
     if args.plan:
@@ -189,10 +242,59 @@ def main() -> None:
         print(f"BLOCK {exc.stage.name}: {exc}", file=sys.stderr)
         raise SystemExit(21) from exc
 
+    metrics_path = args.metrics or args.output_dir / "production_metrics.json"
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    elapsed_by_stage = {
+        metric.stage_name: metric.elapsed_seconds
+        for metric in summary.metrics
+    }
+    critical_path_by_stage: dict[str, float] = {}
+    for stage in stages:
+        if stage.name not in elapsed_by_stage:
+            continue
+        dependency_path = max(
+            (critical_path_by_stage.get(name, 0.0) for name in stage.dependencies),
+            default=0.0,
+        )
+        critical_path_by_stage[stage.name] = (
+            dependency_path + elapsed_by_stage[stage.name]
+        )
+    serial_stage_seconds = sum(elapsed_by_stage.values())
+    critical_path_seconds = max(critical_path_by_stage.values(), default=0.0)
+    metrics_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "total_elapsed_seconds": summary.total_elapsed_seconds,
+                "serial_stage_seconds": serial_stage_seconds,
+                "critical_path_seconds": critical_path_seconds,
+                "dag_overlap_saved_seconds": max(
+                    0.0,
+                    serial_stage_seconds - summary.total_elapsed_seconds,
+                ),
+                "max_parallel_stages": max_workers,
+                "max_parallel_gpu_stages": max_gpu_stages,
+                "stages": [
+                    {
+                        "stage_name": metric.stage_name,
+                        "outcome": metric.outcome,
+                        "resource": metric.resource,
+                        "elapsed_seconds": metric.elapsed_seconds,
+                    }
+                    for metric in summary.metrics
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
     print(f"Production manifest: {manifest_path.resolve()}")
+    print(f"Production metrics: {metrics_path.resolve()}")
     print(
         f"executed={len(summary.executed)} adopted={len(summary.adopted)} "
-        f"skipped={len(summary.skipped)}"
+        f"skipped={len(summary.skipped)} total={summary.total_elapsed_seconds:.1f}s"
     )
     if args.through is None or args.through == "phase8-videos":
         print("Production phases 2-8 are complete. The local renderer can now run Phase 9.")

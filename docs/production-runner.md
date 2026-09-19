@@ -1,212 +1,327 @@
 # Production runner
 
-The production runner turns the validated phase scripts into one resumable execution plan without
-moving their business logic into a second implementation.
+The production runner is the control plane for a complete video. It reuses the validated phase
+scripts and contracts; it does not implement a second copy of narrative, media or GPU business logic.
 
-## Command surface
+The canonical production input remains a finished source script. Phase 1 agents are experimental and
+are intentionally outside this path.
 
-Inside the local orchestrator container:
+## Normal command
 
-```bash
-python scripts/run_production.py data/input/script.txt
-```
-
-From Windows PowerShell, the local Compose control plane exposes the complete handoff:
+On Windows PowerShell the normal production path is one command:
 
 ```powershell
-.\scripts\manage_local_stack.ps1 -Action Production -ScriptFile data\input\script.txt
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+    .\scripts\run_video_factory.ps1 `
+    -Input .\data\input\script.txt `
+    -NonInteractive
 ```
 
-The `Production` action runs the Python orchestrator first and invokes the isolated Remotion/FFmpeg
-renderer only after phases 2-8 have completed successfully. If a stage fails, Phase 9 is not launched.
+The wrapper performs, in order:
 
-The source script must live below `data/` because that directory is the persistent host mount shared
-with the task containers.
+```text
+load .env
+  -> install Remotion node_modules only when absent
+  -> fail-fast local/network preflight
+  -> Salad control-plane status preflight
+  -> cache/resume-aware production DAG for phases 2-8
+  -> Phase 9 composition + Remotion + FFmpeg
+  -> FinalVideo validation
+  -> unconditional project GPU cleanup
+  -> queue cleanup
+  -> wall-clock summary
+```
 
-## Stage graph
+The normal path does not require the user to start workers, wait for them manually, clean queues,
+download clips, select a TTS provider or invoke Phase 9 separately.
 
-The execution order is:
+Docker is not required by this command when the already-prepared Salad workers are being used.
+Docker remains required for worker image build/prepare flows and for the optional local container
+smokes. The historical `manage_local_stack.ps1 -Action Production` entry point now delegates to
+`run_video_factory.ps1` on the host so it does not try to execute PowerShell GPU wrappers inside the
+Python-only orchestrator image.
+
+## Fail-fast preflight
+
+`scripts/preflight_video_factory.py` runs before GPU allocation. The normal command checks:
+
+- source input existence;
+- `deploy/salad/services.json` schema and required model services;
+- local `ffmpeg`, `ffprobe`, Node/npm and the Remotion CLI;
+- required Salad credentials;
+- R2 connectivity;
+- the persistent Fish reference object, content type and exact SHA-256;
+- Postgres connectivity with `SELECT 1`;
+- access to the configured OpenAI model;
+- authenticated Hugging Face access for model repositories declared by the Salad manifest.
+
+The Python preflight also reads every Salad queue. Active jobs are rejected unless they are LTX
+`pending/running` transport IDs explicitly owned by the local Phase 8 resume manifest. This prevents
+a new video from colliding with orphaned or foreign work while preserving interrupted-run resume.
+
+After the Python preflight, `manage_salad_stack.ps1 -Action Status` verifies that the Salad control
+plane is reachable for every configured service. A failure here happens before a worker is prewarmed.
+
+The preflight has `--skip-network` only for CI/unit checks. Production does not use that option.
+
+## Actual DAG
+
+The previous runner iterated a linear list. The production runner now stores explicit dependencies
+and schedules independent work concurrently with bounded resource limits:
 
 ```text
 phase2-narrative
-  -> phase3-continuity
-  -> phase3-shots
-  -> phase4-reference-prompts
-  -> phase4-reference-assets       [Ideogram 4 Quality]
-  -> phase5-narration              [Breeze TTS 2 -> Fish Speech fallback]
-  -> phase5-alignment              [Whisper]
-  -> phase5-beat-timing
-  -> phase5-shot-timing
-  -> phase6-storyboard
-  -> phase8-video-prompts
-  -> phase6-keyframes              [Ideogram 4 Quality]
-  -> phase8-videos                 [LTX 2.5]
-  -> local renderer                [Remotion + FFmpeg]
+  |------------------------------|
+  v                              v
+phase3-continuity          phase5-narration [Breeze -> Fish]
+  |------------|                  |
+  v            v                  v
+phase3-shots  phase4-reference-prompts   phase5-alignment [Whisper]
+  |            |                  |
+  |            +--> phase4-reference-assets [Ideogram]
+  |                               |
+  |                         phase5-beat-timing
+  |                               |
+  +----------------------- phase5-shot-timing
+                                  |
+                         phase6-storyboard
+                           |             |
+                           v             v
+                 phase8-video-prompts  phase6-keyframes [Ideogram]
+                           |             |
+                           +------|------+
+                                  v
+                         phase8-videos [LTX-2.5]
+                                  |
+                                  v
+                  Phase 9 Remotion + FFmpeg -> FinalVideo
 ```
 
-`phase8-video-prompts` intentionally runs before keyframe generation because motion prompts depend on
-the provider-neutral storyboard plan, not on generated keyframe pixels. This allows the semantic
-motion plan and the image generation stage to remain independently resumable.
+`phase4-reference-assets` is still completed and persisted, but the current open Ideogram keyframe
+path is text-conditioned. The binary Phase 4 PNGs are therefore not a false dependency of Phase 6
+keyframe inference.
 
-Storyboard grids are a diagnostic/editorial artifact and are not part of the minimum production
-path to `FinalVideo`.
+The scheduler defaults to at most four concurrent stages and two different GPU-backed stages. A
+`resource_key` also serializes stages that share the same constrained model service. With the
+current manifest, Phase 4 reference generation and Phase 6 keyframes cannot overlap on Ideogram.
 
-## Ideogram keyframes
+These limits bound cost while allowing, for example, Breeze startup/inference to overlap continuity
+planning and a different GPU service to overlap independent CPU/LLM work.
 
-`phase6-keyframes` is an automatic production stage and invokes:
+For regression isolation:
+
+```bash
+python scripts/run_production.py data/input/script.txt --serial
+```
+
+The individual `run_phaseX_*.py` and controlled PowerShell runners remain available for debugging.
+
+## Shared-worker lifetime
+
+End-to-end mode applies one deliberate warm-hold optimization:
+
+1. Phase 4 audits its R2 cache before prewarm.
+2. If fresh Ideogram work is required, the controlled wrapper prewarms one replica.
+3. After successful Phase 4 generation, `-KeepIdeogramWarm` transfers cleanup ownership to the
+   outer end-to-end orchestration.
+4. The DAG resource key prevents Phase 6 from racing Phase 4 on the same service.
+5. Phase 6 reuses the already-ready service if it needs Ideogram.
+6. `-ReleaseSharedIdeogram` guarantees release after Phase 6 even when every keyframe is a cache
+   hit.
+7. The outer `finally` remains a second safety net and stops all project GPU services.
+
+The switch is used only by `--end-to-end`. Standalone controlled Phase 4 keeps its historical
+cleanup behavior.
+
+Fish is explicitly excluded from speculative warm holding. It is a fallback and continues to use
+zero GPU-seconds whenever Breeze succeeds.
+
+## Cache before GPU
+
+A cache hit is not based on local file existence alone.
+
+### Phase 5 narration
+
+Before Breeze prewarm, `audit_phase5_audio_cache.py` rebuilds the exact deterministic request from:
 
 ```text
-scripts/run_phase6_keyframes.py
+text
+voice
+instructions
+speed
+cfg_scale
+seed
+model/generation profile
 ```
 
-The stage uses the dedicated Salad Ideogram worker already shared with Phase 4 reference generation.
-Its production parameters are explicit in the stage specification:
+The R2 object must match application job ID, request SHA-256, content type, non-zero size and artifact
+SHA metadata. A valid hit is materialized locally with no Breeze allocation and no Fish allocation.
+Invalid metadata fails before GPU and is not classified as a TTS fallback condition.
+
+### Phase 5 alignment
+
+Before Whisper prewarm, `audit_phase5_alignment_cache.py` derives the request identity from the
+canonical narration WAV SHA-256, source-script prompt, language, model and generation profile.
+A verified `words.json` object is downloaded and validated without uploading the WAV, submitting a
+queue job or allocating a Whisper GPU. The provider repeats the same cache check internally before
+`ensure_input()`, so cache-before-GPU remains true even when the controlled wrapper is bypassed.
+
+### Phase 6 keyframes
+
+`audit_phase6_keyframe_cache.py` evaluates each canonical Ideogram request and the persisted safety
+rejection evidence before any image GPU prewarm.
+
+Results are classified as:
 
 ```text
-model   = ideogram-ai/ideogram-4-nf4 (worker/config default)
-quality = high -> V4_QUALITY_48 in the worker
-size    = 1024x1536
-queue   = SALAD_IDEOGRAM4_QUEUE_NAME
+hit             -> replay; no GPU for that shot
+miss            -> Ideogram work required
+safety_blocked  -> FLUX fallback is deterministically required
+invalid         -> fail before GPU
 ```
 
-The open-weight Ideogram pipeline is text-conditioned. Therefore the keyframe stage fingerprints and
-passes only the data it actually consumes:
+If fresh Ideogram work might discover a new safety rejection, FLUX is armed at scale-to-zero but is
+not prewarmed. A FLUX GPU is prewarmed only when existing safety evidence already proves that the
+fallback is needed.
 
-```text
-storyboard_frames.json
-shots.json
-```
+### Phase 8 video
 
-The canonical visual continuity information has already been encoded by the storyboard planning step
-into the structured Ideogram caption. `reference_assets.json` and its PNG files remain persisted
-review/evidence artifacts, but they are not declared as binary conditioning inputs to keyframe
-inference. Consequently, changing a Phase 4 PNG without changing the structured storyboard caption
-does not unnecessarily invalidate every keyframe.
+`audit_phase8_video_cache.py` rebuilds the exact LTX request for every shot before LTX prewarm.
+`run_video_generation()` also performs the same verified R2 replay check before transport
+reconciliation or submission. This gives two defenses:
 
-Generation fans out through the shared Ideogram Job Queue. Parallelism comes from independent Salad
-container replicas; each replica keeps one Ideogram runtime resident on its RTX 4090.
+- the controlled wrapper can avoid starting LTX entirely when every clip is already valid in R2;
+- the workflow itself cannot submit a duplicate GPU job simply because the local manifest or local
+  MP4 was lost.
 
-## Phase 5 speech fallback
+A cached output with foreign/mismatched metadata is an error, not a hit.
 
-Phase 5 keeps Breeze TTS 2 as the primary provider. The controlled PowerShell wrapper starts
-Fish Speech only after an explicitly classified terminal Breeze failure and only after Breeze
-has been stopped and verified at zero replicas. A successful Breeze run therefore consumes zero
-Fish GPU-seconds.
+## Resume and interrupted runs
 
-Fish uses its own queue and container group, plus one persistent authorized reference voice in R2.
-The `FISH_SPEECH_REFERENCE_*` values are deployment configuration, not per-video inputs. Before
-Fish GPU allocation, the wrapper validates the reference configuration, verifies the R2 object and
-checks its SHA-256. Fish output is normalized to the same PCM16 mono 24 kHz WAV contract consumed by
-Whisper.
-
-The fallback implementation and real Salad validation evidence are documented in
-`docs/fish-speech-fallback.md`.
-
-## Resume model
-
-Operational state is stored in:
+The stage-level manifest remains:
 
 ```text
 data/output/production_manifest.json
 ```
 
-The current manifest schema is `2`. For every completed stage it stores:
+Schema version remains `2`. For every completed stage it stores the stage/script specification hash,
+input hash, output hash, command and whether the artifacts were executed or adopted.
 
-- stage identity;
-- SHA-256 of the stage specification and executor script;
-- SHA-256 over all declared input artifacts;
-- SHA-256 over all declared output artifacts;
-- whether the stage was executed by the runner or adopted from an existing run;
-- the exact Python command used.
+Scheduling-only fields such as DAG dependencies or resource limits are deliberately excluded from the
+artifact specification hash. Changing orchestration must not invalidate semantically identical,
+already-verified media.
 
-Domain JSON, PNG, WAV and MP4 files remain the source of production content. The production manifest
-only decides whether a stage is current enough to skip.
-
-The first time the runner sees a complete set of pre-existing outputs without a manifest record it
-**adopts** those artifacts. This allows validated historical runs to enter the orchestration model
-without regenerating expensive media. Subsequent runs compare recorded fingerprints:
+Phase 8 additionally keeps `video_generation_manifest.json`, including application ID, request SHA,
+transport ID/status, submission count and validated worker response per shot. A restart can:
 
 ```text
-same inputs + same outputs + same executor script -> SKIP
-missing outputs                                  -> RUN
-changed inputs                                   -> RUN
-changed executor                                 -> RUN
-changed outputs                                  -> RUN
+valid completed stage        -> skip
+complete historical outputs  -> adopt
+changed inputs/script        -> rerun only affected stage/downstream work
+known pending/running job    -> reconcile transport
+purged transport             -> resubmit same deterministic application ID
+valid R2 output              -> replay before queue submission
+failed/cancelled transport   -> explicit resumable retry
 ```
 
-A schema-v1 manifest created while keyframes were a manual gate is upgraded on read. Automatic stage
-records are preserved; the old manual `phase6-keyframes` record is discarded so the new Ideogram
-stage can be adopted from complete existing artifacts or executed normally.
+A failure on one shot does not require regenerating completed shots.
 
-Phase 8 retains its own `video_generation_manifest.json`. That manifest owns transport IDs, retry
-counts and worker responses. `production_manifest.json` does not duplicate Salad transport state.
+## Metrics
 
-## Inspection and targeted reruns
+`scripts/run_production.py` writes:
 
-Show current state without changing the manifest or executing anything:
+```text
+data/output/production_metrics.json
+```
+
+It records:
+
+- measured phases 2-8 wall-clock;
+- the sum of measured stage durations as a serial-equivalent reference;
+- the measured DAG critical-path duration from the same run;
+- overlap saved by concurrency;
+- stage outcome (`executed`, `adopted`, `skipped`);
+- stage wall-clock and resource class;
+- configured stage/GPU concurrency limits.
+
+The outer runner writes:
+
+```text
+data/output/video_factory_metrics.json
+```
+
+with total end-to-end wall-clock, phases 2-8 time, Phase 9 time, final path, zero manual intervention
+for a successful run, and final cleanup state.
+
+Cloud-specific model startup/inference metrics continue to come from the controlled Salad prewarm and
+worker logs. They must be reported from a real cloud run; documentation must not invent them.
+
+## Targeted inspection and reruns
+
+Inspect persisted state without mutation:
 
 ```bash
 python scripts/run_production.py data/input/script.txt --plan
 ```
 
-Stop after a specific stage:
-
-```bash
-python scripts/run_production.py data/input/script.txt \
-  --through phase6-keyframes
-```
-
-Force one stage even if its fingerprints are current:
-
-```bash
-python scripts/run_production.py data/input/script.txt \
-  --force-stage phase6-keyframes
-```
-
-The same force option is available through the PowerShell control plane:
+Force one stage:
 
 ```powershell
-.\scripts\manage_local_stack.ps1 `
-  -Action Production `
-  -ScriptFile data\input\script.txt `
-  -ForceStage phase6-keyframes
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
+    .\scripts\run_video_factory.ps1 `
+    -Input .\data\input\script.txt `
+    -ForceStage phase6-keyframes `
+    -NonInteractive
 ```
 
-## Expected exit behavior
+Stop the Python stage DAG after a stage for debugging:
 
-- `0`: requested stages completed, were adopted, or were already current.
-- `21`: a stage is blocked because required upstream inputs are missing.
-- other non-zero codes: an underlying phase script or subprocess failed.
+```bash
+python scripts/run_production.py data/input/script.txt --through phase6-keyframes
+```
 
-There is no keyframe architecture gate in the production path anymore: Ideogram 4 Quality is the
-selected production model for both Phase 4 references and Phase 6 keyframes.
+## Expected failure behavior
+
+- missing credentials/configuration: fail during preflight, before GPU;
+- malformed/stale cache metadata: fail before GPU rather than silently regenerate;
+- application/R2/Postgres/input bugs: propagate as failures, not fallback;
+- Breeze eligible operational/model failures: the existing classified Fish fallback policy applies;
+- upstream DAG failure: dependent stages are never scheduled;
+- concurrently running controlled stages finish their own cleanup before the runner exits;
+- outer end-to-end cleanup then stops project services, verifies zero replicas and cleans queues.
 
 ## Local/cloud boundary
 
-The runner preserves the architecture boundary introduced by the local Compose control plane:
+The normal control flow now runs on the Windows host because the controlled Salad lifecycle scripts
+are PowerShell scripts. Model inference remains remote:
 
 ```text
-orchestrator container
-  Python control flow
-  OpenAI semantic planning
-  Salad queue clients
-  R2/Postgres clients
-         |
-         v
-remote model-specific Salad workers
-  Whisper       -> RTX 3090
-  Breeze TTS 2  -> RTX 4090, Phase 5 primary
-  Fish Speech   -> RTX 4090, Phase 5 fallback only
-  Ideogram 4    -> RTX 4090, shared Phase 4 + Phase 6 queue
-  LTX 2.5       -> RTX 5090
-         |
-         v
-persisted ./data
-         |
-         v
-renderer container
-  Python + Remotion + Chrome + FFmpeg
+Windows host orchestrator
+  Python DAG + PowerShell lifecycle
+  OpenAI structured planning
+  R2/Postgres/Salad clients
+          |
+          v
+Salad Job Queues
+          |
+          v
+model-specific Salad workers
+  Breeze TTS 2  -> RTX 4090 primary
+  Fish Speech   -> RTX 4090 fallback only, max 1
+  Whisper       -> configured worker GPU
+  Ideogram 4    -> RTX 4090 shared Phase 4/6
+  FLUX.2 Klein  -> safety fallback
+  LTX-2.5       -> RTX 5090
+          |
+          v
+persisted data/output
+          |
+          v
+local Remotion + FFmpeg
+          |
+          v
+FinalVideo
 ```
 
-The orchestrator does not gain Node, Chrome, FFmpeg, CUDA or model weights, and the renderer does not
-own cloud inference orchestration.
+The Compose orchestrator/renderer images are retained for isolation tests and dedicated local render
+workflows, but they are no longer required to bridge the complete production control plane.

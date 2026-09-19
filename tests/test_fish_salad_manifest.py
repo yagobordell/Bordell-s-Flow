@@ -103,3 +103,23 @@ def test_phase5_breeze_prewarm_does_not_fallback_on_arbitrary_errors() -> None:
     assert "throw" in content
     assert "entered failed state during prewarm" in content
     assert "remained running but not ready during the final" in content
+
+
+
+def test_zero_replica_guard_covers_every_stack_service() -> None:
+    manifest = json.loads((ROOT / "deploy/salad/services.json").read_text(encoding="utf-8"))
+    guard = (ROOT / "scripts/ensure_salad_zero_replicas.ps1").read_text(encoding="utf-8")
+
+    for service_name in manifest["stack"]["service_order"]:
+        assert f'"{service_name}"' in guard, service_name
+
+
+
+def test_unified_salad_control_plane_covers_every_stack_service() -> None:
+    manifest = json.loads((ROOT / "deploy/salad/services.json").read_text(encoding="utf-8"))
+    validation = (ROOT / "scripts/manage_salad_validation.ps1").read_text(encoding="utf-8")
+    cleanup = (ROOT / "scripts/cleanup_salad_queue.ps1").read_text(encoding="utf-8")
+
+    for service_name in manifest["stack"]["service_order"]:
+        assert f'"{service_name}"' in validation, service_name
+        assert f'"{service_name}"' in cleanup, service_name

@@ -24,6 +24,53 @@ from .job_queue import QueueJobStatus
 from .speech import GeneratedSpeech, SpeechFormat
 
 
+def build_breeze_job_request(
+    *,
+    text: str,
+    voice: str,
+    instructions: str,
+    speed: float,
+    cfg_scale: float,
+    seed: int,
+    model_id: str,
+) -> InferenceJobRequest:
+    """Build the canonical deterministic Breeze request used by runtime and cache audit."""
+
+    if model_id != BREEZE_TTS2_MODEL_ID:
+        raise ValueError(f"Breeze provider requires model {BREEZE_TTS2_MODEL_ID!r}")
+    if not 0.0 < cfg_scale <= 10.0:
+        raise ValueError("Breeze cfg_scale must be greater than 0 and at most 10")
+    if not 0 <= seed <= 2_147_483_647:
+        raise ValueError("Breeze seed is outside the supported range")
+    job_id = breeze_application_job_id(
+        text=text,
+        voice=voice,
+        instructions=instructions,
+        speed=speed,
+        cfg_scale=cfg_scale,
+        seed=seed,
+        model_id=model_id,
+    )
+    return InferenceJobRequest(
+        job_id=job_id,
+        task=BREEZE_TTS2_TASK,
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/narration.wav",
+            content_type="audio/wav",
+        ),
+        parameters={
+            "generation_profile": BREEZE_TTS2_GENERATION_PROFILE,
+            "model_id": model_id,
+            "text": text,
+            "voice": voice,
+            "instructions": instructions,
+            "speed": speed,
+            "cfg_scale": cfg_scale,
+            "seed": seed,
+        },
+    )
+
+
 class BreezeFallbackEligibleError(RuntimeError):
     """Terminal Breeze failure that the Phase 5 policy explicitly allows to fall through."""
 
@@ -87,7 +134,7 @@ class SaladBreezeSpeechProvider:
         if output_format != "wav":
             raise ValueError("Breeze provider currently supports only WAV output")
 
-        job_id = breeze_application_job_id(
+        request = build_breeze_job_request(
             text=text,
             voice=voice,
             instructions=instructions,
@@ -96,24 +143,7 @@ class SaladBreezeSpeechProvider:
             seed=self._seed,
             model_id=model,
         )
-        request = InferenceJobRequest(
-            job_id=job_id,
-            task=BREEZE_TTS2_TASK,
-            output=ObjectOutput(
-                key=f"jobs/{job_id}/narration.wav",
-                content_type="audio/wav",
-            ),
-            parameters={
-                "generation_profile": BREEZE_TTS2_GENERATION_PROFILE,
-                "model_id": model,
-                "text": text,
-                "voice": voice,
-                "instructions": instructions,
-                "speed": speed,
-                "cfg_scale": self._cfg_scale,
-                "seed": self._seed,
-            },
-        )
+        job_id = request.job_id
         try:
             response = self._executor.execute(
                 request,

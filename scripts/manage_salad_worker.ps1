@@ -270,6 +270,54 @@ function Get-HttpStatusCode {
     }
 }
 
+function Test-TransientSaladFailure {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    $StatusCode = Get-HttpStatusCode -ErrorRecord $ErrorRecord
+    if ($StatusCode -in @(408, 429, 500, 502, 503, 504)) {
+        return $true
+    }
+    $Message = [string]$ErrorRecord.Exception.Message
+    return $Message -match (
+        "(?i)timed out|timeout|upstream connect error|disconnect/reset|" +
+        "remote connection failure|server unavailable|gateway timeout"
+    )
+}
+
+function Invoke-SaladRequest {
+    param(
+        [Parameter(Mandatory)][hashtable]$Headers,
+        [Parameter(Mandatory)][string]$Uri,
+        [Parameter(Mandatory)][string]$Operation,
+        [string]$Method = "Get",
+        [ValidateRange(1, 120)][int]$TimeoutSec = 30,
+        [ValidateRange(1, 10)][int]$MaxAttempts = 6
+    )
+
+    for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
+        try {
+            return Invoke-RestMethod `
+                -Method $Method `
+                -Uri $Uri `
+                -Headers $Headers `
+                -TimeoutSec $TimeoutSec
+        }
+        catch {
+            if (-not (Test-TransientSaladFailure -ErrorRecord $_) -or $Attempt -ge $MaxAttempts) {
+                throw
+            }
+            $DelaySeconds = [Math]::Min(15, 2 * $Attempt)
+            Write-Warning (
+                "$Service Salad operation '$Operation' failed transiently " +
+                "(attempt $Attempt/$MaxAttempts): $($_.Exception.Message). " +
+                "Retrying in ${DelaySeconds}s."
+            )
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+    throw "Unreachable Salad retry state for '$Operation'."
+}
+
 function Resolve-GpuClassIds {
     param([Parameter(Mandatory)][hashtable]$Headers)
 
@@ -363,9 +411,10 @@ function Try-Get-Group {
     param([Parameter(Mandatory)][hashtable]$Headers)
 
     try {
-        return Invoke-RestMethod `
-            -Uri "$ContainersBase/$GroupName" `
+        return Invoke-SaladRequest `
             -Headers $Headers `
+            -Uri "$ContainersBase/$GroupName" `
+            -Operation "read container group" `
             -TimeoutSec 30
     }
     catch {
@@ -753,9 +802,10 @@ function Show-Status {
         Format-List
 
     try {
-        $Response = Invoke-RestMethod `
-            -Uri "$ContainersBase/$GroupName/instances" `
+        $Response = Invoke-SaladRequest `
             -Headers $Headers `
+            -Uri "$ContainersBase/$GroupName/instances" `
+            -Operation "list container instances" `
             -TimeoutSec 30
         $InstanceRows = @()
         if ($Response.PSObject.Properties.Name -contains "instances") {
@@ -816,10 +866,11 @@ switch ($Action) {
             Write-Host "$Service worker is already stopped." -ForegroundColor Green
             exit 0
         }
-        Invoke-RestMethod `
-            -Method Post `
-            -Uri "$ContainersBase/$GroupName/stop" `
+        Invoke-SaladRequest `
             -Headers $Headers `
+            -Method "Post" `
+            -Uri "$ContainersBase/$GroupName/stop" `
+            -Operation "stop container group" `
             -TimeoutSec 60 |
             Out-Null
         Wait-ForGroupStatus -Headers $Headers -Expected "stopped" | Out-Null
@@ -835,10 +886,11 @@ switch ($Action) {
             Show-Status -Headers $Headers
             exit 0
         }
-        Invoke-RestMethod `
-            -Method Post `
-            -Uri "$ContainersBase/$GroupName/start" `
+        Invoke-SaladRequest `
             -Headers $Headers `
+            -Method "Post" `
+            -Uri "$ContainersBase/$GroupName/start" `
+            -Operation "start container group" `
             -TimeoutSec 60 |
             Out-Null
         Wait-ForGroupStatus -Headers $Headers -Expected "running" | Out-Null

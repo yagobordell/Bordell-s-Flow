@@ -1,6 +1,11 @@
 import argparse
 import asyncio
 import json
+import logging
+import shutil
+import subprocess
+import sys
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +19,10 @@ from ai_video_factory.providers import (
     SaladFlux2KleinImageProvider,
     SaladIdeogramImageProvider,
 )
-from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
+from ai_video_factory.providers.inference_jobs import (
+    InferenceJobExecutor,
+    InferenceJobTimeoutError,
+)
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.flux2_klein import FLUX2_KLEIN_KEYFRAME_TASK
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_KEYFRAME_TASK
@@ -22,6 +30,7 @@ from ai_video_factory.workflows.storyboard_keyframes import generate_storyboard_
 
 DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS = 300.0
 DEFAULT_FLUX_PENDING_TIMEOUT_SECONDS = 1800.0
+IDEOGRAM_RUNNING_TIMEOUT_EXIT_CODE = 75
 
 
 def parse_args() -> argparse.Namespace:
@@ -70,6 +79,16 @@ def parse_args() -> argparse.Namespace:
         help="Maximum seconds for a cold FLUX fallback worker to claim a queued job.",
     )
     parser.add_argument(
+        "--prewarm-fallback-on-demand",
+        action="store_true",
+        help="Prewarm FLUX only after the first terminal Ideogram safety rejection.",
+    )
+    parser.add_argument(
+        "--fallback-prewarm-timeout-minutes",
+        type=int,
+        default=60,
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=settings.output_dir / "phase6" / "storyboard_keyframes",
@@ -97,7 +116,31 @@ def _queue(name: str) -> SaladJobQueueClient:
     )
 
 
+async def _prewarm_flux_fallback(timeout_minutes: int) -> None:
+    executable = shutil.which("powershell.exe") or shutil.which("pwsh")
+    if executable is None:
+        raise RuntimeError("PowerShell is required for on-demand FLUX prewarm.")
+    script = Path(__file__).with_name("start_salad_flux_prewarm.ps1")
+    command = [
+        executable,
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(script),
+        "-TimeoutMinutes",
+        str(timeout_minutes),
+        "-NonInteractive",
+    ]
+    print("Ideogram safety rejection confirmed; prewarming FLUX before fallback submission.")
+    await asyncio.to_thread(subprocess.run, command, check=True)
+
+
 async def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
     args = parse_args()
     frames = _read_models(args.frames, StoryboardFrame)
     shots = _read_models(args.shots, Shot)
@@ -132,7 +175,17 @@ async def main() -> None:
         temp_dir=settings.temp_dir / "flux2-klein-keyframe-client",
         task_name=FLUX2_KLEIN_KEYFRAME_TASK,
     )
-    image_provider = SafetyFallbackImageProvider(primary=primary, fallback=fallback)
+    before_fallback = (
+        partial(_prewarm_flux_fallback, args.fallback_prewarm_timeout_minutes)
+        if args.prewarm_fallback_on_demand
+        else None
+    )
+
+    image_provider = SafetyFallbackImageProvider(
+        primary=primary,
+        fallback=fallback,
+        before_fallback=before_fallback,
+    )
 
     keyframes = await generate_storyboard_keyframes(
         frames,
@@ -166,4 +219,18 @@ def _read_models[ModelT: BaseModel](
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except InferenceJobTimeoutError as exc:
+        if exc.phase == "running" and exc.job_id.startswith("ideogram-keyframe-"):
+            print(
+                (
+                    "PHASE6_IDEOGRAM_RUNNING_TIMEOUT "
+                    f"application_job_id={exc.job_id} "
+                    f"transport_job_id={exc.transport_job_id} "
+                    f"detail={exc}"
+                ),
+                file=sys.stderr,
+            )
+            raise SystemExit(IDEOGRAM_RUNNING_TIMEOUT_EXIT_CODE) from exc
+        raise

@@ -41,6 +41,7 @@ def test_zero_replica_guard_waits_for_stopped_then_patches_to_zero() -> None:
     assert "did not reach stopped state before timeout" in script
     assert "$Group = Wait-ForStoppedGroup -InitialGroup $Group" in script
     assert "@{ replicas = 0 }" in script
-    assert "-Method Patch" in script
+    assert '-Method "Patch"' in script
+    assert 'Operation "normalize replicas to zero"' in script
     assert 'if ($Status -eq "stopped" -and $Replicas -eq 0' in script
     assert "did not settle at stopped/replicas=0 before timeout" in script

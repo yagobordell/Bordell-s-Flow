@@ -130,8 +130,9 @@ def test_controlled_gpu_runners_prewarm_and_always_stop() -> None:
 def test_ideogram_controlled_runners_pin_warm_and_clean_queue() -> None:
     assert QUEUE_CLEANUP.is_file()
     cleanup = QUEUE_CLEANUP.read_text(encoding="utf-8")
-    assert 'Where-Object { [string]$_.status -eq "pending" }' in cleanup
-    assert "Waiting for dispatched job(s)" in cleanup
+    assert "foreach ($Job in $ActiveJobs)" in cleanup
+    assert "Cancelling abandoned active job after group stop" in cleanup
+    assert "Waiting for cancelled running job(s)" in cleanup
     assert "requires '$GroupName' fully stopped first" in cleanup
 
     for path in (
@@ -200,11 +201,13 @@ def test_full_production_routes_every_gpu_stage_through_controlled_runner() -> N
 
 
 
-def test_phase8_resume_starts_scale_to_zero_group_for_existing_jobs() -> None:
+def test_phase8_resume_starts_scale_to_zero_group_only_for_active_current_jobs() -> None:
     text = Path("scripts/run_phase8_videos_controlled.ps1").read_text(encoding="utf-8")
 
     assert "video_generation_manifest.json" in text
-    assert "$ResumeSubmittedJobs = $SubmittedJobs.Count -gt 0" in text
+    assert "inspect_phase8_manifest.py" in text
+    assert '[string]$ManifestState.status -eq "matching"' in text
+    assert "[int]$ManifestState.active_resume_jobs -gt 0" in text
     assert "start_salad_scale_to_zero.ps1" in text
     assert 'Service = "ltx25"' in text
     assert "if ($ResumeSubmittedJobs)" in text
@@ -228,6 +231,103 @@ def test_phase8_resume_detection_happens_before_gpu_allocation() -> None:
     assert text.index("$ManifestPath = Join-Path $OutputDir") < text.index(
         "=== R2 preflight: verify storage before GPU allocation ==="
     )
+    assert text.index("& python $ManifestInspector") < text.index(
+        "=== R2 preflight: verify storage before GPU allocation ==="
+    )
     assert text.index("if ($ResumeSubmittedJobs)") < text.index(
         "=== Phase 8 video generation: worker group available; resume/fanout active ==="
     )
+
+
+def test_phase8_resume_hard_guards_queue_before_scale_to_zero_start() -> None:
+    text = Path("scripts/run_phase8_videos_controlled.ps1").read_text(encoding="utf-8")
+
+    assert "check_salad_queue_ready.py" in text
+    assert "& python $QueueGuard ltx25 --output-dir $ProductionOutputRoot" in text
+    assert "LTX resume queue ownership guard failed; refusing GPU allocation." in text
+    assert text.index(
+        "& python $QueueGuard ltx25 --output-dir $ProductionOutputRoot"
+    ) < text.index("& $ScaleToZeroStarter @StartArguments")
+
+
+def test_phase8_archives_stale_manifest_only_after_idle_queue_guard() -> None:
+    text = Path("scripts/run_phase8_videos_controlled.ps1").read_text(encoding="utf-8")
+
+    stale_branch = text.index(
+        'if ([string]$ManifestState.status -eq "different_plan")'
+    )
+    idle_guard = text.index("& python $QueueGuard ltx25 --output-dir $EmptyGuardRoot")
+    archive = text.index("--archive-mismatch")
+    r2_preflight = text.index(
+        "=== R2 preflight: verify storage before GPU allocation ==="
+    )
+
+    assert stale_branch < idle_guard < archive < r2_preflight
+    assert "is not provably idle; refusing to archive it or allocate GPU." in text
+
+
+
+def test_phase6_reuses_shared_ideogram_replica_before_cold_prewarm() -> None:
+    phase6 = Path("scripts/run_phase6_keyframes_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    prewarm = PREWARM.read_text(encoding="utf-8")
+
+    assert '$PrewarmArguments["AdoptReadyReplica"] = $true' in phase6
+    assert "if ($ReleaseSharedIdeogram)" in phase6
+    assert "[switch]$AdoptReadyReplica" in prewarm
+    assert "$AdoptReadyReplica -and" in prewarm
+    assert '$Status -eq "running"' in prewarm
+    assert "[int]$Group.replicas -eq 1" in prewarm
+    assert "[int]$HeldAutoscaler.min_replicas -ne 1" in prewarm
+    assert "Test-RemoteAutoscalerMatchesManifestExceptMinReplicas" in prewarm
+    assert "$HeldInstances.Count -ne 1" in prewarm
+    assert "$HeldStarted" in prewarm
+    assert "$HeldReady" in prewarm
+    assert "Assert-QueueLogicallyEmpty -Queue $Queue -VerificationSeconds 180" in prewarm
+    assert "prewarm adopted one already started+ready shared replica" in prewarm
+
+
+def test_shared_ideogram_adoption_precedes_cold_state_requirement() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+
+    adopt = text.index("if (\n    $AdoptReadyReplica -and")
+    cold_requirement = text.index(
+        "Optimized prewarm requires '$GroupName' stopped at replicas=0/pending=False"
+    )
+    assert adopt < cold_requirement
+
+
+
+def test_phase6_recovers_once_from_hung_ideogram_inference() -> None:
+    text = Path("scripts/run_phase6_keyframes_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    runner = Path("scripts/run_phase6_keyframes.py").read_text(encoding="utf-8")
+
+    assert "[int]$RunningTimeoutSeconds = 600" in text
+    assert "[int]$IdeogramRecoveryRetries = 1" in text
+    assert "$MaxPhase6Attempts = 1 + $IdeogramRecoveryRetries" in text
+    assert "$Phase6ExitCode -eq 75" in text
+    assert "Recycling the worker" in text
+    assert text.index("-Action Stop -Service ideogram4") < text.index(
+        "=== Ideogram recovery prewarm: start one fresh ready replica ==="
+    )
+    assert text.index("& $QueueCleanup -Service ideogram4") < text.index(
+        "=== Ideogram recovery prewarm: start one fresh ready replica ==="
+    )
+    assert "PHASE6_IDEOGRAM_RUNNING_TIMEOUT" in runner
+    assert 'exc.job_id.startswith("ideogram-keyframe-")' in runner
+    assert "IDEOGRAM_RUNNING_TIMEOUT_EXIT_CODE = 75" in runner
+
+
+def test_phase6_emits_inference_progress_logs() -> None:
+    runner = Path("scripts/run_phase6_keyframes.py").read_text(encoding="utf-8")
+    executor = Path(
+        "src/ai_video_factory/providers/inference_jobs.py"
+    ).read_text(encoding="utf-8")
+
+    assert "logging.basicConfig(" in runner
+    assert "Inference transport submitted" in executor
+    assert "Inference transport progress" in executor
+    assert "elapsed_seconds=%.1f" in executor

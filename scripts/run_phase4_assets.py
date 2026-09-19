@@ -1,6 +1,9 @@
 import argparse
 import asyncio
 import json
+import shutil
+import subprocess
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +80,16 @@ def parse_args() -> argparse.Namespace:
         help="Maximum seconds for a cold FLUX fallback worker to claim a queued job.",
     )
     parser.add_argument(
+        "--prewarm-fallback-on-demand",
+        action="store_true",
+        help="Prewarm FLUX only after the first terminal Ideogram safety rejection.",
+    )
+    parser.add_argument(
+        "--fallback-prewarm-timeout-minutes",
+        type=int,
+        default=60,
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=settings.output_dir / "phase4" / "reference_assets",
@@ -102,6 +115,26 @@ def _queue(name: str) -> SaladJobQueueClient:
         queue_name=name,
         api_key=_required_setting("SALAD_API_KEY", settings.salad_api_key),
     )
+
+
+async def _prewarm_flux_fallback(timeout_minutes: int) -> None:
+    executable = shutil.which("powershell.exe") or shutil.which("pwsh")
+    if executable is None:
+        raise RuntimeError("PowerShell is required for on-demand FLUX prewarm.")
+    script = Path(__file__).with_name("start_salad_flux_prewarm.ps1")
+    command = [
+        executable,
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        str(script),
+        "-TimeoutMinutes",
+        str(timeout_minutes),
+        "-NonInteractive",
+    ]
+    print("Ideogram safety rejection confirmed; prewarming FLUX before fallback submission.")
+    await asyncio.to_thread(subprocess.run, command, check=True)
 
 
 async def main() -> None:
@@ -144,7 +177,17 @@ async def main() -> None:
         temp_dir=settings.temp_dir / "flux2-klein-reference-client",
         task_name=FLUX2_KLEIN_REFERENCE_TASK,
     )
-    provider = SafetyFallbackImageProvider(primary=primary, fallback=fallback)
+    before_fallback = (
+        partial(_prewarm_flux_fallback, args.fallback_prewarm_timeout_minutes)
+        if args.prewarm_fallback_on_demand
+        else None
+    )
+
+    provider = SafetyFallbackImageProvider(
+        primary=primary,
+        fallback=fallback,
+        before_fallback=before_fallback,
+    )
 
     assets = await generate_reference_assets(
         references,

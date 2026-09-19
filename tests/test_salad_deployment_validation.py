@@ -52,7 +52,7 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     assert action_set in text
     service_set = (
         'ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", '
-        '"ltx25", "all")'
+        '"flux2_klein", "ltx25", "all")'
     )
     assert service_set in text
     assert 'python scripts/run_salad_smoke_suite.py' in text
@@ -125,7 +125,8 @@ def test_scale_to_zero_restore_reinstates_manifest_autoscaler() -> None:
     assert "function Test-ManifestAutoscaler" in restorer
     assert "Definition.autoscaler.min_replicas" in restorer
     assert "queue_autoscaler = New-ManifestAutoscaler" in restorer
-    assert "-Method Patch" in restorer
+    assert '-Method "Patch"' in restorer
+    assert 'Operation "restore manifest autoscaler"' in restorer
 
     safe_stop = manager.split("function Invoke-SafeStop", maxsplit=1)[1].split(
         "switch ($Action)", maxsplit=1

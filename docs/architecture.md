@@ -1,6 +1,6 @@
 # AI Video Factory — Architecture
 
-This document describes the production architecture after closure of Phase 8. Historical Phase 1
+This document describes the production architecture after closure of Phase 9 and the optimized end-to-end control plane. Historical Phase 1
 agents remain in the repository as experiments/regression fixtures; the production pipeline starts
 from a completed source script.
 
@@ -24,6 +24,10 @@ The project follows a small set of explicit rules:
    it never rewrites `ShotTiming`.
 7. **Expensive stages must be resumable and selectively regenerable.** Completed work is reused only
    after identity/hash validation.
+8. **Cache resolution precedes GPU allocation.** Deterministic R2 identity is checked before prewarm
+   whenever the request can already be constructed.
+9. **Scheduling follows data dependencies, not phase numbering.** Independent CPU/LLM/GPU work may
+   overlap, while stateful semantic chains and constrained shared model services remain serialized.
 
 ## Production pipeline
 
@@ -107,6 +111,70 @@ VideoClip           = { shot_id, uri }
 
 Operational contracts such as `GPUJobRequest`, `GPUJobResponse`, queue snapshots, manifests, leases,
 object metadata and benchmark reports are intentionally separate from these audiovisual contracts.
+
+## End-to-end scheduling and resource lifecycle
+
+The production phase list is represented as an explicit DAG. Phase numbering remains useful for
+artifacts and documentation, but it is not treated as a mandatory global serialization barrier.
+
+```text
+phase2
+  |------------------------------|
+  v                              v
+continuity                  narration [Breeze]
+  |-----------|                  |
+  v           v                  v
+shots   reference prompts    alignment [Whisper]
+  |           |                  |
+  |           +-> reference assets [Ideogram]
+  |                              v
+  +------------------------ beat/shot timing
+                                 |
+                            storyboard
+                              |     |
+                              v     v
+                       video prompts keyframes [Ideogram]
+                              |     |
+                              +--+--+
+                                 v
+                            videos [LTX]
+                                 |
+                                 v
+                         Remotion + FFmpeg
+```
+
+The scheduler has two independent bounds: total concurrent stages and concurrent GPU-backed stages.
+A resource key adds model-level mutual exclusion. This prevents Phase 4 and Phase 6 from contending
+for the current single-replica Ideogram service even though unrelated model services may overlap.
+
+The normal end-to-end mode temporarily retains a successful Phase 4 Ideogram replica until Phase 6
+has consumed or replayed its keyframes. That lifetime extension is bounded: Phase 6 explicitly
+releases the shared service, and the outer PowerShell `finally` stops all project services and cleans
+queues even when an upstream stage fails.
+
+Fish Speech is intentionally not part of predictive prewarm. Breeze remains primary, and Fish can be
+allocated only after a classified eligible Breeze failure and after Breeze has been stopped at zero
+replicas.
+
+### Cache identity before allocation
+
+The shared inference cache requires matching application job ID, request SHA-256, output content type,
+non-zero size and artifact SHA metadata. The request identity includes the model/generation profile
+and all provider parameters used by the worker.
+
+Production applies this before GPU lifecycle decisions for:
+
+- Breeze narration;
+- Ideogram/FLUX keyframes, including persisted safety-rejection evidence;
+- LTX clips.
+
+Phase 8 repeats the cache check inside `run_video_generation()` before queue reconciliation. This is
+important for recovery when local manifests or downloaded MP4s are missing but the deterministic R2
+artifact is still valid.
+
+Scheduling metadata itself is not an audiovisual input and is therefore excluded from stage artifact
+fingerprints. A scheduler upgrade must not force expensive regeneration of otherwise identical
+outputs.
 
 ## Phase 2 — Narrative planning
 
@@ -362,7 +430,9 @@ construction can be amortized across a batch.
 ### 8.4 Deterministic fanout and resume
 
 Before any submission, Python builds every `GPUJobRequest` and computes a run fingerprint from the
-ordered set of shot IDs, deterministic application job IDs and request SHA-256 values.
+ordered set of shot IDs, deterministic application job IDs and request SHA-256 values. The workflow
+then checks the deterministic R2 output for every request before reading or creating a Salad
+transport. A valid object is promoted directly to a replayed succeeded response.
 
 Application IDs are derived from:
 
@@ -592,6 +662,9 @@ Completed production stages:
 6. storyboard prompts, keyframes and scene grids;
 7. reproducible GPU benchmark and idempotent cloud worker infrastructure;
 8. motion prompts, direct LTX-2.5 execution, real GPU worker, resumable fanout and verified
-   `VideoClip[]` fan-in.
+   `VideoClip[]` fan-in;
+9. frame-exact Remotion/FFmpeg compositor producing validated `FinalVideo`;
+10. dependency-aware end-to-end orchestration with cache-before-GPU, bounded parallelism, automatic
+    resume and final resource cleanup.
 
-Next implementation stage: **Phase 9 — compositor**.
+Next implementation stage: **Phase 10 — verification agents**.
