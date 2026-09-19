@@ -497,6 +497,46 @@ function Assert-QueueLogicallyEmpty {
     )
 }
 
+function Resolve-QueueSummaryGrowth {
+    param(
+        [Parameter(Mandatory)][object]$Queue,
+        [Parameter(Mandatory)][int]$VerifiedLength,
+        [ValidateRange(1, 300)][int]$VerificationSeconds = 60
+    )
+
+    $ReportedLength = [int]$Queue.current_queue_length
+    if ($ReportedLength -le $VerifiedLength) {
+        return $VerifiedLength
+    }
+
+    Write-Warning (
+        "$Service queue summary grew from $VerifiedLength to $ReportedLength during optimized " +
+        "prewarm. Verifying enumerable jobs before treating the growth as new active work."
+    )
+    $Snapshot = Get-QueueJobSnapshot -Deadline (Get-Date).AddSeconds($VerificationSeconds)
+    if (-not [bool]$Snapshot.complete) {
+        throw (
+            "Optimized prewarm could not verify queue-summary growth for '$QueueName' after " +
+            "$([int]$Snapshot.pages) page(s); refusing to continue while queue state is ambiguous."
+        )
+    }
+
+    $ActiveJobs = @($Snapshot.active_jobs)
+    if ($ActiveJobs.Count -gt 0) {
+        throw (
+            "Optimized prewarm observed queue-summary growth with " +
+            "$($ActiveJobs.Count) enumerable pending/running job(s); refusing to continue " +
+            "while the worker is bootstrapping."
+        )
+    }
+
+    Write-Warning (
+        "$Service queue summary growth is stale: current_queue_length=$ReportedLength, but " +
+        "enumeration found no pending or running jobs. Rebasing the verified stale summary."
+    )
+    return $ReportedLength
+}
+
 function Get-Instances {
     $Response = Invoke-SaladRead -Uri $InstancesUrl -Operation "container instances"
     if ($Response.PSObject.Properties.Name -contains "instances") {
@@ -820,23 +860,11 @@ while ((Get-Date) -lt $Deadline) {
     $Attached = Test-QueueAttachment -Queue $Queue
 
     $ReportedQueueLength = [int]$Queue.current_queue_length
-    if (
-        $ReportedQueueLength -gt 0 -and
-        $VerifiedInitialQueueLength -eq 0
-    ) {
-        throw (
-            "Optimized prewarm observed new queued work after the pre-allocation empty-queue " +
-            "verification; refusing to continue while the worker is bootstrapping."
-        )
-    }
-    if (
-        $ReportedQueueLength -gt $VerifiedInitialQueueLength -and
-        $VerifiedInitialQueueLength -gt 0
-    ) {
-        throw (
-            "Optimized prewarm observed queue growth beyond the already-verified stale summary; " +
-            "refusing to continue while the worker is bootstrapping."
-        )
+    if ($ReportedQueueLength -gt $VerifiedInitialQueueLength) {
+        $VerifiedInitialQueueLength = Resolve-QueueSummaryGrowth `
+            -Queue $Queue `
+            -VerifiedLength $VerifiedInitialQueueLength `
+            -VerificationSeconds 60
     }
     if ($Status -eq "failed") {
         throw "Container group '$GroupName' entered failed state during prewarm."
