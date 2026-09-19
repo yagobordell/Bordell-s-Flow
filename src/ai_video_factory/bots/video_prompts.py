@@ -4,7 +4,7 @@ from ai_video_factory.domain import Shot, ShotTiming, StoryboardFrame, VideoProm
 from ai_video_factory.providers.base import StructuredTextProvider
 
 VIDEO_PROMPT_INSTRUCTIONS = """\
-Eres un bot de motion planning para un vídeo documental vertical generado desde un keyframe.
+Eres un bot de motion planning para un vídeo documental cinematográfico horizontal 16:9 generado desde un keyframe.
 
 Recibes un shot ya planificado, su duración real, el prompt del storyboard que define el estado
 visual inicial y, cuando existe, el prompt de vídeo del shot anterior dentro de la misma escena.
@@ -17,7 +17,7 @@ Reglas estrictas:
   entorno, objetos y relaciones espaciales que sigan siendo relevantes para el shot.
 - Haz que `SHOT.action` ocurra de forma visible durante el clip. El movimiento debe aportar cambio
   narrativo sin limitarse a micro-movimientos genéricos si la acción exige una transformación clara.
-- Describe solo movimiento útil: movimiento del sujeto, del entorno y de cámara cuando ayude a
+- Mantén la composición cinematográfica landscape 16:9 del keyframe y evita movimientos que empujen sujetos importantes fuera de los márgenes seguros.\n- Describe solo movimiento útil: movimiento del sujeto, del entorno y de cámara cuando ayude a
   expresar la acción. No es obligatorio usar los tres tipos.
 - La duración real limita la complejidad. Un shot corto debe tener una acción simple y legible; no
   comprimas una cadena larga de eventos en pocos segundos.
