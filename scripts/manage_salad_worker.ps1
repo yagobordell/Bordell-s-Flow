@@ -14,6 +14,8 @@ param(
 
     [switch]$SkipBuild,
 
+    [switch]$Recreate,
+
     [switch]$NonInteractive
 )
 
@@ -435,6 +437,43 @@ function Get-Group {
     return $Group
 }
 
+function Remove-StoppedContainerGroup {
+    param([Parameter(Mandatory)][hashtable]$Headers)
+
+    $Group = Get-Group -Headers $Headers
+    if ((Get-GroupStatus -Group $Group) -ne "stopped") {
+        throw "Container group '$GroupName' must be stopped before -Recreate."
+    }
+    if ([int]$Group.replicas -ne 0) {
+        throw "Container group '$GroupName' must have replicas=0 before -Recreate."
+    }
+
+    Write-Warning (
+        "Recreating stopped container group '$GroupName' so Salad can establish " +
+        "a fresh Job Queue attachment."
+    )
+    Invoke-RestMethod `
+        -Method Delete `
+        -Uri "$ContainersBase/$GroupName" `
+        -Headers $Headers `
+        -TimeoutSec 60 |
+        Out-Null
+
+    $Deadline = (Get-Date).AddMinutes(5)
+    do {
+        Start-Sleep -Seconds 5
+        $Remaining = Try-Get-Group -Headers $Headers
+        if ($null -eq $Remaining) {
+            Write-Host "Container group '$GroupName' deleted; ready for clean recreation." `
+                -ForegroundColor Green
+            return
+        }
+    }
+    while ((Get-Date) -lt $Deadline)
+
+    throw "Container group '$GroupName' was not deleted within 5 minutes."
+}
+
 function Get-GroupStatus {
     param([Parameter(Mandatory)][object]$Group)
 
@@ -835,6 +874,10 @@ function Show-Status {
 Set-Location $RepoRoot
 Assert-ServiceDefinition
 
+if ($Recreate -and $Action -ne "Prepare") {
+    throw "-Recreate is only valid with -Action Prepare."
+}
+
 if ($Action -eq "Validate") {
     $Required = Get-RequiredEnvironmentNames
     Write-Host (
@@ -906,6 +949,13 @@ switch ($Action) {
         $ExistingGroup = Try-Get-Group -Headers $Headers
         if ($null -ne $ExistingGroup -and (Get-GroupStatus -Group $ExistingGroup) -ne "stopped") {
             throw "Container group must be stopped before Prepare. Run -Action Stop first."
+        }
+        if ($null -ne $ExistingGroup -and [int]$ExistingGroup.replicas -ne 0) {
+            throw "Container group must have replicas=0 before Prepare."
+        }
+        if ($Recreate -and $null -ne $ExistingGroup) {
+            Remove-StoppedContainerGroup -Headers $Headers
+            $ExistingGroup = $null
         }
 
         if (-not $SkipBuild) {
