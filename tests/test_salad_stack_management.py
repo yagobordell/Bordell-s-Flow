@@ -224,5 +224,14 @@ def test_worker_create_retries_transient_name_conflict_after_delete() -> None:
 def test_whisper_uses_fresh_versioned_group_after_queue_rebind_failure() -> None:
     services = _document()["services"]
 
-    assert services["whisper"]["group_name"] == "ai-video-factory-whisper-worker-v2"
-    assert services["whisper"]["queue_name"] == "ai-video-factory-whisper-jobs"
+    assert services["whisper"]["group_name"] == "ai-video-factory-whisper-worker-v3"
+    assert services["whisper"]["queue_name"] == "ai-video-factory-whisper-jobs-v2"
+
+
+
+def test_whisper_queue_rebind_uses_fresh_group_and_fresh_queue_pair() -> None:
+    services = _document()["services"]
+    whisper = services["whisper"]
+
+    assert whisper["group_name"] == "ai-video-factory-whisper-worker-v3"
+    assert whisper["queue_name"] == "ai-video-factory-whisper-jobs-v2"
