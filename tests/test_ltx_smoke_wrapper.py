@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 WRAPPER = Path("scripts/submit_ltx25_smoke.py")
+ORCHESTRATOR_DOCKERFILE = Path("docker/local/orchestrator/Dockerfile")
 
 
 def _execute_wrapper() -> None:
@@ -53,3 +54,10 @@ def test_ltx_smoke_preserves_explicit_pending_timeout(monkeypatch) -> None:
     _execute_wrapper()
 
     assert called["argv"][-2:] == ["--pending-timeout-seconds", "600"]
+
+
+
+def test_local_orchestrator_installs_ffprobe_for_ltx_validation() -> None:
+    text = ORCHESTRATOR_DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "apt-get install -y --no-install-recommends ffmpeg" in text
