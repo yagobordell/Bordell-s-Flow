@@ -243,3 +243,35 @@ def test_phase8_resume_hard_guards_queue_before_scale_to_zero_start() -> None:
     assert text.index('& python $QueueGuard ltx25 --output-dir $OutputDir') < text.index(
         '& $ScaleToZeroStarter @StartArguments'
     )
+
+
+
+def test_phase6_reuses_shared_ideogram_replica_before_cold_prewarm() -> None:
+    phase6 = Path("scripts/run_phase6_keyframes_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    prewarm = PREWARM.read_text(encoding="utf-8")
+
+    assert '$PrewarmArguments["AdoptReadyReplica"] = $true' in phase6
+    assert "if ($ReleaseSharedIdeogram)" in phase6
+    assert "[switch]$AdoptReadyReplica" in prewarm
+    assert "$AdoptReadyReplica -and" in prewarm
+    assert '$Status -eq "running"' in prewarm
+    assert "[int]$Group.replicas -eq 1" in prewarm
+    assert "[int]$HeldAutoscaler.min_replicas -ne 1" in prewarm
+    assert "Test-RemoteAutoscalerMatchesManifestExceptMinReplicas" in prewarm
+    assert "$HeldInstances.Count -ne 1" in prewarm
+    assert "$HeldStarted" in prewarm
+    assert "$HeldReady" in prewarm
+    assert "Assert-QueueLogicallyEmpty -Queue $Queue -VerificationSeconds 180" in prewarm
+    assert "prewarm adopted one already started+ready shared replica" in prewarm
+
+
+def test_shared_ideogram_adoption_precedes_cold_state_requirement() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+
+    adopt = text.index("if (\n    $AdoptReadyReplica -and")
+    cold_requirement = text.index(
+        "Optimized prewarm requires '$GroupName' stopped at replicas=0/pending=False"
+    )
+    assert adopt < cold_requirement
