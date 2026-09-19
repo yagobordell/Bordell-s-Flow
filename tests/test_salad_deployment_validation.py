@@ -154,3 +154,12 @@ def test_validation_manager_exposes_targeted_prepare_recreate() -> None:
     assert '$Arguments["Recreate"] = $true' in text
     assert "-Recreate is only valid with -Action Prepare." in text
     assert "-Recreate requires one explicit service" in text
+
+
+
+def test_validation_manager_forwards_explicit_pinned_image_for_recovery() -> None:
+    text = VALIDATION_MANAGER.read_text(encoding="utf-8")
+
+    assert "[string]$PinnedImage" in text
+    assert '$Arguments["PinnedImage"] = $PinnedImage' in text
+    assert "-PinnedImage requires one explicit service." in text
