@@ -91,6 +91,9 @@ $PrewarmArguments = @{
     TimeoutMinutes = $PrewarmTimeoutMinutes
     HoldReadyReplica = $true
 }
+if ($ReleaseSharedIdeogram) {
+    $PrewarmArguments["AdoptReadyReplica"] = $true
+}
 $FluxPrewarmArguments = @{ TimeoutMinutes = $PrewarmTimeoutMinutes }
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
@@ -108,7 +111,7 @@ try {
     if ($IdeogramNeeded) {
         $IdeogramTouched = $true
         Write-Host (
-            "=== Ideogram optimized prewarm: select one ready node only when cache misses exist ==="
+            "=== Ideogram optimized prewarm: reuse shared ready replica or select one node ==="
         ) -ForegroundColor Cyan
         & $OptimizedPrewarm @PrewarmArguments
         if (-not $?) {
