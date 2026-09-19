@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)][string]$OutputDir,
     [ValidateRange(10, 180)][int]$PrewarmTimeoutMinutes = 45,
     [ValidateRange(60, 14400)][int]$TimeoutSeconds = 7200,
+    [ValidateRange(30, 1800)][int]$DispatchTimeoutSeconds = 300,
     [ValidateRange(1, 60)][int]$PollSeconds = 10,
     [switch]$NonInteractive
 )
@@ -102,7 +103,12 @@ try {
         if (-not $?) { throw "Real-ESRGAN optimized prewarm failed." }
     }
 
-    & python $Runner --clips $Clips --output-dir $OutputDir --poll-seconds $PollSeconds --timeout-seconds $TimeoutSeconds
+    & python $Runner `
+        --clips $Clips `
+        --output-dir $OutputDir `
+        --poll-seconds $PollSeconds `
+        --timeout-seconds $TimeoutSeconds `
+        --dispatch-timeout-seconds $DispatchTimeoutSeconds
     if ($LASTEXITCODE -ne 0) { throw "Real-ESRGAN upscale failed with exit code $LASTEXITCODE." }
 }
 finally {
