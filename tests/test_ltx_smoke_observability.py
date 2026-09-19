@@ -63,3 +63,26 @@ def test_phase8_smoke_defaults_to_canonical_landscape_contract() -> None:
     assert 'parser.add_argument("--fps", type=int, default=24)' in text
     assert "MP4 dimensions do not match the requested contract" in text
     assert "MP4 fps" in text
+
+
+
+def test_ltx_suite_invokes_landscape_720p_smoke() -> None:
+    text = SMOKE_SUITE.read_text(encoding="utf-8")
+    ltx = text.split("def _smoke_ltx25", maxsplit=1)[1].split(
+        "async def main", maxsplit=1
+    )[0]
+
+    assert '"--width",\n        "1280"' in ltx
+    assert '"--height",\n        "720"' in ltx
+    assert '"--width",\n        "768"' not in ltx
+    assert '"--height",\n        "1280"' not in ltx
+    assert "_prepare_ltx_landscape_keyframe(" in ltx
+    assert 'inputs_dir / "ltx-keyframe-16x9.png"' in ltx
+
+
+def test_phase8_smoke_requires_ffprobe_for_verified_success() -> None:
+    text = PHASE8_SMOKE.read_text(encoding="utf-8")
+
+    assert "ffprobe is required for Phase 8 smoke validation" in text
+    assert "refusing unverified success" in text
+    assert "if probe is not None:" not in text
