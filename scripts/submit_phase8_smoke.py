@@ -149,8 +149,8 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("data/output/phase5/shot_timings.json"),
     )
-    parser.add_argument("--width", type=int, default=768)
-    parser.add_argument("--height", type=int, default=1280)
+    parser.add_argument("--width", type=int, default=1280)
+    parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--wait", action=argparse.BooleanOptionalAction, default=True)
@@ -389,6 +389,29 @@ def main() -> None:
             raise RuntimeError(f"expected exactly one video stream, got {len(video_streams)}")
         if audio_streams:
             raise RuntimeError("Phase 8 MP4 unexpectedly contains an audio stream")
+        video_stream = video_streams[0]
+        if (
+            int(video_stream.get("width", 0)) != args.width
+            or int(video_stream.get("height", 0)) != args.height
+        ):
+            raise RuntimeError(
+                "Phase 8 MP4 dimensions do not match the requested contract: "
+                f"{video_stream.get('width')}x{video_stream.get('height')} "
+                f"!= {args.width}x{args.height}"
+            )
+        rate = str(
+            video_stream.get("avg_frame_rate")
+            or video_stream.get("r_frame_rate")
+            or ""
+        )
+        if "/" not in rate:
+            raise RuntimeError(f"Phase 8 MP4 has invalid frame rate metadata: {rate!r}")
+        numerator, denominator = rate.split("/", maxsplit=1)
+        actual_fps = float(numerator) / float(denominator)
+        if abs(actual_fps - args.fps) > 1e-6:
+            raise RuntimeError(
+                f"Phase 8 MP4 fps {actual_fps} does not match requested {args.fps}"
+            )
         print(probe_path, flush=True)
 
     print(f"downloaded={destination.resolve()}", flush=True)
