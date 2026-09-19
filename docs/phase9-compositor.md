@@ -4,7 +4,7 @@ Status: **CLOSED**
 
 Formal closure record: [`phase9-closure.md`](phase9-closure.md).
 
-Phase 9 turns the canonical silent shot clips and narration timeline into a final audiovisual
+Phase 9 turns the canonical Real-ESRGAN-upscaled silent shot clips and narration timeline into a final audiovisual
 composition. The compositor is deliberately isolated from Phase 8 GPU transport and LTX internals.
 
 ## Phase 9.1 — Media probe and frame-exact timeline
@@ -59,7 +59,7 @@ Each `VideoClip.uri` is resolved below the directory containing `video_clips.jso
 base directory is supplied. Escaping that base directory is rejected.
 
 Before a clip enters the composition plan, `ffprobe` must confirm exactly one H.264 video stream,
-768x1280 dimensions by default, 24 fps by default, no audio streams and enough source frames to cover
+2560x1440 dimensions by default, 24 fps by default, no audio streams and enough source frames to cover
 the frame-quantized canonical shot interval. Clips that are too short fail rather than being slowed
 down or silently padded.
 
@@ -143,7 +143,7 @@ not rewrite the canonical Phase 5 timestamps.
 
 ### Cue grouping
 
-The default caption profile remains intentionally conservative for vertical short-form video:
+The default caption grouping remains intentionally conservative while the render surface is now landscape 16:9:
 
 ```text
 max words per cue:       5
@@ -205,11 +205,11 @@ python scripts/run_phase9_compositor.py
 Defaults:
 
 ```text
-clips:    data/output/phase8/video_clips.json
+clips:    data/output/phase8/upscaled_clips.json
 timings:  data/output/phase5/shot_timings.json
 words:    data/output/phase5/narration_words.json
 output:   data/output/phase9/composition_plan.json
-profile:  768x1280 @ 24 fps
+profile:  2560x1440 @ 24 fps
 ```
 
 Caption grouping can be tuned for experiments with:
