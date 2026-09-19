@@ -115,6 +115,15 @@ class OptimizedGpuStageExecutor:
                 str(output / "phase8"),
                 "-NonInteractive",
             ]
+        if stage_name == "phase8-upscale":
+            return [
+                "scripts/run_phase8_upscale_controlled.ps1",
+                "-Clips",
+                str(output / "phase8" / "video_clips.json"),
+                "-OutputDir",
+                str(output / "phase8"),
+                "-NonInteractive",
+            ]
         return None
 
 
@@ -148,7 +157,7 @@ def parse_args() -> argparse.Namespace:
         "--through",
         choices=PRODUCTION_STAGE_NAMES,
         default=None,
-        help="Stop after the selected stage instead of running through Phase 8 video generation.",
+        help="Stop after the selected stage instead of running through Phase 8 upscale.",
     )
     parser.add_argument(
         "--force-stage",
@@ -296,8 +305,8 @@ def main() -> None:
         f"executed={len(summary.executed)} adopted={len(summary.adopted)} "
         f"skipped={len(summary.skipped)} total={summary.total_elapsed_seconds:.1f}s"
     )
-    if args.through is None or args.through == "phase8-videos":
-        print("Production phases 2-8 are complete. The local renderer can now run Phase 9.")
+    if args.through is None or args.through == "phase8-upscale":
+        print("Production phases 2-8 plus 1440p upscale are complete. Phase 9 can now run.")
 
 
 if __name__ == "__main__":
