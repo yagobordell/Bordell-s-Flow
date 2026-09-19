@@ -157,7 +157,7 @@ def test_queue_repair_patches_autoscaling_without_reusing_group_name() -> None:
     assert "-Method Patch" in script
     assert "-Method Delete" not in script
     assert "Recreating stopped container group" not in script
-    assert "A real queued job must not be submitted until the" in script
+    assert "Refusing GPU allocation or" in script
     assert "Test-QueueAttachment" in script
 
 
@@ -262,3 +262,4 @@ def test_whisper_overrides_stack_autostart_for_job_queue_scale_to_zero() -> None
     assert whisper["queue_name"] == "ai-video-factory-whisper-jobs-v2"
     assert '$ServiceAutostartProperty = $Definition.PSObject.Properties["autostart_policy"]' in script
     assert "$AutostartPolicy = [bool]$ServiceAutostartProperty.Value" in script
+
