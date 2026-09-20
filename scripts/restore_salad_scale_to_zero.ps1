@@ -278,6 +278,11 @@ if ($Mode -eq "WarmScaleOut") {
 }
 $RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
 if ($null -eq $RemoteAutoscaler) {
+    if ($Mode -eq "WarmScaleOut") {
+        throw (
+            "$Service API response omits queue_autoscaler; cannot safely arm warm scale-out."
+        )
+    }
     Write-Host (
         "$Service API response omits queue_autoscaler; skipping legacy autoscaler restore. " +
         "The Stop path and zero-replica guard remain authoritative for cleanup."
@@ -323,7 +328,18 @@ do {
     if ($null -eq $Group) {
         throw "Container group '$GroupName' disappeared while restoring scale-to-zero autoscaling."
     }
-    if (-not [bool]$Group.pending_change -and (Test-TargetAutoscaler -Group $Group)) {
+    $WarmGroupReady = (
+        $Mode -ne "WarmScaleOut" -or
+        (
+            [int]$Group.replicas -ge 1 -and
+            [string]$Group.current_state.status -in @("deploying", "running")
+        )
+    )
+    if (
+        -not [bool]$Group.pending_change -and
+        $WarmGroupReady -and
+        (Test-TargetAutoscaler -Group $Group)
+    ) {
         $Completion = if ($Mode -eq "WarmScaleOut") {
             "warm scale-out autoscaler armed"
         }
