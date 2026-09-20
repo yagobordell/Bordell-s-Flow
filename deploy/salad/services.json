@@ -27,8 +27,8 @@
   "services": {
     "ltx25": {
       "display_name": "AI Video Factory LTX 2.5",
-      "group_name": "ai-video-factory-ltx25-worker",
-      "queue_name": "ai-video-factory-ltx25-jobs",
+      "group_name": "ai-video-factory-ltx25-worker-v2",
+      "queue_name": "ai-video-factory-ltx25-jobs-v2",
       "dockerfile": "docker/workers/ltx25/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:ltx25-torch211-cu128-eagersdpa-xet-v4",
       "priority": "high",
