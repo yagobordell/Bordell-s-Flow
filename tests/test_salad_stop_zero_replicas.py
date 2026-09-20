@@ -45,3 +45,15 @@ def test_zero_replica_guard_waits_for_stopped_then_patches_to_zero() -> None:
     assert 'Operation "normalize replicas to zero"' in script
     assert 'if ($Status -eq "stopped" -and $Replicas -eq 0' in script
     assert "did not settle at stopped/replicas=0 before timeout" in script
+
+
+def test_global_cleanup_rechecks_zero_replicas_before_queue_cleanup() -> None:
+    script = Path("scripts/run_video_factory.ps1").read_text(encoding="utf-8")
+
+    assert '$ZeroReplicaGuard = Join-Path $PSScriptRoot "ensure_salad_zero_replicas.ps1"' in script
+    cleanup = script.split("function Invoke-FinalCleanup", maxsplit=1)[1].split(
+        "Import-EnvFile -Path $EnvFile", maxsplit=1
+    )[0]
+    assert "& $ZeroReplicaGuard `" in cleanup
+    assert "& $QueueCleanup `" in cleanup
+    assert cleanup.index("& $ZeroReplicaGuard `") < cleanup.index("& $QueueCleanup `")
