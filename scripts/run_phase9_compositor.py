@@ -58,6 +58,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    args.output.unlink(missing_ok=True)
     clips = _read_models(args.clips, VideoClip)
     timings = _read_models(args.timings, ShotTiming)
     words = _read_models(args.words, NarrationWord)
