@@ -8,6 +8,9 @@ def test_ideogram_phases_pin_replica_before_readiness() -> None:
     assert "$TargetMinReplicas = if ($HoldReadyReplica) { 1 } else { 0 }" in prewarm
     assert '$PrewarmPatch["queue_autoscaler"]' in prewarm
     assert "min_replicas = 1" in prewarm
+    assert "max_replicas = 1" in prewarm
+    assert "Test-RemoteAutoscalerBounds" in prewarm
+    assert "-ExpectedMaxReplicas 1" in prewarm
     main_prewarm = prewarm.split("$PrewarmPatch = @{" , maxsplit=1)[1]
     assert main_prewarm.index('$PrewarmPatch["queue_autoscaler"]') < main_prewarm.index(
         '"$GroupUrl/start"'
@@ -42,4 +45,23 @@ def test_phase8_holds_ready_ltx_replica_through_dispatch() -> None:
     assert prewarm_block.index("HoldReadyReplica = $true") < prewarm_block.index(
         "& $OptimizedPrewarm @PrewarmArguments"
     )
+    assert "--submit-only" in runner
+    assert 'Mode = "WarmScaleOut"' in runner
+    submit_index = runner.index("--submit-only")
+    scaleout_index = runner.index('Mode = "WarmScaleOut"')
+    final_wait_index = runner.rindex("--dispatch-timeout-seconds")
+    assert submit_index < scaleout_index < final_wait_index
     assert "-Action Stop" in runner
+
+
+def test_warm_scaleout_control_preserves_one_replica_floor() -> None:
+    control = Path("scripts/restore_salad_scale_to_zero.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert '[ValidateSet("Manifest", "WarmScaleOut")]' in control
+    assert 'if ($Mode -eq "WarmScaleOut")' in control
+    assert 'throw "WarmScaleOut is currently reserved for the ltx25 production lifecycle."' in control
+    assert "min_replicas = $MinReplicas" in control
+    assert "max_replicas = [int]$Definition.autoscaler.max_replicas" in control
+    assert '"warm scale-out autoscaler armed"' in control
