@@ -216,6 +216,7 @@ def main() -> None:
             poll_seconds=args.poll_seconds,
             timeout_seconds=args.timeout_seconds,
             dispatch_timeout_seconds=args.dispatch_timeout_seconds,
+            transport_route=args.queue_name,
         )
     finally:
         if progress_thread is not None:
