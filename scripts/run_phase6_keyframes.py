@@ -19,6 +19,7 @@ from ai_video_factory.providers import (
     SaladFlux2KleinImageProvider,
     SaladIdeogramImageProvider,
 )
+from ai_video_factory.providers.images import parse_image_size
 from ai_video_factory.providers.inference_jobs import (
     InferenceJobExecutor,
     InferenceJobTimeoutError,
@@ -142,6 +143,11 @@ async def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     args = parse_args()
+    width, height = parse_image_size(args.size)
+    if width * 9 != height * 16:
+        raise SystemExit(
+            f"Phase 6 production keyframes must be exact 16:9; received {width}x{height}"
+        )
     frames = _read_models(args.frames, StoryboardFrame)
     shots = _read_models(args.shots, Shot)
 
