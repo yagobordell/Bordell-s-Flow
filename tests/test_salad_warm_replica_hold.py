@@ -8,7 +8,10 @@ def test_ideogram_phases_pin_replica_before_readiness() -> None:
     assert "$TargetMinReplicas = if ($HoldReadyReplica) { 1 } else { 0 }" in prewarm
     assert '$PrewarmPatch["queue_autoscaler"]' in prewarm
     assert "min_replicas = 1" in prewarm
-    assert prewarm.index("$PrewarmPatch") < prewarm.index('"$GroupUrl/start"')
+    main_prewarm = prewarm.split("$PrewarmPatch = @{" , maxsplit=1)[1]
+    assert main_prewarm.index('$PrewarmPatch["queue_autoscaler"]') < main_prewarm.index(
+        '"$GroupUrl/start"'
+    )
     assert "Test-RemoteAutoscalerMinReplicas" in prewarm
     assert "-ExpectedMinReplicas $TargetMinReplicas" in prewarm
     assert "Optimized prewarm cannot use -HoldReadyReplica because Salad did not expose" in prewarm
