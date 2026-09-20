@@ -96,7 +96,7 @@ def test_manifest_versions_and_download_profiles_are_explicit() -> None:
 
     assert services["ideogram4"]["image"].endswith("ideogram4-nf4-quality48-v4")
     assert services["breeze_tts2"]["image"].endswith("breeze-tts2-fast-all-v2")
-    assert services["whisper"]["image"].endswith("whisper-large-v3-turbo-v2")
+    assert services["whisper"]["image"].endswith("whisper-large-v3-turbo-v3")
     assert services["ideogram4"]["environment"]["SALAD_LOG_LEVEL"] == "info"
     assert services["whisper"]["environment"]["SALAD_LOG_LEVEL"] == "info"
     assert services["whisper"]["autostart_policy"] is False
