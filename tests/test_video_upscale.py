@@ -300,7 +300,11 @@ def test_upscale_manifest_inspector_counts_terminal_retry_jobs(
     manifest_path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
     output_path = tmp_path / "inspection.json"
 
-    monkeypatch.setattr(upscale_inspector, "build_video_upscale_plan", lambda *_a, **_k: [object()])
+    monkeypatch.setattr(
+        upscale_inspector,
+        "build_video_upscale_plan",
+        lambda *_a, **_k: [object()],
+    )
     monkeypatch.setattr(
         upscale_inspector,
         "video_upscale_run_fingerprint",
