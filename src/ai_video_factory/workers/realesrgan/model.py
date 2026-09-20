@@ -166,6 +166,8 @@ class DirectRealESRGANBackend:
                 pre_pad=parameters.pre_pad,
                 fp32=parameters.fp32,
             )
+            if self._device.startswith("cuda") and bindings.torch.cuda.is_available():
+                bindings.torch.cuda.reset_peak_memory_stats()
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.unlink(missing_ok=True)
 
@@ -333,11 +335,15 @@ class DirectRealESRGANBackend:
         elapsed = time.monotonic() - started
         allocated = 0
         reserved = 0
+        peak_allocated = 0
+        peak_reserved = 0
         free = 0
         total = 0
         if self._device.startswith("cuda") and bindings.torch.cuda.is_available():
             allocated = int(bindings.torch.cuda.memory_allocated())
             reserved = int(bindings.torch.cuda.memory_reserved())
+            peak_allocated = int(bindings.torch.cuda.max_memory_allocated())
+            peak_reserved = int(bindings.torch.cuda.max_memory_reserved())
             try:
                 free_value, total_value = bindings.torch.cuda.mem_get_info()
                 free = int(free_value)
@@ -351,6 +357,8 @@ class DirectRealESRGANBackend:
             f"elapsed_seconds={elapsed:.3f} "
             f"cuda_allocated_bytes={allocated} "
             f"cuda_reserved_bytes={reserved} "
+            f"cuda_peak_allocated_bytes={peak_allocated} "
+            f"cuda_peak_reserved_bytes={peak_reserved} "
             f"cuda_free_bytes={free} cuda_total_bytes={total}",
             flush=True,
         )
