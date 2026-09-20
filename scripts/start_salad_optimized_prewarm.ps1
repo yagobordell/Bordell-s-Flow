@@ -439,10 +439,12 @@ function Repair-ResidualHeldAutoscaler {
     do {
         Start-Sleep -Seconds 3
         $Group = Get-Group
+        $RestoredAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
         if (
             -not [bool]$Group.pending_change -and
-            (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas 0) -and
-            [int](Get-RemoteQueueAutoscaler -Group $Group).max_replicas -eq
+            $null -ne $RestoredAutoscaler -and
+            [int]$RestoredAutoscaler.min_replicas -eq 0 -and
+            [int]$RestoredAutoscaler.max_replicas -eq
                 [int]$Definition.autoscaler.max_replicas
         ) {
             Write-Host "$Service residual warm-hold autoscaler restored to scale-to-zero." `
@@ -965,7 +967,19 @@ do {
 while ((Get-Date) -lt $PatchDeadline)
 $AutoscalerStateReady = (
     -not $AutoscalerObservable -or
-    (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas $TargetMinReplicas)
+    (
+        $HoldReadyReplica -and
+        (Test-RemoteAutoscalerBounds `
+            -Group $Group `
+            -ExpectedMinReplicas 1 `
+            -ExpectedMaxReplicas 1)
+    ) -or
+    (
+        -not $HoldReadyReplica -and
+        (Test-RemoteAutoscalerMinReplicas `
+            -Group $Group `
+            -ExpectedMinReplicas $TargetMinReplicas)
+    )
 )
 if (
     [bool]$Group.pending_change -or
