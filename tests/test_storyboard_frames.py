@@ -91,6 +91,9 @@ def test_storyboard_instructions_require_action_visibility_and_visual_progressio
     assert "solo elementos de tipo objeto" in STORYBOARD_FRAME_INSTRUCTIONS
     assert "horizontal 16:9" in STORYBOARD_FRAME_INSTRUCTIONS
     assert "landscape 16:9" in STORYBOARD_FRAME_INSTRUCTIONS
+    assert "retrato vertical" in STORYBOARD_FRAME_INSTRUCTIONS
+    assert "foreground, midground y background" in STORYBOARD_FRAME_INSTRUCTIONS
+    assert "parallax" in STORYBOARD_FRAME_INSTRUCTIONS
     assert "documental vertical" not in STORYBOARD_FRAME_INSTRUCTIONS
 
 
@@ -172,6 +175,25 @@ def test_storyboard_bot_receives_duration_and_only_relevant_references() -> None
     assert "location_001" not in first_input
     assert "duration_seconds: 7.380" in second_input
     assert "location_001: Canonical feudal Japanese environment reference." in second_input
+
+
+def test_storyboard_bot_rejects_non_landscape_aspect_ratio() -> None:
+    provider = FakeStructuredProvider([_plan("unused")])
+    bot = StoryboardFrameBot(provider=provider, model="test-model")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="exactly 16:9"):
+        asyncio.run(
+            bot.run(
+                _shots()[0],
+                _timings()[0],
+                [_references()[0]],
+                visual_style="cinematic documentary",
+                aspect_ratio="9:16",
+                previous_frame=None,
+            )
+        )
+
+    assert provider.calls == []
 
 
 def test_storyboard_workflow_rejects_unknown_visual_entity() -> None:
