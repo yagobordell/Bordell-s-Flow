@@ -33,3 +33,9 @@ def test_prepare_rejects_a_priority_mismatch() -> None:
 
     assert "[string]$Group.priority -ne [string]$Definition.priority" in script
     assert "Salad did not activate the expected priority" in script
+
+
+def test_ltx_uses_high_priority_for_rtx5090_capacity() -> None:
+    document = json.loads(MANIFEST.read_text(encoding="utf-8"))
+
+    assert document["services"]["ltx25"]["priority"] == "high"
