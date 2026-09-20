@@ -4,10 +4,10 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from ai_video_factory.compositor.media import MediaProbe
-from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoClip, VideoPrompt
 import ai_video_factory.workflows.video_generation as generation
 import ai_video_factory.workflows.video_upscale as upscale
+from ai_video_factory.compositor.media import MediaProbe
+from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoClip, VideoPrompt
 
 
 def _write_png(path: Path, *, width: int, height: int, value: int = 0) -> None:
@@ -17,7 +17,9 @@ def _write_png(path: Path, *, width: int, height: int, value: int = 0) -> None:
     path.write_bytes(buffer.getvalue())
 
 
-def _generation_inputs(base_dir: Path) -> tuple[list[StoryboardKeyframe], list[VideoPrompt], list[ShotTiming]]:
+def _generation_inputs(
+    base_dir: Path,
+) -> tuple[list[StoryboardKeyframe], list[VideoPrompt], list[ShotTiming]]:
     return (
         [StoryboardKeyframe(shot_id=1, uri="storyboard_keyframes/shot_001.png")],
         [VideoPrompt(shot_id=1, prompt="Slow cinematic push-in with gentle parallax.")],
