@@ -48,3 +48,16 @@ The worker owns the model weights inside the deployment boundary and records mod
 CI must cover 16:9 dimensions, request fingerprints, cache invalidation, worker contracts, lifecycle cleanup, Phase 9 2560x1440 composition and anti-regression against vertical production defaults.
 
 Before merge, a real Salad run must verify 1280x720 LTX clips, 2560x1440 upscaled clips, a 2560x1440/24fps H.264 + AAC final video, visual quality, zero-GPU replay and final stopped/replicas=0/clean queues.
+
+
+## Real-ESRGAN terminal recovery and worker observability
+
+A real 13-shot validation completed 12 upscales and lost the worker during shot 13. The failed application job remained `running` in Postgres with `attempt_count=1`, an active lease and no `last_error`; the immediate Salad retries then received HTTP 503 because the original application lease was still owned. Those 503 retries are therefore treated as a secondary lease effect, not independent GPU failures.
+
+Recovery preserves the validated 1440p R2 outputs. When the upscale manifest matches the current plan, has no pending/running transports and contains terminal failures, the controlled runner prewarms exactly one fresh Real-ESRGAN replica with `min_replicas=1/max_replicas=1` and retries only the unresolved clips. Normal fresh production remains eligible for the manifest autoscaler ceiling of two replicas.
+
+The Real-ESRGAN worker image is versioned as `realesrgan-x2plus-v2` for this observability revision. The pixel-generation contract remains unchanged: `RealESRGAN_x2plus`, native x2, `tile=0`, fp16, H.264 CRF 12, and exact 1280x720 -> 2560x1440 spatial scaling. Because the changes are operational only, existing successful artifacts remain valid under the same generation profile.
+
+The worker now keeps `/ready` responsive while a multi-minute upscale owns the inference lock, emits `REALESRGAN_PROGRESS` every ten frames with application job id and CUDA allocated/reserved/free memory, and clears reusable CUDA cache between clips. The workflow also persists the complete terminal Salad payload and prints the persisted `gpu.jobs` row before cleanup when a failure occurs.
+
+If the isolated fresh-worker retry of shot 13 still fails, the next controlled experiment is a new deterministic tiled Real-ESRGAN profile (for example `tile=512`) rather than silently changing existing request parameters. That experiment must use a new profile/job fingerprint and compare quality, memory, performance and frame invariants before becoming production configuration.
