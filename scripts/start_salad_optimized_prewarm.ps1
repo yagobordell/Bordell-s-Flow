@@ -626,6 +626,84 @@ function Request-InstanceReallocation {
     }
 }
 
+function Restart-UnassignedPlacement {
+    param([Parameter(Mandatory)][string]$Reason)
+
+    Write-Warning (
+        "$Service has replicas=1 but no container instance was assigned: $Reason. " +
+        "Recycling the active container group to request a fresh placement."
+    )
+
+    $Queue = Get-Queue
+    $null = Assert-QueueLogicallyEmpty -Queue $Queue -VerificationSeconds 180
+
+    $Instances = @(Get-Instances)
+    if ($Instances.Count -gt 0) {
+        Write-Host (
+            "$Service obtained an instance before placement recycle; skipping group restart."
+        ) -ForegroundColor Yellow
+        return
+    }
+
+    $Group = Get-Group
+    if (
+        [bool]$Group.pending_change -or
+        [int]$Group.replicas -ne 1
+    ) {
+        throw (
+            "$Service cannot safely recycle unassigned placement because the group changed; " +
+            "replicas=$([int]$Group.replicas) pending=$([bool]$Group.pending_change)."
+        )
+    }
+
+    Invoke-SaladMutation `
+        -Method "Post" `
+        -Uri "$GroupUrl/stop" `
+        -Operation "stop unassigned prewarm placement" `
+        -TimeoutSeconds 60 |
+        Out-Null
+
+    $StopDeadline = (Get-Date).AddMinutes(2)
+    do {
+        Start-Sleep -Seconds 5
+        $Group = Get-Group
+        $Instances = @(Get-Instances)
+        if (
+            -not [bool]$Group.pending_change -and
+            [string]$Group.current_state.status -eq "stopped" -and
+            $Instances.Count -eq 0
+        ) {
+            break
+        }
+    }
+    while ((Get-Date) -lt $StopDeadline)
+
+    if (
+        [bool]$Group.pending_change -or
+        [string]$Group.current_state.status -ne "stopped" -or
+        $Instances.Count -ne 0
+    ) {
+        throw "$Service unassigned placement recycle could not stop cleanly."
+    }
+    if ([int]$Group.replicas -ne 1) {
+        throw (
+            "$Service unassigned placement recycle unexpectedly changed replicas to " +
+            "$([int]$Group.replicas); refusing to mutate replica intent implicitly."
+        )
+    }
+
+    Invoke-SaladMutation `
+        -Method "Post" `
+        -Uri "$GroupUrl/start" `
+        -Operation "restart unassigned prewarm placement" `
+        -TimeoutSeconds 60 |
+        Out-Null
+
+    Write-Warning (
+        "$Service unassigned placement recycle accepted; waiting for a fresh Salad assignment."
+    )
+}
+
 function Test-QueueAttachment {
     param([Parameter(Mandatory)][object]$Queue)
 
@@ -1097,6 +1175,44 @@ while ((Get-Date) -lt $Deadline) {
     }
 
     if (-not $ObservedInstance) {
+        $GroupAwaitingAssignment = (
+            -not [bool]$Group.pending_change -and
+            [int]$Group.replicas -eq 1 -and
+            $Status -in @("deploying", "running")
+        )
+        if ($GroupAwaitingAssignment) {
+            if ($null -eq $AllocatingSince) {
+                $AllocatingSince = Get-Date
+            }
+            $Limit = if (
+                $AllocatingReallocations -lt $Profile.MaxAllocatingReallocations
+            ) {
+                [int]$Profile.AllocatingSeconds
+            }
+            else {
+                [int]$Profile.FinalAllocatingSeconds
+            }
+
+            if (((Get-Date) - $AllocatingSince).TotalSeconds -ge $Limit) {
+                if ($AllocatingReallocations -ge $Profile.MaxAllocatingReallocations) {
+                    throw (
+                        "$Service remained without an assigned container instance during " +
+                        "the final ${Limit}s allocation window."
+                    )
+                }
+
+                $AllocatingReallocations += 1
+                Restart-UnassignedPlacement -Reason (
+                    "no instance became visible for ${Limit}s " +
+                    "(allocation retry $AllocatingReallocations/" +
+                    "$($Profile.MaxAllocatingReallocations))"
+                )
+                $AllocatingSince = $null
+            }
+        }
+        else {
+            $AllocatingSince = $null
+        }
         continue
     }
 
