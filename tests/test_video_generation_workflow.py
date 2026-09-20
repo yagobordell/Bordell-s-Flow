@@ -17,6 +17,7 @@ from ai_video_factory.providers.job_queue import (
     QueueJobNotFoundError,
     QueueJobSnapshot,
     QueueJobStatus,
+    TransientQueueError,
 )
 from ai_video_factory.workflows.video_generation import (
     VideoGenerationIncompleteError,
@@ -271,6 +272,97 @@ def test_fanout_submits_all_jobs_before_polling_and_resume_skips_successes(
     assert sum(queue.submit_counts.values()) == 2
     assert queue.operations == []
 
+
+
+def test_polling_tolerates_transient_queue_get_without_cancelling_jobs(
+    tmp_path: Path,
+) -> None:
+    base, keyframes, prompts, timings = _inputs(tmp_path)
+    plan = build_video_generation_plan(
+        keyframes,
+        prompts,
+        timings,
+        keyframe_base_dir=base,
+    )
+    storage = FakeStorage()
+    queue = FakeQueue(storage)
+    original_get = queue.get
+    transient_raised = False
+
+    def flaky_get(transport_job_id: str) -> QueueJobSnapshot:
+        nonlocal transient_raised
+        if not transient_raised:
+            transient_raised = True
+            raise TransientQueueError("temporary Salad control-plane reset")
+        queue.statuses[transport_job_id] = QueueJobStatus.SUCCEEDED
+        return original_get(transport_job_id)
+
+    queue.get = flaky_get  # type: ignore[method-assign]
+
+    manifest, clips = run_video_generation(
+        plan,
+        queue=queue,
+        storage=storage,
+        manifest_path=tmp_path / "manifest.json",
+        clips_dir=tmp_path / "clips",
+        poll_seconds=0.001,
+        timeout_seconds=1.0,
+        dispatch_timeout_seconds=0.01,
+    )
+
+    assert transient_raised
+    assert [clip.shot_id for clip in clips] == [1, 2]
+    assert all(state.transport_status == "succeeded" for state in manifest.jobs)
+    assert [op for op, _ in queue.operations].count("cancel") == 0
+    assert sum(queue.submit_counts.values()) == 2
+
+
+def test_resume_preserves_transport_on_transient_status_read(tmp_path: Path) -> None:
+    base, keyframes, prompts, timings = _inputs(tmp_path)
+    plan = build_video_generation_plan(
+        keyframes,
+        prompts,
+        timings,
+        keyframe_base_dir=base,
+    )
+    storage = FakeStorage()
+    queue = FakeQueue(storage)
+    manifest_path = tmp_path / "manifest.json"
+    clips_dir = tmp_path / "clips"
+
+    first, _ = run_video_generation(
+        plan,
+        queue=queue,
+        storage=storage,
+        manifest_path=manifest_path,
+        clips_dir=clips_dir,
+        wait=False,
+    )
+    original_transport_ids = [state.transport_job_id for state in first.jobs]
+    original_get = queue.get
+    transient_raised = False
+
+    def flaky_get(transport_job_id: str) -> QueueJobSnapshot:
+        nonlocal transient_raised
+        if not transient_raised:
+            transient_raised = True
+            raise TransientQueueError("temporary Salad control-plane reset")
+        return original_get(transport_job_id)
+
+    queue.get = flaky_get  # type: ignore[method-assign]
+
+    resumed, _ = run_video_generation(
+        plan,
+        queue=queue,
+        storage=storage,
+        manifest_path=manifest_path,
+        clips_dir=clips_dir,
+        wait=False,
+    )
+
+    assert transient_raised
+    assert [state.transport_job_id for state in resumed.jobs] == original_transport_ids
+    assert [state.submission_count for state in resumed.jobs] == [1, 1]
 
 def test_first_dispatch_timeout_cancels_stuck_pending_transports(
     tmp_path: Path,
