@@ -32,7 +32,7 @@ async def align_narration_words(
         audio,
         filename=Path(narration.uri).name,
         model=model,
-        prompt=source.text,
+        prompt="",
         language=language,
     )
     if not words:
