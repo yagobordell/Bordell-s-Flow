@@ -171,6 +171,14 @@ class TransformersWhisperBackend:
             if parameters.language is not None:
                 generate_kwargs["language"] = parameters.language
 
+            print(
+                "WHISPER_INFERENCE_CONFIG "
+                f"profile={parameters.generation_profile} "
+                f"language={parameters.language or '<auto>'} "
+                "condition_on_prev_tokens=false temperature=0.0 prompt_ids=false",
+                flush=True,
+            )
+
             result = pipeline(
                 str(audio_path),
                 return_timestamps="word",
