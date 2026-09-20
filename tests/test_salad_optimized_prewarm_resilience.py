@@ -66,8 +66,8 @@ def test_reallocation_verifies_instance_state_before_retrying_lost_response() ->
 def test_all_reallocation_paths_pass_machine_identity_for_lost_response_verification() -> None:
     text = PREWARM.read_text(encoding="utf-8")
 
-    assert text.count("Request-InstanceReallocation `") == 4
-    assert text.count("-MachineId $MachineId `") == 4
+    assert text.count("Request-InstanceReallocation `") == 5
+    assert text.count("-MachineId $MachineId `") == 5
 
 
 def test_stale_queue_retry_budget_uses_absolute_deadline() -> None:
@@ -122,3 +122,22 @@ def test_optimized_prewarm_does_not_depend_on_debug_transport_logs() -> None:
     assert 'log contains "received heartbeat"' not in text
     assert "requires remote SALAD_LOG_LEVEL=debug" not in text
     assert "first real job will prove transport" in text
+
+
+def test_active_prewarm_survives_transient_control_plane_outage() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+
+    assert "control-plane telemetry remained unavailable after bounded read retries" in text
+    assert "keeping the current replica untouched" in text
+    assert "$SlowImagePullSince = $null" in text
+    assert "$RunningNotReadySince = $null" in text
+
+
+def test_breeze_reallocates_sustained_slow_image_pull() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+
+    breeze = text.split("breeze_tts2 = @{" , maxsplit=1)[1].split("fish_speech = @{" , maxsplit=1)[0]
+    assert "SlowImagePullWindowSeconds = 300" in breeze
+    assert "SlowImagePullMinProgress = 0.05" in breeze
+    assert "image pull remained below minimum sustained progress" in text
+    assert "Container image pull advanced only" in text
