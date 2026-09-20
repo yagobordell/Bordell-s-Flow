@@ -68,7 +68,11 @@ Model weights are bootstrapped after the HTTP health endpoint starts. The model 
 
 Model-specific Salad configuration lives in `deploy/salad/services.json`.
 
-The validated dedicated service is:
+The current dedicated service is:
+
+> The 2026-09-15 validation used medium priority. Production was raised to high priority on
+> 2026-09-20 after repeated real runs could not obtain any RTX 5090 placement at medium priority.
+> The GPU class and inference runtime remain unchanged.
 
 ```text
 service:      ltx25
@@ -79,7 +83,7 @@ CPU:          8
 memory:       40960 MiB
 shared memory:8192 MiB
 storage:      137438953472 bytes
-priority:     medium
+priority:     high
 autoscaler:   min=0, max=4
 ```
 
