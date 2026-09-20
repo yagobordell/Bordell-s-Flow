@@ -38,7 +38,7 @@ def main() -> None:
     if not args.audio.is_file():
         raise SystemExit(f"Narration audio not found: {args.audio}")
 
-    source = SourceScript.model_validate_json(args.source.read_text(encoding="utf-8"))
+    SourceScript.model_validate_json(args.source.read_text(encoding="utf-8"))
     audio_sha256 = hashlib.sha256(args.audio.read_bytes()).hexdigest()
     request = build_whisper_job_request(
         audio_sha256=audio_sha256,
