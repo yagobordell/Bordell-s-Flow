@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--aspect-ratio",
         default="16:9",
+        choices=("16:9",),
         help="Target cinematic landscape video aspect ratio.",
     )
     parser.add_argument(
