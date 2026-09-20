@@ -153,6 +153,6 @@ def test_phase8_inspector_and_controlled_wrapper_pin_landscape_contract() -> Non
         '"Phase 8 manifest inspection contract is exactly 1280x720 at 24 fps"'
         in inspector
     )
-    assert wrapper.count("--width 1280 `") == 4
-    assert wrapper.count("--height 720 `") == 4
-    assert wrapper.count("--fps 24 `") == 4
+    assert wrapper.count("--width 1280 `") == 5
+    assert wrapper.count("--height 720 `") == 5
+    assert wrapper.count("--fps 24 `") == 5
