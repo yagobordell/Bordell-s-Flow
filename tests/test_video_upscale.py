@@ -16,6 +16,7 @@ from ai_video_factory.workers.realesrgan import (
 )
 from ai_video_factory.workers.realesrgan.model import DirectRealESRGANBackend
 from ai_video_factory.workflows import video_upscale as upscale
+from scripts import inspect_phase8_upscale_manifest as upscale_inspector
 
 
 def _probe(path: Path) -> MediaProbe:
@@ -271,3 +272,56 @@ def test_realesrgan_worker_emits_frame_progress_and_clears_cuda_cache() -> None:
     assert manifest["services"]["realesrgan"]["image"].endswith(
         ":realesrgan-x2plus-v2"
     )
+
+
+def test_upscale_manifest_inspector_counts_terminal_retry_jobs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    clips_path = tmp_path / "video_clips.json"
+    clips_path.write_text(
+        json.dumps([{"shot_id": 1, "uri": "video_clips/shot_001.mp4"}]),
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "video_upscale_manifest.json"
+    manifest = upscale.VideoUpscaleManifest(
+        run_fingerprint="matching-fingerprint",
+        jobs=[
+            upscale.VideoUpscaleJobState(
+                shot_id=1,
+                application_job_id="phase8-upscale-001-test",
+                request_sha256="request-sha",
+                transport_job_id="transport-failed",
+                transport_status="failed",
+                submission_count=1,
+            )
+        ],
+    )
+    manifest_path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+    output_path = tmp_path / "inspection.json"
+
+    monkeypatch.setattr(upscale_inspector, "build_video_upscale_plan", lambda *_a, **_k: [object()])
+    monkeypatch.setattr(
+        upscale_inspector,
+        "video_upscale_run_fingerprint",
+        lambda _plan: "matching-fingerprint",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "inspect_phase8_upscale_manifest.py",
+            "--clips",
+            str(clips_path),
+            "--manifest",
+            str(manifest_path),
+            "--json-output",
+            str(output_path),
+        ],
+    )
+
+    upscale_inspector.main()
+
+    state = json.loads(output_path.read_text(encoding="utf-8"))
+    assert state["status"] == "matching"
+    assert state["active_resume_jobs"] == 0
+    assert state["terminal_retry_jobs"] == 1
