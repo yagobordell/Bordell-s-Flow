@@ -179,6 +179,11 @@ def test_production_dag_automates_ideogram_keyframes(tmp_path: Path) -> None:
     assert "720" in videos.arguments
     assert "24" in videos.arguments
 
+    alignment = next(stage for stage in stages if stage.name == "phase5-alignment")
+    assert "--language" in alignment.arguments
+    language_index = alignment.arguments.index("--language")
+    assert alignment.arguments[language_index + 1] == "en"
+
 
 def test_existing_keyframes_are_adopted_then_stale_inputs_regenerate(tmp_path: Path) -> None:
     source = tmp_path / "storyboard.json"
@@ -502,3 +507,38 @@ def test_dag_failure_cancels_active_sibling_before_waiting_for_pool(tmp_path: Pa
 
     assert executor.cancel_calls == 1
     assert executor.release.is_set()
+
+
+def test_production_alignment_language_is_explicit_and_changes_stage_spec(
+    tmp_path: Path,
+) -> None:
+    script_file = tmp_path / "script.txt"
+    script_file.write_text("hola mundo", encoding="utf-8")
+    output = tmp_path / "output"
+
+    english = build_production_stages(
+        script_file=script_file,
+        output_dir=output,
+        narration_language="en",
+    )
+    spanish = build_production_stages(
+        script_file=script_file,
+        output_dir=output,
+        narration_language="es",
+    )
+
+    english_alignment = next(stage for stage in english if stage.name == "phase5-alignment")
+    spanish_alignment = next(stage for stage in spanish if stage.name == "phase5-alignment")
+
+    assert english_alignment.arguments != spanish_alignment.arguments
+    assert "en" in english_alignment.arguments
+    assert "es" in spanish_alignment.arguments
+
+
+def test_production_rejects_empty_narration_language(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="narration language must be non-empty"):
+        build_production_stages(
+            script_file=tmp_path / "script.txt",
+            output_dir=tmp_path / "output",
+            narration_language="   ",
+        )
