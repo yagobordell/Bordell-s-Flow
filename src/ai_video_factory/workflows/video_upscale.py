@@ -359,10 +359,28 @@ def _load_or_create_manifest(
             manifest_path.read_text(encoding="utf-8")
         )
         if manifest.run_fingerprint != fingerprint:
-            raise ValueError(
-                "Existing video upscale manifest belongs to a different input plan; "
-                "archive it before starting a different run"
+            if any(
+                state.transport_status in {"pending", "running"}
+                for state in manifest.jobs
+            ):
+                raise ValueError(
+                    "Existing video upscale manifest belongs to a different input plan "
+                    "and still contains active transports"
+                )
+            _archive_manifest(manifest_path, manifest.run_fingerprint)
+            manifest = VideoUpscaleManifest(
+                run_fingerprint=fingerprint,
+                jobs=[
+                    VideoUpscaleJobState(
+                        shot_id=item.shot_id,
+                        application_job_id=item.request.job_id,
+                        request_sha256=item.request.fingerprint(),
+                    )
+                    for item in plan
+                ],
             )
+            _write_manifest(manifest_path, manifest)
+            return manifest
         for state, item in zip(manifest.jobs, plan, strict=True):
             if state.shot_id != item.shot_id:
                 raise ValueError("Video upscale manifest shot order does not match current plan")
@@ -385,6 +403,22 @@ def _load_or_create_manifest(
     )
     _write_manifest(manifest_path, manifest)
     return manifest
+
+
+def _archive_manifest(path: Path, run_fingerprint: str) -> Path:
+    raw = path.read_bytes()
+    state_sha = hashlib.sha256(raw).hexdigest()[:12]
+    archive = path.with_name(
+        f"{path.stem}.archive-{run_fingerprint[:12]}-{state_sha}{path.suffix}"
+    )
+    if archive.exists():
+        if archive.read_bytes() != raw:
+            raise ValueError(f"Video upscale manifest archive collision: {archive}")
+        path.unlink()
+    else:
+        os.replace(path, archive)
+    print(f"Archived superseded video upscale manifest: {archive}")
+    return archive
 
 
 def _write_manifest(path: Path, manifest: VideoUpscaleManifest) -> None:
