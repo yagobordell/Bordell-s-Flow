@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import time
@@ -27,6 +28,7 @@ from ai_video_factory.providers.job_queue import (
     QueueJobNotFoundError,
     QueueJobSnapshot,
     QueueJobStatus,
+    TransientQueueError,
 )
 from ai_video_factory.workers.realesrgan import (
     REALESRGAN_GENERATION_PROFILE,
@@ -40,6 +42,8 @@ SOURCE_HEIGHT = 720
 TARGET_WIDTH = 2560
 TARGET_HEIGHT = 1440
 UPSCALE_FPS = 24
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +263,15 @@ def run_video_upscale(
             state.response = None
             _write_manifest(manifest_path, manifest)
             continue
+        except TransientQueueError as exc:
+            logger.warning(
+                "Transient queue status read during Real-ESRGAN resume "
+                "shot_id=%s transport_job_id=%s; preserving persisted state: %s",
+                item.shot_id,
+                state.transport_job_id,
+                exc,
+            )
+            continue
         _apply_snapshot(state, item, snapshot)
         _write_manifest(manifest_path, manifest)
 
@@ -296,7 +309,46 @@ def run_video_upscale(
     dispatch_deadline = time.monotonic() + dispatch_timeout_seconds
     deadline = time.monotonic() + timeout_seconds
     while any(state.transport_status in {"pending", "running"} for state in manifest.jobs):
-        if not dispatch_proven and time.monotonic() >= dispatch_deadline:
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"Real-ESRGAN upscale did not finish within {timeout_seconds} seconds"
+            )
+
+        poll_had_transient = False
+        for item in plan:
+            state = state_by_shot[item.shot_id]
+            if state.transport_status not in {"pending", "running"}:
+                continue
+            if state.transport_job_id is None:
+                raise RuntimeError(f"Shot {item.shot_id} has no transport job id")
+            try:
+                snapshot = queue.get(state.transport_job_id)
+            except TransientQueueError as exc:
+                poll_had_transient = True
+                logger.warning(
+                    "Transient queue status read during Real-ESRGAN polling "
+                    "shot_id=%s transport_job_id=%s; keeping job active: %s",
+                    item.shot_id,
+                    state.transport_job_id,
+                    exc,
+                )
+                continue
+            _apply_snapshot(state, item, snapshot)
+            if (
+                state.transport_job_id in transport_probe_ids
+                and state.transport_status in {"running", "succeeded", "failed"}
+            ):
+                dispatch_proven = True
+            _write_manifest(manifest_path, manifest)
+
+        if poll_had_transient and not dispatch_proven:
+            dispatch_deadline = time.monotonic() + dispatch_timeout_seconds
+
+        if (
+            not dispatch_proven
+            and not poll_had_transient
+            and time.monotonic() >= dispatch_deadline
+        ):
             pending_probe_states = [
                 state
                 for state in manifest.jobs
@@ -310,26 +362,9 @@ def run_video_upscale(
             _write_manifest(manifest_path, manifest)
             raise TimeoutError(
                 f"Real-ESRGAN upscale did not dispatch any queued job within "
-                f"{dispatch_timeout_seconds} seconds"
+                f"{dispatch_timeout_seconds} seconds of observable queue health"
             )
-        if time.monotonic() >= deadline:
-            raise TimeoutError(
-                f"Real-ESRGAN upscale did not finish within {timeout_seconds} seconds"
-            )
-        for item in plan:
-            state = state_by_shot[item.shot_id]
-            if state.transport_status not in {"pending", "running"}:
-                continue
-            if state.transport_job_id is None:
-                raise RuntimeError(f"Shot {item.shot_id} has no transport job id")
-            snapshot = queue.get(state.transport_job_id)
-            _apply_snapshot(state, item, snapshot)
-            if (
-                state.transport_job_id in transport_probe_ids
-                and state.transport_status in {"running", "succeeded", "failed"}
-            ):
-                dispatch_proven = True
-            _write_manifest(manifest_path, manifest)
+
         if any(state.transport_status in {"pending", "running"} for state in manifest.jobs):
             time.sleep(poll_seconds)
 
