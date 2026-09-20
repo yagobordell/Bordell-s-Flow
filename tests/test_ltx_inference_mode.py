@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from PIL import Image
 
 import ai_video_factory.gpu.ltx_video as ltx_video
 from ai_video_factory.gpu.ltx_video import (
@@ -28,7 +29,7 @@ def test_direct_backend_runs_pipeline_and_encode_in_inference_mode(
     model_root = tmp_path / "models"
     _seed_model_files(model_root)
     keyframe = tmp_path / "keyframe.png"
-    keyframe.write_bytes(b"png")
+    Image.new("RGB", (1536, 864)).save(keyframe, format="PNG")
     state = {"depth": 0, "entries": 0, "pipeline_calls": 0, "encodes": 0}
 
     class FakeInferenceMode:
@@ -70,6 +71,10 @@ def test_direct_backend_runs_pipeline_and_encode_in_inference_mode(
     class FakeOffloadMode:
         CPU = "cpu"
 
+    class FakeDiffVAEApply:
+        natten_available = staticmethod(lambda: True)
+        triton_na_available = staticmethod(lambda: True)
+
     class FakePipeline:
         def __init__(self, **kwargs: Any) -> None:
             assert state["depth"] > 0
@@ -93,6 +98,7 @@ def test_direct_backend_runs_pipeline_and_encode_in_inference_mode(
         image_conditioning_input=lambda **kwargs: kwargs,
         encode_video=fake_encode_video,
         get_video_chunks_number=lambda num_frames, tiling: 1,
+        diffvae_apply=FakeDiffVAEApply,
     )
     monkeypatch.setattr(ltx_video, "_load_ltx_bindings", lambda: bindings)
 
@@ -105,8 +111,8 @@ def test_direct_backend_runs_pipeline_and_encode_in_inference_mode(
             generation_profile=LTX_GENERATION_PROFILE,
             prompt="A cinematic motion shot.",
             seed=43,
-            width=768,
-            height=1280,
+            width=1280,
+            height=720,
             fps=24,
             num_frames=89,
         ),
@@ -116,3 +122,5 @@ def test_direct_backend_runs_pipeline_and_encode_in_inference_mode(
     assert state["depth"] == 0
     assert state["pipeline_calls"] == 1
     assert state["encodes"] == 1
+    assert FakeDiffVAEApply.natten_available() is False
+    assert FakeDiffVAEApply.triton_na_available() is False
