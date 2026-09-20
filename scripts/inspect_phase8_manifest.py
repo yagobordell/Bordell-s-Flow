@@ -26,8 +26,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timings", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--json-output", type=Path, required=True)
-    parser.add_argument("--width", type=int, default=768)
-    parser.add_argument("--height", type=int, default=1280)
+    parser.add_argument("--width", type=int, default=1280)
+    parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed-base", type=int, default=42)
     parser.add_argument(
@@ -113,6 +113,10 @@ def inspect_manifest_state(
 
 def main() -> None:
     args = parse_args()
+    if (args.width, args.height, args.fps) != (1280, 720, 24):
+        raise SystemExit(
+            "Phase 8 manifest inspection contract is exactly 1280x720 at 24 fps"
+        )
     keyframes = _read_models(args.keyframes, StoryboardKeyframe)
     prompts = _read_models(args.prompts, VideoPrompt)
     timings = _read_models(args.timings, ShotTiming)
