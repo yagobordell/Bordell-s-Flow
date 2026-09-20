@@ -157,6 +157,7 @@ class DirectRealESRGANBackend:
         with self._lock:
             self._validate_source(source_path, parameters)
             bindings = self._get_bindings()
+            self._release_cuda_cache(bindings)
             upsampler = self._get_or_build_upsampler(
                 tile=parameters.tile,
                 tile_pad=parameters.tile_pad,
