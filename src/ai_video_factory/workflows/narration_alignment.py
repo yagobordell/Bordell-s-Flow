@@ -1,5 +1,5 @@
-from pathlib import Path
 import re
+from pathlib import Path
 
 from ai_video_factory.domain import NarrationAudio, NarrationWord, SourceScript
 from ai_video_factory.providers.transcription import TranscriptionProvider
@@ -9,7 +9,7 @@ _ZERO_DURATION_TOLERANCE_SECONDS = 1e-6
 _MAX_TRAILING_ZERO_DURATION_WORDS = 4
 _MIN_WORD_COUNT_RATIO = 0.55
 _MAX_WORD_COUNT_RATIO = 1.75
-_MIN_SOURCE_WORDS_FOR_RATIO_CHECK = 8
+_MIN_SOURCE_WORDS_FOR_RATIO_CHECK = 20
 
 
 async def align_narration_words(
