@@ -253,6 +253,8 @@ def test_realesrgan_salad_service_scales_to_zero() -> None:
     assert service["resources"]["gpu_class_names"] == ["RTX 3090 (24 GB)"]
     assert service["autoscaler"]["min_replicas"] == 0
     assert service["autoscaler"]["max_replicas"] == 2
+    assert service["environment"]["INFERENCE_WORKER_LEASE_SECONDS"] == "180"
+    assert service["environment"]["INFERENCE_WORKER_HEARTBEAT_SECONDS"] == "30"
 
 
 def test_upscale_terminal_snapshot_preserves_provider_payload(
