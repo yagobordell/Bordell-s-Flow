@@ -156,6 +156,8 @@ def main() -> None:
     args = parse_args()
     if args.progress_seconds < 0:
         raise SystemExit("--progress-seconds must be >= 0")
+    if (args.width, args.height, args.fps) != (1280, 720, 24):
+        raise SystemExit("Phase 8 production video contract is exactly 1280x720 at 24 fps")
 
     environment = _environment()
 
