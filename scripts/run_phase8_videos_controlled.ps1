@@ -74,6 +74,7 @@ Write-Host "=== Phase 8 resume manifest: verify current deterministic plan ===" 
     --width 1280 `
     --height 720 `
     --fps 24 `
+    --transport-route $env:SALAD_LTX25_QUEUE_NAME `
     --manifest $ManifestPath `
     --json-output $ManifestStatePath
 if ($LASTEXITCODE -ne 0) {
@@ -87,6 +88,36 @@ $ResumeSubmittedJobs = (
     [string]$ManifestState.status -eq "matching" -and
     [int]$ManifestState.active_resume_jobs -gt 0
 )
+
+if ([string]$ManifestState.status -eq "different_transport_route") {
+    Write-Host (
+        "=== Phase 8 transport migration: archive stale queue-local transport IDs ==="
+    ) -ForegroundColor Cyan
+    $ArchiveStatePath = Join-Path ([IO.Path]::GetTempPath()) (
+        "ai-video-factory-phase8-route-archive-{0}.json" -f ([Guid]::NewGuid().ToString("N"))
+    )
+    & python $ManifestInspector `
+        --keyframes $Keyframes `
+        --prompts $Prompts `
+        --timings $Timings `
+        --width 1280 `
+        --height 720 `
+        --fps 24 `
+        --transport-route $env:SALAD_LTX25_QUEUE_NAME `
+        --manifest $ManifestPath `
+        --json-output $ArchiveStatePath `
+        --archive-mismatch
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -LiteralPath $ArchiveStatePath -Force -ErrorAction SilentlyContinue
+        throw "Phase 8 transport-route manifest archival failed; refusing GPU allocation."
+    }
+    $ArchiveState = Get-Content -LiteralPath $ArchiveStatePath -Raw | ConvertFrom-Json
+    Remove-Item -LiteralPath $ArchiveStatePath -Force -ErrorAction SilentlyContinue
+    if ([string]$ArchiveState.status -ne "archived_different_transport_route") {
+        throw "Phase 8 transport-route manifest changed unexpectedly during archival."
+    }
+    $ResumeSubmittedJobs = $false
+}
 
 if ([string]$ManifestState.status -eq "different_plan") {
     Write-Host (
