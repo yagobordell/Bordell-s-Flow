@@ -98,6 +98,7 @@ function Test-BreezePrewarmFallbackEligible {
         "exceeded the global node-change budget",
         "could not make allocation/container-creation progress",
         "image pull remained stalled during the final",
+        "image pull remained below minimum sustained progress",
         "image pull completed but the container never started during",
         "remained running but not ready during the final",
         "did not become ready within the overall"
