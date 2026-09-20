@@ -176,6 +176,7 @@ Write-Host (
 $PrewarmArguments = @{
     Service = "ltx25"
     TimeoutMinutes = $PrewarmTimeoutMinutes
+    HoldReadyReplica = $true
 }
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
