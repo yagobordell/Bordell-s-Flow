@@ -268,6 +268,9 @@ def test_realesrgan_worker_emits_frame_progress_and_clears_cuda_cache() -> None:
     assert "cuda.memory_allocated()" in model
     assert "cuda.memory_reserved()" in model
     assert "cuda.mem_get_info()" in model
+    assert "cuda.max_memory_allocated()" in model
+    assert "cuda.max_memory_reserved()" in model
+    assert "cuda.reset_peak_memory_stats()" in model
     assert "cuda.empty_cache()" in model
     assert manifest["services"]["realesrgan"]["image"].endswith(
         ":realesrgan-x2plus-v2"
