@@ -142,3 +142,23 @@ def test_breeze_reallocates_sustained_slow_image_pull() -> None:
     assert "SlowImagePullMinProgress = 0.05" in breeze
     assert "image pull remained below minimum sustained progress" in text
     assert "Container image pull advanced only" in text
+
+
+def test_optimized_prewarm_recovers_when_no_instance_is_assigned() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+
+    assert "function Restart-UnassignedPlacement" in text
+    assert "$GroupAwaitingAssignment" in text
+    assert "remained without an assigned container instance" in text
+    assert 'Operation "stop unassigned prewarm placement"' in text
+    assert 'Operation "restart unassigned prewarm placement"' in text
+    assert "unexpectedly changed replicas" in text
+
+
+def test_unassigned_recovery_uses_existing_allocation_budget() -> None:
+    text = PREWARM.read_text(encoding="utf-8")
+
+    assert "$AllocatingReallocations += 1" in text
+    assert "$Profile.AllocatingSeconds" in text
+    assert "$Profile.FinalAllocatingSeconds" in text
+    assert "allocation retry $AllocatingReallocations/" in text
