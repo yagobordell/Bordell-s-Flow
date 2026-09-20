@@ -187,7 +187,7 @@ def test_alignment_rejects_unordered_word_timestamps() -> None:
 
 
 def test_alignment_rejects_implausible_word_count_inflation() -> None:
-    source_text = "uno dos tres cuatro cinco seis siete ocho nueve diez"
+    source_text = " ".join(f"fuente{index}" for index in range(20))
     provider = RecordingTranscriptionProvider(
         [
             TranscribedWord(
@@ -195,13 +195,13 @@ def test_alignment_rejects_implausible_word_count_inflation() -> None:
                 start_seconds=index * 0.05,
                 end_seconds=index * 0.05 + 0.04,
             )
-            for index in range(20)
+            for index in range(40)
         ]
     )
 
     with pytest.raises(
         ValueError,
-        match=r"word count is implausible.*source_words=10.*aligned_words=20",
+        match=r"word count is implausible.*source_words=20.*aligned_words=40",
     ):
         asyncio.run(
             align_narration_words(
