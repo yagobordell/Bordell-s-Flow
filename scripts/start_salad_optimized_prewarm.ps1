@@ -45,6 +45,8 @@ $Profiles = @{
         ImagePullStallSeconds = 180
         FinalImagePullStallSeconds = 480
         MaxImagePullReallocations = 2
+        SlowImagePullWindowSeconds = 300
+        SlowImagePullMinProgress = 0.05
         PostPullStartSeconds = 240
         FinalPostPullStartSeconds = 480
         MaxPostPullStartReallocations = 1
@@ -877,6 +879,8 @@ $NodeChanges = 0
 $AllocatingSince = $null
 $ImagePullSince = $null
 $ImagePullBaseline = $null
+$SlowImagePullSince = $null
+$SlowImagePullBaseline = $null
 $PostPullStartSince = $null
 $RunningNotReadySince = $null
 $AllocatingReallocations = 0
@@ -887,9 +891,34 @@ $ImagePullProgressThreshold = 0.005
 
 while ((Get-Date) -lt $Deadline) {
     Start-Sleep -Seconds 5
-    $Group = Get-Group
-    $Queue = Get-Queue
-    $Instances = @(Get-Instances)
+    try {
+        $Group = Get-Group
+        $Queue = Get-Queue
+        $Instances = @(Get-Instances)
+    }
+    catch {
+        if (
+            (Test-TransientSaladReadFailure -ErrorRecord $_) -and
+            (Get-Date) -lt $Deadline
+        ) {
+            Write-Warning (
+                "$Service control-plane telemetry remained unavailable after bounded read retries; " +
+                "keeping the current replica untouched and retrying within the overall prewarm " +
+                "budget. Error: $($_.Exception.Message)"
+            )
+            # Do not interpret an unobserved interval as worker stall. The overall prewarm
+            # deadline remains authoritative, so this cannot extend GPU allocation indefinitely.
+            $AllocatingSince = $null
+            $ImagePullSince = $null
+            $ImagePullBaseline = $null
+            $SlowImagePullSince = $null
+            $SlowImagePullBaseline = $null
+            $PostPullStartSince = $null
+            $RunningNotReadySince = $null
+            continue
+        }
+        throw
+    }
     $Status = [string]$Group.current_state.status
     $Attached = Test-QueueAttachment -Queue $Queue
 
@@ -983,6 +1012,8 @@ while ((Get-Date) -lt $Deadline) {
             $AllocatingSince = $null
             $ImagePullSince = $null
             $ImagePullBaseline = $null
+            $SlowImagePullSince = $null
+            $SlowImagePullBaseline = $null
             $PostPullStartSince = $null
             $RunningNotReadySince = $null
         }
@@ -1143,13 +1174,64 @@ while ((Get-Date) -lt $Deadline) {
                     -Reason "Container image pull made less than 0.5% progress for ${Limit}s"
                 $ImagePullSince = $null
                 $ImagePullBaseline = $null
+                $SlowImagePullSince = $null
+                $SlowImagePullBaseline = $null
                 continue
+            }
+        }
+
+        $SlowPullConfigured = (
+            $Profile.ContainsKey("SlowImagePullWindowSeconds") -and
+            $Profile.ContainsKey("SlowImagePullMinProgress")
+        )
+        if ($SlowPullConfigured) {
+            $SlowPullWindowSeconds = [int]$Profile.SlowImagePullWindowSeconds
+            $SlowPullMinProgress = [double]$Profile.SlowImagePullMinProgress
+            if ($null -eq $SlowImagePullSince) {
+                $SlowImagePullSince = Get-Date
+                $SlowImagePullBaseline = $PullingProgress
+            }
+            elseif ($PullingProgress -lt $SlowImagePullBaseline) {
+                $SlowImagePullSince = Get-Date
+                $SlowImagePullBaseline = $PullingProgress
+            }
+            elseif (
+                ((Get-Date) - $SlowImagePullSince).TotalSeconds -ge $SlowPullWindowSeconds
+            ) {
+                $SlowPullProgress = $PullingProgress - $SlowImagePullBaseline
+                if ($SlowPullProgress -lt $SlowPullMinProgress) {
+                    if ($ImagePullReallocations -ge $Profile.MaxImagePullReallocations) {
+                        throw (
+                            "$Service image pull remained below minimum sustained progress " +
+                            "during the final ${SlowPullWindowSeconds}s window."
+                        )
+                    }
+                    $ImagePullReallocations += 1
+                    Request-InstanceReallocation `
+                        -InstanceId $InstanceId `
+                        -MachineId $MachineId `
+                        -Reason (
+                            "Container image pull advanced only " +
+                            "$([Math]::Round($SlowPullProgress * 100, 2)) percentage points " +
+                            "during ${SlowPullWindowSeconds}s; minimum is " +
+                            "$([Math]::Round($SlowPullMinProgress * 100, 2))"
+                        )
+                    $ImagePullSince = $null
+                    $ImagePullBaseline = $null
+                    $SlowImagePullSince = $null
+                    $SlowImagePullBaseline = $null
+                    continue
+                }
+                $SlowImagePullSince = Get-Date
+                $SlowImagePullBaseline = $PullingProgress
             }
         }
     }
     else {
         $ImagePullSince = $null
         $ImagePullBaseline = $null
+        $SlowImagePullSince = $null
+        $SlowImagePullBaseline = $null
     }
 
     $ImagePulledButNotStarted = (
