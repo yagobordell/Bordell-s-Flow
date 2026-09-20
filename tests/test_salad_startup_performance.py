@@ -262,7 +262,7 @@ def test_phase8_archives_stale_manifest_only_after_idle_queue_guard() -> None:
         'if ([string]$ManifestState.status -eq "different_plan")'
     )
     idle_guard = text.index("& python $QueueGuard ltx25 --output-dir $EmptyGuardRoot")
-    archive = text.index("--archive-mismatch")
+    archive = text.index("--archive-mismatch", stale_branch)
     r2_preflight = text.index(
         "=== R2 preflight: verify storage before GPU allocation ==="
     )
