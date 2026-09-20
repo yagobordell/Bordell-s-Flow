@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
@@ -27,7 +28,10 @@ from ai_video_factory.providers.job_queue import (
     QueueJobNotFoundError,
     QueueJobSnapshot,
     QueueJobStatus,
+    TransientQueueError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,6 +236,15 @@ def run_video_generation(
             state.response = None
             _write_manifest(manifest_path, manifest)
             continue
+        except TransientQueueError as exc:
+            logger.warning(
+                "Transient queue status read during Phase 8 resume "
+                "shot_id=%s transport_job_id=%s; preserving persisted state: %s",
+                item.shot_id,
+                state.transport_job_id,
+                exc,
+            )
+            continue
         _apply_snapshot(state, item, snapshot)
         _write_manifest(manifest_path, manifest)
 
@@ -274,7 +287,46 @@ def run_video_generation(
     while any(
         state.transport_status in {"pending", "running"} for state in manifest.jobs
     ):
-        if not dispatch_proven and time.monotonic() >= dispatch_deadline:
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Video generation did not finish within {timeout_seconds} seconds")
+
+        poll_had_transient = False
+        for item in plan:
+            state = state_by_shot[item.shot_id]
+            if state.transport_status not in {"pending", "running"}:
+                continue
+            if state.transport_job_id is None:  # pragma: no cover - invariant protection
+                raise RuntimeError(f"Shot {item.shot_id} has no transport job id")
+            try:
+                snapshot = queue.get(state.transport_job_id)
+            except TransientQueueError as exc:
+                poll_had_transient = True
+                logger.warning(
+                    "Transient queue status read during Phase 8 polling "
+                    "shot_id=%s transport_job_id=%s; keeping job active: %s",
+                    item.shot_id,
+                    state.transport_job_id,
+                    exc,
+                )
+                continue
+            _apply_snapshot(state, item, snapshot)
+            if (
+                state.transport_job_id in transport_probe_ids
+                and state.transport_status in {"running", "succeeded", "failed"}
+            ):
+                dispatch_proven = True
+            _write_manifest(manifest_path, manifest)
+
+        if poll_had_transient and not dispatch_proven:
+            # A control-plane outage is not evidence that queued jobs failed to dispatch.
+            # Require a fresh continuous observation window before cancelling pending work.
+            dispatch_deadline = time.monotonic() + dispatch_timeout_seconds
+
+        if (
+            not dispatch_proven
+            and not poll_had_transient
+            and time.monotonic() >= dispatch_deadline
+        ):
             pending_probe_states = [
                 state
                 for state in manifest.jobs
@@ -288,25 +340,8 @@ def run_video_generation(
             _write_manifest(manifest_path, manifest)
             raise TimeoutError(
                 f"LTX video generation did not dispatch any queued job within "
-                f"{dispatch_timeout_seconds} seconds"
+                f"{dispatch_timeout_seconds} seconds of observable queue health"
             )
-        if time.monotonic() >= deadline:
-            raise TimeoutError(f"Video generation did not finish within {timeout_seconds} seconds")
-
-        for item in plan:
-            state = state_by_shot[item.shot_id]
-            if state.transport_status not in {"pending", "running"}:
-                continue
-            if state.transport_job_id is None:  # pragma: no cover - invariant protection
-                raise RuntimeError(f"Shot {item.shot_id} has no transport job id")
-            snapshot = queue.get(state.transport_job_id)
-            _apply_snapshot(state, item, snapshot)
-            if (
-                state.transport_job_id in transport_probe_ids
-                and state.transport_status in {"running", "succeeded", "failed"}
-            ):
-                dispatch_proven = True
-            _write_manifest(manifest_path, manifest)
 
         if any(
             state.transport_status in {"pending", "running"} for state in manifest.jobs
