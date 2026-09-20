@@ -73,7 +73,7 @@ class RecordingTranscriptionProvider:
         return self.words
 
 
-def test_alignment_preserves_source_as_prompt_and_assigns_word_ids() -> None:
+def test_alignment_keeps_source_for_validation_without_decoder_prompt() -> None:
     source_text = "Japón fue gobernado por guerreros.\nAparecen los samuráis."
     provider = RecordingTranscriptionProvider(
         [
@@ -95,7 +95,7 @@ def test_alignment_preserves_source_as_prompt_and_assigns_word_ids() -> None:
     )
 
     assert provider.last_call is not None
-    assert provider.last_call["prompt"] == source_text
+    assert provider.last_call["prompt"] == ""
     assert provider.last_call["filename"] == "narration.wav"
     assert [word.model_dump() for word in words] == [
         {"id": 1, "text": "Japón", "start_seconds": 0.2, "end_seconds": 0.7},
