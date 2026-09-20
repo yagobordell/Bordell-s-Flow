@@ -40,6 +40,9 @@ def main() -> None:
             transport_job_id,
             status,
             attempt_count,
+            lease_owner,
+            lease_expires_at,
+            request,
             last_error,
             updated_at
         FROM gpu.jobs
@@ -58,6 +61,16 @@ def main() -> None:
     print(f"transport_job_id={row['transport_job_id']}")
     print(f"status={row['status']}")
     print(f"attempt_count={row['attempt_count']}")
+    print(f"lease_owner={row['lease_owner'] or '<none>'}")
+    print(f"lease_expires_at={row['lease_expires_at'] or '<none>'}")
+    request = row["request"] or {}
+    parameters = request.get("parameters", {}) if isinstance(request, dict) else {}
+    print(f"task={request.get('task', '<unknown>') if isinstance(request, dict) else '<unknown>'}")
+    print(f"width={parameters.get('width', '<unknown>')}")
+    print(f"height={parameters.get('height', '<unknown>')}")
+    print(f"fps={parameters.get('fps', '<unknown>')}")
+    print(f"num_frames={parameters.get('num_frames', '<unknown>')}")
+    print(f"generation_profile={parameters.get('generation_profile', '<unknown>')}")
     print(f"updated_at={row['updated_at']}")
     print(f"last_error={row['last_error'] or '<none>'}")
 
