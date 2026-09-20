@@ -155,6 +155,10 @@ def test_production_dag_automates_ideogram_keyframes(tmp_path: Path) -> None:
     )
     names = [stage.name for stage in stages]
     keyframe = next(stage for stage in stages if stage.name == "phase6-keyframes")
+    references = next(stage for stage in stages if stage.name == "phase4-reference-assets")
+    storyboard = next(stage for stage in stages if stage.name == "phase6-storyboard")
+    video_prompts = next(stage for stage in stages if stage.name == "phase8-video-prompts")
+    videos = next(stage for stage in stages if stage.name == "phase8-videos")
 
     assert names.index("phase8-video-prompts") < names.index("phase6-keyframes")
     assert names.index("phase6-keyframes") < names.index("phase8-videos")
@@ -168,6 +172,12 @@ def test_production_dag_automates_ideogram_keyframes(tmp_path: Path) -> None:
         "shots.json",
     }
     assert "reference_assets.json" not in {path.name for path in keyframe.inputs}
+    assert "1536x864" in references.arguments
+    assert "16:9" in storyboard.arguments
+    assert "16:9" in video_prompts.arguments
+    assert "1280" in videos.arguments
+    assert "720" in videos.arguments
+    assert "24" in videos.arguments
 
 
 def test_existing_keyframes_are_adopted_then_stale_inputs_regenerate(tmp_path: Path) -> None:
