@@ -1,9 +1,11 @@
 import asyncio
 import base64
+from io import BytesIO
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from PIL import Image
 
 from ai_video_factory.domain import Shot, StoryboardFrame
 from ai_video_factory.providers.images import GeneratedImage, ImageReferenceInput
@@ -49,7 +51,7 @@ def test_openai_image_provider_omits_input_fidelity_when_not_requested() -> None
             prompt="New storyboard composition",
             references=_image_references(),
             model="gpt-image-2",
-            size="1024x1536",
+            size="1536x864",
             quality="medium",
             output_format="png",
         )
@@ -69,7 +71,7 @@ def test_openai_image_provider_forwards_explicit_input_fidelity() -> None:
             prompt="New storyboard composition",
             references=_image_references(),
             model="compatible-image-model",
-            size="1024x1536",
+            size="1536x864",
             quality="medium",
             output_format="png",
             input_fidelity="high",
@@ -78,6 +80,12 @@ def test_openai_image_provider_forwards_explicit_input_fidelity() -> None:
 
     assert client.images.last_edit is not None
     assert client.images.last_edit["input_fidelity"] == "high"
+
+
+def _png_bytes(width: int, height: int) -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (width, height)).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 class ParallelImageProvider:
@@ -94,8 +102,9 @@ class ParallelImageProvider:
             self.all_started.set()
 
         await asyncio.wait_for(self.all_started.wait(), timeout=0.5)
+        width, height = (int(part) for part in str(kwargs["size"]).split("x"))
         return GeneratedImage(
-            content=str(kwargs["prompt"]).encode("utf-8"),
+            content=_png_bytes(width, height),
             media_type="image/png",
             extension="png",
         )
@@ -140,7 +149,7 @@ def test_storyboard_keyframes_run_in_parallel_without_binary_reference_inputs(
             image_provider=provider,  # type: ignore[arg-type]
             output_dir=output_dir,
             model="ideogram-ai/ideogram-4-nf4",
-            size="1024x1536",
+            size="1536x864",
             quality="high",
         )
     )
@@ -155,8 +164,38 @@ def test_storyboard_keyframes_run_in_parallel_without_binary_reference_inputs(
         '{"caption":"Frame two"}',
     ]
     assert all("references" not in call for call in provider.calls)
-    assert (output_dir / "shot_001.png").is_file()
-    assert (output_dir / "shot_002.png").is_file()
+    with Image.open(output_dir / "shot_001.png") as image:
+        assert image.size == (1536, 864)
+    with Image.open(output_dir / "shot_002.png") as image:
+        assert image.size == (1536, 864)
+
+
+class WrongSizeStoryboardProvider:
+    async def generate_image(self, **kwargs: Any) -> GeneratedImage:
+        return GeneratedImage(
+            content=_png_bytes(864, 1536),
+            media_type="image/png",
+            extension="png",
+        )
+
+
+def test_storyboard_keyframes_reject_non_landscape_provider_geometry(tmp_path: Any) -> None:
+    output_dir = tmp_path / "phase6" / "storyboard_keyframes"
+
+    with pytest.raises(ValueError, match="expected exactly 1536x864"):
+        asyncio.run(
+            generate_storyboard_keyframes(
+                _frames(),
+                _shots(),
+                image_provider=WrongSizeStoryboardProvider(),  # type: ignore[arg-type]
+                output_dir=output_dir,
+                model="test",
+                size="1536x864",
+                quality="high",
+            )
+        )
+
+    assert not output_dir.exists()
 
 
 class FailingStoryboardProvider:
@@ -185,7 +224,7 @@ def test_storyboard_keyframe_failure_writes_no_partial_batch(tmp_path: Any) -> N
                 image_provider=FailingStoryboardProvider(),  # type: ignore[arg-type]
                 output_dir=output_dir,
                 model="ideogram-ai/ideogram-4-nf4",
-                size="1024x1536",
+                size="1536x864",
                 quality="high",
             )
         )
