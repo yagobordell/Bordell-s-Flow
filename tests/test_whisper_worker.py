@@ -57,27 +57,23 @@ def _request() -> InferenceJobRequest:
         parameters={
             "generation_profile": WHISPER_GENERATION_PROFILE,
             "model_id": WHISPER_MODEL_ID,
-            "prompt": "Hello world",
             "language": "en",
         },
     )
 
 
-def test_whisper_application_job_id_is_deterministic() -> None:
+def test_whisper_application_job_id_is_deterministic_and_language_scoped() -> None:
     first = whisper_application_job_id(
         audio_sha256="a" * 64,
-        prompt="Hello world",
         language="en",
     )
     second = whisper_application_job_id(
         audio_sha256="a" * 64,
-        prompt="Hello world",
         language="en",
     )
     changed = whisper_application_job_id(
         audio_sha256="a" * 64,
-        prompt="Different prompt",
-        language="en",
+        language="es",
     )
 
     assert first == second
@@ -124,14 +120,9 @@ def test_whisper_backend_builds_once_and_requests_word_timestamps(
         cuda = FakeCuda()
         float16 = "float16"
 
-    class FakePromptIds:
-        def to(self, device: str) -> str:
-            return f"prompt-ids:{device}"
-
     class FakeTokenizer:
-        def get_prompt_ids(self, prompt: str, *, return_tensors: str) -> FakePromptIds:
-            state["prompt"] = (prompt, return_tensors)
-            return FakePromptIds()
+        def get_prompt_ids(self, *_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("Whisper no-prompt profile must never build prompt_ids")
 
     class FakePipeline:
         tokenizer = FakeTokenizer()
@@ -169,7 +160,6 @@ def test_whisper_backend_builds_once_and_requests_word_timestamps(
         parameters=WhisperTranscriptionParameters(
             generation_profile=WHISPER_GENERATION_PROFILE,
             model_id=WHISPER_MODEL_ID,
-            prompt="Canonical narration",
             language="en",
         ),
     )
@@ -181,10 +171,10 @@ def test_whisper_backend_builds_once_and_requests_word_timestamps(
     assert state["calls"][0][1]["return_timestamps"] == "word"
     assert state["calls"][0][1]["generate_kwargs"] == {
         "task": "transcribe",
+        "condition_on_prev_tokens": False,
+        "temperature": 0.0,
         "language": "en",
-        "prompt_ids": "prompt-ids:cuda:0",
     }
-    assert state["prompt"] == ("Canonical narration", "pt")
     assert [word.text for word in words] == ["Hello", "world"]
 
 
@@ -203,6 +193,7 @@ def test_whisper_worker_settings_and_salad_manifest() -> None:
     assert service["queue_name"] == "ai-video-factory-whisper-jobs-v2"
     assert service["group_name"] == "ai-video-factory-whisper-worker-v4"
     assert service["dockerfile"] == "docker/workers/whisper/Dockerfile"
+    assert service["image"].endswith(":whisper-large-v3-turbo-v3")
     assert service["resources"]["gpu_class_names"] == ["RTX 3090 (24 GB)"]
     assert "gpu_classes" not in service["resources"]
     assert service["autoscaler"]["min_replicas"] == 0
@@ -218,4 +209,21 @@ def test_whisper_container_is_model_specific() -> None:
     assert "COPY src /opt/factory/src" in text
     assert "COPY . /opt/factory" not in text
     assert "transformers==5.5.2" in text
+    assert WHISPER_GENERATION_PROFILE == "whisper-large-v3-turbo-fp16-no-prompt-greedy-v2"
     assert "ai_video_factory.workers.whisper.runtime:app" in entrypoint
+
+
+def test_whisper_parameters_reject_legacy_prompt_field() -> None:
+    try:
+        WhisperTranscriptionParameters.model_validate(
+            {
+                "generation_profile": WHISPER_GENERATION_PROFILE,
+                "model_id": WHISPER_MODEL_ID,
+                "language": "es",
+                "prompt": "legacy decoder prompt",
+            }
+        )
+    except Exception as exc:
+        assert "prompt" in str(exc)
+    else:
+        raise AssertionError("Whisper v2 profile must reject legacy prompt parameters")
