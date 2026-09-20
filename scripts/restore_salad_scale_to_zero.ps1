@@ -171,21 +171,24 @@ function Try-Get-Group {
     }
 }
 
-function New-TargetAutoscaler {
-    $MinReplicas = if ($Mode -eq "WarmScaleOut") {
-        1
-    }
-    else {
-        [int]$Definition.autoscaler.min_replicas
-    }
+function New-ManifestAutoscaler {
     return @{
-        min_replicas = $MinReplicas
+        min_replicas = [int]$Definition.autoscaler.min_replicas
         max_replicas = [int]$Definition.autoscaler.max_replicas
         desired_queue_length = [int]$Definition.autoscaler.desired_queue_length
         polling_period = [int]$Definition.autoscaler.polling_period
         max_upscale_per_minute = [int]$Definition.autoscaler.max_upscale_per_minute
         max_downscale_per_minute = [int]$Definition.autoscaler.max_downscale_per_minute
     }
+}
+
+function New-TargetAutoscaler {
+    if ($Mode -eq "Manifest") {
+        return New-ManifestAutoscaler
+    }
+    $Autoscaler = New-ManifestAutoscaler
+    $Autoscaler.min_replicas = 1
+    return $Autoscaler
 }
 
 function Get-RemoteQueueAutoscaler {
@@ -198,8 +201,31 @@ function Get-RemoteQueueAutoscaler {
     return $Property.Value
 }
 
+function Test-ManifestAutoscaler {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $Autoscaler) {
+        return $false
+    }
+    return (
+        [int]$Autoscaler.min_replicas -eq [int]$Definition.autoscaler.min_replicas -and
+        [int]$Autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
+        [int]$Autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
+        [int]$Autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period -and
+        [int]$Autoscaler.max_upscale_per_minute -eq `
+            [int]$Definition.autoscaler.max_upscale_per_minute -and
+        [int]$Autoscaler.max_downscale_per_minute -eq `
+            [int]$Definition.autoscaler.max_downscale_per_minute
+    )
+}
+
 function Test-TargetAutoscaler {
     param([Parameter(Mandatory)][object]$Group)
+
+    if ($Mode -eq "Manifest") {
+        return Test-ManifestAutoscaler -Group $Group
+    }
 
     $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
     if ($null -eq $Autoscaler) {
@@ -311,7 +337,12 @@ Write-Host (
     "$Service applying autoscaler mode=$Mode min_replicas=$TargetMinReplicas " +
     "max_replicas=$([int]$Definition.autoscaler.max_replicas)."
 ) -ForegroundColor Cyan
-$Body = @{ queue_autoscaler = New-TargetAutoscaler } | ConvertTo-Json -Depth 10
+$Body = if ($Mode -eq "WarmScaleOut") {
+    @{ queue_autoscaler = New-TargetAutoscaler } | ConvertTo-Json -Depth 10
+}
+else {
+    @{ queue_autoscaler = New-ManifestAutoscaler } | ConvertTo-Json -Depth 10
+}
 Invoke-SaladRequest `
     -Method "Patch" `
     -Uri $GroupUrl `
