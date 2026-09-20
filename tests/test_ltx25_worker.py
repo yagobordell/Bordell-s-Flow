@@ -50,6 +50,7 @@ def test_ltx25_salad_manifest_has_dedicated_queue_and_image() -> None:
     document = json.loads(manifest_path.read_text(encoding="utf-8"))
     service = document["services"]["ltx25"]
 
+    assert service["group_name"] == "ai-video-factory-ltx25-worker-v2"
     assert service["queue_name"] == "ai-video-factory-ltx25-jobs-v2"
     assert service["dockerfile"] == "docker/workers/ltx25/Dockerfile"
     assert "ltx25" in service["image"]
