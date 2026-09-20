@@ -376,7 +376,7 @@ function Test-RemoteAutoscalerBounds {
 function New-ManifestAutoscaler {
     return @{
         min_replicas = [int]$Definition.autoscaler.min_replicas
-        max_replicas = 1
+        max_replicas = [int]$Definition.autoscaler.max_replicas
         desired_queue_length = [int]$Definition.autoscaler.desired_queue_length
         polling_period = [int]$Definition.autoscaler.polling_period
         max_upscale_per_minute = [int]$Definition.autoscaler.max_upscale_per_minute
@@ -918,7 +918,7 @@ $PrewarmPatch = @{ replicas = 1 }
 if ($HoldReadyReplica) {
     $PrewarmPatch["queue_autoscaler"] = @{
         min_replicas = 1
-        max_replicas = [int]$Definition.autoscaler.max_replicas
+        max_replicas = 1
         desired_queue_length = [int]$Definition.autoscaler.desired_queue_length
         polling_period = [int]$Definition.autoscaler.polling_period
         max_upscale_per_minute = [int]$Definition.autoscaler.max_upscale_per_minute
