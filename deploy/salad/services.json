@@ -451,7 +451,7 @@
       },
       "environment": {
         "INFERENCE_WORKER_MODE": "production",
-        "INFERENCE_WORKER_LEASE_SECONDS": "900",
+        "INFERENCE_WORKER_LEASE_SECONDS": "180",
         "INFERENCE_WORKER_HEARTBEAT_SECONDS": "30",
         "REALESRGAN_MODEL_ROOT": "/workspace/models/realesrgan",
         "REALESRGAN_DEVICE": "cuda",
