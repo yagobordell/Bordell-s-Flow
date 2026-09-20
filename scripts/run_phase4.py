@@ -44,6 +44,12 @@ def parse_args() -> argparse.Namespace:
         help="Shared visual style applied to all canonical references.",
     )
     parser.add_argument(
+        "--aspect-ratio",
+        default="16:9",
+        choices=("16:9",),
+        help="Canonical production reference aspect ratio.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=settings.output_dir / "phase4" / "visual_references.json",
@@ -70,6 +76,7 @@ async def main() -> None:
         block_continuity=continuity,
         reference_bot=reference_bot,
         visual_style=args.style,
+        aspect_ratio=args.aspect_ratio,
     )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
