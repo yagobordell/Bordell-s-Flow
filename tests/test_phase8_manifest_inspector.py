@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
+
+from PIL import Image
 
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
 from ai_video_factory.workflows.video_generation import (
@@ -16,7 +19,9 @@ def _plan(tmp_path: Path):
     keyframe_dir = tmp_path / "phase6"
     asset_dir = keyframe_dir / "storyboard_keyframes"
     asset_dir.mkdir(parents=True)
-    (asset_dir / "shot_001.png").write_bytes(b"png-one")
+    buffer = BytesIO()
+    Image.new("RGB", (1536, 864)).save(buffer, format="PNG")
+    (asset_dir / "shot_001.png").write_bytes(buffer.getvalue())
     keyframes = [
         StoryboardKeyframe(shot_id=1, uri="storyboard_keyframes/shot_001.png"),
     ]
