@@ -1,9 +1,11 @@
 import asyncio
 import base64
+from io import BytesIO
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from PIL import Image
 
 from ai_video_factory.domain import VisualReference
 from ai_video_factory.providers.images import GeneratedImage
@@ -35,7 +37,7 @@ def test_openai_image_provider_decodes_png_and_forwards_generation_settings() ->
         provider.generate_image(
             prompt="Canonical samurai reference",
             model="gpt-image-2",
-            size="1024x1024",
+            size="1536x864",
             quality="medium",
             output_format="png",
         )
@@ -55,6 +57,12 @@ def test_openai_image_provider_decodes_png_and_forwards_generation_settings() ->
     }
 
 
+def _png_bytes(width: int, height: int) -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (width, height)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 class ParallelImageProvider:
     def __init__(self, expected_calls: int) -> None:
         self.expected_calls = expected_calls
@@ -67,9 +75,9 @@ class ParallelImageProvider:
             self.all_started.set()
 
         await asyncio.wait_for(self.all_started.wait(), timeout=0.5)
-        prompt = str(kwargs["prompt"])
+        width, height = (int(part) for part in str(kwargs["size"]).split("x"))
         return GeneratedImage(
-            content=prompt.encode("utf-8"),
+            content=_png_bytes(width, height),
             media_type="image/png",
             extension="png",
             metadata={"prompt_variant": "test"},
@@ -110,8 +118,37 @@ def test_reference_asset_workflow_runs_in_parallel_and_writes_deterministic_file
             "metadata": {"prompt_variant": "test"},
         },
     ]
-    assert (output_dir / "group_001.png").read_bytes() == b"Samurai group"
-    assert (output_dir / "location_001.png").read_bytes() == b"Feudal Japan"
+    with Image.open(output_dir / "group_001.png") as image:
+        assert image.size == (1536, 864)
+    with Image.open(output_dir / "location_001.png") as image:
+        assert image.size == (1536, 864)
+
+
+class WrongSizeImageProvider:
+    async def generate_image(self, **kwargs: Any) -> GeneratedImage:
+        return GeneratedImage(
+            content=_png_bytes(864, 1536),
+            media_type="image/png",
+            extension="png",
+        )
+
+
+def test_reference_asset_workflow_rejects_wrong_provider_geometry(tmp_path: Any) -> None:
+    output_dir = tmp_path / "phase4" / "reference_assets"
+
+    with pytest.raises(ValueError, match="expected exactly 1536x864"):
+        asyncio.run(
+            generate_reference_assets(
+                [VisualReference(entity_id="location_001", prompt="wide city")],
+                image_provider=WrongSizeImageProvider(),  # type: ignore[arg-type]
+                output_dir=output_dir,
+                model="test",
+                size="1536x864",
+                quality="high",
+            )
+        )
+
+    assert not output_dir.exists()
 
 
 class FailingImageProvider:
