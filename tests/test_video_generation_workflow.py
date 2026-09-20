@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 import ai_video_factory.workflows.video_generation as video_generation
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
@@ -139,12 +141,18 @@ class FakeQueue:
         )
 
 
+def _png_bytes(value: int) -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (1536, 864), color=(value, value, value)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def _inputs(tmp_path: Path):
     keyframes_dir = tmp_path / "phase6"
     assets_dir = keyframes_dir / "storyboard_keyframes"
     assets_dir.mkdir(parents=True)
-    (assets_dir / "shot_001.png").write_bytes(b"png-one")
-    (assets_dir / "shot_002.png").write_bytes(b"png-two")
+    (assets_dir / "shot_001.png").write_bytes(_png_bytes(10))
+    (assets_dir / "shot_002.png").write_bytes(_png_bytes(20))
 
     keyframes = [
         StoryboardKeyframe(shot_id=1, uri="storyboard_keyframes/shot_001.png"),
