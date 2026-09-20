@@ -38,6 +38,7 @@ $QueueGuard = Join-Path $PSScriptRoot "check_salad_queue_ready.py"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $CacheAudit = Join-Path $PSScriptRoot "audit_phase8_video_cache.py"
 $ManifestInspector = Join-Path $PSScriptRoot "inspect_phase8_manifest.py"
+$FailureInspector = Join-Path $PSScriptRoot "inspect_inference_job_error.py"
 $Runner = Join-Path $PSScriptRoot "run_phase8_videos.py"
 $ServicesPath = Join-Path (Split-Path $PSScriptRoot -Parent) "deploy\salad\services.json"
 
@@ -88,6 +89,11 @@ $ResumeSubmittedJobs = (
     [string]$ManifestState.status -eq "matching" -and
     [int]$ManifestState.active_resume_jobs -gt 0
 )
+$RetryTerminalOnly = (
+    [string]$ManifestState.status -eq "matching" -and
+    [int]$ManifestState.active_resume_jobs -eq 0 -and
+    [int]$ManifestState.terminal_retry_jobs -gt 0
+)
 
 if ([string]$ManifestState.status -eq "different_transport_route") {
     Write-Host (
@@ -117,6 +123,7 @@ if ([string]$ManifestState.status -eq "different_transport_route") {
         throw "Phase 8 transport-route manifest changed unexpectedly during archival."
     }
     $ResumeSubmittedJobs = $false
+    $RetryTerminalOnly = $false
 }
 
 if ([string]$ManifestState.status -eq "different_plan") {
@@ -164,6 +171,7 @@ if ([string]$ManifestState.status -eq "different_plan") {
         throw "Phase 8 stale manifest changed unexpectedly during archival."
     }
     $ResumeSubmittedJobs = $false
+    $RetryTerminalOnly = $false
 }
 
 Write-Host "=== R2 preflight: verify storage before GPU allocation ===" -ForegroundColor Cyan
@@ -272,19 +280,30 @@ try {
             throw "Phase 8 LTX fanout submission failed with exit code $LASTEXITCODE."
         }
 
-        Write-Host (
-            "=== LTX warm scale-out: keep one ready replica and allow up to four workers ==="
-        ) -ForegroundColor Cyan
-        $ScaleOutArguments = @{
-            Service = "ltx25"
-            Mode = "WarmScaleOut"
+        if ($RetryTerminalOnly) {
+            Write-Host (
+                "=== LTX terminal retry recovery: keep exactly one warm worker pinned ==="
+            ) -ForegroundColor Cyan
+            Write-Host (
+                "Retrying terminal Phase 8 transports serially at min_replicas=1/max_replicas=1; " +
+                "validated R2 successes remain cached."
+            ) -ForegroundColor Yellow
         }
-        if ($NonInteractive) {
-            $ScaleOutArguments["NonInteractive"] = $true
-        }
-        & $AutoscalerControl @ScaleOutArguments
-        if (-not $?) {
-            throw "LTX warm scale-out autoscaler activation failed."
+        else {
+            Write-Host (
+                "=== LTX warm scale-out: keep one ready replica and allow up to four workers ==="
+            ) -ForegroundColor Cyan
+            $ScaleOutArguments = @{
+                Service = "ltx25"
+                Mode = "WarmScaleOut"
+            }
+            if ($NonInteractive) {
+                $ScaleOutArguments["NonInteractive"] = $true
+            }
+            & $AutoscalerControl @ScaleOutArguments
+            if (-not $?) {
+                throw "LTX warm scale-out autoscaler activation failed."
+            }
         }
     }
 
@@ -303,7 +322,38 @@ try {
         --timeout-seconds $TimeoutSeconds `
         --dispatch-timeout-seconds $DispatchTimeoutSeconds
     if ($LASTEXITCODE -ne 0) {
-        throw "Phase 8 video generation failed with exit code $LASTEXITCODE."
+        $Phase8ExitCode = $LASTEXITCODE
+        if (Test-Path -LiteralPath $ManifestPath -PathType Leaf) {
+            try {
+                $FailureManifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+                $TerminalFailures = @(
+                    $FailureManifest.jobs |
+                        Where-Object { [string]$_.transport_status -in @("failed", "cancelled") }
+                )
+                foreach ($Failure in $TerminalFailures) {
+                    Write-Host (
+                        "=== Phase 8 persisted failure diagnostic: shot={0} transport={1} ===" -f \
+                        [int]$Failure.shot_id,
+                        [string]$Failure.transport_job_id
+                    ) -ForegroundColor Yellow
+                    & python $FailureInspector \
+                        --application-job-id ([string]$Failure.application_job_id)
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Warning (
+                            "Could not read persisted gpu.jobs diagnostics for shot " +
+                            ([string]$Failure.shot_id) + "."
+                        )
+                    }
+                }
+            }
+            catch {
+                Write-Warning (
+                    "Could not inspect persisted Phase 8 terminal failures: " +
+                    $_.Exception.Message
+                )
+            }
+        }
+        throw "Phase 8 video generation failed with exit code $Phase8ExitCode."
     }
 }
 finally {
