@@ -44,7 +44,6 @@ def main() -> None:
         audio_sha256=audio_sha256,
         filename=args.audio.name,
         model=args.model,
-        prompt=source.text,
         language=args.language,
     )
     storage = create_r2_storage(
@@ -74,6 +73,8 @@ def main() -> None:
         "request_sha256": request.fingerprint(),
         "object_key": request.output.key,
         "audio_sha256": audio_sha256,
+        "language": args.language,
+        "generation_profile": request.parameters["generation_profile"],
         "error": error,
     }
     print(
