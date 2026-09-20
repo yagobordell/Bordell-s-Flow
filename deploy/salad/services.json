@@ -438,7 +438,7 @@
       "group_name": "ai-video-factory-realesrgan-worker",
       "queue_name": "ai-video-factory-realesrgan-jobs",
       "dockerfile": "docker/workers/realesrgan/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:realesrgan-x2plus-v1",
+      "image": "docker.io/yagobordell/ai-video-factory:realesrgan-x2plus-v2",
       "priority": "medium",
       "resources": {
         "cpu": 4,
