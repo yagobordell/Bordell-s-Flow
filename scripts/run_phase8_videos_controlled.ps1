@@ -150,6 +150,7 @@ if ([string]$ManifestState.status -eq "different_plan") {
         --width 1280 `
         --height 720 `
         --fps 24 `
+        --transport-route $env:SALAD_LTX25_QUEUE_NAME `
         --manifest $ManifestPath `
         --json-output $ArchiveStatePath `
         --archive-mismatch
