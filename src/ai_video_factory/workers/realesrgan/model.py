@@ -88,6 +88,7 @@ class RealESRGANBackend(Protocol):
         source_path: Path,
         output_path: Path,
         parameters: RealESRGANParameters,
+        job_id: str | None = None,
     ) -> None: ...
 
 
@@ -153,6 +154,7 @@ class DirectRealESRGANBackend:
         source_path: Path,
         output_path: Path,
         parameters: RealESRGANParameters,
+        job_id: str | None = None,
     ) -> None:
         with self._lock:
             self._validate_source(source_path, parameters)
@@ -234,6 +236,7 @@ class DirectRealESRGANBackend:
                 frame_count=0,
                 total_frames=parameters.source_frame_count,
                 started=started,
+                job_id=job_id,
             )
             try:
                 while True:
@@ -303,6 +306,7 @@ class DirectRealESRGANBackend:
                 frame_count=frame_count,
                 total_frames=parameters.source_frame_count,
                 started=started,
+                job_id=job_id,
             )
             print(
                 "REALESRGAN_INFERENCE_METRIC "
@@ -323,6 +327,7 @@ class DirectRealESRGANBackend:
         frame_count: int,
         total_frames: int,
         started: float,
+        job_id: str | None,
     ) -> None:
         elapsed = time.monotonic() - started
         allocated = 0
@@ -340,6 +345,7 @@ class DirectRealESRGANBackend:
                 pass
         print(
             "REALESRGAN_PROGRESS "
+            f"job_id={job_id or '<unknown>'} "
             f"event={event} frame={frame_count}/{total_frames} "
             f"elapsed_seconds={elapsed:.3f} "
             f"cuda_allocated_bytes={allocated} "
@@ -479,6 +485,7 @@ class RealESRGANVideoTaskRunner:
             source_path=inputs["video"],
             output_path=output,
             parameters=parameters,
+            job_id=request.job_id,
         )
         if not output.is_file() or output.stat().st_size <= 0:
             raise RuntimeError("Real-ESRGAN backend produced no usable MP4 output")
