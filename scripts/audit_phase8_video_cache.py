@@ -64,6 +64,8 @@ def _read_models(path: Path, model_type: type) -> list:
 
 def main() -> None:
     args = parse_args()
+    if (args.width, args.height, args.fps) != (1280, 720, 24):
+        raise SystemExit("Phase 8 cache audit contract is exactly 1280x720 at 24 fps")
     environment = _environment()
     keyframes = _read_models(args.keyframes, StoryboardKeyframe)
     prompts = _read_models(args.prompts, VideoPrompt)
