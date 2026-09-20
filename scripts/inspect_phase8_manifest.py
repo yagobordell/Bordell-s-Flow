@@ -69,6 +69,7 @@ def inspect_manifest_state(
         "existing_fingerprint": None,
         "active_resume_jobs": 0,
         "submitted_jobs": 0,
+        "terminal_retry_jobs": 0,
         "archived_path": None,
         "existing_transport_route": None,
         "expected_transport_route": transport_route,
@@ -96,6 +97,9 @@ def inspect_manifest_state(
         job.transport_job_id is not None
         and job.transport_status in {"pending", "running"}
         for job in manifest.jobs
+    )
+    state["terminal_retry_jobs"] = sum(
+        job.transport_status in {"failed", "cancelled"} for job in manifest.jobs
     )
 
     if manifest.run_fingerprint == expected_fingerprint:
@@ -167,6 +171,7 @@ def main() -> None:
         f"status={state['status']} "
         f"active_resume_jobs={state['active_resume_jobs']} "
         f"submitted_jobs={state['submitted_jobs']} "
+        f"terminal_retry_jobs={state['terminal_retry_jobs']} "
         f"transport_route={state['existing_transport_route']} "
         f"expected_transport_route={state['expected_transport_route']} "
         f"expected={expected_fingerprint}"
