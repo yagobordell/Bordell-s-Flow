@@ -98,5 +98,5 @@ def test_ltx25_model_download_uses_xet_with_resilient_timeouts() -> None:
     assert "xet_disabled=" in bootstrap
 
     assert service["image"].endswith(
-        ":ltx25-torch211-cu128-natten0216-xet-v3"
+        ":ltx25-torch211-cu128-eagersdpa-xet-v4"
     )
