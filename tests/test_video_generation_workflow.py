@@ -518,11 +518,33 @@ def test_terminal_failure_is_persisted_for_a_later_resume(tmp_path: Path) -> Non
         clips_dir=tmp_path / "clips",
         wait=False,
     )
+    terminal_payloads: dict[str, dict[str, object]] = {}
     for state in manifest.jobs:
         assert state.transport_job_id is not None
         queue.statuses[state.transport_job_id] = QueueJobStatus.FAILED
+        terminal_payloads[state.transport_job_id] = {
+            "id": state.transport_job_id,
+            "status": "failed",
+            "events": [{"action": "rejected"}],
+        }
 
-    with pytest.raises(VideoGenerationIncompleteError, match="Rerun to resume"):
+    original_get = queue.get
+
+    def failed_get(transport_job_id: str) -> QueueJobSnapshot:
+        snapshot = original_get(transport_job_id)
+        return QueueJobSnapshot(
+            id=snapshot.id,
+            status=snapshot.status,
+            output=snapshot.output,
+            provider_payload=terminal_payloads[transport_job_id],
+        )
+
+    queue.get = failed_get  # type: ignore[method-assign]
+
+    with pytest.raises(
+        VideoGenerationIncompleteError,
+        match=r"transport_job_id=.*provider_payload=.*rejected",
+    ):
         run_video_generation(
             plan,
             queue=queue,
@@ -536,6 +558,8 @@ def test_terminal_failure_is_persisted_for_a_later_resume(tmp_path: Path) -> Non
 
     saved = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert [item["transport_status"] for item in saved["jobs"]] == ["failed", "failed"]
+    assert all(item["last_terminal_transport_job_id"] for item in saved["jobs"])
+    assert all(item["last_terminal_payload"]["status"] == "failed" for item in saved["jobs"])
 
 
 def test_manifest_rejects_changed_generation_plan(tmp_path: Path) -> None:
