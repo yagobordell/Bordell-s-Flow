@@ -551,8 +551,17 @@ class ProductionRunner:
         os.replace(temporary, self._manifest_path)
 
 
-def build_production_stages(*, script_file: Path, output_dir: Path) -> list[ProductionStage]:
+def build_production_stages(
+    *,
+    script_file: Path,
+    output_dir: Path,
+    narration_language: str = "en",
+) -> list[ProductionStage]:
     """Describe the production DAG while preserving validated phase scripts as executors."""
+
+    narration_language = narration_language.strip()
+    if not narration_language:
+        raise ValueError("Production narration language must be non-empty")
 
     phase2 = output_dir / "phase2"
     phase3 = output_dir / "phase3"
@@ -675,6 +684,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
                 "--source", str(source_script),
                 "--narration", str(narration),
                 "--audio", str(narration_audio),
+                "--language", narration_language,
                 "--output", str(narration_words),
             ),
             inputs=(source_script, narration, narration_audio),
