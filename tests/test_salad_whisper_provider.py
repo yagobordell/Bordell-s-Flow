@@ -89,7 +89,7 @@ def test_salad_whisper_provider_preserves_transcription_contract(tmp_path: Path)
     ]
     assert queue.last_request.task == "audio.whisper.transcribe"
     assert queue.last_request.parameters["language"] == "en"
-    assert queue.last_request.parameters["prompt"] == "Hello world"
+    assert "prompt" not in queue.last_request.parameters
     assert queue.last_request.inputs[0].key.startswith("phase5/whisper/inputs/")
     assert queue.last_metadata["stage"] == "phase5-alignment"
 
@@ -142,7 +142,6 @@ def test_salad_whisper_provider_replays_cache_before_queue_submission(
         audio_sha256=sha256_file(audio_path),
         filename="narration.wav",
         model=WHISPER_MODEL_ID,
-        prompt="Hello world",
         language="en",
     )
     transcript = WhisperTranscript(
@@ -184,3 +183,28 @@ def test_salad_whisper_provider_replays_cache_before_queue_submission(
     assert queue.last_request is None
     input_key = request.inputs[0].key
     assert storage.stat(input_key) is None
+
+
+def test_whisper_request_identity_ignores_canonical_script_prompt() -> None:
+    from ai_video_factory.workers.whisper import WHISPER_GENERATION_PROFILE
+
+    first = build_whisper_job_request(
+        audio_sha256="a" * 64,
+        filename="narration.wav",
+        model=WHISPER_MODEL_ID,
+        language="es",
+    )
+    second = build_whisper_job_request(
+        audio_sha256="a" * 64,
+        filename="narration.wav",
+        model=WHISPER_MODEL_ID,
+        language="es",
+    )
+
+    assert first.job_id == second.job_id
+    assert first.parameters == {
+        "generation_profile": WHISPER_GENERATION_PROFILE,
+        "model_id": WHISPER_MODEL_ID,
+        "language": "es",
+    }
+    assert "prompt" not in first.parameters
