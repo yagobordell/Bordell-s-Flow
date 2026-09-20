@@ -9,7 +9,7 @@ class ProjectConfig(BaseModel):
     topic: str = Field(min_length=3)
     language: str = "es"
     duration_seconds: int = Field(default=45, ge=10, le=180)
-    aspect_ratio: Literal["9:16"] = "9:16"
+    aspect_ratio: Literal["16:9"] = "16:9"
     audience: str = "general"
     style: str = "cinematic documentary"
 
