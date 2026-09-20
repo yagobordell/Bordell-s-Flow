@@ -15,7 +15,7 @@ from ai_video_factory.inference.ports import LocalArtifact
 
 WHISPER_TRANSCRIPTION_TASK = "audio.whisper.transcribe"
 WHISPER_MODEL_ID = "openai/whisper-large-v3-turbo"
-WHISPER_GENERATION_PROFILE = "whisper-large-v3-turbo-fp16-v1"
+WHISPER_GENERATION_PROFILE = "whisper-large-v3-turbo-fp16-no-prompt-greedy-v2"
 
 
 class WhisperTranscriptionParameters(BaseModel):
@@ -25,7 +25,6 @@ class WhisperTranscriptionParameters(BaseModel):
 
     generation_profile: str
     model_id: str
-    prompt: str = Field(default="", max_length=16000)
     language: str | None = Field(default=None, min_length=2, max_length=64)
 
     @field_validator("generation_profile")
@@ -43,11 +42,6 @@ class WhisperTranscriptionParameters(BaseModel):
         if value != WHISPER_MODEL_ID:
             raise ValueError(f"model_id must be exactly {WHISPER_MODEL_ID!r}")
         return value
-
-    @field_validator("prompt")
-    @classmethod
-    def normalize_prompt(cls, value: str) -> str:
-        return value.strip()
 
     @field_validator("language")
     @classmethod
@@ -109,7 +103,6 @@ def _load_whisper_bindings() -> _WhisperBindings:
 def whisper_application_job_id(
     *,
     audio_sha256: str,
-    prompt: str,
     language: str | None,
     model_id: str = WHISPER_MODEL_ID,
 ) -> str:
@@ -118,7 +111,6 @@ def whisper_application_job_id(
         "generation_profile": WHISPER_GENERATION_PROFILE,
         "language": language,
         "model_id": model_id,
-        "prompt": prompt,
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return f"whisper-{hashlib.sha256(canonical).hexdigest()[:32]}"
@@ -171,18 +163,13 @@ class TransformersWhisperBackend:
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
             pipeline = self._get_or_build_pipeline(bindings)
-            generate_kwargs: dict[str, Any] = {"task": "transcribe"}
+            generate_kwargs: dict[str, Any] = {
+                "task": "transcribe",
+                "condition_on_prev_tokens": False,
+                "temperature": 0.0,
+            }
             if parameters.language is not None:
                 generate_kwargs["language"] = parameters.language
-            if parameters.prompt:
-                prompt_ids = pipeline.tokenizer.get_prompt_ids(
-                    parameters.prompt,
-                    return_tensors="pt",
-                )
-                to_method = getattr(prompt_ids, "to", None)
-                if callable(to_method):
-                    prompt_ids = to_method(self._device)
-                generate_kwargs["prompt_ids"] = prompt_ids
 
             result = pipeline(
                 str(audio_path),
