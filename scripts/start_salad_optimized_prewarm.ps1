@@ -356,10 +356,27 @@ function Test-RemoteAutoscalerMinReplicas {
     return [int]$Autoscaler.min_replicas -eq $ExpectedMinReplicas
 }
 
+function Test-RemoteAutoscalerBounds {
+    param(
+        [Parameter(Mandatory)][object]$Group,
+        [Parameter(Mandatory)][int]$ExpectedMinReplicas,
+        [Parameter(Mandatory)][int]$ExpectedMaxReplicas
+    )
+
+    $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $Autoscaler) {
+        return $false
+    }
+    return (
+        [int]$Autoscaler.min_replicas -eq $ExpectedMinReplicas -and
+        [int]$Autoscaler.max_replicas -eq $ExpectedMaxReplicas
+    )
+}
+
 function New-ManifestAutoscaler {
     return @{
         min_replicas = [int]$Definition.autoscaler.min_replicas
-        max_replicas = [int]$Definition.autoscaler.max_replicas
+        max_replicas = 1
         desired_queue_length = [int]$Definition.autoscaler.desired_queue_length
         polling_period = [int]$Definition.autoscaler.polling_period
         max_upscale_per_minute = [int]$Definition.autoscaler.max_upscale_per_minute
@@ -367,15 +384,20 @@ function New-ManifestAutoscaler {
     }
 }
 
-function Test-RemoteAutoscalerMatchesManifestExceptMinReplicas {
+function Test-RemoteAutoscalerMatchesKnownWarmHold {
     param([Parameter(Mandatory)][object]$Group)
 
     $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
     if ($null -eq $Autoscaler) {
         return $false
     }
+    $KnownMax = (
+        [int]$Autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -or
+        [int]$Autoscaler.max_replicas -eq 1
+    )
     return (
-        [int]$Autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
+        [int]$Autoscaler.min_replicas -eq 1 -and
+        $KnownMax -and
         [int]$Autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
         [int]$Autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period -and
         [int]$Autoscaler.max_upscale_per_minute -eq `
@@ -392,10 +414,10 @@ function Repair-ResidualHeldAutoscaler {
     if ($null -eq $Autoscaler -or [int]$Autoscaler.min_replicas -eq 0) {
         return $Group
     }
-    if (-not (Test-RemoteAutoscalerMatchesManifestExceptMinReplicas -Group $Group)) {
+    if (-not (Test-RemoteAutoscalerMatchesKnownWarmHold -Group $Group)) {
         throw (
             "Optimized prewarm refuses unexpected remote autoscaler drift; " +
-            "only a residual warm-hold min_replicas override can be repaired automatically."
+            "only a known residual warm-hold min/max override can be repaired automatically."
         )
     }
 
@@ -420,7 +442,8 @@ function Repair-ResidualHeldAutoscaler {
         if (
             -not [bool]$Group.pending_change -and
             (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas 0) -and
-            (Test-RemoteAutoscalerMatchesManifestExceptMinReplicas -Group $Group)
+            [int](Get-RemoteQueueAutoscaler -Group $Group).max_replicas -eq
+                [int]$Definition.autoscaler.max_replicas
         ) {
             Write-Host "$Service residual warm-hold autoscaler restored to scale-to-zero." `
                 -ForegroundColor Green
@@ -917,7 +940,19 @@ do {
     $Group = Get-Group
     $AutoscalerStateReady = (
         -not $AutoscalerObservable -or
-        (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas $TargetMinReplicas)
+        (
+            $HoldReadyReplica -and
+            (Test-RemoteAutoscalerBounds `
+                -Group $Group `
+                -ExpectedMinReplicas 1 `
+                -ExpectedMaxReplicas 1)
+        ) -or
+        (
+            -not $HoldReadyReplica -and
+            (Test-RemoteAutoscalerMinReplicas `
+                -Group $Group `
+                -ExpectedMinReplicas $TargetMinReplicas)
+        )
     )
     if (
         -not [bool]$Group.pending_change -and
@@ -1133,7 +1168,19 @@ while ((Get-Date) -lt $Deadline) {
 
     $AutoscalerStateReady = (
         -not $AutoscalerObservable -or
-        (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas $TargetMinReplicas)
+        (
+            $HoldReadyReplica -and
+            (Test-RemoteAutoscalerBounds `
+                -Group $Group `
+                -ExpectedMinReplicas 1 `
+                -ExpectedMaxReplicas 1)
+        ) -or
+        (
+            -not $HoldReadyReplica -and
+            (Test-RemoteAutoscalerMinReplicas `
+                -Group $Group `
+                -ExpectedMinReplicas $TargetMinReplicas)
+        )
     )
     if (
         -not [bool]$Group.pending_change -and
@@ -1166,7 +1213,12 @@ while ((Get-Date) -lt $Deadline) {
                 )
             )
         }
-        $HoldSuffix = if ($HoldReadyReplica) { " with min_replicas=1 pinned" } else { "" }
+        $HoldSuffix = if ($HoldReadyReplica) {
+            " with min_replicas=1/max_replicas=1 pinned"
+        }
+        else {
+            ""
+        }
         Write-Host (
             "$Service prewarm complete: exactly one started ready replica$HoldSuffix, " +
             "queue config verified and still empty; first real job will prove transport."
