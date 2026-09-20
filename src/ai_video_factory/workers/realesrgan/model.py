@@ -273,6 +273,7 @@ class DirectRealESRGANBackend:
                             frame_count=frame_count,
                             total_frames=parameters.source_frame_count,
                             started=started,
+                            job_id=job_id,
                         )
             finally:
                 decode.stdout.close()
