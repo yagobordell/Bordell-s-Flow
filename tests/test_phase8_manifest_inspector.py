@@ -71,6 +71,7 @@ def test_missing_manifest_is_not_resume(tmp_path: Path) -> None:
     assert state["status"] == "missing"
     assert state["active_resume_jobs"] == 0
     assert state["submitted_jobs"] == 0
+    assert state["terminal_retry_jobs"] == 0
 
 
 def test_matching_succeeded_manifest_is_not_active_resume(tmp_path: Path) -> None:
@@ -91,6 +92,27 @@ def test_matching_succeeded_manifest_is_not_active_resume(tmp_path: Path) -> Non
     assert state["status"] == "matching"
     assert state["submitted_jobs"] == 1
     assert state["active_resume_jobs"] == 0
+    assert state["terminal_retry_jobs"] == 0
+
+
+def test_matching_failed_manifest_is_terminal_retry(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    item = plan[0]
+    manifest_path = tmp_path / "phase8" / "video_generation_manifest.json"
+    _write_manifest(
+        manifest_path,
+        fingerprint=video_generation_run_fingerprint(plan),
+        application_job_id=item.request.job_id,
+        request_sha256=item.request.fingerprint(),
+        status="failed",
+        transport_job_id="transport-failed",
+    )
+
+    state = inspect_manifest_state(plan, manifest_path)
+
+    assert state["status"] == "matching"
+    assert state["active_resume_jobs"] == 0
+    assert state["terminal_retry_jobs"] == 1
 
 
 def test_matching_running_manifest_is_active_resume(tmp_path: Path) -> None:
@@ -110,6 +132,7 @@ def test_matching_running_manifest_is_active_resume(tmp_path: Path) -> None:
 
     assert state["status"] == "matching"
     assert state["active_resume_jobs"] == 1
+    assert state["terminal_retry_jobs"] == 0
 
 
 def test_different_plan_manifest_can_be_archived_without_deleting_artifacts(
