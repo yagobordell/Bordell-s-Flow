@@ -20,6 +20,7 @@ $QueueCleanup = Join-Path $PSScriptRoot "cleanup_salad_queue.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $CacheAudit = Join-Path $PSScriptRoot "audit_phase8_upscale_cache.py"
 $ManifestInspector = Join-Path $PSScriptRoot "inspect_phase8_upscale_manifest.py"
+$FailureInspector = Join-Path $PSScriptRoot "inspect_inference_job_error.py"
 $Runner = Join-Path $PSScriptRoot "run_phase8_upscale.py"
 $ServicesPath = Join-Path (Split-Path $PSScriptRoot -Parent) "deploy\salad\services.json"
 
@@ -47,6 +48,11 @@ if ($LASTEXITCODE -ne 0) {
 $ManifestState = Get-Content -LiteralPath $ManifestStatePath -Raw | ConvertFrom-Json
 Remove-Item -LiteralPath $ManifestStatePath -Force -ErrorAction SilentlyContinue
 $ResumeSubmittedJobs = ([string]$ManifestState.status -eq "matching" -and [int]$ManifestState.active_resume_jobs -gt 0)
+$RetryTerminalOnly = (
+    [string]$ManifestState.status -eq "matching" -and
+    [int]$ManifestState.active_resume_jobs -eq 0 -and
+    [int]$ManifestState.terminal_retry_jobs -gt 0
+)
 
 if ([string]$ManifestState.status -eq "different_plan") {
     Write-Host "=== Real-ESRGAN stale manifest: prove queue idle before archival ===" -ForegroundColor Cyan
@@ -62,6 +68,7 @@ if ([string]$ManifestState.status -eq "different_plan") {
     }
     Remove-Item -LiteralPath $ArchiveStatePath -Force -ErrorAction SilentlyContinue
     $ResumeSubmittedJobs = $false
+    $RetryTerminalOnly = $false
 }
 
 Write-Host "=== R2 preflight before Real-ESRGAN allocation ===" -ForegroundColor Cyan
@@ -97,8 +104,20 @@ try {
     }
     else {
         $PrewarmArguments = @{ Service = "realesrgan"; TimeoutMinutes = $PrewarmTimeoutMinutes }
+        if ($RetryTerminalOnly) {
+            $PrewarmArguments["HoldReadyReplica"] = $true
+            Write-Host (
+                "=== Real-ESRGAN terminal retry: prewarm exactly one fresh RTX 3090 ==="
+            ) -ForegroundColor Cyan
+            Write-Host (
+                "Retrying only terminal upscale transports at min_replicas=1/max_replicas=1; " +
+                "validated 1440p R2 outputs remain cached."
+            ) -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "=== Real-ESRGAN optimized prewarm ===" -ForegroundColor Cyan
+        }
         if ($NonInteractive) { $PrewarmArguments["NonInteractive"] = $true }
-        Write-Host "=== Real-ESRGAN optimized prewarm ===" -ForegroundColor Cyan
         & $OptimizedPrewarm @PrewarmArguments
         if (-not $?) { throw "Real-ESRGAN optimized prewarm failed." }
     }
@@ -109,7 +128,40 @@ try {
         --poll-seconds $PollSeconds `
         --timeout-seconds $TimeoutSeconds `
         --dispatch-timeout-seconds $DispatchTimeoutSeconds
-    if ($LASTEXITCODE -ne 0) { throw "Real-ESRGAN upscale failed with exit code $LASTEXITCODE." }
+    if ($LASTEXITCODE -ne 0) {
+        $UpscaleExitCode = $LASTEXITCODE
+        if (Test-Path -LiteralPath $ManifestPath -PathType Leaf) {
+            try {
+                $FailureManifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+                $TerminalFailures = @(
+                    $FailureManifest.jobs |
+                        Where-Object { [string]$_.transport_status -in @("failed", "cancelled") }
+                )
+                foreach ($Failure in $TerminalFailures) {
+                    Write-Host (
+                        "=== Real-ESRGAN persisted failure: shot={0} transport={1} ===" -f \
+                        [int]$Failure.shot_id,
+                        [string]$Failure.transport_job_id
+                    ) -ForegroundColor Yellow
+                    & python $FailureInspector \
+                        --application-job-id ([string]$Failure.application_job_id)
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Warning (
+                            "Could not read persisted gpu.jobs diagnostics for upscale shot " +
+                            ([string]$Failure.shot_id) + "."
+                        )
+                    }
+                }
+            }
+            catch {
+                Write-Warning (
+                    "Could not inspect persisted Real-ESRGAN terminal failures: " +
+                    $_.Exception.Message
+                )
+            }
+        }
+        throw "Real-ESRGAN upscale failed with exit code $UpscaleExitCode."
+    }
 }
 finally {
     try {
