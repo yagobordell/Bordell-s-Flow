@@ -12,6 +12,9 @@ param(
 
     [string[]]$ForceStage = @(),
 
+    [ValidatePattern("^[A-Za-z][A-Za-z0-9_-]{1,15}$")]
+    [string]$NarrationLanguage = "en",
+
     [string]$EnvFile = ".env",
 
     [switch]$NonInteractive
@@ -205,6 +208,8 @@ try {
             $MaxParallelStages,
             "--max-parallel-gpu-stages",
             $MaxParallelGpuStages,
+            "--narration-language",
+            $NarrationLanguage,
             "--metrics",
             $ProductionMetrics
         )
