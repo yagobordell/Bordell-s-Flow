@@ -8,7 +8,7 @@ The canonical production boundary is now:
 local orchestrator
     |
     v
-Salad queue: ai-video-factory-ltx25-jobs
+Salad queue: ai-video-factory-ltx25-jobs-v2
     |
     v
 docker/workers/ltx25
@@ -70,14 +70,20 @@ Model-specific Salad configuration lives in `deploy/salad/services.json`.
 
 The current dedicated service is:
 
+> 2026-09-20 routing migration: production moved from
+> `ai-video-factory-ltx25-worker` / `ai-video-factory-ltx25-jobs` to the fresh
+> `-v2` group/queue pair after repeated real runs proved that ready RTX 5090 workers
+> were not receiving queued jobs. The old queue also reported a persistently stale
+> historical queue length. Image, model, GPU class and inference settings are unchanged.
+
 > The 2026-09-15 validation used medium priority. Production was raised to high priority on
 > 2026-09-20 after repeated real runs could not obtain any RTX 5090 placement at medium priority.
 > The GPU class and inference runtime remain unchanged.
 
 ```text
 service:      ltx25
-group:        ai-video-factory-ltx25-worker
-queue:        ai-video-factory-ltx25-jobs
+group:        ai-video-factory-ltx25-worker-v2
+queue:        ai-video-factory-ltx25-jobs-v2
 GPU:          RTX 5090 (32 GB)
 CPU:          8
 memory:       40960 MiB
@@ -186,13 +192,13 @@ Full evidence: [`ltx25-salad-validation-2026-09-15.md`](ltx25-salad-validation-2
 ```text
 SALAD_LTX25_QUEUE_NAME
 SALAD_QUEUE_NAME              # legacy fallback
-ai-video-factory-ltx25-jobs   # canonical default
+ai-video-factory-ltx25-jobs-v2 # canonical default
 ```
 
 The dedicated setting should be used for new environments:
 
 ```text
-SALAD_LTX25_QUEUE_NAME=ai-video-factory-ltx25-jobs
+SALAD_LTX25_QUEUE_NAME=ai-video-factory-ltx25-jobs-v2
 ```
 
 Existing deterministic application job IDs deliberately retain the `phase8-shot-*` prefix. They are persisted identity, not deployment naming, and changing them would invalidate successful replay/resume state for no functional benefit.
