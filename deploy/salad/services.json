@@ -50,7 +50,8 @@
         "LTX_MODEL_REVISION": "main",
         "LTX_DEVICE": "cuda",
         "SALAD_QUEUE_ENABLED": "true",
-        "SALAD_LOG_LEVEL": "info"
+        "SALAD_LOG_LEVEL": "info",
+        "PYTHONFAULTHANDLER": "1"
       },
       "required_environment": [
         "HF_TOKEN"
