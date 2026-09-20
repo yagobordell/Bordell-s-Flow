@@ -26,10 +26,12 @@ class OptimizedGpuStageExecutor:
         repo_root: Path,
         output_dir: Path,
         hold_shared_workers: bool = False,
+        narration_language: str = "en",
     ) -> None:
         self._repo_root = repo_root
         self._output_dir = output_dir
         self._hold_shared_workers = hold_shared_workers
+        self._narration_language = narration_language
         self._default = SubprocessStageExecutor(repo_root=repo_root)
 
     def __call__(self, stage: ProductionStage) -> None:
@@ -86,6 +88,8 @@ class OptimizedGpuStageExecutor:
                 str(output / "phase5" / "narration.wav"),
                 "-Output",
                 str(output / "phase5" / "narration_words.json"),
+                "-Language",
+                self._narration_language,
                 "-NonInteractive",
             ]
         if stage_name == "phase6-keyframes":
@@ -142,6 +146,11 @@ def parse_args() -> argparse.Namespace:
         nargs="?",
         default=Path("data/input/script.txt"),
         help="UTF-8 source script used as the canonical production input.",
+    )
+    parser.add_argument(
+        "--narration-language",
+        default="en",
+        help="Language hint passed explicitly to Whisper alignment. Defaults to en.",
     )
     parser.add_argument(
         "--output-dir",
@@ -219,6 +228,7 @@ def main() -> None:
     stages = build_production_stages(
         script_file=args.script_file,
         output_dir=args.output_dir,
+        narration_language=args.narration_language,
     )
     max_workers = 1 if args.serial else args.max_parallel_stages
     max_gpu_stages = 1 if args.serial else args.max_parallel_gpu_stages
@@ -230,6 +240,7 @@ def main() -> None:
             repo_root=Path("."),
             output_dir=args.output_dir,
             hold_shared_workers=args.end_to_end,
+            narration_language=args.narration_language,
         ),
         max_workers=max_workers,
         max_gpu_stages=max_gpu_stages,
