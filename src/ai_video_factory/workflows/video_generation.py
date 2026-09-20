@@ -7,7 +7,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -55,6 +55,8 @@ class VideoGenerationJobState(BaseModel):
     ] = "unsubmitted"
     submission_count: int = Field(default=0, ge=0)
     response: GPUJobResponse | None = None
+    last_terminal_transport_job_id: str | None = None
+    last_terminal_payload: dict[str, Any] | None = None
 
 
 class VideoGenerationManifest(BaseModel):
@@ -358,7 +360,7 @@ def run_video_generation(
         state for state in manifest.jobs if state.transport_status in {"failed", "cancelled"}
     ]
     if failed:
-        details = ", ".join(f"shot {state.shot_id}={state.transport_status}" for state in failed)
+        details = "; ".join(_terminal_failure_detail(state) for state in failed)
         raise VideoGenerationIncompleteError(
             f"Video generation has terminal transport failures: {details}. Rerun to resume."
         )
@@ -539,6 +541,9 @@ def _apply_snapshot(
 ) -> None:
     state.transport_job_id = snapshot.id
     state.transport_status = snapshot.status.value
+    if snapshot.status in {QueueJobStatus.FAILED, QueueJobStatus.CANCELLED}:
+        state.last_terminal_transport_job_id = snapshot.id
+        state.last_terminal_payload = snapshot.provider_payload
     if snapshot.status is not QueueJobStatus.SUCCEEDED:
         state.response = None
         return
@@ -553,6 +558,24 @@ def _apply_snapshot(
     if response.output.content_type != "video/mp4":
         raise ValueError(f"Worker returned a non-MP4 artifact for shot {item.shot_id}")
     state.response = response
+
+
+def _terminal_failure_detail(state: VideoGenerationJobState) -> str:
+    parts = [
+        f"shot {state.shot_id}={state.transport_status}",
+        f"transport_job_id={state.transport_job_id or '<none>'}",
+    ]
+    if state.last_terminal_payload is not None:
+        rendered = json.dumps(
+            state.last_terminal_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        if len(rendered) > 1800:
+            rendered = rendered[:1797] + "..."
+        parts.append(f"provider_payload={rendered}")
+    return " ".join(parts)
 
 
 def _parse_success_response(value: object) -> GPUJobResponse:
