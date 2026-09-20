@@ -71,6 +71,10 @@ def test_video_prompt_instructions_define_motion_only_single_shot_boundary() -> 
     assert "no menciones LTX, seeds, frames, FPS" in VIDEO_PROMPT_INSTRUCTIONS
     assert "horizontal 16:9" in VIDEO_PROMPT_INSTRUCTIONS
     assert "landscape 16:9" in VIDEO_PROMPT_INSTRUCTIONS
+    assert "slow cinematic push-in" in VIDEO_PROMPT_INSTRUCTIONS
+    assert "lateral tracking" in VIDEO_PROMPT_INSTRUCTIONS
+    assert "parallax" in VIDEO_PROMPT_INSTRUCTIONS
+    assert "movimiento de cámara contenido" in VIDEO_PROMPT_INSTRUCTIONS
     assert "documental vertical" not in VIDEO_PROMPT_INSTRUCTIONS
 
 
@@ -140,6 +144,25 @@ def test_video_prompt_bot_receives_action_duration_and_starting_storyboard() -> 
     assert "STARTING STORYBOARD KEYFRAME:\nSamurai formation" in first_input
     assert "visual_style: cinematic documentary" in first_input
     assert "aspect_ratio: 16:9" in first_input
+
+
+def test_video_prompt_bot_rejects_non_landscape_aspect_ratio() -> None:
+    provider = FakeStructuredProvider(["unused"])
+    bot = VideoPromptBot(provider=provider, model="test-model")  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="exactly 16:9"):
+        asyncio.run(
+            bot.run(
+                _shots()[0],
+                _timings()[0],
+                _storyboard_frames()[0],
+                visual_style="cinematic documentary",
+                aspect_ratio="9:16",
+                previous_prompt=None,
+            )
+        )
+
+    assert provider.calls == []
 
 
 def test_video_prompt_workflow_rejects_misaligned_storyboard_frames() -> None:
