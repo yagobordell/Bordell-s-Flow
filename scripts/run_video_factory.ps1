@@ -24,6 +24,7 @@ $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $ProductionRunner = Join-Path $PSScriptRoot "run_production.py"
 $Preflight = Join-Path $PSScriptRoot "preflight_video_factory.py"
 $SaladStack = Join-Path $PSScriptRoot "manage_salad_stack.ps1"
+$ZeroReplicaGuard = Join-Path $PSScriptRoot "ensure_salad_zero_replicas.ps1"
 $QueueCleanup = Join-Path $PSScriptRoot "cleanup_salad_queue.ps1"
 $Phase9Plan = Join-Path $PSScriptRoot "run_phase9_compositor.py"
 $Phase9Motion = Join-Path $PSScriptRoot "run_phase9_motion.py"
@@ -135,7 +136,19 @@ function Invoke-FinalCleanup {
 
     foreach ($Service in $Services) {
         try {
-            & $QueueCleanup -Service $Service -TimeoutSeconds 180 -NonInteractive
+            & $ZeroReplicaGuard `
+                -Service $Service `
+                -EnvFile $EnvFile `
+                -NonInteractive
+            if (-not $?) {
+                throw "Zero-replica recheck failed for $Service."
+            }
+
+            & $QueueCleanup `
+                -Service $Service `
+                -EnvFile $EnvFile `
+                -TimeoutSeconds 180 `
+                -NonInteractive
             if (-not $?) {
                 throw "Queue cleanup failed for $Service."
             }
