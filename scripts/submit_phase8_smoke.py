@@ -353,7 +353,10 @@ def main() -> None:
 
     response_path.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
     if current["status"] != "succeeded":
-        raise RuntimeError(f"Salad job ended with status {current['status']}")
+        terminal_detail = json.dumps(current, ensure_ascii=False, sort_keys=True)
+        raise RuntimeError(
+            f"Salad job ended with status {current['status']}: {terminal_detail}"
+        )
 
     output = _normalized_queue_output(current.get("output"))
     if output.get("status") != "succeeded":
