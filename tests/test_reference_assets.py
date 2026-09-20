@@ -51,7 +51,7 @@ def test_openai_image_provider_decodes_png_and_forwards_generation_settings() ->
         "model": "gpt-image-2",
         "prompt": "Canonical samurai reference",
         "n": 1,
-        "size": "1024x1024",
+        "size": "1536x864",
         "quality": "medium",
         "output_format": "png",
     }
@@ -100,7 +100,7 @@ def test_reference_asset_workflow_runs_in_parallel_and_writes_deterministic_file
             image_provider=provider,  # type: ignore[arg-type]
             output_dir=output_dir,
             model="gpt-image-2",
-            size="1024x1024",
+            size="1536x864",
             quality="medium",
         )
     )
