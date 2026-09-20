@@ -110,7 +110,7 @@ def test_ltx_num_frames_rejects_invalid_duration_or_fps() -> None:
 def test_ltx_parameters_enforce_generation_profile_and_shape() -> None:
     validated = LTXVideoParameters.model_validate(parameters())
     assert validated.generation_profile == LTX_GENERATION_PROFILE
-    assert LTX_GENERATION_PROFILE.endswith("gridpad-v3")
+    assert LTX_GENERATION_PROFILE.endswith("gridpad-eagersdpa-v4")
     assert validated.width == 1280
     assert validated.height == 720
     assert validated.num_frames == 121
@@ -252,6 +252,15 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     class FakeOffloadMode:
         CPU = "cpu"
 
+    class FakeDiffvaeApply:
+        @staticmethod
+        def natten_available() -> bool:
+            return True
+
+        @staticmethod
+        def triton_na_available() -> bool:
+            return True
+
     class FakeCuda:
         @staticmethod
         def is_available() -> bool:
@@ -281,6 +290,7 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
         image_conditioning_input=fake_conditioning,
         encode_video=fake_encode_video,
         get_video_chunks_number=lambda num_frames, tiling: 3,
+        diffvae_apply=FakeDiffvaeApply,
     )
     monkeypatch.setattr(ltx_video, "_load_ltx_bindings", lambda: bindings)
 
@@ -307,6 +317,8 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     assert state["pipeline_init"]["quantization"] == "fp8-policy"
     assert state["pipeline_init"]["offload_mode"] == "cpu"
     assert state["pipeline_init"]["device"] == "device:cuda"
+    assert FakeDiffvaeApply.natten_available() is False
+    assert FakeDiffvaeApply.triton_na_available() is False
     assert state["conditionings"][0]["frame_idx"] == 0
     assert state["conditionings"][0]["strength"] == 1.0
     assert state["pipeline_calls"][0]["width"] == 1280
