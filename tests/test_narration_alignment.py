@@ -184,3 +184,61 @@ def test_alignment_rejects_unordered_word_timestamps() -> None:
                 language=None,
             )
         )
+
+
+def test_alignment_rejects_implausible_word_count_inflation() -> None:
+    source_text = "uno dos tres cuatro cinco seis siete ocho nueve diez"
+    provider = RecordingTranscriptionProvider(
+        [
+            TranscribedWord(
+                text=f"palabra{index}",
+                start_seconds=index * 0.05,
+                end_seconds=index * 0.05 + 0.04,
+            )
+            for index in range(20)
+        ]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"word count is implausible.*source_words=10.*aligned_words=20",
+    ):
+        asyncio.run(
+            align_narration_words(
+                SourceScript(text=source_text),
+                NarrationAudio(uri="narration.wav", duration_seconds=2.0),
+                b"audio",
+                transcription_provider=provider,  # type: ignore[arg-type]
+                model="whisper-1",
+                language="es",
+            )
+        )
+
+
+def test_alignment_rejects_long_trailing_zero_duration_run() -> None:
+    provider = RecordingTranscriptionProvider(
+        [
+            TranscribedWord(text="uno", start_seconds=0.0, end_seconds=0.2),
+            TranscribedWord(text="dos", start_seconds=0.2, end_seconds=0.4),
+            TranscribedWord(text="tres", start_seconds=0.4, end_seconds=0.4),
+            TranscribedWord(text="cuatro", start_seconds=0.4, end_seconds=0.4),
+            TranscribedWord(text="cinco", start_seconds=0.4, end_seconds=0.4),
+            TranscribedWord(text="seis", start_seconds=0.4, end_seconds=0.4),
+            TranscribedWord(text="siete", start_seconds=0.4, end_seconds=0.4),
+        ]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"trailing zero-duration word run.*count=5",
+    ):
+        asyncio.run(
+            align_narration_words(
+                SourceScript(text="uno dos tres cuatro cinco seis siete"),
+                NarrationAudio(uri="narration.wav", duration_seconds=1.0),
+                b"audio",
+                transcription_provider=provider,  # type: ignore[arg-type]
+                model="whisper-1",
+                language="es",
+            )
+        )
