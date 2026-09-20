@@ -136,7 +136,8 @@ def test_active_prewarm_survives_transient_control_plane_outage() -> None:
 def test_breeze_reallocates_sustained_slow_image_pull() -> None:
     text = PREWARM.read_text(encoding="utf-8")
 
-    breeze = text.split("breeze_tts2 = @{" , maxsplit=1)[1].split("fish_speech = @{" , maxsplit=1)[0]
+    breeze = text.split("breeze_tts2 = @{" , maxsplit=1)[1]
+    breeze = breeze.split("fish_speech = @{" , maxsplit=1)[0]
     assert "SlowImagePullWindowSeconds = 300" in breeze
     assert "SlowImagePullMinProgress = 0.05" in breeze
     assert "image pull remained below minimum sustained progress" in text
