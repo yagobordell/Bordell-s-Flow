@@ -132,3 +132,17 @@ def test_queue_cancel_timeout_is_not_retried_implicitly(
         _client().cancel("transport-001")
 
     assert calls == 1
+
+
+def test_queue_snapshot_preserves_provider_payload_for_terminal_diagnostics() -> None:
+    payload = {
+        "id": "transport-failed",
+        "status": "failed",
+        "events": [{"action": "rejected", "time": "2026-09-20T19:00:00Z"}],
+        "input": {"job_id": "phase8-shot-003"},
+    }
+
+    snapshot = SaladJobQueueClient._snapshot(payload)
+
+    assert snapshot.provider_payload == payload
+    assert snapshot.provider_payload is not payload
