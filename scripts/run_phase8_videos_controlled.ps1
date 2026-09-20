@@ -32,6 +32,7 @@ $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
+$AutoscalerControl = Join-Path $PSScriptRoot "restore_salad_scale_to_zero.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $QueueGuard = Join-Path $PSScriptRoot "check_salad_queue_ready.py"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
@@ -182,6 +183,8 @@ if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
 }
 
+$FreshPrewarm = $false
+
 try {
     if (-not $LtxNeeded) {
         Write-Host (
@@ -216,6 +219,40 @@ try {
         & $OptimizedPrewarm @PrewarmArguments
         if (-not $?) {
             throw "LTX optimized prewarm failed."
+        }
+        $FreshPrewarm = $true
+    }
+
+    if ($FreshPrewarm) {
+        Write-Host (
+            "=== Phase 8 fanout: submit jobs while exactly one warm LTX replica is pinned ==="
+        ) -ForegroundColor Cyan
+        & python $Runner `
+            --keyframes $Keyframes `
+            --prompts $Prompts `
+            --timings $Timings `
+            --width 1280 `
+            --height 720 `
+            --fps 24 `
+            --output-dir $OutputDir `
+            --submit-only
+        if ($LASTEXITCODE -ne 0) {
+            throw "Phase 8 LTX fanout submission failed with exit code $LASTEXITCODE."
+        }
+
+        Write-Host (
+            "=== LTX warm scale-out: keep one ready replica and allow up to four workers ==="
+        ) -ForegroundColor Cyan
+        $ScaleOutArguments = @{
+            Service = "ltx25"
+            Mode = "WarmScaleOut"
+        }
+        if ($NonInteractive) {
+            $ScaleOutArguments["NonInteractive"] = $true
+        }
+        & $AutoscalerControl @ScaleOutArguments
+        if (-not $?) {
+            throw "LTX warm scale-out autoscaler activation failed."
         }
     }
 
