@@ -580,6 +580,49 @@ def test_manifest_rejects_changed_generation_plan(tmp_path: Path) -> None:
 
 
 
+
+def test_transport_route_change_archives_queue_local_resume_state(
+    tmp_path: Path,
+) -> None:
+    base, keyframes, prompts, timings = _inputs(tmp_path)
+    plan = build_video_generation_plan(
+        keyframes,
+        prompts,
+        timings,
+        keyframe_base_dir=base,
+    )
+    storage = FakeStorage()
+    old_queue = FakeQueue(storage)
+    manifest_path = tmp_path / "manifest.json"
+
+    old_manifest, _ = run_video_generation(
+        plan,
+        queue=old_queue,
+        storage=storage,
+        manifest_path=manifest_path,
+        clips_dir=tmp_path / "clips",
+        wait=False,
+        transport_route="old-queue",
+    )
+    assert all(state.transport_status == "pending" for state in old_manifest.jobs)
+
+    new_queue = FakeQueue(storage)
+    migrated, _ = run_video_generation(
+        plan,
+        queue=new_queue,
+        storage=storage,
+        manifest_path=manifest_path,
+        clips_dir=tmp_path / "clips",
+        wait=False,
+        transport_route="new-queue",
+    )
+
+    assert migrated.transport_route == "new-queue"
+    assert [state.submission_count for state in migrated.jobs] == [1, 1]
+    assert sum(new_queue.submit_counts.values()) == 2
+    assert list(tmp_path.glob("manifest.archive-*.json"))
+
+
 def test_manifest_replace_retries_transient_windows_sharing_violation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
