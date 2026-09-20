@@ -31,7 +31,7 @@
       "queue_name": "ai-video-factory-ltx25-jobs",
       "dockerfile": "docker/workers/ltx25/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:ltx25-torch211-cu128-eagersdpa-xet-v4",
-      "priority": "medium",
+      "priority": "high",
       "resources": {
         "cpu": 8,
         "memory": 40960,
