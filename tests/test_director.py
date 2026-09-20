@@ -3,7 +3,11 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ai_video_factory.agents.director import DIRECTOR_INSTRUCTIONS, DirectedStoryboard, DirectorAgent
+from ai_video_factory.agents.director import (
+    DIRECTOR_INSTRUCTIONS,
+    DirectedStoryboard,
+    DirectorAgent,
+)
 from ai_video_factory.domain import ProjectConfig, Script, StoryboardScene
 
 
