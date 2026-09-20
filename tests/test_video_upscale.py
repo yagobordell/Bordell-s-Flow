@@ -6,8 +6,13 @@ from pathlib import Path
 
 from ai_video_factory.compositor.media import MediaProbe
 from ai_video_factory.domain import VideoClip
+from ai_video_factory.inference.contracts import InferenceJobResponse, OutputArtifact
 from ai_video_factory.inference.ports import StoredObject
-from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
+from ai_video_factory.providers.job_queue import (
+    QueueJobSnapshot,
+    QueueJobStatus,
+    TransientQueueError,
+)
 from ai_video_factory.workers.realesrgan import (
     REALESRGAN_GENERATION_PROFILE,
     REALESRGAN_MODEL_NAME,
@@ -79,6 +84,62 @@ class NoSubmitQueue:
 
     def get(self, _job_id: str):
         raise AssertionError("valid Real-ESRGAN cache must prevent queue polling")
+
+
+class TransientThenSuccessQueue:
+    def __init__(self, storage: FakeStorage) -> None:
+        self.storage = storage
+        self.request = None
+        self.get_calls = 0
+        self.cancel_calls = 0
+
+    def submit(self, request, *, metadata):
+        del metadata
+        self.request = request
+        return QueueJobSnapshot(id="transport-1", status=QueueJobStatus.PENDING)
+
+    def get(self, transport_job_id: str) -> QueueJobSnapshot:
+        assert transport_job_id == "transport-1"
+        assert self.request is not None
+        self.get_calls += 1
+        if self.get_calls == 1:
+            raise TransientQueueError("temporary Salad control-plane reset")
+
+        content = b"upscaled-video"
+        digest = hashlib.sha256(content).hexdigest()
+        stored = StoredObject(
+            key=self.request.output.key,
+            content_type="video/mp4",
+            size_bytes=len(content),
+            etag="etag",
+            metadata={
+                "job-id": self.request.job_id,
+                "request-sha256": self.request.fingerprint(),
+                "artifact-sha256": digest,
+            },
+        )
+        self.storage.objects[self.request.output.key] = (content, stored)
+        response = InferenceJobResponse(
+            job_id=self.request.job_id,
+            request_sha256=self.request.fingerprint(),
+            output=OutputArtifact(
+                key=self.request.output.key,
+                content_type="video/mp4",
+                size_bytes=len(content),
+                sha256=digest,
+                etag="etag",
+            ),
+            attempt_count=1,
+            replayed=False,
+        ).model_dump(mode="json")
+        return QueueJobSnapshot(
+            id=transport_job_id,
+            status=QueueJobStatus.SUCCEEDED,
+            output=response,
+        )
+
+    def cancel(self, _transport_job_id: str) -> None:
+        self.cancel_calls += 1
 
 
 def test_upscale_plan_is_exact_720p_to_1440p_and_cache_skips_queue(
@@ -332,3 +393,38 @@ def test_upscale_manifest_inspector_counts_terminal_retry_jobs(
     assert state["status"] == "matching"
     assert state["active_resume_jobs"] == 0
     assert state["terminal_retry_jobs"] == 1
+
+
+def test_upscale_polling_tolerates_transient_queue_get(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    phase8 = tmp_path / "phase8"
+    clips_dir = phase8 / "video_clips"
+    clips_dir.mkdir(parents=True)
+    source = clips_dir / "shot_001.mp4"
+    source.write_bytes(b"source-ltx-720p")
+    monkeypatch.setattr(upscale, "probe_video", _probe)
+
+    plan = upscale.build_video_upscale_plan(
+        [VideoClip(shot_id=1, uri="video_clips/shot_001.mp4")],
+        clip_base_dir=phase8,
+    )
+    storage = FakeStorage()
+    queue = TransientThenSuccessQueue(storage)
+
+    manifest, clips = upscale.run_video_upscale(
+        plan,
+        queue=queue,
+        storage=storage,
+        manifest_path=phase8 / "video_upscale_manifest.json",
+        clips_dir=phase8 / "upscaled_clips",
+        poll_seconds=0.001,
+        timeout_seconds=1.0,
+        dispatch_timeout_seconds=0.002,
+    )
+
+    assert queue.get_calls >= 2
+    assert queue.cancel_calls == 0
+    assert manifest.jobs[0].transport_status == "succeeded"
+    assert clips == [VideoClip(shot_id=1, uri="upscaled_clips/shot_001.mp4")]
