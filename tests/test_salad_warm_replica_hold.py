@@ -38,5 +38,8 @@ def test_phase8_holds_ready_ltx_replica_through_dispatch() -> None:
     assert 'Service = "ltx25"' in runner
     assert "HoldReadyReplica = $true" in runner
     assert "DispatchTimeoutSeconds = 300" in runner
-    assert runner.index("HoldReadyReplica = $true") < runner.index("$OptimizedPrewarm")
+    prewarm_block = runner.split("$PrewarmArguments = @{", maxsplit=1)[1]
+    assert prewarm_block.index("HoldReadyReplica = $true") < prewarm_block.index(
+        "& $OptimizedPrewarm @PrewarmArguments"
+    )
     assert "-Action Stop" in runner
