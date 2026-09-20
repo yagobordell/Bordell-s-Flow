@@ -9,9 +9,9 @@ import sys
 import time
 import wave
 from pathlib import Path
+from typing import Any
 
 from PIL import Image
-from typing import Any
 
 from ai_video_factory.config import settings
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
