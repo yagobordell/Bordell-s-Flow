@@ -332,11 +332,11 @@ try {
                 )
                 foreach ($Failure in $TerminalFailures) {
                     Write-Host (
-                        "=== Phase 8 persisted failure diagnostic: shot={0} transport={1} ===" -f \
+                        "=== Phase 8 persisted failure diagnostic: shot={0} transport={1} ===" -f `
                         [int]$Failure.shot_id,
                         [string]$Failure.transport_job_id
                     ) -ForegroundColor Yellow
-                    & python $FailureInspector \
+                    & python $FailureInspector `
                         --application-job-id ([string]$Failure.application_job_id)
                     if ($LASTEXITCODE -ne 0) {
                         Write-Warning (
