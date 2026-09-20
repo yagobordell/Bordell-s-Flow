@@ -62,6 +62,7 @@ class VideoGenerationManifest(BaseModel):
 
     schema_version: Literal["1"] = "1"
     run_fingerprint: str
+    transport_route: str | None = None
     jobs: list[VideoGenerationJobState] = Field(min_length=1)
 
 
@@ -191,6 +192,7 @@ def run_video_generation(
     poll_seconds: float = 15.0,
     timeout_seconds: float = 21600.0,
     dispatch_timeout_seconds: float = 300.0,
+    transport_route: str | None = None,
 ) -> tuple[VideoGenerationManifest, list[VideoClip]]:
     """Fan out LTX jobs, persist progress, resume transports and fan in canonical clips."""
 
@@ -201,7 +203,11 @@ def run_video_generation(
     if not plan:
         raise ValueError("Video generation plan cannot be empty")
 
-    manifest = _load_or_create_manifest(plan, manifest_path)
+    manifest = _load_or_create_manifest(
+        plan,
+        manifest_path,
+        transport_route=transport_route,
+    )
     state_by_shot = {state.shot_id: state for state in manifest.jobs}
 
     for item in plan:
@@ -394,28 +400,44 @@ def _validate_inputs(
 
 
 def _load_or_create_manifest(
-    plan: list[VideoGenerationPlanItem], manifest_path: Path
+    plan: list[VideoGenerationPlanItem],
+    manifest_path: Path,
+    *,
+    transport_route: str | None = None,
 ) -> VideoGenerationManifest:
     fingerprint = video_generation_run_fingerprint(plan)
     if manifest_path.is_file():
         manifest = VideoGenerationManifest.model_validate_json(
             manifest_path.read_text(encoding="utf-8")
         )
-        if manifest.run_fingerprint == fingerprint:
+        same_plan = manifest.run_fingerprint == fingerprint
+        route_changed = (
+            transport_route is not None
+            and manifest.transport_route != transport_route
+        )
+        if same_plan and not route_changed:
             _validate_manifest_against_plan(manifest, plan, fingerprint)
             return manifest
-        if any(
-            state.transport_status in {"pending", "running"}
-            for state in manifest.jobs
-        ):
-            raise ValueError(
-                "Existing video generation manifest belongs to a different input plan "
-                "and still contains active transports"
+        if same_plan and route_changed:
+            print(
+                "Archived Phase 8 transport manifest because the queue route changed: "
+                f"{manifest.transport_route!r} -> {transport_route!r}"
             )
-        _archive_manifest(manifest_path, manifest.run_fingerprint)
+            _archive_manifest(manifest_path, manifest.run_fingerprint)
+        else:
+            if any(
+                state.transport_status in {"pending", "running"}
+                for state in manifest.jobs
+            ):
+                raise ValueError(
+                    "Existing video generation manifest belongs to a different input plan "
+                    "and still contains active transports"
+                )
+            _archive_manifest(manifest_path, manifest.run_fingerprint)
 
     manifest = VideoGenerationManifest(
         run_fingerprint=fingerprint,
+        transport_route=transport_route,
         jobs=[
             VideoGenerationJobState(
                 shot_id=item.shot_id,
