@@ -85,3 +85,16 @@ def test_phase8_terminal_retry_keeps_single_warm_worker_and_reports_failures() -
     assert 'Mode = "WarmScaleOut"' not in retry_block
     assert "inspect_inference_job_error.py" in runner
     assert "--application-job-id" in runner
+
+
+def test_realesrgan_terminal_retry_pins_one_fresh_worker_and_reports_failure() -> None:
+    runner = Path("scripts/run_phase8_upscale_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "terminal_retry_jobs" in runner
+    assert "$RetryTerminalOnly" in runner
+    assert '$PrewarmArguments["HoldReadyReplica"] = $true' in runner
+    assert "min_replicas=1/max_replicas=1" in runner
+    assert "inspect_inference_job_error.py" in runner
+    assert "--application-job-id" in runner
