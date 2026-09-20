@@ -70,6 +70,9 @@ Write-Host "=== Phase 8 resume manifest: verify current deterministic plan ===" 
     --keyframes $Keyframes `
     --prompts $Prompts `
     --timings $Timings `
+    --width 1280 `
+    --height 720 `
+    --fps 24 `
     --manifest $ManifestPath `
     --json-output $ManifestStatePath
 if ($LASTEXITCODE -ne 0) {
@@ -112,6 +115,9 @@ if ([string]$ManifestState.status -eq "different_plan") {
         --keyframes $Keyframes `
         --prompts $Prompts `
         --timings $Timings `
+        --width 1280 `
+        --height 720 `
+        --fps 24 `
         --manifest $ManifestPath `
         --json-output $ArchiveStatePath `
         --archive-mismatch
@@ -141,6 +147,9 @@ Write-Host "=== Phase 8 cache plan: resolve R2 replay before LTX allocation ==="
     --keyframes $Keyframes `
     --prompts $Prompts `
     --timings $Timings `
+    --width 1280 `
+    --height 720 `
+    --fps 24 `
     --json-output $CachePlanPath
 if ($LASTEXITCODE -ne 0) {
     Remove-Item -LiteralPath $CachePlanPath -Force -ErrorAction SilentlyContinue
@@ -216,6 +225,9 @@ try {
         --keyframes $Keyframes `
         --prompts $Prompts `
         --timings $Timings `
+        --width 1280 `
+        --height 720 `
+        --fps 24 `
         --output-dir $OutputDir `
         --poll-seconds $PollSeconds `
         --timeout-seconds $TimeoutSeconds `
