@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed-base", type=int, default=42)
+    parser.add_argument("--transport-route", required=True)
     parser.add_argument(
         "--archive-mismatch",
         action="store_true",
@@ -59,6 +60,7 @@ def inspect_manifest_state(
     manifest_path: Path,
     *,
     archive_mismatch: bool = False,
+    transport_route: str | None = None,
 ) -> dict[str, object]:
     expected_fingerprint = video_generation_run_fingerprint(plan)
     state: dict[str, object] = {
@@ -68,6 +70,8 @@ def inspect_manifest_state(
         "active_resume_jobs": 0,
         "submitted_jobs": 0,
         "archived_path": None,
+        "existing_transport_route": None,
+        "expected_transport_route": transport_route,
     }
 
     if not manifest_path.is_file():
@@ -84,6 +88,7 @@ def inspect_manifest_state(
         ) from exc
 
     state["existing_fingerprint"] = manifest.run_fingerprint
+    state["existing_transport_route"] = manifest.transport_route
     state["submitted_jobs"] = sum(
         job.transport_job_id is not None for job in manifest.jobs
     )
@@ -99,6 +104,17 @@ def inspect_manifest_state(
             plan,
             expected_fingerprint,
         )
+        if (
+            transport_route is not None
+            and manifest.transport_route != transport_route
+        ):
+            state["status"] = "different_transport_route"
+            if archive_mismatch:
+                archived = _archive_path(manifest_path, manifest.run_fingerprint)
+                os.replace(manifest_path, archived)
+                state["archived_path"] = str(archived)
+                state["status"] = "archived_different_transport_route"
+            return state
         state["status"] = "matching"
         return state
 
@@ -135,6 +151,7 @@ def main() -> None:
             plan,
             args.manifest,
             archive_mismatch=args.archive_mismatch,
+            transport_route=args.transport_route,
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
@@ -150,6 +167,8 @@ def main() -> None:
         f"status={state['status']} "
         f"active_resume_jobs={state['active_resume_jobs']} "
         f"submitted_jobs={state['submitted_jobs']} "
+        f"transport_route={state['existing_transport_route']} "
+        f"expected_transport_route={state['expected_transport_route']} "
         f"expected={expected_fingerprint}"
     )
     if state["archived_path"] is not None:
