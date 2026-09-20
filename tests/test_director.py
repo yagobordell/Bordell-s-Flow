@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ai_video_factory.agents.director import DirectedStoryboard, DirectorAgent
+from ai_video_factory.agents.director import DIRECTOR_INSTRUCTIONS, DirectedStoryboard, DirectorAgent
 from ai_video_factory.domain import ProjectConfig, Script, StoryboardScene
 
 
@@ -27,6 +27,12 @@ class FakeStructuredProvider:
             "output_type": output_type,
         }
         return self.result
+
+
+def test_director_instructions_are_landscape_native() -> None:
+    assert "horizontal 16:9" in DIRECTOR_INSTRUCTIONS
+    assert "landscape widescreen" in DIRECTOR_INSTRUCTIONS
+    assert "vídeo vertical" not in DIRECTOR_INSTRUCTIONS
 
 
 def test_director_builds_video_plan_with_real_project_state() -> None:
