@@ -20,6 +20,7 @@ from ai_video_factory.gpu.ltx_video import (
 )
 from ai_video_factory.gpu.ports import ObjectStorage
 from ai_video_factory.gpu.storage import sha256_file
+from ai_video_factory.providers.images import inspect_image_payload
 from ai_video_factory.providers.inference_jobs import cached_inference_response
 from ai_video_factory.providers.job_queue import (
     JobQueueClient,
@@ -78,8 +79,8 @@ def build_video_generation_plan(
     """Build deterministic LTX queue requests for every canonical shot."""
 
     _validate_inputs(keyframes, prompts, timings)
-    if width <= 0 or height <= 0 or fps <= 0:
-        raise ValueError("Video generation dimensions and fps must be positive")
+    if (width, height, fps) != (1280, 720, 24):
+        raise ValueError("Production LTX output must be exactly 1280x720 at 24 fps")
 
     base_dir = keyframe_base_dir.resolve()
     plan: list[VideoGenerationPlanItem] = []
@@ -90,6 +91,22 @@ def build_video_generation_plan(
             raise ValueError(f"Shot {keyframe.shot_id} keyframe URI escapes its base directory")
         if not keyframe_path.is_file():
             raise FileNotFoundError(f"Storyboard keyframe file not found: {keyframe_path}")
+
+        image_format, keyframe_width, keyframe_height = inspect_image_payload(
+            keyframe_path.read_bytes()
+        )
+        if image_format != "png":
+            raise ValueError(f"Shot {keyframe.shot_id} keyframe must be a PNG")
+        if keyframe_width * 9 != keyframe_height * 16:
+            raise ValueError(
+                f"Shot {keyframe.shot_id} keyframe must be native 16:9; "
+                f"found {keyframe_width}x{keyframe_height}"
+            )
+        if keyframe_width < width or keyframe_height < height:
+            raise ValueError(
+                f"Shot {keyframe.shot_id} keyframe is below the 1280x720 LTX input contract: "
+                f"found {keyframe_width}x{keyframe_height}"
+            )
 
         duration_seconds = timing.end_seconds - timing.start_seconds
         num_frames = ltx_num_frames_for_duration(duration_seconds, fps=fps)
@@ -349,8 +366,18 @@ def _load_or_create_manifest(
         manifest = VideoGenerationManifest.model_validate_json(
             manifest_path.read_text(encoding="utf-8")
         )
-        _validate_manifest_against_plan(manifest, plan, fingerprint)
-        return manifest
+        if manifest.run_fingerprint == fingerprint:
+            _validate_manifest_against_plan(manifest, plan, fingerprint)
+            return manifest
+        if any(
+            state.transport_status in {"pending", "running"}
+            for state in manifest.jobs
+        ):
+            raise ValueError(
+                "Existing video generation manifest belongs to a different input plan "
+                "and still contains active transports"
+            )
+        _archive_manifest(manifest_path, manifest.run_fingerprint)
 
     manifest = VideoGenerationManifest(
         run_fingerprint=fingerprint,
@@ -385,6 +412,22 @@ def _validate_manifest_against_plan(
             raise ValueError(f"Manifest application job mismatch for shot {item.shot_id}")
         if state.request_sha256 != item.request.fingerprint():
             raise ValueError(f"Manifest request fingerprint mismatch for shot {item.shot_id}")
+
+
+def _archive_manifest(path: Path, run_fingerprint: str) -> Path:
+    raw = path.read_bytes()
+    state_sha = hashlib.sha256(raw).hexdigest()[:12]
+    archive = path.with_name(
+        f"{path.stem}.archive-{run_fingerprint[:12]}-{state_sha}{path.suffix}"
+    )
+    if archive.exists():
+        if archive.read_bytes() != raw:
+            raise ValueError(f"Video generation manifest archive collision: {archive}")
+        path.unlink()
+    else:
+        os.replace(path, archive)
+    print(f"Archived superseded video generation manifest: {archive}")
+    return archive
 
 
 def _write_manifest(path: Path, manifest: VideoGenerationManifest) -> None:
