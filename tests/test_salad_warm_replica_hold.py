@@ -28,3 +28,15 @@ def test_ideogram_phases_pin_replica_before_readiness() -> None:
         assert runner.index("start_salad_optimized_prewarm.ps1") < runner.index(phase_runner)
         assert "-Action Stop" in runner
         assert "cleanup_salad_queue.ps1" in runner
+
+
+def test_phase8_holds_ready_ltx_replica_through_dispatch() -> None:
+    runner = Path("scripts/run_phase8_videos_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'Service = "ltx25"' in runner
+    assert "HoldReadyReplica = $true" in runner
+    assert "DispatchTimeoutSeconds = 300" in runner
+    assert runner.index("HoldReadyReplica = $true") < runner.index("$OptimizedPrewarm")
+    assert "-Action Stop" in runner
