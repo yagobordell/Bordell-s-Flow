@@ -68,3 +68,20 @@ def test_warm_scaleout_control_preserves_one_replica_floor() -> None:
     assert "$Autoscaler.min_replicas = 1" in control
     assert "max_replicas = [int]$Definition.autoscaler.max_replicas" in control
     assert '"warm scale-out autoscaler armed"' in control
+
+
+def test_phase8_terminal_retry_keeps_single_warm_worker_and_reports_failures() -> None:
+    runner = Path("scripts/run_phase8_videos_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "terminal_retry_jobs" in runner
+    assert "$RetryTerminalOnly" in runner
+    assert "keep exactly one warm worker pinned" in runner
+    assert "min_replicas=1/max_replicas=1" in runner
+    retry_block = runner.split("if ($RetryTerminalOnly) {", maxsplit=1)[1].split(
+        "else {", maxsplit=1
+    )[0]
+    assert 'Mode = "WarmScaleOut"' not in retry_block
+    assert "inspect_inference_job_error.py" in runner
+    assert "--application-job-id" in runner
