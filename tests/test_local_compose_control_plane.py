@@ -23,7 +23,7 @@ def test_local_compose_separates_orchestrator_and_renderer() -> None:
     assert 'shm_size: "2gb"' in text
 
 
-def test_orchestrator_image_stays_python_only() -> None:
+def test_orchestrator_image_keeps_gpu_and_node_runtimes_out() -> None:
     text = ORCHESTRATOR_DOCKERFILE.read_text(encoding="utf-8")
 
     assert text.startswith("FROM python:3.12-slim-bookworm")
@@ -31,7 +31,7 @@ def test_orchestrator_image_stays_python_only() -> None:
     assert "COPY scripts ./scripts" in text
     assert "COPY deploy ./deploy" in text
     assert "node:22" not in text
-    assert "ffmpeg" not in text
+    assert "ffmpeg" in text
     assert "cuda" not in text.lower()
 
 
