@@ -153,6 +153,52 @@ def test_phase8_inspector_and_controlled_wrapper_pin_landscape_contract() -> Non
         '"Phase 8 manifest inspection contract is exactly 1280x720 at 24 fps"'
         in inspector
     )
-    assert wrapper.count("--width 1280 `") == 5
-    assert wrapper.count("--height 720 `") == 5
-    assert wrapper.count("--fps 24 `") == 5
+    assert wrapper.count("--width 1280 `") == 6
+    assert wrapper.count("--height 720 `") == 6
+    assert wrapper.count("--fps 24 `") == 6
+    assert wrapper.count("--transport-route $env:SALAD_LTX25_QUEUE_NAME `") == 3
+
+
+
+def test_transport_route_change_is_not_resumed(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    item = plan[0]
+    manifest_path = tmp_path / "phase8" / "video_generation_manifest.json"
+    manifest = VideoGenerationManifest(
+        run_fingerprint=video_generation_run_fingerprint(plan),
+        transport_route="ai-video-factory-ltx25-jobs",
+        jobs=[
+            VideoGenerationJobState(
+                shot_id=1,
+                application_job_id=item.request.job_id,
+                request_sha256=item.request.fingerprint(),
+                transport_status="pending",
+                transport_job_id="legacy-transport",
+                submission_count=3,
+            )
+        ],
+    )
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+
+    state = inspect_manifest_state(
+        plan,
+        manifest_path,
+        transport_route="ai-video-factory-ltx25-jobs-v2",
+    )
+
+    assert state["status"] == "different_transport_route"
+    assert state["active_resume_jobs"] == 1
+    assert state["existing_transport_route"] == "ai-video-factory-ltx25-jobs"
+    assert state["expected_transport_route"] == "ai-video-factory-ltx25-jobs-v2"
+
+    archived = inspect_manifest_state(
+        plan,
+        manifest_path,
+        archive_mismatch=True,
+        transport_route="ai-video-factory-ltx25-jobs-v2",
+    )
+
+    assert archived["status"] == "archived_different_transport_route"
+    assert not manifest_path.exists()
+    assert Path(str(archived["archived_path"])).is_file()
