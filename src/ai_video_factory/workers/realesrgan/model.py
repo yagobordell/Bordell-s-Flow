@@ -140,10 +140,12 @@ class DirectRealESRGANBackend:
             self._get_or_build_upsampler()
 
     def ready(self) -> None:
-        with self._lock:
-            self._validate_bootstrap()
-            if self._upsampler is None:
-                raise RuntimeError("Real-ESRGAN runtime has not been prepared")
+        # Readiness must remain responsive while a multi-minute video upscale owns
+        # the inference lock. Preparation completes before queue traffic is enabled,
+        # and inference never sets the resident upsampler back to None.
+        self._validate_bootstrap()
+        if self._upsampler is None:
+            raise RuntimeError("Real-ESRGAN runtime has not been prepared")
 
     def upscale(
         self,
@@ -225,6 +227,13 @@ class DirectRealESRGANBackend:
 
             frame_count = 0
             started = time.monotonic()
+            self._log_progress(
+                bindings,
+                event="start",
+                frame_count=0,
+                total_frames=parameters.source_frame_count,
+                started=started,
+            )
             try:
                 while True:
                     raw = decode.stdout.read(frame_bytes)
@@ -249,6 +258,18 @@ class DirectRealESRGANBackend:
                         )
                     encode.stdin.write(enhanced.tobytes())
                     frame_count += 1
+                    if (
+                        frame_count == 1
+                        or frame_count % 10 == 0
+                        or frame_count == parameters.source_frame_count
+                    ):
+                        self._log_progress(
+                            bindings,
+                            event="frame",
+                            frame_count=frame_count,
+                            total_frames=parameters.source_frame_count,
+                            started=started,
+                        )
             finally:
                 decode.stdout.close()
                 encode.stdin.close()
@@ -275,6 +296,13 @@ class DirectRealESRGANBackend:
             self._validate_output(output_probe, parameters)
             elapsed = time.monotonic() - started
             fps_effective = frame_count / elapsed if elapsed > 0 else math.inf
+            self._log_progress(
+                bindings,
+                event="complete",
+                frame_count=frame_count,
+                total_frames=parameters.source_frame_count,
+                started=started,
+            )
             print(
                 "REALESRGAN_INFERENCE_METRIC "
                 f"elapsed_seconds={elapsed:.3f} frames={frame_count} "
@@ -284,6 +312,48 @@ class DirectRealESRGANBackend:
                 f"model={parameters.model_name}",
                 flush=True,
             )
+            self._release_cuda_cache(bindings)
+
+    def _log_progress(
+        self,
+        bindings: _Bindings,
+        *,
+        event: str,
+        frame_count: int,
+        total_frames: int,
+        started: float,
+    ) -> None:
+        elapsed = time.monotonic() - started
+        allocated = 0
+        reserved = 0
+        free = 0
+        total = 0
+        if self._device.startswith("cuda") and bindings.torch.cuda.is_available():
+            allocated = int(bindings.torch.cuda.memory_allocated())
+            reserved = int(bindings.torch.cuda.memory_reserved())
+            try:
+                free_value, total_value = bindings.torch.cuda.mem_get_info()
+                free = int(free_value)
+                total = int(total_value)
+            except Exception:
+                pass
+        print(
+            "REALESRGAN_PROGRESS "
+            f"event={event} frame={frame_count}/{total_frames} "
+            f"elapsed_seconds={elapsed:.3f} "
+            f"cuda_allocated_bytes={allocated} "
+            f"cuda_reserved_bytes={reserved} "
+            f"cuda_free_bytes={free} cuda_total_bytes={total}",
+            flush=True,
+        )
+
+    def _release_cuda_cache(self, bindings: _Bindings) -> None:
+        if not self._device.startswith("cuda") or not bindings.torch.cuda.is_available():
+            return
+        try:
+            bindings.torch.cuda.synchronize()
+        finally:
+            bindings.torch.cuda.empty_cache()
 
     def _get_bindings(self) -> _Bindings:
         if self._bindings is None:
