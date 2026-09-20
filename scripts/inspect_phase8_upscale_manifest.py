@@ -34,6 +34,7 @@ def main() -> None:
     fingerprint = video_upscale_run_fingerprint(plan)
     status = "missing"
     active = 0
+    terminal_retry_jobs = 0
     archived_to: str | None = None
     if args.manifest.is_file():
         manifest = VideoUpscaleManifest.model_validate_json(
@@ -44,10 +45,16 @@ def main() -> None:
             active = sum(
                 state.transport_status in {"pending", "running"} for state in manifest.jobs
             )
+            terminal_retry_jobs = sum(
+                state.transport_status in {"failed", "cancelled"} for state in manifest.jobs
+            )
         else:
             status = "different_plan"
             active = sum(
                 state.transport_status in {"pending", "running"} for state in manifest.jobs
+            )
+            terminal_retry_jobs = sum(
+                state.transport_status in {"failed", "cancelled"} for state in manifest.jobs
             )
             if args.archive_mismatch:
                 if active:
@@ -65,6 +72,7 @@ def main() -> None:
         "status": status,
         "run_fingerprint": fingerprint,
         "active_resume_jobs": active,
+        "terminal_retry_jobs": terminal_retry_jobs,
         "archived_to": archived_to,
     }
     args.json_output.parent.mkdir(parents=True, exist_ok=True)
