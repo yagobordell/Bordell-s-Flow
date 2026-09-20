@@ -141,3 +141,18 @@ def test_different_plan_manifest_can_be_archived_without_deleting_artifacts(
     archived_path = Path(str(archived["archived_path"]))
     assert archived_path.is_file()
     assert archived_path.parent.name == "manifest_archive"
+
+
+def test_phase8_inspector_and_controlled_wrapper_pin_landscape_contract() -> None:
+    inspector = Path("scripts/inspect_phase8_manifest.py").read_text(encoding="utf-8")
+    wrapper = Path("scripts/run_phase8_videos_controlled.ps1").read_text(encoding="utf-8")
+
+    assert 'parser.add_argument("--width", type=int, default=1280)' in inspector
+    assert 'parser.add_argument("--height", type=int, default=720)' in inspector
+    assert (
+        '"Phase 8 manifest inspection contract is exactly 1280x720 at 24 fps"'
+        in inspector
+    )
+    assert wrapper.count("--width 1280 `") == 4
+    assert wrapper.count("--height 720 `") == 4
+    assert wrapper.count("--fps 24 `") == 4
