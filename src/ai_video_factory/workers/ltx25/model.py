@@ -16,7 +16,7 @@ from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.ports import LocalArtifact
 
 LTX_VIDEO_TASK = "video.ltx25.generate"
-LTX_GENERATION_PROFILE = "ltx25-distilled-a95ab856-fp8cpu-gridpad-v3"
+LTX_GENERATION_PROFILE = "ltx25-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
 _CANONICAL_LANDSCAPE_SIZE = (1280, 720)
 _LTX_TWO_STAGE_SPATIAL_GRID = 64
 
@@ -257,12 +257,14 @@ class _LTXBindings:
     image_conditioning_input: Any
     encode_video: Any
     get_video_chunks_number: Any
+    diffvae_apply: Any
 
 
 def _load_ltx_bindings() -> _LTXBindings:
     try:
         import torch
         from ltx_core.model.video_vae import get_video_chunks_number
+        from ltx_core.model.video_vae.transformer import apply as diffvae_apply
         from ltx_pipelines.distilled import DistilledPipeline
         from ltx_pipelines.utils.args import ImageConditioningInput
         from ltx_pipelines.utils.media_io import encode_video
@@ -283,6 +285,7 @@ def _load_ltx_bindings() -> _LTXBindings:
         image_conditioning_input=ImageConditioningInput,
         encode_video=encode_video,
         get_video_chunks_number=get_video_chunks_number,
+        diffvae_apply=diffvae_apply,
     )
 
 
@@ -291,6 +294,20 @@ def _torch_inference_context(torch_module: Any) -> Any:
     if inference_mode is None:
         return nullcontext()
     return inference_mode()
+
+
+def _force_diffvae_eager_sdpa(diffvae_apply: Any) -> None:
+    """Force LTX DiffVAE onto its upstream PyTorch eager-SDPA fallback.
+
+    The RTX 5090 Salad worker hit a native segmentation fault inside the default
+    NATTEN-backed decode path for the canonical landscape grid.  LTX upstream
+    already supports eager tiled SDPA as a compatibility backend; making both
+    native fallback probes report unavailable routes CHUNKED_EAGER through that
+    implementation without changing checkpoints, denoising schedules, or seeds.
+    """
+
+    diffvae_apply.natten_available = lambda: False
+    diffvae_apply.triton_na_available = lambda: False
 
 
 class DirectLTX25Backend:
@@ -418,6 +435,7 @@ class DirectLTX25Backend:
         quantization = bindings.quantization_kind.FP8_CAST.to_policy(
             checkpoint_path=str(self._model_files.transformer)
         )
+        _force_diffvae_eager_sdpa(bindings.diffvae_apply)
         self._pipeline = bindings.distilled_pipeline(
             model_paths=model_paths,
             spatial_upsampler_path=str(self._model_files.spatial_upsampler),
