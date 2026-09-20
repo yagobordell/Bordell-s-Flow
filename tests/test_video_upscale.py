@@ -7,12 +7,14 @@ from pathlib import Path
 from ai_video_factory.compositor.media import MediaProbe
 from ai_video_factory.domain import VideoClip
 from ai_video_factory.inference.ports import StoredObject
+from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
 from ai_video_factory.workers.realesrgan import (
     REALESRGAN_GENERATION_PROFILE,
     REALESRGAN_MODEL_NAME,
     RealESRGANParameters,
     realesrgan_application_job_id,
 )
+from ai_video_factory.workers.realesrgan.model import DirectRealESRGANBackend
 from ai_video_factory.workflows import video_upscale as upscale
 
 
@@ -189,3 +191,83 @@ def test_realesrgan_salad_service_scales_to_zero() -> None:
     assert service["resources"]["gpu_class_names"] == ["RTX 3090 (24 GB)"]
     assert service["autoscaler"]["min_replicas"] == 0
     assert service["autoscaler"]["max_replicas"] == 2
+
+
+def test_upscale_terminal_snapshot_preserves_provider_payload(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    phase8 = tmp_path / "phase8"
+    clips_dir = phase8 / "video_clips"
+    clips_dir.mkdir(parents=True)
+    source = clips_dir / "shot_001.mp4"
+    source.write_bytes(b"source-ltx-720p")
+    monkeypatch.setattr(upscale, "probe_video", _probe)
+
+    item = upscale.build_video_upscale_plan(
+        [VideoClip(shot_id=1, uri="video_clips/shot_001.mp4")],
+        clip_base_dir=phase8,
+    )[0]
+    state = upscale.VideoUpscaleJobState(
+        shot_id=1,
+        application_job_id=item.request.job_id,
+        request_sha256=item.request.fingerprint(),
+    )
+    payload = {
+        "id": "transport-failed",
+        "status": "failed",
+        "events": [{"action": "rejected"}],
+    }
+
+    upscale._apply_snapshot(
+        state,
+        item,
+        QueueJobSnapshot(
+            id="transport-failed",
+            status=QueueJobStatus.FAILED,
+            provider_payload=payload,
+        ),
+    )
+
+    assert state.last_terminal_transport_job_id == "transport-failed"
+    assert state.last_terminal_payload == payload
+    detail = upscale._terminal_failure_detail(state)
+    assert "transport_job_id=transport-failed" in detail
+    assert "provider_payload=" in detail
+    assert "rejected" in detail
+
+
+def test_realesrgan_readiness_does_not_wait_for_inference_lock(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    backend = DirectRealESRGANBackend(model_root=tmp_path)
+    backend._upsampler = object()
+    monkeypatch.setattr(backend, "_validate_bootstrap", lambda: None)
+
+    class ExplodingLock:
+        def __enter__(self):
+            raise AssertionError("ready() must not acquire the long-running inference lock")
+
+        def __exit__(self, *_args):
+            return None
+
+    backend._lock = ExplodingLock()  # type: ignore[assignment]
+    backend.ready()
+
+
+def test_realesrgan_worker_emits_frame_progress_and_clears_cuda_cache() -> None:
+    model = Path("src/ai_video_factory/workers/realesrgan/model.py").read_text(
+        encoding="utf-8"
+    )
+    manifest = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
+
+    assert "REALESRGAN_PROGRESS" in model
+    assert "frame_count % 10 == 0" in model
+    assert "cuda.memory_allocated()" in model
+    assert "cuda.memory_reserved()" in model
+    assert "cuda.mem_get_info()" in model
+    assert "cuda.empty_cache()" in model
+    assert manifest["services"]["realesrgan"]["image"].endswith(
+        ":realesrgan-x2plus-v2"
+    )
