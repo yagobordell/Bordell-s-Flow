@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--aspect-ratio",
         default="16:9",
+        choices=("16:9",),
         help="Storyboard frame aspect ratio; production is cinematic landscape 16:9.",
     )
     parser.add_argument(
