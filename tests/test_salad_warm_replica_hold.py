@@ -61,7 +61,10 @@ def test_warm_scaleout_control_preserves_one_replica_floor() -> None:
 
     assert '[ValidateSet("Manifest", "WarmScaleOut")]' in control
     assert 'if ($Mode -eq "WarmScaleOut")' in control
-    assert 'throw "WarmScaleOut is currently reserved for the ltx25 production lifecycle."' in control
+    assert (
+        'throw "WarmScaleOut is currently reserved for the ltx25 production lifecycle."'
+        in control
+    )
     assert "min_replicas = $MinReplicas" in control
     assert "max_replicas = [int]$Definition.autoscaler.max_replicas" in control
     assert '"warm scale-out autoscaler armed"' in control
