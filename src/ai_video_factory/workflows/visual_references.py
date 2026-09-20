@@ -16,8 +16,12 @@ async def build_visual_references(
     block_continuity: list[BlockContinuity],
     reference_bot: VisualReferenceBot,
     visual_style: str,
+    aspect_ratio: str = "16:9",
 ) -> list[VisualReference]:
     """Build contextual visual references independently while preserving entity order."""
+
+    if aspect_ratio.strip() != "16:9":
+        raise ValueError("Visual references production aspect ratio must be exactly 16:9")
 
     entity_ids = [entity.id for entity in entities]
     if len(entity_ids) != len(set(entity_ids)):
@@ -69,6 +73,7 @@ async def build_visual_references(
                 entity,
                 visual_style=visual_style,
                 narrative_context=" ".join(contexts[entity.id]),
+                aspect_ratio=aspect_ratio,
             )
             for entity in entities
         )
