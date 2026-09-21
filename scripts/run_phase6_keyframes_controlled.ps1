@@ -19,7 +19,7 @@ param(
     [int]$PendingTimeoutSeconds = 300,
 
     [ValidateRange(60, 3600)]
-    [int]$RunningTimeoutSeconds = 600,
+    [int]$RunningTimeoutSeconds = 1200,
 
     [ValidateRange(0, 2)]
     [int]$IdeogramRecoveryRetries = 1,
