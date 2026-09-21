@@ -11,6 +11,7 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ai_video_factory.inference.contracts import InferenceJobRequest
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.ports import LocalArtifact
 
 WHISPER_TRANSCRIPTION_TASK = "audio.whisper.transcribe"
@@ -226,10 +227,18 @@ class TransformersWhisperBackend:
         return self._bindings
 
     def _validate_runtime(self, bindings: _WhisperBindings) -> None:
-        if not self._model_root.is_dir():
-            raise FileNotFoundError(f"Whisper model directory does not exist: {self._model_root}")
-        if not (self._model_root / "config.json").is_file():
-            raise FileNotFoundError(f"Whisper config.json is missing from {self._model_root}")
+        config_path = self._model_root / "config.json"
+        weights_ready = (
+            self._model_root.is_dir()
+            and any(
+                path.is_file() and path.stat().st_size > 0
+                for path in self._model_root.rglob("*.safetensors")
+            )
+        )
+        if not self._model_root.is_dir() or not config_path.is_file() or not weights_ready:
+            raise ModelBootstrapPendingError(
+                f"Whisper model bootstrap is still pending at {self._model_root}"
+            )
         if self._device.startswith("cuda") and not bindings.torch.cuda.is_available():
             raise RuntimeError("CUDA is not available for the Whisper production runtime")
         if not hasattr(bindings.torch, self._dtype):
