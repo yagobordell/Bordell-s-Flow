@@ -44,6 +44,12 @@ def parse_args() -> argparse.Namespace:
         help="Storyboard frame aspect ratio; production is cinematic landscape 16:9.",
     )
     parser.add_argument(
+        "--max-scene-concurrency",
+        type=int,
+        default=3,
+        help="Maximum number of scenes planned concurrently; shots stay serial within each scene.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=settings.output_dir / "phase6" / "storyboard_frames.json",
@@ -61,7 +67,10 @@ async def main() -> None:
     timings = _read_models(args.timings, ShotTiming)
     references = _read_models(args.references, VisualReference)
 
-    provider = OpenAIProvider(api_key=settings.openai_api_key)
+    provider = OpenAIProvider(
+        api_key=settings.openai_api_key,
+        reasoning_effort="low",
+    )
     frame_bot = StoryboardFrameBot(provider=provider, model=settings.openai_model)
     frames = await build_storyboard_frames(
         shots,
@@ -70,6 +79,7 @@ async def main() -> None:
         frame_bot=frame_bot,
         visual_style=args.style,
         aspect_ratio=args.aspect_ratio,
+        max_scene_concurrency=args.max_scene_concurrency,
     )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

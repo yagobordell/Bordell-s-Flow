@@ -1,3 +1,4 @@
+import asyncio
 import math
 
 from ai_video_factory.bots.video_prompts import VideoPromptBot
@@ -12,41 +13,60 @@ async def build_video_prompts(
     prompt_bot: VideoPromptBot,
     visual_style: str,
     aspect_ratio: str,
+    max_scene_concurrency: int = 3,
 ) -> list[VideoPrompt]:
     """Build ordered motion prompts while carrying explicit within-scene temporal context."""
 
     _validate_inputs(shots, timings, storyboard_frames)
+    if max_scene_concurrency < 1:
+        raise ValueError("Video prompt max_scene_concurrency must be at least 1")
 
-    prompts: list[VideoPrompt] = []
-    previous_prompt: VideoPrompt | None = None
-    previous_scene_id: int | None = None
+    scene_groups = _group_scene_inputs(shots, timings, storyboard_frames)
+    gate = asyncio.Semaphore(max_scene_concurrency)
 
+    async def build_scene(
+        scene_inputs: list[tuple[Shot, ShotTiming, StoryboardFrame]],
+    ) -> list[VideoPrompt]:
+        async with gate:
+            prompts: list[VideoPrompt] = []
+            previous_prompt: VideoPrompt | None = None
+            for shot, timing, storyboard_frame in scene_inputs:
+                prompt = await prompt_bot.run(
+                    shot,
+                    timing,
+                    storyboard_frame,
+                    visual_style=visual_style,
+                    aspect_ratio=aspect_ratio,
+                    previous_prompt=previous_prompt,
+                )
+                if not prompt.strip():
+                    raise ValueError("Video prompt bot returned an empty prompt")
+
+                video_prompt = VideoPrompt(shot_id=shot.id, prompt=prompt.strip())
+                prompts.append(video_prompt)
+                previous_prompt = video_prompt
+            return prompts
+
+    grouped_prompts = await asyncio.gather(*(build_scene(group) for group in scene_groups))
+    return [prompt for group in grouped_prompts for prompt in group]
+
+
+def _group_scene_inputs(
+    shots: list[Shot],
+    timings: list[ShotTiming],
+    storyboard_frames: list[StoryboardFrame],
+) -> list[list[tuple[Shot, ShotTiming, StoryboardFrame]]]:
+    groups: list[list[tuple[Shot, ShotTiming, StoryboardFrame]]] = []
     for shot, timing, storyboard_frame in zip(
         shots,
         timings,
         storyboard_frames,
         strict=True,
     ):
-        if previous_scene_id is not None and shot.scene_id != previous_scene_id:
-            previous_prompt = None
-
-        prompt = await prompt_bot.run(
-            shot,
-            timing,
-            storyboard_frame,
-            visual_style=visual_style,
-            aspect_ratio=aspect_ratio,
-            previous_prompt=previous_prompt,
-        )
-        if not prompt.strip():
-            raise ValueError("Video prompt bot returned an empty prompt")
-
-        video_prompt = VideoPrompt(shot_id=shot.id, prompt=prompt.strip())
-        prompts.append(video_prompt)
-        previous_prompt = video_prompt
-        previous_scene_id = shot.scene_id
-
-    return prompts
+        if not groups or groups[-1][0][0].scene_id != shot.scene_id:
+            groups.append([])
+        groups[-1].append((shot, timing, storyboard_frame))
+    return groups
 
 
 def _validate_inputs(

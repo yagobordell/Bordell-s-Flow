@@ -54,6 +54,17 @@ def _provider(responses: FakeResponses) -> OpenAIProvider:
     )
 
 
+def _provider_without_rate_limit_wait(responses: FakeResponses) -> OpenAIProvider:
+    return OpenAIProvider(
+        client=FakeOpenAIClient(responses),  # type: ignore[arg-type]
+        reasoning_effort="high",
+        service_tier="flex",
+        fallback_service_tier="default",
+        rate_limit_retries=0,
+        rate_limit_backoff_seconds=0,
+    )
+
+
 def test_openai_provider_uses_high_reasoning_and_flex() -> None:
     expected = Script(title="Demo", hook="Hook", narration="Hook. Narración.")
     responses = FakeResponses(expected)
@@ -128,6 +139,26 @@ def test_openai_provider_retries_once_with_default_when_flex_returns_404() -> No
     assert responses.calls[1]["service_tier"] == "default"
     assert responses.calls[0]["reasoning"] == {"effort": "high"}
     assert responses.calls[1]["reasoning"] == {"effort": "high"}
+
+
+def test_openai_provider_uses_default_tier_when_flex_is_rate_limited() -> None:
+    expected = Script(title="Demo", hook="Hook", narration="Hook. NarraciÃ³n.")
+    responses = FakeResponses(expected, failures=[FakeStatusError(429)])
+    provider = _provider_without_rate_limit_wait(responses)
+
+    result = asyncio.run(
+        provider.generate_structured(
+            model="test-model",
+            instructions="Write a short script",
+            input_text="Tema: samurÃ¡is",
+            output_type=Script,
+        )
+    )
+
+    assert result == expected
+    assert len(responses.calls) == 2
+    assert responses.calls[0]["service_tier"] == "flex"
+    assert responses.calls[1]["service_tier"] == "default"
 
 
 def test_openai_provider_does_not_fallback_for_other_status_codes() -> None:
