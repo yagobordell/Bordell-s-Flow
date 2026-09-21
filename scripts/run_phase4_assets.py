@@ -86,6 +86,11 @@ def parse_args() -> argparse.Namespace:
         help="Prewarm FLUX only after the first terminal Ideogram safety rejection.",
     )
     parser.add_argument(
+        "--prefer-fallback-provider",
+        action="store_true",
+        help="Use the prewarmed FLUX provider for the whole batch and skip Ideogram.",
+    )
+    parser.add_argument(
         "--fallback-prewarm-timeout-minutes",
         type=int,
         default=60,
@@ -189,17 +194,22 @@ async def main() -> None:
         else None
     )
 
-    provider = SafetyFallbackImageProvider(
-        primary=primary,
-        fallback=fallback,
-        before_fallback=before_fallback,
-    )
+    if args.prefer_fallback_provider:
+        provider = fallback
+        generation_model = args.fallback_model
+    else:
+        provider = SafetyFallbackImageProvider(
+            primary=primary,
+            fallback=fallback,
+            before_fallback=before_fallback,
+        )
+        generation_model = args.model
 
     assets = await generate_reference_assets(
         references,
         image_provider=provider,
         output_dir=args.output_dir,
-        model=args.model,
+        model=generation_model,
         size=args.size,
         quality=args.quality,
     )

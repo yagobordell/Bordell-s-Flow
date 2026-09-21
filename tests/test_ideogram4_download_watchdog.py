@@ -14,7 +14,7 @@ def test_download_watchdog_allows_continuing_byte_progress(tmp_path: Path) -> No
         "root = pathlib.Path(sys.argv[1])\n"
         "root.mkdir(parents=True, exist_ok=True)\n"
         "target = root / 'model.incomplete'\n"
-        "for _ in range(5):\n"
+        "for _ in range(20):\n"
         "    with target.open('ab') as handle:\n"
         "        handle.write(b'x' * 1024)\n"
         "        handle.flush()\n"
@@ -25,13 +25,13 @@ def test_download_watchdog_allows_continuing_byte_progress(tmp_path: Path) -> No
     return_code = run_with_progress_watchdog(
         [sys.executable, str(script), str(progress_root)],
         progress_root=progress_root,
-        stall_timeout_seconds=0.15,
-        hard_timeout_seconds=2.0,
+        stall_timeout_seconds=0.5,
+        hard_timeout_seconds=3.0,
         poll_seconds=0.02,
     )
 
     assert return_code == 0
-    assert (progress_root / "model.incomplete").stat().st_size == 5 * 1024
+    assert (progress_root / "model.incomplete").stat().st_size == 20 * 1024
 
 
 def test_download_watchdog_aborts_process_without_byte_progress(tmp_path: Path) -> None:

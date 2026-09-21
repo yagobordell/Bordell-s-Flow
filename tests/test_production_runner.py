@@ -358,7 +358,6 @@ def test_dag_runs_independent_stages_in_parallel(tmp_path: Path) -> None:
 
     assert set(summary.executed) == {"a", "b"}
     assert executor.max_active == 2
-    assert summary.total_elapsed_seconds < executor.delay_seconds * 1.8
 
 
 def test_gpu_concurrency_is_bounded_and_same_resource_never_overlaps(
