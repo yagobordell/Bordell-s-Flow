@@ -510,6 +510,48 @@ function Get-QueueJobSnapshot {
     }
 }
 
+function Test-PreflightVerifiedQueueEmpty {
+    if ($env:AI_VIDEO_FACTORY_PREFLIGHT_QUEUE_EMPTY -ne "1") {
+        return $false
+    }
+
+    $ReportPath = $env:AI_VIDEO_FACTORY_PREFLIGHT_REPORT
+    if ([string]::IsNullOrWhiteSpace($ReportPath) -or
+        -not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) {
+        return $false
+    }
+
+    try {
+        $ReportFile = Get-Item -LiteralPath $ReportPath
+        $ReportAge = (Get-Date) - $ReportFile.LastWriteTime
+        if ($ReportAge -lt [TimeSpan]::Zero -or $ReportAge -gt [TimeSpan]::FromMinutes(15)) {
+            return $false
+        }
+
+        $Report = Get-Content -LiteralPath $ReportPath -Raw | ConvertFrom-Json
+        $QueuesProperty = $Report.checks.PSObject.Properties["salad_queues"]
+        if ($null -eq $QueuesProperty -or $null -eq $QueuesProperty.Value) {
+            return $false
+        }
+        $ServiceProperty = $QueuesProperty.Value.PSObject.Properties[$Service]
+        if ($null -eq $ServiceProperty -or $null -eq $ServiceProperty.Value) {
+            return $false
+        }
+
+        return (
+            [int]$ServiceProperty.Value.active_jobs -eq 0 -and
+            [int]$ServiceProperty.Value.recognized_resume_jobs -eq 0
+        )
+    }
+    catch {
+        Write-Warning (
+            "$Service could not read the same-run Salad preflight report; " +
+            "falling back to exhaustive queue pagination. Error: $($_.Exception.Message)"
+        )
+        return $false
+    }
+}
+
 function Assert-QueueLogicallyEmpty {
     param(
         [Parameter(Mandatory)][object]$Queue,
@@ -518,6 +560,15 @@ function Assert-QueueLogicallyEmpty {
 
     $ReportedLength = [int]$Queue.current_queue_length
     if ($ReportedLength -eq 0) {
+        return
+    }
+
+    if (Test-PreflightVerifiedQueueEmpty) {
+        Write-Warning (
+            "$Service queue summary is stale during optimized prewarm: " +
+            "same-run preflight already verified active_jobs=0 and " +
+            "recognized_resume_jobs=0; skipping duplicate historical pagination."
+        )
         return
     }
 
