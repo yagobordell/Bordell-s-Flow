@@ -959,12 +959,30 @@ catch {
     if ($LASTEXITCODE -ne 0) {
         throw "Salad scale-to-zero restore failed while activating optimized-prewarm fallback."
     }
-    & $ScaleToZeroStarter `
-        -Service $Service `
-        -TimeoutMinutes 10 `
-        -NonInteractive
-    if ($LASTEXITCODE -ne 0) {
-        throw "Salad scale-to-zero start failed while activating optimized-prewarm fallback."
+    $FallbackGroup = Get-Group
+    $FallbackStatus = [string]$FallbackGroup.current_state.status
+    $FallbackReplicas = [int]$FallbackGroup.replicas
+    if ($FallbackStatus -eq "failed") {
+        throw "Salad container group entered failed state while activating optimized-prewarm fallback."
+    }
+    $FallbackAlreadyStarting = (
+        $FallbackStatus -in @("deploying", "running") -and
+        $FallbackReplicas -ge 1
+    )
+    if ($FallbackAlreadyStarting) {
+        Write-Warning (
+            "$Service already has a replica in $FallbackStatus after the failed hold mutation; " +
+            "letting queued work wait for readiness instead of issuing a second start."
+        )
+    }
+    else {
+        & $ScaleToZeroStarter `
+            -Service $Service `
+            -TimeoutMinutes 10 `
+            -NonInteractive
+        if ($LASTEXITCODE -ne 0) {
+            throw "Salad scale-to-zero start failed while activating optimized-prewarm fallback."
+        }
     }
     $env:AI_VIDEO_FACTORY_SCALE_TO_ZERO_FALLBACK = "1"
     Write-Warning (
