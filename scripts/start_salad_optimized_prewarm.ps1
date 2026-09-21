@@ -13,6 +13,8 @@ param(
 
     [switch]$AdoptReadyReplica,
 
+    [switch]$AllowScaleToZeroFallback,
+
     [switch]$NonInteractive
 )
 
@@ -21,6 +23,8 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $ManifestPath = Join-Path $RepoRoot "deploy\salad\services.json"
+$ScaleToZeroRestorer = Join-Path $PSScriptRoot "restore_salad_scale_to_zero.ps1"
+$ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
 
 $Profiles = @{
     whisper = @{
@@ -927,14 +931,48 @@ if ($HoldReadyReplica) {
         max_downscale_per_minute = [int]$Definition.autoscaler.max_downscale_per_minute
     }
 }
-Invoke-SaladMutation `
-    -Method "Patch" `
-    -Uri $GroupUrl `
-    -Operation "persist one-replica prewarm state" `
-    -ContentType "application/merge-patch+json" `
-    -Body ($PrewarmPatch | ConvertTo-Json -Depth 10 -Compress) `
-    -TimeoutSeconds 60 |
-    Out-Null
+try {
+    Invoke-SaladMutation `
+        -Method "Patch" `
+        -Uri $GroupUrl `
+        -Operation "persist one-replica prewarm state" `
+        -ContentType "application/merge-patch+json" `
+        -Body ($PrewarmPatch | ConvertTo-Json -Depth 10 -Compress) `
+        -TimeoutSeconds 60 |
+        Out-Null
+}
+catch {
+    if (-not $AllowScaleToZeroFallback) {
+        throw
+    }
+
+    Write-Warning (
+        "$Service optimized prewarm could not persist its one-replica hold; " +
+        "restoring manifest scale-to-zero and continuing with queue-triggered cold start. " +
+        "Error: $($_.Exception.Message)"
+    )
+    & $ScaleToZeroRestorer `
+        -Service $Service `
+        -TimeoutMinutes 3 `
+        -Mode Manifest `
+        -NonInteractive
+    if ($LASTEXITCODE -ne 0) {
+        throw "Salad scale-to-zero restore failed while activating optimized-prewarm fallback."
+    }
+    & $ScaleToZeroStarter `
+        -Service $Service `
+        -TimeoutMinutes 10 `
+        -NonInteractive
+    if ($LASTEXITCODE -ne 0) {
+        throw "Salad scale-to-zero start failed while activating optimized-prewarm fallback."
+    }
+    $env:AI_VIDEO_FACTORY_SCALE_TO_ZERO_FALLBACK = "1"
+    Write-Warning (
+        "$Service is active in scale-to-zero fallback mode; the first queued job " +
+        "will trigger the model cold start."
+    )
+    return
+}
 
 $PatchDeadline = (Get-Date).AddMinutes(2)
 do {

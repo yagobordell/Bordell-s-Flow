@@ -107,6 +107,7 @@ $PrewarmArguments = @{
     Service = "ideogram4"
     TimeoutMinutes = $PrewarmTimeoutMinutes
     HoldReadyReplica = $true
+    AllowScaleToZeroFallback = $true
 }
 if ($ReleaseSharedIdeogram) {
     $PrewarmArguments["AdoptReadyReplica"] = $true
@@ -153,6 +154,10 @@ try {
 
     Write-Host "=== Phase 6 generation: replay plus required Ideogram/FLUX work ===" `
         -ForegroundColor Cyan
+    $PendingTimeoutForRun = $PendingTimeoutSeconds
+    if ($env:AI_VIDEO_FACTORY_SCALE_TO_ZERO_FALLBACK -eq "1") {
+        $PendingTimeoutForRun = [Math]::Max($PendingTimeoutSeconds, 900)
+    }
     $Phase6Arguments = @(
         "--frames", $Frames,
         "--shots", $Shots,
@@ -161,7 +166,7 @@ try {
         "--queue-name", $env:SALAD_IDEOGRAM4_QUEUE_NAME,
         "--fallback-queue-name", $env:SALAD_FLUX2_KLEIN_QUEUE_NAME,
         "--poll-seconds", $PollSeconds,
-        "--pending-timeout-seconds", $PendingTimeoutSeconds,
+        "--pending-timeout-seconds", $PendingTimeoutForRun,
         "--fallback-pending-timeout-seconds", $FluxPendingTimeoutSeconds,
         "--timeout-seconds", $RunningTimeoutSeconds
     )

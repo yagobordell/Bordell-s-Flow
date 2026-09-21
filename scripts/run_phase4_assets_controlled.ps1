@@ -99,6 +99,7 @@ $PrewarmArguments = @{
     Service = "ideogram4"
     TimeoutMinutes = $PrewarmTimeoutMinutes
     HoldReadyReplica = $true
+    AllowScaleToZeroFallback = $true
 }
 $FluxPrewarmArguments = @{ TimeoutMinutes = $PrewarmTimeoutMinutes }
 if ($NonInteractive) {
@@ -140,6 +141,10 @@ try {
     }
 
     Write-Host "=== Phase 4 generation: cache replay plus required queue work ===" -ForegroundColor Cyan
+    $PendingTimeoutForRun = $PendingTimeoutSeconds
+    if ($env:AI_VIDEO_FACTORY_SCALE_TO_ZERO_FALLBACK -eq "1") {
+        $PendingTimeoutForRun = [Math]::Max($PendingTimeoutSeconds, 900)
+    }
     $Phase4Arguments = @(
         $ReferencesFile,
         "--output-dir", $OutputDir,
@@ -147,7 +152,7 @@ try {
         "--queue-name", $env:SALAD_IDEOGRAM4_QUEUE_NAME,
         "--fallback-queue-name", $env:SALAD_FLUX2_KLEIN_QUEUE_NAME,
         "--poll-seconds", $PollSeconds,
-        "--pending-timeout-seconds", $PendingTimeoutSeconds,
+        "--pending-timeout-seconds", $PendingTimeoutForRun,
         "--fallback-pending-timeout-seconds", $FluxPendingTimeoutSeconds,
         "--timeout-seconds", $RunningTimeoutSeconds
     )
