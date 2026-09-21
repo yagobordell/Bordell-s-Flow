@@ -20,10 +20,14 @@ from ai_video_factory.inference.ports import LocalArtifact
 
 BREEZE_TTS2_TASK = "audio.breeze_tts2.generate"
 BREEZE_TTS2_MODEL_ID = "BreezeBlue/Breeze-TTS-2"
-BREEZE_TTS2_GENERATION_PROFILE = "breeze-tts2-fast-all-v1"
+BREEZE_TTS2_GENERATION_PROFILE = "breeze-tts2-fast-all-v2"
 
 _MAX_NEW_TOKENS = 1500
 _MAX_SEQ_LEN = 2048
+_MAX_PROMPT_TOKENS = _MAX_SEQ_LEN - _MAX_NEW_TOKENS
+# Reference-conditioned continuation adds the reference transcript and encoded audio
+# to the prompt. Reserve room for those tokens before packing later chunks.
+_REFERENCE_PROMPT_RESERVE_TOKENS = 192
 _REPETITION_PENALTY = 1.1
 
 
@@ -166,7 +170,7 @@ class BreezeTTS2Backend:
         model_repository: str = BREEZE_TTS2_MODEL_ID,
         model_revision: str = "main",
         device: str = "cuda",
-        max_chunk_chars: int = 1200,
+        max_chunk_chars: int = 4000,
         inter_chunk_pause_ms: int = 120,
     ) -> None:
         if max_chunk_chars < 200:
@@ -224,45 +228,83 @@ class BreezeTTS2Backend:
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
             runtime = self._get_or_build_runtime(bindings)
-            chunks = _split_narration_text(parameters.text, self._max_chunk_chars)
             instruction = _compose_instruction(parameters.voice, parameters.instructions)
+            if self._tokenizer is None:
+                raise RuntimeError("Breeze TTS 2 tokenizer has not been prepared")
+            chunks = _plan_narration_chunks(
+                parameters.text,
+                tokenizer=self._tokenizer,
+                instruction=instruction,
+                max_chunk_chars=self._max_chunk_chars,
+            )
             pause_frames = round(runtime.sample_rate * self._inter_chunk_pause_ms / 1000)
+            reference_path: Path | None = None
+            reference_audio: list[Any] = []
 
-            with bindings.soundfile.SoundFile(
-                raw_path,
-                mode="w",
-                samplerate=runtime.sample_rate,
-                channels=1,
-                subtype="PCM_16",
-            ) as output_file:
-                for index, text_chunk in enumerate(chunks):
-                    request_id = f"narration-{index:04d}"
-                    request = {
-                        "id": request_id,
-                        "text": text_chunk,
-                        "speaker": "S0",
-                        "instruction": instruction,
-                    }
-                    template_name = bindings.select_template_name(request)
-                    bindings.set_all_seeds(parameters.seed)
-                    inputs = bindings.prepare_inputs(
-                        self._tokenizer,
-                        self._audio_tokenizer,
-                        self._model,
-                        [request],
-                        bindings.get_template(template_name),
-                        guidance_scale=parameters.cfg_scale,
-                        guidance_scale_ref=None,
-                        guidance_scale_ins=None,
-                    )
-                    for audio_chunk in runtime.iter_audio_chunks(
-                        inputs,
-                        request_id=request_id,
-                        seed=parameters.seed,
-                    ):
-                        output_file.write(audio_chunk.audio)
-                    if index + 1 < len(chunks) and pause_frames > 0:
-                        output_file.write(bindings.np.zeros(pause_frames, dtype="float32"))
+            try:
+                with bindings.soundfile.SoundFile(
+                    raw_path,
+                    mode="w",
+                    samplerate=runtime.sample_rate,
+                    channels=1,
+                    subtype="PCM_16",
+                ) as output_file:
+                    for index, text_chunk in enumerate(chunks):
+                        request_id = f"narration-{index:04d}"
+                        request = {
+                            "id": request_id,
+                            "text": text_chunk,
+                            "speaker": "S0",
+                            "instruction": instruction,
+                        }
+                        if reference_path is not None:
+                            request["ref_audio_path"] = str(reference_path)
+                            request["ref_text"] = chunks[0]
+
+                        template_name = bindings.select_template_name(request)
+                        bindings.set_all_seeds(parameters.seed)
+                        inputs = bindings.prepare_inputs(
+                            self._tokenizer,
+                            self._audio_tokenizer,
+                            self._model,
+                            [request],
+                            bindings.get_template(template_name),
+                            guidance_scale=parameters.cfg_scale,
+                            guidance_scale_ref=None,
+                            guidance_scale_ins=None,
+                        )
+                        for audio_chunk in runtime.iter_audio_chunks(
+                            inputs,
+                            request_id=request_id,
+                            seed=parameters.seed,
+                        ):
+                            output_file.write(audio_chunk.audio)
+                            if index == 0:
+                                reference_audio.append(audio_chunk.audio.copy())
+
+                        if index == 0 and len(chunks) > 1:
+                            if not reference_audio:
+                                raise RuntimeError(
+                                    "Breeze TTS 2 produced no audio for the voice anchor"
+                                )
+                            reference_path = raw_path.with_name(
+                                f"{raw_path.stem}.voice-reference.wav"
+                            )
+                            reference_samples = bindings.np.concatenate(reference_audio)
+                            with bindings.soundfile.SoundFile(
+                                reference_path,
+                                mode="w",
+                                samplerate=runtime.sample_rate,
+                                channels=1,
+                                subtype="PCM_16",
+                            ) as reference_file:
+                                reference_file.write(reference_samples)
+
+                        if index + 1 < len(chunks) and pause_frames > 0:
+                            output_file.write(bindings.np.zeros(pause_frames, dtype="float32"))
+            finally:
+                if reference_path is not None:
+                    reference_path.unlink(missing_ok=True)
 
         try:
             if math.isclose(parameters.speed, 1.0, rel_tol=0.0, abs_tol=1e-9):
@@ -423,6 +465,166 @@ def _split_narration_text(text: str, max_chars: int) -> list[str]:
     if current:
         chunks.append(current)
     return chunks
+
+
+def _prompt_token_count(tokenizer: Any, *, instruction: str, text: str) -> int:
+    rendered = f"[S0]<ins_bos>{instruction}<ins_eos>{text}"
+    encoded = tokenizer(rendered, add_special_tokens=True)
+    token_ids = encoded["input_ids"]
+    if token_ids and isinstance(token_ids[0], list):
+        token_ids = token_ids[0]
+    return len(token_ids)
+
+
+def _fits_prompt(
+    tokenizer: Any,
+    *,
+    instruction: str,
+    text: str,
+    token_budget: int,
+    max_chars: int,
+) -> bool:
+    return len(text) <= max_chars and _prompt_token_count(
+        tokenizer,
+        instruction=instruction,
+        text=text,
+    ) <= token_budget
+
+
+def _split_piece_for_prompt_budget(
+    text: str,
+    *,
+    tokenizer: Any,
+    instruction: str,
+    token_budget: int,
+    max_chars: int,
+) -> list[str]:
+    if _fits_prompt(
+        tokenizer,
+        instruction=instruction,
+        text=text,
+        token_budget=token_budget,
+        max_chars=max_chars,
+    ):
+        return [text]
+
+    words = text.split()
+    if len(words) <= 1:
+        raise ValueError(
+            "Breeze narration contains a token that cannot fit within the runtime prompt budget"
+        )
+
+    midpoint = len(words) // 2
+    left = " ".join(words[:midpoint])
+    right = " ".join(words[midpoint:])
+    return [
+        *_split_piece_for_prompt_budget(
+            left,
+            tokenizer=tokenizer,
+            instruction=instruction,
+            token_budget=token_budget,
+            max_chars=max_chars,
+        ),
+        *_split_piece_for_prompt_budget(
+            right,
+            tokenizer=tokenizer,
+            instruction=instruction,
+            token_budget=token_budget,
+            max_chars=max_chars,
+        ),
+    ]
+
+
+def _pack_prompt_pieces(
+    pieces: list[str],
+    *,
+    tokenizer: Any,
+    instruction: str,
+    token_budget: int,
+    max_chars: int,
+) -> list[str]:
+    chunks: list[str] = []
+    current = ""
+    for piece in pieces:
+        for fitting_piece in _split_piece_for_prompt_budget(
+            piece,
+            tokenizer=tokenizer,
+            instruction=instruction,
+            token_budget=token_budget,
+            max_chars=max_chars,
+        ):
+            candidate = fitting_piece if not current else f"{current} {fitting_piece}"
+            if current and not _fits_prompt(
+                tokenizer,
+                instruction=instruction,
+                text=candidate,
+                token_budget=token_budget,
+                max_chars=max_chars,
+            ):
+                chunks.append(current)
+                current = fitting_piece
+            else:
+                current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _plan_narration_chunks(
+    text: str,
+    *,
+    tokenizer: Any,
+    instruction: str,
+    max_chunk_chars: int,
+) -> list[str]:
+    """Pack narration to the runtime budget and anchor continuation voice identity.
+
+    The old implementation split every narration at 1,200 characters. That imposed an
+    artificial voice-design reset on otherwise safe two-minute scripts. A complete request is
+    now preferred whenever its actual tokenizer prompt fits the resident runtime. Only genuinely
+    oversized narration is split; later chunks reserve prompt space for a reference recording of
+    the first chunk so Breeze uses voice direction instead of independently designing a new voice.
+    """
+
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError("Breeze narration text must be non-empty")
+    if _fits_prompt(
+        tokenizer,
+        instruction=instruction,
+        text=stripped,
+        token_budget=_MAX_PROMPT_TOKENS,
+        max_chars=max_chunk_chars,
+    ):
+        return [stripped]
+
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", stripped) if part.strip()]
+    pieces: list[str] = []
+    for sentence in sentences:
+        if len(sentence) <= max_chunk_chars:
+            pieces.append(sentence)
+        else:
+            pieces.extend(_split_oversized_piece(sentence, max_chunk_chars))
+
+    first_parts = _split_piece_for_prompt_budget(
+        pieces[0],
+        tokenizer=tokenizer,
+        instruction=instruction,
+        token_budget=_MAX_PROMPT_TOKENS,
+        max_chars=max_chunk_chars,
+    )
+    remaining = [first_parts[0]]
+    remainder_pieces = [*first_parts[1:], *pieces[1:]]
+    remaining.extend(
+        _pack_prompt_pieces(
+            remainder_pieces,
+            tokenizer=tokenizer,
+            instruction=instruction,
+            token_budget=_MAX_PROMPT_TOKENS - _REFERENCE_PROMPT_RESERVE_TOKENS,
+            max_chars=max_chunk_chars,
+        )
+    )
+    return remaining
 
 
 def _split_oversized_piece(text: str, max_chars: int) -> list[str]:

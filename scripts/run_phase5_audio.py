@@ -20,6 +20,7 @@ from ai_video_factory.providers import (
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.providers.speech import GeneratedSpeech, SpeechProvider
+from ai_video_factory.workers.breeze_tts2 import BREEZE_TTS2_GENERATION_PROFILE
 from ai_video_factory.workflows.narration_audio import generate_narration_audio
 
 DEFAULT_INSTRUCTIONS = (
@@ -340,6 +341,7 @@ async def main() -> None:
     print(f"Phase 5 narration audio complete. Metadata: {args.metadata.resolve()}")
     print(f"Provider provenance: {args.provenance.resolve()}")
     print(f"Measured narration duration: {narration.duration_seconds:.3f} seconds")
+    print(f"Breeze generation profile: {BREEZE_TTS2_GENERATION_PROFILE}")
     print(f"Generated with provider={args.provider} model={model}")
 
 

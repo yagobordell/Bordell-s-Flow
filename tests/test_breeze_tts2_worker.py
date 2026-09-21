@@ -16,7 +16,12 @@ from ai_video_factory.workers.breeze_tts2 import (
     BreezeTTS2WorkerSettings,
     breeze_application_job_id,
 )
-from ai_video_factory.workers.breeze_tts2.model import _atempo_chain, _split_narration_text
+from ai_video_factory.workers.breeze_tts2.model import (
+    _MAX_PROMPT_TOKENS,
+    _atempo_chain,
+    _plan_narration_chunks,
+    _split_narration_text,
+)
 
 
 class FakeBackend:
@@ -132,6 +137,42 @@ def test_breeze_text_chunking_preserves_content_order() -> None:
     assert all(len(chunk) <= 35 for chunk in chunks)
 
 
+class _WordTokenizer:
+    def __call__(self, text: str, *, add_special_tokens: bool):
+        del add_special_tokens
+        return {"input_ids": text.split()}
+
+
+def test_breeze_prefers_one_request_when_prompt_fits_runtime_budget() -> None:
+    text = " ".join(f"word{index}" for index in range(400))
+
+    chunks = _plan_narration_chunks(
+        text,
+        tokenizer=_WordTokenizer(),
+        instruction="Speak naturally.",
+        max_chunk_chars=4000,
+    )
+
+    assert chunks == [text]
+
+
+def test_breeze_anchors_context_overflow_chunks() -> None:
+    text = "First sentence establishes the voice. " + " ".join(
+        f"word{index}" for index in range(_MAX_PROMPT_TOKENS * 2)
+    )
+
+    chunks = _plan_narration_chunks(
+        text,
+        tokenizer=_WordTokenizer(),
+        instruction="Speak naturally.",
+        max_chunk_chars=4000,
+    )
+
+    assert len(chunks) >= 3
+    assert chunks[0] == "First sentence establishes the voice."
+    assert " ".join(chunks) == text
+
+
 def test_breeze_atempo_chain_covers_full_supported_speed_range() -> None:
     assert _atempo_chain(1.0) == "atempo=1"
     assert _atempo_chain(4.0) == "atempo=2,atempo=2"
@@ -150,7 +191,7 @@ def test_breeze_worker_settings_and_salad_manifest() -> None:
 
     assert settings.model_repository == BREEZE_TTS2_MODEL_ID
     assert settings.device == "cuda"
-    assert settings.max_chunk_chars == 1200
+    assert settings.max_chunk_chars == 4000
     assert service["queue_name"] == "ai-video-factory-breeze-tts2-jobs"
     assert service["resources"]["gpu_class_names"] == ["RTX 4090 (24 GB)"]
     assert service["dockerfile"] == "docker/workers/breeze-tts2/Dockerfile"

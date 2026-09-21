@@ -90,7 +90,7 @@
       "group_name": "ai-video-factory-breeze-tts2-worker-v2",
       "queue_name": "ai-video-factory-breeze-tts2-jobs",
       "dockerfile": "docker/workers/breeze-tts2/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:breeze-tts2-fast-all-v2",
+      "image": "docker.io/yagobordell/ai-video-factory:breeze-tts2-fast-all-v3",
       "priority": "high",
       "resources": {
         "cpu": 8,
@@ -110,7 +110,7 @@
         "BREEZE_MODEL_REVISION": "main",
         "BREEZE_RUNTIME_ROOT": "/opt/breeze-infer",
         "BREEZE_DEVICE": "cuda:0",
-        "BREEZE_MAX_CHUNK_CHARS": "1200",
+        "BREEZE_MAX_CHUNK_CHARS": "4000",
         "BREEZE_INTER_CHUNK_PAUSE_MS": "120",
         "BREEZE_DOWNLOAD_STALL_TIMEOUT_SECONDS": "300",
         "BREEZE_DOWNLOAD_HARD_TIMEOUT_SECONDS": "1200",
