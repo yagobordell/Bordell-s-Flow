@@ -4,6 +4,7 @@ from typing import Any
 
 import ai_video_factory.workers.whisper.model as whisper_model
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.workers.whisper import (
     WHISPER_GENERATION_PROFILE,
     WHISPER_MODEL_ID,
@@ -109,6 +110,7 @@ def test_whisper_backend_builds_once_and_requests_word_timestamps(
     model_root = tmp_path / "model"
     model_root.mkdir()
     (model_root / "config.json").write_text("{}", encoding="utf-8")
+    (model_root / "model.safetensors").write_bytes(b"weights")
     state: dict[str, Any] = {"builds": 0, "calls": []}
 
     class FakeCuda:
@@ -227,3 +229,38 @@ def test_whisper_parameters_reject_legacy_prompt_field() -> None:
         assert "prompt" in str(exc)
     else:
         raise AssertionError("Whisper v2 profile must reject legacy prompt parameters")
+
+
+def test_whisper_backend_reports_model_bootstrap_as_retryable_pending(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    model_root = tmp_path / "model"
+    model_root.mkdir()
+
+    class FakeCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+    class FakeTorch:
+        cuda = FakeCuda()
+        float16 = "float16"
+
+    monkeypatch.setattr(
+        whisper_model,
+        "_load_whisper_bindings",
+        lambda: whisper_model._WhisperBindings(
+            torch=FakeTorch,
+            pipeline_factory=lambda **_kwargs: None,
+        ),
+    )
+
+    backend = TransformersWhisperBackend(model_root=model_root)
+
+    try:
+        backend.prepare()
+    except ModelBootstrapPendingError as exc:
+        assert str(model_root) in str(exc)
+    else:
+        raise AssertionError("missing Whisper weights must remain retryable during bootstrap")
