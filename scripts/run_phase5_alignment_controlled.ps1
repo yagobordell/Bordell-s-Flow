@@ -16,7 +16,7 @@ param(
     [string]$Language = "en",
 
     [ValidateRange(10, 120)]
-    [int]$PrewarmTimeoutMinutes = 60,
+    [int]$PrewarmTimeoutMinutes = 120,
 
     [ValidateRange(30, 900)]
     [int]$PendingTimeoutSeconds = 180,
