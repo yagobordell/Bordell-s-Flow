@@ -33,8 +33,8 @@ $Profiles = @{
         PostPullStartSeconds = 180
         FinalPostPullStartSeconds = 360
         MaxPostPullStartReallocations = 1
-        RunningNotReadySeconds = 480
-        FinalRunningNotReadySeconds = 900
+        RunningNotReadySeconds = 1800
+        FinalRunningNotReadySeconds = 3000
         MaxRunningNotReadyReallocations = 1
         MaxNodeChanges = 6
     }
