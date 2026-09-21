@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import threading
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +19,8 @@ from ai_video_factory.inference.ports import LocalArtifact
 from ai_video_factory.providers.ideogram_caption import validate_ideogram_caption
 
 from .bootstrap_progress import IdeogramBootstrapProgress
+
+logger = logging.getLogger(__name__)
 
 IDEOGRAM4_REFERENCE_TASK = "image.ideogram4.reference"
 IDEOGRAM4_KEYFRAME_TASK = "image.ideogram4.keyframe"
@@ -228,16 +232,80 @@ class Ideogram4Backend:
             bindings = self._get_bindings()
             pipeline = self._get_or_build_pipeline(bindings)
             preset = bindings.presets[self._sampler_preset]
-            images = pipeline(
-                parameters.caption,
-                height=parameters.height,
-                width=parameters.width,
-                num_steps=preset.num_steps,
-                guidance_schedule=preset.guidance_schedule,
-                mu=preset.mu,
-                std=preset.std,
-                seed=parameters.seed,
-                raise_on_caption_issues=True,
+            stop_telemetry = threading.Event()
+            inference_started = time.monotonic()
+
+            def log_inference_progress() -> None:
+                while not stop_telemetry.wait(30):
+                    elapsed = time.monotonic() - inference_started
+                    allocated = None
+                    reserved = None
+                    max_allocated = None
+                    cuda = getattr(bindings.torch, "cuda", None)
+                    if cuda is not None:
+                        try:
+                            allocated = int(cuda.memory_allocated())
+                            reserved = int(cuda.memory_reserved())
+                            max_allocated = int(cuda.max_memory_allocated())
+                        except Exception:
+                            logger.exception("Ideogram CUDA telemetry read failed")
+                    logger.info(
+                        (
+                            "IDEOGRAM_INFERENCE_PROGRESS elapsed_seconds=%.1f "
+                            "width=%d height=%d steps=%d seed=%d "
+                            "allocated_bytes=%s reserved_bytes=%s max_allocated_bytes=%s"
+                        ),
+                        elapsed,
+                        parameters.width,
+                        parameters.height,
+                        preset.num_steps,
+                        parameters.seed,
+                        allocated,
+                        reserved,
+                        max_allocated,
+                    )
+
+            logger.info(
+                (
+                    "IDEOGRAM_INFERENCE_START width=%d height=%d steps=%d seed=%d "
+                    "caption_sha256=%s"
+                ),
+                parameters.width,
+                parameters.height,
+                preset.num_steps,
+                parameters.seed,
+                hashlib.sha256(parameters.caption.encode("utf-8")).hexdigest(),
+            )
+            telemetry_thread = threading.Thread(
+                target=log_inference_progress,
+                name="ideogram-inference-telemetry",
+                daemon=True,
+            )
+            telemetry_thread.start()
+            try:
+                images = pipeline(
+                    parameters.caption,
+                    height=parameters.height,
+                    width=parameters.width,
+                    num_steps=preset.num_steps,
+                    guidance_schedule=preset.guidance_schedule,
+                    mu=preset.mu,
+                    std=preset.std,
+                    seed=parameters.seed,
+                    raise_on_caption_issues=True,
+                )
+            finally:
+                stop_telemetry.set()
+                telemetry_thread.join(timeout=2)
+
+            elapsed = time.monotonic() - inference_started
+            logger.info(
+                "IDEOGRAM_INFERENCE_DONE elapsed_seconds=%.1f width=%d height=%d steps=%d seed=%d",
+                elapsed,
+                parameters.width,
+                parameters.height,
+                preset.num_steps,
+                parameters.seed,
             )
             if len(images) != 1:
                 raise RuntimeError("Ideogram 4 did not return exactly one image")
