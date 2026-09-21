@@ -18,6 +18,9 @@ param(
     [ValidateRange(60, 43200)]
     [int]$TimeoutSeconds = 21600,
 
+    [ValidateRange(30, 1800)]
+    [int]$DispatchTimeoutSeconds = 300,
+
     [ValidateRange(1, 60)]
     [int]$PollSeconds = 15,
 
@@ -29,11 +32,13 @@ $ErrorActionPreference = "Stop"
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
+$AutoscalerControl = Join-Path $PSScriptRoot "restore_salad_scale_to_zero.ps1"
 $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $QueueGuard = Join-Path $PSScriptRoot "check_salad_queue_ready.py"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $CacheAudit = Join-Path $PSScriptRoot "audit_phase8_video_cache.py"
 $ManifestInspector = Join-Path $PSScriptRoot "inspect_phase8_manifest.py"
+$FailureInspector = Join-Path $PSScriptRoot "inspect_inference_job_error.py"
 $Runner = Join-Path $PSScriptRoot "run_phase8_videos.py"
 $ServicesPath = Join-Path (Split-Path $PSScriptRoot -Parent) "deploy\salad\services.json"
 
@@ -67,6 +72,10 @@ Write-Host "=== Phase 8 resume manifest: verify current deterministic plan ===" 
     --keyframes $Keyframes `
     --prompts $Prompts `
     --timings $Timings `
+    --width 1280 `
+    --height 720 `
+    --fps 24 `
+    --transport-route $env:SALAD_LTX25_QUEUE_NAME `
     --manifest $ManifestPath `
     --json-output $ManifestStatePath
 if ($LASTEXITCODE -ne 0) {
@@ -80,6 +89,42 @@ $ResumeSubmittedJobs = (
     [string]$ManifestState.status -eq "matching" -and
     [int]$ManifestState.active_resume_jobs -gt 0
 )
+$RetryTerminalOnly = (
+    [string]$ManifestState.status -eq "matching" -and
+    [int]$ManifestState.active_resume_jobs -eq 0 -and
+    [int]$ManifestState.terminal_retry_jobs -gt 0
+)
+
+if ([string]$ManifestState.status -eq "different_transport_route") {
+    Write-Host (
+        "=== Phase 8 transport migration: archive stale queue-local transport IDs ==="
+    ) -ForegroundColor Cyan
+    $ArchiveStatePath = Join-Path ([IO.Path]::GetTempPath()) (
+        "ai-video-factory-phase8-route-archive-{0}.json" -f ([Guid]::NewGuid().ToString("N"))
+    )
+    & python $ManifestInspector `
+        --keyframes $Keyframes `
+        --prompts $Prompts `
+        --timings $Timings `
+        --width 1280 `
+        --height 720 `
+        --fps 24 `
+        --transport-route $env:SALAD_LTX25_QUEUE_NAME `
+        --manifest $ManifestPath `
+        --json-output $ArchiveStatePath `
+        --archive-mismatch
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -LiteralPath $ArchiveStatePath -Force -ErrorAction SilentlyContinue
+        throw "Phase 8 transport-route manifest archival failed; refusing GPU allocation."
+    }
+    $ArchiveState = Get-Content -LiteralPath $ArchiveStatePath -Raw | ConvertFrom-Json
+    Remove-Item -LiteralPath $ArchiveStatePath -Force -ErrorAction SilentlyContinue
+    if ([string]$ArchiveState.status -ne "archived_different_transport_route") {
+        throw "Phase 8 transport-route manifest changed unexpectedly during archival."
+    }
+    $ResumeSubmittedJobs = $false
+    $RetryTerminalOnly = $false
+}
 
 if ([string]$ManifestState.status -eq "different_plan") {
     Write-Host (
@@ -109,6 +154,10 @@ if ([string]$ManifestState.status -eq "different_plan") {
         --keyframes $Keyframes `
         --prompts $Prompts `
         --timings $Timings `
+        --width 1280 `
+        --height 720 `
+        --fps 24 `
+        --transport-route $env:SALAD_LTX25_QUEUE_NAME `
         --manifest $ManifestPath `
         --json-output $ArchiveStatePath `
         --archive-mismatch
@@ -122,6 +171,7 @@ if ([string]$ManifestState.status -eq "different_plan") {
         throw "Phase 8 stale manifest changed unexpectedly during archival."
     }
     $ResumeSubmittedJobs = $false
+    $RetryTerminalOnly = $false
 }
 
 Write-Host "=== R2 preflight: verify storage before GPU allocation ===" -ForegroundColor Cyan
@@ -138,6 +188,9 @@ Write-Host "=== Phase 8 cache plan: resolve R2 replay before LTX allocation ==="
     --keyframes $Keyframes `
     --prompts $Prompts `
     --timings $Timings `
+    --width 1280 `
+    --height 720 `
+    --fps 24 `
     --json-output $CachePlanPath
 if ($LASTEXITCODE -ne 0) {
     Remove-Item -LiteralPath $CachePlanPath -Force -ErrorAction SilentlyContinue
@@ -164,10 +217,13 @@ Write-Host (
 $PrewarmArguments = @{
     Service = "ltx25"
     TimeoutMinutes = $PrewarmTimeoutMinutes
+    HoldReadyReplica = $true
 }
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
 }
+
+$FreshPrewarm = $false
 
 try {
     if (-not $LtxNeeded) {
@@ -204,6 +260,51 @@ try {
         if (-not $?) {
             throw "LTX optimized prewarm failed."
         }
+        $FreshPrewarm = $true
+    }
+
+    if ($FreshPrewarm) {
+        Write-Host (
+            "=== Phase 8 fanout: submit jobs while exactly one warm LTX replica is pinned ==="
+        ) -ForegroundColor Cyan
+        & python $Runner `
+            --keyframes $Keyframes `
+            --prompts $Prompts `
+            --timings $Timings `
+            --width 1280 `
+            --height 720 `
+            --fps 24 `
+            --output-dir $OutputDir `
+            --submit-only
+        if ($LASTEXITCODE -ne 0) {
+            throw "Phase 8 LTX fanout submission failed with exit code $LASTEXITCODE."
+        }
+
+        if ($RetryTerminalOnly) {
+            Write-Host (
+                "=== LTX terminal retry recovery: keep exactly one warm worker pinned ==="
+            ) -ForegroundColor Cyan
+            Write-Host (
+                "Retrying terminal Phase 8 transports serially at min_replicas=1/max_replicas=1; " +
+                "validated R2 successes remain cached."
+            ) -ForegroundColor Yellow
+        }
+        else {
+            Write-Host (
+                "=== LTX warm scale-out: keep one ready replica and allow up to four workers ==="
+            ) -ForegroundColor Cyan
+            $ScaleOutArguments = @{
+                Service = "ltx25"
+                Mode = "WarmScaleOut"
+            }
+            if ($NonInteractive) {
+                $ScaleOutArguments["NonInteractive"] = $true
+            }
+            & $AutoscalerControl @ScaleOutArguments
+            if (-not $?) {
+                throw "LTX warm scale-out autoscaler activation failed."
+            }
+        }
     }
 
     Write-Host (
@@ -213,11 +314,46 @@ try {
         --keyframes $Keyframes `
         --prompts $Prompts `
         --timings $Timings `
+        --width 1280 `
+        --height 720 `
+        --fps 24 `
         --output-dir $OutputDir `
         --poll-seconds $PollSeconds `
-        --timeout-seconds $TimeoutSeconds
+        --timeout-seconds $TimeoutSeconds `
+        --dispatch-timeout-seconds $DispatchTimeoutSeconds
     if ($LASTEXITCODE -ne 0) {
-        throw "Phase 8 video generation failed with exit code $LASTEXITCODE."
+        $Phase8ExitCode = $LASTEXITCODE
+        if (Test-Path -LiteralPath $ManifestPath -PathType Leaf) {
+            try {
+                $FailureManifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+                $TerminalFailures = @(
+                    $FailureManifest.jobs |
+                        Where-Object { [string]$_.transport_status -in @("failed", "cancelled") }
+                )
+                foreach ($Failure in $TerminalFailures) {
+                    Write-Host (
+                        "=== Phase 8 persisted failure diagnostic: shot={0} transport={1} ===" -f `
+                        [int]$Failure.shot_id,
+                        [string]$Failure.transport_job_id
+                    ) -ForegroundColor Yellow
+                    & python $FailureInspector `
+                        --application-job-id ([string]$Failure.application_job_id)
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Warning (
+                            "Could not read persisted gpu.jobs diagnostics for shot " +
+                            ([string]$Failure.shot_id) + "."
+                        )
+                    }
+                }
+            }
+            catch {
+                Write-Warning (
+                    "Could not inspect persisted Phase 8 terminal failures: " +
+                    $_.Exception.Message
+                )
+            }
+        }
+        throw "Phase 8 video generation failed with exit code $Phase8ExitCode."
     }
 }
 finally {

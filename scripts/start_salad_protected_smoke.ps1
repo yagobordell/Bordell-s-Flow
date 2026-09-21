@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "ltx25")]
+    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "ltx25", "realesrgan")]
     [string]$Service,
 
     [string]$EnvFile = ".env",
@@ -160,6 +160,58 @@ function Test-QueueAttachment {
     ).Count -eq 1
 }
 
+
+function Get-ActiveQueueJobs {
+    $Active = @()
+    for ($Page = 1; $Page -le 100; $Page += 1) {
+        $Response = Invoke-RestMethod `
+            -Method Get `
+            -Uri "$QueueUrl/jobs?page=$Page&page_size=25" `
+            -Headers $Headers `
+            -TimeoutSec 30
+
+        $Items = @(
+            if ($Response.PSObject.Properties.Name -contains "items") {
+                $Response.items
+            }
+            elseif ($Response.PSObject.Properties.Name -contains "jobs") {
+                $Response.jobs
+            }
+        )
+
+        foreach ($Job in $Items) {
+            if ([string]$Job.status -in @("pending", "running")) {
+                $Active += $Job
+            }
+        }
+
+        if ($Items.Count -lt 25) {
+            return [PSCustomObject]@{
+                jobs = @($Active)
+                complete = $true
+                pages = $Page
+            }
+        }
+    }
+
+    return [PSCustomObject]@{
+        jobs = @($Active)
+        complete = $false
+        pages = 100
+    }
+}
+
+function Format-ActiveQueueJobs {
+    param([Parameter(Mandatory)][object[]]$Jobs)
+
+    return (
+        @($Jobs) |
+            ForEach-Object {
+                "{0}:{1}" -f [string]$_.id, [string]$_.status
+            }
+    ) -join ", "
+}
+
 Import-EnvFile -Path $EnvFile
 if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
     throw "Salad stack manifest not found: $ManifestPath"
@@ -193,10 +245,27 @@ $Headers = @{
 }
 
 $Queue = Get-Queue
-if ([int]$Queue.current_queue_length -ne 0) {
+$QueueSummaryLength = [int]$Queue.current_queue_length
+$QueueJobs = Get-ActiveQueueJobs
+if (-not [bool]$QueueJobs.complete) {
     throw (
-        "Protected smoke requires an empty queue before bootstrap; " +
-        "'$QueueName' contains $([int]$Queue.current_queue_length) job(s)."
+        "Protected smoke could not exhaustively enumerate '$QueueName' before bootstrap; " +
+        "refusing to start GPU work."
+    )
+}
+$ActiveQueueJobs = @($QueueJobs.jobs)
+if ($ActiveQueueJobs.Count -gt 0) {
+    throw (
+        "Protected smoke requires no pending/running jobs before bootstrap; " +
+        "'$QueueName' has active work: " +
+        (Format-ActiveQueueJobs -Jobs $ActiveQueueJobs)
+    )
+}
+if ($QueueSummaryLength -ne 0) {
+    Write-Warning (
+        "Protected smoke queue summary is stale: current_queue_length=$QueueSummaryLength, " +
+        "but exhaustive pagination across $([int]$QueueJobs.pages) page(s) found no " +
+        "pending/running jobs. Treating '$QueueName' as logically empty."
     )
 }
 

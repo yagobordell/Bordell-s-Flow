@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25")]
+    [ValidateSet("whisper", "breeze_tts2", "ideogram4", "ltx25", "realesrgan")]
     [string]$Service,
 
     [string]$EnvFile = ".env",
@@ -297,17 +297,40 @@ function Repair-GroupConfiguration {
     $Networking = $Group.PSObject.Properties["networking"]
     if ($null -ne $Networking -and $null -ne $Networking.Value) {
         throw (
-            "Container group '$GroupName' has networking enabled, which Salad does not allow with " +
-            "queue_connection. Increment services.$Service.group_name in deploy/salad/services.json " +
-            "and run Prepare again."
+            "Container group '$GroupName' has networking enabled, which is outside the " +
+            "current Job Queue contract. Increment services.$Service.group_name and Prepare again."
         )
     }
 
-    Write-Host (
-        "Repairing Job Queue autoscaling in place for stopped group '$GroupName'..."
-    ) -ForegroundColor Cyan
+    $Connection = $Group.PSObject.Properties["queue_connection"]
+    if (
+        $null -eq $Connection -or $null -eq $Connection.Value -or
+        [string]$Group.queue_connection.queue_name -ne $QueueName -or
+        [string]$Group.queue_connection.path -ne $QueuePath -or
+        [int]$Group.queue_connection.port -ne $ContainerPort
+    ) {
+        throw (
+            "Container group '$GroupName' has a missing or incorrect immutable queue_connection. " +
+            "Create a fresh group name; Salad does not support changing queue_connection by PATCH."
+        )
+    }
+
+    $Autoscaler = $Group.PSObject.Properties["queue_autoscaler"]
+    $AutoscalerMatches = (
+        $null -ne $Autoscaler -and $null -ne $Autoscaler.Value -and
+        [int]$Group.queue_autoscaler.min_replicas -eq [int]$Definition.autoscaler.min_replicas -and
+        [int]$Group.queue_autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
+        [int]$Group.queue_autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
+        [int]$Group.queue_autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period -and
+        [int]$Group.queue_autoscaler.max_upscale_per_minute -eq [int]$Definition.autoscaler.max_upscale_per_minute -and
+        [int]$Group.queue_autoscaler.max_downscale_per_minute -eq [int]$Definition.autoscaler.max_downscale_per_minute
+    )
+    if ($AutoscalerMatches) {
+        return $Group
+    }
+
+    Write-Host "Repairing Job Queue autoscaler in place for '$GroupName'..." -ForegroundColor Cyan
     $Body = @{
-        queue_connection = New-QueueConnection
         queue_autoscaler = New-QueueAutoscaler
         replicas = 0
     } | ConvertTo-Json -Depth 10
@@ -323,18 +346,13 @@ function Repair-GroupConfiguration {
 
     $Updated = Wait-ForGroupSettled
     if ([int]$Updated.replicas -ne 0) {
-        Write-Warning (
-            "Salad raised '$GroupName' to replicas=$([int]$Updated.replicas) while applying " +
-            "the Job Queue autoscaler. Forcing replicas back to zero now."
-        )
         $Updated = Set-ZeroReplicas -Group $Updated
     }
     if (-not (Test-GroupConfiguration -Group $Updated)) {
-        throw "Salad did not persist the complete Job Queue autoscaling configuration after PATCH."
+        throw "Salad did not persist the Job Queue autoscaler after PATCH."
     }
     return $Updated
 }
-
 Import-EnvFile -Path $EnvFile
 if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
     throw "Salad stack manifest not found: $ManifestPath"
@@ -396,30 +414,36 @@ if ($null -eq $Group) {
     throw "Container group '$GroupName' is missing. Run Prepare first."
 }
 
-if ([string]$Group.current_state.status -ne "stopped") {
+$GroupStatus = [string]$Group.current_state.status
+if ($GroupStatus -notin @("stopped", "running", "deploying")) {
     throw (
-        "Queue repair requires '$GroupName' to be stopped. " +
-        "Current status=$([string]$Group.current_state.status)."
+        "Queue verification requires '$GroupName' stopped, running, or deploying at zero replicas. " +
+        "Current status=$GroupStatus."
+    )
+}
+if ([int]$Group.replicas -ne 0) {
+    throw (
+        "Queue verification requires '$GroupName' at zero replicas. " +
+        "Current replicas=$([int]$Group.replicas)."
     )
 }
 
-$Group = Set-ZeroReplicas -Group $Group
 if (-not (Test-GroupConfiguration -Group $Group)) {
     $Group = Repair-GroupConfiguration -Group $Group
 }
 
 $Queue = Get-Queue
 if (Test-QueueAttachment -Queue $Queue) {
-    Write-Host "$Service queue autoscaling and queue listing verified." -ForegroundColor Green
+    Write-Host "$Service queue listing currently includes '$GroupName'." -ForegroundColor Green
 }
 else {
     Write-Warning (
-        "$Service queue autoscaling is configured on the stopped container group, " +
-        "but Salad does not list stopped groups in queue.container_groups reliably. " +
-        "Runtime attachment will be validated after Start/Smoke."
+        "$Service queue listing does not currently include '$GroupName'. This field is " +
+        "non-authoritative for zero-replica/stopped workers; queue_connection and real " +
+        "transport execution are the acceptance signals."
     )
 }
 
 Write-Host (
-    "$Service Job Queue autoscaling configuration verified; group remains at zero replicas."
+    "$Service Job Queue configuration verified; group is at zero replicas."
 ) -ForegroundColor Green

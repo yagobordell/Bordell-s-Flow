@@ -38,6 +38,18 @@ class FakeStorage:
         return None
 
 
+class ArtifactAppearsAfterSubmitStorage(FakeStorage):
+    def __init__(self, stored: StoredObject) -> None:
+        super().__init__(stored)
+        self.stat_calls = 0
+
+    def stat(self, key: str) -> StoredObject | None:
+        self.stat_calls += 1
+        if self.stat_calls == 1:
+            return None
+        return super().stat(key)
+
+
 class FakeQueue:
     def __init__(self, snapshot: QueueJobSnapshot) -> None:
         self.snapshot = snapshot
@@ -290,4 +302,51 @@ def test_executor_does_not_cancel_transport_after_running_timeout() -> None:
     assert captured.value.job_id == "image-test-001"
     assert captured.value.transport_job_id == "transport-running"
     assert queue.submits == 1
+    assert queue.cancellations == []
+
+
+def test_executor_reconciles_completed_r2_artifact_at_running_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = {"now": 0.0}
+    monkeypatch.setattr(
+        "ai_video_factory.providers.inference_jobs.time.monotonic",
+        lambda: clock["now"],
+    )
+    monkeypatch.setattr(
+        "ai_video_factory.providers.inference_jobs.time.sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+    request = _request()
+    stored = StoredObject(
+        key=request.output.key,
+        content_type=request.output.content_type,
+        size_bytes=123,
+        etag="etag-complete",
+        metadata={
+            "job-id": request.job_id,
+            "request-sha256": request.fingerprint(),
+            "artifact-sha256": "a" * 64,
+        },
+    )
+    storage = ArtifactAppearsAfterSubmitStorage(stored)
+    queue = FakeQueue(
+        QueueJobSnapshot(
+            id="transport-stale-running",
+            status=QueueJobStatus.RUNNING,
+        )
+    )
+    executor = InferenceJobExecutor(
+        queue=queue,
+        storage=storage,
+        poll_seconds=0.01,
+        timeout_seconds=0.01,
+        pending_timeout_seconds=1,
+    )
+
+    response = executor.execute(request, metadata={"phase": "6"})
+
+    assert response.job_id == request.job_id
+    assert response.replayed is True
+    assert storage.stat_calls == 2
     assert queue.cancellations == []

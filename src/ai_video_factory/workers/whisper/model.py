@@ -11,11 +11,12 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ai_video_factory.inference.contracts import InferenceJobRequest
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.ports import LocalArtifact
 
 WHISPER_TRANSCRIPTION_TASK = "audio.whisper.transcribe"
 WHISPER_MODEL_ID = "openai/whisper-large-v3-turbo"
-WHISPER_GENERATION_PROFILE = "whisper-large-v3-turbo-fp16-v1"
+WHISPER_GENERATION_PROFILE = "whisper-large-v3-turbo-fp16-no-prompt-greedy-v2"
 
 
 class WhisperTranscriptionParameters(BaseModel):
@@ -25,7 +26,6 @@ class WhisperTranscriptionParameters(BaseModel):
 
     generation_profile: str
     model_id: str
-    prompt: str = Field(default="", max_length=16000)
     language: str | None = Field(default=None, min_length=2, max_length=64)
 
     @field_validator("generation_profile")
@@ -43,11 +43,6 @@ class WhisperTranscriptionParameters(BaseModel):
         if value != WHISPER_MODEL_ID:
             raise ValueError(f"model_id must be exactly {WHISPER_MODEL_ID!r}")
         return value
-
-    @field_validator("prompt")
-    @classmethod
-    def normalize_prompt(cls, value: str) -> str:
-        return value.strip()
 
     @field_validator("language")
     @classmethod
@@ -109,7 +104,6 @@ def _load_whisper_bindings() -> _WhisperBindings:
 def whisper_application_job_id(
     *,
     audio_sha256: str,
-    prompt: str,
     language: str | None,
     model_id: str = WHISPER_MODEL_ID,
 ) -> str:
@@ -118,7 +112,6 @@ def whisper_application_job_id(
         "generation_profile": WHISPER_GENERATION_PROFILE,
         "language": language,
         "model_id": model_id,
-        "prompt": prompt,
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return f"whisper-{hashlib.sha256(canonical).hexdigest()[:32]}"
@@ -171,18 +164,21 @@ class TransformersWhisperBackend:
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
             pipeline = self._get_or_build_pipeline(bindings)
-            generate_kwargs: dict[str, Any] = {"task": "transcribe"}
+            generate_kwargs: dict[str, Any] = {
+                "task": "transcribe",
+                "condition_on_prev_tokens": False,
+                "temperature": 0.0,
+            }
             if parameters.language is not None:
                 generate_kwargs["language"] = parameters.language
-            if parameters.prompt:
-                prompt_ids = pipeline.tokenizer.get_prompt_ids(
-                    parameters.prompt,
-                    return_tensors="pt",
-                )
-                to_method = getattr(prompt_ids, "to", None)
-                if callable(to_method):
-                    prompt_ids = to_method(self._device)
-                generate_kwargs["prompt_ids"] = prompt_ids
+
+            print(
+                "WHISPER_INFERENCE_CONFIG "
+                f"profile={parameters.generation_profile} "
+                f"language={parameters.language or '<auto>'} "
+                "condition_on_prev_tokens=false temperature=0.0 prompt_ids=false",
+                flush=True,
+            )
 
             result = pipeline(
                 str(audio_path),
@@ -231,10 +227,18 @@ class TransformersWhisperBackend:
         return self._bindings
 
     def _validate_runtime(self, bindings: _WhisperBindings) -> None:
-        if not self._model_root.is_dir():
-            raise FileNotFoundError(f"Whisper model directory does not exist: {self._model_root}")
-        if not (self._model_root / "config.json").is_file():
-            raise FileNotFoundError(f"Whisper config.json is missing from {self._model_root}")
+        config_path = self._model_root / "config.json"
+        weights_ready = (
+            self._model_root.is_dir()
+            and any(
+                path.is_file() and path.stat().st_size > 0
+                for path in self._model_root.rglob("*.safetensors")
+            )
+        )
+        if not self._model_root.is_dir() or not config_path.is_file() or not weights_ready:
+            raise ModelBootstrapPendingError(
+                f"Whisper model bootstrap is still pending at {self._model_root}"
+            )
         if self._device.startswith("cuda") and not bindings.torch.cuda.is_available():
             raise RuntimeError("CUDA is not available for the Whisper production runtime")
         if not hasattr(bindings.torch, self._dtype):

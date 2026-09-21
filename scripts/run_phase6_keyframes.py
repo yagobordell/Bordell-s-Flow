@@ -19,6 +19,7 @@ from ai_video_factory.providers import (
     SaladFlux2KleinImageProvider,
     SaladIdeogramImageProvider,
 )
+from ai_video_factory.providers.images import parse_image_size
 from ai_video_factory.providers.inference_jobs import (
     InferenceJobExecutor,
     InferenceJobTimeoutError,
@@ -49,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--model", default=settings.ideogram4_model)
     parser.add_argument("--fallback-model", default=settings.flux2_klein_model)
-    parser.add_argument("--size", default="1024x1536")
+    parser.add_argument("--size", default="1536x864")
     parser.add_argument("--quality", choices=("high", "auto"), default="high")
     parser.add_argument("--queue-name", default=settings.salad_ideogram4_queue_name)
     parser.add_argument(
@@ -142,6 +143,11 @@ async def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     args = parse_args()
+    width, height = parse_image_size(args.size)
+    if width * 9 != height * 16:
+        raise SystemExit(
+            f"Phase 6 production keyframes must be exact 16:9; received {width}x{height}"
+        )
     frames = _read_models(args.frames, StoryboardFrame)
     shots = _read_models(args.shots, Shot)
 

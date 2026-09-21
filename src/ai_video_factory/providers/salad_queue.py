@@ -267,4 +267,5 @@ class SaladJobQueueClient(JobQueueClient):
             id=transport_job_id,
             status=status,
             output=payload.get("output"),
+            provider_payload=dict(payload),
         )

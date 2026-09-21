@@ -35,7 +35,7 @@ def _environment() -> dict[str, str]:
 
 
 def _default_queue_name() -> str:
-    return os.getenv("SALAD_LTX25_QUEUE_NAME", "ai-video-factory-ltx25-jobs")
+    return os.getenv("SALAD_LTX25_QUEUE_NAME", "ai-video-factory-ltx25-jobs-v2")
 
 
 def _read_models[ModelT](path: Path, model_type: type[ModelT]) -> list[ModelT]:
@@ -121,8 +121,8 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("data/output/phase5/shot_timings.json"),
     )
-    parser.add_argument("--width", type=int, default=768)
-    parser.add_argument("--height", type=int, default=1280)
+    parser.add_argument("--width", type=int, default=1280)
+    parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed-base", type=int, default=42)
     parser.add_argument(
@@ -142,6 +142,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument("--timeout-seconds", type=float, default=21600.0)
+    parser.add_argument("--dispatch-timeout-seconds", type=float, default=300.0)
     parser.add_argument(
         "--progress-seconds",
         type=float,
@@ -155,6 +156,8 @@ def main() -> None:
     args = parse_args()
     if args.progress_seconds < 0:
         raise SystemExit("--progress-seconds must be >= 0")
+    if (args.width, args.height, args.fps) != (1280, 720, 24):
+        raise SystemExit("Phase 8 production video contract is exactly 1280x720 at 24 fps")
 
     environment = _environment()
 
@@ -212,6 +215,8 @@ def main() -> None:
             retry_terminal=not args.no_retry_terminal,
             poll_seconds=args.poll_seconds,
             timeout_seconds=args.timeout_seconds,
+            dispatch_timeout_seconds=args.dispatch_timeout_seconds,
+            transport_route=args.queue_name,
         )
     finally:
         if progress_thread is not None:

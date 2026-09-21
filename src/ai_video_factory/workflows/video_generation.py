@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,13 +21,17 @@ from ai_video_factory.gpu.ltx_video import (
 )
 from ai_video_factory.gpu.ports import ObjectStorage
 from ai_video_factory.gpu.storage import sha256_file
+from ai_video_factory.providers.images import inspect_image_payload
 from ai_video_factory.providers.inference_jobs import cached_inference_response
 from ai_video_factory.providers.job_queue import (
     JobQueueClient,
     QueueJobNotFoundError,
     QueueJobSnapshot,
     QueueJobStatus,
+    TransientQueueError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +55,8 @@ class VideoGenerationJobState(BaseModel):
     ] = "unsubmitted"
     submission_count: int = Field(default=0, ge=0)
     response: GPUJobResponse | None = None
+    last_terminal_transport_job_id: str | None = None
+    last_terminal_payload: dict[str, Any] | None = None
 
 
 class VideoGenerationManifest(BaseModel):
@@ -57,6 +64,7 @@ class VideoGenerationManifest(BaseModel):
 
     schema_version: Literal["1"] = "1"
     run_fingerprint: str
+    transport_route: str | None = None
     jobs: list[VideoGenerationJobState] = Field(min_length=1)
 
 
@@ -70,16 +78,16 @@ def build_video_generation_plan(
     timings: list[ShotTiming],
     *,
     keyframe_base_dir: Path,
-    width: int = 768,
-    height: int = 1280,
+    width: int = 1280,
+    height: int = 720,
     fps: int = 24,
     seed_base: int = 42,
 ) -> list[VideoGenerationPlanItem]:
     """Build deterministic LTX queue requests for every canonical shot."""
 
     _validate_inputs(keyframes, prompts, timings)
-    if width <= 0 or height <= 0 or fps <= 0:
-        raise ValueError("Video generation dimensions and fps must be positive")
+    if (width, height, fps) != (1280, 720, 24):
+        raise ValueError("Production LTX output must be exactly 1280x720 at 24 fps")
 
     base_dir = keyframe_base_dir.resolve()
     plan: list[VideoGenerationPlanItem] = []
@@ -90,6 +98,22 @@ def build_video_generation_plan(
             raise ValueError(f"Shot {keyframe.shot_id} keyframe URI escapes its base directory")
         if not keyframe_path.is_file():
             raise FileNotFoundError(f"Storyboard keyframe file not found: {keyframe_path}")
+
+        image_format, keyframe_width, keyframe_height = inspect_image_payload(
+            keyframe_path.read_bytes()
+        )
+        if image_format != "png":
+            raise ValueError(f"Shot {keyframe.shot_id} keyframe must be a PNG")
+        if keyframe_width * 9 != keyframe_height * 16:
+            raise ValueError(
+                f"Shot {keyframe.shot_id} keyframe must be native 16:9; "
+                f"found {keyframe_width}x{keyframe_height}"
+            )
+        if keyframe_width < width or keyframe_height < height:
+            raise ValueError(
+                f"Shot {keyframe.shot_id} keyframe is below the 1280x720 LTX input contract: "
+                f"found {keyframe_width}x{keyframe_height}"
+            )
 
         duration_seconds = timing.end_seconds - timing.start_seconds
         num_frames = ltx_num_frames_for_duration(duration_seconds, fps=fps)
@@ -169,15 +193,23 @@ def run_video_generation(
     retry_terminal: bool = True,
     poll_seconds: float = 15.0,
     timeout_seconds: float = 21600.0,
+    dispatch_timeout_seconds: float = 300.0,
+    transport_route: str | None = None,
 ) -> tuple[VideoGenerationManifest, list[VideoClip]]:
     """Fan out LTX jobs, persist progress, resume transports and fan in canonical clips."""
 
     if poll_seconds <= 0 or timeout_seconds <= 0:
         raise ValueError("poll_seconds and timeout_seconds must be positive")
+    if dispatch_timeout_seconds <= 0:
+        raise ValueError("dispatch_timeout_seconds must be positive")
     if not plan:
         raise ValueError("Video generation plan cannot be empty")
 
-    manifest = _load_or_create_manifest(plan, manifest_path)
+    manifest = _load_or_create_manifest(
+        plan,
+        manifest_path,
+        transport_route=transport_route,
+    )
     state_by_shot = {state.shot_id: state for state in manifest.jobs}
 
     for item in plan:
@@ -212,6 +244,15 @@ def run_video_generation(
             state.response = None
             _write_manifest(manifest_path, manifest)
             continue
+        except TransientQueueError as exc:
+            logger.warning(
+                "Transient queue status read during Phase 8 resume "
+                "shot_id=%s transport_job_id=%s; preserving persisted state: %s",
+                item.shot_id,
+                state.transport_job_id,
+                exc,
+            )
+            continue
         _apply_snapshot(state, item, snapshot)
         _write_manifest(manifest_path, manifest)
 
@@ -238,6 +279,18 @@ def run_video_generation(
     if not wait:
         return manifest, []
 
+    transport_probe_ids = {
+        state.transport_job_id
+        for state in manifest.jobs
+        if state.transport_job_id is not None
+        and state.transport_status in {"pending", "running"}
+    }
+    dispatch_proven = any(
+        state.transport_job_id in transport_probe_ids
+        and state.transport_status == "running"
+        for state in manifest.jobs
+    )
+    dispatch_deadline = time.monotonic() + dispatch_timeout_seconds
     deadline = time.monotonic() + timeout_seconds
     while any(
         state.transport_status in {"pending", "running"} for state in manifest.jobs
@@ -245,15 +298,58 @@ def run_video_generation(
         if time.monotonic() >= deadline:
             raise TimeoutError(f"Video generation did not finish within {timeout_seconds} seconds")
 
+        poll_had_transient = False
         for item in plan:
             state = state_by_shot[item.shot_id]
             if state.transport_status not in {"pending", "running"}:
                 continue
             if state.transport_job_id is None:  # pragma: no cover - invariant protection
                 raise RuntimeError(f"Shot {item.shot_id} has no transport job id")
-            snapshot = queue.get(state.transport_job_id)
+            try:
+                snapshot = queue.get(state.transport_job_id)
+            except TransientQueueError as exc:
+                poll_had_transient = True
+                logger.warning(
+                    "Transient queue status read during Phase 8 polling "
+                    "shot_id=%s transport_job_id=%s; keeping job active: %s",
+                    item.shot_id,
+                    state.transport_job_id,
+                    exc,
+                )
+                continue
             _apply_snapshot(state, item, snapshot)
+            if (
+                state.transport_job_id in transport_probe_ids
+                and state.transport_status in {"running", "succeeded", "failed"}
+            ):
+                dispatch_proven = True
             _write_manifest(manifest_path, manifest)
+
+        if poll_had_transient and not dispatch_proven:
+            # A control-plane outage is not evidence that queued jobs failed to dispatch.
+            # Require a fresh continuous observation window before cancelling pending work.
+            dispatch_deadline = time.monotonic() + dispatch_timeout_seconds
+
+        if (
+            not dispatch_proven
+            and not poll_had_transient
+            and time.monotonic() >= dispatch_deadline
+        ):
+            pending_probe_states = [
+                state
+                for state in manifest.jobs
+                if state.transport_job_id in transport_probe_ids
+                and state.transport_status == "pending"
+            ]
+            for state in pending_probe_states:
+                assert state.transport_job_id is not None
+                queue.cancel(state.transport_job_id)
+                state.transport_status = "cancelled"
+            _write_manifest(manifest_path, manifest)
+            raise TimeoutError(
+                f"LTX video generation did not dispatch any queued job within "
+                f"{dispatch_timeout_seconds} seconds of observable queue health"
+            )
 
         if any(
             state.transport_status in {"pending", "running"} for state in manifest.jobs
@@ -264,7 +360,7 @@ def run_video_generation(
         state for state in manifest.jobs if state.transport_status in {"failed", "cancelled"}
     ]
     if failed:
-        details = ", ".join(f"shot {state.shot_id}={state.transport_status}" for state in failed)
+        details = "; ".join(_terminal_failure_detail(state) for state in failed)
         raise VideoGenerationIncompleteError(
             f"Video generation has terminal transport failures: {details}. Rerun to resume."
         )
@@ -306,18 +402,44 @@ def _validate_inputs(
 
 
 def _load_or_create_manifest(
-    plan: list[VideoGenerationPlanItem], manifest_path: Path
+    plan: list[VideoGenerationPlanItem],
+    manifest_path: Path,
+    *,
+    transport_route: str | None = None,
 ) -> VideoGenerationManifest:
     fingerprint = video_generation_run_fingerprint(plan)
     if manifest_path.is_file():
         manifest = VideoGenerationManifest.model_validate_json(
             manifest_path.read_text(encoding="utf-8")
         )
-        _validate_manifest_against_plan(manifest, plan, fingerprint)
-        return manifest
+        same_plan = manifest.run_fingerprint == fingerprint
+        route_changed = (
+            transport_route is not None
+            and manifest.transport_route != transport_route
+        )
+        if same_plan and not route_changed:
+            _validate_manifest_against_plan(manifest, plan, fingerprint)
+            return manifest
+        if same_plan and route_changed:
+            print(
+                "Archived Phase 8 transport manifest because the queue route changed: "
+                f"{manifest.transport_route!r} -> {transport_route!r}"
+            )
+            _archive_manifest(manifest_path, manifest.run_fingerprint)
+        else:
+            if any(
+                state.transport_status in {"pending", "running"}
+                for state in manifest.jobs
+            ):
+                raise ValueError(
+                    "Existing video generation manifest belongs to a different input plan "
+                    "and still contains active transports"
+                )
+            _archive_manifest(manifest_path, manifest.run_fingerprint)
 
     manifest = VideoGenerationManifest(
         run_fingerprint=fingerprint,
+        transport_route=transport_route,
         jobs=[
             VideoGenerationJobState(
                 shot_id=item.shot_id,
@@ -349,6 +471,22 @@ def _validate_manifest_against_plan(
             raise ValueError(f"Manifest application job mismatch for shot {item.shot_id}")
         if state.request_sha256 != item.request.fingerprint():
             raise ValueError(f"Manifest request fingerprint mismatch for shot {item.shot_id}")
+
+
+def _archive_manifest(path: Path, run_fingerprint: str) -> Path:
+    raw = path.read_bytes()
+    state_sha = hashlib.sha256(raw).hexdigest()[:12]
+    archive = path.with_name(
+        f"{path.stem}.archive-{run_fingerprint[:12]}-{state_sha}{path.suffix}"
+    )
+    if archive.exists():
+        if archive.read_bytes() != raw:
+            raise ValueError(f"Video generation manifest archive collision: {archive}")
+        path.unlink()
+    else:
+        os.replace(path, archive)
+    print(f"Archived superseded video generation manifest: {archive}")
+    return archive
 
 
 def _write_manifest(path: Path, manifest: VideoGenerationManifest) -> None:
@@ -403,6 +541,9 @@ def _apply_snapshot(
 ) -> None:
     state.transport_job_id = snapshot.id
     state.transport_status = snapshot.status.value
+    if snapshot.status in {QueueJobStatus.FAILED, QueueJobStatus.CANCELLED}:
+        state.last_terminal_transport_job_id = snapshot.id
+        state.last_terminal_payload = snapshot.provider_payload
     if snapshot.status is not QueueJobStatus.SUCCEEDED:
         state.response = None
         return
@@ -417,6 +558,24 @@ def _apply_snapshot(
     if response.output.content_type != "video/mp4":
         raise ValueError(f"Worker returned a non-MP4 artifact for shot {item.shot_id}")
     state.response = response
+
+
+def _terminal_failure_detail(state: VideoGenerationJobState) -> str:
+    parts = [
+        f"shot {state.shot_id}={state.transport_status}",
+        f"transport_job_id={state.transport_job_id or '<none>'}",
+    ]
+    if state.last_terminal_payload is not None:
+        rendered = json.dumps(
+            state.last_terminal_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
+        if len(rendered) > 1800:
+            rendered = rendered[:1797] + "..."
+        parts.append(f"provider_payload={rendered}")
+    return " ".join(parts)
 
 
 def _parse_success_response(value: object) -> GPUJobResponse:

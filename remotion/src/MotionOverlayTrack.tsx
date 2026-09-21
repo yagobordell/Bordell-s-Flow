@@ -41,7 +41,7 @@ const BoundaryAccent = ({
           transform: "skewX(-12deg)",
           background:
             "linear-gradient(90deg, rgba(255,255,255,0), rgba(255,255,255,0.85), rgba(255,255,255,0))",
-          filter: "blur(18px)",
+          filter: "blur(24px)",
           opacity,
         }}
       />
@@ -57,14 +57,14 @@ const ProgressBar = ({totalFrames}: {totalFrames: number}) => {
     <div
       style={{
         position: "absolute",
-        top: 42,
-        left: 48,
-        right: 48,
-        height: 5,
+        top: 48,
+        left: 80,
+        right: 80,
+        height: 6,
         borderRadius: 999,
         overflow: "hidden",
         backgroundColor: "rgba(255, 255, 255, 0.18)",
-        boxShadow: "0 1px 6px rgba(0, 0, 0, 0.24)",
+        boxShadow: "0 2px 8px rgba(0, 0, 0, 0.24)",
         pointerEvents: "none",
       }}
     >

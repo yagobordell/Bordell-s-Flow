@@ -1,6 +1,6 @@
 # AI Video Factory
 
-Pipeline educativo para generar vídeos cortos verticales a partir de un guion mediante bots
+Pipeline educativo para generar vídeos cinematográficos 16:9 a partir de un guion mediante bots
 estructurados, providers desacoplados y workflows reproducibles.
 
 El objetivo no es únicamente producir un vídeo: el proyecto sirve para construir y validar una
@@ -15,15 +15,18 @@ procesamiento stateful, media providers, GPU remota y composición programática
 en Fase 8, la timeline canónica de Fase 5 y los timings por palabra en un vídeo audiovisual final de
 45 segundos con captions, resaltado de palabra activa, transiciones, motion overlays y narración AAC.
 
-La corrida canónica validada produce:
+El contrato de producción de esta rama es:
 
 ```text
-768x1280
-24 fps
-1080 frames
-45.000 s
-H.264 + AAC mono 24 kHz
+LTX:             1280x720 @ 24 fps
+Real-ESRGAN:     2560x1440 @ 24 fps
+Phase 9/final:   2560x1440 @ 24 fps
+H.264 + AAC
 ```
+
+La validación vertical 768x1280 permanece como baseline histórico. La validación real Salad del
+nuevo recorrido 16:9 y su replay sin GPU siguen siendo gates obligatorios antes de marcar este PR
+como ready o fusionarlo.
 
 El artefacto audiovisual final es:
 
@@ -81,7 +84,7 @@ un **guion ya terminado**, no desde un tema.
     - Adapter directo LTX-2.5 Python/PyTorch; sin ComfyUI.
     - Worker GPU real con runtime residente.
     - Fanout completo, resume desde manifiesto y replay idempotente.
-    - 8 clips H.264 reales validados a 768×1280, 24 fps.
+    - Producción migrada a clips LTX H.264 1280×720, 24 fps; la validación cloud nueva está pendiente.
     - Fan-in canónico a `VideoClip[]` con tamaño y SHA-256 verificados.
 
 11. **Fase 9 — Compositor** ✅
@@ -90,7 +93,7 @@ un **guion ya terminado**, no desde un tema.
     - Remotion aislado para render visual, captions y motion overlays.
     - Transiciones que preservan los límites canónicos de los 8 shots.
     - FFmpeg/ffprobe para probing y mux final sin recodificar el vídeo aceptado.
-    - `FinalVideo` validado a 1080 frames, 45.000 s, H.264 + AAC.
+    - Compositor migrado a 2560×1440 @ 24 fps; frame count/timeline se preservan y el mux final sigue H.264 + AAC.
 
 12. **Fase 10 — Agentes de verificación**
     - Consistencia narrativa y visual.
@@ -273,13 +276,17 @@ StoryboardKeyframe[] + Shot[] + ShotTiming[]
                          ↓
             direct LTX-2.5 worker
                          ↓
-                    VideoClip[]
+              VideoClip[] 1280x720
+                         ↓
+          Real-ESRGAN_x2plus worker
+                         ↓
+              VideoClip[] 2560x1440
 ```
 
 Composición final:
 
 ```text
-VideoClip[] + ShotTiming[] + NarrationWord[]
+Upscaled VideoClip[] + ShotTiming[] + NarrationWord[]
                     ↓
           composition_plan.json
                     ↓
@@ -404,7 +411,7 @@ python scripts/run_phase6_keyframes.py
 python scripts/run_phase6_storyboard_grids.py
 ```
 
-La validación real produjo 8 keyframes verticales y 3 grids de escena.
+El camino de producción de esta rama genera keyframes y grids landscape 16:9; la validación vertical anterior queda como baseline histórico.
 
 ## Fase 7 — Infraestructura GPU
 
@@ -451,7 +458,7 @@ video.ltx25.generate
 Perfil validado:
 
 ```text
-ltx25-distilled-a95ab856-fp8cpu-v1
+ltx25-distilled-a95ab856-fp8cpu-gridpad-v2
 ```
 
 Las duraciones de `ShotTiming` se redondean al siguiente frame count válido de LTX (`8k + 1`) sin
@@ -485,9 +492,10 @@ Un manifiesto atómico conserva application job ID, request SHA, transport ID, e
 submissions y respuesta validada. Un rerun de un manifest completo no consulta ni resubmite los
 jobs ya exitosos.
 
-La corrida real de cierre produjo 8 clips H.264 a 768×1280 y 24 fps. Los shots 1, 5 y 8 fueron
-replays de jobs previos; los demás realizaron inferencia nueva. Una segunda ejecución terminó con
-cero nuevas submissions y cero transport IDs nuevos.
+La corrida real histórica de cierre produjo 8 clips H.264 a 768×1280 y 24 fps. En esta rama ese
+baseline queda invalidado por identidad: LTX genera 1280×720 @ 24 fps y después una etapa separada
+Real-ESRGAN_x2plus genera clips 2560×1440. La nueva validación cloud completa todavía es obligatoria
+antes del merge.
 
 Salida canónica:
 
@@ -496,10 +504,10 @@ data/output/phase8/
 ├── video_prompts.json
 ├── video_generation_manifest.json
 ├── video_clips.json
-└── video_clips/
-    ├── shot_001.mp4
-    ├── ...
-    └── shot_008.mp4
+├── video_clips/                 # LTX 1280x720
+├── video_upscale_manifest.json
+├── upscaled_clips.json
+└── upscaled_clips/              # Real-ESRGAN 2560x1440
 ```
 
 Documentación:

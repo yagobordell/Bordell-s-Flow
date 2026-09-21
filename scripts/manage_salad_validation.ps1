@@ -3,12 +3,14 @@ param(
     [ValidateSet("Validate", "Prepare", "Start", "Prewarm", "Status", "Smoke", "ProtectedSmoke", "Stop")]
     [string]$Action = "Status",
 
-    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "flux2_klein", "ltx25", "all")]
+    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "flux2_klein", "ltx25", "realesrgan", "all")]
     [string]$Service = "all",
 
     [string]$EnvFile = ".env",
 
     [string]$ComposeFile = "compose.yaml",
+
+    [string]$PinnedImage = "",
 
     [ValidateRange(10, 180)]
     [int]$PrepareTimeoutMinutes = 120,
@@ -17,6 +19,8 @@ param(
     [int]$PrewarmTimeoutMinutes = 90,
 
     [switch]$SkipBuild,
+
+    [switch]$Recreate,
 
     [switch]$SkipLocalBuild,
 
@@ -95,11 +99,20 @@ function Invoke-StackAction {
         EnvFile = $EnvFile
         PrepareTimeoutMinutes = $PrepareTimeoutMinutes
     }
+    if (-not [string]::IsNullOrWhiteSpace($PinnedImage)) {
+        if ($Service -eq "all") {
+            throw "-PinnedImage requires one explicit service."
+        }
+        $Arguments["PinnedImage"] = $PinnedImage
+    }
     if ($Service -ne "all") {
         $Arguments["Services"] = @($Service)
     }
     if ($SkipBuild) {
         $Arguments["SkipBuild"] = $true
+    }
+    if ($Recreate -and $StackAction -eq "Prepare") {
+        $Arguments["Recreate"] = $true
     }
     if ($NonInteractive) {
         $Arguments["NonInteractive"] = $true
@@ -310,6 +323,13 @@ function Invoke-SafeStop {
             Invoke-ZeroReplicaFallback -StopFailure $_
         }
     }
+}
+
+if ($Recreate -and $Action -ne "Prepare") {
+    throw "-Recreate is only valid with -Action Prepare."
+}
+if ($Recreate -and $Service -eq "all") {
+    throw "-Recreate requires one explicit service; refusing to recreate the full stack."
 }
 
 switch ($Action) {

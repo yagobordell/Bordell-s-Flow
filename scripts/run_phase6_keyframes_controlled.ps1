@@ -19,7 +19,7 @@ param(
     [int]$PendingTimeoutSeconds = 300,
 
     [ValidateRange(60, 3600)]
-    [int]$RunningTimeoutSeconds = 600,
+    [int]$RunningTimeoutSeconds = 1200,
 
     [ValidateRange(0, 2)]
     [int]$IdeogramRecoveryRetries = 1,
@@ -47,6 +47,20 @@ $QueueCleanup = Join-Path $PSScriptRoot "cleanup_salad_queue.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $AuditScript = Join-Path $PSScriptRoot "audit_phase6_keyframe_cache.py"
 $Phase6Runner = Join-Path $PSScriptRoot "run_phase6_keyframes.py"
+$ServicesPath = Join-Path (Split-Path $PSScriptRoot -Parent) "deploy\salad\services.json"
+
+$Services = Get-Content -LiteralPath $ServicesPath -Raw | ConvertFrom-Json
+$IdeogramService = $Services.services.ideogram4
+$FluxService = $Services.services.flux2_klein
+$env:SALAD_ORGANIZATION = [string]$Services.stack.organization
+$env:SALAD_PROJECT = [string]$Services.stack.project
+$env:SALAD_IDEOGRAM4_QUEUE_NAME = [string]$IdeogramService.queue_name
+$env:SALAD_FLUX2_KLEIN_QUEUE_NAME = [string]$FluxService.queue_name
+Write-Host (
+    "Phase 6 canonical Salad routes: ideogram={0} flux={1}" -f `
+    $env:SALAD_IDEOGRAM4_QUEUE_NAME,
+    $env:SALAD_FLUX2_KLEIN_QUEUE_NAME
+) -ForegroundColor DarkGray
 
 foreach ($Path in @($Frames, $Shots)) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -144,6 +158,8 @@ try {
         "--shots", $Shots,
         "--output-dir", $OutputDir,
         "--output", $Output,
+        "--queue-name", $env:SALAD_IDEOGRAM4_QUEUE_NAME,
+        "--fallback-queue-name", $env:SALAD_FLUX2_KLEIN_QUEUE_NAME,
         "--poll-seconds", $PollSeconds,
         "--pending-timeout-seconds", $PendingTimeoutSeconds,
         "--fallback-pending-timeout-seconds", $FluxPendingTimeoutSeconds,

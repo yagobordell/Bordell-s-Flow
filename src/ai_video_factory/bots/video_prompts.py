@@ -4,7 +4,8 @@ from ai_video_factory.domain import Shot, ShotTiming, StoryboardFrame, VideoProm
 from ai_video_factory.providers.base import StructuredTextProvider
 
 VIDEO_PROMPT_INSTRUCTIONS = """\
-Eres un bot de motion planning para un vídeo documental vertical generado desde un keyframe.
+Eres un bot de motion planning para un vídeo documental cinematográfico horizontal 16:9
+generado desde un keyframe.
 
 Recibes un shot ya planificado, su duración real, el prompt del storyboard que define el estado
 visual inicial y, cuando existe, el prompt de vídeo del shot anterior dentro de la misma escena.
@@ -17,8 +18,15 @@ Reglas estrictas:
   entorno, objetos y relaciones espaciales que sigan siendo relevantes para el shot.
 - Haz que `SHOT.action` ocurra de forma visible durante el clip. El movimiento debe aportar cambio
   narrativo sin limitarse a micro-movimientos genéricos si la acción exige una transformación clara.
+- Mantén la composición cinematográfica landscape 16:9 del keyframe y evita movimientos que
+  empujen sujetos importantes fuera de los márgenes seguros.
 - Describe solo movimiento útil: movimiento del sujeto, del entorno y de cámara cuando ayude a
   expresar la acción. No es obligatorio usar los tres tipos.
+- Para landscape, favorece movimiento controlado que explote el eje horizontal y la profundidad:
+  slow cinematic push-in, lateral tracking, gentle dolly, parallax, subtle handheld o wide
+  establishing movement cuando encajen con el shot.
+- Evita pans, zooms, orbitados o desplazamientos agresivos que destruyan identidad, vestuario,
+  iluminación, geometría del entorno o composición. Mantén el movimiento de cámara contenido.
 - La duración real limita la complejidad. Un shot corto debe tener una acción simple y legible; no
   comprimas una cadena larga de eventos en pocos segundos.
 - El clip debe ser un solo plano continuo. No añadas cortes, transiciones, montajes, flashbacks,
@@ -66,8 +74,8 @@ class VideoPromptBot:
             raise ValueError("VideoPromptBot requires matching shot and storyboard frame IDs")
         if not visual_style.strip():
             raise ValueError("Video visual style must be non-empty")
-        if not aspect_ratio.strip():
-            raise ValueError("Video aspect ratio must be non-empty")
+        if aspect_ratio.strip() != "16:9":
+            raise ValueError("Video production aspect ratio must be exactly 16:9")
 
         duration = timing.end_seconds - timing.start_seconds
         if duration <= 0:

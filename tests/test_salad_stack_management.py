@@ -25,6 +25,7 @@ def test_salad_manifest_centralizes_stack_identity_and_shared_environment() -> N
         "ideogram4",
         "flux2_klein",
         "ltx25",
+        "realesrgan",
     ]
     assert document["stack"]["shared_required_environment"] == [
         "POSTGRES_DSN",
@@ -46,8 +47,8 @@ def test_every_model_has_its_own_group_and_queue() -> None:
     groups = [service["group_name"] for service in services.values()]
     queues = [service["queue_name"] for service in services.values()]
 
-    assert len(groups) == len(set(groups)) == 6
-    assert len(queues) == len(set(queues)) == 6
+    assert len(groups) == len(set(groups)) == 7
+    assert len(queues) == len(set(queues)) == 7
     assert services["whisper"]["required_environment"] == []
     assert services["breeze_tts2"]["required_environment"] == []
     assert services["breeze_tts2"]["group_name"] == "ai-video-factory-breeze-tts2-worker-v2"
@@ -56,6 +57,7 @@ def test_every_model_has_its_own_group_and_queue() -> None:
     assert services["ideogram4"]["required_environment"] == ["HF_TOKEN"]
     assert services["flux2_klein"]["required_environment"] == []
     assert services["ltx25"]["required_environment"] == ["HF_TOKEN"]
+    assert services["realesrgan"]["required_environment"] == []
 
 
 def test_worker_queue_display_names_match_salad_api_contract() -> None:
@@ -141,20 +143,127 @@ def test_queue_repair_patches_autoscaling_without_reusing_group_name() -> None:
     assert "Cancel pending jobs and allow " in script
     assert "running jobs to finish before changing the container group." in script
     assert "Terminal queue history will" in script
-    assert 'current_state.status -ne "stopped"' in script
+    assert '$GroupStatus -notin @("stopped", "running", "deploying")' in script
     assert "function Set-ZeroReplicas" in script
     assert "function Repair-GroupConfiguration" in script
-    assert "Repairing Job Queue autoscaling in place" in script
+    assert "Repairing Job Queue autoscaler in place" in script
     assert "Normalizing group" in script
-    assert "Forcing replicas back to zero now." in script
     assert "$Updated = Set-ZeroReplicas -Group $Updated" in script
     assert '@{ replicas = 0 }' in script
     assert "function New-Networking" not in script
     assert "networking = New-Networking" not in script
-    assert "queue_connection = New-QueueConnection" in script
+    assert "queue_connection = New-QueueConnection" not in script
     assert "queue_autoscaler = New-QueueAutoscaler" in script
     assert "-Method Patch" in script
     assert "-Method Delete" not in script
     assert "Recreating stopped container group" not in script
-    assert "Runtime attachment will be validated after Start/Smoke." in script
+    assert "Wait-ForQueueAssociation" not in script
+    assert "non-authoritative for zero-replica/stopped workers" in script
     assert "Test-QueueAttachment" in script
+
+
+def test_worker_prepare_can_recreate_stopped_group_for_queue_rebind() -> None:
+    script = WORKER_MANAGER.read_text(encoding="utf-8")
+
+    assert "[switch]$Recreate" in script
+    assert "function Remove-StoppedContainerGroup" in script
+    assert "must be stopped before -Recreate" in script
+    assert "must have replicas=0 before -Recreate" in script
+    assert "-Method Delete" in script
+    assert "fresh Job Queue attachment" in script
+    assert "$ExistingGroup = $null" in script
+    assert "New-ContainerGroup" in script
+
+
+def test_stack_prepare_forwards_targeted_recreate() -> None:
+    script = STACK_MANAGER.read_text(encoding="utf-8")
+
+    assert "[switch]$Recreate" in script
+    assert '$WorkerArguments["Recreate"] = $true' in script
+    assert '-Recreate is only valid with -Action Prepare.' in script
+
+
+
+def test_worker_recreate_preserves_or_accepts_pinned_image_before_delete() -> None:
+    script = WORKER_MANAGER.read_text(encoding="utf-8")
+
+    prepare = script.split('"Prepare" {', maxsplit=1)[1]
+    assert "[string]$PinnedImage" in script
+    assert "Using explicit pinned image: $ResolvedPinnedImage" in prepare
+    assert "Reusing existing immutable image before any group recreation" in prepare
+    assert "$ResolvedPinnedImage = [string]$ExistingGroup.container.image" in prepare
+    assert "Remove-StoppedContainerGroup -Headers $Headers" in prepare
+    assert prepare.index("$ResolvedPinnedImage =") < prepare.index(
+        "Remove-StoppedContainerGroup -Headers $Headers"
+    )
+    assert "-PinnedImage $ResolvedPinnedImage" in prepare
+    assert "Assert-PreparedGroup -Group $Group -PinnedImage $ResolvedPinnedImage" in prepare
+
+
+def test_stack_manager_forwards_explicit_pinned_image_only_to_targeted_service() -> None:
+    script = STACK_MANAGER.read_text(encoding="utf-8")
+
+    assert "[string]$PinnedImage" in script
+    assert '$WorkerArguments["PinnedImage"] = $PinnedImage' in script
+    assert "-PinnedImage requires exactly one selected service." in script
+
+
+
+def test_worker_create_retries_transient_name_conflict_after_delete() -> None:
+    script = WORKER_MANAGER.read_text(encoding="utf-8")
+
+    assert "function Test-NameConflictFailure" in script
+    assert "$CreateDeadline = (Get-Date).AddMinutes(5)" in script
+    assert "name_conflict attempt $CreateAttempt" in script
+    assert "Try-Get-Group -Headers $Headers" in script
+    assert "Continuing with normal post-create validation." in script
+    assert "refusing unbounded recreate retries" in script
+
+
+
+def test_whisper_uses_fresh_versioned_group_after_queue_rebind_failure() -> None:
+    services = _document()["services"]
+
+    assert services["whisper"]["group_name"] == "ai-video-factory-whisper-worker-v4"
+    assert services["whisper"]["queue_name"] == "ai-video-factory-whisper-jobs-v2"
+
+
+
+def test_whisper_queue_rebind_uses_fresh_group_and_fresh_queue_pair() -> None:
+    services = _document()["services"]
+    whisper = services["whisper"]
+
+    assert whisper["group_name"] == "ai-video-factory-whisper-worker-v4"
+    assert whisper["queue_name"] == "ai-video-factory-whisper-jobs-v2"
+
+
+def test_worker_update_does_not_patch_immutable_queue_connection() -> None:
+    script = WORKER_MANAGER.read_text(encoding="utf-8")
+
+    create_block = script.split("function New-ContainerGroup", maxsplit=1)[1].split(
+        "function Update-ContainerGroup", maxsplit=1
+    )[0]
+    update_block = script.split("function Update-ContainerGroup", maxsplit=1)[1].split(
+        "function Ensure-PreparedZeroReplicas", maxsplit=1
+    )[0]
+
+    assert "queue_connection = New-QueueConnectionConfiguration" in create_block
+    assert "queue_connection = New-QueueConnectionConfiguration" not in update_block
+    assert "queue_autoscaler = New-QueueAutoscalerConfiguration" in update_block
+
+
+def test_whisper_uses_manual_prewarm_lifecycle_consistently() -> None:
+    document = _document()
+    whisper = document["services"]["whisper"]
+    script = WORKER_MANAGER.read_text(encoding="utf-8")
+
+    assert document["stack"]["autostart_policy"] is False
+    assert whisper["autostart_policy"] is False
+    assert whisper["group_name"] == "ai-video-factory-whisper-worker-v4"
+    assert whisper["queue_name"] == "ai-video-factory-whisper-jobs-v2"
+    assert (
+        '$ServiceAutostartProperty = $Definition.PSObject.Properties["autostart_policy"]'
+        in script
+    )
+    assert "$AutostartPolicy = [bool]$ServiceAutostartProperty.Value" in script
+

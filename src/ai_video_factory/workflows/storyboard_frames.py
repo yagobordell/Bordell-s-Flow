@@ -1,3 +1,4 @@
+import asyncio
 import math
 
 from ai_video_factory.bots.storyboard_frames import StoryboardFrameBot
@@ -12,38 +13,58 @@ async def build_storyboard_frames(
     frame_bot: StoryboardFrameBot,
     visual_style: str,
     aspect_ratio: str,
+    max_scene_concurrency: int = 3,
 ) -> list[StoryboardFrame]:
     """Build ordered storyboard keyframe prompts while carrying explicit visual context."""
 
     _validate_inputs(shots, timings, references)
+    if max_scene_concurrency < 1:
+        raise ValueError("Storyboard max_scene_concurrency must be at least 1")
     references_by_id = {reference.entity_id: reference for reference in references}
 
-    frames: list[StoryboardFrame] = []
-    previous_frame: StoryboardFrame | None = None
-    previous_scene_id: int | None = None
+    scene_groups = _group_scene_inputs(shots, timings)
+    gate = asyncio.Semaphore(max_scene_concurrency)
 
+    async def build_scene(
+        scene_inputs: list[tuple[Shot, ShotTiming]],
+    ) -> list[StoryboardFrame]:
+        async with gate:
+            frames: list[StoryboardFrame] = []
+            previous_frame: StoryboardFrame | None = None
+            for shot, timing in scene_inputs:
+                shot_references = [
+                    references_by_id[entity_id] for entity_id in shot.entity_ids
+                ]
+                prompt = await frame_bot.run(
+                    shot,
+                    timing,
+                    shot_references,
+                    visual_style=visual_style,
+                    aspect_ratio=aspect_ratio,
+                    previous_frame=previous_frame,
+                )
+                if not prompt.strip():
+                    raise ValueError("Storyboard frame bot returned an empty prompt")
+
+                frame = StoryboardFrame(shot_id=shot.id, prompt=prompt.strip())
+                frames.append(frame)
+                previous_frame = frame
+            return frames
+
+    grouped_frames = await asyncio.gather(*(build_scene(group) for group in scene_groups))
+    return [frame for group in grouped_frames for frame in group]
+
+
+def _group_scene_inputs(
+    shots: list[Shot],
+    timings: list[ShotTiming],
+) -> list[list[tuple[Shot, ShotTiming]]]:
+    groups: list[list[tuple[Shot, ShotTiming]]] = []
     for shot, timing in zip(shots, timings, strict=True):
-        if previous_scene_id is not None and shot.scene_id != previous_scene_id:
-            previous_frame = None
-
-        shot_references = [references_by_id[entity_id] for entity_id in shot.entity_ids]
-        prompt = await frame_bot.run(
-            shot,
-            timing,
-            shot_references,
-            visual_style=visual_style,
-            aspect_ratio=aspect_ratio,
-            previous_frame=previous_frame,
-        )
-        if not prompt.strip():
-            raise ValueError("Storyboard frame bot returned an empty prompt")
-
-        frame = StoryboardFrame(shot_id=shot.id, prompt=prompt.strip())
-        frames.append(frame)
-        previous_frame = frame
-        previous_scene_id = shot.scene_id
-
-    return frames
+        if not groups or groups[-1][0][0].scene_id != shot.scene_id:
+            groups.append([])
+        groups[-1].append((shot, timing))
+    return groups
 
 
 def _validate_inputs(

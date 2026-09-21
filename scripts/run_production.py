@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -27,10 +26,12 @@ class OptimizedGpuStageExecutor:
         repo_root: Path,
         output_dir: Path,
         hold_shared_workers: bool = False,
+        narration_language: str = "en",
     ) -> None:
         self._repo_root = repo_root
         self._output_dir = output_dir
         self._hold_shared_workers = hold_shared_workers
+        self._narration_language = narration_language
         self._default = SubprocessStageExecutor(repo_root=repo_root)
 
     def __call__(self, stage: ProductionStage) -> None:
@@ -44,7 +45,10 @@ class OptimizedGpuStageExecutor:
         if os.name == "nt":
             command.extend(["-ExecutionPolicy", "Bypass"])
         command.extend(["-File", *arguments])
-        subprocess.run(command, cwd=self._repo_root, check=True)
+        self._default.run_command(command)
+
+    def cancel_running(self) -> None:
+        self._default.cancel_running()
 
     def _controlled_arguments(self, stage_name: str) -> list[str] | None:
         output = self._output_dir
@@ -84,6 +88,8 @@ class OptimizedGpuStageExecutor:
                 str(output / "phase5" / "narration.wav"),
                 "-Output",
                 str(output / "phase5" / "narration_words.json"),
+                "-Language",
+                self._narration_language,
                 "-NonInteractive",
             ]
         if stage_name == "phase6-keyframes":
@@ -115,6 +121,15 @@ class OptimizedGpuStageExecutor:
                 str(output / "phase8"),
                 "-NonInteractive",
             ]
+        if stage_name == "phase8-upscale":
+            return [
+                "scripts/run_phase8_upscale_controlled.ps1",
+                "-Clips",
+                str(output / "phase8" / "video_clips.json"),
+                "-OutputDir",
+                str(output / "phase8"),
+                "-NonInteractive",
+            ]
         return None
 
 
@@ -133,6 +148,11 @@ def parse_args() -> argparse.Namespace:
         help="UTF-8 source script used as the canonical production input.",
     )
     parser.add_argument(
+        "--narration-language",
+        default="en",
+        help="Language hint passed explicitly to Whisper alignment. Defaults to en.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=settings.output_dir,
@@ -148,7 +168,7 @@ def parse_args() -> argparse.Namespace:
         "--through",
         choices=PRODUCTION_STAGE_NAMES,
         default=None,
-        help="Stop after the selected stage instead of running through Phase 8 video generation.",
+        help="Stop after the selected stage instead of running through Phase 8 upscale.",
     )
     parser.add_argument(
         "--force-stage",
@@ -208,6 +228,7 @@ def main() -> None:
     stages = build_production_stages(
         script_file=args.script_file,
         output_dir=args.output_dir,
+        narration_language=args.narration_language,
     )
     max_workers = 1 if args.serial else args.max_parallel_stages
     max_gpu_stages = 1 if args.serial else args.max_parallel_gpu_stages
@@ -219,6 +240,7 @@ def main() -> None:
             repo_root=Path("."),
             output_dir=args.output_dir,
             hold_shared_workers=args.end_to_end,
+            narration_language=args.narration_language,
         ),
         max_workers=max_workers,
         max_gpu_stages=max_gpu_stages,
@@ -296,8 +318,8 @@ def main() -> None:
         f"executed={len(summary.executed)} adopted={len(summary.adopted)} "
         f"skipped={len(summary.skipped)} total={summary.total_elapsed_seconds:.1f}s"
     )
-    if args.through is None or args.through == "phase8-videos":
-        print("Production phases 2-8 are complete. The local renderer can now run Phase 9.")
+    if args.through is None or args.through == "phase8-upscale":
+        print("Production phases 2-8 plus 1440p upscale are complete. Phase 9 can now run.")
 
 
 if __name__ == "__main__":

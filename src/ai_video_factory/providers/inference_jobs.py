@@ -178,6 +178,15 @@ class InferenceJobExecutor:
             now = time.monotonic()
             if snapshot.status == QueueJobStatus.PENDING:
                 if now >= pending_deadline:
+                    reconciled = _reconcile_cached_response(self._storage, request)
+                    if reconciled is not None:
+                        logger.warning(
+                            "Inference transport exceeded pending timeout but its R2 artifact "
+                            "is complete; replaying application_job_id=%s transport_job_id=%s",
+                            request.job_id,
+                            snapshot.id,
+                        )
+                        return reconciled
                     self._raise_timeout(
                         request=request,
                         snapshot_status=snapshot.status,
@@ -190,6 +199,15 @@ class InferenceJobExecutor:
                 if running_deadline is None:
                     running_deadline = now + self._timeout_seconds
                 if now >= running_deadline:
+                    reconciled = _reconcile_cached_response(self._storage, request)
+                    if reconciled is not None:
+                        logger.warning(
+                            "Inference transport exceeded running timeout but its R2 artifact "
+                            "is complete; replaying application_job_id=%s transport_job_id=%s",
+                            request.job_id,
+                            snapshot.id,
+                        )
+                        return reconciled
                     self._raise_timeout(
                         request=request,
                         snapshot_status=snapshot.status,
@@ -324,6 +342,23 @@ def _terminal_rejection_detail(output: Any) -> str | None:
     if not isinstance(detail, str) or not detail.strip():
         return None
     return detail.strip()
+
+
+def _reconcile_cached_response(
+    storage: ObjectStorage,
+    request: InferenceJobRequest,
+) -> InferenceJobResponse | None:
+    """Recover a completed R2 artifact when the queue status is stale at a deadline."""
+
+    try:
+        return cached_inference_response(storage, request)
+    except RuntimeError as exc:
+        logger.warning(
+            "Inference timeout cache reconciliation rejected application_job_id=%s: %s",
+            request.job_id,
+            exc,
+        )
+        return None
 
 
 def _artifact_from_stored(stored: StoredObject, sha256: str) -> OutputArtifact:

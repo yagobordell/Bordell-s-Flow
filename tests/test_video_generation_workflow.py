@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from io import BytesIO
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 import ai_video_factory.workflows.video_generation as video_generation
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
@@ -15,6 +17,7 @@ from ai_video_factory.providers.job_queue import (
     QueueJobNotFoundError,
     QueueJobSnapshot,
     QueueJobStatus,
+    TransientQueueError,
 )
 from ai_video_factory.workflows.video_generation import (
     VideoGenerationIncompleteError,
@@ -130,13 +133,27 @@ class FakeQueue:
             ).model_dump(mode="json")
         return QueueJobSnapshot(id=transport_job_id, status=status, output=output)
 
+    def cancel(self, transport_job_id: str) -> QueueJobSnapshot:
+        self.operations.append(("cancel", transport_job_id))
+        self.statuses[transport_job_id] = QueueJobStatus.CANCELLED
+        return QueueJobSnapshot(
+            id=transport_job_id,
+            status=QueueJobStatus.CANCELLED,
+        )
+
+
+def _png_bytes(value: int) -> bytes:
+    buffer = BytesIO()
+    Image.new("RGB", (1536, 864), color=(value, value, value)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
 
 def _inputs(tmp_path: Path):
     keyframes_dir = tmp_path / "phase6"
     assets_dir = keyframes_dir / "storyboard_keyframes"
     assets_dir.mkdir(parents=True)
-    (assets_dir / "shot_001.png").write_bytes(b"png-one")
-    (assets_dir / "shot_002.png").write_bytes(b"png-two")
+    (assets_dir / "shot_001.png").write_bytes(_png_bytes(10))
+    (assets_dir / "shot_002.png").write_bytes(_png_bytes(20))
 
     keyframes = [
         StoryboardKeyframe(shot_id=1, uri="storyboard_keyframes/shot_001.png"),
@@ -172,6 +189,9 @@ def test_plan_is_deterministic_and_preserves_ltx_frame_rules(tmp_path: Path) -> 
     assert [item.request.job_id for item in first] == [item.request.job_id for item in second]
     assert [item.request.parameters["num_frames"] for item in first] == [89, 65]
     assert [item.request.parameters["seed"] for item in first] == [43, 44]
+    assert first[0].request.parameters["width"] == 1280
+    assert first[0].request.parameters["height"] == 720
+    assert first[0].request.parameters["fps"] == 24
     assert first[0].request.output.key.endswith("/shot_001.mp4")
     assert first[1].request.output.key.endswith("/shot_002.mp4")
 
@@ -251,6 +271,130 @@ def test_fanout_submits_all_jobs_before_polling_and_resume_skips_successes(
     )
     assert sum(queue.submit_counts.values()) == 2
     assert queue.operations == []
+
+
+
+def test_polling_tolerates_transient_queue_get_without_cancelling_jobs(
+    tmp_path: Path,
+) -> None:
+    base, keyframes, prompts, timings = _inputs(tmp_path)
+    plan = build_video_generation_plan(
+        keyframes,
+        prompts,
+        timings,
+        keyframe_base_dir=base,
+    )
+    storage = FakeStorage()
+    queue = FakeQueue(storage)
+    original_get = queue.get
+    transient_raised = False
+
+    def flaky_get(transport_job_id: str) -> QueueJobSnapshot:
+        nonlocal transient_raised
+        if not transient_raised:
+            transient_raised = True
+            raise TransientQueueError("temporary Salad control-plane reset")
+        queue.statuses[transport_job_id] = QueueJobStatus.SUCCEEDED
+        return original_get(transport_job_id)
+
+    queue.get = flaky_get  # type: ignore[method-assign]
+
+    manifest, clips = run_video_generation(
+        plan,
+        queue=queue,
+        storage=storage,
+        manifest_path=tmp_path / "manifest.json",
+        clips_dir=tmp_path / "clips",
+        poll_seconds=0.001,
+        timeout_seconds=1.0,
+        dispatch_timeout_seconds=0.01,
+    )
+
+    assert transient_raised
+    assert [clip.shot_id for clip in clips] == [1, 2]
+    assert all(state.transport_status == "succeeded" for state in manifest.jobs)
+    assert [op for op, _ in queue.operations].count("cancel") == 0
+    assert sum(queue.submit_counts.values()) == 2
+
+
+def test_resume_preserves_transport_on_transient_status_read(tmp_path: Path) -> None:
+    base, keyframes, prompts, timings = _inputs(tmp_path)
+    plan = build_video_generation_plan(
+        keyframes,
+        prompts,
+        timings,
+        keyframe_base_dir=base,
+    )
+    storage = FakeStorage()
+    queue = FakeQueue(storage)
+    manifest_path = tmp_path / "manifest.json"
+    clips_dir = tmp_path / "clips"
+
+    first, _ = run_video_generation(
+        plan,
+        queue=queue,
+        storage=storage,
+        manifest_path=manifest_path,
+        clips_dir=clips_dir,
+        wait=False,
+    )
+    original_transport_ids = [state.transport_job_id for state in first.jobs]
+    original_get = queue.get
+    transient_raised = False
+
+    def flaky_get(transport_job_id: str) -> QueueJobSnapshot:
+        nonlocal transient_raised
+        if not transient_raised:
+            transient_raised = True
+            raise TransientQueueError("temporary Salad control-plane reset")
+        return original_get(transport_job_id)
+
+    queue.get = flaky_get  # type: ignore[method-assign]
+
+    resumed, _ = run_video_generation(
+        plan,
+        queue=queue,
+        storage=storage,
+        manifest_path=manifest_path,
+        clips_dir=clips_dir,
+        wait=False,
+    )
+
+    assert transient_raised
+    assert [state.transport_job_id for state in resumed.jobs] == original_transport_ids
+    assert [state.submission_count for state in resumed.jobs] == [1, 1]
+
+def test_first_dispatch_timeout_cancels_stuck_pending_transports(
+    tmp_path: Path,
+) -> None:
+    base, keyframes, prompts, timings = _inputs(tmp_path)
+    plan = build_video_generation_plan(
+        keyframes,
+        prompts,
+        timings,
+        keyframe_base_dir=base,
+    )
+    storage = FakeStorage()
+    queue = FakeQueue(storage)
+    manifest_path = tmp_path / "phase8" / "video_generation_manifest.json"
+
+    with pytest.raises(TimeoutError, match="did not dispatch any queued job"):
+        run_video_generation(
+            plan,
+            queue=queue,
+            storage=storage,
+            manifest_path=manifest_path,
+            clips_dir=tmp_path / "phase8" / "video_clips",
+            poll_seconds=0.001,
+            timeout_seconds=1.0,
+            dispatch_timeout_seconds=0.002,
+        )
+
+    assert [op for op, _ in queue.operations].count("cancel") == 2
+    saved = VideoGenerationManifest.model_validate_json(
+        manifest_path.read_text(encoding="utf-8")
+    )
+    assert all(state.transport_status == "cancelled" for state in saved.jobs)
 
 
 def test_resume_resubmits_purged_transport_with_same_application_id(
@@ -374,11 +518,33 @@ def test_terminal_failure_is_persisted_for_a_later_resume(tmp_path: Path) -> Non
         clips_dir=tmp_path / "clips",
         wait=False,
     )
+    terminal_payloads: dict[str, dict[str, object]] = {}
     for state in manifest.jobs:
         assert state.transport_job_id is not None
         queue.statuses[state.transport_job_id] = QueueJobStatus.FAILED
+        terminal_payloads[state.transport_job_id] = {
+            "id": state.transport_job_id,
+            "status": "failed",
+            "events": [{"action": "rejected"}],
+        }
 
-    with pytest.raises(VideoGenerationIncompleteError, match="Rerun to resume"):
+    original_get = queue.get
+
+    def failed_get(transport_job_id: str) -> QueueJobSnapshot:
+        snapshot = original_get(transport_job_id)
+        return QueueJobSnapshot(
+            id=snapshot.id,
+            status=snapshot.status,
+            output=snapshot.output,
+            provider_payload=terminal_payloads[transport_job_id],
+        )
+
+    queue.get = failed_get  # type: ignore[method-assign]
+
+    with pytest.raises(
+        VideoGenerationIncompleteError,
+        match=r"transport_job_id=.*provider_payload=.*rejected",
+    ):
         run_video_generation(
             plan,
             queue=queue,
@@ -392,6 +558,8 @@ def test_terminal_failure_is_persisted_for_a_later_resume(tmp_path: Path) -> Non
 
     saved = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert [item["transport_status"] for item in saved["jobs"]] == ["failed", "failed"]
+    assert all(item["last_terminal_transport_job_id"] for item in saved["jobs"])
+    assert all(item["last_terminal_payload"]["status"] == "failed" for item in saved["jobs"])
 
 
 def test_manifest_rejects_changed_generation_plan(tmp_path: Path) -> None:
@@ -434,6 +602,49 @@ def test_manifest_rejects_changed_generation_plan(tmp_path: Path) -> None:
             wait=False,
         )
 
+
+
+
+def test_transport_route_change_archives_queue_local_resume_state(
+    tmp_path: Path,
+) -> None:
+    base, keyframes, prompts, timings = _inputs(tmp_path)
+    plan = build_video_generation_plan(
+        keyframes,
+        prompts,
+        timings,
+        keyframe_base_dir=base,
+    )
+    storage = FakeStorage()
+    old_queue = FakeQueue(storage)
+    manifest_path = tmp_path / "manifest.json"
+
+    old_manifest, _ = run_video_generation(
+        plan,
+        queue=old_queue,
+        storage=storage,
+        manifest_path=manifest_path,
+        clips_dir=tmp_path / "clips",
+        wait=False,
+        transport_route="old-queue",
+    )
+    assert all(state.transport_status == "pending" for state in old_manifest.jobs)
+
+    new_queue = FakeQueue(storage)
+    migrated, _ = run_video_generation(
+        plan,
+        queue=new_queue,
+        storage=storage,
+        manifest_path=manifest_path,
+        clips_dir=tmp_path / "clips",
+        wait=False,
+        transport_route="new-queue",
+    )
+
+    assert migrated.transport_route == "new-queue"
+    assert [state.submission_count for state in migrated.jobs] == [1, 1]
+    assert sum(new_queue.submit_counts.values()) == 2
+    assert list(tmp_path.glob("manifest.archive-*.json"))
 
 
 def test_manifest_replace_retries_transient_windows_sharing_violation(

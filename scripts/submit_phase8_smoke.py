@@ -103,10 +103,12 @@ def _one_by_id[ModelT](items: list[ModelT], identifier: int, attribute: str) -> 
     return matches[0]
 
 
-def _ffprobe(path: Path) -> dict[str, Any] | None:
+def _ffprobe(path: Path) -> dict[str, Any]:
     executable = shutil.which("ffprobe")
     if executable is None:
-        return None
+        raise RuntimeError(
+            "ffprobe is required for Phase 8 smoke validation; refusing unverified success"
+        )
     completed = subprocess.run(
         [
             executable,
@@ -149,8 +151,8 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("data/output/phase5/shot_timings.json"),
     )
-    parser.add_argument("--width", type=int, default=768)
-    parser.add_argument("--height", type=int, default=1280)
+    parser.add_argument("--width", type=int, default=1280)
+    parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--wait", action=argparse.BooleanOptionalAction, default=True)
@@ -351,7 +353,10 @@ def main() -> None:
 
     response_path.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
     if current["status"] != "succeeded":
-        raise RuntimeError(f"Salad job ended with status {current['status']}")
+        terminal_detail = json.dumps(current, ensure_ascii=False, sort_keys=True)
+        raise RuntimeError(
+            f"Salad job ended with status {current['status']}: {terminal_detail}"
+        )
 
     output = _normalized_queue_output(current.get("output"))
     if output.get("status") != "succeeded":
@@ -376,20 +381,42 @@ def main() -> None:
         )
 
     probe = _ffprobe(destination)
-    if probe is not None:
-        probe_path = args.output_dir / f"shot_{args.shot_id:03d}-ffprobe.json"
-        probe_path.write_text(json.dumps(probe, indent=2) + "\n", encoding="utf-8")
-        video_streams = [
-            item for item in probe.get("streams", []) if item.get("codec_type") == "video"
-        ]
-        audio_streams = [
-            item for item in probe.get("streams", []) if item.get("codec_type") == "audio"
-        ]
-        if len(video_streams) != 1:
-            raise RuntimeError(f"expected exactly one video stream, got {len(video_streams)}")
-        if audio_streams:
-            raise RuntimeError("Phase 8 MP4 unexpectedly contains an audio stream")
-        print(probe_path, flush=True)
+    probe_path = args.output_dir / f"shot_{args.shot_id:03d}-ffprobe.json"
+    probe_path.write_text(json.dumps(probe, indent=2) + "\n", encoding="utf-8")
+    video_streams = [
+        item for item in probe.get("streams", []) if item.get("codec_type") == "video"
+    ]
+    audio_streams = [
+        item for item in probe.get("streams", []) if item.get("codec_type") == "audio"
+    ]
+    if len(video_streams) != 1:
+        raise RuntimeError(f"expected exactly one video stream, got {len(video_streams)}")
+    if audio_streams:
+        raise RuntimeError("Phase 8 MP4 unexpectedly contains an audio stream")
+    video_stream = video_streams[0]
+    if (
+        int(video_stream.get("width", 0)) != args.width
+        or int(video_stream.get("height", 0)) != args.height
+    ):
+        raise RuntimeError(
+            "Phase 8 MP4 dimensions do not match the requested contract: "
+            f"{video_stream.get('width')}x{video_stream.get('height')} "
+            f"!= {args.width}x{args.height}"
+        )
+    rate = str(
+        video_stream.get("avg_frame_rate")
+        or video_stream.get("r_frame_rate")
+        or ""
+    )
+    if "/" not in rate:
+        raise RuntimeError(f"Phase 8 MP4 has invalid frame rate metadata: {rate!r}")
+    numerator, denominator = rate.split("/", maxsplit=1)
+    actual_fps = float(numerator) / float(denominator)
+    if abs(actual_fps - args.fps) > 1e-6:
+        raise RuntimeError(
+            f"Phase 8 MP4 fps {actual_fps} does not match requested {args.fps}"
+        )
+    print(probe_path, flush=True)
 
     print(f"downloaded={destination.resolve()}", flush=True)
     print(f"sha256={downloaded_sha256}", flush=True)

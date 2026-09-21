@@ -23,7 +23,6 @@ def build_whisper_job_request(
     audio_sha256: str,
     filename: str,
     model: str,
-    prompt: str,
     language: str | None,
 ) -> InferenceJobRequest:
     """Build the canonical deterministic Whisper request for audit and execution."""
@@ -35,7 +34,6 @@ def build_whisper_job_request(
     suffix = Path(filename).suffix or ".wav"
     job_id = whisper_application_job_id(
         audio_sha256=audio_sha256,
-        prompt=prompt,
         language=language,
         model_id=model,
     )
@@ -58,7 +56,6 @@ def build_whisper_job_request(
         parameters={
             "generation_profile": WHISPER_GENERATION_PROFILE,
             "model_id": model,
-            "prompt": prompt,
             "language": language,
         },
     )
@@ -110,6 +107,11 @@ class SaladWhisperTranscriptionProvider:
         if not audio:
             raise ValueError("Whisper transcription audio must be non-empty")
 
+        # The known narration text remains source truth for downstream validation.
+        # Do not feed it into Whisper decoder prompt_ids: this long-form ASR path
+        # intentionally transcribes only from audio + explicit language.
+        del prompt
+
         self._temp_dir.mkdir(parents=True, exist_ok=True)
         suffix = Path(filename).suffix or ".wav"
         with tempfile.TemporaryDirectory(prefix="whisper-client-", dir=self._temp_dir) as tmp:
@@ -121,7 +123,6 @@ class SaladWhisperTranscriptionProvider:
                 audio_sha256=audio_sha256,
                 filename=filename,
                 model=model,
-                prompt=prompt,
                 language=language,
             )
             response = cached_inference_response(self._executor.storage, request)

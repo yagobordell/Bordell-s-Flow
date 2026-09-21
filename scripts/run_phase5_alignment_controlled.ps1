@@ -12,8 +12,11 @@ param(
     [Parameter(Mandatory)]
     [string]$Output,
 
+    [ValidatePattern("^[A-Za-z][A-Za-z0-9_-]{1,15}$")]
+    [string]$Language = "en",
+
     [ValidateRange(10, 120)]
-    [int]$PrewarmTimeoutMinutes = 30,
+    [int]$PrewarmTimeoutMinutes = 120,
 
     [ValidateRange(30, 900)]
     [int]$PendingTimeoutSeconds = 180,
@@ -35,6 +38,17 @@ $OptimizedPrewarm = Join-Path $PSScriptRoot "start_salad_optimized_prewarm.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $CacheAudit = Join-Path $PSScriptRoot "audit_phase5_alignment_cache.py"
 $Runner = Join-Path $PSScriptRoot "run_phase5_alignment.py"
+$ServicesPath = Join-Path (Split-Path $PSScriptRoot -Parent) "deploy\salad\services.json"
+
+$Services = Get-Content -LiteralPath $ServicesPath -Raw | ConvertFrom-Json
+$WhisperService = $Services.services.whisper
+$env:SALAD_ORGANIZATION = [string]$Services.stack.organization
+$env:SALAD_PROJECT = [string]$Services.stack.project
+$env:SALAD_WHISPER_QUEUE_NAME = [string]$WhisperService.queue_name
+Write-Host (
+    "Phase 5 canonical Salad route: queue={0} language={1}" -f `
+    $env:SALAD_WHISPER_QUEUE_NAME, $Language
+) -ForegroundColor DarkGray
 
 foreach ($Path in @($Source, $Narration, $Audio)) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -56,6 +70,7 @@ Write-Host "=== Phase 5 alignment cache: resolve replay before Whisper allocatio
 & python $CacheAudit `
     --source $Source `
     --audio $Audio `
+    --language $Language `
     --json-output $CachePlanPath
 if ($LASTEXITCODE -ne 0) {
     Remove-Item -LiteralPath $CachePlanPath -Force -ErrorAction SilentlyContinue
@@ -69,7 +84,9 @@ $RunnerArguments = @(
     "--source", $Source,
     "--narration", $Narration,
     "--audio", $Audio,
+    "--language", $Language,
     "--output", $Output,
+    "--queue-name", $env:SALAD_WHISPER_QUEUE_NAME,
     "--poll-seconds", $PollSeconds,
     "--pending-timeout-seconds", $PendingTimeoutSeconds,
     "--timeout-seconds", $RunningTimeoutSeconds
@@ -89,6 +106,7 @@ if ($WhisperCacheHit) {
 $PrewarmArguments = @{
     Service = "whisper"
     TimeoutMinutes = $PrewarmTimeoutMinutes
+    HoldReadyReplica = $true
 }
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true

@@ -6,7 +6,8 @@ from ai_video_factory.providers.ideogram_caption import (
 )
 
 STORYBOARD_FRAME_INSTRUCTIONS = """\
-Eres un bot de storyboard para un vídeo documental vertical generado con Ideogram 4.
+Eres un bot de storyboard para un vídeo documental cinematográfico horizontal 16:9
+generado con Ideogram 4.
 
 Recibes un shot ya planificado, su duración real y las referencias visuales canónicas de las
 entidades que participan. Cuando existe, también recibes el caption JSON del frame anterior.
@@ -34,7 +35,16 @@ Reglas estrictas:
   con adjetivos distintos; cambia de forma perceptible el recurso visual, el contexto o el estado.
 - La duración sirve para limitar la complejidad visual: representa un momento claro que pueda
   sostener el shot, no una secuencia de acciones comprimida en una sola imagen.
-- Puedes decidir composición, escala de plano, ángulo de cámara estático y distribución espacial.
+- Puedes decidir composición, escala de plano, ángulo de cámara estático y distribución
+  espacial.
+- Compón para un canvas landscape 16:9 usando de verdad todo el eje horizontal; evita una
+  composición de retrato vertical centrada dentro de un lienzo ancho.
+- Deja breathing room lateral en la dirección probable de movimiento y mantén sujetos importantes
+  dentro de márgenes seguros, lejos de los bordes y de zonas que un crop pudiera comprometer.
+- Cuando el entorno sea visible, crea capas claras de foreground, midground y background para que
+  el plano pueda admitir parallax, tracking lateral o un dolly/push-in controlado.
+- Prefiere masas visuales grandes y legibles; evita llenar el frame de detalle diminuto difícil de
+  mantener temporalmente durante image-to-video.
 - `bbox` usa coordenadas normalizadas [ymin, xmin, ymax, xmax] entre 0 y 1000 y es opcional.
 - Incluye solo elementos de tipo objeto. No generes elementos de texto.
 - No generes movimiento de cámara, transición, duración, instrucciones de vídeo ni múltiples
@@ -71,8 +81,8 @@ class StoryboardFrameBot:
             raise ValueError("StoryboardFrameBot requires matching shot and timing IDs")
         if not visual_style.strip():
             raise ValueError("Storyboard visual style must be non-empty")
-        if not aspect_ratio.strip():
-            raise ValueError("Storyboard aspect ratio must be non-empty")
+        if aspect_ratio.strip() != "16:9":
+            raise ValueError("Storyboard production aspect ratio must be exactly 16:9")
 
         duration = timing.end_seconds - timing.start_seconds
         if duration <= 0:

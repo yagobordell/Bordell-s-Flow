@@ -8,7 +8,13 @@ def test_ideogram_phases_pin_replica_before_readiness() -> None:
     assert "$TargetMinReplicas = if ($HoldReadyReplica) { 1 } else { 0 }" in prewarm
     assert '$PrewarmPatch["queue_autoscaler"]' in prewarm
     assert "min_replicas = 1" in prewarm
-    assert prewarm.index("$PrewarmPatch") < prewarm.index('"$GroupUrl/start"')
+    assert "max_replicas = 1" in prewarm
+    assert "Test-RemoteAutoscalerBounds" in prewarm
+    assert "-ExpectedMaxReplicas 1" in prewarm
+    main_prewarm = prewarm.split("$PrewarmPatch = @{" , maxsplit=1)[1]
+    assert main_prewarm.index('$PrewarmPatch["queue_autoscaler"]') < main_prewarm.index(
+        '"$GroupUrl/start"'
+    )
     assert "Test-RemoteAutoscalerMinReplicas" in prewarm
     assert "-ExpectedMinReplicas $TargetMinReplicas" in prewarm
     assert "Optimized prewarm cannot use -HoldReadyReplica because Salad did not expose" in prewarm
@@ -25,3 +31,70 @@ def test_ideogram_phases_pin_replica_before_readiness() -> None:
         assert runner.index("start_salad_optimized_prewarm.ps1") < runner.index(phase_runner)
         assert "-Action Stop" in runner
         assert "cleanup_salad_queue.ps1" in runner
+
+
+def test_phase8_holds_ready_ltx_replica_through_dispatch() -> None:
+    runner = Path("scripts/run_phase8_videos_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'Service = "ltx25"' in runner
+    assert "HoldReadyReplica = $true" in runner
+    assert "DispatchTimeoutSeconds = 300" in runner
+    prewarm_block = runner.split("$PrewarmArguments = @{", maxsplit=1)[1]
+    assert prewarm_block.index("HoldReadyReplica = $true") < prewarm_block.index(
+        "& $OptimizedPrewarm @PrewarmArguments"
+    )
+    assert "--submit-only" in runner
+    assert 'Mode = "WarmScaleOut"' in runner
+    submit_index = runner.index("--submit-only")
+    scaleout_index = runner.index('Mode = "WarmScaleOut"')
+    final_wait_index = runner.rindex("--dispatch-timeout-seconds")
+    assert submit_index < scaleout_index < final_wait_index
+    assert "-Action Stop" in runner
+
+
+def test_warm_scaleout_control_preserves_one_replica_floor() -> None:
+    control = Path("scripts/restore_salad_scale_to_zero.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert '[ValidateSet("Manifest", "WarmScaleOut")]' in control
+    assert 'if ($Mode -eq "WarmScaleOut")' in control
+    assert (
+        'throw "WarmScaleOut is currently reserved for the ltx25 production lifecycle."'
+        in control
+    )
+    assert "$Autoscaler.min_replicas = 1" in control
+    assert "max_replicas = [int]$Definition.autoscaler.max_replicas" in control
+    assert '"warm scale-out autoscaler armed"' in control
+
+
+def test_phase8_terminal_retry_keeps_single_warm_worker_and_reports_failures() -> None:
+    runner = Path("scripts/run_phase8_videos_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "terminal_retry_jobs" in runner
+    assert "$RetryTerminalOnly" in runner
+    assert "keep exactly one warm worker pinned" in runner
+    assert "min_replicas=1/max_replicas=1" in runner
+    retry_block = runner.split("if ($RetryTerminalOnly) {", maxsplit=1)[1].split(
+        "else {", maxsplit=1
+    )[0]
+    assert 'Mode = "WarmScaleOut"' not in retry_block
+    assert "inspect_inference_job_error.py" in runner
+    assert "--application-job-id" in runner
+
+
+def test_realesrgan_terminal_retry_pins_one_fresh_worker_and_reports_failure() -> None:
+    runner = Path("scripts/run_phase8_upscale_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "terminal_retry_jobs" in runner
+    assert "$RetryTerminalOnly" in runner
+    assert '$PrewarmArguments["HoldReadyReplica"] = $true' in runner
+    assert "min_replicas=1/max_replicas=1" in runner
+    assert "inspect_inference_job_error.py" in runner
+    assert "--application-job-id" in runner

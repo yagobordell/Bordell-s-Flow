@@ -2,7 +2,11 @@ import asyncio
 from pathlib import Path
 
 from ai_video_factory.domain import Shot, StoryboardFrame, StoryboardKeyframe
-from ai_video_factory.providers.images import ImageProvider, ImageQuality
+from ai_video_factory.providers.images import (
+    ImageProvider,
+    ImageQuality,
+    require_generated_image_geometry,
+)
 
 
 async def generate_storyboard_keyframes(
@@ -38,6 +42,12 @@ async def generate_storyboard_keyframes(
         raise ValueError("Storyboard keyframe workflow requires PNG provider output")
     if any(not image.content for image in generated_images):
         raise ValueError("Storyboard keyframe provider returned an empty image payload")
+    for frame, image in zip(frames, generated_images, strict=True):
+        require_generated_image_geometry(
+            image,
+            size=size,
+            label=f"Storyboard keyframe {frame.shot_id}",
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     keyframes: list[StoryboardKeyframe] = []

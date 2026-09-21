@@ -40,7 +40,7 @@ The validated profile is:
 
 ```text
 model: openai/whisper-large-v3-turbo
-generation profile: whisper-large-v3-turbo-fp16-v1
+generation profile: whisper-large-v3-turbo-fp16-no-prompt-greedy-v2
 dtype: float16
 device: cuda:0
 task: transcribe
@@ -48,9 +48,11 @@ timestamps: word
 language default in Phase 5: en
 ```
 
-The canonical source script is preserved as Whisper prompt context. The backend converts it to
-`prompt_ids`, while the requested language is passed as a Whisper generation hint. The worker emits
-only validated word text plus start/end seconds.
+The canonical source script is deliberately not passed into Whisper decoder `prompt_ids`.
+For long-form narration the worker transcribes from audio plus the explicit language hint, with
+`condition_on_prev_tokens=False` and greedy `temperature=0.0`. The known source script remains
+the business truth used by Phase 5 to validate transcript quality and by downstream timing/caption
+logic; it is not decoder context.
 
 Word timestamps produced by the Transformers Whisper pipeline are approximate model timestamps; the
 existing Phase 5 validation remains responsible for ordering and narration-duration invariants.
@@ -69,7 +71,7 @@ Audio is addressed by SHA-256 under:
 phase5/whisper/inputs/<audio-sha256>.wav
 ```
 
-The deterministic application job ID fingerprints the audio SHA, prompt, language, model and
+The deterministic application job ID fingerprints the audio SHA, language, model and generation
 profile. Results are persisted under:
 
 ```text
@@ -140,11 +142,8 @@ queue-backed smoke on 2026-09-12 completed successfully with ten ordered word ti
 OOM. The first cold-start smoke took `1046.931` seconds including scale-from-zero and model bootstrap;
 this is a correctness baseline rather than a steady-state inference benchmark.
 
-The validated container image is:
-
-```text
-docker.io/yagobordell/ai-video-factory@sha256:28ef8956398a646992dc1741ea6f9139dac93394697d11bd23f398ee8db41084
-```
+The no-prompt profile is deployed from the versioned `whisper-large-v3-turbo-v4` image tag. The
+immutable digest is resolved and recorded by `Prepare` before validation.
 
 Full validation evidence and the deployment issues found along the way are recorded in
 `docs/whisper-salad-validation-2026-09-12.md`.

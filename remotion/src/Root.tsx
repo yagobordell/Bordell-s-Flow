@@ -7,8 +7,8 @@ import {validateRenderProps} from "./validation";
 
 const defaultProps: RemotionRenderProps = {
   schema_version: "2",
-  width: 768,
-  height: 1280,
+  width: 2560,
+  height: 1440,
   fps: 24,
   total_frames: 1,
   shots: [],
@@ -42,8 +42,8 @@ export const RemotionRoot = () => {
         component={Phase9Visual}
         durationInFrames={1}
         fps={24}
-        width={768}
-        height={1280}
+        width={2560}
+        height={1440}
         defaultProps={defaultProps}
         calculateMetadata={calculateMetadata}
       />
@@ -52,8 +52,8 @@ export const RemotionRoot = () => {
         component={Phase9Motion}
         durationInFrames={1}
         fps={24}
-        width={768}
-        height={1280}
+        width={2560}
+        height={1440}
         defaultProps={defaultProps}
         calculateMetadata={calculateMetadata}
       />

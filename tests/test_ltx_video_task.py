@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from PIL import Image
 from pydantic import ValidationError
 
 import ai_video_factory.gpu.ltx_video as ltx_video
@@ -55,8 +56,8 @@ def parameters(**updates: Any) -> dict[str, Any]:
         "generation_profile": LTX_GENERATION_PROFILE,
         "prompt": "A deliberate samurai motion shot.",
         "seed": 43,
-        "width": 768,
-        "height": 1280,
+        "width": 1280,
+        "height": 720,
         "fps": 24,
         "num_frames": 121,
     }
@@ -109,8 +110,9 @@ def test_ltx_num_frames_rejects_invalid_duration_or_fps() -> None:
 def test_ltx_parameters_enforce_generation_profile_and_shape() -> None:
     validated = LTXVideoParameters.model_validate(parameters())
     assert validated.generation_profile == LTX_GENERATION_PROFILE
-    assert validated.width == 768
-    assert validated.height == 1280
+    assert LTX_GENERATION_PROFILE.endswith("gridpad-eagersdpa-v4")
+    assert validated.width == 1280
+    assert validated.height == 720
     assert validated.num_frames == 121
 
     with pytest.raises(ValidationError, match="generation_profile"):
@@ -204,7 +206,7 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     model_root = tmp_path / "models"
     _seed_model_files(model_root)
     keyframe = tmp_path / "keyframe.png"
-    keyframe.write_bytes(b"png")
+    Image.new("RGB", (1280, 720), (32, 64, 96)).save(keyframe, format="PNG")
 
     state: dict[str, Any] = {
         "pipeline_builds": 0,
@@ -213,6 +215,13 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
         "conditionings": [],
     }
 
+    class FakeChunk:
+        shape = (61, 768, 1280, 3)
+
+        def __getitem__(self, item: Any) -> str:
+            state.setdefault("video_crops", []).append(item)
+            return "cropped-chunk"
+
     class FakePipeline:
         def __init__(self, **kwargs: Any) -> None:
             state["pipeline_builds"] += 1
@@ -220,7 +229,11 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
 
         def __call__(self, **kwargs: Any) -> Any:
             state["pipeline_calls"].append(kwargs)
-            return SimpleNamespace(video="decoded-video", num_frames=121, tiling_config="tiling")
+            return SimpleNamespace(
+                video=iter([FakeChunk(), FakeChunk()]),
+                num_frames=121,
+                tiling_config="tiling",
+            )
 
     class FakeModelPaths:
         @classmethod
@@ -238,6 +251,15 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
 
     class FakeOffloadMode:
         CPU = "cpu"
+
+    class FakeDiffvaeApply:
+        @staticmethod
+        def natten_available() -> bool:
+            return True
+
+        @staticmethod
+        def triton_na_available() -> bool:
+            return True
 
     class FakeCuda:
         @staticmethod
@@ -268,6 +290,7 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
         image_conditioning_input=fake_conditioning,
         encode_video=fake_encode_video,
         get_video_chunks_number=lambda num_frames, tiling: 3,
+        diffvae_apply=FakeDiffvaeApply,
     )
     monkeypatch.setattr(ltx_video, "_load_ltx_bindings", lambda: bindings)
 
@@ -294,8 +317,18 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     assert state["pipeline_init"]["quantization"] == "fp8-policy"
     assert state["pipeline_init"]["offload_mode"] == "cpu"
     assert state["pipeline_init"]["device"] == "device:cuda"
+    assert FakeDiffvaeApply.natten_available() is False
+    assert FakeDiffvaeApply.triton_na_available() is False
     assert state["conditionings"][0]["frame_idx"] == 0
     assert state["conditionings"][0]["strength"] == 1.0
+    assert state["pipeline_calls"][0]["width"] == 1280
+    assert state["pipeline_calls"][0]["height"] == 768
+    cropped_video = state["encodes"][0]["video"]
+    assert list(cropped_video) == ["cropped-chunk", "cropped-chunk"]
+    assert state["video_crops"] == [
+        (Ellipsis, slice(24, 744), slice(0, 1280), slice(None)),
+        (Ellipsis, slice(24, 744), slice(0, 1280), slice(None)),
+    ]
     assert len(state["encodes"]) == 2
     assert all(call["audio"] is None for call in state["encodes"])
 

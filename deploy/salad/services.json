@@ -9,7 +9,8 @@
       "fish_speech",
       "ideogram4",
       "flux2_klein",
-      "ltx25"
+      "ltx25",
+      "realesrgan"
     ],
     "shared_required_environment": [
       "POSTGRES_DSN",
@@ -26,11 +27,11 @@
   "services": {
     "ltx25": {
       "display_name": "AI Video Factory LTX 2.5",
-      "group_name": "ai-video-factory-ltx25-worker",
-      "queue_name": "ai-video-factory-ltx25-jobs",
+      "group_name": "ai-video-factory-ltx25-worker-v2",
+      "queue_name": "ai-video-factory-ltx25-jobs-v2",
       "dockerfile": "docker/workers/ltx25/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:ltx25-torch211-cu128-natten0216-xet-v3",
-      "priority": "medium",
+      "image": "docker.io/yagobordell/ai-video-factory:ltx25-torch211-cu128-eagersdpa-xet-v4",
+      "priority": "high",
       "resources": {
         "cpu": 8,
         "memory": 40960,
@@ -49,7 +50,8 @@
         "LTX_MODEL_REVISION": "main",
         "LTX_DEVICE": "cuda",
         "SALAD_QUEUE_ENABLED": "true",
-        "SALAD_LOG_LEVEL": "info"
+        "SALAD_LOG_LEVEL": "info",
+        "PYTHONFAULTHANDLER": "1"
       },
       "required_environment": [
         "HF_TOKEN"
@@ -227,10 +229,10 @@
     },
     "whisper": {
       "display_name": "AI Video Factory Whisper",
-      "group_name": "ai-video-factory-whisper-worker",
-      "queue_name": "ai-video-factory-whisper-jobs",
+      "group_name": "ai-video-factory-whisper-worker-v4",
+      "queue_name": "ai-video-factory-whisper-jobs-v2",
       "dockerfile": "docker/workers/whisper/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:whisper-large-v3-turbo-v2",
+      "image": "docker.io/yagobordell/ai-video-factory:whisper-large-v3-turbo-v4",
       "priority": "medium",
       "resources": {
         "cpu": 4,
@@ -289,7 +291,8 @@
         "polling_period": 30,
         "max_upscale_per_minute": 1,
         "max_downscale_per_minute": 1
-      }
+      },
+      "autostart_policy": false
     },
     "flux2_klein": {
       "display_name": "AI Video Factory FLUX.2 Klein 4B Fallback",
@@ -427,6 +430,61 @@
         "desired_queue_length": 1,
         "polling_period": 30,
         "max_upscale_per_minute": 1,
+        "max_downscale_per_minute": 1
+      }
+    },
+    "realesrgan": {
+      "display_name": "AI Video Factory Real-ESRGAN x2",
+      "group_name": "ai-video-factory-realesrgan-worker",
+      "queue_name": "ai-video-factory-realesrgan-jobs",
+      "dockerfile": "docker/workers/realesrgan/Dockerfile",
+      "image": "docker.io/yagobordell/ai-video-factory:realesrgan-x2plus-v2",
+      "priority": "medium",
+      "resources": {
+        "cpu": 4,
+        "memory": 16384,
+        "shm_size": 4096,
+        "storage_amount": 34359738368,
+        "gpu_class_names": [
+          "RTX 3090 (24 GB)"
+        ]
+      },
+      "environment": {
+        "INFERENCE_WORKER_MODE": "production",
+        "INFERENCE_WORKER_LEASE_SECONDS": "180",
+        "INFERENCE_WORKER_HEARTBEAT_SECONDS": "30",
+        "REALESRGAN_MODEL_ROOT": "/workspace/models/realesrgan",
+        "REALESRGAN_DEVICE": "cuda",
+        "SALAD_QUEUE_ENABLED": "true",
+        "SALAD_LOG_LEVEL": "info"
+      },
+      "required_environment": [],
+      "probes": {
+        "startup": {
+          "path": "/health",
+          "period_seconds": 10,
+          "timeout_seconds": 5,
+          "failure_threshold": 18
+        },
+        "readiness": {
+          "path": "/ready",
+          "period_seconds": 10,
+          "timeout_seconds": 5,
+          "failure_threshold": 6
+        },
+        "liveness": {
+          "path": "/health",
+          "period_seconds": 30,
+          "timeout_seconds": 10,
+          "failure_threshold": 20
+        }
+      },
+      "autoscaler": {
+        "min_replicas": 0,
+        "max_replicas": 2,
+        "desired_queue_length": 1,
+        "polling_period": 30,
+        "max_upscale_per_minute": 2,
         "max_downscale_per_minute": 1
       }
     }

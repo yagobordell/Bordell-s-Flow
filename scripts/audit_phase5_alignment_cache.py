@@ -38,13 +38,12 @@ def main() -> None:
     if not args.audio.is_file():
         raise SystemExit(f"Narration audio not found: {args.audio}")
 
-    source = SourceScript.model_validate_json(args.source.read_text(encoding="utf-8"))
+    SourceScript.model_validate_json(args.source.read_text(encoding="utf-8"))
     audio_sha256 = hashlib.sha256(args.audio.read_bytes()).hexdigest()
     request = build_whisper_job_request(
         audio_sha256=audio_sha256,
         filename=args.audio.name,
         model=args.model,
-        prompt=source.text,
         language=args.language,
     )
     storage = create_r2_storage(
@@ -74,6 +73,8 @@ def main() -> None:
         "request_sha256": request.fingerprint(),
         "object_key": request.output.key,
         "audio_sha256": audio_sha256,
+        "language": args.language,
+        "generation_profile": request.parameters["generation_profile"],
         "error": error,
     }
     print(

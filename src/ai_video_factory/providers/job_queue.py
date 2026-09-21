@@ -29,6 +29,7 @@ class QueueJobSnapshot:
     id: str
     status: QueueJobStatus
     output: Any = None
+    provider_payload: dict[str, Any] | None = None
 
 
 class JobQueueClient(Protocol):

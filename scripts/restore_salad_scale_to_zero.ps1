@@ -1,13 +1,16 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "ltx25")]
+    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "ltx25", "realesrgan")]
     [string]$Service,
 
     [string]$EnvFile = ".env",
 
     [ValidateRange(1, 10)]
     [int]$TimeoutMinutes = 3,
+
+    [ValidateSet("Manifest", "WarmScaleOut")]
+    [string]$Mode = "Manifest",
 
     [switch]$NonInteractive
 )
@@ -179,6 +182,15 @@ function New-ManifestAutoscaler {
     }
 }
 
+function New-TargetAutoscaler {
+    if ($Mode -eq "Manifest") {
+        return New-ManifestAutoscaler
+    }
+    $Autoscaler = New-ManifestAutoscaler
+    $Autoscaler.min_replicas = 1
+    return $Autoscaler
+}
+
 function Get-RemoteQueueAutoscaler {
     param([Parameter(Mandatory)][object]$Group)
 
@@ -196,9 +208,38 @@ function Test-ManifestAutoscaler {
     if ($null -eq $Autoscaler) {
         return $false
     }
-
     return (
         [int]$Autoscaler.min_replicas -eq [int]$Definition.autoscaler.min_replicas -and
+        [int]$Autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
+        [int]$Autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
+        [int]$Autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period -and
+        [int]$Autoscaler.max_upscale_per_minute -eq `
+            [int]$Definition.autoscaler.max_upscale_per_minute -and
+        [int]$Autoscaler.max_downscale_per_minute -eq `
+            [int]$Definition.autoscaler.max_downscale_per_minute
+    )
+}
+
+function Test-TargetAutoscaler {
+    param([Parameter(Mandatory)][object]$Group)
+
+    if ($Mode -eq "Manifest") {
+        return Test-ManifestAutoscaler -Group $Group
+    }
+
+    $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $Autoscaler) {
+        return $false
+    }
+    $ExpectedMinReplicas = if ($Mode -eq "WarmScaleOut") {
+        1
+    }
+    else {
+        [int]$Definition.autoscaler.min_replicas
+    }
+
+    return (
+        [int]$Autoscaler.min_replicas -eq $ExpectedMinReplicas -and
         [int]$Autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
         [int]$Autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
         [int]$Autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period -and
@@ -237,28 +278,71 @@ $Headers = @{
 
 $Group = Try-Get-Group
 if ($null -eq $Group) {
+    if ($Mode -eq "WarmScaleOut") {
+        throw "$Service worker group does not exist; cannot arm warm scale-out."
+    }
     Write-Host "$Service worker group does not exist; scale-to-zero restore not needed." `
         -ForegroundColor Green
     exit 0
 }
+if ($Mode -eq "WarmScaleOut") {
+    if ($Service -ne "ltx25") {
+        throw "WarmScaleOut is currently reserved for the ltx25 production lifecycle."
+    }
+    $Status = [string]$Group.current_state.status
+    if (
+        [bool]$Group.pending_change -or
+        [int]$Group.replicas -lt 1 -or
+        $Status -notin @("deploying", "running")
+    ) {
+        throw (
+            "WarmScaleOut requires an active held LTX group; " +
+            "status=$Status replicas=$([int]$Group.replicas) " +
+            "pending=$([bool]$Group.pending_change)."
+        )
+    }
+}
 $RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
 if ($null -eq $RemoteAutoscaler) {
+    if ($Mode -eq "WarmScaleOut") {
+        throw (
+            "$Service API response omits queue_autoscaler; cannot safely arm warm scale-out."
+        )
+    }
     Write-Host (
         "$Service API response omits queue_autoscaler; skipping legacy autoscaler restore. " +
         "The Stop path and zero-replica guard remain authoritative for cleanup."
     ) -ForegroundColor Yellow
     exit 0
 }
-if (Test-ManifestAutoscaler -Group $Group) {
-    Write-Host "$Service queue autoscaler already matches the scale-to-zero manifest." `
+if (Test-TargetAutoscaler -Group $Group) {
+    $TargetDescription = if ($Mode -eq "WarmScaleOut") {
+        "warm scale-out min_replicas=1/max_replicas=$([int]$Definition.autoscaler.max_replicas)"
+    }
+    else {
+        "scale-to-zero manifest"
+    }
+    Write-Host "$Service queue autoscaler already matches $TargetDescription." `
         -ForegroundColor Green
     exit 0
 }
 
+$TargetMinReplicas = if ($Mode -eq "WarmScaleOut") {
+    1
+}
+else {
+    [int]$Definition.autoscaler.min_replicas
+}
 Write-Host (
-    "$Service restoring queue autoscaler to manifest min_replicas=$([int]$Definition.autoscaler.min_replicas)."
+    "$Service applying autoscaler mode=$Mode min_replicas=$TargetMinReplicas " +
+    "max_replicas=$([int]$Definition.autoscaler.max_replicas)."
 ) -ForegroundColor Cyan
-$Body = @{ queue_autoscaler = New-ManifestAutoscaler } | ConvertTo-Json -Depth 10
+$Body = if ($Mode -eq "WarmScaleOut") {
+    @{ queue_autoscaler = New-TargetAutoscaler } | ConvertTo-Json -Depth 10
+}
+else {
+    @{ queue_autoscaler = New-ManifestAutoscaler } | ConvertTo-Json -Depth 10
+}
 Invoke-SaladRequest `
     -Method "Patch" `
     -Uri $GroupUrl `
@@ -275,11 +359,28 @@ do {
     if ($null -eq $Group) {
         throw "Container group '$GroupName' disappeared while restoring scale-to-zero autoscaling."
     }
-    if (-not [bool]$Group.pending_change -and (Test-ManifestAutoscaler -Group $Group)) {
-        Write-Host "$Service scale-to-zero autoscaler restored." -ForegroundColor Green
+    $WarmGroupReady = (
+        $Mode -ne "WarmScaleOut" -or
+        (
+            [int]$Group.replicas -ge 1 -and
+            [string]$Group.current_state.status -in @("deploying", "running")
+        )
+    )
+    if (
+        -not [bool]$Group.pending_change -and
+        $WarmGroupReady -and
+        (Test-TargetAutoscaler -Group $Group)
+    ) {
+        $Completion = if ($Mode -eq "WarmScaleOut") {
+            "warm scale-out autoscaler armed"
+        }
+        else {
+            "scale-to-zero autoscaler restored"
+        }
+        Write-Host "$Service $Completion." -ForegroundColor Green
         exit 0
     }
 }
 while ((Get-Date) -lt $Deadline)
 
-throw "Container group '$GroupName' did not restore the manifest autoscaler before timeout."
+throw "Container group '$GroupName' did not apply autoscaler mode '$Mode' before timeout."

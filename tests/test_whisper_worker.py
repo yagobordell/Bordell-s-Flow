@@ -4,6 +4,7 @@ from typing import Any
 
 import ai_video_factory.workers.whisper.model as whisper_model
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.workers.whisper import (
     WHISPER_GENERATION_PROFILE,
     WHISPER_MODEL_ID,
@@ -57,27 +58,23 @@ def _request() -> InferenceJobRequest:
         parameters={
             "generation_profile": WHISPER_GENERATION_PROFILE,
             "model_id": WHISPER_MODEL_ID,
-            "prompt": "Hello world",
             "language": "en",
         },
     )
 
 
-def test_whisper_application_job_id_is_deterministic() -> None:
+def test_whisper_application_job_id_is_deterministic_and_language_scoped() -> None:
     first = whisper_application_job_id(
         audio_sha256="a" * 64,
-        prompt="Hello world",
         language="en",
     )
     second = whisper_application_job_id(
         audio_sha256="a" * 64,
-        prompt="Hello world",
         language="en",
     )
     changed = whisper_application_job_id(
         audio_sha256="a" * 64,
-        prompt="Different prompt",
-        language="en",
+        language="es",
     )
 
     assert first == second
@@ -113,6 +110,7 @@ def test_whisper_backend_builds_once_and_requests_word_timestamps(
     model_root = tmp_path / "model"
     model_root.mkdir()
     (model_root / "config.json").write_text("{}", encoding="utf-8")
+    (model_root / "model.safetensors").write_bytes(b"weights")
     state: dict[str, Any] = {"builds": 0, "calls": []}
 
     class FakeCuda:
@@ -124,14 +122,9 @@ def test_whisper_backend_builds_once_and_requests_word_timestamps(
         cuda = FakeCuda()
         float16 = "float16"
 
-    class FakePromptIds:
-        def to(self, device: str) -> str:
-            return f"prompt-ids:{device}"
-
     class FakeTokenizer:
-        def get_prompt_ids(self, prompt: str, *, return_tensors: str) -> FakePromptIds:
-            state["prompt"] = (prompt, return_tensors)
-            return FakePromptIds()
+        def get_prompt_ids(self, *_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("Whisper no-prompt profile must never build prompt_ids")
 
     class FakePipeline:
         tokenizer = FakeTokenizer()
@@ -169,7 +162,6 @@ def test_whisper_backend_builds_once_and_requests_word_timestamps(
         parameters=WhisperTranscriptionParameters(
             generation_profile=WHISPER_GENERATION_PROFILE,
             model_id=WHISPER_MODEL_ID,
-            prompt="Canonical narration",
             language="en",
         ),
     )
@@ -181,10 +173,10 @@ def test_whisper_backend_builds_once_and_requests_word_timestamps(
     assert state["calls"][0][1]["return_timestamps"] == "word"
     assert state["calls"][0][1]["generate_kwargs"] == {
         "task": "transcribe",
+        "condition_on_prev_tokens": False,
+        "temperature": 0.0,
         "language": "en",
-        "prompt_ids": "prompt-ids:cuda:0",
     }
-    assert state["prompt"] == ("Canonical narration", "pt")
     assert [word.text for word in words] == ["Hello", "world"]
 
 
@@ -200,9 +192,10 @@ def test_whisper_worker_settings_and_salad_manifest() -> None:
 
     assert settings.model_repository == WHISPER_MODEL_ID
     assert settings.device == "cuda:0"
-    assert service["queue_name"] == "ai-video-factory-whisper-jobs"
-    assert service["group_name"] == "ai-video-factory-whisper-worker"
+    assert service["queue_name"] == "ai-video-factory-whisper-jobs-v2"
+    assert service["group_name"] == "ai-video-factory-whisper-worker-v4"
     assert service["dockerfile"] == "docker/workers/whisper/Dockerfile"
+    assert service["image"].endswith(":whisper-large-v3-turbo-v4")
     assert service["resources"]["gpu_class_names"] == ["RTX 3090 (24 GB)"]
     assert "gpu_classes" not in service["resources"]
     assert service["autoscaler"]["min_replicas"] == 0
@@ -218,4 +211,56 @@ def test_whisper_container_is_model_specific() -> None:
     assert "COPY src /opt/factory/src" in text
     assert "COPY . /opt/factory" not in text
     assert "transformers==5.5.2" in text
+    assert WHISPER_GENERATION_PROFILE == "whisper-large-v3-turbo-fp16-no-prompt-greedy-v2"
     assert "ai_video_factory.workers.whisper.runtime:app" in entrypoint
+
+
+def test_whisper_parameters_reject_legacy_prompt_field() -> None:
+    try:
+        WhisperTranscriptionParameters.model_validate(
+            {
+                "generation_profile": WHISPER_GENERATION_PROFILE,
+                "model_id": WHISPER_MODEL_ID,
+                "language": "es",
+                "prompt": "legacy decoder prompt",
+            }
+        )
+    except Exception as exc:
+        assert "prompt" in str(exc)
+    else:
+        raise AssertionError("Whisper v2 profile must reject legacy prompt parameters")
+
+
+def test_whisper_backend_reports_model_bootstrap_as_retryable_pending(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    model_root = tmp_path / "model"
+    model_root.mkdir()
+
+    class FakeCuda:
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+    class FakeTorch:
+        cuda = FakeCuda()
+        float16 = "float16"
+
+    monkeypatch.setattr(
+        whisper_model,
+        "_load_whisper_bindings",
+        lambda: whisper_model._WhisperBindings(
+            torch=FakeTorch,
+            pipeline_factory=lambda **_kwargs: None,
+        ),
+    )
+
+    backend = TransformersWhisperBackend(model_root=model_root)
+
+    try:
+        backend.prepare()
+    except ModelBootstrapPendingError as exc:
+        assert str(model_root) in str(exc)
+    else:
+        raise AssertionError("missing Whisper weights must remain retryable during bootstrap")

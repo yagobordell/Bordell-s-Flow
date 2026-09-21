@@ -38,8 +38,8 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("data/output/phase5/shot_timings.json"),
     )
-    parser.add_argument("--width", type=int, default=768)
-    parser.add_argument("--height", type=int, default=1280)
+    parser.add_argument("--width", type=int, default=1280)
+    parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed-base", type=int, default=42)
     parser.add_argument("--json-output", type=Path)
@@ -64,6 +64,8 @@ def _read_models(path: Path, model_type: type) -> list:
 
 def main() -> None:
     args = parse_args()
+    if (args.width, args.height, args.fps) != (1280, 720, 24):
+        raise SystemExit("Phase 8 cache audit contract is exactly 1280x720 at 24 fps")
     environment = _environment()
     keyframes = _read_models(args.keyframes, StoryboardKeyframe)
     prompts = _read_models(args.prompts, VideoPrompt)

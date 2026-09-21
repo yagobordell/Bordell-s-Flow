@@ -50,7 +50,8 @@ def test_ltx25_salad_manifest_has_dedicated_queue_and_image() -> None:
     document = json.loads(manifest_path.read_text(encoding="utf-8"))
     service = document["services"]["ltx25"]
 
-    assert service["queue_name"] == "ai-video-factory-ltx25-jobs"
+    assert service["group_name"] == "ai-video-factory-ltx25-worker-v2"
+    assert service["queue_name"] == "ai-video-factory-ltx25-jobs-v2"
     assert service["dockerfile"] == "docker/workers/ltx25/Dockerfile"
     assert "ltx25" in service["image"]
     assert service["resources"]["gpu_class_names"] == ["RTX 5090 (32 GB)"]
@@ -98,5 +99,5 @@ def test_ltx25_model_download_uses_xet_with_resilient_timeouts() -> None:
     assert "xet_disabled=" in bootstrap
 
     assert service["image"].endswith(
-        ":ltx25-torch211-cu128-natten0216-xet-v3"
+        ":ltx25-torch211-cu128-eagersdpa-xet-v4"
     )

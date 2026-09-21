@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "ltx25")]
+    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "ltx25", "realesrgan")]
     [string]$Service,
 
     [string]$EnvFile = ".env",
@@ -33,8 +33,8 @@ $Profiles = @{
         PostPullStartSeconds = 180
         FinalPostPullStartSeconds = 360
         MaxPostPullStartReallocations = 1
-        RunningNotReadySeconds = 480
-        FinalRunningNotReadySeconds = 900
+        RunningNotReadySeconds = 1800
+        FinalRunningNotReadySeconds = 3000
         MaxRunningNotReadyReallocations = 1
         MaxNodeChanges = 6
     }
@@ -45,6 +45,8 @@ $Profiles = @{
         ImagePullStallSeconds = 180
         FinalImagePullStallSeconds = 480
         MaxImagePullReallocations = 2
+        SlowImagePullWindowSeconds = 300
+        SlowImagePullMinProgress = 0.05
         PostPullStartSeconds = 240
         FinalPostPullStartSeconds = 480
         MaxPostPullStartReallocations = 1
@@ -82,6 +84,21 @@ $Profiles = @{
         FinalRunningNotReadySeconds = 900
         MaxRunningNotReadyReallocations = 1
         MaxNodeChanges = 2
+    }
+    realesrgan = @{
+        AllocatingSeconds = 180
+        FinalAllocatingSeconds = 480
+        MaxAllocatingReallocations = 2
+        ImagePullStallSeconds = 120
+        FinalImagePullStallSeconds = 360
+        MaxImagePullReallocations = 2
+        PostPullStartSeconds = 120
+        FinalPostPullStartSeconds = 300
+        MaxPostPullStartReallocations = 1
+        RunningNotReadySeconds = 240
+        FinalRunningNotReadySeconds = 600
+        MaxRunningNotReadyReallocations = 1
+        MaxNodeChanges = 6
     }
     ltx25 = @{
         AllocatingSeconds = 480
@@ -339,6 +356,23 @@ function Test-RemoteAutoscalerMinReplicas {
     return [int]$Autoscaler.min_replicas -eq $ExpectedMinReplicas
 }
 
+function Test-RemoteAutoscalerBounds {
+    param(
+        [Parameter(Mandatory)][object]$Group,
+        [Parameter(Mandatory)][int]$ExpectedMinReplicas,
+        [Parameter(Mandatory)][int]$ExpectedMaxReplicas
+    )
+
+    $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $Autoscaler) {
+        return $false
+    }
+    return (
+        [int]$Autoscaler.min_replicas -eq $ExpectedMinReplicas -and
+        [int]$Autoscaler.max_replicas -eq $ExpectedMaxReplicas
+    )
+}
+
 function New-ManifestAutoscaler {
     return @{
         min_replicas = [int]$Definition.autoscaler.min_replicas
@@ -350,15 +384,20 @@ function New-ManifestAutoscaler {
     }
 }
 
-function Test-RemoteAutoscalerMatchesManifestExceptMinReplicas {
+function Test-RemoteAutoscalerMatchesKnownWarmHold {
     param([Parameter(Mandatory)][object]$Group)
 
     $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
     if ($null -eq $Autoscaler) {
         return $false
     }
+    $KnownMax = (
+        [int]$Autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -or
+        [int]$Autoscaler.max_replicas -eq 1
+    )
     return (
-        [int]$Autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
+        [int]$Autoscaler.min_replicas -eq 1 -and
+        $KnownMax -and
         [int]$Autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
         [int]$Autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period -and
         [int]$Autoscaler.max_upscale_per_minute -eq `
@@ -375,10 +414,10 @@ function Repair-ResidualHeldAutoscaler {
     if ($null -eq $Autoscaler -or [int]$Autoscaler.min_replicas -eq 0) {
         return $Group
     }
-    if (-not (Test-RemoteAutoscalerMatchesManifestExceptMinReplicas -Group $Group)) {
+    if (-not (Test-RemoteAutoscalerMatchesKnownWarmHold -Group $Group)) {
         throw (
             "Optimized prewarm refuses unexpected remote autoscaler drift; " +
-            "only a residual warm-hold min_replicas override can be repaired automatically."
+            "only a known residual warm-hold min/max override can be repaired automatically."
         )
     }
 
@@ -400,10 +439,13 @@ function Repair-ResidualHeldAutoscaler {
     do {
         Start-Sleep -Seconds 3
         $Group = Get-Group
+        $RestoredAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
         if (
             -not [bool]$Group.pending_change -and
-            (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas 0) -and
-            (Test-RemoteAutoscalerMatchesManifestExceptMinReplicas -Group $Group)
+            $null -ne $RestoredAutoscaler -and
+            [int]$RestoredAutoscaler.min_replicas -eq 0 -and
+            [int]$RestoredAutoscaler.max_replicas -eq
+                [int]$Definition.autoscaler.max_replicas
         ) {
             Write-Host "$Service residual warm-hold autoscaler restored to scale-to-zero." `
                 -ForegroundColor Green
@@ -609,6 +651,84 @@ function Request-InstanceReallocation {
     }
 }
 
+function Restart-UnassignedPlacement {
+    param([Parameter(Mandatory)][string]$Reason)
+
+    Write-Warning (
+        "$Service has replicas=1 but no container instance was assigned: $Reason. " +
+        "Recycling the active container group to request a fresh placement."
+    )
+
+    $Queue = Get-Queue
+    $null = Assert-QueueLogicallyEmpty -Queue $Queue -VerificationSeconds 180
+
+    $Instances = @(Get-Instances)
+    if ($Instances.Count -gt 0) {
+        Write-Host (
+            "$Service obtained an instance before placement recycle; skipping group restart."
+        ) -ForegroundColor Yellow
+        return
+    }
+
+    $Group = Get-Group
+    if (
+        [bool]$Group.pending_change -or
+        [int]$Group.replicas -ne 1
+    ) {
+        throw (
+            "$Service cannot safely recycle unassigned placement because the group changed; " +
+            "replicas=$([int]$Group.replicas) pending=$([bool]$Group.pending_change)."
+        )
+    }
+
+    Invoke-SaladMutation `
+        -Method "Post" `
+        -Uri "$GroupUrl/stop" `
+        -Operation "stop unassigned prewarm placement" `
+        -TimeoutSeconds 60 |
+        Out-Null
+
+    $StopDeadline = (Get-Date).AddMinutes(2)
+    do {
+        Start-Sleep -Seconds 5
+        $Group = Get-Group
+        $Instances = @(Get-Instances)
+        if (
+            -not [bool]$Group.pending_change -and
+            [string]$Group.current_state.status -eq "stopped" -and
+            $Instances.Count -eq 0
+        ) {
+            break
+        }
+    }
+    while ((Get-Date) -lt $StopDeadline)
+
+    if (
+        [bool]$Group.pending_change -or
+        [string]$Group.current_state.status -ne "stopped" -or
+        $Instances.Count -ne 0
+    ) {
+        throw "$Service unassigned placement recycle could not stop cleanly."
+    }
+    if ([int]$Group.replicas -ne 1) {
+        throw (
+            "$Service unassigned placement recycle unexpectedly changed replicas to " +
+            "$([int]$Group.replicas); refusing to mutate replica intent implicitly."
+        )
+    }
+
+    Invoke-SaladMutation `
+        -Method "Post" `
+        -Uri "$GroupUrl/start" `
+        -Operation "restart unassigned prewarm placement" `
+        -TimeoutSeconds 60 |
+        Out-Null
+
+    Write-Warning (
+        "$Service unassigned placement recycle accepted; waiting for a fresh Salad assignment."
+    )
+}
+
 function Test-QueueAttachment {
     param([Parameter(Mandatory)][object]$Queue)
 
@@ -648,6 +768,7 @@ $BaseUrl = "https://api.salad.com/api/public/organizations/$Organization/project
 $GroupUrl = "$BaseUrl/containers/$GroupName"
 $InstancesUrl = "$GroupUrl/instances"
 $QueueUrl = "$BaseUrl/queues/$QueueName"
+$LogsUrl = "https://api.salad.com/api/public/organizations/$Organization/log-entries"
 $Headers = @{
     "Salad-Api-Key" = Get-SaladApiKey
     "Accept" = "application/json"
@@ -714,17 +835,33 @@ if (
     $null = Assert-QueueLogicallyEmpty -Queue $Queue -VerificationSeconds 180
     Write-Host (
         "$Service prewarm adopted one already started+ready shared replica with " +
-        "min_replicas=1 pinned; queue still empty."
+        "min_replicas=1 pinned; queue config verified and still empty. " +
+        "The first real job will prove runtime transport."
     ) -ForegroundColor Green
     exit 0
 }
 
-if ($Status -ne "stopped" -or [bool]$Group.pending_change -or [int]$Group.replicas -ne 0) {
+$AutostartProperty = $Definition.PSObject.Properties["autostart_policy"]
+$AutostartEnabled = (
+    $null -ne $AutostartProperty -and
+    [bool]$AutostartProperty.Value
+)
+$AllowedInitialStatuses = @("stopped", "running")
+if ($AutostartEnabled) {
+    $AllowedInitialStatuses += "deploying"
+}
+if (
+    $Status -notin $AllowedInitialStatuses -or
+    [bool]$Group.pending_change -or
+    [int]$Group.replicas -ne 0
+) {
     throw (
-        "Optimized prewarm requires '$GroupName' stopped at replicas=0/pending=False; " +
-        "status=$Status replicas=$([int]$Group.replicas) pending=$([bool]$Group.pending_change)."
+        "Optimized prewarm requires '$GroupName' at replicas=0/pending=False in an allowed " +
+        "lifecycle state; status=$Status autostart=$AutostartEnabled " +
+        "replicas=$([int]$Group.replicas) pending=$([bool]$Group.pending_change)."
     )
 }
+$GroupAlreadyActive = $Status -in @("running", "deploying")
 $RemoteAutoscaler = Get-RemoteQueueAutoscaler -Group $Group
 $AutoscalerObservable = $null -ne $RemoteAutoscaler
 if ($AutoscalerObservable) {
@@ -783,7 +920,7 @@ $PrewarmPatch = @{ replicas = 1 }
 if ($HoldReadyReplica) {
     $PrewarmPatch["queue_autoscaler"] = @{
         min_replicas = 1
-        max_replicas = [int]$Definition.autoscaler.max_replicas
+        max_replicas = 1
         desired_queue_length = [int]$Definition.autoscaler.desired_queue_length
         polling_period = [int]$Definition.autoscaler.polling_period
         max_upscale_per_minute = [int]$Definition.autoscaler.max_upscale_per_minute
@@ -805,7 +942,19 @@ do {
     $Group = Get-Group
     $AutoscalerStateReady = (
         -not $AutoscalerObservable -or
-        (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas $TargetMinReplicas)
+        (
+            $HoldReadyReplica -and
+            (Test-RemoteAutoscalerBounds `
+                -Group $Group `
+                -ExpectedMinReplicas 1 `
+                -ExpectedMaxReplicas 1)
+        ) -or
+        (
+            -not $HoldReadyReplica -and
+            (Test-RemoteAutoscalerMinReplicas `
+                -Group $Group `
+                -ExpectedMinReplicas $TargetMinReplicas)
+        )
     )
     if (
         -not [bool]$Group.pending_change -and
@@ -818,7 +967,19 @@ do {
 while ((Get-Date) -lt $PatchDeadline)
 $AutoscalerStateReady = (
     -not $AutoscalerObservable -or
-    (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas $TargetMinReplicas)
+    (
+        $HoldReadyReplica -and
+        (Test-RemoteAutoscalerBounds `
+            -Group $Group `
+            -ExpectedMinReplicas 1 `
+            -ExpectedMaxReplicas 1)
+    ) -or
+    (
+        -not $HoldReadyReplica -and
+        (Test-RemoteAutoscalerMinReplicas `
+            -Group $Group `
+            -ExpectedMinReplicas $TargetMinReplicas)
+    )
 )
 if (
     [bool]$Group.pending_change -or
@@ -828,12 +989,14 @@ if (
     throw "Salad did not persist the one-replica prewarm state safely."
 }
 
-Invoke-SaladMutation `
-    -Method "Post" `
-    -Uri "$GroupUrl/start" `
-    -Operation "start prewarmed container group" `
-    -TimeoutSeconds 60 |
-    Out-Null
+if (-not $GroupAlreadyActive) {
+    Invoke-SaladMutation `
+        -Method "Post" `
+        -Uri "$GroupUrl/start" `
+        -Operation "start prewarmed container group" `
+        -TimeoutSeconds 60 |
+        Out-Null
+}
 
 $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
 $CurrentInstanceId = ""
@@ -843,6 +1006,8 @@ $NodeChanges = 0
 $AllocatingSince = $null
 $ImagePullSince = $null
 $ImagePullBaseline = $null
+$SlowImagePullSince = $null
+$SlowImagePullBaseline = $null
 $PostPullStartSince = $null
 $RunningNotReadySince = $null
 $AllocatingReallocations = 0
@@ -853,9 +1018,34 @@ $ImagePullProgressThreshold = 0.005
 
 while ((Get-Date) -lt $Deadline) {
     Start-Sleep -Seconds 5
-    $Group = Get-Group
-    $Queue = Get-Queue
-    $Instances = @(Get-Instances)
+    try {
+        $Group = Get-Group
+        $Queue = Get-Queue
+        $Instances = @(Get-Instances)
+    }
+    catch {
+        if (
+            (Test-TransientSaladReadFailure -ErrorRecord $_) -and
+            (Get-Date) -lt $Deadline
+        ) {
+            Write-Warning (
+                "$Service control-plane telemetry remained unavailable after bounded read retries; " +
+                "keeping the current replica untouched and retrying within the overall prewarm " +
+                "budget. Error: $($_.Exception.Message)"
+            )
+            # Do not interpret an unobserved interval as worker stall. The overall prewarm
+            # deadline remains authoritative, so this cannot extend GPU allocation indefinitely.
+            $AllocatingSince = $null
+            $ImagePullSince = $null
+            $ImagePullBaseline = $null
+            $SlowImagePullSince = $null
+            $SlowImagePullBaseline = $null
+            $PostPullStartSince = $null
+            $RunningNotReadySince = $null
+            continue
+        }
+        throw
+    }
     $Status = [string]$Group.current_state.status
     $Attached = Test-QueueAttachment -Queue $Queue
 
@@ -949,6 +1139,8 @@ while ((Get-Date) -lt $Deadline) {
             $AllocatingSince = $null
             $ImagePullSince = $null
             $ImagePullBaseline = $null
+            $SlowImagePullSince = $null
+            $SlowImagePullBaseline = $null
             $PostPullStartSince = $null
             $RunningNotReadySince = $null
         }
@@ -990,7 +1182,19 @@ while ((Get-Date) -lt $Deadline) {
 
     $AutoscalerStateReady = (
         -not $AutoscalerObservable -or
-        (Test-RemoteAutoscalerMinReplicas -Group $Group -ExpectedMinReplicas $TargetMinReplicas)
+        (
+            $HoldReadyReplica -and
+            (Test-RemoteAutoscalerBounds `
+                -Group $Group `
+                -ExpectedMinReplicas 1 `
+                -ExpectedMaxReplicas 1)
+        ) -or
+        (
+            -not $HoldReadyReplica -and
+            (Test-RemoteAutoscalerMinReplicas `
+                -Group $Group `
+                -ExpectedMinReplicas $TargetMinReplicas)
+        )
     )
     if (
         -not [bool]$Group.pending_change -and
@@ -1023,14 +1227,58 @@ while ((Get-Date) -lt $Deadline) {
                 )
             )
         }
-        $HoldSuffix = if ($HoldReadyReplica) { " with min_replicas=1 pinned" } else { "" }
+        $HoldSuffix = if ($HoldReadyReplica) {
+            " with min_replicas=1/max_replicas=1 pinned"
+        }
+        else {
+            ""
+        }
         Write-Host (
-            "$Service prewarm complete: exactly one started ready replica$HoldSuffix, queue still empty."
+            "$Service prewarm complete: exactly one started ready replica$HoldSuffix, " +
+            "queue config verified and still empty; first real job will prove transport."
         ) -ForegroundColor Green
         exit 0
     }
 
     if (-not $ObservedInstance) {
+        $GroupAwaitingAssignment = (
+            -not [bool]$Group.pending_change -and
+            [int]$Group.replicas -eq 1 -and
+            $Status -in @("deploying", "running")
+        )
+        if ($GroupAwaitingAssignment) {
+            if ($null -eq $AllocatingSince) {
+                $AllocatingSince = Get-Date
+            }
+            $Limit = if (
+                $AllocatingReallocations -lt $Profile.MaxAllocatingReallocations
+            ) {
+                [int]$Profile.AllocatingSeconds
+            }
+            else {
+                [int]$Profile.FinalAllocatingSeconds
+            }
+
+            if (((Get-Date) - $AllocatingSince).TotalSeconds -ge $Limit) {
+                if ($AllocatingReallocations -ge $Profile.MaxAllocatingReallocations) {
+                    throw (
+                        "$Service remained without an assigned container instance during " +
+                        "the final ${Limit}s allocation window."
+                    )
+                }
+
+                $AllocatingReallocations += 1
+                Restart-UnassignedPlacement -Reason (
+                    "no instance became visible for ${Limit}s " +
+                    "(allocation retry $AllocatingReallocations/" +
+                    "$($Profile.MaxAllocatingReallocations))"
+                )
+                $AllocatingSince = $null
+            }
+        }
+        else {
+            $AllocatingSince = $null
+        }
         continue
     }
 
@@ -1108,13 +1356,64 @@ while ((Get-Date) -lt $Deadline) {
                     -Reason "Container image pull made less than 0.5% progress for ${Limit}s"
                 $ImagePullSince = $null
                 $ImagePullBaseline = $null
+                $SlowImagePullSince = $null
+                $SlowImagePullBaseline = $null
                 continue
+            }
+        }
+
+        $SlowPullConfigured = (
+            $Profile.ContainsKey("SlowImagePullWindowSeconds") -and
+            $Profile.ContainsKey("SlowImagePullMinProgress")
+        )
+        if ($SlowPullConfigured) {
+            $SlowPullWindowSeconds = [int]$Profile.SlowImagePullWindowSeconds
+            $SlowPullMinProgress = [double]$Profile.SlowImagePullMinProgress
+            if ($null -eq $SlowImagePullSince) {
+                $SlowImagePullSince = Get-Date
+                $SlowImagePullBaseline = $PullingProgress
+            }
+            elseif ($PullingProgress -lt $SlowImagePullBaseline) {
+                $SlowImagePullSince = Get-Date
+                $SlowImagePullBaseline = $PullingProgress
+            }
+            elseif (
+                ((Get-Date) - $SlowImagePullSince).TotalSeconds -ge $SlowPullWindowSeconds
+            ) {
+                $SlowPullProgress = $PullingProgress - $SlowImagePullBaseline
+                if ($SlowPullProgress -lt $SlowPullMinProgress) {
+                    if ($ImagePullReallocations -ge $Profile.MaxImagePullReallocations) {
+                        throw (
+                            "$Service image pull remained below minimum sustained progress " +
+                            "during the final ${SlowPullWindowSeconds}s window."
+                        )
+                    }
+                    $ImagePullReallocations += 1
+                    Request-InstanceReallocation `
+                        -InstanceId $InstanceId `
+                        -MachineId $MachineId `
+                        -Reason (
+                            "Container image pull advanced only " +
+                            "$([Math]::Round($SlowPullProgress * 100, 2)) percentage points " +
+                            "during ${SlowPullWindowSeconds}s; minimum is " +
+                            "$([Math]::Round($SlowPullMinProgress * 100, 2))"
+                        )
+                    $ImagePullSince = $null
+                    $ImagePullBaseline = $null
+                    $SlowImagePullSince = $null
+                    $SlowImagePullBaseline = $null
+                    continue
+                }
+                $SlowImagePullSince = Get-Date
+                $SlowImagePullBaseline = $PullingProgress
             }
         }
     }
     else {
         $ImagePullSince = $null
         $ImagePullBaseline = $null
+        $SlowImagePullSince = $null
+        $SlowImagePullBaseline = $null
     }
 
     $ImagePulledButNotStarted = (

@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
@@ -31,6 +33,7 @@ PRODUCTION_STAGE_NAMES = (
     "phase8-video-prompts",
     "phase6-keyframes",
     "phase8-videos",
+    "phase8-upscale",
 )
 
 
@@ -114,18 +117,78 @@ class ProductionStageBlocked(RuntimeError):
 
 
 class SubprocessStageExecutor:
-    """Execute existing phase scripts without duplicating their validated business logic."""
+    """Execute stage subprocesses and make active process trees cancellable."""
 
     def __init__(self, *, repo_root: Path, python_executable: str = sys.executable) -> None:
         self._repo_root = repo_root
         self._python_executable = python_executable
+        self._processes: set[subprocess.Popen[bytes]] = set()
+        self._process_lock = threading.Lock()
 
     def __call__(self, stage: ProductionStage) -> None:
-        subprocess.run(
-            stage.command(self._python_executable),
-            cwd=self._repo_root,
-            check=True,
-        )
+        self.run_command(stage.command(self._python_executable))
+
+    def run_command(self, command: tuple[str, ...] | list[str]) -> None:
+        kwargs: dict[str, object] = {
+            "cwd": self._repo_root,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            kwargs["start_new_session"] = True
+
+        process = subprocess.Popen(command, **kwargs)
+        with self._process_lock:
+            self._processes.add(process)
+        try:
+            returncode = process.wait()
+            if returncode != 0:
+                raise subprocess.CalledProcessError(returncode, command)
+        finally:
+            with self._process_lock:
+                self._processes.discard(process)
+
+    def cancel_running(self) -> None:
+        """Terminate every active stage process tree so DAG failures are fail-fast."""
+
+        with self._process_lock:
+            processes = tuple(self._processes)
+
+        for process in processes:
+            if process.poll() is not None:
+                continue
+            if os.name == "nt":
+                subprocess.run(
+                    [
+                        "taskkill",
+                        "/PID",
+                        str(process.pid),
+                        "/T",
+                        "/F",
+                    ],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            else:
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                except ProcessLookupError:
+                    continue
+
+        for process in processes:
+            if process.poll() is not None:
+                continue
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                if os.name == "nt":
+                    process.kill()
+                else:
+                    try:
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
 
 class ProductionRunner:
@@ -212,10 +275,11 @@ class ProductionRunner:
         running_resource_keys: set[str] = set()
         running_gpu_stages = 0
 
-        with ThreadPoolExecutor(
+        pool = ThreadPoolExecutor(
             max_workers=self._max_workers,
             thread_name_prefix="production-stage",
-        ) as pool:
+        )
+        try:
             while pending or running:
                 made_progress = False
 
@@ -304,12 +368,7 @@ class ProductionRunner:
                     if stage.resource_key is not None:
                         running_resource_keys.discard(stage.resource_key)
 
-                    try:
-                        future.result()
-                    except BaseException:
-                        for outstanding in running:
-                            outstanding.cancel()
-                        raise
+                    future.result()
 
                     missing_outputs = tuple(
                         path for path in stage.outputs if not path.exists()
@@ -334,6 +393,16 @@ class ProductionRunner:
                     )
                     completed.add(stage.name)
                     print(f"DONE  {stage.name}: {elapsed:.1f} s")
+        except BaseException:
+            for outstanding in running:
+                outstanding.cancel()
+            cancel_running = getattr(self._executor, "cancel_running", None)
+            if callable(cancel_running):
+                cancel_running()
+            pool.shutdown(wait=True, cancel_futures=True)
+            raise
+        else:
+            pool.shutdown(wait=True)
 
         return ProductionRunSummary(
             executed=tuple(executed),
@@ -482,8 +551,17 @@ class ProductionRunner:
         os.replace(temporary, self._manifest_path)
 
 
-def build_production_stages(*, script_file: Path, output_dir: Path) -> list[ProductionStage]:
+def build_production_stages(
+    *,
+    script_file: Path,
+    output_dir: Path,
+    narration_language: str = "en",
+) -> list[ProductionStage]:
     """Describe the production DAG while preserving validated phase scripts as executors."""
+
+    narration_language = narration_language.strip()
+    if not narration_language:
+        raise ValueError("Production narration language must be non-empty")
 
     phase2 = output_dir / "phase2"
     phase3 = output_dir / "phase3"
@@ -513,6 +591,8 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
     video_prompts = phase8 / "video_prompts.json"
     video_clips = phase8 / "video_clips.json"
     video_clips_dir = phase8 / "video_clips"
+    upscaled_clips = phase8 / "upscaled_clips.json"
+    upscaled_clips_dir = phase8 / "upscaled_clips"
 
     return [
         ProductionStage(
@@ -556,6 +636,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
                 str(entities),
                 "--blocks", str(narrative_blocks),
                 "--continuity", str(continuity),
+                "--aspect-ratio", "16:9",
                 "--output", str(visual_references),
             ),
             inputs=(entities, narrative_blocks, continuity),
@@ -570,6 +651,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
             script=Path("scripts/run_phase4_assets.py"),
             arguments=(
                 str(visual_references),
+                "--size", "1536x864",
                 "--output-dir", str(reference_assets_dir),
                 "--metadata", str(reference_assets),
             ),
@@ -602,6 +684,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
                 "--source", str(source_script),
                 "--narration", str(narration),
                 "--audio", str(narration_audio),
+                "--language", narration_language,
                 "--output", str(narration_words),
             ),
             inputs=(source_script, narration, narration_audio),
@@ -648,6 +731,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
                 "--shots", str(shots),
                 "--timings", str(shot_timings),
                 "--references", str(visual_references),
+                "--aspect-ratio", "16:9",
                 "--output", str(storyboard_frames),
             ),
             inputs=(shots, shot_timings, visual_references),
@@ -662,6 +746,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
                 "--shots", str(shots),
                 "--timings", str(shot_timings),
                 "--storyboard-frames", str(storyboard_frames),
+                "--aspect-ratio", "16:9",
                 "--output", str(video_prompts),
             ),
             inputs=(shots, shot_timings, storyboard_frames),
@@ -677,7 +762,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
             arguments=(
                 "--frames", str(storyboard_frames),
                 "--shots", str(shots),
-                "--size", "1024x1536",
+                "--size", "1536x864",
                 "--quality", "high",
                 "--output-dir", str(storyboard_keyframes_dir),
                 "--output", str(storyboard_keyframes),
@@ -687,7 +772,7 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
         ),
         ProductionStage(
             name="phase8-videos",
-            description="fan out, resume, verify, and download LTX 2.5 video clips",
+            description="fan out, resume, verify, and download LTX 2.5 720p video clips",
             dependencies=(
                 "phase8-video-prompts",
                 "phase6-keyframes",
@@ -700,10 +785,27 @@ def build_production_stages(*, script_file: Path, output_dir: Path) -> list[Prod
                 "--keyframes", str(storyboard_keyframes),
                 "--prompts", str(video_prompts),
                 "--timings", str(shot_timings),
+                "--width", "1280",
+                "--height", "720",
+                "--fps", "24",
                 "--output-dir", str(phase8),
             ),
             inputs=(storyboard_keyframes, storyboard_keyframes_dir, video_prompts, shot_timings),
             outputs=(video_clips, video_clips_dir),
+        ),
+        ProductionStage(
+            name="phase8-upscale",
+            description="upscale LTX clips 2x with self-hosted Real-ESRGAN",
+            dependencies=("phase8-videos",),
+            resource="gpu",
+            resource_key="realesrgan",
+            script=Path("scripts/run_phase8_upscale.py"),
+            arguments=(
+                "--clips", str(video_clips),
+                "--output-dir", str(phase8),
+            ),
+            inputs=(video_clips, video_clips_dir),
+            outputs=(upscaled_clips, upscaled_clips_dir),
         ),
     ]
 

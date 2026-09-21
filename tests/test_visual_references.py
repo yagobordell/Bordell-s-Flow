@@ -70,6 +70,8 @@ def test_visual_reference_bot_uses_safe_location_description_for_caption() -> No
     assert "época feudal" in provider.last_call["input_text"]
     assert "safe_generation_description" in provider.last_call["instructions"]
     assert "estado narrativo" in provider.last_call["instructions"]
+    assert "horizontal 16:9" in provider.last_call["instructions"]
+    assert "TARGET ASPECT RATIO: 16:9" in provider.last_call["input_text"]
 
 
 def test_visual_reference_character_caption_keeps_rich_identity() -> None:
@@ -100,7 +102,9 @@ def test_visual_reference_character_caption_keeps_rich_identity() -> None:
     elements = caption["compositional_deconstruction"]["elements"]
     assert len(elements) == 1
     assert elements[0]["type"] == "obj"
-    assert elements[0]["bbox"] == [60, 180, 940, 820]
+    assert elements[0]["bbox"] == [100, 100, 900, 560]
+    assert "widescreen" in reference.prompt.lower()
+    assert "no portrait framing" in reference.prompt.lower()
     assert "dark lamellar armor" in elements[0]["desc"]
 
 
@@ -118,9 +122,11 @@ class ParallelReferenceBot:
         *,
         visual_style: str,
         narrative_context: str,
+        aspect_ratio: str = "16:9",
     ) -> VisualReference:
         self.started += 1
         self.contexts[entity.id] = narrative_context
+        assert aspect_ratio == "16:9"
         if self.started == 2:
             self.all_started.set()
 

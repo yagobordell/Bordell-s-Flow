@@ -41,6 +41,20 @@ $QueueCleanup = Join-Path $PSScriptRoot "cleanup_salad_queue.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $AuditScript = Join-Path $PSScriptRoot "audit_phase4_reference_cache.py"
 $Phase4Runner = Join-Path $PSScriptRoot "run_phase4_assets.py"
+$ServicesPath = Join-Path (Split-Path $PSScriptRoot -Parent) "deploy\salad\services.json"
+
+$Services = Get-Content -LiteralPath $ServicesPath -Raw | ConvertFrom-Json
+$IdeogramService = $Services.services.ideogram4
+$FluxService = $Services.services.flux2_klein
+$env:SALAD_ORGANIZATION = [string]$Services.stack.organization
+$env:SALAD_PROJECT = [string]$Services.stack.project
+$env:SALAD_IDEOGRAM4_QUEUE_NAME = [string]$IdeogramService.queue_name
+$env:SALAD_FLUX2_KLEIN_QUEUE_NAME = [string]$FluxService.queue_name
+Write-Host (
+    "Phase 4 canonical Salad routes: ideogram={0} flux={1}" -f `
+    $env:SALAD_IDEOGRAM4_QUEUE_NAME,
+    $env:SALAD_FLUX2_KLEIN_QUEUE_NAME
+) -ForegroundColor DarkGray
 
 if (-not (Test-Path -LiteralPath $ReferencesFile -PathType Leaf)) {
     throw "Visual references file not found: $ReferencesFile"
@@ -130,6 +144,8 @@ try {
         $ReferencesFile,
         "--output-dir", $OutputDir,
         "--metadata", $Metadata,
+        "--queue-name", $env:SALAD_IDEOGRAM4_QUEUE_NAME,
+        "--fallback-queue-name", $env:SALAD_FLUX2_KLEIN_QUEUE_NAME,
         "--poll-seconds", $PollSeconds,
         "--pending-timeout-seconds", $PendingTimeoutSeconds,
         "--fallback-pending-timeout-seconds", $FluxPendingTimeoutSeconds,

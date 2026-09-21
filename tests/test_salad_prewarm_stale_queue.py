@@ -9,7 +9,7 @@ def test_optimized_prewarm_verifies_stale_queue_summary_by_job_enumeration() -> 
     assert "function Get-QueueJobSnapshot" in text
     assert '"pending", "running"' in text
     assert "exhaustive job enumeration found no pending or running jobs" in text
-    assert text.count("$null = Assert-QueueLogicallyEmpty -Queue $Queue") == 3
+    assert text.count("$null = Assert-QueueLogicallyEmpty -Queue $Queue") == 4
     assert "$VerifiedInitialQueueLength = [int]$Queue.current_queue_length" in text
     assert "prewarm adopted one already started+ready shared replica" in text
 

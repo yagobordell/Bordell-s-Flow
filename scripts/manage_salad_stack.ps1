@@ -7,10 +7,14 @@ param(
 
     [string]$EnvFile = ".env",
 
+    [string]$PinnedImage = "",
+
     [ValidateRange(10, 180)]
     [int]$PrepareTimeoutMinutes = 120,
 
     [switch]$SkipBuild,
+
+    [switch]$Recreate,
 
     [switch]$NonInteractive
 )
@@ -221,8 +225,17 @@ function Invoke-WorkerAction {
         EnvFile = $EnvFile
         PrepareTimeoutMinutes = $PrepareTimeoutMinutes
     }
+    if (-not [string]::IsNullOrWhiteSpace($PinnedImage)) {
+        if ($Selected.Count -ne 1) {
+            throw "-PinnedImage requires exactly one selected service."
+        }
+        $WorkerArguments["PinnedImage"] = $PinnedImage
+    }
     if ($SkipBuild) {
         $WorkerArguments["SkipBuild"] = $true
+    }
+    if ($Recreate -and $WorkerAction -eq "Prepare") {
+        $WorkerArguments["Recreate"] = $true
     }
     if ($NonInteractive) {
         $WorkerArguments["NonInteractive"] = $true
@@ -289,6 +302,9 @@ if ($Action -eq "Stop" -and -not (Test-Path -LiteralPath $ZeroReplicaGuard -Path
 Import-EnvFile -Path $EnvFile
 $Document = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
 Assert-StackManifest
+if ($Recreate -and $Action -ne "Prepare") {
+    throw "-Recreate is only valid with -Action Prepare."
+}
 
 $ConfiguredOrder = @($Document.stack.service_order | ForEach-Object { [string]$_ })
 if ($Services.Count -eq 0) {

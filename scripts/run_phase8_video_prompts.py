@@ -39,8 +39,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--aspect-ratio",
-        default="9:16",
-        help="Target video aspect ratio.",
+        default="16:9",
+        choices=("16:9",),
+        help="Target cinematic landscape video aspect ratio.",
+    )
+    parser.add_argument(
+        "--max-scene-concurrency",
+        type=int,
+        default=3,
+        help="Maximum number of scenes planned concurrently; shots stay serial within each scene.",
     )
     parser.add_argument(
         "--output",
@@ -60,7 +67,10 @@ async def main() -> None:
     timings = _read_models(args.timings, ShotTiming)
     storyboard_frames = _read_models(args.storyboard_frames, StoryboardFrame)
 
-    provider = OpenAIProvider(api_key=settings.openai_api_key)
+    provider = OpenAIProvider(
+        api_key=settings.openai_api_key,
+        reasoning_effort="low",
+    )
     prompt_bot = VideoPromptBot(provider=provider, model=settings.openai_model)
     prompts = await build_video_prompts(
         shots,
@@ -69,6 +79,7 @@ async def main() -> None:
         prompt_bot=prompt_bot,
         visual_style=args.style,
         aspect_ratio=args.aspect_ratio,
+        max_scene_concurrency=args.max_scene_concurrency,
     )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

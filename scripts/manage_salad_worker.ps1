@@ -7,12 +7,16 @@ param(
 
     [string]$Image = "",
 
+    [string]$PinnedImage = "",
+
     [string]$EnvFile = ".env",
 
     [ValidateRange(10, 180)]
     [int]$PrepareTimeoutMinutes = 120,
 
     [switch]$SkipBuild,
+
+    [switch]$Recreate,
 
     [switch]$NonInteractive
 )
@@ -141,6 +145,11 @@ if ($null -ne $Stack) {
     }
 }
 
+$ServiceAutostartProperty = $Definition.PSObject.Properties["autostart_policy"]
+if ($null -ne $ServiceAutostartProperty) {
+    $AutostartPolicy = [bool]$ServiceAutostartProperty.Value
+}
+
 $OrganizationApiBase = "https://api.salad.com/api/public/organizations/$Organization"
 $GpuClassesBase = "$OrganizationApiBase/gpu-classes"
 $ApiBase = "$OrganizationApiBase/projects/$Project"
@@ -183,6 +192,12 @@ function Assert-ServiceDefinition {
     }
     if ($Image -notmatch '^[^\s]+:[^\s/:]+$') {
         throw "Service '$Service' image must include an explicit mutable tag: $Image"
+    }
+    if (
+        -not [string]::IsNullOrWhiteSpace($PinnedImage) -and
+        $PinnedImage -notmatch '^[^\s]+@sha256:[0-9a-fA-F]{64}$'
+    ) {
+        throw "Service '$Service' -PinnedImage must be an immutable sha256 image reference."
     }
     if ($QueuePath -ne "/jobs") {
         throw "Service '$Service' queue path must remain /jobs for the shared worker HTTP contract."
@@ -435,6 +450,43 @@ function Get-Group {
     return $Group
 }
 
+function Remove-StoppedContainerGroup {
+    param([Parameter(Mandatory)][hashtable]$Headers)
+
+    $Group = Get-Group -Headers $Headers
+    if ((Get-GroupStatus -Group $Group) -ne "stopped") {
+        throw "Container group '$GroupName' must be stopped before -Recreate."
+    }
+    if ([int]$Group.replicas -ne 0) {
+        throw "Container group '$GroupName' must have replicas=0 before -Recreate."
+    }
+
+    Write-Warning (
+        "Recreating stopped container group '$GroupName' so Salad can establish " +
+        "a fresh Job Queue attachment."
+    )
+    Invoke-RestMethod `
+        -Method Delete `
+        -Uri "$ContainersBase/$GroupName" `
+        -Headers $Headers `
+        -TimeoutSec 60 |
+        Out-Null
+
+    $Deadline = (Get-Date).AddMinutes(5)
+    do {
+        Start-Sleep -Seconds 5
+        $Remaining = Try-Get-Group -Headers $Headers
+        if ($null -eq $Remaining) {
+            Write-Host "Container group '$GroupName' deleted; ready for clean recreation." `
+                -ForegroundColor Green
+            return
+        }
+    }
+    while ((Get-Date) -lt $Deadline)
+
+    throw "Container group '$GroupName' was not deleted within 5 minutes."
+}
+
 function Get-GroupStatus {
     param([Parameter(Mandatory)][object]$Group)
 
@@ -633,6 +685,20 @@ function New-QueueConnectionConfiguration {
     }
 }
 
+function Test-NameConflictFailure {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    if ((Get-HttpStatusCode -ErrorRecord $ErrorRecord) -ne 400) {
+        return $false
+    }
+    $Details = [string]$ErrorRecord.ErrorDetails.Message
+    $Message = [string]$ErrorRecord.Exception.Message
+    return (
+        $Details -match '"type"\s*:\s*"name_conflict"' -or
+        $Message -match 'name_conflict'
+    )
+}
+
 function New-ContainerGroup {
     param(
         [Parameter(Mandatory)][hashtable]$Headers,
@@ -661,14 +727,50 @@ function New-ContainerGroup {
     } | ConvertTo-Json -Depth 20
 
     Write-Host "Creating container group: $GroupName" -ForegroundColor Cyan
-    Invoke-RestMethod `
-        -Method Post `
-        -Uri $ContainersBase `
-        -Headers $Headers `
-        -ContentType "application/json" `
-        -Body $CreateBody `
-        -TimeoutSec 60 |
-        Out-Null
+    $CreateDeadline = (Get-Date).AddMinutes(5)
+    $CreateAttempt = 0
+    while ($true) {
+        $CreateAttempt += 1
+        try {
+            Invoke-RestMethod `
+                -Method Post `
+                -Uri $ContainersBase `
+                -Headers $Headers `
+                -ContentType "application/json" `
+                -Body $CreateBody `
+                -TimeoutSec 60 |
+                Out-Null
+            return
+        }
+        catch {
+            if (-not (Test-NameConflictFailure -ErrorRecord $_)) {
+                throw
+            }
+
+            $VisibleGroup = Try-Get-Group -Headers $Headers
+            if ($null -ne $VisibleGroup) {
+                Write-Warning (
+                    "Create returned name_conflict, but '$GroupName' is visible again. " +
+                    "Continuing with normal post-create validation."
+                )
+                return
+            }
+
+            if ((Get-Date) -ge $CreateDeadline) {
+                throw (
+                    "Salad kept container-group name '$GroupName' reserved for more than " +
+                    "5 minutes after deletion; refusing unbounded recreate retries."
+                )
+            }
+
+            $DelaySeconds = [Math]::Min(30, 5 + (5 * $CreateAttempt))
+            Write-Warning (
+                "Salad still reserves deleted container-group name '$GroupName' " +
+                "(name_conflict attempt $CreateAttempt). Retrying in ${DelaySeconds}s."
+            )
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
 }
 
 function Update-ContainerGroup {
@@ -689,7 +791,6 @@ function Update-ContainerGroup {
         startup_probe = New-Probe -Probe $Definition.probes.startup
         readiness_probe = New-Probe -Probe $Definition.probes.readiness
         liveness_probe = New-Probe -Probe $Definition.probes.liveness
-        queue_connection = New-QueueConnectionConfiguration
         queue_autoscaler = New-QueueAutoscalerConfiguration
     } | ConvertTo-Json -Depth 20
 
@@ -835,6 +936,10 @@ function Show-Status {
 Set-Location $RepoRoot
 Assert-ServiceDefinition
 
+if ($Recreate -and $Action -ne "Prepare") {
+    throw "-Recreate is only valid with -Action Prepare."
+}
+
 if ($Action -eq "Validate") {
     $Required = Get-RequiredEnvironmentNames
     Write-Host (
@@ -904,36 +1009,70 @@ switch ($Action) {
     "Prepare" {
         Ensure-Queue -Headers $Headers
         $ExistingGroup = Try-Get-Group -Headers $Headers
-        if ($null -ne $ExistingGroup -and (Get-GroupStatus -Group $ExistingGroup) -ne "stopped") {
-            throw "Container group must be stopped before Prepare. Run -Action Stop first."
-        }
-
-        if (-not $SkipBuild) {
-            & docker version *> $null
-            if ($LASTEXITCODE -ne 0) {
-                throw "Docker Desktop is not running."
+        if ($null -ne $ExistingGroup) {
+            $ExistingStatus = Get-GroupStatus -Group $ExistingGroup
+            if ($ExistingStatus -notin @("stopped", "running")) {
+                throw (
+                    "Container group must be stopped or running at zero replicas before Prepare. " +
+                    "Current status=$ExistingStatus."
+                )
             }
-            Write-Host "Building and publishing $Image" -ForegroundColor Cyan
-            & docker buildx build `
-                --platform linux/amd64 `
-                --file $Dockerfile `
-                --tag $Image `
-                --push `
-                .
-            if ($LASTEXITCODE -ne 0) {
-                throw "Docker build or push failed."
+            if ([int]$ExistingGroup.replicas -ne 0) {
+                throw "Container group must have replicas=0 before Prepare."
+            }
+            if ($Recreate -and $ExistingStatus -ne "stopped") {
+                throw "Container group must be stopped before -Recreate."
             }
         }
+        $ResolvedPinnedImage = ""
+        if (-not [string]::IsNullOrWhiteSpace($PinnedImage)) {
+            $ResolvedPinnedImage = $PinnedImage.Trim()
+            Write-Host "Using explicit pinned image: $ResolvedPinnedImage" -ForegroundColor Green
+        }
+        elseif (
+            $SkipBuild -and
+            $null -ne $ExistingGroup -and
+            [string]$ExistingGroup.container.image -match '@sha256:[0-9a-fA-F]{64}$'
+        ) {
+            $ResolvedPinnedImage = [string]$ExistingGroup.container.image
+            Write-Host (
+                "Reusing existing immutable image before any group recreation: " +
+                $ResolvedPinnedImage
+            ) -ForegroundColor Green
+        }
+        else {
+            if (-not $SkipBuild) {
+                & docker version *> $null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Docker Desktop is not running."
+                }
+                Write-Host "Building and publishing $Image" -ForegroundColor Cyan
+                & docker buildx build `
+                    --platform linux/amd64 `
+                    --file $Dockerfile `
+                    --tag $Image `
+                    --push `
+                    .
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Docker build or push failed."
+                }
+            }
+            $ResolvedPinnedImage = Resolve-PinnedImage -MutableImage $Image
+        }
+        Write-Host "Pinned image: $ResolvedPinnedImage" -ForegroundColor Green
 
-        $PinnedImage = Resolve-PinnedImage -MutableImage $Image
-        Write-Host "Pinned image: $PinnedImage" -ForegroundColor Green
+        if ($Recreate -and $null -ne $ExistingGroup) {
+            Remove-StoppedContainerGroup -Headers $Headers
+            $ExistingGroup = $null
+        }
+
         $WorkerEnvironment = Get-WorkerEnvironment
         $GpuClassIds = @(Resolve-GpuClassIds -Headers $Headers)
 
         if ($null -eq $ExistingGroup) {
             New-ContainerGroup `
                 -Headers $Headers `
-                -PinnedImage $PinnedImage `
+                -PinnedImage $ResolvedPinnedImage `
                 -WorkerEnvironment $WorkerEnvironment `
                 -GpuClassIds $GpuClassIds
             $Group = Wait-ForGroupSettled `
@@ -944,7 +1083,7 @@ switch ($Action) {
             $PreviousVersion = [int]$ExistingGroup.version
             Update-ContainerGroup `
                 -Headers $Headers `
-                -PinnedImage $PinnedImage `
+                -PinnedImage $ResolvedPinnedImage `
                 -WorkerEnvironment $WorkerEnvironment `
                 -GpuClassIds $GpuClassIds
             $Group = Wait-ForGroupSettled `
@@ -956,11 +1095,11 @@ switch ($Action) {
         }
 
         $Group = Ensure-PreparedZeroReplicas -Headers $Headers -Group $Group
-        Assert-PreparedGroup -Group $Group -PinnedImage $PinnedImage
+        Assert-PreparedGroup -Group $Group -PinnedImage $ResolvedPinnedImage
         $WorkerEnvironment = $null
         $GpuClassIds = $null
 
-        Write-Host "$Service worker image/config prepared; group remains stopped at zero replicas." `
+        Write-Host "$Service worker image/config prepared; group remains at zero replicas." `
             -ForegroundColor Green
         Show-Status -Headers $Headers
     }

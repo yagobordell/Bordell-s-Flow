@@ -1,9 +1,15 @@
+import re
 from pathlib import Path
 
 from ai_video_factory.domain import NarrationAudio, NarrationWord, SourceScript
 from ai_video_factory.providers.transcription import TranscriptionProvider
 
 _TIMESTAMP_TOLERANCE_SECONDS = 0.5
+_ZERO_DURATION_TOLERANCE_SECONDS = 1e-6
+_MAX_TRAILING_ZERO_DURATION_WORDS = 4
+_MIN_WORD_COUNT_RATIO = 0.55
+_MAX_WORD_COUNT_RATIO = 1.75
+_MIN_SOURCE_WORDS_FOR_RATIO_CHECK = 20
 
 
 async def align_narration_words(
@@ -26,7 +32,7 @@ async def align_narration_words(
         audio,
         filename=Path(narration.uri).name,
         model=model,
-        prompt=source.text,
+        prompt="",
         language=language,
     )
     if not words:
@@ -72,4 +78,40 @@ async def align_narration_words(
             f"duration={narration.duration_seconds}"
         )
 
+    _validate_alignment_quality(source, aligned)
     return aligned
+
+
+def _validate_alignment_quality(
+    source: SourceScript,
+    words: list[NarrationWord],
+) -> None:
+    source_word_count = len(_tokenize_source_words(source.text))
+    aligned_word_count = len(words)
+
+    if source_word_count >= _MIN_SOURCE_WORDS_FOR_RATIO_CHECK:
+        ratio = aligned_word_count / source_word_count
+        if ratio < _MIN_WORD_COUNT_RATIO or ratio > _MAX_WORD_COUNT_RATIO:
+            raise ValueError(
+                "Narration alignment word count is implausible relative to the source script: "
+                f"source_words={source_word_count}, aligned_words={aligned_word_count}, "
+                f"ratio={ratio:.3f}"
+            )
+
+    trailing_zero_duration = 0
+    for word in reversed(words):
+        if abs(word.end_seconds - word.start_seconds) > _ZERO_DURATION_TOLERANCE_SECONDS:
+            break
+        trailing_zero_duration += 1
+
+    if trailing_zero_duration > _MAX_TRAILING_ZERO_DURATION_WORDS:
+        first_bad = words[len(words) - trailing_zero_duration]
+        raise ValueError(
+            "Narration alignment has an implausible trailing zero-duration word run: "
+            f"count={trailing_zero_duration}, first_word_id={first_bad.id}, "
+            f"timestamp={first_bad.start_seconds:.3f}"
+        )
+
+
+def _tokenize_source_words(text: str) -> list[str]:
+    return re.findall(r"\w+(?:['’]\w+)?", text.casefold(), flags=re.UNICODE)

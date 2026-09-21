@@ -68,6 +68,56 @@ def test_salad_queue_preflight_allows_only_manifest_owned_ltx_resume(
     assert result["whisper"]["active_jobs"] == 0
 
 
+
+def test_salad_queue_preflight_allows_manifest_owned_realesrgan_resume(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "phase8" / "video_upscale_manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "transport_job_id": "upscale-owned",
+                        "transport_status": "pending",
+                    },
+                    {
+                        "transport_job_id": "upscale-succeeded",
+                        "transport_status": "succeeded",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(preflight.settings, "salad_api_key", "test-key")
+    services = {
+        "stack": {"organization": "org", "project": "project"},
+        "services": {"realesrgan": {"queue_name": "realesrgan-q"}},
+    }
+    monkeypatch.setattr(
+        preflight,
+        "_queue_summary",
+        lambda **_: {"current_queue_length": 1},
+    )
+    monkeypatch.setattr(
+        preflight,
+        "_queue_jobs",
+        lambda **_: [
+            {"id": "upscale-owned", "status": "pending"},
+        ],
+    )
+
+    result = preflight._check_salad_queues(services, tmp_path)
+
+    assert result["realesrgan"] == {
+        "active_jobs": 1,
+        "recognized_resume_jobs": 1,
+    }
+
+
 def test_salad_queue_preflight_rejects_unowned_active_job(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

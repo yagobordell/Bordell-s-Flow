@@ -8,7 +8,7 @@ from pathlib import Path
 if __name__ == "__main__":
     os.environ["SALAD_QUEUE_NAME"] = os.getenv(
         "SALAD_LTX25_QUEUE_NAME",
-        "ai-video-factory-ltx25-jobs",
+        "ai-video-factory-ltx25-jobs-v2",
     )
     original_argv = sys.argv
     try:

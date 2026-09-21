@@ -4,8 +4,8 @@ from ai_video_factory.domain import ProjectConfig, Script, StoryboardScene, Vide
 from ai_video_factory.providers.base import StructuredTextProvider
 
 DIRECTOR_INSTRUCTIONS = """\
-Eres el director de un vídeo vertical corto para redes sociales.
-Transforma un guion narrado en un plan audiovisual estructurado.
+Eres el director de un vídeo documental cinematográfico horizontal 16:9.
+Transforma un guion narrado en un plan audiovisual estructurado pensado para landscape widescreen.
 
 Reglas:
 - Divide la narración en escenas breves y visualmente claras.
@@ -13,7 +13,9 @@ Reglas:
 - Cada escena debe contener una porción continua de la narración.
 - Escribe los prompts visuales en inglés para maximizar compatibilidad con modelos de imagen.
 - Mantén coherencia visual entre escenas: época, personajes, vestuario, iluminación y estilo.
-- Evita texto visible, logos, marcas de agua y elementos UI en los prompts visuales.
+- Compón para 16:9 horizontal: aprovecha el eje lateral, deja aire para movimiento y evita
+  encuadres de retrato o sujetos apretados contra los bordes.
+- Evita texto visible, logos, marcas de agua, bordes, letterboxing y elementos UI.
 - Usa movimientos de cámara simples y realizables para image-to-video.
 - La suma aproximada de las duraciones debe acercarse a la duración objetivo del proyecto.
 - `visual_style` debe describir la identidad visual global del vídeo de forma reutilizable.

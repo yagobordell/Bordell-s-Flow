@@ -147,3 +147,18 @@ def test_ltx_running_not_ready_reallocates_stalled_model_bootstrap() -> None:
     assert "running-not-ready watchdog started" in script
     assert "remained running but not ready" in script
     assert "Request-InstanceReallocation -InstanceId $InstanceId" in script
+
+
+
+def test_bootstrap_uses_exhaustive_active_jobs_not_stale_queue_summary() -> None:
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+
+    assert "function Get-ActiveQueueJobs" in script
+    assert '"$QueueUrl/jobs?page=$Page&page_size=25"' in script
+    assert '$Job.status -in @("pending", "running")' in script
+    assert "$Items.Count -lt 25" in script
+    assert "could not exhaustively enumerate" in script
+    assert "requires no pending/running jobs before bootstrap" in script
+    assert "Protected smoke queue summary is stale" in script
+    assert "Treating '$QueueName' as logically empty." in script
+    assert "contains $([int]$Queue.current_queue_length) job(s)" not in script

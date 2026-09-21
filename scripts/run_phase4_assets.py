@@ -16,13 +16,14 @@ from ai_video_factory.providers import (
     SaladFlux2KleinImageProvider,
     SaladIdeogramImageProvider,
 )
+from ai_video_factory.providers.images import parse_image_size
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.flux2_klein import FLUX2_KLEIN_REFERENCE_TASK
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_REFERENCE_TASK
 from ai_video_factory.workflows.reference_assets import generate_reference_assets
 
-DEFAULT_SIZE = "1024x1024"
+DEFAULT_SIZE = "1536x864"
 DEFAULT_QUALITY = "high"
 DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS = 300.0
 DEFAULT_FLUX_PENDING_TIMEOUT_SECONDS = 1800.0
@@ -139,6 +140,11 @@ async def _prewarm_flux_fallback(timeout_minutes: int) -> None:
 
 async def main() -> None:
     args = parse_args()
+    width, height = parse_image_size(args.size)
+    if width * 9 != height * 16:
+        raise SystemExit(
+            f"Phase 4 production references must be exact 16:9; received {width}x{height}"
+        )
     if not args.references_file.is_file():
         raise SystemExit(f"Visual references file not found: {args.references_file}")
 

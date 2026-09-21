@@ -14,7 +14,7 @@ def test_project_defaults() -> None:
 
     assert project.language == "es"
     assert project.duration_seconds == 45
-    assert project.aspect_ratio == "9:16"
+    assert project.aspect_ratio == "16:9"
 
 
 def test_source_script_is_minimal_production_input() -> None:

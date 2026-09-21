@@ -104,3 +104,41 @@ def test_phase5_alignment_checks_cache_before_whisper_prewarm() -> None:
     prewarm = text.index("Whisper optimized prewarm")
     assert audit < prewarm
     assert "no Whisper GPU allocation required" in text
+
+
+def test_one_command_runner_exposes_narration_language_and_defaults_to_english() -> None:
+    text = _read("scripts/run_video_factory.ps1")
+    production = _read("scripts/run_production.py")
+    controlled = _read("scripts/run_phase5_alignment_controlled.ps1")
+
+    assert '[string]$NarrationLanguage = "en"' in text
+    assert '"--narration-language"' in text
+    assert "$NarrationLanguage" in text
+    assert '--narration-language' in production
+    assert 'default="en"' in production
+    assert '[string]$Language = "en"' in controlled
+    assert "--language" in controlled
+    assert "$Language" in controlled
+
+
+def test_phase5_alignment_cache_audit_receives_same_explicit_language() -> None:
+    text = _read("scripts/run_phase5_alignment_controlled.ps1")
+
+    audit_block = text.split("Phase 5 alignment cache", maxsplit=1)[1].split(
+        "$CachePlan =", maxsplit=1
+    )[0]
+    runner_block = text.split("$RunnerArguments = @(", maxsplit=1)[1].split(
+        ")", maxsplit=1
+    )[0]
+
+    assert "--language $Language" in audit_block
+    assert '"--language", $Language' in runner_block
+
+
+def test_phase9_plan_removes_stale_artifact_before_rebuild() -> None:
+    text = _read("scripts/run_phase9_compositor.py")
+
+    assert "args.output.unlink(missing_ok=True)" in text
+    assert text.index("args.output.unlink(missing_ok=True)") < text.index(
+        "plan = build_composition_plan("
+    )

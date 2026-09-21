@@ -155,6 +155,10 @@ def test_production_dag_automates_ideogram_keyframes(tmp_path: Path) -> None:
     )
     names = [stage.name for stage in stages]
     keyframe = next(stage for stage in stages if stage.name == "phase6-keyframes")
+    references = next(stage for stage in stages if stage.name == "phase4-reference-assets")
+    storyboard = next(stage for stage in stages if stage.name == "phase6-storyboard")
+    video_prompts = next(stage for stage in stages if stage.name == "phase8-video-prompts")
+    videos = next(stage for stage in stages if stage.name == "phase8-videos")
 
     assert names.index("phase8-video-prompts") < names.index("phase6-keyframes")
     assert names.index("phase6-keyframes") < names.index("phase8-videos")
@@ -162,12 +166,23 @@ def test_production_dag_automates_ideogram_keyframes(tmp_path: Path) -> None:
     assert "--quality" in keyframe.arguments
     assert "high" in keyframe.arguments
     assert "--size" in keyframe.arguments
-    assert "1024x1536" in keyframe.arguments
+    assert "1536x864" in keyframe.arguments
     assert {path.name for path in keyframe.inputs} == {
         "storyboard_frames.json",
         "shots.json",
     }
     assert "reference_assets.json" not in {path.name for path in keyframe.inputs}
+    assert "1536x864" in references.arguments
+    assert "16:9" in storyboard.arguments
+    assert "16:9" in video_prompts.arguments
+    assert "1280" in videos.arguments
+    assert "720" in videos.arguments
+    assert "24" in videos.arguments
+
+    alignment = next(stage for stage in stages if stage.name == "phase5-alignment")
+    assert "--language" in alignment.arguments
+    language_index = alignment.arguments.index("--language")
+    assert alignment.arguments[language_index + 1] == "en"
 
 
 def test_existing_keyframes_are_adopted_then_stale_inputs_regenerate(tmp_path: Path) -> None:
@@ -436,3 +451,94 @@ def test_real_production_dag_exposes_safe_parallel_branches(tmp_path: Path) -> N
     assert by_name["phase6-keyframes"].dependencies == ("phase6-storyboard",)
     assert by_name["phase4-reference-assets"].resource_key == "ideogram4"
     assert by_name["phase6-keyframes"].resource_key == "ideogram4"
+    assert by_name["phase8-upscale"].dependencies == ("phase8-videos",)
+    assert by_name["phase8-upscale"].resource_key == "realesrgan"
+    assert by_name["phase8-upscale"].outputs[0].name == "upscaled_clips.json"
+
+
+
+class FailFastExecutor:
+    def __init__(self) -> None:
+        self.release = threading.Event()
+        self.sibling_started = threading.Event()
+        self.cancel_calls = 0
+
+    def __call__(self, stage: ProductionStage) -> None:
+        if stage.name == "failing":
+            assert self.sibling_started.wait(timeout=2)
+            raise RuntimeError("boom")
+        self.sibling_started.set()
+        assert self.release.wait(timeout=2)
+
+    def cancel_running(self) -> None:
+        self.cancel_calls += 1
+        self.release.set()
+
+
+def test_dag_failure_cancels_active_sibling_before_waiting_for_pool(tmp_path: Path) -> None:
+    source = tmp_path / "source.txt"
+    source.write_text("source", encoding="utf-8")
+    executor = FailFastExecutor()
+    runner = ProductionRunner(
+        [
+            ProductionStage(
+                name="failing",
+                description="failing",
+                script=_script(tmp_path, "failing.py"),
+                inputs=(source,),
+                outputs=(tmp_path / "failing.json",),
+            ),
+            ProductionStage(
+                name="sibling",
+                description="sibling",
+                script=_script(tmp_path, "sibling.py"),
+                inputs=(source,),
+                outputs=(tmp_path / "sibling.json",),
+            ),
+        ],
+        manifest_path=tmp_path / "manifest.json",
+        repo_root=tmp_path,
+        executor=executor,
+        max_workers=2,
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        runner.run()
+
+    assert executor.cancel_calls == 1
+    assert executor.release.is_set()
+
+
+def test_production_alignment_language_is_explicit_and_changes_stage_spec(
+    tmp_path: Path,
+) -> None:
+    script_file = tmp_path / "script.txt"
+    script_file.write_text("hola mundo", encoding="utf-8")
+    output = tmp_path / "output"
+
+    english = build_production_stages(
+        script_file=script_file,
+        output_dir=output,
+        narration_language="en",
+    )
+    spanish = build_production_stages(
+        script_file=script_file,
+        output_dir=output,
+        narration_language="es",
+    )
+
+    english_alignment = next(stage for stage in english if stage.name == "phase5-alignment")
+    spanish_alignment = next(stage for stage in spanish if stage.name == "phase5-alignment")
+
+    assert english_alignment.arguments != spanish_alignment.arguments
+    assert "en" in english_alignment.arguments
+    assert "es" in spanish_alignment.arguments
+
+
+def test_production_rejects_empty_narration_language(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="narration language must be non-empty"):
+        build_production_stages(
+            script_file=tmp_path / "script.txt",
+            output_dir=tmp_path / "output",
+            narration_language="   ",
+        )

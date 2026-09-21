@@ -52,7 +52,7 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     assert action_set in text
     service_set = (
         'ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", '
-        '"flux2_klein", "ltx25", "all")'
+        '"flux2_klein", "ltx25", "realesrgan", "all")'
     )
     assert service_set in text
     assert 'python scripts/run_salad_smoke_suite.py' in text
@@ -145,3 +145,21 @@ def test_smoke_suite_persists_evidence_for_each_worker() -> None:
     for service in ("breeze_tts2", "whisper", "ideogram4", "ltx25"):
         assert f'_write_report(args.output_dir, "{service}"' in text
     assert '"smoke-summary.json"' in text
+
+
+def test_validation_manager_exposes_targeted_prepare_recreate() -> None:
+    text = VALIDATION_MANAGER.read_text(encoding="utf-8")
+
+    assert "[switch]$Recreate" in text
+    assert '$Arguments["Recreate"] = $true' in text
+    assert "-Recreate is only valid with -Action Prepare." in text
+    assert "-Recreate requires one explicit service" in text
+
+
+
+def test_validation_manager_forwards_explicit_pinned_image_for_recovery() -> None:
+    text = VALIDATION_MANAGER.read_text(encoding="utf-8")
+
+    assert "[string]$PinnedImage" in text
+    assert '$Arguments["PinnedImage"] = $PinnedImage' in text
+    assert "-PinnedImage requires one explicit service." in text
