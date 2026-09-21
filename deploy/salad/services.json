@@ -158,7 +158,7 @@
       "group_name": "ai-video-factory-ideogram4-worker",
       "queue_name": "ai-video-factory-ideogram4-jobs",
       "dockerfile": "docker/workers/ideogram4/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:ideogram4-nf4-quality48-v4",
+      "image": "docker.io/yagobordell/ai-video-factory:ideogram4-nf4-quality48-v5",
       "priority": "high",
       "resources": {
         "cpu": 8,
