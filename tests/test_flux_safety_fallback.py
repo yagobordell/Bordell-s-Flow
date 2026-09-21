@@ -3,7 +3,10 @@ import asyncio
 import pytest
 
 from ai_video_factory.providers.images import GeneratedImage
-from ai_video_factory.providers.inference_jobs import RemoteInferenceRejectedError
+from ai_video_factory.providers.inference_jobs import (
+    InferenceJobTimeoutError,
+    RemoteInferenceRejectedError,
+)
 from ai_video_factory.providers.safety_fallback import SafetyFallbackImageProvider
 
 
@@ -72,3 +75,48 @@ def test_non_safety_rejection_does_not_use_flux() -> None:
         )
 
     assert fallback.calls == []
+
+
+def test_ideogram_timeout_routes_batch_remainder_to_flux_once() -> None:
+    class TimingOutProvider:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate_image(self, **kwargs):
+            self.calls += 1
+            raise InferenceJobTimeoutError(
+                "timed out",
+                phase="running",
+                job_id="ideogram-reference-timeout",
+                transport_job_id="transport-timeout",
+            )
+
+    async def run() -> None:
+        primary = TimingOutProvider()
+        fallback = _Provider(_image())
+        provider = SafetyFallbackImageProvider(primary=primary, fallback=fallback)
+        results = await asyncio.gather(
+            provider.generate_image(
+                prompt="a",
+                model="ideogram-ai/ideogram-4-nf4",
+                size="1024x1024",
+                quality="high",
+                output_format="png",
+            ),
+            provider.generate_image(
+                prompt="b",
+                model="ideogram-ai/ideogram-4-nf4",
+                size="1024x1024",
+                quality="high",
+                output_format="png",
+            ),
+        )
+
+        assert primary.calls == 1
+        assert len(fallback.calls) == 2
+        assert all(
+            result.metadata["fallback_reason"] == "primary_timeout"
+            for result in results
+        )
+
+    asyncio.run(run())
