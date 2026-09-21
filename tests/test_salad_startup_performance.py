@@ -310,7 +310,7 @@ def test_phase6_recovers_once_from_hung_ideogram_inference() -> None:
     )
     runner = Path("scripts/run_phase6_keyframes.py").read_text(encoding="utf-8")
 
-    assert "[int]$RunningTimeoutSeconds = 600" in text
+    assert "[int]$RunningTimeoutSeconds = 1200" in text
     assert "[int]$IdeogramRecoveryRetries = 1" in text
     assert "$MaxPhase6Attempts = 1 + $IdeogramRecoveryRetries" in text
     assert "$Phase6ExitCode -eq 75" in text
