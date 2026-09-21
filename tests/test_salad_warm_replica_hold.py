@@ -20,6 +20,10 @@ def test_ideogram_phases_pin_replica_before_readiness() -> None:
     assert "Optimized prewarm cannot use -HoldReadyReplica because Salad did not expose" in prewarm
     assert '$Group.PSObject.Properties["queue_autoscaler"]' in prewarm
     assert "$Group.queue_autoscaler" not in prewarm
+    assert "[switch]$AllowScaleToZeroFallback" in prewarm
+    assert "restore_salad_scale_to_zero.ps1" in prewarm
+    assert "start_salad_scale_to_zero.ps1" in prewarm
+    assert 'AI_VIDEO_FACTORY_SCALE_TO_ZERO_FALLBACK = "1"' in prewarm
 
     for runner_path, phase_runner in (
         (Path("scripts/run_phase4_assets_controlled.ps1"), "run_phase4_assets.py"),
@@ -31,6 +35,8 @@ def test_ideogram_phases_pin_replica_before_readiness() -> None:
         assert runner.index("start_salad_optimized_prewarm.ps1") < runner.index(phase_runner)
         assert "-Action Stop" in runner
         assert "cleanup_salad_queue.ps1" in runner
+        assert "AllowScaleToZeroFallback = $true" in runner
+        assert "$PendingTimeoutForRun = [Math]::Max($PendingTimeoutSeconds, 900)" in runner
 
 
 def test_phase8_holds_ready_ltx_replica_through_dispatch() -> None:

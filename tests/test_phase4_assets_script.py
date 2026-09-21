@@ -34,7 +34,8 @@ def test_controlled_ideogram_runners_use_optimized_prewarm_before_queue() -> Non
         assert 'start_salad_optimized_prewarm.ps1' in text
         assert 'Service = "ideogram4"' in text
         assert 'TimeoutMinutes = $PrewarmTimeoutMinutes' in text
-        assert '"--pending-timeout-seconds", $PendingTimeoutSeconds' in text
+        assert '"--pending-timeout-seconds", $PendingTimeoutForRun' in text
+        assert 'AI_VIDEO_FACTORY_SCALE_TO_ZERO_FALLBACK' in text
         assert '[int]$PendingTimeoutSeconds = 300' in text
         assert 'finally {' in text
         assert '-Action Stop' in text
