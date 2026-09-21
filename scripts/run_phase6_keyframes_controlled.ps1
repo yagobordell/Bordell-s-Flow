@@ -32,6 +32,8 @@ param(
 
     [switch]$ReleaseSharedIdeogram,
 
+    [switch]$PreferFallbackProvider,
+
     [switch]$NonInteractive
 )
 
@@ -95,6 +97,16 @@ $IdeogramNeeded = @($Plan | Where-Object { $_.status -eq "miss" }).Count -gt 0
 $FluxNeeded = @($Plan | Where-Object { $_.status -eq "safety_blocked" }).Count -gt 0
 if ($InvalidCount -gt 0) {
     throw "Phase 6 cache contains $InvalidCount invalid artifact(s); refusing GPU allocation."
+}
+$PreferFlux = $PreferFallbackProvider -or `
+    $env:AI_VIDEO_FACTORY_PREFER_FLUX_IMAGE_PROVIDER -eq "1"
+if ($PreferFlux -and $IdeogramNeeded) {
+    Write-Warning (
+        "Phase 6 is using FLUX for all missing keyframes because the Ideogram " +
+        "cold-start path is currently too slow for this run."
+    )
+    $FluxNeeded = $true
+    $IdeogramNeeded = $false
 }
 Write-Host (
     "Phase 6 GPU plan: ideogram={0} flux2_klein={1} cached={2}" -f `
@@ -175,6 +187,9 @@ try {
             "--prewarm-fallback-on-demand",
             "--fallback-prewarm-timeout-minutes", $PrewarmTimeoutMinutes
         )
+    }
+    if ($PreferFlux) {
+        $Phase6Arguments += "--prefer-fallback-provider"
     }
 
     $Phase6Attempt = 0

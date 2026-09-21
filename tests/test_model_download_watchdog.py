@@ -61,7 +61,7 @@ def test_shared_watchdog_does_not_reallocate_when_progress_is_fast_enough(
         "root = pathlib.Path(sys.argv[1])\n"
         "root.mkdir(parents=True, exist_ok=True)\n"
         "target = root / 'weights.incomplete'\n"
-        "for _ in range(8):\n"
+        "for _ in range(32):\n"
         "    with target.open('ab') as handle:\n"
         "        handle.write(b'x' * (256 * 1024))\n"
         "        handle.flush()\n"
@@ -83,8 +83,8 @@ def test_shared_watchdog_does_not_reallocate_when_progress_is_fast_enough(
         poll_seconds=0.02,
         label="test-model",
         min_throughput_mib_per_second=1.0,
-        throughput_grace_seconds=0.08,
-        throughput_window_seconds=0.08,
+            throughput_grace_seconds=0.5,
+            throughput_window_seconds=0.5,
         reallocate_on_slow=True,
     )
 

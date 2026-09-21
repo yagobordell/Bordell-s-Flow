@@ -36,6 +36,8 @@ def test_controlled_ideogram_runners_use_optimized_prewarm_before_queue() -> Non
         assert 'TimeoutMinutes = $PrewarmTimeoutMinutes' in text
         assert '"--pending-timeout-seconds", $PendingTimeoutForRun' in text
         assert 'AI_VIDEO_FACTORY_SCALE_TO_ZERO_FALLBACK' in text
+        assert 'AI_VIDEO_FACTORY_PREFER_FLUX_IMAGE_PROVIDER' in text
+        assert 'prefer-fallback-provider' in text
         assert '[int]$PendingTimeoutSeconds = 300' in text
         assert 'finally {' in text
         assert '-Action Stop' in text

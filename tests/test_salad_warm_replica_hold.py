@@ -39,6 +39,8 @@ def test_ideogram_phases_pin_replica_before_readiness() -> None:
         assert "cleanup_salad_queue.ps1" in runner
         assert "AllowScaleToZeroFallback = $true" in runner
         assert "$PendingTimeoutForRun = [Math]::Max($PendingTimeoutSeconds, 900)" in runner
+        assert "AI_VIDEO_FACTORY_PREFER_FLUX_IMAGE_PROVIDER" in runner
+        assert "PreferFallbackProvider" in runner
 
 
 def test_phase8_holds_ready_ltx_replica_through_dispatch() -> None:
