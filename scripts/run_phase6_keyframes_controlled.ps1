@@ -22,7 +22,7 @@ param(
     [int]$RunningTimeoutSeconds = 1200,
 
     [ValidateRange(0, 2)]
-    [int]$IdeogramRecoveryRetries = 1,
+    [int]$IdeogramRecoveryRetries = 0,
 
     [ValidateRange(300, 3600)]
     [int]$FluxPendingTimeoutSeconds = 1800,
