@@ -195,7 +195,7 @@ def test_whisper_worker_settings_and_salad_manifest() -> None:
     assert service["queue_name"] == "ai-video-factory-whisper-jobs-v2"
     assert service["group_name"] == "ai-video-factory-whisper-worker-v4"
     assert service["dockerfile"] == "docker/workers/whisper/Dockerfile"
-    assert service["image"].endswith(":whisper-large-v3-turbo-v3")
+    assert service["image"].endswith(":whisper-large-v3-turbo-v4")
     assert service["resources"]["gpu_class_names"] == ["RTX 3090 (24 GB)"]
     assert "gpu_classes" not in service["resources"]
     assert service["autoscaler"]["min_replicas"] == 0
