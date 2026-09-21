@@ -232,7 +232,7 @@
       "group_name": "ai-video-factory-whisper-worker-v4",
       "queue_name": "ai-video-factory-whisper-jobs-v2",
       "dockerfile": "docker/workers/whisper/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:whisper-large-v3-turbo-v3",
+      "image": "docker.io/yagobordell/ai-video-factory:whisper-large-v3-turbo-v4",
       "priority": "medium",
       "resources": {
         "cpu": 4,
