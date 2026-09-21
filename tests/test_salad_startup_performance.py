@@ -96,7 +96,7 @@ def test_manifest_versions_and_download_profiles_are_explicit() -> None:
 
     assert services["ideogram4"]["image"].endswith("ideogram4-nf4-quality48-v4")
     assert services["breeze_tts2"]["image"].endswith("breeze-tts2-fast-all-v2")
-    assert services["whisper"]["image"].endswith("whisper-large-v3-turbo-v3")
+    assert services["whisper"]["image"].endswith("whisper-large-v3-turbo-v4")
     assert services["ideogram4"]["environment"]["SALAD_LOG_LEVEL"] == "info"
     assert services["whisper"]["environment"]["SALAD_LOG_LEVEL"] == "info"
     assert services["whisper"]["autostart_policy"] is False
@@ -340,12 +340,19 @@ def test_phase6_emits_inference_progress_logs() -> None:
 
 
 def test_whisper_alignment_prewarm_budget_matches_cold_start_profile() -> None:
-    text = Path("scripts/run_phase5_alignment_controlled.ps1").read_text(
+    controlled = Path("scripts/run_phase5_alignment_controlled.ps1").read_text(
         encoding="utf-8"
     )
+    prewarm = PREWARM.read_text(encoding="utf-8")
+    whisper_profile = prewarm.split("    whisper = @{", maxsplit=1)[1].split(
+        "    }", maxsplit=1
+    )[0]
 
-    assert "[int]$PrewarmTimeoutMinutes = 60" in text
-    assert "TimeoutMinutes = $PrewarmTimeoutMinutes" in text
+    assert "[int]$PrewarmTimeoutMinutes = 120" in controlled
+    assert "TimeoutMinutes = $PrewarmTimeoutMinutes" in controlled
+    assert "RunningNotReadySeconds = 1800" in whisper_profile
+    assert "FinalRunningNotReadySeconds = 3000" in whisper_profile
+    assert "MaxRunningNotReadyReallocations = 1" in whisper_profile
 
 
 
