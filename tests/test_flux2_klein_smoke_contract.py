@@ -46,6 +46,9 @@ def test_flux2_klein_prewarm_reports_pull_and_bootstrap_timings() -> None:
     assert "image_pull_and_start_seconds=" in text
     assert "ready_seconds=" in text
     assert "bootstrap_after_start_seconds=" in text
+    assert "running-not-ready watchdog" in text
+    assert "Request-InstanceReallocation" in text
+    assert "$MaxNodeReallocations = 1" in text
 
 
 def test_flux2_klein_historical_metric_collector_never_starts_gpu() -> None:
