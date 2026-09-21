@@ -106,6 +106,7 @@ if ($WhisperCacheHit) {
 $PrewarmArguments = @{
     Service = "whisper"
     TimeoutMinutes = $PrewarmTimeoutMinutes
+    HoldReadyReplica = $true
 }
 if ($NonInteractive) {
     $PrewarmArguments["NonInteractive"] = $true
