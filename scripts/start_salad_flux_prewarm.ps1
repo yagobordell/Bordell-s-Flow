@@ -5,6 +5,12 @@ param(
     [ValidateRange(10, 120)]
     [int]$TimeoutMinutes = 60,
 
+    [ValidateRange(1, 60)]
+    [int]$RunningNotReadyTimeoutMinutes = 10,
+
+    [ValidateRange(0, 3)]
+    [int]$MaxNodeReallocations = 1,
+
     [switch]$NonInteractive
 )
 
@@ -243,6 +249,22 @@ function Get-Instances {
     return @()
 }
 
+function Request-InstanceReallocation {
+    param(
+        [Parameter(Mandatory)][string]$InstanceId,
+        [Parameter(Mandatory)][string]$Reason
+    )
+
+    Write-Warning "FLUX prewarm requesting Salad node reallocation: $Reason"
+    Invoke-SaladRequest `
+        -Method "Post" `
+        -Uri "$InstancesUrl/$InstanceId/reallocate" `
+        -Operation "reallocate FLUX prewarm instance $InstanceId" `
+        -TimeoutSec 60 `
+        -MaxAttempts 3 |
+        Out-Null
+}
+
 function Get-QueueConnectionName {
     param([Parameter(Mandatory)][object]$Group)
 
@@ -360,6 +382,11 @@ $PrewarmStartedAt = Get-Date
 $AssignmentSeconds = $null
 $ContainerStartedSeconds = $null
 $ReadySeconds = $null
+$RunningNotReadySince = $null
+$RunningNotReadyInstanceId = ""
+$ReallocationPending = $false
+$ReallocatedMachineId = ""
+$NodeReallocations = 0
 
 Write-Host "FLUX prewarm: requesting exactly one replica before queue submission." -ForegroundColor Cyan
 Invoke-SaladRequest `
@@ -410,12 +437,16 @@ do {
     $Ready = $false
     $Pulling = "-"
     $Machine = ""
+    $InstanceId = ""
     if ($Instances.Count -eq 1) {
         $ElapsedSeconds = ((Get-Date) - $PrewarmStartedAt).TotalSeconds
         if ($null -eq $AssignmentSeconds) {
             $AssignmentSeconds = $ElapsedSeconds
         }
         $Instance = $Instances[0]
+        if ($Instance.PSObject.Properties.Name -contains "id") {
+            $InstanceId = [string]$Instance.id
+        }
         if ($Instance.PSObject.Properties.Name -contains "state") {
             $State = [string]$Instance.state
         }
@@ -437,6 +468,73 @@ do {
         if ($Ready -and $null -eq $ReadySeconds) {
             $ReadySeconds = $ElapsedSeconds
         }
+    }
+
+    if (
+        $ReallocationPending -and
+        $Instances.Count -eq 1 -and
+        -not [string]::IsNullOrWhiteSpace($Machine) -and
+        $Machine -ne $ReallocatedMachineId
+    ) {
+        Write-Host (
+            "{0} FLUX prewarm reallocation completed on a different Salad node" -f
+            (Get-Date -Format "HH:mm:ss")
+        ) -ForegroundColor Cyan
+        $ReallocationPending = $false
+        $RunningNotReadySince = Get-Date
+        $RunningNotReadyInstanceId = $InstanceId
+    }
+
+    $RunningNotReady = (
+        $Instances.Count -eq 1 -and
+        $Started -and
+        $State -eq "running" -and
+        -not $Ready
+    )
+    if ($RunningNotReady) {
+        if (
+            $null -eq $RunningNotReadySince -or
+            $InstanceId -ne $RunningNotReadyInstanceId
+        ) {
+            $RunningNotReadySince = Get-Date
+            $RunningNotReadyInstanceId = $InstanceId
+            Write-Host (
+                "{0} FLUX prewarm running-not-ready watchdog started limit={1}m" -f
+                (Get-Date -Format "HH:mm:ss"),
+                $RunningNotReadyTimeoutMinutes
+            ) -ForegroundColor Cyan
+        }
+
+        $RunningNotReadyElapsed = (Get-Date) - $RunningNotReadySince
+        if (
+            $RunningNotReadyElapsed.TotalMinutes -ge $RunningNotReadyTimeoutMinutes -and
+            -not $ReallocationPending
+        ) {
+            if ($NodeReallocations -ge $MaxNodeReallocations) {
+                throw (
+                    "FLUX prewarm remained running but not ready after " +
+                    "$NodeReallocations Salad node reallocation(s)."
+                )
+            }
+            if ([string]::IsNullOrWhiteSpace($InstanceId)) {
+                throw "Cannot reallocate stalled FLUX prewarm because instance id is missing."
+            }
+
+            $NodeReallocations += 1
+            $ReallocationPending = $true
+            $ReallocatedMachineId = $Machine
+            Request-InstanceReallocation `
+                -InstanceId $InstanceId `
+                -Reason (
+                    "running but not ready for at least " +
+                    "$RunningNotReadyTimeoutMinutes minute(s) " +
+                    "($NodeReallocations/$MaxNodeReallocations)"
+                )
+        }
+    }
+    else {
+        $RunningNotReadySince = $null
+        $RunningNotReadyInstanceId = ""
     }
 
     Write-Host (
