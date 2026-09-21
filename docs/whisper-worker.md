@@ -142,7 +142,7 @@ queue-backed smoke on 2026-09-12 completed successfully with ten ordered word ti
 OOM. The first cold-start smoke took `1046.931` seconds including scale-from-zero and model bootstrap;
 this is a correctness baseline rather than a steady-state inference benchmark.
 
-The no-prompt profile is deployed from the versioned `whisper-large-v3-turbo-v3` image tag. The
+The no-prompt profile is deployed from the versioned `whisper-large-v3-turbo-v4` image tag. The
 immutable digest is resolved and recorded by `Prepare` before validation.
 
 Full validation evidence and the deployment issues found along the way are recorded in
