@@ -195,6 +195,12 @@ try {
             throw "Salad control-plane preflight failed."
         }
         $SaladPreflightPassed = $true
+        # The preflight has already enumerated every Salad queue and confirmed that
+        # no pending/running job exists. Let the controlled GPU runners reuse that
+        # same proof during this process; otherwise a stale queue counter forces a
+        # second slow historical pagination pass before every prewarm.
+        $env:AI_VIDEO_FACTORY_PREFLIGHT_QUEUE_EMPTY = "1"
+        $env:AI_VIDEO_FACTORY_PREFLIGHT_REPORT = Join-Path $OutputDir "preflight_report.json"
 
         Ensure-RemotionDependencies
 

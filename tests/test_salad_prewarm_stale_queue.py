@@ -7,6 +7,9 @@ def test_optimized_prewarm_verifies_stale_queue_summary_by_job_enumeration() -> 
     text = PREWARM.read_text(encoding="utf-8")
 
     assert "function Get-QueueJobSnapshot" in text
+    assert "function Test-PreflightVerifiedQueueEmpty" in text
+    assert "AI_VIDEO_FACTORY_PREFLIGHT_QUEUE_EMPTY" in text
+    assert "skipping duplicate historical pagination" in text
     assert '"pending", "running"' in text
     assert "exhaustive job enumeration found no pending or running jobs" in text
     assert text.count("$null = Assert-QueueLogicallyEmpty -Queue $Queue") == 4

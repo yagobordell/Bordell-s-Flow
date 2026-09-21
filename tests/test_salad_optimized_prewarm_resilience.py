@@ -7,6 +7,7 @@ def test_optimized_prewarm_retries_transient_control_plane_reads() -> None:
     text = PREWARM.read_text(encoding="utf-8")
 
     assert "function Invoke-SaladRead" in text
+    assert "AI_VIDEO_FACTORY_PREFLIGHT_REPORT" in text
     assert "function Test-TransientSaladReadFailure" in text
     assert "WebExceptionStatus]::Timeout" in text
     assert "$StatusCode -eq 408" in text
