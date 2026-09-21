@@ -24,6 +24,8 @@ def test_ideogram_phases_pin_replica_before_readiness() -> None:
     assert "restore_salad_scale_to_zero.ps1" in prewarm
     assert "start_salad_scale_to_zero.ps1" in prewarm
     assert 'AI_VIDEO_FACTORY_SCALE_TO_ZERO_FALLBACK = "1"' in prewarm
+    assert "$FallbackAlreadyStarting" in prewarm
+    assert "letting queued work wait for readiness" in prewarm
 
     for runner_path, phase_runner in (
         (Path("scripts/run_phase4_assets_controlled.ps1"), "run_phase4_assets.py"),
