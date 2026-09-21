@@ -20,3 +20,4 @@ def test_phase5_whisper_prewarm_budget_allows_reallocation_recovery() -> None:
     assert "[int]$PrewarmTimeoutMinutes = 120" in text
     assert 'Service = "whisper"' in text
     assert "TimeoutMinutes = $PrewarmTimeoutMinutes" in text
+    assert "HoldReadyReplica = $true" in text
