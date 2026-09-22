@@ -15,19 +15,28 @@ const BoundaryAccent = ({
   }
 
   const activeShot = shots.find(
-    (shot) =>
-      shot.shot_id > 1 &&
-      frame >= shot.start_frame &&
-      frame < shot.start_frame + frames,
+    (shot) => {
+      const effectiveFrames = Math.min(frames, shot.duration_frames);
+      return (
+        shot.shot_id > 1 &&
+        frame >= shot.start_frame &&
+        frame < shot.start_frame + effectiveFrames
+      );
+    },
   );
   if (!activeShot) {
     return null;
   }
 
+  const effectiveFrames = Math.min(frames, activeShot.duration_frames);
+  if (effectiveFrames === 0) {
+    return null;
+  }
+
   const localFrame = frame - activeShot.start_frame;
-  const progress = frames === 1 ? 0.5 : localFrame / (frames - 1);
+  const progress = effectiveFrames === 1 ? 0.5 : localFrame / (effectiveFrames - 1);
   const leftPercent = -20 + progress * 140;
-  const opacity = frames === 1 ? 0.16 : Math.sin(Math.PI * progress) * 0.18;
+  const opacity = effectiveFrames === 1 ? 0.16 : Math.sin(Math.PI * progress) * 0.18;
 
   return (
     <AbsoluteFill style={{overflow: "hidden", pointerEvents: "none"}}>

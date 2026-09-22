@@ -15,7 +15,10 @@ const MotionShot = ({
   profile: RemotionVisualProfile;
 }) => {
   const localFrame = useCurrentFrame();
-  const transitionFrames = profile.transition_frames;
+  const transitionFrames = Math.min(
+    profile.transition_frames,
+    Math.floor(shot.duration_frames / 2),
+  );
 
   const entryProgress =
     index === 0 || transitionFrames === 0

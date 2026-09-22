@@ -134,15 +134,18 @@ def test_prepare_remotion_props_accepts_custom_visual_profile(tmp_path: Path) ->
     assert props.total_frames == 48
 
 
-def test_visual_profile_rejects_transition_window_that_cannot_fit(tmp_path: Path) -> None:
+def test_visual_profile_is_preserved_when_renderer_must_clamp_short_shots(
+    tmp_path: Path,
+) -> None:
     profile = RemotionVisualProfile(transition_frames=13)
 
-    with pytest.raises(ValueError, match="transition windows"):
-        prepare_remotion_props(
-            _plan(tmp_path),
-            public_dir=tmp_path / "public",
-            visual_profile=profile,
-        )
+    props = prepare_remotion_props(
+        _plan(tmp_path),
+        public_dir=tmp_path / "public",
+        visual_profile=profile,
+    )
+
+    assert props.visual_profile.transition_frames == 13
 
 
 def test_prepare_remotion_props_removes_stale_staged_clip(tmp_path: Path) -> None:
