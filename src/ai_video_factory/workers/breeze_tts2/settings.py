@@ -26,7 +26,7 @@ class BreezeTTS2WorkerSettings(InferenceWorkerSettings):
     )
     device: str = Field(default="cuda", validation_alias="BREEZE_DEVICE")
     max_chunk_chars: int = Field(
-        default=4000,
+        default=1200,
         ge=200,
         le=10_000,
         validation_alias="BREEZE_MAX_CHUNK_CHARS",

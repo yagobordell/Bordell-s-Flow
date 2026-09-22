@@ -20,7 +20,7 @@ from ai_video_factory.inference.ports import LocalArtifact
 
 BREEZE_TTS2_TASK = "audio.breeze_tts2.generate"
 BREEZE_TTS2_MODEL_ID = "BreezeBlue/Breeze-TTS-2"
-BREEZE_TTS2_GENERATION_PROFILE = "breeze-tts2-fast-all-v2"
+BREEZE_TTS2_GENERATION_PROFILE = "breeze-tts2-fast-all-v3"
 
 _MAX_NEW_TOKENS = 1500
 _MAX_SEQ_LEN = 2048
@@ -170,7 +170,7 @@ class BreezeTTS2Backend:
         model_repository: str = BREEZE_TTS2_MODEL_ID,
         model_revision: str = "main",
         device: str = "cuda",
-        max_chunk_chars: int = 4000,
+        max_chunk_chars: int = 1200,
         inter_chunk_pause_ms: int = 120,
     ) -> None:
         if max_chunk_chars < 200:
@@ -579,11 +579,10 @@ def _plan_narration_chunks(
 ) -> list[str]:
     """Pack narration to the runtime budget and anchor continuation voice identity.
 
-    The old implementation split every narration at 1,200 characters. That imposed an
-    artificial voice-design reset on otherwise safe two-minute scripts. A complete request is
-    now preferred whenever its actual tokenizer prompt fits the resident runtime. Only genuinely
-    oversized narration is split; later chunks reserve prompt space for a reference recording of
-    the first chunk so Breeze uses voice direction instead of independently designing a new voice.
+    The runtime has a finite audio-token budget as well as a text-context budget. A request that
+    fits the text context can still be truncated at the audio-token ceiling, so the configured
+    chunk guard remains active for production narration. Splitting is sentence-aware and later
+    chunks use a reference recording from the first chunk, so the guard cannot reset voice design.
     """
 
     stripped = text.strip()
@@ -606,15 +605,35 @@ def _plan_narration_chunks(
         else:
             pieces.extend(_split_oversized_piece(sentence, max_chunk_chars))
 
-    first_parts = _split_piece_for_prompt_budget(
-        pieces[0],
-        tokenizer=tokenizer,
-        instruction=instruction,
-        token_budget=_MAX_PROMPT_TOKENS,
-        max_chars=max_chunk_chars,
-    )
-    remaining = [first_parts[0]]
-    remainder_pieces = [*first_parts[1:], *pieces[1:]]
+    safe_pieces: list[str] = []
+    for piece in pieces:
+        safe_pieces.extend(
+            _split_piece_for_prompt_budget(
+                piece,
+                tokenizer=tokenizer,
+                instruction=instruction,
+                token_budget=_MAX_PROMPT_TOKENS,
+                max_chars=max_chunk_chars,
+            )
+        )
+
+    first_chunk = safe_pieces[0]
+    remainder_index = 1
+    while remainder_index < len(safe_pieces):
+        candidate = f"{first_chunk} {safe_pieces[remainder_index]}"
+        if not _fits_prompt(
+            tokenizer,
+            instruction=instruction,
+            text=candidate,
+            token_budget=_MAX_PROMPT_TOKENS,
+            max_chars=max_chunk_chars,
+        ):
+            break
+        first_chunk = candidate
+        remainder_index += 1
+
+    remaining = [first_chunk]
+    remainder_pieces = safe_pieces[remainder_index:]
     remaining.extend(
         _pack_prompt_pieces(
             remainder_pieces,

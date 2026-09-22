@@ -74,7 +74,7 @@ Phase 8 prewarms one healthy RTX 5090 before submitting the video batch. After s
 This hardening changes the worker images for:
 
 - Ideogram: `ideogram4-nf4-quality48-v3`
-- Breeze: `breeze-tts2-fast-all-v3`
+- Breeze: `breeze-tts2-fast-all-v4`
 - Whisper: `whisper-large-v3-turbo-v2`
 
 Each changed worker requires one `Prepare` before its next use. Prepare can be deferred until that service is actually needed. LTX is unchanged and does not require another Prepare for this hardening.

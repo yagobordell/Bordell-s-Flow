@@ -43,7 +43,7 @@ Initial generation profile:
 
 ```text
 model: BreezeBlue/Breeze-TTS-2
-profile: breeze-tts2-fast-all-v2
+profile: breeze-tts2-fast-all-v3
 fast_all: true
 cfg_scale: 4.0
 seed: 42
@@ -67,15 +67,15 @@ without changing domain contracts.
 
 ## Long narration
 
-The worker first measures the actual tokenizer prompt against the resident runtime budget. A script
-that fits is sent as one request; `BREEZE_MAX_CHUNK_CHARS` (default 4000) is only a secondary guard,
-not the normal two-minute split point. This prevents an arbitrary character boundary from resetting
-voice design in the middle of a narration.
+The worker first measures the actual tokenizer prompt against the resident runtime budget. The
+runtime also has a finite audio-token budget (`max_new_tokens=1500`, roughly two minutes at the
+production voice speed), so `BREEZE_MAX_CHUNK_CHARS` remains a sentence-aware output-safety guard
+(default 1200). This prevents a long request from being silently truncated at the runtime ceiling.
 
-Only a script that genuinely exceeds the model context is split at sentence boundaries. The first
-chunk establishes the designed voice. Later chunks use a short reference recording from that first
-chunk through Breeze voice direction, while retaining the same delivery instruction and seed. Audio
-is written sequentially into one 24 kHz mono WAV with a small configurable inter-chunk pause.
+Chunks are split at sentence boundaries when the output-safety guard or model context requires it.
+The first chunk establishes the designed voice. Later chunks use a reference recording from that
+first chunk through Breeze voice direction, while retaining the same delivery instruction and seed.
+Audio is written sequentially into one 24 kHz mono WAV with a small configurable inter-chunk pause.
 Downstream stages still receive exactly one canonical `narration.wav` and one `NarrationAudio` timeline.
 
 ## Speech speed

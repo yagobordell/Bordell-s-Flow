@@ -156,6 +156,23 @@ def test_breeze_prefers_one_request_when_prompt_fits_runtime_budget() -> None:
     assert chunks == [text]
 
 
+def test_breeze_output_guard_splits_two_minute_script_without_voice_reset() -> None:
+    text = Path("data/input/script_2min_english.txt").read_text(encoding="utf-8").strip()
+
+    chunks = _plan_narration_chunks(
+        text,
+        tokenizer=_WordTokenizer(),
+        instruction="Speak naturally.",
+        max_chunk_chars=1200,
+    )
+
+    assert len(chunks) == 2
+    assert " ".join(chunks) == " ".join(text.split())
+    assert chunks[0].endswith("the same sky.")
+    assert chunks[1].startswith("During the afternoon,")
+    assert all(len(chunk) <= 1200 for chunk in chunks)
+
+
 def test_breeze_anchors_context_overflow_chunks() -> None:
     text = "First sentence establishes the voice. " + " ".join(
         f"word{index}" for index in range(_MAX_PROMPT_TOKENS * 2)
@@ -191,7 +208,7 @@ def test_breeze_worker_settings_and_salad_manifest() -> None:
 
     assert settings.model_repository == BREEZE_TTS2_MODEL_ID
     assert settings.device == "cuda"
-    assert settings.max_chunk_chars == 4000
+    assert settings.max_chunk_chars == 1200
     assert service["queue_name"] == "ai-video-factory-breeze-tts2-jobs"
     assert service["resources"]["gpu_class_names"] == ["RTX 4090 (24 GB)"]
     assert service["dockerfile"] == "docker/workers/breeze-tts2/Dockerfile"
