@@ -64,8 +64,12 @@ The selected A2V memory policy is `fp8-cast` on the dev transformer with `CPU` o
 matches the proven memory strategy already used by I2V. The existing eager-SDPA DiffVAE
 compatibility route for RTX 5090 is also preserved.
 
-A real Salad A2V benchmark is required before claiming a peak-VRAM figure or stable duration
-ceiling. No arbitrary 10-second product split is encoded in the worker.
+The upstream duration helper clamps raw duration-derived frame counts to 1024 before snapping
+down to the 8k+1 temporal grid. The worker therefore rejects audio longer than
+`1024 / fps` seconds rather than allowing silent truncation. At the production 24 fps this is
+42.667 seconds of input; the largest snapped output is 1017 frames, or 42.375 seconds.
+A lower recommended production duration remains unset until a real RTX 5090 benchmark establishes
+one. No arbitrary 10-second product split is encoded in the worker.
 
 ## Geometry and timing
 
@@ -88,8 +92,8 @@ frame count from the effective audio duration. The generated metadata records:
 - image and audio SHA-256
 - quantization/offload mode
 - model-load, inference and encode timings
-- currently measured duration-limit fields, which remain null until a real benchmark establishes
-  defensible limits
+- technical hard duration derived from the upstream 1024-frame clamp; recommended duration remains
+  null until a real benchmark establishes a defensible operational limit
 
 The official A2V result supplies the original conditioning audio for muxing. The worker passes
 `result.audio` directly to the official `encode_video` helper rather than synthesizing or
@@ -205,8 +209,9 @@ scene changes and obvious facial deformation.
 
 ## Duration benchmark
 
-Do not set a hard or recommended product duration until the real RTX 5090 smoke/benchmark has
-measured representative clips. Suggested matrix:
+The technical hard limit is already enforced from the upstream 1024-frame clamp. Do not set a
+lower recommended product duration until the real RTX 5090 smoke/benchmark has measured
+representative clips. Suggested matrix:
 
 | Speech duration | Purpose |
 | --- | --- |
