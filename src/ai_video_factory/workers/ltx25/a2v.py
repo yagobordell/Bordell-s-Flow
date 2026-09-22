@@ -235,7 +235,10 @@ def _probe_json(path: Path) -> dict[str, Any]:
             "-v",
             "error",
             "-show_entries",
-            "format=duration:stream=index,codec_type,codec_name,sample_rate,channels,width,height,r_frame_rate",
+            (
+                "format=duration:stream=index,codec_type,codec_name,sample_rate,channels,"
+                "width,height,r_frame_rate"
+            ),
             "-of",
             "json",
             str(path),
