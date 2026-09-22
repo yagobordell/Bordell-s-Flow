@@ -962,19 +962,56 @@ switch ($Action) {
             Write-Host "$Service worker group does not exist; nothing to stop." -ForegroundColor Green
             exit 0
         }
-        if ((Get-GroupStatus -Group $Group) -eq "stopped") {
-            Write-Host "$Service worker is already stopped." -ForegroundColor Green
-            exit 0
+
+        if ((Get-GroupStatus -Group $Group) -ne "stopped") {
+            Invoke-SaladRequest `
+                -Headers $Headers `
+                -Method "Post" `
+                -Uri "$ContainersBase/$GroupName/stop" `
+                -Operation "stop container group" `
+                -TimeoutSec 60 |
+                Out-Null
+            $Group = Wait-ForGroupStatus -Headers $Headers -Expected "stopped"
         }
-        Invoke-SaladRequest `
-            -Headers $Headers `
-            -Method "Post" `
-            -Uri "$ContainersBase/$GroupName/stop" `
-            -Operation "stop container group" `
-            -TimeoutSec 60 |
-            Out-Null
-        Wait-ForGroupStatus -Headers $Headers -Expected "stopped" | Out-Null
-        Write-Host "$Service worker stopped." -ForegroundColor Green
+        else {
+            Write-Host "$Service worker is already stopped." -ForegroundColor Green
+        }
+
+        if ([int]$Group.replicas -ne 0) {
+            Write-Warning (
+                "$Service is stopped but retains replicas=$([int]$Group.replicas). " +
+                "Normalizing the stopped group to replicas=0."
+            )
+            $Body = @{ replicas = 0 } | ConvertTo-Json
+            Invoke-SaladRequest `
+                -Headers $Headers `
+                -Method "Patch" `
+                -Uri "$ContainersBase/$GroupName" `
+                -Operation "normalize stopped container group to zero replicas" `
+                -ContentType "application/merge-patch+json" `
+                -Body $Body `
+                -TimeoutSec 60 |
+                Out-Null
+            $Group = Wait-ForGroupSettled `
+                -Headers $Headers `
+                -TimeoutMinutes 10
+        }
+
+        $FinalStatus = Get-GroupStatus -Group $Group
+        if (
+            $FinalStatus -ne "stopped" -or
+            [bool]$Group.pending_change -or
+            [int]$Group.replicas -ne 0
+        ) {
+            throw (
+                "Stop cleanup did not normalize '$GroupName' to " +
+                "stopped/replicas=0/pending=False; " +
+                "status=$FinalStatus replicas=$([int]$Group.replicas) " +
+                "pending=$([bool]$Group.pending_change)."
+            )
+        }
+
+        Write-Host "$Service worker stopped with replicas=0." -ForegroundColor Green
         exit 0
     }
 
