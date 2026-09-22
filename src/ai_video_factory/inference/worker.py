@@ -130,6 +130,14 @@ class InferenceWorker:
             raise JobBusyError(f"job is currently leased by another worker: {request.job_id}")
 
         try:
+            if (
+                request.max_attempts is not None
+                and claim.attempt_count > request.max_attempts
+            ):
+                raise NonRetryableTaskError(
+                    f"job {request.job_id} exceeded max_attempts={request.max_attempts}; "
+                    "refusing to re-run inference"
+                )
             response = self._execute_claimed(request, request_sha256, claim.attempt_count)
         except (
             JobConflictError,
