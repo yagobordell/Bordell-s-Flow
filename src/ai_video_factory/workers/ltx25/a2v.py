@@ -38,8 +38,8 @@ LTX_A2V_DEFAULT_PROMPT = (
     "single continuous shot, no cuts, no scene changes, no camera movement, no exaggerated "
     "gestures, no identity drift."
 )
-LTX_A2V_RECOMMENDED_MAX_SECONDS = 12.0
-LTX_A2V_HARD_MAX_SECONDS = 20.0
+LTX_A2V_RECOMMENDED_MAX_SECONDS: float | None = None
+LTX_A2V_HARD_MAX_SECONDS: float | None = None
 
 _DEV_TRANSFORMER = "diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors"
 _TEXT_ENCODER = "text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors"
@@ -270,11 +270,6 @@ def probe_audio(path: Path) -> AudioProbe:
         raise ValueError("invalid audio: missing duration/sample-rate/channel metadata") from exc
     if not math.isfinite(duration) or duration <= 0:
         raise ValueError("invalid audio: duration must be positive")
-    if duration > LTX_A2V_HARD_MAX_SECONDS:
-        raise ValueError(
-            "unsupported duration: "
-            f"{duration:.3f}s exceeds A2V hard maximum {LTX_A2V_HARD_MAX_SECONDS:.1f}s"
-        )
     return AudioProbe(
         duration_seconds=duration,
         codec=str(stream.get("codec_name") or "unknown"),
