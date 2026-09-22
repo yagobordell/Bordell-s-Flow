@@ -49,6 +49,7 @@ class FakeBackend:
                 "parameters": parameters,
             }
         )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"fake-mp4")
         return {
             "generation_mode": "audio_to_video",
