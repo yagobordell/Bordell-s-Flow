@@ -14,6 +14,23 @@ from ai_video_factory.inference.tasks import TaskRunnerRegistry
 from ai_video_factory.inference.worker import InferenceWorker
 
 
+class _FailingRunner:
+    task_name = "test.single_shot_failure"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def run(
+        self,
+        request: InferenceJobRequest,
+        inputs: Mapping[str, Path],
+        work_dir: Path,
+    ) -> LocalArtifact:
+        del request, inputs, work_dir
+        self.calls += 1
+        raise RuntimeError("first A2V-like failure")
+
+
 class _RejectingRunner:
     task_name = "test.non_retryable"
 
@@ -66,6 +83,51 @@ def test_non_retryable_failure_is_cached_before_second_execution(tmp_path: Path)
     with pytest.raises(NonRetryableTaskError, match="deterministic provider rejection"):
         worker.process(request, transport_job_id="salad-attempt-2")
 
+    assert runner.calls == 1
+
+
+def test_single_shot_generic_failure_returns_422_on_first_delivery(
+    tmp_path: Path,
+) -> None:
+    runner = _FailingRunner()
+    worker = InferenceWorker(
+        storage=LocalObjectStorage(tmp_path / "objects"),
+        repository=InMemoryJobRepository(),
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="single-shot-worker",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    request = InferenceJobRequest(
+        job_id="single-shot-http-001",
+        task=runner.task_name,
+        output=ObjectOutput(
+            key="jobs/single-shot-http-001/output.mp4",
+            content_type="video/mp4",
+        ),
+        max_attempts=1,
+        parameters={},
+    )
+    payload = request.model_dump(mode="json", exclude_none=True)
+
+    with TestClient(create_app(worker)) as client:
+        first = client.post(
+            "/jobs",
+            headers={"Salad-Job-Id": "salad-attempt-1"},
+            json=payload,
+        )
+        second = client.post(
+            "/jobs",
+            headers={"Salad-Job-Id": "salad-attempt-2"},
+            json=payload,
+        )
+
+    assert first.status_code == 422
+    assert second.status_code == 422
+    expected = "RuntimeError: first A2V-like failure"
+    assert expected in first.json()["detail"]
+    assert expected in second.json()["detail"]
     assert runner.calls == 1
 
 
