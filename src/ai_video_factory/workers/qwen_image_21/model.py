@@ -181,7 +181,9 @@ class QwenImage21Backend:
             torch_dtype=torch.bfloat16,
             local_files_only=True,
         )
-        pipeline.to(self._device)
+        if self._device != "cuda":
+            raise RuntimeError("Qwen-Image-2.1 worker currently requires device='cuda'")
+        pipeline.enable_model_cpu_offload()
         elapsed = time.monotonic() - started
         allocated = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
         reserved = torch.cuda.memory_reserved() if torch.cuda.is_available() else 0
