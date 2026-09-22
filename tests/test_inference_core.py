@@ -55,4 +55,5 @@ def test_optional_sidecars_do_not_change_legacy_request_serialization() -> None:
     document = request.model_dump(mode="json", exclude_none=True)
 
     assert "sidecar_outputs" not in document
+    assert "max_attempts" not in document
     assert len(request.fingerprint()) == 64
