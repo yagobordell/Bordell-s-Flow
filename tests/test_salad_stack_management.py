@@ -23,7 +23,7 @@ def test_salad_manifest_centralizes_stack_identity_and_shared_environment() -> N
         "breeze_tts2",
         "fish_speech",
         "ideogram4",
-        "flux2_klein",
+        "qwen_image_21",
         "ltx25",
         "realesrgan",
     ]
@@ -55,7 +55,7 @@ def test_every_model_has_its_own_group_and_queue() -> None:
     assert services["fish_speech"]["required_environment"] == ["HF_TOKEN"]
     assert services["fish_speech"]["group_name"] == "ai-video-factory-fish-speech-worker"
     assert services["ideogram4"]["required_environment"] == ["HF_TOKEN"]
-    assert services["flux2_klein"]["required_environment"] == []
+    assert services["qwen_image_21"]["required_environment"] == ["HF_TOKEN"]
     assert services["ltx25"]["required_environment"] == ["HF_TOKEN"]
     assert services["realesrgan"]["required_environment"] == []
 
