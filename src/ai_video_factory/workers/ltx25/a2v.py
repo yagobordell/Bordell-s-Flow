@@ -369,21 +369,19 @@ class DirectLTX25A2VBackend:
         self._lock = threading.Lock()
 
     def prepare(self) -> None:
+        """Validate A2V assets without duplicating the resident I2V model at startup."""
         with self._lock:
             bindings = self._get_bindings()
             try:
                 self._validate_runtime(bindings)
             except FileNotFoundError as exc:
                 raise ModelBootstrapPendingError(str(exc)) from exc
-            with self._inference_context(bindings):
-                self._get_or_build_pipeline(bindings)
 
     def ready(self) -> None:
+        """Keep readiness cheap; the A2V pipeline is lazy-loaded once and then reused."""
         with self._lock:
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
-            if self._pipeline is None:
-                raise RuntimeError("LTX-2.5 A2V pipeline has not been prepared")
 
     def generate(
         self,
