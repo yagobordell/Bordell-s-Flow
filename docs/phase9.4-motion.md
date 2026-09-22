@@ -40,10 +40,10 @@ MotionShotTrack
 
 MotionOverlayTrack
   - short light sweep after internal cuts
-  - thin global progress bar
+  - optional thin global progress bar (off by default)
 
 CaptionTrack
-  - unchanged cue and word frame intervals
+  - optional cue and word presentation (off by default)
   - subtle cue entrance/exit translation and scale
   - unchanged active-word highlighting
 ```
@@ -61,7 +61,8 @@ transition_floor_opacity:   0.72
 transition_scale:           1.015
 caption_motion_frames:      4
 boundary_accent_frames:     5
-show_progress_bar:          true
+show_captions:              false
+show_progress_bar:          false
 ```
 
 At 24 fps, the default transition window is 250 ms. Python validates that two transition windows can
@@ -71,9 +72,10 @@ cannot modify canonical shot boundaries or `total_frames`.
 The profile is intentionally not a canonical audiovisual domain contract. It is renderer styling and
 may be tuned later without rewriting `ShotTiming`, caption timing or Phase 8 media.
 
-## Caption invariants
+## Optional caption invariants
 
-Phase 9.4 reuses all 29 caption cues and 105 word intervals already validated in Phase 9.2/9.3.
+When captions are enabled, Phase 9.4 reuses the caption cues and word intervals already validated in
+Phase 9.2/9.3.
 Caption motion only changes presentation opacity/translation/scale inside each existing cue interval.
 It does not move cue starts, cue ends, word starts or word ends.
 
@@ -124,10 +126,12 @@ canonical boundary; no black gap, cross-shot blend or accidental overlap was obs
 Comparison against the closed Phase 9.3 `visual.mp4` confirmed that the motion layer changes only
 presentation. The opacity dip reaches the configured floor near the boundary and recovers inside the
 new shot, while the scale change remains visually subtle. The short boundary accent does not obscure
-subjects, and the progress bar stays in the upper safe area without colliding with captions.
+subjects. Production defaults disable both the progress bar and caption track, so no top duration
+indicator or subtitle card is rendered unless explicitly enabled.
 
-Caption cards remain readable during their four-frame motion window, active-word highlighting remains
-clear, and the presentation cleanup still shows `el` and `sirve` without U+2020 dagger artifacts.
+When caption rendering is explicitly enabled, caption cards remain readable during their four-frame
+motion window, active-word highlighting remains clear, and presentation cleanup still shows `el` and
+`sirve` without U+2020 dagger artifacts.
 Because Phase 9.4 remains intentionally silent, perceptual voice synchronization is deferred to the
 later narration-mux validation; caption and word frame intervals themselves are unchanged.
 

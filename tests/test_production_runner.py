@@ -448,8 +448,8 @@ def test_real_production_dag_exposes_safe_parallel_branches(tmp_path: Path) -> N
     assert by_name["phase4-reference-prompts"].dependencies == ("phase3-continuity",)
     assert by_name["phase8-video-prompts"].dependencies == ("phase6-storyboard",)
     assert by_name["phase6-keyframes"].dependencies == ("phase6-storyboard",)
-    assert by_name["phase4-reference-assets"].resource_key == "ideogram4"
-    assert by_name["phase6-keyframes"].resource_key == "ideogram4"
+    assert by_name["phase4-reference-assets"].resource_key == "flux2_klein"
+    assert by_name["phase6-keyframes"].resource_key == "flux2_klein"
     assert by_name["phase8-upscale"].dependencies == ("phase8-videos",)
     assert by_name["phase8-upscale"].resource_key == "realesrgan"
     assert by_name["phase8-upscale"].outputs[0].name == "upscaled_clips.json"

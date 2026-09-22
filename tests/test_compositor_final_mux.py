@@ -154,14 +154,14 @@ def test_validate_final_mux_inputs_preserves_canonical_timeline(tmp_path: Path) 
     assert inputs.narration.duration_seconds == pytest.approx(2.0)
 
 
-def test_validate_final_mux_inputs_allows_metadata_rounding_within_one_frame(
+def test_validate_final_mux_inputs_allows_metadata_rounding_when_wav_is_canonical(
     tmp_path: Path,
 ) -> None:
     visual = tmp_path / "visual_motion.mp4"
     visual.touch()
     audio = tmp_path / "narration.wav"
-    _write_wav(audio, duration_seconds=2.02)
-    narration = NarrationAudio(uri="narration.wav", duration_seconds=2.0)
+    _write_wav(audio, duration_seconds=2.0)
+    narration = NarrationAudio(uri="narration.wav", duration_seconds=2.02)
 
     inputs = validate_final_mux_inputs(
         _plan(),
@@ -171,7 +171,7 @@ def test_validate_final_mux_inputs_allows_metadata_rounding_within_one_frame(
         probe_video_fn=lambda _: _video_probe(),
     )
 
-    assert inputs.narration.duration_seconds == pytest.approx(2.02)
+    assert inputs.narration.duration_seconds == pytest.approx(2.0)
 
 
 def test_validate_final_mux_inputs_rejects_wrong_audio_or_visual(tmp_path: Path) -> None:

@@ -202,6 +202,11 @@ def validate_final_mux_inputs(
     if Path(narration.uri).name != audio_path.name:
         raise ValueError("Narration metadata URI does not match the selected WAV file")
 
+    if wav.duration_seconds > canonical_duration + 1e-9:
+        raise ValueError(
+            "Narration WAV exceeds the canonical composition; refusing to truncate audio: "
+            f"wav={wav.duration_seconds:.6f}s canonical={canonical_duration:.6f}s"
+        )
     if abs(wav.duration_seconds - canonical_duration) > frame_tolerance:
         raise ValueError(
             "Narration WAV duration differs from the canonical composition by over one frame: "

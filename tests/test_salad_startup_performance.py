@@ -316,7 +316,8 @@ def test_phase6_recovers_once_from_hung_ideogram_inference() -> None:
 
     assert "[int]$RunningTimeoutSeconds = 1200" in text
     assert "[int]$IdeogramRecoveryRetries = 1" in text
-    assert "$MaxPhase6Attempts = 1 + $IdeogramRecoveryRetries" in text
+    assert '$MaxPhase6Attempts = if ($PrimaryProvider -eq "ideogram4") {' in text
+    assert "1 + $IdeogramRecoveryRetries" in text
     assert "$Phase6ExitCode -eq 75" in text
     assert "Recycling the worker" in text
     assert text.index("-Action Stop -Service ideogram4") < text.index(

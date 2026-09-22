@@ -39,6 +39,9 @@ export const validateRenderProps = (props: RemotionRenderProps): void => {
   if (typeof profile.show_progress_bar !== "boolean") {
     throw new Error("Phase 9.4 progress bar flag must be boolean");
   }
+  if (typeof profile.show_captions !== "boolean") {
+    throw new Error("Phase 9.4 captions flag must be boolean");
+  }
 
   if (props.shots.length === 0) {
     if (

@@ -20,7 +20,8 @@ const defaultProps: RemotionRenderProps = {
     transition_scale: 1.015,
     caption_motion_frames: 4,
     boundary_accent_frames: 5,
-    show_progress_bar: true,
+    show_captions: false,
+    show_progress_bar: false,
   },
 };
 

@@ -74,7 +74,8 @@ class RemotionVisualProfile(BaseModel):
     transition_scale: float = Field(default=1.015, ge=1.0, le=1.1)
     caption_motion_frames: int = Field(default=4, ge=0)
     boundary_accent_frames: int = Field(default=5, ge=0)
-    show_progress_bar: bool = True
+    show_captions: bool = False
+    show_progress_bar: bool = False
 
 
 class RemotionRenderProps(BaseModel):

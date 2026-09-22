@@ -223,6 +223,9 @@ Caption grouping can be tuned for experiments with:
 
 The default profile is the closed canonical profile validated by the later Remotion stages.
 
+The production default omits subtitle cues entirely. Use `--include-captions` only for an
+intentional captioned render.
+
 ## Phase 9.2 closure criteria
 
 All Phase 9.2 closure criteria are confirmed:

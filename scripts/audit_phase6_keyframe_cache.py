@@ -33,6 +33,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("frames_file", type=Path)
     parser.add_argument("--model", default=settings.ideogram4_model)
     parser.add_argument("--fallback-model", default=settings.flux2_klein_model)
+    parser.add_argument(
+        "--primary-provider",
+        choices=("flux2_klein", "ideogram4"),
+        default="flux2_klein",
+        help="Provider whose canonical cache is audited first.",
+    )
     parser.add_argument("--size", default=DEFAULT_SIZE)
     parser.add_argument("--json-output", type=Path)
     return parser.parse_args()
@@ -72,11 +78,36 @@ def audit_keyframe_cache(
     model_id: str,
     fallback_model_id: str,
     size: str,
+    primary_provider: str = "ideogram4",
 ) -> list[dict[str, Any]]:
     width, height = parse_ideogram_size(size)
     records: list[dict[str, Any]] = []
 
     for frame in frames:
+        if primary_provider == "flux2_klein":
+            flux_request = build_flux_job_request(
+                task_name=FLUX2_KLEIN_KEYFRAME_TASK,
+                prompt=frame.prompt,
+                model_id=fallback_model_id,
+                width=width,
+                height=height,
+            )
+            status, error = _cache_status(storage, flux_request)
+            records.append(
+                {
+                    "shot_id": frame.shot_id,
+                    "status": status,
+                    "provider": "flux2_klein",
+                    "matched_variant": "flux2_klein" if status == "hit" else None,
+                    "job_id": flux_request.job_id,
+                    "object_key": flux_request.output.key,
+                    "expected_request_sha256": flux_request.fingerprint(),
+                    "safety_rejected_variants": [],
+                    "error": error,
+                }
+            )
+            continue
+
         candidates = [
             (
                 variant_name,
@@ -189,6 +220,7 @@ def main() -> None:
         model_id=args.model,
         fallback_model_id=args.fallback_model,
         size=args.size,
+        primary_provider=args.primary_provider,
     )
     hits = sum(record["status"] == "hit" for record in records)
     misses = sum(record["status"] == "miss" for record in records)

@@ -19,10 +19,12 @@ export const Phase9Motion = ({
         totalFrames={totalFrames}
         profile={profile}
       />
-      <CaptionTrack
-        captions={captions}
-        motionFrames={profile.caption_motion_frames}
-      />
+      {profile.show_captions ? (
+        <CaptionTrack
+          captions={captions}
+          motionFrames={profile.caption_motion_frames}
+        />
+      ) : null}
     </AbsoluteFill>
   );
 };

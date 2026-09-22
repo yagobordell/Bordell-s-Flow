@@ -32,6 +32,9 @@ param(
 
     [switch]$ReleaseSharedIdeogram,
 
+    [ValidateSet("flux2_klein", "ideogram4")]
+    [string]$PrimaryProvider = "flux2_klein",
+
     [switch]$PreferFallbackProvider,
 
     [switch]$NonInteractive
@@ -80,7 +83,7 @@ $PlanPath = Join-Path ([IO.Path]::GetTempPath()) (
     "ai-video-factory-phase6-plan-{0}.json" -f ([Guid]::NewGuid().ToString("N"))
 )
 Write-Host "=== Phase 6 cache plan: determine required GPU work before prewarm ===" -ForegroundColor Cyan
-& python $AuditScript $Frames --json-output $PlanPath
+& python $AuditScript $Frames --primary-provider $PrimaryProvider --json-output $PlanPath
 if ($LASTEXITCODE -ne 0) {
     Remove-Item -LiteralPath $PlanPath -Force -ErrorAction SilentlyContinue
     throw "Phase 6 cache planning failed; refusing GPU allocation."
@@ -99,9 +102,12 @@ if ($InvalidCount -gt 0) {
     throw "Phase 6 cache contains $InvalidCount invalid artifact(s); refusing GPU allocation."
 }
 $PreferFlux = $PreferFallbackProvider
+if ($PrimaryProvider -eq "flux2_klein") {
+    $PreferFlux = $true
+}
 if ($PreferFlux -and $IdeogramNeeded) {
     Write-Warning (
-        "Phase 6 is using the explicitly requested FLUX provider for all missing keyframes."
+        "Phase 6 is using FLUX.2 Klein as the primary provider for all missing keyframes."
     )
     $FluxNeeded = $true
     $IdeogramNeeded = $false
@@ -131,7 +137,7 @@ if ($NonInteractive) {
 $IdeogramTouched = $false
 # Fresh Ideogram work can discover a safety rejection not yet represented in R2.
 # Prewarm FLUX only after that rejection is confirmed; do not allocate it speculatively.
-$OnDemandFluxPrewarm = $IdeogramNeeded -and -not $FluxNeeded
+$OnDemandFluxPrewarm = $PrimaryProvider -eq "ideogram4" -and $IdeogramNeeded -and -not $FluxNeeded
 $FluxCleanupRequired = $IdeogramNeeded -or $FluxNeeded
 $PrimaryFailure = $null
 $CleanupFailures = @()
@@ -149,7 +155,7 @@ try {
 
     if ($FluxNeeded) {
         Write-Host (
-            "=== FLUX fallback: prewarm only because cached safety evidence requires it ==="
+            "=== FLUX.2 Klein primary/fallback: prewarm before queue submission ==="
         ) -ForegroundColor Cyan
         & $FluxPrewarm @FluxPrewarmArguments
         if (-not $?) {
@@ -178,7 +184,8 @@ try {
         "--poll-seconds", $PollSeconds,
         "--pending-timeout-seconds", $PendingTimeoutForRun,
         "--fallback-pending-timeout-seconds", $FluxPendingTimeoutSeconds,
-        "--timeout-seconds", $RunningTimeoutSeconds
+        "--timeout-seconds", $RunningTimeoutSeconds,
+        "--primary-provider", $PrimaryProvider
     )
     if ($OnDemandFluxPrewarm) {
         $Phase6Arguments += @(
@@ -186,12 +193,17 @@ try {
             "--fallback-prewarm-timeout-minutes", $PrewarmTimeoutMinutes
         )
     }
-    if ($PreferFlux) {
+    if ($PreferFallbackProvider) {
         $Phase6Arguments += "--prefer-fallback-provider"
     }
 
     $Phase6Attempt = 0
-    $MaxPhase6Attempts = 1 + $IdeogramRecoveryRetries
+    $MaxPhase6Attempts = if ($PrimaryProvider -eq "ideogram4") {
+        1 + $IdeogramRecoveryRetries
+    }
+    else {
+        1
+    }
     while ($true) {
         $Phase6Attempt += 1
         Write-Host (

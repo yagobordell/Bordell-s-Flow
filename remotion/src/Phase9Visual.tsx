@@ -4,7 +4,7 @@ import {AbsoluteFill, Sequence, staticFile} from "remotion";
 import {CaptionTrack} from "./CaptionTrack";
 import type {RemotionRenderProps} from "./types";
 
-export const Phase9Visual = ({shots, captions}: RemotionRenderProps) => {
+export const Phase9Visual = ({shots, captions, visual_profile: profile}: RemotionRenderProps) => {
   return (
     <AbsoluteFill style={{backgroundColor: "black"}}>
       {shots.map((shot) => (
@@ -25,7 +25,7 @@ export const Phase9Visual = ({shots, captions}: RemotionRenderProps) => {
           />
         </Sequence>
       ))}
-      <CaptionTrack captions={captions} />
+      {profile.show_captions ? <CaptionTrack captions={captions} /> : null}
     </AbsoluteFill>
   );
 };

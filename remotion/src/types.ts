@@ -34,6 +34,7 @@ export type RemotionVisualProfile = {
   transition_scale: number;
   caption_motion_frames: number;
   boundary_accent_frames: number;
+  show_captions: boolean;
   show_progress_bar: boolean;
 };
 

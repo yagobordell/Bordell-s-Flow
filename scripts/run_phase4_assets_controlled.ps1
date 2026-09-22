@@ -26,6 +26,9 @@ param(
 
     [switch]$KeepIdeogramWarm,
 
+    [ValidateSet("flux2_klein", "ideogram4")]
+    [string]$PrimaryProvider = "flux2_klein",
+
     [switch]$PreferFallbackProvider,
 
     [switch]$NonInteractive
@@ -72,7 +75,7 @@ $PlanPath = Join-Path ([IO.Path]::GetTempPath()) (
     "ai-video-factory-phase4-plan-{0}.json" -f ([Guid]::NewGuid().ToString("N"))
 )
 Write-Host "=== Phase 4 cache plan: determine which GPU, if any, is needed ===" -ForegroundColor Cyan
-& python $AuditScript $ReferencesFile --json-output $PlanPath
+& python $AuditScript $ReferencesFile --primary-provider $PrimaryProvider --json-output $PlanPath
 if ($LASTEXITCODE -ne 0) {
     throw "Phase 4 cache planning failed."
 }
@@ -91,9 +94,12 @@ if ($InvalidCount -gt 0) {
 }
 
 $PreferFlux = $PreferFallbackProvider
+if ($PrimaryProvider -eq "flux2_klein") {
+    $PreferFlux = $true
+}
 if ($PreferFlux -and $IdeogramNeeded) {
     Write-Warning (
-        "Phase 4 is using the explicitly requested FLUX provider for all missing references."
+        "Phase 4 is using FLUX.2 Klein as the primary provider for all missing references."
     )
     $FluxNeeded = $true
     $IdeogramNeeded = $false
@@ -121,7 +127,7 @@ if ($NonInteractive) {
 $IdeogramTouched = $false
 # Fresh Ideogram work can discover a terminal safety rejection not known by the cache audit.
 # In that case Python prewarms FLUX on demand before submitting the first fallback job.
-$OnDemandFluxPrewarm = $IdeogramNeeded -and -not $FluxNeeded
+$OnDemandFluxPrewarm = $PrimaryProvider -eq "ideogram4" -and $IdeogramNeeded -and -not $FluxNeeded
 $FluxCleanupRequired = $IdeogramNeeded -or $FluxNeeded
 $PrimaryFailure = $null
 $CleanupFailures = @()
@@ -139,7 +145,7 @@ try {
 
     if ($FluxNeeded) {
         Write-Host (
-            "=== FLUX.2 Klein fallback: prewarm one ready replica before queue submission ==="
+            "=== FLUX.2 Klein primary/fallback: prewarm one ready replica before queue submission ==="
         ) -ForegroundColor Cyan
         & $FluxPrewarm @FluxPrewarmArguments
         if (-not $?) {
@@ -165,7 +171,8 @@ try {
         "--poll-seconds", $PollSeconds,
         "--pending-timeout-seconds", $PendingTimeoutForRun,
         "--fallback-pending-timeout-seconds", $FluxPendingTimeoutSeconds,
-        "--timeout-seconds", $RunningTimeoutSeconds
+        "--timeout-seconds", $RunningTimeoutSeconds,
+        "--primary-provider", $PrimaryProvider
     )
     if ($OnDemandFluxPrewarm) {
         $Phase4Arguments += @(
@@ -173,7 +180,7 @@ try {
             "--fallback-prewarm-timeout-minutes", $PrewarmTimeoutMinutes
         )
     }
-    if ($PreferFlux) {
+    if ($PreferFallbackProvider) {
         $Phase4Arguments += "--prefer-fallback-provider"
     }
     & python $Phase4Runner @Phase4Arguments

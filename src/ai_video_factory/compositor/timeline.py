@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
 from math import isclose
 
 from ai_video_factory.domain import ShotTiming
@@ -32,9 +32,24 @@ def quantize_shot_timings(
         raise ValueError("Composition fps must be positive")
 
     intervals: list[FrameInterval] = []
-    for timing in timings:
+    for index, timing in enumerate(timings):
         start_frame = seconds_to_frame(timing.start_seconds, fps)
-        end_frame = seconds_to_frame(timing.end_seconds, fps)
+        nearest_end_frame = seconds_to_frame(timing.end_seconds, fps)
+        if nearest_end_frame <= start_frame:
+            raise ValueError(
+                "Shot timing collapses to a non-positive frame interval: "
+                f"shot_id={timing.shot_id}, start_frame={start_frame}, "
+                f"end_frame={nearest_end_frame}"
+            )
+        # The final boundary is the end of the measured narration.  Rounding it
+        # down would make the visual timeline shorter than the WAV and would let
+        # the final mux cut the last audio packet.  Earlier boundaries retain
+        # nearest-frame quantization so shot boundaries do not drift.
+        end_frame = (
+            seconds_to_end_frame(timing.end_seconds, fps)
+            if index == len(timings) - 1
+            else nearest_end_frame
+        )
         if end_frame <= start_frame:
             raise ValueError(
                 "Shot timing collapses to a non-positive frame interval: "
@@ -64,6 +79,21 @@ def seconds_to_frame(seconds: float, fps: int) -> int:
         raise ValueError("Composition fps must be positive")
     frames = Decimal(str(seconds)) * Decimal(fps)
     return int(frames.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def seconds_to_end_frame(seconds: float, fps: int) -> int:
+    """Map the final absolute timestamp up to a frame boundary.
+
+    The canonical visual timeline must contain the complete measured narration;
+    a final frame of visual hold is preferable to truncating spoken audio.
+    """
+
+    if seconds < 0:
+        raise ValueError("Frame timestamp must be >= 0")
+    if fps <= 0:
+        raise ValueError("Composition fps must be positive")
+    frames = Decimal(str(seconds)) * Decimal(fps)
+    return int(frames.quantize(Decimal("1"), rounding=ROUND_CEILING))
 
 
 def _validate_timings(timings: list[ShotTiming]) -> None:

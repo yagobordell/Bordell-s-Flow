@@ -1,10 +1,11 @@
-# FLUX.2 Klein 4B safety fallback
+# FLUX.2 Klein 4B primary image provider
 
 ## Purpose
 
-Ideogram 4 remains the primary provider for Phase 4 reference images and Phase 6 keyframes.
-FLUX.2 Klein 4B is used only after confirmed terminal Ideogram safety rejection for all executable
-deterministic variants of the request.
+FLUX.2 Klein 4B is the default primary provider for Phase 4 reference images and Phase 6 keyframes.
+Ideogram 4 remains implemented and can be selected explicitly with
+`--primary-provider ideogram4`; in that mode the existing deterministic FLUX safety fallback is
+preserved.
 
 Infrastructure errors, network failures, timeouts, OOMs, queue failures, capacity problems and model
 bootstrap failures are not fallback triggers.
@@ -92,7 +93,8 @@ The fallback wrapper catches only terminal Ideogram safety rejection. Ordinary p
 propagated instead of being silently rerouted to FLUX.2.
 
 Phase 4 and Phase 6 both use `SaladFlux2KleinImageProvider` with distinct task names for references
-and keyframes. Ideogram remains primary in both phases.
+and keyframes. The controlled runners pass `--primary-provider flux2_klein` and audit the FLUX R2
+keys before allocating a worker. The historical Ideogram-first route remains available explicitly.
 
 ## Deterministic identity and cache invalidation
 
@@ -108,8 +110,9 @@ Application job IDs use `flux2-klein-reference-...` or `flux2-klein-keyframe-...
 legacy FLUX.1 fallback artifacts from matching FLUX.2 requests while preserving normal replay of
 successful FLUX.2 outputs.
 
-Generated metadata records provider, model, model revision, fallback source/reason, application job
-ID, request SHA-256 and replay state.
+Generated metadata records provider, model, model revision, application job ID, request SHA-256 and
+replay state. Fallback source/reason fields are added only when the explicit Ideogram-first safety
+wrapper actually routes a request to FLUX.
 
 ## Cold-start lifecycle
 

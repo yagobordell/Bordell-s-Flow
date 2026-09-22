@@ -139,9 +139,9 @@ class SaladFlux2KleinImageProvider:
         if model != FLUX2_KLEIN_MODEL_ID:
             raise ValueError(f"FLUX provider requires model {FLUX2_KLEIN_MODEL_ID!r}")
         if quality not in {"high", "auto"}:
-            raise ValueError("FLUX fallback supports quality='high' or 'auto'")
+            raise ValueError("FLUX provider supports quality='high' or 'auto'")
         if output_format != "png":
-            raise ValueError("FLUX fallback supports only PNG output")
+            raise ValueError("FLUX provider supports only PNG output")
         width, height = _parse_size(size)
         request = build_flux_job_request(
             task_name=self._task_name,
@@ -159,7 +159,6 @@ class SaladFlux2KleinImageProvider:
                     "phase": "4" if purpose == "reference" else "6",
                     "provider": "flux2_klein",
                     "purpose": purpose,
-                    "fallback_from": "ideogram4",
                     "model": FLUX2_KLEIN_MODEL_ID,
                     "model_revision": FLUX2_KLEIN_MODEL_REVISION,
                 },
@@ -170,7 +169,7 @@ class SaladFlux2KleinImageProvider:
             self._executor.download_output(response, destination)
             content = destination.read_bytes()
         if not content:
-            raise RuntimeError("FLUX fallback returned an empty PNG artifact")
+            raise RuntimeError("FLUX provider returned an empty PNG artifact")
         return GeneratedImage(
             content=content,
             media_type="image/png",
@@ -179,8 +178,6 @@ class SaladFlux2KleinImageProvider:
                 "provider": "flux2_klein",
                 "model": FLUX2_KLEIN_MODEL_ID,
                 "model_revision": FLUX2_KLEIN_MODEL_REVISION,
-                "fallback_from": "ideogram4",
-                "fallback_reason": "safety_rejection",
                 "job_id": response.job_id,
                 "request_sha256": response.request_sha256,
                 "replayed": str(response.replayed).lower(),
