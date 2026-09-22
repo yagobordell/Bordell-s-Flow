@@ -11,7 +11,9 @@ from ai_video_factory.gpu.errors import (
     InputIntegrityError,
     JobBusyError,
     JobConflictError,
+    JobExecutionError,
     LeaseLostError,
+    NonRetryableTaskError,
     OutputConflictError,
 )
 from ai_video_factory.gpu.ports import LocalArtifact, LocalSidecarArtifact
@@ -37,6 +39,23 @@ class CountingCopyRunner:
         output = work_dir / "result.txt"
         shutil.copyfile(inputs["source"], output)
         return LocalArtifact(output, request.output.content_type)
+
+
+class FailingRunner:
+    task_name = "infrastructure.copy"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def run(
+        self,
+        request: GPUJobRequest,
+        inputs: Mapping[str, Path],
+        work_dir: Path,
+    ) -> LocalArtifact:
+        del request, inputs, work_dir
+        self.calls += 1
+        raise RuntimeError("single-shot failure")
 
 
 class LeaseLosingRepository(InMemoryJobRepository):
@@ -100,6 +119,32 @@ def test_worker_executes_once_and_replays_completed_result(tmp_path: Path) -> No
     assert first.replayed is False
     assert second.replayed is True
     assert first.output.sha256 == digest
+    assert runner.calls == 1
+
+
+def test_worker_max_attempts_prevents_second_inference_execution(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    repository = InMemoryJobRepository()
+    runner = FailingRunner()
+    worker = GPUWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-1",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
+    request = build_request("job-single-shot", digest).model_copy(
+        update={"max_attempts": 1}
+    )
+
+    with pytest.raises(JobExecutionError, match="execution failed"):
+        worker.process(request, transport_job_id="salad-1")
+    with pytest.raises(NonRetryableTaskError, match="max_attempts=1"):
+        worker.process(request, transport_job_id="salad-2")
+
     assert runner.calls == 1
 
 
