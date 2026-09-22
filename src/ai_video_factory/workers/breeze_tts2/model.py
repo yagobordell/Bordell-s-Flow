@@ -363,7 +363,10 @@ class BreezeTTS2Backend:
             # fail when their prefix falls outside that profile. Keep the static
             # decode/decoder/codec paths accelerated and deliberately use eager
             # prefill for every request shape.
-            fast_all=False,
+            # ``fast_all`` is a master override in Breeze. Keep it unset so
+            # the per-stage flags below can express the mixed eager/accelerated
+            # runtime required by reference-conditioned continuation.
+            fast_all=None,
             fast_text_encoder=True,
             fast_backbone_prefill=False,
             fast_backbone_decode=True,

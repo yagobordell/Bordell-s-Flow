@@ -75,7 +75,7 @@ def test_breeze_reference_runtime_uses_eager_prefill_and_fast_decode() -> None:
     backend._bindings = bindings
     assert backend._get_or_build_runtime(bindings) is runtime
 
-    assert config.kwargs["fast_all"] is False
+    assert config.kwargs["fast_all"] is None
     assert config.kwargs["fast_text_encoder"] is True
     assert config.kwargs["fast_backbone_prefill"] is False
     assert config.kwargs["fast_backbone_decode"] is True

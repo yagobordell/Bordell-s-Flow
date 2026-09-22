@@ -44,7 +44,7 @@ Initial generation profile:
 ```text
 model: BreezeBlue/Breeze-TTS-2
 profile: breeze-tts2-fast-decode-v4
-fast_all: false
+fast_all: unset (`null`)
 fast_text_encoder: true
 fast_backbone_prefill: false
 fast_backbone_decode: true
