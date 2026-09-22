@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
@@ -92,9 +92,16 @@ class JobRepository(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class LocalArtifactPart:
+    path: Path
+    content_type: str
+
+
+@dataclass(frozen=True, slots=True)
 class LocalArtifact:
     path: Path
     content_type: str
+    sidecars: Mapping[str, LocalArtifactPart] = field(default_factory=dict)
 
 
 class TaskRunner(Protocol):
