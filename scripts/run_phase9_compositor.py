@@ -35,6 +35,11 @@ def parse_args() -> argparse.Namespace:
         help="Phase 5 narration_words.json file.",
     )
     parser.add_argument(
+        "--include-captions",
+        action="store_true",
+        help="Opt in to rendering caption cues; subtitles are disabled by default.",
+    )
+    parser.add_argument(
         "--clip-base-dir",
         type=Path,
         default=None,
@@ -61,7 +66,7 @@ def main() -> None:
     args.output.unlink(missing_ok=True)
     clips = _read_models(args.clips, VideoClip)
     timings = _read_models(args.timings, ShotTiming)
-    words = _read_models(args.words, NarrationWord)
+    words = _read_models(args.words, NarrationWord) if args.include_captions else None
     clip_base_dir = args.clip_base_dir or args.clips.parent
 
     plan = build_composition_plan(

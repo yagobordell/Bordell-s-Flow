@@ -49,7 +49,10 @@ def test_flux_dynamic_fallback_prewarms_on_first_confirmed_safety_rejection() ->
     for text in (phase4, phase6):
         assert "--prewarm-fallback-on-demand" in text
         assert '"start_salad_scale_to_zero.ps1"' not in text
-        assert "$OnDemandFluxPrewarm = $IdeogramNeeded -and -not $FluxNeeded" in text
+        assert (
+            '$OnDemandFluxPrewarm = $PrimaryProvider -eq "ideogram4" '
+            "-and $IdeogramNeeded -and -not $FluxNeeded"
+        ) in text
 
     for text in (phase4_runner, phase6_runner):
         assert "Ideogram safety rejection confirmed; prewarming FLUX" in text
@@ -61,7 +64,7 @@ def test_phase6_checks_cache_before_ideogram_and_does_not_eager_prewarm_flux() -
 
     audit = text.index("Phase 6 cache plan")
     ideogram = text.index("Ideogram optimized prewarm")
-    flux = text.index("FLUX fallback: prewarm only because cached safety evidence requires it")
+    flux = text.index("FLUX.2 Klein primary/fallback: prewarm before queue submission")
     assert audit < ideogram
     assert audit < flux
     assert "--prewarm-fallback-on-demand" in text

@@ -31,3 +31,12 @@ def test_rejects_timing_that_collapses_to_zero_frames() -> None:
 
     with pytest.raises(ValueError, match="non-positive frame interval"):
         quantize_shot_timings(timings, fps=24)
+
+
+def test_rounds_final_boundary_up_to_contain_measured_narration() -> None:
+    timings = [ShotTiming(shot_id=1, start_seconds=0.0, end_seconds=1.01)]
+
+    intervals = quantize_shot_timings(timings, fps=24)
+
+    assert intervals[0].end_frame == 25
+    assert intervals[0].end_frame / 24 >= 1.01

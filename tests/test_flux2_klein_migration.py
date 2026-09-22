@@ -80,6 +80,17 @@ def test_phase4_and_phase6_use_flux2_klein_fallback_contract() -> None:
     assert "FLUX2_KLEIN_KEYFRAME_TASK" in phase6
 
 
+def test_phase4_and_phase6_default_to_flux_without_removing_ideogram() -> None:
+    phase4 = Path("scripts/run_phase4_assets.py").read_text(encoding="utf-8")
+    phase6 = Path("scripts/run_phase6_keyframes.py").read_text(encoding="utf-8")
+
+    for script in (phase4, phase6):
+        assert 'default="flux2_klein"' in script
+        assert 'choices=("flux2_klein", "ideogram4")' in script
+        assert "SafetyFallbackImageProvider" in script
+        assert "SaladIdeogramImageProvider" in script
+
+
 def test_no_operational_flux1_schnell_references_remain() -> None:
     roots = (
         Path("src"),

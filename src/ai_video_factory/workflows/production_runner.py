@@ -646,14 +646,15 @@ def build_production_stages(
         ),
         ProductionStage(
             name="phase4-reference-assets",
-            description="generate reference images through the Ideogram 4 Salad worker",
+            description="generate reference images through the FLUX.2 Klein Salad worker",
             dependencies=("phase4-reference-prompts",),
             resource="gpu",
-            resource_key="ideogram4",
+            resource_key="flux2_klein",
             script=Path("scripts/run_phase4_assets.py"),
             arguments=(
                 str(visual_references),
                 "--size", "1536x864",
+                "--primary-provider", "flux2_klein",
                 "--output-dir", str(reference_assets_dir),
                 "--metadata", str(reference_assets),
             ),
@@ -756,16 +757,20 @@ def build_production_stages(
         ),
         ProductionStage(
             name="phase6-keyframes",
-            description="generate storyboard keyframes through Ideogram 4 Quality",
+            description=(
+                "generate storyboard keyframes through FLUX.2 Klein; retain Ideogram "
+                "as an explicit alternative"
+            ),
             dependencies=("phase6-storyboard",),
             resource="gpu",
-            resource_key="ideogram4",
+            resource_key="flux2_klein",
             script=Path("scripts/run_phase6_keyframes.py"),
             arguments=(
                 "--frames", str(storyboard_frames),
                 "--shots", str(shots),
                 "--size", "1536x864",
                 "--quality", "high",
+                "--primary-provider", "flux2_klein",
                 "--output-dir", str(storyboard_keyframes_dir),
                 "--output", str(storyboard_keyframes),
             ),

@@ -229,7 +229,7 @@ class Flux2KleinImageTaskRunner:
         if request.task != self.task_name:
             raise ValueError(f"FLUX.2 Klein runner cannot execute task {request.task!r}")
         if inputs or request.inputs:
-            raise ValueError("FLUX.2 Klein fallback tasks do not accept object inputs")
+            raise ValueError("FLUX.2 Klein image tasks do not accept object inputs")
         if request.output.content_type != "image/png":
             raise ValueError("FLUX.2 Klein output must be image/png")
         parameters = Flux2KleinImageParameters.model_validate(request.parameters)

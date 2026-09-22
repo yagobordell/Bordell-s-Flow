@@ -317,6 +317,21 @@ def run_video_generation(
                     exc,
                 )
                 continue
+            if snapshot.status in {QueueJobStatus.FAILED, QueueJobStatus.CANCELLED}:
+                cached = cached_inference_response(storage, item.request)
+                if cached is not None:
+                    logger.warning(
+                        "Accepting verified R2 replay after terminal LTX transport "
+                        "status shot_id=%s transport_job_id=%s status=%s",
+                        item.shot_id,
+                        snapshot.id,
+                        snapshot.status.value,
+                    )
+                    state.transport_job_id = snapshot.id
+                    state.transport_status = "succeeded"
+                    state.response = cached
+                    _write_manifest(manifest_path, manifest)
+                    continue
             _apply_snapshot(state, item, snapshot)
             if (
                 state.transport_job_id in transport_probe_ids

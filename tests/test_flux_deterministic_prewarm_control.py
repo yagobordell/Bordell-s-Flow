@@ -42,11 +42,12 @@ def test_phase4_uses_ready_flux_prewarm_instead_of_zero_replica_arm() -> None:
     assert "arm_salad_scale_to_zero.ps1" not in script
 
 
-def test_phase6_uses_cached_or_on_demand_ready_flux_fallback() -> None:
+def test_phase6_uses_ready_flux_prewarm_as_the_default_primary_provider() -> None:
     script = PHASE6.read_text(encoding="utf-8")
 
     assert '"start_salad_flux_prewarm.ps1"' in script
     assert '"restore_salad_flux_scale_to_zero.ps1"' in script
     assert "--prewarm-fallback-on-demand" in script
-    assert "prewarm only because cached safety evidence requires it" in script
+    assert '[string]$PrimaryProvider = "flux2_klein"' in script
+    assert "FLUX.2 Klein primary/fallback: prewarm before queue submission" in script
     assert '"start_salad_scale_to_zero.ps1"' not in script

@@ -40,6 +40,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--transition-scale", type=float, default=1.015)
     parser.add_argument("--caption-motion-frames", type=int, default=4)
     parser.add_argument("--boundary-accent-frames", type=int, default=5)
+    parser.add_argument(
+        "--show-captions",
+        action="store_true",
+        help="Opt in to rendering subtitles; disabled by default.",
+    )
+    parser.add_argument(
+        "--show-progress-bar",
+        action="store_true",
+        help="Opt in to rendering the top progress bar; disabled by default.",
+    )
     parser.add_argument("--no-progress-bar", action="store_true")
     parser.add_argument("--crf", type=int, default=18)
     parser.add_argument("--prepare-only", action="store_true")
@@ -63,7 +73,8 @@ def main() -> None:
         transition_scale=args.transition_scale,
         caption_motion_frames=args.caption_motion_frames,
         boundary_accent_frames=args.boundary_accent_frames,
-        show_progress_bar=not args.no_progress_bar,
+        show_captions=args.show_captions,
+        show_progress_bar=args.show_progress_bar and not args.no_progress_bar,
     )
     props = prepare_remotion_props(
         plan,
@@ -88,6 +99,7 @@ def main() -> None:
         f"transition:{profile.transition_frames}f "
         f"caption:{profile.caption_motion_frames}f "
         f"accent:{profile.boundary_accent_frames}f "
+        f"captions={profile.show_captions} "
         f"progress_bar={profile.show_progress_bar}"
     )
 

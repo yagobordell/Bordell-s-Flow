@@ -42,6 +42,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--model", default=settings.ideogram4_model)
     parser.add_argument("--fallback-model", default=settings.flux2_klein_model)
+    parser.add_argument(
+        "--primary-provider",
+        choices=("flux2_klein", "ideogram4"),
+        default="flux2_klein",
+        help="Provider whose canonical cache is audited first.",
+    )
     parser.add_argument("--size", default=DEFAULT_SIZE)
     parser.add_argument("--verify-content-sha256", action="store_true")
     parser.add_argument("--json-output", type=Path)
@@ -124,14 +130,47 @@ def audit_reference_cache(
     *,
     storage: R2ObjectStorage,
     model_id: str,
-    fallback_model_id: str = FLUX2_KLEIN_MODEL_ID,
     size: str,
+    fallback_model_id: str = FLUX2_KLEIN_MODEL_ID,
+    primary_provider: str = "ideogram4",
     verify_content_sha256: bool = False,
 ) -> list[dict[str, Any]]:
     width, height = parse_ideogram_size(size)
     records: list[dict[str, Any]] = []
 
     for reference in references:
+        if primary_provider == "flux2_klein":
+            flux_request = build_flux_job_request(
+                task_name=FLUX2_KLEIN_REFERENCE_TASK,
+                prompt=reference.prompt,
+                model_id=fallback_model_id,
+                width=width,
+                height=height,
+            )
+            status, fields = _cache_record(
+                storage=storage,
+                request=flux_request,
+                verify_content_sha256=verify_content_sha256,
+            )
+            records.append(
+                {
+                    "entity_id": reference.entity_id,
+                    "status": status,
+                    "provider": "flux2_klein",
+                    "matched_variant": "flux2_klein" if status == "hit" else None,
+                    "job_id": flux_request.job_id,
+                    "object_key": flux_request.output.key,
+                    "expected_request_sha256": flux_request.fingerprint(),
+                    "expected_content_type": flux_request.output.content_type,
+                    "candidate_job_ids": {},
+                    "safety_rejected_variants": [],
+                    "fallback_job_id": None,
+                    "fallback_object_key": None,
+                    **fields,
+                }
+            )
+            continue
+
         ideogram_candidates: list[tuple[str, Any]] = []
         for variant_name, caption in reference_caption_variants(
             reference.prompt,
@@ -293,6 +332,7 @@ def main() -> None:
         storage=storage,
         model_id=args.model,
         fallback_model_id=args.fallback_model,
+        primary_provider=args.primary_provider,
         size=args.size,
         verify_content_sha256=args.verify_content_sha256,
     )

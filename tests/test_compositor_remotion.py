@@ -109,7 +109,8 @@ def test_prepare_remotion_props_includes_default_visual_profile(tmp_path: Path) 
         transition_scale=1.015,
         caption_motion_frames=4,
         boundary_accent_frames=5,
-        show_progress_bar=True,
+        show_captions=False,
+        show_progress_bar=False,
     )
 
 

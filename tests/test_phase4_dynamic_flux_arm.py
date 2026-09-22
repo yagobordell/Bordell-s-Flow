@@ -4,10 +4,14 @@ SCRIPT = Path("scripts/run_phase4_assets_controlled.ps1")
 PYTHON_RUNNER = Path("scripts/run_phase4_assets.py")
 
 
-def test_phase4_defers_flux_until_fresh_ideogram_safety_rejection() -> None:
+def test_phase4_uses_flux_by_default_and_defers_dynamic_fallback_to_ideogram_mode() -> None:
     text = SCRIPT.read_text(encoding="utf-8")
 
-    assert "$OnDemandFluxPrewarm = $IdeogramNeeded -and -not $FluxNeeded" in text
+    assert (
+        '$OnDemandFluxPrewarm = $PrimaryProvider -eq "ideogram4" '
+        "-and $IdeogramNeeded -and -not $FluxNeeded"
+    ) in text
+    assert '[string]$PrimaryProvider = "flux2_klein"' in text
     assert "--prewarm-fallback-on-demand" in text
     assert '"start_salad_scale_to_zero.ps1"' not in text
     assert 'if ($IdeogramNeeded) {\n        $IdeogramTouched = $true' in text

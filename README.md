@@ -180,11 +180,12 @@ Puntos clave:
 - Breeze puede arrancar/trabajar en paralelo con la rama de continuidad;
 - shots y prompts de referencias se desacoplan cuando sus dependencias lo permiten;
 - prompts de movimiento y keyframes parten en paralelo desde el storyboard;
-- Phase 4 y Phase 6 comparten Ideogram sin ejecutarse simultáneamente sobre el recurso limitado;
-- un Ideogram ya listo puede conservarse temporalmente hasta su último uso en el vídeo;
+- Phase 4 y Phase 6 comparten FLUX.2 Klein sin ejecutarse simultáneamente sobre el recurso limitado;
+- Ideogram se conserva como ruta explícita para futuras tareas y alternativas controladas;
 - Breeze, keyframes y LTX auditan R2 antes de prewarm/submission;
 - Fish no se prewarmea de forma especulativa y sigue consumiendo cero GPU-seconds si Breeze funciona;
-- FLUX se mantiene como fallback de seguridad y no se prewarmea salvo evidencia que lo requiera;
+- FLUX.2 Klein es el proveedor primario de imagen en Phase 4 y Phase 6; el auditor de R2 sólo
+  precalienta cuando detecta trabajo FLUX no cacheado. Ideogram queda disponible de forma explícita;
 - el `finally` end-to-end detiene los servicios del proyecto, aplica guard de replicas=0 y limpia
   las queues.
 
@@ -552,8 +553,9 @@ el orden y la evidencia temporal canónica se preservan.
 ### 9.3–9.4 Renderer visual
 
 Remotion vive en un proyecto Node/TypeScript aislado. `Phase9Visual` conserva el baseline hard-cut y
-`Phase9Motion` añade transiciones internas a cada shot, motion de captions, acentos de corte y barra
-de progreso sin mover los límites canónicos.
+`Phase9Motion` añade transiciones internas a cada shot y acentos de corte sin mover los límites
+canónicos. Subtítulos y barra superior están desactivados por defecto; se habilitan explícitamente
+con `--show-captions` y `--show-progress-bar`.
 
 Los artefactos de transcripción `†el` y `sirve†` se normalizan sólo para presentación como `el` y
 `sirve`; la transcripción canónica no se muta.

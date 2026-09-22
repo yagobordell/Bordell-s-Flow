@@ -36,7 +36,10 @@ IDEOGRAM_RUNNING_TIMEOUT_EXIT_CODE = 75
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate Phase 6 keyframes with Ideogram 4 and FLUX safety fallback."
+        description=(
+            "Generate Phase 6 keyframes with FLUX.2 Klein by default; Ideogram 4 "
+            "remains an explicit alternative with safety fallback."
+        )
     )
     parser.add_argument(
         "--frames",
@@ -50,6 +53,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--model", default=settings.ideogram4_model)
     parser.add_argument("--fallback-model", default=settings.flux2_klein_model)
+    parser.add_argument(
+        "--primary-provider",
+        choices=("flux2_klein", "ideogram4"),
+        default="flux2_klein",
+        help=(
+            "Primary image provider. Defaults to FLUX.2 Klein; Ideogram is retained "
+            "for opt-in use."
+        ),
+    )
     parser.add_argument("--size", default="1536x864")
     parser.add_argument("--quality", choices=("high", "auto"), default="high")
     parser.add_argument("--queue-name", default=settings.salad_ideogram4_queue_name)
@@ -88,8 +100,7 @@ def parse_args() -> argparse.Namespace:
         "--prefer-fallback-provider",
         action="store_true",
         help=(
-            "Explicit operator policy: use the prewarmed FLUX provider for the whole batch "
-            "and skip Ideogram."
+            "Deprecated compatibility alias for --primary-provider flux2_klein."
         ),
     )
     parser.add_argument(
@@ -179,12 +190,12 @@ async def main() -> None:
         timeout_seconds=args.timeout_seconds,
         pending_timeout_seconds=args.fallback_pending_timeout_seconds,
     )
-    primary = SaladIdeogramImageProvider(
+    ideogram_provider = SaladIdeogramImageProvider(
         executor=ideogram_executor,
         temp_dir=settings.temp_dir / "ideogram4-keyframe-client",
         task_name=IDEOGRAM4_KEYFRAME_TASK,
     )
-    fallback = SaladFlux2KleinImageProvider(
+    flux_provider = SaladFlux2KleinImageProvider(
         executor=flux_executor,
         temp_dir=settings.temp_dir / "flux2-klein-keyframe-client",
         task_name=FLUX2_KLEIN_KEYFRAME_TASK,
@@ -195,16 +206,20 @@ async def main() -> None:
         else None
     )
 
-    if args.prefer_fallback_provider:
-        image_provider = fallback
+    use_flux = args.primary_provider == "flux2_klein" or args.prefer_fallback_provider
+    if use_flux:
+        image_provider = flux_provider
         generation_model = args.fallback_model
+        provider_label = "FLUX.2 Klein primary"
     else:
         image_provider = SafetyFallbackImageProvider(
-            primary=primary,
-            fallback=fallback,
+            primary=ideogram_provider,
+            fallback=flux_provider,
+            fallback_model=args.fallback_model,
             before_fallback=before_fallback,
         )
         generation_model = args.model
+        provider_label = "Ideogram 4 primary with FLUX safety fallback"
 
     keyframes = await generate_storyboard_keyframes(
         frames,
@@ -222,7 +237,7 @@ async def main() -> None:
         encoding="utf-8",
     )
     print(f"Phase 6 storyboard keyframes complete. Metadata: {args.output.resolve()}")
-    print(f"Generated {len(keyframes)} keyframe PNG files with Ideogram/FLUX fallback")
+    print(f"Generated {len(keyframes)} keyframe PNG files with {provider_label}")
 
 
 def _read_models[ModelT: BaseModel](
