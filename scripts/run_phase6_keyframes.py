@@ -14,18 +14,16 @@ from ai_video_factory.providers import SaladQwenImage21Provider
 from ai_video_factory.providers.images import parse_image_size
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
-from ai_video_factory.workers.flux2_klein import FLUX2_KLEIN_KEYFRAME_TASK
-from ai_video_factory.workers.ideogram4 import IDEOGRAM4_KEYFRAME_TASK
+from ai_video_factory.workers.qwen_image_21 import QWEN_IMAGE_21_KEYFRAME_TASK
 from ai_video_factory.workflows.storyboard_keyframes import generate_storyboard_keyframes
 
-DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS = 300.0
-DEFAULT_FLUX_PENDING_TIMEOUT_SECONDS = 1800.0
-IDEOGRAM_RUNNING_TIMEOUT_EXIT_CODE = 75
+DEFAULT_QWEN_PENDING_TIMEOUT_SECONDS = 1800.0
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate Phase 6 keyframes with Qwen-Image-2.1 on Salad."\n    )
+        description="Generate Phase 6 keyframes with Qwen-Image-2.1 on Salad."
+    )
     parser.add_argument(
         "--frames",
         type=Path,
@@ -82,7 +80,9 @@ def _queue(name: str) -> SaladJobQueueClient:
         queue_name=name,
         api_key=_required_setting("SALAD_API_KEY", settings.salad_api_key),
     )
-\n\nasync def main() -> None:
+
+
+async def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -114,15 +114,13 @@ def _queue(name: str) -> SaladJobQueueClient:
         temp_dir=settings.temp_dir / "qwen-image-21-keyframe-client",
         task_name=QWEN_IMAGE_21_KEYFRAME_TASK,
     )
-    generation_model = args.model
-    provider_label = "Qwen-Image-2.1"
 
     keyframes = await generate_storyboard_keyframes(
         frames,
         shots,
         image_provider=image_provider,
         output_dir=args.output_dir,
-        model=generation_model,
+        model=args.model,
         size=args.size,
         quality=args.quality,
     )
@@ -133,7 +131,7 @@ def _queue(name: str) -> SaladJobQueueClient:
         encoding="utf-8",
     )
     print(f"Phase 6 storyboard keyframes complete. Metadata: {args.output.resolve()}")
-    print(f"Generated {len(keyframes)} keyframe PNG files with {provider_label}")
+    print(f"Generated {len(keyframes)} keyframe PNG files with Qwen-Image-2.1")
 
 
 def _read_models[ModelT: BaseModel](
@@ -146,4 +144,7 @@ def _read_models[ModelT: BaseModel](
     if not isinstance(raw, list):
         raise SystemExit(f"JSON file must contain an array: {path}")
     return [model_type.model_validate(item) for item in raw]
-\n\nif __name__ == "__main__":\n    asyncio.run(main())\n
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
