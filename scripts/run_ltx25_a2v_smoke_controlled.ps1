@@ -162,6 +162,22 @@ try {
         }
     }
 
+    $CleanupArgs = @(
+        $Submit,
+        "--audio", $ResolvedAudio,
+        "--avatar-image", $ResolvedAvatar,
+        "--output-dir", (Join-Path $RepoRoot $OutputDir),
+        "--cleanup-stale-only"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($Prompt)) {
+        $CleanupArgs += @("--prompt", $Prompt)
+    }
+    Write-Host "=== Clear stale A2V transport for this exact input pair ===" -ForegroundColor Cyan
+    & python @CleanupArgs
+    if (-not $?) {
+        throw "LTX A2V stale transport cleanup failed."
+    }
+
     $BootstrapArgs = @{
         Service = $Service
         EnvFile = $EnvFile
