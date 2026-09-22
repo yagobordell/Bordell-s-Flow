@@ -12,19 +12,18 @@ from ai_video_factory.providers import SaladQwenImage21Provider
 from ai_video_factory.providers.images import parse_image_size
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
-from ai_video_factory.workers.flux2_klein import FLUX2_KLEIN_REFERENCE_TASK
-from ai_video_factory.workers.ideogram4 import IDEOGRAM4_REFERENCE_TASK
+from ai_video_factory.workers.qwen_image_21 import QWEN_IMAGE_21_REFERENCE_TASK
 from ai_video_factory.workflows.reference_assets import generate_reference_assets
 
 DEFAULT_SIZE = "1536x864"
 DEFAULT_QUALITY = "high"
-DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS = 300.0
-DEFAULT_FLUX_PENDING_TIMEOUT_SECONDS = 1800.0
+DEFAULT_QWEN_PENDING_TIMEOUT_SECONDS = 1800.0
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate canonical Phase 4 references with Qwen-Image-2.1 on Salad."\n    )
+        description="Generate canonical Phase 4 references with Qwen-Image-2.1 on Salad."
+    )
     parser.add_argument(
         "references_file",
         type=Path,
@@ -33,15 +32,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--model", default=settings.qwen_image_21_model)
     parser.add_argument("--size", default=DEFAULT_SIZE)
-    parser.add_argument(
-        "--quality",
-        choices=("high", "auto"),
-        default=DEFAULT_QUALITY,
-    )
-    parser.add_argument(
-        "--queue-name",
-        default=settings.salad_qwen_image_21_queue_name,
-    )
+    parser.add_argument("--quality", choices=("high", "auto"), default=DEFAULT_QUALITY)
+    parser.add_argument("--queue-name", default=settings.salad_qwen_image_21_queue_name)
     parser.add_argument(
         "--poll-seconds",
         type=float,
@@ -84,7 +76,9 @@ def _queue(name: str) -> SaladJobQueueClient:
         queue_name=name,
         api_key=_required_setting("SALAD_API_KEY", settings.salad_api_key),
     )
-\n\nasync def main() -> None:
+
+
+async def main() -> None:
     args = parse_args()
     width, height = parse_image_size(args.size)
     if width * 9 != height * 16:
@@ -117,14 +111,12 @@ def _queue(name: str) -> SaladJobQueueClient:
         temp_dir=settings.temp_dir / "qwen-image-21-reference-client",
         task_name=QWEN_IMAGE_21_REFERENCE_TASK,
     )
-    generation_model = args.model
-    provider_label = "Qwen-Image-2.1"
 
     assets = await generate_reference_assets(
         references,
         image_provider=provider,
         output_dir=args.output_dir,
-        model=generation_model,
+        model=args.model,
         size=args.size,
         quality=args.quality,
     )
@@ -135,7 +127,7 @@ def _queue(name: str) -> SaladJobQueueClient:
         encoding="utf-8",
     )
     print(f"Phase 4 reference assets complete. Metadata: {args.metadata.resolve()}")
-    print(f"Generated {len(assets)} reference PNG files with {provider_label}")
+    print(f"Generated {len(assets)} reference PNG files with Qwen-Image-2.1")
 
 
 if __name__ == "__main__":
