@@ -514,6 +514,11 @@ def main() -> None:
     queue_output: Any = current.get("output")
     if isinstance(queue_output, str):
         queue_output = json.loads(queue_output)
+    if isinstance(queue_output, dict) and "detail" in queue_output:
+        raise RuntimeError(
+            "A2V worker terminal failure: "
+            + str(queue_output["detail"])
+        )
     if not isinstance(queue_output, dict) or queue_output.get("status") != "succeeded":
         raise RuntimeError(f"A2V worker returned invalid output: {queue_output!r}")
     artifact = queue_output.get("output") or {}
