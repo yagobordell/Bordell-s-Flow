@@ -87,7 +87,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--prefer-fallback-provider",
         action="store_true",
-        help="Use the prewarmed FLUX provider for the whole batch and skip Ideogram.",
+        help=(
+            "Explicit operator policy: use the prewarmed FLUX provider for the whole batch "
+            "and skip Ideogram."
+        ),
     )
     parser.add_argument(
         "--fallback-prewarm-timeout-minutes",

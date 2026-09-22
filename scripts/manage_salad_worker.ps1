@@ -618,16 +618,11 @@ function New-Probe {
 function Get-WorkerEnvironment {
     $Environment = @{}
     foreach ($Property in $Definition.environment.PSObject.Properties) {
-        $Override = [Environment]::GetEnvironmentVariable(
-            $Property.Name,
-            [EnvironmentVariableTarget]::Process
-        )
-        if ([string]::IsNullOrWhiteSpace($Override)) {
-            $Environment[$Property.Name] = [string]$Property.Value
-        }
-        else {
-            $Environment[$Property.Name] = $Override.Trim()
-        }
+        # Runtime behavior belongs to the deployment manifest. Local .env values
+        # are intentionally limited to credentials and required external inputs;
+        # they must not disable the Salad queue or switch a production worker to
+        # local mode during Prepare.
+        $Environment[$Property.Name] = [string]$Property.Value
     }
 
     foreach ($Name in Get-RequiredEnvironmentNames) {

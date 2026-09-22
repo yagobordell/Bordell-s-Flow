@@ -54,8 +54,11 @@ def test_xet_is_enabled_without_unsafe_high_performance_mode() -> None:
     for service, path in DOCKERFILES.items():
         text = path.read_text(encoding="utf-8")
         assert "hf-xet==1.6.0" in text, service
-        assert "HF_HUB_DISABLE_XET=1" not in text, service
         assert "HF_XET_HIGH_PERFORMANCE" not in text, service
+        if service == "whisper":
+            assert "HF_HUB_DISABLE_XET=1" in text, service
+        else:
+            assert "HF_HUB_DISABLE_XET=1" not in text, service
 
 
 def test_optimized_prewarm_applies_bounded_node_selection_to_every_worker() -> None:
@@ -95,8 +98,8 @@ def test_manifest_versions_and_download_profiles_are_explicit() -> None:
     services = json.loads(MANIFEST.read_text(encoding="utf-8"))["services"]
 
     assert services["ideogram4"]["image"].endswith("ideogram4-nf4-quality48-v4")
-    assert services["breeze_tts2"]["image"].endswith("breeze-tts2-fast-all-v2")
-    assert services["whisper"]["image"].endswith("whisper-large-v3-turbo-v4")
+    assert services["breeze_tts2"]["image"].endswith("breeze-tts2-fast-decode-v6")
+    assert services["whisper"]["image"].endswith("whisper-large-v3-turbo-v5")
     assert services["ideogram4"]["environment"]["SALAD_LOG_LEVEL"] == "info"
     assert services["whisper"]["environment"]["SALAD_LOG_LEVEL"] == "info"
     assert services["whisper"]["autostart_policy"] is False
@@ -285,6 +288,7 @@ def test_phase6_reuses_shared_ideogram_replica_before_cold_prewarm() -> None:
     assert '$Status -eq "running"' in prewarm
     assert "[int]$Group.replicas -eq 1" in prewarm
     assert "[int]$HeldAutoscaler.min_replicas -ne 1" in prewarm
+    assert "function Test-RemoteAutoscalerMatchesManifestExceptMinReplicas" in prewarm
     assert "Test-RemoteAutoscalerMatchesManifestExceptMinReplicas" in prewarm
     assert "$HeldInstances.Count -ne 1" in prewarm
     assert "$HeldStarted" in prewarm

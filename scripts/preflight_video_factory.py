@@ -159,13 +159,29 @@ def _check_postgres() -> str:
         raise RuntimeError(
             "psycopg is required for production preflight; install the project dev/gpu extras."
         ) from exc
-    with psycopg.connect(dsn, connect_timeout=10) as connection:
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT 1")
-            value = cursor.fetchone()
-    if value != (1,):
-        raise RuntimeError("Postgres preflight query returned an unexpected result")
-    return "postgres=ok"
+
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with psycopg.connect(dsn, connect_timeout=10) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute("SELECT 1")
+                    value = cursor.fetchone()
+            if value != (1,):
+                raise RuntimeError("Postgres preflight query returned an unexpected result")
+            return "postgres=ok"
+        except psycopg.OperationalError as exc:
+            if attempt >= max_attempts:
+                raise
+            delay_seconds = min(10, 2 * attempt)
+            print(
+                "VIDEO_FACTORY_PREFLIGHT_RETRY "
+                f"operation='Postgres preflight' attempt={attempt}/{max_attempts} "
+                f"delay_seconds={delay_seconds} error={exc}"
+            )
+            time.sleep(delay_seconds)
+
+    raise RuntimeError("Postgres preflight retry loop exhausted")
 
 
 def _active_resume_transport_ids(

@@ -29,7 +29,8 @@ Schema v2 centralizes stack-wide properties:
 Each service then declares only its model-specific image, Dockerfile, group, queue, GPU profile,
 probes, autoscaler, environment defaults and additional required environment variables.
 
-The current additional requirement is `HF_TOKEN` for the gated Ideogram and LTX repositories.
+The current additional requirement is `HF_TOKEN` for Whisper downloads and the gated Ideogram and
+LTX repositories.
 
 ## Commands
 
@@ -104,10 +105,11 @@ pwsh scripts/manage_salad_stack.ps1 `
 
 ## Environment loading and secrets
 
-Both stack and per-service managers load `.env` by default. Existing process environment variables
-win over `.env`, making shell/CI overrides explicit. Values loaded or entered interactively are stored
-only in the current process environment before being sent as Salad container environment variables.
-They are never written back to `.env` by these scripts.
+Both stack and per-service managers load `.env` by default. The runtime environment declared in
+`deploy/salad/services.json` is authoritative during `Prepare`; local `.env` values cannot disable
+the Salad queue or change a worker from production to local mode. `.env` remains the source for
+required secrets and external credentials. Values loaded or entered interactively are stored only in
+the current process environment and are never written back to `.env` by these scripts.
 
 `Prepare` needs:
 

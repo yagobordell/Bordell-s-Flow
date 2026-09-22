@@ -90,7 +90,7 @@
       "group_name": "ai-video-factory-breeze-tts2-worker-v2",
       "queue_name": "ai-video-factory-breeze-tts2-jobs",
       "dockerfile": "docker/workers/breeze-tts2/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:breeze-tts2-fast-all-v2",
+      "image": "docker.io/yagobordell/ai-video-factory:breeze-tts2-fast-decode-v6",
       "priority": "high",
       "resources": {
         "cpu": 8,
@@ -229,10 +229,10 @@
     },
     "whisper": {
       "display_name": "AI Video Factory Whisper",
-      "group_name": "ai-video-factory-whisper-worker-v4",
+      "group_name": "ai-video-factory-whisper-worker-v5",
       "queue_name": "ai-video-factory-whisper-jobs-v2",
       "dockerfile": "docker/workers/whisper/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:whisper-large-v3-turbo-v4",
+        "image": "docker.io/yagobordell/ai-video-factory:whisper-large-v3-turbo-v5",
       "priority": "medium",
       "resources": {
         "cpu": 4,
@@ -258,12 +258,13 @@
         "WHISPER_DOWNLOAD_MIN_MIBPS": "4",
         "WHISPER_DOWNLOAD_THROUGHPUT_GRACE_SECONDS": "90",
         "WHISPER_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS": "60",
-        "HF_HUB_DOWNLOAD_TIMEOUT": "120",
-        "HF_HUB_ETAG_TIMEOUT": "30",
+          "HF_HUB_DOWNLOAD_TIMEOUT": "120",
+          "HF_HUB_ETAG_TIMEOUT": "30",
+          "HF_HUB_DISABLE_XET": "1",
         "SALAD_QUEUE_ENABLED": "true",
         "SALAD_LOG_LEVEL": "info"
       },
-      "required_environment": [],
+      "required_environment": ["HF_TOKEN"],
       "probes": {
         "startup": {
           "path": "/health",

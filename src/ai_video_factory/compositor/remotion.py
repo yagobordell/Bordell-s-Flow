@@ -105,10 +105,9 @@ class RemotionRenderProps(BaseModel):
                 raise ValueError("Remotion shot duration must match its frame interval")
             if not shot.src.startswith("/media/"):
                 raise ValueError("Remotion shot sources must resolve below /media/")
-            if self.visual_profile.transition_frames * 2 > shot.duration_frames:
-                raise ValueError("Visual transition windows must fit inside every shot")
-            if self.visual_profile.boundary_accent_frames > shot.duration_frames:
-                raise ValueError("Boundary accent window must fit inside every shot")
+            # The renderer derives an effective window per shot. Very short shots
+            # remain valid timeline inputs; their visual windows are clamped to
+            # the frames available inside that shot instead of changing timing.
 
         for previous, current in zip(self.shots, self.shots[1:], strict=False):
             if previous.end_frame != current.start_frame:

@@ -64,12 +64,6 @@ export const validateRenderProps = (props: RemotionRenderProps): void => {
     if (!shot.src.startsWith("/media/")) {
       throw new Error(`Shot ${shot.shot_id} source must be staged below /media/`);
     }
-    if (profile.transition_frames * 2 > shot.duration_frames) {
-      throw new Error(`Shot ${shot.shot_id} is too short for the visual transition window`);
-    }
-    if (profile.boundary_accent_frames > shot.duration_frames) {
-      throw new Error(`Shot ${shot.shot_id} is too short for the boundary accent window`);
-    }
     if (index === 0 && shot.start_frame !== 0) {
       throw new Error("Remotion shot timeline must start at frame 0");
     }

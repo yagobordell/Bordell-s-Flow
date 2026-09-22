@@ -585,6 +585,8 @@ def build_production_stages(
     narration_words = phase5 / "narration_words.json"
     beat_timings = phase5 / "beat_timings.json"
     shot_timings = phase5 / "shot_timings.json"
+    breeze_provider = Path("src/ai_video_factory/providers/salad_breeze.py")
+    breeze_worker = Path("src/ai_video_factory/workers/breeze_tts2/model.py")
     storyboard_frames = phase6 / "storyboard_frames.json"
     storyboard_keyframes = phase6 / "storyboard_keyframes.json"
     storyboard_keyframes_dir = phase6 / "storyboard_keyframes"
@@ -670,7 +672,7 @@ def build_production_stages(
                 "--output-dir", str(phase5),
                 "--metadata", str(narration),
             ),
-            inputs=(source_script,),
+            inputs=(source_script, breeze_provider, breeze_worker),
             outputs=(narration, narration_audio),
         ),
         ProductionStage(

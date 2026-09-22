@@ -453,6 +453,12 @@ def test_real_production_dag_exposes_safe_parallel_branches(tmp_path: Path) -> N
     assert by_name["phase8-upscale"].dependencies == ("phase8-videos",)
     assert by_name["phase8-upscale"].resource_key == "realesrgan"
     assert by_name["phase8-upscale"].outputs[0].name == "upscaled_clips.json"
+    assert Path("src/ai_video_factory/providers/salad_breeze.py") in by_name[
+        "phase5-narration"
+    ].inputs
+    assert Path("src/ai_video_factory/workers/breeze_tts2/model.py") in by_name[
+        "phase5-narration"
+    ].inputs
 
 
 

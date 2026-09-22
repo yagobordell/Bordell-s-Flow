@@ -60,7 +60,7 @@ Before real deployment validation:
 1. Docker Desktop must be running with Docker Compose v2.
 2. Docker must be authenticated to the registry used by `deploy/salad/services.json`.
 3. `.env` must contain the Salad API key, Postgres DSN and R2 credentials.
-4. `HF_TOKEN` must be present for LTX 2.5 and Ideogram 4 deployment.
+4. `HF_TOKEN` must be present for Whisper, LTX 2.5 and Ideogram 4 deployment.
 5. The Hugging Face account behind `HF_TOKEN` must have accepted any gated Ideogram repository terms.
 
 The shared required environment is:

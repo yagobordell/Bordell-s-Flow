@@ -1,5 +1,6 @@
 import json
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,70 @@ from ai_video_factory.workers.breeze_tts2 import (
     BreezeTTS2WorkerSettings,
     breeze_application_job_id,
 )
-from ai_video_factory.workers.breeze_tts2.model import _atempo_chain, _split_narration_text
+from ai_video_factory.workers.breeze_tts2.model import (
+    _MAX_PROMPT_TOKENS,
+    _atempo_chain,
+    _BreezeBindings,
+    _plan_narration_chunks,
+    _split_narration_text,
+)
+
+
+class _RecordingFastConfig:
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+
+
+class _PreparedRuntime:
+    fast_enabled = True
+    codec_chunk_frames = 1
+
+    def warmup_from_profile(self, profile: Any) -> None:
+        self.profile = profile
+
+
+@dataclass(frozen=True)
+class _WarmupProfile:
+    codec_chunk_frames: int = 1
+
+
+def test_breeze_reference_runtime_uses_eager_prefill_and_fast_decode() -> None:
+    config = _RecordingFastConfig()
+    runtime = _PreparedRuntime()
+
+    def build_config(**kwargs: Any) -> _RecordingFastConfig:
+        config.kwargs = kwargs
+        return config
+
+    bindings = _BreezeBindings(
+        torch=object(),
+        np=object(),
+        soundfile=object(),
+        load_runtime=lambda *_args, **_kwargs: (object(), object(), object()),
+        set_all_seeds=lambda *_args, **_kwargs: None,
+        update_generation_config_for_breeze=lambda *_args, **_kwargs: None,
+        get_template=object(),
+        prepare_inputs=object(),
+        select_template_name=object(),
+        fast_runtime_type=lambda *_args, **_kwargs: runtime,
+        fast_config_type=build_config,
+        load_warmup_profile=lambda *_args, **_kwargs: _WarmupProfile(),
+    )
+    backend = BreezeTTS2Backend(
+        model_root=Path("models"),
+        runtime_root=Path("runtime"),
+        device="cpu",
+    )
+
+    backend._bindings = bindings
+    assert backend._get_or_build_runtime(bindings) is runtime
+
+    assert config.kwargs["fast_all"] is None
+    assert config.kwargs["fast_text_encoder"] is True
+    assert config.kwargs["fast_backbone_prefill"] is False
+    assert config.kwargs["fast_backbone_decode"] is True
+    assert config.kwargs["fast_depth_decoder"] is True
+    assert config.kwargs["fast_codec"] is True
 
 
 class FakeBackend:
@@ -130,6 +194,59 @@ def test_breeze_text_chunking_preserves_content_order() -> None:
     assert len(chunks) >= 2
     assert " ".join(chunks) == text
     assert all(len(chunk) <= 35 for chunk in chunks)
+
+
+class _WordTokenizer:
+    def __call__(self, text: str, *, add_special_tokens: bool):
+        del add_special_tokens
+        return {"input_ids": text.split()}
+
+
+def test_breeze_prefers_one_request_when_prompt_fits_runtime_budget() -> None:
+    text = " ".join(f"word{index}" for index in range(400))
+
+    chunks = _plan_narration_chunks(
+        text,
+        tokenizer=_WordTokenizer(),
+        instruction="Speak naturally.",
+        max_chunk_chars=4000,
+    )
+
+    assert chunks == [text]
+
+
+def test_breeze_output_guard_splits_two_minute_script_without_voice_reset() -> None:
+    text = Path("data/input/script_2min_english.txt").read_text(encoding="utf-8").strip()
+
+    chunks = _plan_narration_chunks(
+        text,
+        tokenizer=_WordTokenizer(),
+        instruction="Speak naturally.",
+        max_chunk_chars=1200,
+    )
+
+    assert len(chunks) == 2
+    assert " ".join(chunks) == " ".join(text.split())
+    assert chunks[0].endswith("the same sky.")
+    assert chunks[1].startswith("During the afternoon,")
+    assert all(len(chunk) <= 1200 for chunk in chunks)
+
+
+def test_breeze_anchors_context_overflow_chunks() -> None:
+    text = "First sentence establishes the voice. " + " ".join(
+        f"word{index}" for index in range(_MAX_PROMPT_TOKENS * 2)
+    )
+
+    chunks = _plan_narration_chunks(
+        text,
+        tokenizer=_WordTokenizer(),
+        instruction="Speak naturally.",
+        max_chunk_chars=4000,
+    )
+
+    assert len(chunks) >= 3
+    assert chunks[0] == "First sentence establishes the voice."
+    assert " ".join(chunks) == text
 
 
 def test_breeze_atempo_chain_covers_full_supported_speed_range() -> None:

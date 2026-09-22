@@ -90,12 +90,10 @@ if ($InvalidCount -gt 0) {
     throw "Phase 4 cache contains $InvalidCount invalid artifact(s); refusing GPU allocation."
 }
 
-$PreferFlux = $PreferFallbackProvider -or `
-    $env:AI_VIDEO_FACTORY_PREFER_FLUX_IMAGE_PROVIDER -eq "1"
+$PreferFlux = $PreferFallbackProvider
 if ($PreferFlux -and $IdeogramNeeded) {
     Write-Warning (
-        "Phase 4 is using FLUX for all missing references because the Ideogram " +
-        "cold-start path is currently too slow for this run."
+        "Phase 4 is using the explicitly requested FLUX provider for all missing references."
     )
     $FluxNeeded = $true
     $IdeogramNeeded = $false
