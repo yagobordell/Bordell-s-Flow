@@ -61,8 +61,6 @@ class OptimizedGpuStageExecutor:
                 str(output / "phase4" / "reference_assets"),
                 "-Metadata",
                 str(output / "phase4" / "reference_assets.json"),
-                "-PrimaryProvider",
-                "flux2_klein",
                 "-NonInteractive",
             ]
             if self._hold_shared_workers:
@@ -105,8 +103,6 @@ class OptimizedGpuStageExecutor:
                 str(output / "phase6" / "storyboard_keyframes"),
                 "-Output",
                 str(output / "phase6" / "storyboard_keyframes.json"),
-                "-PrimaryProvider",
-                "flux2_klein",
                 "-NonInteractive",
             ]
             if self._hold_shared_workers:
