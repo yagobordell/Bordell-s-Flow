@@ -98,12 +98,40 @@ function Get-SaladApiKey {
     return $Value.Trim()
 }
 
+function Invoke-SaladRead {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [ValidateRange(1, 10)][int]$MaxAttempts = 3,
+        [ValidateRange(1, 120)][int]$TimeoutSec = 30
+    )
+
+    for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
+        try {
+            return Invoke-RestMethod `
+                -Method Get `
+                -Uri $Uri `
+                -Headers $Headers `
+                -TimeoutSec $TimeoutSec
+        }
+        catch {
+            if ($Attempt -eq $MaxAttempts) {
+                throw
+            }
+            Write-Warning (
+                "Transient Salad read failed ($Attempt/$MaxAttempts) for '$Uri': " +
+                "$($_.Exception.Message). Retrying control-plane read."
+            )
+            Start-Sleep -Seconds ([Math]::Min(10, 2 * $Attempt))
+        }
+    }
+}
+
 function Get-Group {
-    return Invoke-RestMethod -Uri $GroupUrl -Headers $Headers -TimeoutSec 30
+    return Invoke-SaladRead -Uri $GroupUrl
 }
 
 function Get-Queue {
-    return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
+    return Invoke-SaladRead -Uri $QueueUrl
 }
 
 function Get-RemoteQueueAutoscaler {
@@ -130,7 +158,7 @@ function Test-RemoteAutoscalerMinReplicas {
 }
 
 function Get-Instances {
-    $Response = Invoke-RestMethod -Uri $InstancesUrl -Headers $Headers -TimeoutSec 30
+    $Response = Invoke-SaladRead -Uri $InstancesUrl
     if ($Response.PSObject.Properties.Name -contains "instances") {
         return @($Response.instances)
     }
@@ -164,11 +192,8 @@ function Test-QueueAttachment {
 function Get-ActiveQueueJobs {
     $Active = @()
     for ($Page = 1; $Page -le 100; $Page += 1) {
-        $Response = Invoke-RestMethod `
-            -Method Get `
-            -Uri "$QueueUrl/jobs?page=$Page&page_size=25" `
-            -Headers $Headers `
-            -TimeoutSec 30
+        $Response = Invoke-SaladRead `
+            -Uri "$QueueUrl/jobs?page=$Page&page_size=25"
 
         $Items = @(
             if ($Response.PSObject.Properties.Name -contains "items") {
