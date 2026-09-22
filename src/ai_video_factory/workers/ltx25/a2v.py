@@ -154,6 +154,8 @@ class A2VGenerationResult:
     model_load_seconds: float
     inference_seconds: float
     encode_seconds: float
+    total_elapsed_seconds: float
+    peak_vram_bytes: int | None
     input_audio: AudioProbe
     output_video: VideoProbe
 
@@ -401,11 +403,19 @@ class DirectLTX25A2VBackend:
         parameters: LTXA2VParameters,
     ) -> A2VGenerationResult:
         audio_probe = probe_audio(audio_path, fps=parameters.fps)
+        generation_started = time.monotonic()
         with self._lock:
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
+            cuda_metrics = (
+                self._device.startswith("cuda") and bindings.torch.cuda.is_available()
+            )
+            if cuda_metrics:
+                bindings.torch.cuda.reset_peak_memory_stats()
+            pipeline_was_loaded = self._pipeline is not None
             with self._inference_context(bindings):
                 pipeline = self._get_or_build_pipeline(bindings)
+                model_load_seconds = 0.0 if pipeline_was_loaded else self._model_load_seconds
                 pipeline_width = _round_up_to_grid(parameters.width)
                 pipeline_height = _round_up_to_grid(parameters.height)
                 conditioning_path = _prepare_avatar_image(
@@ -471,6 +481,9 @@ class DirectLTX25A2VBackend:
                     ),
                 )
                 encode_seconds = time.monotonic() - encode_started
+            peak_vram_bytes = (
+                int(bindings.torch.cuda.max_memory_allocated()) if cuda_metrics else None
+            )
 
         output_probe = probe_video(output_path)
         if not output_probe.has_audio:
@@ -486,9 +499,11 @@ class DirectLTX25A2VBackend:
             num_frames=int(result.num_frames),
             effective_audio_duration_seconds=effective,
             output_video_duration_seconds=output_probe.duration_seconds,
-            model_load_seconds=self._model_load_seconds,
+            model_load_seconds=model_load_seconds,
             inference_seconds=inference_seconds,
             encode_seconds=encode_seconds,
+            total_elapsed_seconds=time.monotonic() - generation_started,
+            peak_vram_bytes=peak_vram_bytes,
             input_audio=audio_probe,
             output_video=output_probe,
         )
@@ -595,6 +610,8 @@ class LTXA2VTaskRunner:
             "model_load_seconds": result.model_load_seconds,
             "inference_seconds": result.inference_seconds,
             "encode_seconds": result.encode_seconds,
+            "total_elapsed_seconds": result.total_elapsed_seconds,
+            "peak_vram_bytes": result.peak_vram_bytes,
             "recommended_max_duration_seconds": LTX_A2V_RECOMMENDED_MAX_SECONDS,
             "hard_max_duration_seconds": ltx_a2v_hard_max_seconds(fps=parameters.fps),
         }
