@@ -72,11 +72,11 @@ function Invoke-DispatchRecovery {
         "before bounded recovery attempt {0}/{1}." -f $Attempt, $DispatchRecoveryAttempts
     )
     & $ValidationManager -Action Stop -Service realesrgan -EnvFile $EnvFile -NonInteractive
-    if ($LASTEXITCODE -ne 0) {
+    if (-not $?) {
         throw "Real-ESRGAN worker stop failed during dispatch recovery."
     }
     & $QueueCleanup -Service realesrgan -EnvFile $EnvFile -TimeoutSeconds 180 -NonInteractive
-    if ($LASTEXITCODE -ne 0) {
+    if (-not $?) {
         throw "Real-ESRGAN queue cleanup failed during dispatch recovery."
     }
 
