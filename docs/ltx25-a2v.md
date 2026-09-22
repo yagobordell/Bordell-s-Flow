@@ -50,7 +50,7 @@ The A2V task runs in the existing `ltx25` container group and queue. The deploym
 - CPU: 8
 - RAM: 40960 MB
 - shared memory: 8192 MB
-- storage: 128 GiB
+- storage: 192 GiB (raised from 128 GiB for the combined I2V+A2V BF16 model pack)
 - queue: `ai-video-factory-ltx25-jobs-v2`
 - model root: `/workspace/models/ltx-2.5`
 
