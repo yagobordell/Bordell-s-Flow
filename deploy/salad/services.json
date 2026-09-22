@@ -461,15 +461,15 @@
       "probes": {
         "startup": {
           "path": "/health",
-          "period_seconds": 30,
+          "period_seconds": 45,
           "timeout_seconds": 5,
-          "failure_threshold": 30
+          "failure_threshold": 20
         },
         "readiness": {
           "path": "/ready",
-          "period_seconds": 30,
+          "period_seconds": 45,
           "timeout_seconds": 5,
-          "failure_threshold": 30
+          "failure_threshold": 20
         },
         "liveness": {
           "path": "/health",
