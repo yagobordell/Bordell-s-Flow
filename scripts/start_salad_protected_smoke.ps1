@@ -296,6 +296,40 @@ if ($QueueSummaryLength -ne 0) {
 
 $Group = Get-Group
 $Status = [string]$Group.current_state.status
+if (
+    $Status -eq "stopped" -and
+    -not [bool]$Group.pending_change -and
+    [int]$Group.replicas -ne 0
+) {
+    Write-Warning (
+        "Protected smoke found a stopped group with residual " +
+        "replicas=$([int]$Group.replicas). Normalizing to replicas=0 before bootstrap."
+    )
+    $NormalizeBody = @{ replicas = 0 } | ConvertTo-Json -Depth 10
+    Invoke-RestMethod `
+        -Method Patch `
+        -Uri $GroupUrl `
+        -Headers $Headers `
+        -ContentType "application/merge-patch+json" `
+        -Body $NormalizeBody `
+        -TimeoutSec 60 |
+        Out-Null
+
+    $NormalizeDeadline = (Get-Date).AddMinutes(2)
+    do {
+        Start-Sleep -Seconds 5
+        $Group = Get-Group
+        $Status = [string]$Group.current_state.status
+        if (
+            $Status -eq "stopped" -and
+            -not [bool]$Group.pending_change -and
+            [int]$Group.replicas -eq 0
+        ) {
+            break
+        }
+    }
+    while ((Get-Date) -lt $NormalizeDeadline)
+}
 if ($Status -ne "stopped" -or [bool]$Group.pending_change -or [int]$Group.replicas -ne 0) {
     throw (
         "Protected smoke bootstrap requires '$GroupName' at stopped/replicas=0/pending=False; " +
