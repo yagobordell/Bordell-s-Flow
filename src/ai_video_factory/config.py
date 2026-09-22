@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     salad_fish_speech_queue_name: str = "ai-video-factory-fish-speech-jobs"
     salad_ideogram4_queue_name: str = "ai-video-factory-ideogram4-jobs"
     salad_flux2_klein_queue_name: str = "ai-video-factory-flux2-klein-jobs"
+    salad_ltx25_queue_name: str = "ai-video-factory-ltx25-jobs-v2"
     salad_whisper_queue_name: str = "ai-video-factory-whisper-jobs-v2"
     hf_token: str | None = None
     postgres_dsn: str | None = None
