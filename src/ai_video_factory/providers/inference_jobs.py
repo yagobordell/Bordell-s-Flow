@@ -90,10 +90,35 @@ def cached_inference_response(
     if stored.size_bytes < 1:
         raise RuntimeError(f"Cached inference output is empty for request {request.job_id}")
 
+    sidecars: dict[str, OutputArtifact] = {}
+    for name, spec in (request.sidecar_outputs or {}).items():
+        sidecar = storage.stat(spec.key)
+        if sidecar is None:
+            raise RuntimeError(
+                f"Cached inference sidecar {name!r} is missing for request {request.job_id}"
+            )
+        sidecar_sha256 = sidecar.metadata.get("artifact-sha256")
+        if (
+            sidecar.metadata.get("job-id") != request.job_id
+            or sidecar.metadata.get("request-sha256") != request_sha256
+            or sidecar_sha256 is None
+        ):
+            raise RuntimeError(
+                f"Cached inference sidecar {name!r} metadata does not match request "
+                f"{request.job_id}"
+            )
+        if sidecar.content_type != spec.content_type:
+            raise RuntimeError(
+                f"Cached inference sidecar {name!r} content type does not match request "
+                f"{request.job_id}"
+            )
+        sidecars[name] = _artifact_from_stored(sidecar, sidecar_sha256)
+
     return InferenceJobResponse(
         job_id=request.job_id,
         request_sha256=request_sha256,
         output=_artifact_from_stored(stored, artifact_sha256),
+        sidecar_outputs=sidecars or None,
         attempt_count=1,
         replayed=True,
     )
