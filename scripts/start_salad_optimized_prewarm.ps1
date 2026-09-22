@@ -388,6 +388,24 @@ function New-ManifestAutoscaler {
     }
 }
 
+function Test-RemoteAutoscalerMatchesManifestExceptMinReplicas {
+    param([Parameter(Mandatory)][object]$Group)
+
+    $Autoscaler = Get-RemoteQueueAutoscaler -Group $Group
+    if ($null -eq $Autoscaler) {
+        return $false
+    }
+    return (
+        [int]$Autoscaler.max_replicas -eq [int]$Definition.autoscaler.max_replicas -and
+        [int]$Autoscaler.desired_queue_length -eq [int]$Definition.autoscaler.desired_queue_length -and
+        [int]$Autoscaler.polling_period -eq [int]$Definition.autoscaler.polling_period -and
+        [int]$Autoscaler.max_upscale_per_minute -eq `
+            [int]$Definition.autoscaler.max_upscale_per_minute -and
+        [int]$Autoscaler.max_downscale_per_minute -eq `
+            [int]$Definition.autoscaler.max_downscale_per_minute
+    )
+}
+
 function Test-RemoteAutoscalerMatchesKnownWarmHold {
     param([Parameter(Mandatory)][object]$Group)
 

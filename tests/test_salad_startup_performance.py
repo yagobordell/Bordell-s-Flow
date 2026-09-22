@@ -288,6 +288,7 @@ def test_phase6_reuses_shared_ideogram_replica_before_cold_prewarm() -> None:
     assert '$Status -eq "running"' in prewarm
     assert "[int]$Group.replicas -eq 1" in prewarm
     assert "[int]$HeldAutoscaler.min_replicas -ne 1" in prewarm
+    assert "function Test-RemoteAutoscalerMatchesManifestExceptMinReplicas" in prewarm
     assert "Test-RemoteAutoscalerMatchesManifestExceptMinReplicas" in prewarm
     assert "$HeldInstances.Count -ne 1" in prewarm
     assert "$HeldStarted" in prewarm
