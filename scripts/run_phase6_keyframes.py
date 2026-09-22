@@ -2,10 +2,6 @@ import argparse
 import asyncio
 import json
 import logging
-import shutil
-import subprocess
-import sys
-from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -14,16 +10,9 @@ from r2_client import create_r2_storage
 
 from ai_video_factory.config import settings
 from ai_video_factory.domain import Shot, StoryboardFrame
-from ai_video_factory.providers import (
-    SafetyFallbackImageProvider,
-    SaladFlux2KleinImageProvider,
-    SaladIdeogramImageProvider,
-)
+from ai_video_factory.providers import SaladQwenImage21Provider
 from ai_video_factory.providers.images import parse_image_size
-from ai_video_factory.providers.inference_jobs import (
-    InferenceJobExecutor,
-    InferenceJobTimeoutError,
-)
+from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.flux2_klein import FLUX2_KLEIN_KEYFRAME_TASK
 from ai_video_factory.workers.ideogram4 import IDEOGRAM4_KEYFRAME_TASK
@@ -36,11 +25,7 @@ IDEOGRAM_RUNNING_TIMEOUT_EXIT_CODE = 75
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=(
-            "Generate Phase 6 keyframes with FLUX.2 Klein by default; Ideogram 4 "
-            "remains an explicit alternative with safety fallback."
-        )
-    )
+        description="Generate Phase 6 keyframes with Qwen-Image-2.1 on Salad."\n    )
     parser.add_argument(
         "--frames",
         type=Path,
@@ -51,24 +36,10 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=settings.output_dir / "phase3" / "shots.json",
     )
-    parser.add_argument("--model", default=settings.ideogram4_model)
-    parser.add_argument("--fallback-model", default=settings.flux2_klein_model)
-    parser.add_argument(
-        "--primary-provider",
-        choices=("flux2_klein", "ideogram4"),
-        default="flux2_klein",
-        help=(
-            "Primary image provider. Defaults to FLUX.2 Klein; Ideogram is retained "
-            "for opt-in use."
-        ),
-    )
+    parser.add_argument("--model", default=settings.qwen_image_21_model)
     parser.add_argument("--size", default="1536x864")
     parser.add_argument("--quality", choices=("high", "auto"), default="high")
-    parser.add_argument("--queue-name", default=settings.salad_ideogram4_queue_name)
-    parser.add_argument(
-        "--fallback-queue-name",
-        default=settings.salad_flux2_klein_queue_name,
-    )
+    parser.add_argument("--queue-name", default=settings.salad_qwen_image_21_queue_name)
     parser.add_argument(
         "--poll-seconds",
         type=float,
@@ -82,31 +53,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pending-timeout-seconds",
         type=float,
-        default=DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS,
-        help="Maximum seconds for an already-prewarmed Ideogram worker to claim a queued job.",
-    )
-    parser.add_argument(
-        "--fallback-pending-timeout-seconds",
-        type=float,
-        default=DEFAULT_FLUX_PENDING_TIMEOUT_SECONDS,
-        help="Maximum seconds for a cold FLUX fallback worker to claim a queued job.",
-    )
-    parser.add_argument(
-        "--prewarm-fallback-on-demand",
-        action="store_true",
-        help="Prewarm FLUX only after the first terminal Ideogram safety rejection.",
-    )
-    parser.add_argument(
-        "--prefer-fallback-provider",
-        action="store_true",
-        help=(
-            "Deprecated compatibility alias for --primary-provider flux2_klein."
-        ),
-    )
-    parser.add_argument(
-        "--fallback-prewarm-timeout-minutes",
-        type=int,
-        default=60,
+        default=DEFAULT_QWEN_PENDING_TIMEOUT_SECONDS,
+        help="Maximum seconds for a cold Qwen worker to claim a queued job.",
     )
     parser.add_argument(
         "--output-dir",
@@ -134,29 +82,7 @@ def _queue(name: str) -> SaladJobQueueClient:
         queue_name=name,
         api_key=_required_setting("SALAD_API_KEY", settings.salad_api_key),
     )
-
-
-async def _prewarm_flux_fallback(timeout_minutes: int) -> None:
-    executable = shutil.which("powershell.exe") or shutil.which("pwsh")
-    if executable is None:
-        raise RuntimeError("PowerShell is required for on-demand FLUX prewarm.")
-    script = Path(__file__).with_name("start_salad_flux_prewarm.ps1")
-    command = [
-        executable,
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        str(script),
-        "-TimeoutMinutes",
-        str(timeout_minutes),
-        "-NonInteractive",
-    ]
-    print("Ideogram safety rejection confirmed; prewarming FLUX before fallback submission.")
-    await asyncio.to_thread(subprocess.run, command, check=True)
-
-
-async def main() -> None:
+\n\nasync def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
@@ -176,50 +102,20 @@ async def main() -> None:
         access_key_id=_required_setting("R2_ACCESS_KEY_ID", settings.r2_access_key_id),
         secret_access_key=_required_setting("R2_SECRET_ACCESS_KEY", settings.r2_secret_access_key),
     )
-    ideogram_executor = InferenceJobExecutor(
+    executor = InferenceJobExecutor(
         queue=_queue(args.queue_name),
         storage=storage,
         poll_seconds=args.poll_seconds,
         timeout_seconds=args.timeout_seconds,
         pending_timeout_seconds=args.pending_timeout_seconds,
     )
-    flux_executor = InferenceJobExecutor(
-        queue=_queue(args.fallback_queue_name),
-        storage=storage,
-        poll_seconds=args.poll_seconds,
-        timeout_seconds=args.timeout_seconds,
-        pending_timeout_seconds=args.fallback_pending_timeout_seconds,
+    image_provider = SaladQwenImage21Provider(
+        executor=executor,
+        temp_dir=settings.temp_dir / "qwen-image-21-keyframe-client",
+        task_name=QWEN_IMAGE_21_KEYFRAME_TASK,
     )
-    ideogram_provider = SaladIdeogramImageProvider(
-        executor=ideogram_executor,
-        temp_dir=settings.temp_dir / "ideogram4-keyframe-client",
-        task_name=IDEOGRAM4_KEYFRAME_TASK,
-    )
-    flux_provider = SaladFlux2KleinImageProvider(
-        executor=flux_executor,
-        temp_dir=settings.temp_dir / "flux2-klein-keyframe-client",
-        task_name=FLUX2_KLEIN_KEYFRAME_TASK,
-    )
-    before_fallback = (
-        partial(_prewarm_flux_fallback, args.fallback_prewarm_timeout_minutes)
-        if args.prewarm_fallback_on_demand
-        else None
-    )
-
-    use_flux = args.primary_provider == "flux2_klein" or args.prefer_fallback_provider
-    if use_flux:
-        image_provider = flux_provider
-        generation_model = args.fallback_model
-        provider_label = "FLUX.2 Klein primary"
-    else:
-        image_provider = SafetyFallbackImageProvider(
-            primary=ideogram_provider,
-            fallback=flux_provider,
-            fallback_model=args.fallback_model,
-            before_fallback=before_fallback,
-        )
-        generation_model = args.model
-        provider_label = "Ideogram 4 primary with FLUX safety fallback"
+    generation_model = args.model
+    provider_label = "Qwen-Image-2.1"
 
     keyframes = await generate_storyboard_keyframes(
         frames,
@@ -250,21 +146,4 @@ def _read_models[ModelT: BaseModel](
     if not isinstance(raw, list):
         raise SystemExit(f"JSON file must contain an array: {path}")
     return [model_type.model_validate(item) for item in raw]
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except InferenceJobTimeoutError as exc:
-        if exc.phase == "running" and exc.job_id.startswith("ideogram-keyframe-"):
-            print(
-                (
-                    "PHASE6_IDEOGRAM_RUNNING_TIMEOUT "
-                    f"application_job_id={exc.job_id} "
-                    f"transport_job_id={exc.transport_job_id} "
-                    f"detail={exc}"
-                ),
-                file=sys.stderr,
-            )
-            raise SystemExit(IDEOGRAM_RUNNING_TIMEOUT_EXIT_CODE) from exc
-        raise
+\n\nif __name__ == "__main__":\n    asyncio.run(main())\n
