@@ -1,5 +1,6 @@
 import json
 import wave
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +20,67 @@ from ai_video_factory.workers.breeze_tts2 import (
 from ai_video_factory.workers.breeze_tts2.model import (
     _MAX_PROMPT_TOKENS,
     _atempo_chain,
+    _BreezeBindings,
     _plan_narration_chunks,
     _split_narration_text,
 )
+
+
+class _RecordingFastConfig:
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+
+
+class _PreparedRuntime:
+    fast_enabled = True
+    codec_chunk_frames = 1
+
+    def warmup_from_profile(self, profile: Any) -> None:
+        self.profile = profile
+
+
+@dataclass(frozen=True)
+class _WarmupProfile:
+    codec_chunk_frames: int = 1
+
+
+def test_breeze_reference_runtime_uses_eager_prefill_and_fast_decode() -> None:
+    config = _RecordingFastConfig()
+    runtime = _PreparedRuntime()
+
+    def build_config(**kwargs: Any) -> _RecordingFastConfig:
+        config.kwargs = kwargs
+        return config
+
+    bindings = _BreezeBindings(
+        torch=object(),
+        np=object(),
+        soundfile=object(),
+        load_runtime=lambda *_args, **_kwargs: (object(), object(), object()),
+        set_all_seeds=lambda *_args, **_kwargs: None,
+        update_generation_config_for_breeze=lambda *_args, **_kwargs: None,
+        get_template=object(),
+        prepare_inputs=object(),
+        select_template_name=object(),
+        fast_runtime_type=lambda *_args, **_kwargs: runtime,
+        fast_config_type=build_config,
+        load_warmup_profile=lambda *_args, **_kwargs: _WarmupProfile(),
+    )
+    backend = BreezeTTS2Backend(
+        model_root=Path("models"),
+        runtime_root=Path("runtime"),
+        device="cpu",
+    )
+
+    backend._bindings = bindings
+    assert backend._get_or_build_runtime(bindings) is runtime
+
+    assert config.kwargs["fast_all"] is False
+    assert config.kwargs["fast_text_encoder"] is True
+    assert config.kwargs["fast_backbone_prefill"] is False
+    assert config.kwargs["fast_backbone_decode"] is True
+    assert config.kwargs["fast_depth_decoder"] is True
+    assert config.kwargs["fast_codec"] is True
 
 
 class FakeBackend:

@@ -20,7 +20,7 @@ from ai_video_factory.inference.ports import LocalArtifact
 
 BREEZE_TTS2_TASK = "audio.breeze_tts2.generate"
 BREEZE_TTS2_MODEL_ID = "BreezeBlue/Breeze-TTS-2"
-BREEZE_TTS2_GENERATION_PROFILE = "breeze-tts2-fast-all-v3"
+BREEZE_TTS2_GENERATION_PROFILE = "breeze-tts2-fast-decode-v4"
 
 _MAX_NEW_TOKENS = 1500
 _MAX_SEQ_LEN = 2048
@@ -160,7 +160,7 @@ def breeze_application_job_id(
 
 
 class BreezeTTS2Backend:
-    """Resident Breeze TTS 2 fast-all runtime producing canonical narration WAVs."""
+    """Resident Breeze TTS 2 accelerated runtime producing canonical narration WAVs."""
 
     def __init__(
         self,
@@ -357,12 +357,18 @@ class BreezeTTS2Backend:
         config = bindings.fast_config_type(
             max_new_tokens=_MAX_NEW_TOKENS,
             max_seq_len=_MAX_SEQ_LEN,
-            fast_all=True,
-            fast_text_encoder=False,
+            # Reference-conditioned continuation adds a variable-length audio/text
+            # prefix. The official CUDA-graph prefill cache is frozen to the finite
+            # shapes in fast.json, so using it here makes valid reference requests
+            # fail when their prefix falls outside that profile. Keep the static
+            # decode/decoder/codec paths accelerated and deliberately use eager
+            # prefill for every request shape.
+            fast_all=False,
+            fast_text_encoder=True,
             fast_backbone_prefill=False,
-            fast_backbone_decode=False,
-            fast_depth_decoder=False,
-            fast_codec=False,
+            fast_backbone_decode=True,
+            fast_depth_decoder=True,
+            fast_codec=True,
             repetition_penalty=_REPETITION_PENALTY,
         )
         runtime = bindings.fast_runtime_type(
@@ -372,7 +378,7 @@ class BreezeTTS2Backend:
             tokenizer=tokenizer,
         )
         if not runtime.fast_enabled:
-            raise RuntimeError("Breeze TTS 2 fast-all runtime did not enable its fast path")
+            raise RuntimeError("Breeze TTS 2 runtime did not enable an accelerated path")
 
         profile = bindings.load_warmup_profile(self._runtime_root / "configs" / "fast.json")
         profile = replace(profile, codec_chunk_frames=runtime.codec_chunk_frames)

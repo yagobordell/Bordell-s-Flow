@@ -18,7 +18,7 @@ ai-video-factory-breeze-tts2-jobs
       v
 docker/workers/breeze-tts2
   BreezeTTS2Backend
-  fast-all resident runtime
+  accelerated resident runtime
       |
       v
 jobs/<job-id>/narration.wav in R2
@@ -43,8 +43,13 @@ Initial generation profile:
 
 ```text
 model: BreezeBlue/Breeze-TTS-2
-profile: breeze-tts2-fast-all-v3
-fast_all: true
+profile: breeze-tts2-fast-decode-v4
+fast_all: false
+fast_text_encoder: true
+fast_backbone_prefill: false
+fast_backbone_decode: true
+fast_depth_decoder: true
+fast_codec: true
 cfg_scale: 4.0
 seed: 42
 sample format: mono PCM16 WAV
@@ -52,8 +57,11 @@ runtime source commit: 008f769016b0a24711becd7a4925030bc93f608c
 ```
 
 `prepare()` loads the model once, builds `FastBreezeStreamingRuntime`, applies the official fast
-warmup profile and retains the warmed runtime in GPU memory. Individual jobs reuse that resident
-runtime.
+warmup profile and retains the warmed runtime in GPU memory. The variable-length backbone prefill
+is intentionally eager: reference-conditioned continuation adds an audio/text prefix whose shape
+is not bounded by the static CUDA-graph buckets in the official `fast.json` profile. Static text
+encoding, autoregressive decode, depth decoding and codec stages remain accelerated. Individual
+jobs reuse that resident runtime.
 
 ## Voice and delivery
 
@@ -125,8 +133,9 @@ SALAD_QUEUE_ENABLED=true
 Local `.env` values must not override those deployment-managed values during `Prepare`; `.env` remains
 the source for required secrets and external credentials.
 
-Breeze documents approximately 14.4 GiB VRAM for the `--fast-all` path and recommends a 24 GB GPU for
-that configuration. RTX 4090 is the initial latency-oriented baseline.
+Breeze documents approximately 14.4 GiB VRAM for the official `--fast-all` path and recommends a
+24 GB GPU for that configuration. The current mixed profile uses eager prefill plus accelerated
+decode/decoder/codec stages and keeps the RTX 4090 as the latency-oriented baseline.
 
 ### Validated real deployment baseline
 
