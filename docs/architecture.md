@@ -165,7 +165,7 @@ and all provider parameters used by the worker.
 Production applies this before GPU lifecycle decisions for:
 
 - Breeze narration;
-- Ideogram/FLUX keyframes, including persisted safety-rejection evidence;
+- Qwen-Image-2.1 references and keyframes with deterministic R2 replay;
 - LTX clips.
 
 Phase 8 repeats the cache check inside `run_video_generation()` before queue reconciliation. This is
