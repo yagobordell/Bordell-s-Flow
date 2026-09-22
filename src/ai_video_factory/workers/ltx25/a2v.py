@@ -39,7 +39,7 @@ LTX_A2V_DEFAULT_PROMPT = (
     "gestures, no identity drift."
 )
 LTX_A2V_RECOMMENDED_MAX_SECONDS: float | None = None
-LTX_A2V_HARD_MAX_SECONDS: float | None = None
+LTX_A2V_MAX_RAW_FRAMES = 1024
 
 _DEV_TRANSFORMER = "diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors"
 _TEXT_ENCODER = "text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors"
@@ -257,7 +257,13 @@ def _probe_json(path: Path) -> dict[str, Any]:
         raise ValueError(f"ffprobe returned invalid JSON for {path.name}") from exc
 
 
-def probe_audio(path: Path) -> AudioProbe:
+def ltx_a2v_hard_max_seconds(*, fps: int) -> float:
+    if fps <= 0:
+        raise ValueError("fps must be positive")
+    return LTX_A2V_MAX_RAW_FRAMES / float(fps)
+
+
+def probe_audio(path: Path, *, fps: int | None = None) -> AudioProbe:
     if not path.is_file():
         raise FileNotFoundError(f"audio input does not exist: {path}")
     payload = _probe_json(path)
@@ -273,6 +279,11 @@ def probe_audio(path: Path) -> AudioProbe:
         raise ValueError("invalid audio: missing duration/sample-rate/channel metadata") from exc
     if not math.isfinite(duration) or duration <= 0:
         raise ValueError("invalid audio: duration must be positive")
+    if fps is not None and duration > ltx_a2v_hard_max_seconds(fps=fps):
+        raise ValueError(
+            "unsupported duration: input audio exceeds the official A2V 1024-frame "
+            f"derivation clamp at {fps} fps"
+        )
     return AudioProbe(
         duration_seconds=duration,
         codec=str(stream.get("codec_name") or "unknown"),
@@ -389,7 +400,7 @@ class DirectLTX25A2VBackend:
         output_path: Path,
         parameters: LTXA2VParameters,
     ) -> A2VGenerationResult:
-        audio_probe = probe_audio(audio_path)
+        audio_probe = probe_audio(audio_path, fps=parameters.fps)
         with self._lock:
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
@@ -585,7 +596,7 @@ class LTXA2VTaskRunner:
             "inference_seconds": result.inference_seconds,
             "encode_seconds": result.encode_seconds,
             "recommended_max_duration_seconds": LTX_A2V_RECOMMENDED_MAX_SECONDS,
-            "hard_max_duration_seconds": LTX_A2V_HARD_MAX_SECONDS,
+            "hard_max_duration_seconds": ltx_a2v_hard_max_seconds(fps=parameters.fps),
         }
         metadata_path.write_text(
             json.dumps(metadata, indent=2, sort_keys=True) + "\n",
