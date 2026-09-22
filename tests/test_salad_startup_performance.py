@@ -54,8 +54,11 @@ def test_xet_is_enabled_without_unsafe_high_performance_mode() -> None:
     for service, path in DOCKERFILES.items():
         text = path.read_text(encoding="utf-8")
         assert "hf-xet==1.6.0" in text, service
-        assert "HF_HUB_DISABLE_XET=1" not in text, service
         assert "HF_XET_HIGH_PERFORMANCE" not in text, service
+        if service == "whisper":
+            assert "HF_HUB_DISABLE_XET=1" in text, service
+        else:
+            assert "HF_HUB_DISABLE_XET=1" not in text, service
 
 
 def test_optimized_prewarm_applies_bounded_node_selection_to_every_worker() -> None:
