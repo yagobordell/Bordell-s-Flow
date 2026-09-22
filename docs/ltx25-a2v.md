@@ -169,9 +169,9 @@ A2V metadata provides per-segment timings suitable for benchmark aggregation. Th
 also prints queue progress, input/output duration, dimensions, fps, frame count, model load,
 inference/encode time and output SHA-256.
 
-Peak GPU memory is not yet reported by the upstream adapter. Add that measurement only after it is
-validated against the production Salad/NVIDIA runtime rather than reporting an unreliable
-allocator value.
+The adapter records PyTorch CUDA peak allocated bytes for each A2V call. This is an allocator
+metric (not whole-machine VRAM consumption), so the Salad benchmark should retain it together with
+container/runtime metrics rather than treating it as a complete node-memory measurement.
 
 ## Real Salad smoke
 
