@@ -35,8 +35,8 @@ __all__ = [
     "SafetyFallbackImageProvider",
     "SaladBreezeSpeechProvider",
     "SaladFishSpeechProvider",
-    "SaladFlux2KleinImageProvider",
     "SaladIdeogramImageProvider",
+    "SaladQwenImage21Provider",
     "SaladWhisperTranscriptionProvider",
     "SpeechFallbackFailedError",
     "SpeechProvider",
@@ -51,8 +51,8 @@ def __getattr__(name: str):
         from .salad_ideogram import SaladIdeogramImageProvider
 
         return SaladIdeogramImageProvider
-    if name == "SaladFlux2KleinImageProvider":
-        from .salad_flux import SaladFlux2KleinImageProvider
+    if name == "SaladQwenImage21Provider":
+        from .salad_qwen_image import SaladQwenImage21Provider
 
-        return SaladFlux2KleinImageProvider
+        return SaladQwenImage21Provider
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
