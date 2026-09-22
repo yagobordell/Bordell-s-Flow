@@ -51,8 +51,7 @@
         "LTX_DEVICE": "cuda",
         "SALAD_QUEUE_ENABLED": "true",
         "SALAD_LOG_LEVEL": "info",
-        "PYTHONFAULTHANDLER": "1",
-        "LTX_A2V_MODE": "enabled"
+        "PYTHONFAULTHANDLER": "1"
       },
       "required_environment": [
         "HF_TOKEN"
