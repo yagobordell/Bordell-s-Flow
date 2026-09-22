@@ -2,15 +2,55 @@
 param(
     [Parameter(Mandatory)][string]$Clips,
     [Parameter(Mandatory)][string]$OutputDir,
+    [string]$EnvFile = ".env",
     [ValidateRange(10, 180)][int]$PrewarmTimeoutMinutes = 45,
     [ValidateRange(60, 14400)][int]$TimeoutSeconds = 7200,
     [ValidateRange(30, 1800)][int]$DispatchTimeoutSeconds = 300,
+    [ValidateRange(0, 2)][int]$DispatchRecoveryAttempts = 1,
     [ValidateRange(1, 60)][int]$PollSeconds = 10,
     [switch]$NonInteractive
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+function Import-EnvFile {
+    param([Parameter(Mandatory)][string]$Path)
+
+    $Resolved = $Path
+    if (-not [IO.Path]::IsPathRooted($Resolved)) {
+        $Resolved = Join-Path (Split-Path $PSScriptRoot -Parent) $Resolved
+    }
+    if (-not (Test-Path -LiteralPath $Resolved -PathType Leaf)) {
+        throw "Video Factory environment file not found: $Resolved"
+    }
+
+    foreach ($RawLine in Get-Content -LiteralPath $Resolved) {
+        $Line = $RawLine.Trim()
+        if ([string]::IsNullOrWhiteSpace($Line) -or $Line.StartsWith("#")) {
+            continue
+        }
+        if ($Line -notmatch '^(?:export\s+)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<value>.*)$') {
+            continue
+        }
+        $Name = $Matches["name"]
+        $Value = $Matches["value"].Trim()
+        if ($Value.Length -ge 2) {
+            $First = $Value.Substring(0, 1)
+            $Last = $Value.Substring($Value.Length - 1, 1)
+            if (($First -eq '"' -and $Last -eq '"') -or ($First -eq "'" -and $Last -eq "'")) {
+                $Value = $Value.Substring(1, $Value.Length - 2)
+            }
+        }
+        [Environment]::SetEnvironmentVariable(
+            $Name,
+            $Value,
+            [EnvironmentVariableTarget]::Process
+        )
+    }
+}
+
+Import-EnvFile -Path $EnvFile
 
 $ValidationManager = Join-Path $PSScriptRoot "manage_salad_validation.ps1"
 $ScaleToZeroStarter = Join-Path $PSScriptRoot "start_salad_scale_to_zero.ps1"
@@ -23,6 +63,35 @@ $ManifestInspector = Join-Path $PSScriptRoot "inspect_phase8_upscale_manifest.py
 $FailureInspector = Join-Path $PSScriptRoot "inspect_inference_job_error.py"
 $Runner = Join-Path $PSScriptRoot "run_phase8_upscale.py"
 $ServicesPath = Join-Path (Split-Path $PSScriptRoot -Parent) "deploy\salad\services.json"
+
+function Invoke-DispatchRecovery {
+    param([Parameter(Mandatory)][int]$Attempt)
+
+    Write-Warning (
+        "Real-ESRGAN transport made no observable dispatch; recycling the worker " +
+        "before bounded recovery attempt {0}/{1}." -f $Attempt, $DispatchRecoveryAttempts
+    )
+    & $ValidationManager -Action Stop -Service realesrgan -EnvFile $EnvFile -NonInteractive
+    if ($LASTEXITCODE -ne 0) {
+        throw "Real-ESRGAN worker stop failed during dispatch recovery."
+    }
+    & $QueueCleanup -Service realesrgan -EnvFile $EnvFile -TimeoutSeconds 180 -NonInteractive
+    if ($LASTEXITCODE -ne 0) {
+        throw "Real-ESRGAN queue cleanup failed during dispatch recovery."
+    }
+
+    $RecoveryPrewarmArguments = @{
+        Service = "realesrgan"
+        EnvFile = $EnvFile
+        TimeoutMinutes = $PrewarmTimeoutMinutes
+        HoldReadyReplica = $true
+    }
+    if ($NonInteractive) { $RecoveryPrewarmArguments["NonInteractive"] = $true }
+    & $OptimizedPrewarm @RecoveryPrewarmArguments
+    if (-not $?) {
+        throw "Real-ESRGAN optimized prewarm failed during dispatch recovery."
+    }
+}
 
 if (-not (Test-Path -LiteralPath $Clips -PathType Leaf)) {
     throw "Required Phase 8 clips metadata not found: $Clips"
@@ -122,17 +191,40 @@ try {
         if (-not $?) { throw "Real-ESRGAN optimized prewarm failed." }
     }
 
-    & python $Runner `
-        --clips $Clips `
-        --output-dir $OutputDir `
-        --poll-seconds $PollSeconds `
-        --timeout-seconds $TimeoutSeconds `
-        --dispatch-timeout-seconds $DispatchTimeoutSeconds
-    if ($LASTEXITCODE -ne 0) {
+    $RecoveryAttempt = 0
+    while ($true) {
+        & python $Runner `
+            --clips $Clips `
+            --output-dir $OutputDir `
+            --poll-seconds $PollSeconds `
+            --timeout-seconds $TimeoutSeconds `
+            --dispatch-timeout-seconds $DispatchTimeoutSeconds
+        if ($LASTEXITCODE -eq 0) {
+            break
+        }
+
         $UpscaleExitCode = $LASTEXITCODE
+        $CanRecoverDispatch = $false
         if (Test-Path -LiteralPath $ManifestPath -PathType Leaf) {
             try {
                 $FailureManifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+                $ActiveTransports = @(
+                    $FailureManifest.jobs |
+                        Where-Object { [string]$_.transport_status -in @("pending", "running") }
+                ).Count
+                $FailedTransports = @(
+                    $FailureManifest.jobs |
+                        Where-Object { [string]$_.transport_status -eq "failed" }
+                ).Count
+                $CancelledTransports = @(
+                    $FailureManifest.jobs |
+                        Where-Object { [string]$_.transport_status -eq "cancelled" }
+                ).Count
+                $CanRecoverDispatch = (
+                    $ActiveTransports -eq 0 -and
+                    $FailedTransports -eq 0 -and
+                    $CancelledTransports -gt 0
+                )
                 $TerminalFailures = @(
                     $FailureManifest.jobs |
                         Where-Object { [string]$_.transport_status -in @("failed", "cancelled") }
@@ -159,6 +251,11 @@ try {
                     $_.Exception.Message
                 )
             }
+        }
+        if ($CanRecoverDispatch -and $RecoveryAttempt -lt $DispatchRecoveryAttempts) {
+            $RecoveryAttempt += 1
+            Invoke-DispatchRecovery -Attempt $RecoveryAttempt
+            continue
         }
         throw "Real-ESRGAN upscale failed with exit code $UpscaleExitCode."
     }
