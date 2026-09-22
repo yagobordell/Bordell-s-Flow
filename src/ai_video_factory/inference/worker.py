@@ -159,11 +159,18 @@ class InferenceWorker:
     ) -> InferenceJobResponse:
         existing = self.storage.stat(request.output.key)
         if existing is not None:
-            output = self._reconcile_existing(request, request_sha256, existing)
+            output = self._reconcile_existing(
+                request,
+                request_sha256,
+                request.output,
+                existing,
+            )
+            sidecars = self._reconcile_sidecars(request, request_sha256)
             return InferenceJobResponse(
                 job_id=request.job_id,
                 request_sha256=request_sha256,
                 output=output,
+                sidecar_outputs=sidecars or None,
                 attempt_count=attempt_count,
                 replayed=True,
             )
@@ -190,6 +197,16 @@ class InferenceWorker:
                 self._validate_local_artifact(artifact.path, work_dir)
                 if artifact.content_type != request.output.content_type:
                     raise ValueError("task output content type does not match the job contract")
+                declared_sidecars = request.sidecar_outputs or {}
+                if set(artifact.sidecars) != set(declared_sidecars):
+                    raise ValueError("task sidecar artifacts do not match the job contract")
+                for name, sidecar in artifact.sidecars.items():
+                    self._validate_local_artifact(sidecar.path, work_dir)
+                    if sidecar.content_type != declared_sidecars[name].content_type:
+                        raise ValueError(
+                            f"task sidecar {name!r} content type does not match the job contract"
+                        )
+
                 digest = sha256_file(artifact.path)
                 heartbeat.renew_now()
 
@@ -204,12 +221,38 @@ class InferenceWorker:
                     },
                 )
                 heartbeat.ensure_owned()
-                output = self._artifact_from_stored(request, digest, uploaded)
+                output = self._artifact_from_stored(
+                    request.output,
+                    digest,
+                    uploaded,
+                )
+                sidecar_outputs: dict[str, OutputArtifact] = {}
+                for name, sidecar in artifact.sidecars.items():
+                    sidecar_digest = sha256_file(sidecar.path)
+                    spec = declared_sidecars[name]
+                    uploaded_sidecar = self.storage.upload(
+                        sidecar.path,
+                        spec.key,
+                        content_type=sidecar.content_type,
+                        metadata={
+                            "job-id": request.job_id,
+                            "request-sha256": request_sha256,
+                            "artifact-sha256": sidecar_digest,
+                            "artifact-name": name,
+                        },
+                    )
+                    heartbeat.ensure_owned()
+                    sidecar_outputs[name] = self._artifact_from_stored(
+                        spec,
+                        sidecar_digest,
+                        uploaded_sidecar,
+                    )
 
         return InferenceJobResponse(
             job_id=request.job_id,
             request_sha256=request_sha256,
             output=output,
+            sidecar_outputs=sidecar_outputs or None,
             attempt_count=attempt_count,
             replayed=False,
         )
@@ -251,6 +294,7 @@ class InferenceWorker:
         self,
         request: InferenceJobRequest,
         request_sha256: str,
+        spec,
         stored: StoredObject,
     ) -> OutputArtifact:
         metadata = stored.metadata
@@ -262,17 +306,39 @@ class InferenceWorker:
             from .errors import OutputConflictError
 
             raise OutputConflictError(
-                f"output key already exists for a different request: {request.output.key}"
+                f"output key already exists for a different request: {spec.key}"
             )
         return self._artifact_from_stored(
-            request,
+            spec,
             metadata["artifact-sha256"],
             stored,
         )
 
+    def _reconcile_sidecars(
+        self,
+        request: InferenceJobRequest,
+        request_sha256: str,
+    ) -> dict[str, OutputArtifact]:
+        reconciled: dict[str, OutputArtifact] = {}
+        for name, spec in (request.sidecar_outputs or {}).items():
+            stored = self.storage.stat(spec.key)
+            if stored is None:
+                from .errors import OutputConflictError
+
+                raise OutputConflictError(
+                    f"primary output exists but sidecar {name!r} is missing: {spec.key}"
+                )
+            reconciled[name] = self._reconcile_existing(
+                request,
+                request_sha256,
+                spec,
+                stored,
+            )
+        return reconciled
+
     @staticmethod
     def _artifact_from_stored(
-        request: InferenceJobRequest,
+        spec,
         expected_sha256: str,
         stored: StoredObject,
     ) -> OutputArtifact:
@@ -281,7 +347,7 @@ class InferenceWorker:
             raise RuntimeError("uploaded output metadata does not match its local digest")
         if stored.size_bytes < 1:
             raise RuntimeError("uploaded output is empty")
-        if stored.content_type != request.output.content_type:
+        if stored.content_type != spec.content_type:
             raise RuntimeError("uploaded output content type does not match the job contract")
         return OutputArtifact(
             key=stored.key,
