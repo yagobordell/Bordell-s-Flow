@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     openai_tts_model: str = "gpt-4o-mini-tts"
     openai_tts_voice: str = "marin"
 
+    qwen_image_21_model: str = "Qwen/Qwen-Image-2.1"
     ideogram4_model: str = "ideogram-ai/ideogram-4-nf4"
-    flux2_klein_model: str = "black-forest-labs/FLUX.2-klein-4B"
 
     breeze_tts_model: str = "BreezeBlue/Breeze-TTS-2"
     breeze_tts_voice: str = (
@@ -47,8 +47,8 @@ class Settings(BaseSettings):
     salad_project: str | None = None
     salad_breeze_tts2_queue_name: str = "ai-video-factory-breeze-tts2-jobs"
     salad_fish_speech_queue_name: str = "ai-video-factory-fish-speech-jobs"
+    salad_qwen_image_21_queue_name: str = "ai-video-factory-qwen-image-21-jobs"
     salad_ideogram4_queue_name: str = "ai-video-factory-ideogram4-jobs"
-    salad_flux2_klein_queue_name: str = "ai-video-factory-flux2-klein-jobs"
     salad_whisper_queue_name: str = "ai-video-factory-whisper-jobs-v2"
     hf_token: str | None = None
     postgres_dsn: str | None = None
