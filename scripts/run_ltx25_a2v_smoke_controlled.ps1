@@ -4,6 +4,8 @@ param(
 
     [string]$Audio = "",
 
+    [string]$AvatarInputDir = "data/input/avatar",
+
     [string]$Prompt = "",
 
     [string]$EnvFile = ".env",
@@ -60,6 +62,38 @@ function Import-EnvFile {
     }
 }
 
+function Resolve-UniqueMediaPath {
+    param(
+        [Parameter(Mandatory)][string]$Directory,
+        [Parameter(Mandatory)][string[]]$Extensions,
+        [Parameter(Mandatory)][string]$Kind
+    )
+
+    $ResolvedDirectory = $Directory
+    if (-not [IO.Path]::IsPathRooted($ResolvedDirectory)) {
+        $ResolvedDirectory = Join-Path $RepoRoot $ResolvedDirectory
+    }
+    $ResolvedDirectory = [IO.Path]::GetFullPath($ResolvedDirectory)
+
+    if (-not (Test-Path -LiteralPath $ResolvedDirectory -PathType Container)) {
+        throw "Avatar input directory not found: $ResolvedDirectory"
+    }
+
+    $Candidates = @(
+        Get-ChildItem -LiteralPath $ResolvedDirectory -File |
+            Where-Object { $Extensions -contains $_.Extension.ToLowerInvariant() }
+    )
+    if ($Candidates.Count -eq 0) {
+        throw "No $Kind file found in $ResolvedDirectory. Supported extensions: $($Extensions -join ', ')"
+    }
+    if ($Candidates.Count -gt 1) {
+        $Names = ($Candidates | ForEach-Object { $_.Name }) -join ", "
+        throw "Expected exactly one $Kind file in $ResolvedDirectory, found $($Candidates.Count): $Names"
+    }
+
+    return $Candidates[0].FullName
+}
+
 foreach ($RequiredPath in @($Manager, $Bootstrap, $Submit)) {
     if (-not (Test-Path -LiteralPath $RequiredPath -PathType Leaf)) {
         throw "Required A2V smoke helper not found: $RequiredPath"
@@ -68,28 +102,23 @@ foreach ($RequiredPath in @($Manager, $Bootstrap, $Submit)) {
 
 Import-EnvFile -Path $EnvFile
 
-$GeneratedAudio = $false
-$RunningOnWindows = [string]$env:OS -eq "Windows_NT"
+$AudioExtensions = @(".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg")
+$ImageExtensions = @(".png", ".jpg", ".jpeg", ".webp")
+
 if ([string]::IsNullOrWhiteSpace($Audio)) {
-    if (-not $RunningOnWindows) {
-        throw "A speech WAV is required on non-Windows hosts. Pass -Audio <path>."
-    }
-    $FixtureDir = Join-Path $RepoRoot "data\output\deployment-validation\ltx25-a2v\fixtures"
-    New-Item -ItemType Directory -Force -Path $FixtureDir | Out-Null
-    $Audio = Join-Path $FixtureDir "speech-smoke.wav"
-    Add-Type -AssemblyName System.Speech
-    $Synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
-    try {
-        $Synth.SetOutputToWaveFile($Audio)
-        $Synth.Speak(
-            "This is a short L T X avatar synchronization test with natural spoken audio."
-        )
-    }
-    finally {
-        $Synth.Dispose()
-    }
-    $GeneratedAudio = $true
-    Write-Host "Generated reusable speech fixture: $Audio" -ForegroundColor Green
+    $Audio = Resolve-UniqueMediaPath `
+        -Directory $AvatarInputDir `
+        -Extensions $AudioExtensions `
+        -Kind "audio"
+    Write-Host "Using avatar test audio: $Audio" -ForegroundColor Green
+}
+
+if ([string]::IsNullOrWhiteSpace($AvatarImage)) {
+    $AvatarImage = Resolve-UniqueMediaPath `
+        -Directory $AvatarInputDir `
+        -Extensions $ImageExtensions `
+        -Kind "image"
+    Write-Host "Using avatar test image: $AvatarImage" -ForegroundColor Green
 }
 
 $ResolvedAudio = [IO.Path]::GetFullPath(
@@ -99,19 +128,16 @@ if (-not (Test-Path -LiteralPath $ResolvedAudio -PathType Leaf)) {
     throw "Speech audio not found: $ResolvedAudio"
 }
 
-$ResolvedAvatar = ""
-if (-not [string]::IsNullOrWhiteSpace($AvatarImage)) {
-    $ResolvedAvatar = [IO.Path]::GetFullPath(
-        $(if ([IO.Path]::IsPathRooted($AvatarImage)) {
-            $AvatarImage
-        }
-        else {
-            Join-Path $RepoRoot $AvatarImage
-        })
-    )
-    if (-not (Test-Path -LiteralPath $ResolvedAvatar -PathType Leaf)) {
-        throw "Avatar image not found: $ResolvedAvatar"
+$ResolvedAvatar = [IO.Path]::GetFullPath(
+    $(if ([IO.Path]::IsPathRooted($AvatarImage)) {
+        $AvatarImage
     }
+    else {
+        Join-Path $RepoRoot $AvatarImage
+    })
+)
+if (-not (Test-Path -LiteralPath $ResolvedAvatar -PathType Leaf)) {
+    throw "Avatar image not found: $ResolvedAvatar"
 }
 
 $Common = @{
@@ -156,9 +182,7 @@ try {
         "--audio", $ResolvedAudio,
         "--output-dir", (Join-Path $RepoRoot $OutputDir)
     )
-    if (-not [string]::IsNullOrWhiteSpace($ResolvedAvatar)) {
-        $PythonArgs += @("--avatar-image", $ResolvedAvatar)
-    }
+    $PythonArgs += @("--avatar-image", $ResolvedAvatar)
     if (-not [string]::IsNullOrWhiteSpace($Prompt)) {
         $PythonArgs += @("--prompt", $Prompt)
     }
@@ -176,8 +200,5 @@ finally {
     & $Manager @Stop
     if (-not $?) {
         throw "LTX A2V cleanup failed."
-    }
-    if ($GeneratedAudio) {
-        Write-Host "Speech fixture retained for repeatable future smokes: $ResolvedAudio"
     }
 }
