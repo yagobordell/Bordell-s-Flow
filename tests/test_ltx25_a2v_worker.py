@@ -38,6 +38,8 @@ class FakeA2VBackend:
             model_load_seconds=4.0,
             inference_seconds=30.0,
             encode_seconds=2.0,
+            total_elapsed_seconds=36.0,
+            peak_vram_bytes=123456789,
             input_audio=AudioProbe(
                 duration_seconds=5.0,
                 codec="pcm_s16le",
@@ -132,6 +134,8 @@ def test_a2v_runner_requires_image_audio_and_writes_metadata(tmp_path: Path) -> 
     assert metadata["height"] == 720
     assert metadata["quantization"] == "fp8-cast"
     assert metadata["offload_mode"] == "cpu"
+    assert metadata["peak_vram_bytes"] == 123456789
+    assert metadata["total_elapsed_seconds"] == 36.0
     assert len(metadata["image_sha256"]) == 64
     assert len(metadata["audio_sha256"]) == 64
 
