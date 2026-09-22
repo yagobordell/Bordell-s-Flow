@@ -8,7 +8,7 @@
       "breeze_tts2",
       "fish_speech",
       "ideogram4",
-      "flux2_klein",
+      "qwen_image_21",
       "ltx25",
       "realesrgan"
     ],
@@ -232,7 +232,7 @@
       "group_name": "ai-video-factory-whisper-worker-v5",
       "queue_name": "ai-video-factory-whisper-jobs-v2",
       "dockerfile": "docker/workers/whisper/Dockerfile",
-        "image": "docker.io/yagobordell/ai-video-factory:whisper-large-v3-turbo-v5",
+      "image": "docker.io/yagobordell/ai-video-factory:whisper-large-v3-turbo-v5",
       "priority": "medium",
       "resources": {
         "cpu": 4,
@@ -258,13 +258,15 @@
         "WHISPER_DOWNLOAD_MIN_MIBPS": "4",
         "WHISPER_DOWNLOAD_THROUGHPUT_GRACE_SECONDS": "90",
         "WHISPER_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS": "60",
-          "HF_HUB_DOWNLOAD_TIMEOUT": "120",
-          "HF_HUB_ETAG_TIMEOUT": "30",
-          "HF_HUB_DISABLE_XET": "1",
+        "HF_HUB_DOWNLOAD_TIMEOUT": "120",
+        "HF_HUB_ETAG_TIMEOUT": "30",
+        "HF_HUB_DISABLE_XET": "1",
         "SALAD_QUEUE_ENABLED": "true",
         "SALAD_LOG_LEVEL": "info"
       },
-      "required_environment": ["HF_TOKEN"],
+      "required_environment": [
+        "HF_TOKEN"
+      ],
       "probes": {
         "startup": {
           "path": "/health",
@@ -294,73 +296,6 @@
         "max_downscale_per_minute": 1
       },
       "autostart_policy": false
-    },
-    "flux2_klein": {
-      "display_name": "AI Video Factory FLUX.2 Klein 4B Fallback",
-      "group_name": "ai-video-factory-flux2-klein-worker",
-      "queue_name": "ai-video-factory-flux2-klein-jobs",
-      "dockerfile": "docker/workers/flux2-klein/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:flux2-klein-4b-bf16-v1",
-      "priority": "high",
-      "resources": {
-        "cpu": 8,
-        "memory": 32768,
-        "shm_size": 8192,
-        "storage_amount": 103079215104,
-        "gpu_class_names": [
-          "RTX 4090 (24 GB)"
-        ]
-      },
-      "environment": {
-        "INFERENCE_WORKER_MODE": "production",
-        "INFERENCE_WORKER_LEASE_SECONDS": "900",
-        "INFERENCE_WORKER_HEARTBEAT_SECONDS": "30",
-        "FLUX2_KLEIN_MODEL_ROOT": "/workspace/models/flux2-klein-4b",
-        "FLUX2_KLEIN_MODEL_REPOSITORY": "black-forest-labs/FLUX.2-klein-4B",
-        "FLUX2_KLEIN_MODEL_REVISION": "e7b7dc27f91deacad38e78976d1f2b499d76a294",
-        "FLUX2_KLEIN_DEVICE": "cuda",
-        "FLUX2_KLEIN_DOWNLOAD_STALL_TIMEOUT_SECONDS": "600",
-        "FLUX2_KLEIN_DOWNLOAD_HARD_TIMEOUT_SECONDS": "2400",
-        "FLUX2_KLEIN_DOWNLOAD_POLL_SECONDS": "15",
-        "FLUX2_KLEIN_DOWNLOAD_MIN_MIBPS": "6",
-        "FLUX2_KLEIN_DOWNLOAD_THROUGHPUT_GRACE_SECONDS": "180",
-        "FLUX2_KLEIN_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS": "120",
-        "FLUX2_KLEIN_READY_TIMEOUT_SECONDS": "1200",
-        "HF_HUB_DOWNLOAD_TIMEOUT": "120",
-        "HF_HUB_ETAG_TIMEOUT": "30",
-        "HF_XET_HIGH_PERFORMANCE": "1",
-        "SALAD_QUEUE_ENABLED": "true",
-        "SALAD_LOG_LEVEL": "info"
-      },
-      "required_environment": [],
-      "probes": {
-        "startup": {
-          "path": "/health",
-          "period_seconds": 30,
-          "timeout_seconds": 5,
-          "failure_threshold": 20
-        },
-        "readiness": {
-          "path": "/ready",
-          "period_seconds": 30,
-          "timeout_seconds": 5,
-          "failure_threshold": 20
-        },
-        "liveness": {
-          "path": "/health",
-          "period_seconds": 30,
-          "timeout_seconds": 10,
-          "failure_threshold": 20
-        }
-      },
-      "autoscaler": {
-        "min_replicas": 0,
-        "max_replicas": 1,
-        "desired_queue_length": 1,
-        "polling_period": 30,
-        "max_upscale_per_minute": 1,
-        "max_downscale_per_minute": 1
-      }
     },
     "fish_speech": {
       "display_name": "AI Video Factory Fish Speech S2 Pro Fallback",
@@ -486,6 +421,69 @@
         "desired_queue_length": 1,
         "polling_period": 30,
         "max_upscale_per_minute": 2,
+        "max_downscale_per_minute": 1
+      }
+    },
+    "qwen_image_21": {
+      "display_name": "AI Video Factory Qwen-Image-2.1",
+      "group_name": "ai-video-factory-qwen-image-21-worker",
+      "queue_name": "ai-video-factory-qwen-image-21-jobs",
+      "dockerfile": "docker/workers/qwen-image-2.1/Dockerfile",
+      "image": "docker.io/yagobordell/ai-video-factory:qwen-image-2.1-bf16-v1",
+      "priority": "high",
+      "resources": {
+        "cpu": 8,
+        "memory": 49152,
+        "shm_size": 8192,
+        "storage_amount": 137438953472,
+        "gpu_class_names": [
+          "RTX 5090 (32 GB)"
+        ]
+      },
+      "environment": {
+        "INFERENCE_WORKER_MODE": "production",
+        "INFERENCE_WORKER_LEASE_SECONDS": "900",
+        "INFERENCE_WORKER_HEARTBEAT_SECONDS": "30",
+        "QWEN_IMAGE_21_MODEL_ROOT": "/workspace/models/qwen-image-2.1",
+        "QWEN_IMAGE_21_MODEL_REPOSITORY": "Qwen/Qwen-Image-2.1",
+        "QWEN_IMAGE_21_MODEL_REVISION": "b3179ad355be050328e483a9dfdd9e60cd62adfa",
+        "QWEN_IMAGE_21_DEVICE": "cuda",
+        "QWEN_IMAGE_21_READY_TIMEOUT_SECONDS": "1800",
+        "HF_HUB_DOWNLOAD_TIMEOUT": "120",
+        "HF_HUB_ETAG_TIMEOUT": "30",
+        "HF_XET_HIGH_PERFORMANCE": "1",
+        "SALAD_QUEUE_ENABLED": "true",
+        "SALAD_LOG_LEVEL": "info"
+      },
+      "required_environment": [
+        "HF_TOKEN"
+      ],
+      "probes": {
+        "startup": {
+          "path": "/health",
+          "period_seconds": 30,
+          "timeout_seconds": 5,
+          "failure_threshold": 30
+        },
+        "readiness": {
+          "path": "/ready",
+          "period_seconds": 30,
+          "timeout_seconds": 5,
+          "failure_threshold": 30
+        },
+        "liveness": {
+          "path": "/health",
+          "period_seconds": 30,
+          "timeout_seconds": 10,
+          "failure_threshold": 20
+        }
+      },
+      "autoscaler": {
+        "min_replicas": 0,
+        "max_replicas": 1,
+        "desired_queue_length": 1,
+        "polling_period": 30,
+        "max_upscale_per_minute": 1,
         "max_downscale_per_minute": 1
       }
     }
