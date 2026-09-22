@@ -426,17 +426,17 @@ class DirectLTX25AudioToVideoBackend:
             inference_started = time.monotonic()
             try:
                 result = pipeline(
-                prompt=parameters.prompt,
-                negative_prompt=bindings.default_negative_prompt,
-                seed=parameters.seed,
-                height=pipeline_height,
-                width=pipeline_width,
-                num_frames=None,
-                frame_rate=float(parameters.fps),
-                num_inference_steps=self._pipeline_params.num_inference_steps,
-                video_guider_params=self._pipeline_params.video_guider_params,
-                images=[conditioning],
-                audio_path=str(audio_path.resolve()),
+                    prompt=parameters.prompt,
+                    negative_prompt=bindings.default_negative_prompt,
+                    seed=parameters.seed,
+                    height=pipeline_height,
+                    width=pipeline_width,
+                    num_frames=None,
+                    frame_rate=float(parameters.fps),
+                    num_inference_steps=self._pipeline_params.num_inference_steps,
+                    video_guider_params=self._pipeline_params.video_guider_params,
+                    images=[conditioning],
+                    audio_path=str(audio_path.resolve()),
                     audio_start_time=0.0,
                     audio_max_duration=None,
                 )
