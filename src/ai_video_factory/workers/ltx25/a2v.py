@@ -640,6 +640,11 @@ class LTXAudioToVideoTaskRunner:
                 "INVALID_REQUEST",
                 f"LTXAudioToVideoTaskRunner cannot execute task {request.task!r}",
             )
+        if request.max_attempts != 1:
+            raise _input_error(
+                "INVALID_REQUEST",
+                "video.ltx25.audio_to_video requires max_attempts=1",
+            )
         if set(inputs) != {"image", "audio"}:
             raise _input_error(
                 "INVALID_REQUEST",
