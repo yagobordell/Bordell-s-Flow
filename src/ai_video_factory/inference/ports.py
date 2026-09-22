@@ -92,9 +92,17 @@ class JobRepository(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class LocalSidecarArtifact:
+    name: str
+    path: Path
+    content_type: str
+
+
+@dataclass(frozen=True, slots=True)
 class LocalArtifact:
     path: Path
     content_type: str
+    sidecars: tuple[LocalSidecarArtifact, ...] = ()
 
 
 class TaskRunner(Protocol):
