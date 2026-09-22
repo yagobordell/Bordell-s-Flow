@@ -75,6 +75,7 @@ class InferenceJobRequest(BaseModel):
     task: str = Field(min_length=2, max_length=128)
     inputs: list[ObjectInput] = Field(default_factory=list, max_length=16)
     output: ObjectOutput
+    sidecar_outputs: dict[str, ObjectOutput] | None = None
     parameters: dict[str, JsonValue] = Field(default_factory=dict)
 
     @field_validator("job_id")
@@ -100,6 +101,19 @@ class InferenceJobRequest(BaseModel):
         expected_prefix = f"jobs/{self.job_id}/"
         if not self.output.key.startswith(expected_prefix):
             raise ValueError(f"output.key must start with {expected_prefix!r}")
+        if self.sidecar_outputs:
+            if any(not _IDENTIFIER_PATTERN.fullmatch(name) for name in self.sidecar_outputs):
+                raise ValueError(
+                    "sidecar output names may contain only letters, numbers, '.', '_' and '-'"
+                )
+            keys = [self.output.key, *(item.key for item in self.sidecar_outputs.values())]
+            if len(keys) != len(set(keys)):
+                raise ValueError("output and sidecar output keys must be unique")
+            for item in self.sidecar_outputs.values():
+                if not item.key.startswith(expected_prefix):
+                    raise ValueError(
+                        f"sidecar output keys must start with {expected_prefix!r}"
+                    )
         return self
 
     def fingerprint(self) -> str:
@@ -143,5 +157,6 @@ class InferenceJobResponse(BaseModel):
     status: Literal["succeeded"] = "succeeded"
     request_sha256: str
     output: OutputArtifact
+    sidecar_outputs: dict[str, OutputArtifact] | None = None
     attempt_count: int = Field(ge=1)
     replayed: bool = False
