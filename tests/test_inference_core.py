@@ -40,3 +40,27 @@ def test_local_inference_settings_do_not_require_cloud_secrets() -> None:
 
     assert settings.worker_mode == "local"
     assert settings.local_object_root.as_posix() == "data/inference-local"
+
+
+
+def test_optional_sidecars_preserve_legacy_request_fingerprint() -> None:
+    legacy = InferenceJobRequest(
+        job_id="legacy-job",
+        task="infrastructure.copy",
+        output=ObjectOutput(
+            key="jobs/legacy-job/output.txt",
+            content_type="text/plain",
+        ),
+    )
+    explicit_none = InferenceJobRequest(
+        job_id="legacy-job",
+        task="infrastructure.copy",
+        output=ObjectOutput(
+            key="jobs/legacy-job/output.txt",
+            content_type="text/plain",
+        ),
+        sidecar_outputs=None,
+    )
+
+    assert legacy.fingerprint() == explicit_none.fingerprint()
+    assert "sidecar_outputs" not in legacy.model_dump(mode="json", exclude_none=True)
