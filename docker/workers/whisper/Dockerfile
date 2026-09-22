@@ -23,6 +23,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     XDG_CACHE_HOME=/workspace/.cache \
     HF_HUB_DOWNLOAD_TIMEOUT=120 \
     HF_HUB_ETAG_TIMEOUT=30 \
+    HF_HUB_DISABLE_XET=1 \
     INFERENCE_WORKER_MODE=production \
     INFERENCE_WORKER_TEMP_DIR=/tmp/ai-video-factory \
     WHISPER_MODEL_ROOT=/workspace/models/whisper-large-v3-turbo \

@@ -75,7 +75,7 @@ This hardening changes the worker images for:
 
 - Ideogram: `ideogram4-nf4-quality48-v3`
 - Breeze: `breeze-tts2-fast-decode-v6`
-- Whisper: `whisper-large-v3-turbo-v2`
+- Whisper: `whisper-large-v3-turbo-v5`
 
 Each changed worker requires one `Prepare` before its next use. Prepare can be deferred until that service is actually needed. LTX is unchanged and does not require another Prepare for this hardening.
 

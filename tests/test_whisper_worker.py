@@ -195,12 +195,13 @@ def test_whisper_worker_settings_and_salad_manifest() -> None:
     assert service["queue_name"] == "ai-video-factory-whisper-jobs-v2"
     assert service["group_name"] == "ai-video-factory-whisper-worker-v4"
     assert service["dockerfile"] == "docker/workers/whisper/Dockerfile"
-    assert service["image"].endswith(":whisper-large-v3-turbo-v4")
+    assert service["image"].endswith(":whisper-large-v3-turbo-v5")
     assert service["resources"]["gpu_class_names"] == ["RTX 3090 (24 GB)"]
     assert "gpu_classes" not in service["resources"]
     assert service["autoscaler"]["min_replicas"] == 0
     assert service["autoscaler"]["max_replicas"] == 1
     assert service["required_environment"] == ["HF_TOKEN"]
+    assert service["environment"]["HF_HUB_DISABLE_XET"] == "1"
 
 
 def test_whisper_container_is_model_specific() -> None:
@@ -211,6 +212,7 @@ def test_whisper_container_is_model_specific() -> None:
     assert "COPY src /opt/factory/src" in text
     assert "COPY . /opt/factory" not in text
     assert "transformers==5.5.2" in text
+    assert "HF_HUB_DISABLE_XET=1" in text
     assert WHISPER_GENERATION_PROFILE == "whisper-large-v3-turbo-fp16-no-prompt-greedy-v2"
     assert "ai_video_factory.workers.whisper.runtime:app" in entrypoint
 
