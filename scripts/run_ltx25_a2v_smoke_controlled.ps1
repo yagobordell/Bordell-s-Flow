@@ -69,8 +69,9 @@ foreach ($RequiredPath in @($Manager, $Bootstrap, $Submit)) {
 Import-EnvFile -Path $EnvFile
 
 $GeneratedAudio = $false
+$RunningOnWindows = [string]$env:OS -eq "Windows_NT"
 if ([string]::IsNullOrWhiteSpace($Audio)) {
-    if (-not $IsWindows -and $PSVersionTable.PSVersion.Major -ge 6) {
+    if (-not $RunningOnWindows) {
         throw "A speech WAV is required on non-Windows hosts. Pass -Audio <path>."
     }
     $FixtureDir = Join-Path $RepoRoot "data\output\deployment-validation\ltx25-a2v\fixtures"
