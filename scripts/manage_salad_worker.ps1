@@ -306,16 +306,26 @@ function Invoke-SaladRequest {
         [Parameter(Mandatory)][string]$Operation,
         [string]$Method = "Get",
         [ValidateRange(1, 120)][int]$TimeoutSec = 30,
-        [ValidateRange(1, 10)][int]$MaxAttempts = 6
+        [ValidateRange(1, 10)][int]$MaxAttempts = 6,
+        [string]$ContentType = "",
+        [object]$Body = $null
     )
 
     for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
         try {
-            return Invoke-RestMethod `
-                -Method $Method `
-                -Uri $Uri `
-                -Headers $Headers `
-                -TimeoutSec $TimeoutSec
+            $Request = @{
+                Method = $Method
+                Uri = $Uri
+                Headers = $Headers
+                TimeoutSec = $TimeoutSec
+            }
+            if (-not [string]::IsNullOrWhiteSpace($ContentType)) {
+                $Request["ContentType"] = $ContentType
+            }
+            if ($null -ne $Body) {
+                $Request["Body"] = $Body
+            }
+            return Invoke-RestMethod @Request
         }
         catch {
             if (-not (Test-TransientSaladFailure -ErrorRecord $_) -or $Attempt -ge $MaxAttempts) {
