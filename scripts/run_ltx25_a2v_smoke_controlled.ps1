@@ -8,6 +8,8 @@ param(
 
     [string]$Prompt = "",
 
+    [string]$SegmentId = "",
+
     [string]$EnvFile = ".env",
 
     [string]$OutputDir = "data/output/deployment-validation/ltx25-a2v",
@@ -140,6 +142,13 @@ if (-not (Test-Path -LiteralPath $ResolvedAvatar -PathType Leaf)) {
     throw "Avatar image not found: $ResolvedAvatar"
 }
 
+$ResolvedSegmentId = $SegmentId
+if ([string]::IsNullOrWhiteSpace($ResolvedSegmentId)) {
+    $Timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")
+    $ResolvedSegmentId = "smoke-$Timestamp"
+}
+Write-Host "Using A2V smoke segment id: $ResolvedSegmentId" -ForegroundColor Green
+
 $Common = @{
     Service = $Service
     EnvFile = $EnvFile
@@ -166,6 +175,7 @@ try {
         $Submit,
         "--audio", $ResolvedAudio,
         "--avatar-image", $ResolvedAvatar,
+        "--segment-id", $ResolvedSegmentId,
         "--output-dir", (Join-Path $RepoRoot $OutputDir),
         "--cleanup-stale-only"
     )
@@ -196,6 +206,7 @@ try {
     $PythonArgs = @(
         $Submit,
         "--audio", $ResolvedAudio,
+        "--segment-id", $ResolvedSegmentId,
         "--output-dir", (Join-Path $RepoRoot $OutputDir)
     )
     $PythonArgs += @("--avatar-image", $ResolvedAvatar)
