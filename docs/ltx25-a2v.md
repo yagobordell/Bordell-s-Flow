@@ -281,7 +281,19 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File \
     -NonInteractive
 ```
 
-Optional explicit inputs:
+By default the smoke uses the real local avatar fixtures in:
+
+```text
+data/input/avatar/
+```
+
+That directory must contain exactly one supported image (`.png`, `.jpg`, `.jpeg`, or
+`.webp`) and exactly one supported audio file (`.wav`, `.mp3`, `.m4a`, `.aac`,
+`.flac`, or `.ogg`). These files remain local because `data/input/*` is gitignored.
+The wrapper resolves and validates both files before allocating a Salad GPU, so an absent or
+ambiguous fixture set fails without incurring GPU cost.
+
+Explicit paths are still supported when a different test pair is needed:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File \
@@ -291,11 +303,6 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File \
     -Prompt "A stable talking head speaking naturally to camera." \
     -NonInteractive
 ```
-
-On Windows, if `-Audio` is omitted, the wrapper creates a short real speech WAV using the
-system speech synthesizer. If `-AvatarImage` is omitted, the Python smoke creates a
-deterministic synthetic avatar fixture. This means the baseline smoke has no dependency on a
-private run asset; real avatar assets can be supplied explicitly for visual QA.
 
 The script:
 
