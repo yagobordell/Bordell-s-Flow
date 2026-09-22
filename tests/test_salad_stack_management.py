@@ -49,7 +49,7 @@ def test_every_model_has_its_own_group_and_queue() -> None:
 
     assert len(groups) == len(set(groups)) == 7
     assert len(queues) == len(set(queues)) == 7
-    assert services["whisper"]["required_environment"] == []
+    assert services["whisper"]["required_environment"] == ["HF_TOKEN"]
     assert services["breeze_tts2"]["required_environment"] == []
     assert services["breeze_tts2"]["group_name"] == "ai-video-factory-breeze-tts2-worker-v2"
     assert services["fish_speech"]["required_environment"] == ["HF_TOKEN"]

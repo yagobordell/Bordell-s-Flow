@@ -263,7 +263,7 @@
         "SALAD_QUEUE_ENABLED": "true",
         "SALAD_LOG_LEVEL": "info"
       },
-      "required_environment": [],
+      "required_environment": ["HF_TOKEN"],
       "probes": {
         "startup": {
           "path": "/health",

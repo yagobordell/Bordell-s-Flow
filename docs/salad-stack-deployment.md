@@ -29,7 +29,8 @@ Schema v2 centralizes stack-wide properties:
 Each service then declares only its model-specific image, Dockerfile, group, queue, GPU profile,
 probes, autoscaler, environment defaults and additional required environment variables.
 
-The current additional requirement is `HF_TOKEN` for the gated Ideogram and LTX repositories.
+The current additional requirement is `HF_TOKEN` for Whisper downloads and the gated Ideogram and
+LTX repositories.
 
 ## Commands
 

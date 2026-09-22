@@ -200,7 +200,7 @@ def test_whisper_worker_settings_and_salad_manifest() -> None:
     assert "gpu_classes" not in service["resources"]
     assert service["autoscaler"]["min_replicas"] == 0
     assert service["autoscaler"]["max_replicas"] == 1
-    assert service["required_environment"] == []
+    assert service["required_environment"] == ["HF_TOKEN"]
 
 
 def test_whisper_container_is_model_specific() -> None:
