@@ -11,7 +11,6 @@ from ai_video_factory.gpu.errors import (
     InputIntegrityError,
     JobBusyError,
     JobConflictError,
-    JobExecutionError,
     LeaseLostError,
     NonRetryableTaskError,
     OutputConflictError,
@@ -140,9 +139,15 @@ def test_worker_max_attempts_prevents_second_inference_execution(tmp_path: Path)
         update={"max_attempts": 1}
     )
 
-    with pytest.raises(JobExecutionError, match="execution failed"):
+    with pytest.raises(
+        NonRetryableTaskError,
+        match="RuntimeError: single-shot failure",
+    ):
         worker.process(request, transport_job_id="salad-1")
-    with pytest.raises(NonRetryableTaskError, match="max_attempts=1"):
+    with pytest.raises(
+        NonRetryableTaskError,
+        match="RuntimeError: single-shot failure",
+    ):
         worker.process(request, transport_job_id="salad-2")
 
     assert runner.calls == 1
