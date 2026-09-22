@@ -65,7 +65,7 @@ class FakeBackend:
         }
 
 
-def _request(**updates: Any) -> InferenceJobRequest:
+def _request(*, max_attempts: int | None = 1, **updates: Any) -> InferenceJobRequest:
     parameters: dict[str, Any] = {
         "generation_profile": LTX_A2V_GENERATION_PROFILE,
         "prompt": "A stable talking head.",
@@ -103,6 +103,7 @@ def _request(**updates: Any) -> InferenceJobRequest:
                 content_type="application/json",
             )
         },
+        max_attempts=max_attempts,
         parameters=parameters,
     )
 
@@ -153,6 +154,13 @@ def test_a2v_runner_requires_image_audio_and_metadata_sidecar(tmp_path: Path) ->
 
     with pytest.raises(NonRetryableTaskError, match="image.*audio"):
         runner.run(_request(), {"image": image}, tmp_path / "bad")
+
+    with pytest.raises(NonRetryableTaskError, match="max_attempts=1"):
+        runner.run(
+            _request(max_attempts=2),
+            {"image": image, "audio": audio},
+            tmp_path / "retryable",
+        )
 
 
 def test_a2v_job_id_fingerprints_image_audio_and_segment() -> None:
