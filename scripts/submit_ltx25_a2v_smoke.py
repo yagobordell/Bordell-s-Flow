@@ -353,6 +353,8 @@ def main() -> None:
         model_load_seconds=metadata.get("model_load_seconds"),
         inference_seconds=metadata.get("inference_seconds"),
         encode_seconds=metadata.get("encode_seconds"),
+        total_elapsed_seconds=metadata.get("total_elapsed_seconds"),
+        peak_vram_bytes=metadata.get("peak_vram_bytes"),
         video_sha256=sha256_file(video_path),
     )
     print(f"video={video_path.resolve()}", flush=True)
