@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 import ai_video_factory.workers.ltx25.a2v as a2v
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
+from ai_video_factory.inference.errors import NonRetryableTaskError
 from ai_video_factory.workers.ltx25 import (
     LTX_A2V_GENERATION_PROFILE,
     LTX_A2V_TASK,
@@ -150,7 +151,7 @@ def test_a2v_runner_requires_image_audio_and_metadata_sidecar(tmp_path: Path) ->
     assert '"generation_mode": "audio_to_video"' in metadata
     assert backend.calls[0]["parameters"].seed == 73
 
-    with pytest.raises(ValueError, match="image.*audio"):
+    with pytest.raises(NonRetryableTaskError, match="image.*audio"):
         runner.run(_request(), {"image": image}, tmp_path / "bad")
 
 
