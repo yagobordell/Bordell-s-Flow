@@ -146,10 +146,16 @@ class InferenceWorker:
             NonRetryableTaskError,
             UnsupportedTaskError,
         ) as exc:
-            self._mark_failed(request, request_sha256, exc)
+            failure = self._single_shot_failure(request, exc)
+            self._mark_failed(request, request_sha256, failure)
+            if failure is not exc:
+                raise failure from exc
             raise
         except Exception as exc:
-            self._mark_failed(request, request_sha256, exc)
+            failure = self._single_shot_failure(request, exc)
+            self._mark_failed(request, request_sha256, failure)
+            if failure is not exc:
+                raise failure from exc
             raise JobExecutionError(f"execution failed for job {request.job_id}") from exc
 
         self.repository.mark_succeeded(
@@ -354,6 +360,17 @@ class InferenceWorker:
             size_bytes=stored.size_bytes,
             sha256=expected_sha256,
             etag=stored.etag,
+        )
+
+    @staticmethod
+    def _single_shot_failure(
+        request: InferenceJobRequest,
+        error: BaseException,
+    ) -> BaseException:
+        if request.max_attempts != 1 or isinstance(error, NonRetryableTaskError):
+            return error
+        return NonRetryableTaskError(
+            f"{type(error).__name__}: {error}"
         )
 
     def _mark_failed(
