@@ -468,6 +468,15 @@ def main() -> None:
                             "A2V transport remained pending after "
                             f"{pending_reallocations} Salad node reallocation(s)"
                         )
+                    latest = _salad_request(
+                        job_url,
+                        environment["SALAD_API_KEY"],
+                    )
+                    latest_status = str(latest.get("status") or "")
+                    if latest_status != "pending":
+                        current = latest
+                        pending_since = None
+                        continue
                     pending_reallocations += 1
                     instance_id = _reallocate_single_group_instance(
                         organization=environment["SALAD_ORGANIZATION"],
