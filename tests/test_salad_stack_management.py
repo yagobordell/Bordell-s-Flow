@@ -107,6 +107,17 @@ def test_worker_manager_supports_env_file_and_unattended_deployment() -> None:
     assert "required_environment" in script
 
 
+def test_worker_manager_keeps_manifest_runtime_environment_authoritative() -> None:
+    script = WORKER_MANAGER.read_text(encoding="utf-8")
+
+    environment_builder = script.split(
+        "function Get-WorkerEnvironment", maxsplit=1
+    )[1].split("function New-ContainerConfiguration", maxsplit=1)[0]
+    assert "$Environment[$Property.Name] = [string]$Property.Value" in environment_builder
+    assert "GetEnvironmentVariable(\n            $Property.Name" not in environment_builder
+    assert "must not disable the Salad queue" in environment_builder
+
+
 def test_stack_manager_orchestrates_all_model_services() -> None:
     script = STACK_MANAGER.read_text(encoding="utf-8")
 
@@ -224,7 +235,7 @@ def test_worker_create_retries_transient_name_conflict_after_delete() -> None:
 def test_whisper_uses_fresh_versioned_group_after_queue_rebind_failure() -> None:
     services = _document()["services"]
 
-    assert services["whisper"]["group_name"] == "ai-video-factory-whisper-worker-v4"
+    assert services["whisper"]["group_name"] == "ai-video-factory-whisper-worker-v5"
     assert services["whisper"]["queue_name"] == "ai-video-factory-whisper-jobs-v2"
 
 
@@ -233,7 +244,7 @@ def test_whisper_queue_rebind_uses_fresh_group_and_fresh_queue_pair() -> None:
     services = _document()["services"]
     whisper = services["whisper"]
 
-    assert whisper["group_name"] == "ai-video-factory-whisper-worker-v4"
+    assert whisper["group_name"] == "ai-video-factory-whisper-worker-v5"
     assert whisper["queue_name"] == "ai-video-factory-whisper-jobs-v2"
 
 
@@ -259,7 +270,7 @@ def test_whisper_uses_manual_prewarm_lifecycle_consistently() -> None:
 
     assert document["stack"]["autostart_policy"] is False
     assert whisper["autostart_policy"] is False
-    assert whisper["group_name"] == "ai-video-factory-whisper-worker-v4"
+    assert whisper["group_name"] == "ai-video-factory-whisper-worker-v5"
     assert whisper["queue_name"] == "ai-video-factory-whisper-jobs-v2"
     assert (
         '$ServiceAutostartProperty = $Definition.PSObject.Properties["autostart_policy"]'

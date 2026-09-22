@@ -229,7 +229,7 @@
     },
     "whisper": {
       "display_name": "AI Video Factory Whisper",
-      "group_name": "ai-video-factory-whisper-worker-v4",
+      "group_name": "ai-video-factory-whisper-worker-v5",
       "queue_name": "ai-video-factory-whisper-jobs-v2",
       "dockerfile": "docker/workers/whisper/Dockerfile",
         "image": "docker.io/yagobordell/ai-video-factory:whisper-large-v3-turbo-v5",

@@ -193,7 +193,7 @@ def test_whisper_worker_settings_and_salad_manifest() -> None:
     assert settings.model_repository == WHISPER_MODEL_ID
     assert settings.device == "cuda:0"
     assert service["queue_name"] == "ai-video-factory-whisper-jobs-v2"
-    assert service["group_name"] == "ai-video-factory-whisper-worker-v4"
+    assert service["group_name"] == "ai-video-factory-whisper-worker-v5"
     assert service["dockerfile"] == "docker/workers/whisper/Dockerfile"
     assert service["image"].endswith(":whisper-large-v3-turbo-v5")
     assert service["resources"]["gpu_class_names"] == ["RTX 3090 (24 GB)"]
