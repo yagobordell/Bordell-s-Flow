@@ -16,7 +16,10 @@ from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ai_video_factory.inference.contracts import InferenceJobRequest
-from ai_video_factory.inference.errors import ModelBootstrapPendingError
+from ai_video_factory.inference.errors import (
+    ModelBootstrapPendingError,
+    NonRetryableTaskError,
+)
 from ai_video_factory.inference.ports import LocalArtifact, LocalSidecarArtifact
 
 from .model import (
@@ -194,19 +197,25 @@ def _ffprobe_json(path: Path) -> dict[str, Any]:
     return json.loads(completed.stdout)
 
 
+def _input_error(code: str, message: str) -> NonRetryableTaskError:
+    return NonRetryableTaskError(f"LTX_A2V_{code}: {message}")
+
+
 def probe_audio(path: Path) -> AudioProbe:
     if not path.is_file() or path.stat().st_size <= 0:
-        raise ValueError(f"invalid audio input: {path}")
+        raise _input_error("INVALID_AUDIO", f"invalid audio input: {path}")
     try:
         probe = _ffprobe_json(path)
     except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
-        raise ValueError(f"audio decode failed for {path}") from exc
+        raise _input_error("AUDIO_DECODE_FAILED", f"audio decode failed for {path}") from exc
 
     streams = [
         stream for stream in probe.get("streams", []) if stream.get("codec_type") == "audio"
     ]
     if not streams:
-        raise ValueError("audio input does not contain a decodable audio stream")
+        raise _input_error(
+            "INVALID_AUDIO", "audio input does not contain a decodable audio stream"
+        )
     stream = streams[0]
     duration_value = (
         stream.get("duration")
@@ -218,11 +227,18 @@ def probe_audio(path: Path) -> AudioProbe:
         sample_rate = int(stream.get("sample_rate") or 0)
         channels = int(stream.get("channels") or 0)
     except (TypeError, ValueError) as exc:
-        raise ValueError("audio probe returned invalid stream metadata") from exc
+        raise _input_error(
+            "INVALID_AUDIO", "audio probe returned invalid stream metadata"
+        ) from exc
     if not math.isfinite(duration) or duration <= 0:
-        raise ValueError("audio duration must be a positive finite number")
+        raise _input_error(
+            "INVALID_AUDIO", "audio duration must be a positive finite number"
+        )
     if sample_rate <= 0 or channels <= 0:
-        raise ValueError("audio stream must report positive sample rate and channel count")
+        raise _input_error(
+            "INVALID_AUDIO",
+            "audio stream must report positive sample rate and channel count",
+        )
     return AudioProbe(
         codec=str(stream.get("codec_name") or "unknown"),
         sample_rate=sample_rate,
@@ -235,7 +251,8 @@ def _validate_audio_duration(audio: AudioProbe, *, fps: int) -> None:
     max_grid_frames = ((LTX_A2V_MAX_RAW_FRAMES - 1) // 8) * 8 + 1
     hard_max_seconds = max_grid_frames / float(fps)
     if audio.duration_seconds > hard_max_seconds:
-        raise ValueError(
+        raise _input_error(
+            "UNSUPPORTED_DURATION",
             "audio duration exceeds the LTX A2V temporal-grid hard maximum for "
             f"{fps} fps: {audio.duration_seconds:.3f}s > {hard_max_seconds:.3f}s"
         )
@@ -251,12 +268,14 @@ def _prepare_avatar_image(
     pipeline_height: int,
 ) -> Path:
     if not source.is_file() or source.stat().st_size <= 0:
-        raise ValueError(f"invalid avatar image input: {source}")
+        raise _input_error("INVALID_IMAGE", f"invalid avatar image input: {source}")
     try:
         with Image.open(source) as opened:
             image = opened.convert("RGB")
     except Exception as exc:
-        raise ValueError(f"avatar image decode failed for {source}") from exc
+        raise _input_error(
+            "IMAGE_DECODE_FAILED", f"avatar image decode failed for {source}"
+        ) from exc
 
     fitted = ImageOps.fit(
         image,
@@ -266,7 +285,9 @@ def _prepare_avatar_image(
     )
     pad_total = pipeline_height - requested_height
     if pipeline_width != requested_width or pad_total < 0:
-        raise ValueError("unsupported LTX A2V grid-padding geometry")
+        raise _input_error(
+            "INVALID_IMAGE", "unsupported LTX A2V grid-padding geometry"
+        )
     pad_top = pad_total // 2
     pad_bottom = pad_total - pad_top
     canvas = Image.new("RGB", (pipeline_width, pipeline_height))
@@ -370,6 +391,7 @@ class DirectLTX25AudioToVideoBackend:
         output_path: Path,
         parameters: LTXAudioToVideoParameters,
     ) -> dict[str, Any]:
+        generation_started = time.monotonic()
         audio_probe = probe_audio(audio_path)
         _validate_audio_duration(audio_probe, fps=parameters.fps)
 
@@ -392,17 +414,18 @@ class DirectLTX25AudioToVideoBackend:
                 crf=None,
             )
 
-            build_started = time.monotonic()
-            pipeline, built_now = self._get_or_build_pipeline(bindings)
-            model_load_seconds = time.monotonic() - build_started if built_now else 0.0
-
             cuda = getattr(bindings.torch, "cuda", None)
             reset_peak = getattr(cuda, "reset_peak_memory_stats", None)
             if reset_peak is not None:
                 reset_peak()
 
+            build_started = time.monotonic()
+            pipeline, built_now = self._get_or_build_pipeline(bindings)
+            model_load_seconds = time.monotonic() - build_started if built_now else 0.0
+
             inference_started = time.monotonic()
-            result = pipeline(
+            try:
+                result = pipeline(
                 prompt=parameters.prompt,
                 negative_prompt=bindings.default_negative_prompt,
                 seed=parameters.seed,
@@ -414,9 +437,13 @@ class DirectLTX25AudioToVideoBackend:
                 video_guider_params=self._pipeline_params.video_guider_params,
                 images=[conditioning],
                 audio_path=str(audio_path.resolve()),
-                audio_start_time=0.0,
-                audio_max_duration=None,
-            )
+                    audio_start_time=0.0,
+                    audio_max_duration=None,
+                )
+            except ValueError as exc:
+                if "decode audio" in str(exc).lower():
+                    raise _input_error("AUDIO_DECODE_FAILED", str(exc)) from exc
+                raise
             inference_seconds = time.monotonic() - inference_started
 
             output_video = result.video
@@ -451,7 +478,27 @@ class DirectLTX25AudioToVideoBackend:
 
         effective_audio_duration = _result_audio_duration(result.audio)
         output_video_duration = _output_duration(output_path)
-        total_seconds = model_load_seconds + inference_seconds + encode_seconds
+        generation_elapsed_seconds = model_load_seconds + inference_seconds + encode_seconds
+        total_elapsed_seconds = time.monotonic() - generation_started
+        logger.info(
+            "LTX25_A2V_INFERENCE_METRIC input_audio_seconds=%.3f "
+            "effective_audio_seconds=%.3f output_video_seconds=%.3f "
+            "num_frames=%d fps=%d model_load_seconds=%.3f inference_seconds=%.3f "
+            "encode_mux_seconds=%.3f total_seconds=%.3f real_time_factor=%.3f "
+            "peak_vram_bytes=%s pipeline_reused=%s",
+            audio_probe.duration_seconds,
+            effective_audio_duration,
+            output_video_duration,
+            int(result.num_frames),
+            parameters.fps,
+            model_load_seconds,
+            inference_seconds,
+            encode_seconds,
+            total_elapsed_seconds,
+            inference_seconds / audio_probe.duration_seconds,
+            peak_vram_bytes,
+            not built_now,
+        )
         return {
             "generation_mode": "audio_to_video",
             "generation_profile": parameters.generation_profile,
@@ -470,7 +517,8 @@ class DirectLTX25AudioToVideoBackend:
             "model_load_seconds": model_load_seconds,
             "inference_seconds": inference_seconds,
             "video_encode_mux_seconds": encode_seconds,
-            "generation_elapsed_seconds": total_seconds,
+            "generation_elapsed_seconds": generation_elapsed_seconds,
+            "total_elapsed_seconds": total_elapsed_seconds,
             "real_time_factor": inference_seconds / audio_probe.duration_seconds,
             "peak_vram_bytes": peak_vram_bytes,
             "pipeline_reused": not built_now,
@@ -588,27 +636,42 @@ class LTXAudioToVideoTaskRunner:
         inputs: Mapping[str, Path],
     ) -> None:
         if request.task != self.task_name:
-            raise ValueError(
-                f"LTXAudioToVideoTaskRunner cannot execute task {request.task!r}"
+            raise _input_error(
+                "INVALID_REQUEST",
+                f"LTXAudioToVideoTaskRunner cannot execute task {request.task!r}",
             )
         if set(inputs) != {"image", "audio"}:
-            raise ValueError(
-                "video.ltx25.audio_to_video requires exactly 'image' and 'audio' inputs"
+            raise _input_error(
+                "INVALID_REQUEST",
+                "video.ltx25.audio_to_video requires exactly 'image' and 'audio' inputs",
             )
         declared_names = {item.name for item in request.inputs}
         if declared_names != {"image", "audio"}:
-            raise ValueError(
-                "video.ltx25.audio_to_video request must declare 'image' and 'audio' inputs"
+            raise _input_error(
+                "INVALID_REQUEST",
+                "video.ltx25.audio_to_video request must declare 'image' and 'audio' inputs",
             )
         if request.output.content_type != "video/mp4":
-            raise ValueError("LTX A2V output content_type must be 'video/mp4'")
+            raise _input_error(
+                "INVALID_REQUEST", "LTX A2V output content_type must be 'video/mp4'"
+            )
         if Path(request.output.key).suffix.lower() != ".mp4":
-            raise ValueError("LTX A2V output key must end in .mp4")
+            raise _input_error(
+                "INVALID_REQUEST", "LTX A2V output key must end in .mp4"
+            )
         sidecars = request.sidecar_outputs or {}
         if set(sidecars) != {"metadata"}:
-            raise ValueError("LTX A2V request must declare exactly one 'metadata' sidecar")
+            raise _input_error(
+                "INVALID_REQUEST",
+                "LTX A2V request must declare exactly one 'metadata' sidecar",
+            )
         metadata_output = sidecars["metadata"]
         if metadata_output.content_type != "application/json":
-            raise ValueError("LTX A2V metadata sidecar must use application/json")
+            raise _input_error(
+                "INVALID_REQUEST",
+                "LTX A2V metadata sidecar must use application/json",
+            )
         if Path(metadata_output.key).suffix.lower() != ".json":
-            raise ValueError("LTX A2V metadata sidecar key must end in .json")
+            raise _input_error(
+                "INVALID_REQUEST", "LTX A2V metadata sidecar key must end in .json"
+            )
