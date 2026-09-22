@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "ltx25", "realesrgan")]
+    [ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", "qwen_image_21", "ltx25", "realesrgan")]
     [string]$Service,
 
     [string]$EnvFile = ".env",
@@ -71,6 +71,21 @@ $Profiles = @{
         MaxPostPullStartReallocations = 1
         RunningNotReadySeconds = 1200
         FinalRunningNotReadySeconds = 1800
+        MaxRunningNotReadyReallocations = 1
+        MaxNodeChanges = 6
+    }
+    qwen_image_21 = @{
+        AllocatingSeconds = 480
+        FinalAllocatingSeconds = 1200
+        MaxAllocatingReallocations = 2
+        ImagePullStallSeconds = 300
+        FinalImagePullStallSeconds = 900
+        MaxImagePullReallocations = 2
+        PostPullStartSeconds = 300
+        FinalPostPullStartSeconds = 600
+        MaxPostPullStartReallocations = 1
+        RunningNotReadySeconds = 1800
+        FinalRunningNotReadySeconds = 3000
         MaxRunningNotReadyReallocations = 1
         MaxNodeChanges = 6
     }
