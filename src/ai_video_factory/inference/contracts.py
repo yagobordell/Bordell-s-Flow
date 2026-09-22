@@ -76,6 +76,7 @@ class InferenceJobRequest(BaseModel):
     inputs: list[ObjectInput] = Field(default_factory=list, max_length=16)
     output: ObjectOutput
     sidecar_outputs: dict[str, ObjectOutput] | None = None
+    max_attempts: int | None = Field(default=None, ge=1, le=100)
     parameters: dict[str, JsonValue] = Field(default_factory=dict)
 
     @field_validator("job_id")
