@@ -6,6 +6,7 @@ from ai_video_factory.inference.app import create_app
 from ai_video_factory.inference.runtime import build_worker
 from ai_video_factory.inference.tasks import TaskRunnerRegistry
 
+from .a2v import DirectLTX25A2VBackend, LTXA2VTaskRunner
 from .model import DirectLTX25Backend, LTXVideoTaskRunner
 from .settings import LTX25WorkerSettings
 
@@ -15,7 +16,16 @@ def build_ltx25_worker(settings: LTX25WorkerSettings):
         model_root=settings.model_root,
         device=settings.device,
     )
-    runners = TaskRunnerRegistry([LTXVideoTaskRunner(backend=backend)])
+    a2v_backend = DirectLTX25A2VBackend(
+        model_root=settings.model_root,
+        device=settings.device,
+    )
+    runners = TaskRunnerRegistry(
+        [
+            LTXVideoTaskRunner(backend=backend),
+            LTXA2VTaskRunner(backend=a2v_backend),
+        ]
+    )
     return build_worker(settings, runners=runners)
 
 
