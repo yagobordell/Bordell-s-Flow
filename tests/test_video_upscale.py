@@ -142,6 +142,47 @@ class TransientThenSuccessQueue:
         self.cancel_calls += 1
 
 
+class OutputCommittedBeforeTerminalFailureQueue:
+    def __init__(self, storage: FakeStorage) -> None:
+        self.storage = storage
+        self.request = None
+        self.get_calls = 0
+
+    def submit(self, request, *, metadata):
+        del metadata
+        self.request = request
+        return QueueJobSnapshot(id="transport-failed", status=QueueJobStatus.PENDING)
+
+    def get(self, transport_job_id: str) -> QueueJobSnapshot:
+        assert transport_job_id == "transport-failed"
+        assert self.request is not None
+        self.get_calls += 1
+        content = b"durable-output-before-transport-failure"
+        digest = hashlib.sha256(content).hexdigest()
+        self.storage.objects[self.request.output.key] = (
+            content,
+            StoredObject(
+                key=self.request.output.key,
+                content_type="video/mp4",
+                size_bytes=len(content),
+                etag="etag",
+                metadata={
+                    "job-id": self.request.job_id,
+                    "request-sha256": self.request.fingerprint(),
+                    "artifact-sha256": digest,
+                },
+            ),
+        )
+        return QueueJobSnapshot(
+            id=transport_job_id,
+            status=QueueJobStatus.FAILED,
+            provider_payload={"error": "transport lost after output commit"},
+        )
+
+    def cancel(self, _transport_job_id: str) -> None:
+        raise AssertionError("verified durable output must avoid cancellation")
+
+
 def test_upscale_plan_is_exact_720p_to_1440p_and_cache_skips_queue(
     tmp_path: Path,
     monkeypatch,
@@ -429,4 +470,39 @@ def test_upscale_polling_tolerates_transient_queue_get(
     assert queue.get_calls >= 2
     assert queue.cancel_calls == 0
     assert manifest.jobs[0].transport_status == "succeeded"
+    assert clips == [VideoClip(shot_id=1, uri="upscaled_clips/shot_001.mp4")]
+
+
+def test_verified_r2_output_wins_over_terminal_transport_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    phase8 = tmp_path / "phase8"
+    clips_dir = phase8 / "video_clips"
+    clips_dir.mkdir(parents=True)
+    source = clips_dir / "shot_001.mp4"
+    source.write_bytes(b"source-ltx-720p")
+    monkeypatch.setattr(upscale, "probe_video", _probe)
+
+    plan = upscale.build_video_upscale_plan(
+        [VideoClip(shot_id=1, uri="video_clips/shot_001.mp4")],
+        clip_base_dir=phase8,
+    )
+    storage = FakeStorage()
+    queue = OutputCommittedBeforeTerminalFailureQueue(storage)
+
+    manifest, clips = upscale.run_video_upscale(
+        plan,
+        queue=queue,
+        storage=storage,
+        manifest_path=phase8 / "video_upscale_manifest.json",
+        clips_dir=phase8 / "upscaled_clips",
+        poll_seconds=0.001,
+        timeout_seconds=1.0,
+    )
+
+    assert queue.get_calls == 1
+    assert manifest.jobs[0].transport_status == "succeeded"
+    assert manifest.jobs[0].response is not None
+    assert manifest.jobs[0].response.replayed is True
     assert clips == [VideoClip(shot_id=1, uri="upscaled_clips/shot_001.mp4")]

@@ -321,6 +321,9 @@ def run_video_upscale(
                 continue
             if state.transport_job_id is None:
                 raise RuntimeError(f"Shot {item.shot_id} has no transport job id")
+            if _accept_cached_output(state, item, storage):
+                _write_manifest(manifest_path, manifest)
+                continue
             try:
                 snapshot = queue.get(state.transport_job_id)
             except TransientQueueError as exc:
@@ -332,6 +335,18 @@ def run_video_upscale(
                     state.transport_job_id,
                     exc,
                 )
+                continue
+            if snapshot.status in {QueueJobStatus.FAILED, QueueJobStatus.CANCELLED} and (
+                _accept_cached_output(state, item, storage)
+            ):
+                logger.warning(
+                    "Accepting verified R2 replay after terminal Real-ESRGAN transport "
+                    "status shot_id=%s transport_job_id=%s status=%s",
+                    item.shot_id,
+                    state.transport_job_id,
+                    snapshot.status.value,
+                )
+                _write_manifest(manifest_path, manifest)
                 continue
             _apply_snapshot(state, item, snapshot)
             if (
@@ -385,6 +400,21 @@ def run_video_upscale(
         clip_uri_prefix=clip_uri_prefix,
     )
     return manifest, clips
+
+
+def _accept_cached_output(
+    state: VideoUpscaleJobState,
+    item: VideoUpscalePlanItem,
+    storage: ObjectStorage,
+) -> bool:
+    """Reconcile a durable output when Salad's transport state is stale."""
+
+    cached = cached_inference_response(storage, item.request)
+    if cached is None:
+        return False
+    state.transport_status = "succeeded"
+    state.response = cached
+    return True
 
 
 def _load_or_create_manifest(
