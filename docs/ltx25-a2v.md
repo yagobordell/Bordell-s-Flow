@@ -342,6 +342,27 @@ The script:
 These checks do not grade visual quality or lip-sync and never trigger regeneration. There is
 no manual acceptance step: the generated artifact is retained as-is.
 
+### Pending transport recovery
+
+The Salad Job Queue worker depends on Salad's Instance Metadata Service (IMDS). A node can be
+healthy enough to finish model bootstrap while its queue worker still cannot obtain the workload
+instance token. In that case the Salad transport job remains `pending` and LTX inference has not
+started.
+
+The A2V smoke treats this strictly as transport recovery, not generation retry:
+
+- before submitting, it cancels and waits for cancellation of stale `pending` transports for the
+  same deterministic application job;
+- if the newly submitted transport remains `pending` for 180 seconds, it reallocates the single
+  Salad instance to another node while keeping the same queue job;
+- it does not submit a replacement queue job during that recovery;
+- if the transport still cannot dispatch after the configured reallocation budget, it cancels the
+  pending transport and fails;
+- once a transport reaches `running`, the pending-recovery path is disabled and the one-shot LTX
+  execution is allowed to finish normally.
+
+A pending transport therefore does not consume the A2V `max_attempts=1` inference budget.
+
 ## Benchmark evidence
 
 Real benchmark evidence belongs here after each validated deployment. The smoke emits all of
