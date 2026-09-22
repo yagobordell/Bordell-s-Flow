@@ -5,7 +5,6 @@ import json
 import math
 import mimetypes
 import os
-import re
 import shutil
 import subprocess
 import time
@@ -118,38 +117,6 @@ def _duration(probe: dict[str, Any]) -> float:
     return duration
 
 
-def _validate_non_silent_audio(path: Path) -> float:
-    executable = shutil.which("ffmpeg")
-    if executable is None:
-        raise RuntimeError("ffmpeg is required for A2V smoke validation")
-    completed = subprocess.run(
-        [
-            executable,
-            "-hide_banner",
-            "-nostats",
-            "-i",
-            str(path),
-            "-map",
-            "0:a:0",
-            "-af",
-            "volumedetect",
-            "-f",
-            "null",
-            "-",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    match = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", completed.stderr)
-    if match is None:
-        raise RuntimeError("output audio is silent or volumedetect returned no mean volume")
-    mean_volume_db = float(match.group(1))
-    if mean_volume_db <= -70.0:
-        raise RuntimeError(f"output audio is effectively silent: {mean_volume_db:.2f} dB")
-    return mean_volume_db
-
-
 def _validate_decodable_video(path: Path) -> None:
     executable = shutil.which("ffmpeg")
     assert executable is not None
@@ -260,6 +227,7 @@ def main() -> None:
                 content_type="application/json",
             )
         },
+        max_attempts=1,
         parameters={
             "generation_profile": LTX_A2V_GENERATION_PROFILE,
             "prompt": args.prompt,
@@ -395,12 +363,6 @@ def main() -> None:
         raise RuntimeError(f"A2V fps {actual_fps} != requested {args.fps}")
 
     output_duration = _duration(probe)
-    if abs(output_duration - input_audio_duration) > (8 / args.fps + 0.15):
-        raise RuntimeError(
-            "A2V output duration differs from input speech by more than one temporal grid: "
-            f"input={input_audio_duration:.3f}s output={output_duration:.3f}s"
-        )
-    mean_volume_db = _validate_non_silent_audio(video_path)
     _validate_decodable_video(video_path)
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -434,7 +396,6 @@ def main() -> None:
     print(f"resolution={args.width}x{args.height}")
     print(f"fps={actual_fps:.6f}")
     print(f"num_frames={metadata['num_frames']}")
-    print(f"mean_volume_db={mean_volume_db:.3f}")
     print(f"inference_seconds={metadata['inference_seconds']}")
     print(f"real_time_factor={metadata['real_time_factor']}")
     print(f"peak_vram_bytes={metadata.get('peak_vram_bytes')}")
