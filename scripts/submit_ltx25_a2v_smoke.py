@@ -71,7 +71,11 @@ def _salad_request(
             payload_bytes = response.read()
             if not payload_bytes:
                 return {}
-            return json.loads(payload_bytes.decode("utf-8"))
+            text = payload_bytes.decode("utf-8")
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return {"raw": text}
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Salad API returned HTTP {exc.code}: {detail}") from exc
@@ -118,10 +122,11 @@ def _cancel_stale_pending_application_jobs(
                 salad_job_id=transport_job_id,
                 application_job_id=application_job_id,
             )
-            _salad_request(
+            _cancel_pending_transport(
                 f"{base_url}/{transport_job_id}",
                 api_key,
-                method="DELETE",
+                transport_job_id,
+                strict=True,
             )
             _event(
                 "A2V_STALE_PENDING_CANCEL_DONE",
@@ -167,17 +172,39 @@ def _reallocate_single_group_instance(
     return instance_id
 
 
-def _cancel_pending_transport(job_url: str, api_key: str, salad_job_id: str) -> None:
+def _cancel_pending_transport(
+    job_url: str,
+    api_key: str,
+    salad_job_id: str,
+    *,
+    strict: bool = False,
+) -> None:
     try:
         _salad_request(job_url, api_key, method="DELETE")
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            time.sleep(2)
+            try:
+                current = _salad_request(job_url, api_key)
+            except RuntimeError as exc:
+                if "HTTP 404" in str(exc):
+                    _event("A2V_PENDING_CANCEL_DONE", salad_job_id=salad_job_id)
+                    return
+                raise
+            if str(current.get("status")) == "cancelled":
+                _event("A2V_PENDING_CANCEL_DONE", salad_job_id=salad_job_id)
+                return
+        raise TimeoutError(
+            f"Salad did not confirm cancellation of pending job {salad_job_id}"
+        )
     except Exception as exc:
         _event(
             "A2V_PENDING_CANCEL_FAILED",
             salad_job_id=salad_job_id,
             error=repr(exc),
         )
-        return
-    _event("A2V_PENDING_CANCEL_DONE", salad_job_id=salad_job_id)
+        if strict:
+            raise
 
 
 def _write_default_avatar(path: Path) -> None:
@@ -415,12 +442,6 @@ def main() -> None:
     try:
         while current["status"] not in {"succeeded", "failed", "cancelled"}:
             if time.monotonic() >= deadline:
-                if str(current.get("status")) == "pending":
-                    _cancel_pending_transport(
-                        job_url,
-                        environment["SALAD_API_KEY"],
-                        str(created["id"]),
-                    )
                 raise TimeoutError(f"A2V job did not finish within {args.timeout_seconds}s")
             time.sleep(args.poll_seconds)
             current = _salad_request(job_url, environment["SALAD_API_KEY"])
@@ -430,11 +451,6 @@ def main() -> None:
                 pending_since = pending_since or time.monotonic()
                 if time.monotonic() - pending_since >= pending_limit_seconds:
                     if pending_reallocations >= args.max_pending_reallocations:
-                        _cancel_pending_transport(
-                            job_url,
-                            environment["SALAD_API_KEY"],
-                            str(created["id"]),
-                        )
                         raise TimeoutError(
                             "A2V transport remained pending after "
                             f"{pending_reallocations} Salad node reallocation(s)"
