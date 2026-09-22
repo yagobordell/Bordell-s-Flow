@@ -207,25 +207,6 @@ class InferenceWorker:
                             f"task sidecar {name!r} content type does not match the job contract"
                         )
 
-                digest = sha256_file(artifact.path)
-                heartbeat.renew_now()
-
-                uploaded = self.storage.upload(
-                    artifact.path,
-                    request.output.key,
-                    content_type=artifact.content_type,
-                    metadata={
-                        "job-id": request.job_id,
-                        "request-sha256": request_sha256,
-                        "artifact-sha256": digest,
-                    },
-                )
-                heartbeat.ensure_owned()
-                output = self._artifact_from_stored(
-                    request.output,
-                    digest,
-                    uploaded,
-                )
                 sidecar_outputs: dict[str, OutputArtifact] = {}
                 for name, sidecar in artifact.sidecars.items():
                     sidecar_digest = sha256_file(sidecar.path)
@@ -247,6 +228,25 @@ class InferenceWorker:
                         sidecar_digest,
                         uploaded_sidecar,
                     )
+
+                digest = sha256_file(artifact.path)
+                heartbeat.renew_now()
+                uploaded = self.storage.upload(
+                    artifact.path,
+                    request.output.key,
+                    content_type=artifact.content_type,
+                    metadata={
+                        "job-id": request.job_id,
+                        "request-sha256": request_sha256,
+                        "artifact-sha256": digest,
+                    },
+                )
+                heartbeat.ensure_owned()
+                output = self._artifact_from_stored(
+                    request.output,
+                    digest,
+                    uploaded,
+                )
 
         return InferenceJobResponse(
             job_id=request.job_id,
