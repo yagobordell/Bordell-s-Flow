@@ -68,10 +68,116 @@ def _salad_request(
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            return json.loads(response.read().decode("utf-8"))
+            payload_bytes = response.read()
+            if not payload_bytes:
+                return {}
+            return json.loads(payload_bytes.decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Salad API returned HTTP {exc.code}: {detail}") from exc
+
+
+def _queue_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = payload.get("items")
+    if raw is None:
+        raw = payload.get("jobs")
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def _cancel_stale_pending_application_jobs(
+    *,
+    base_url: str,
+    api_key: str,
+    application_job_id: str,
+) -> None:
+    for page in range(1, 101):
+        payload = _salad_request(
+            f"{base_url}?page={page}&page_size=25",
+            api_key,
+        )
+        items = _queue_items(payload)
+        for item in items:
+            metadata = item.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            if metadata.get("application_job_id") != application_job_id:
+                continue
+            status = str(item.get("status") or "")
+            transport_job_id = str(item.get("id") or "")
+            if status == "running":
+                raise RuntimeError(
+                    "Refusing to submit a duplicate A2V transport because the same "
+                    f"application job is already running: {transport_job_id}"
+                )
+            if status != "pending" or not transport_job_id:
+                continue
+            _event(
+                "A2V_STALE_PENDING_CANCEL_START",
+                salad_job_id=transport_job_id,
+                application_job_id=application_job_id,
+            )
+            _salad_request(
+                f"{base_url}/{transport_job_id}",
+                api_key,
+                method="DELETE",
+            )
+            _event(
+                "A2V_STALE_PENDING_CANCEL_DONE",
+                salad_job_id=transport_job_id,
+            )
+        if len(items) < 25:
+            return
+    raise RuntimeError("A2V stale-job scan exceeded 100 queue pages")
+
+
+def _reallocate_single_group_instance(
+    *,
+    organization: str,
+    project: str,
+    group_name: str,
+    api_key: str,
+) -> str:
+    group_url = (
+        "https://api.salad.com/api/public/organizations/"
+        f"{organization}/projects/{project}/containers/{group_name}"
+    )
+    payload = _salad_request(f"{group_url}/instances", api_key)
+    raw_instances = payload.get("instances")
+    if raw_instances is None:
+        raw_instances = payload.get("items")
+    instances = [
+        item for item in (raw_instances or [])
+        if isinstance(item, dict)
+    ]
+    if len(instances) != 1:
+        raise RuntimeError(
+            "A2V pending recovery requires exactly one Salad instance; "
+            f"found {len(instances)}"
+        )
+    instance_id = str(instances[0].get("id") or "")
+    if not instance_id:
+        raise RuntimeError("A2V pending recovery could not resolve the Salad instance id")
+    _salad_request(
+        f"{group_url}/instances/{instance_id}/reallocate",
+        api_key,
+        method="POST",
+    )
+    return instance_id
+
+
+def _cancel_pending_transport(job_url: str, api_key: str, salad_job_id: str) -> None:
+    try:
+        _salad_request(job_url, api_key, method="DELETE")
+    except Exception as exc:
+        _event(
+            "A2V_PENDING_CANCEL_FAILED",
+            salad_job_id=salad_job_id,
+            error=repr(exc),
+        )
+        return
+    _event("A2V_PENDING_CANCEL_DONE", salad_job_id=salad_job_id)
 
 
 def _write_default_avatar(path: Path) -> None:
@@ -147,7 +253,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed", type=int, default=4242)
     parser.add_argument("--timeout-seconds", type=int, default=10800)
-    parser.add_argument("--pending-timeout-seconds", type=int, default=300)
+    parser.add_argument("--pending-timeout-seconds", type=int, default=180)
+    parser.add_argument("--max-pending-reallocations", type=int, default=1)
+    parser.add_argument("--post-reallocation-pending-seconds", type=int, default=1200)
+    parser.add_argument(
+        "--group-name",
+        default=os.getenv(
+            "SALAD_LTX25_GROUP_NAME",
+            "ai-video-factory-ltx25-worker-v2",
+        ),
+    )
     parser.add_argument("--poll-seconds", type=int, default=15)
     parser.add_argument(
         "--output-dir",
@@ -276,6 +391,11 @@ def main() -> None:
         f"/queues/{args.queue_name}"
     )
     base_url = f"{queue_url}/jobs"
+    _cancel_stale_pending_application_jobs(
+        base_url=base_url,
+        api_key=environment["SALAD_API_KEY"],
+        application_job_id=job_id,
+    )
     _event("A2V_QUEUE_SUBMIT_START", queue=args.queue_name, application_job_id=job_id)
     created = _salad_request(
         base_url,
@@ -288,23 +408,63 @@ def main() -> None:
 
     deadline = time.monotonic() + args.timeout_seconds
     pending_since = time.monotonic() if created.get("status") == "pending" else None
+    pending_limit_seconds = args.pending_timeout_seconds
+    pending_reallocations = 0
     current = created
     job_url = f"{base_url}/{created['id']}"
-    while current["status"] not in {"succeeded", "failed", "cancelled"}:
-        if time.monotonic() >= deadline:
-            raise TimeoutError(f"A2V job did not finish within {args.timeout_seconds}s")
-        time.sleep(args.poll_seconds)
-        current = _salad_request(job_url, environment["SALAD_API_KEY"])
-        status = str(current["status"])
-        _event("A2V_QUEUE_WAIT_STATUS", salad_job_id=created["id"], status=status)
-        if status == "pending":
-            pending_since = pending_since or time.monotonic()
-            if time.monotonic() - pending_since >= args.pending_timeout_seconds:
-                raise TimeoutError(
-                    f"A2V job remained pending for {args.pending_timeout_seconds}s"
-                )
-        else:
-            pending_since = None
+    try:
+        while current["status"] not in {"succeeded", "failed", "cancelled"}:
+            if time.monotonic() >= deadline:
+                if str(current.get("status")) == "pending":
+                    _cancel_pending_transport(
+                        job_url,
+                        environment["SALAD_API_KEY"],
+                        str(created["id"]),
+                    )
+                raise TimeoutError(f"A2V job did not finish within {args.timeout_seconds}s")
+            time.sleep(args.poll_seconds)
+            current = _salad_request(job_url, environment["SALAD_API_KEY"])
+            status = str(current["status"])
+            _event("A2V_QUEUE_WAIT_STATUS", salad_job_id=created["id"], status=status)
+            if status == "pending":
+                pending_since = pending_since or time.monotonic()
+                if time.monotonic() - pending_since >= pending_limit_seconds:
+                    if pending_reallocations >= args.max_pending_reallocations:
+                        _cancel_pending_transport(
+                            job_url,
+                            environment["SALAD_API_KEY"],
+                            str(created["id"]),
+                        )
+                        raise TimeoutError(
+                            "A2V transport remained pending after "
+                            f"{pending_reallocations} Salad node reallocation(s)"
+                        )
+                    pending_reallocations += 1
+                    instance_id = _reallocate_single_group_instance(
+                        organization=environment["SALAD_ORGANIZATION"],
+                        project=environment["SALAD_PROJECT"],
+                        group_name=args.group_name,
+                        api_key=environment["SALAD_API_KEY"],
+                    )
+                    _event(
+                        "A2V_PENDING_REALLOCATE",
+                        salad_job_id=created["id"],
+                        instance_id=instance_id,
+                        reallocation=pending_reallocations,
+                        max_reallocations=args.max_pending_reallocations,
+                    )
+                    pending_since = time.monotonic()
+                    pending_limit_seconds = args.post_reallocation_pending_seconds
+            else:
+                pending_since = None
+    except Exception:
+        if str(current.get("status")) == "pending":
+            _cancel_pending_transport(
+                job_url,
+                environment["SALAD_API_KEY"],
+                str(created["id"]),
+            )
+        raise
 
     response_path.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
     if current["status"] != "succeeded":
