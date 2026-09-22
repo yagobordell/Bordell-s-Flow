@@ -12,6 +12,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
 from ai_video_factory.inference.storage import sha256_file
 from ai_video_factory.gpu.storage import R2ObjectStorage
@@ -134,6 +136,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Submit and validate one real LTX-2.5 image+speech A2V job on Salad."
     )
+    parser.add_argument("--env-file", type=Path, default=Path(".env"))
     parser.add_argument("--avatar-image", type=Path, required=True)
     parser.add_argument("--audio", type=Path, required=True)
     parser.add_argument("--prompt", default=LTX_A2V_DEFAULT_PROMPT)
@@ -158,11 +161,14 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    load_dotenv(args.env_file, override=False)
     environment = _environment()
     avatar = args.avatar_image.resolve()
     audio = args.audio.resolve()
     if not avatar.is_file():
         raise SystemExit(f"Avatar image not found: {avatar}")
+    if avatar.suffix.lower() != ".png":
+        raise SystemExit("--avatar-image must currently be a PNG for the smoke upload contract")
     if not audio.is_file():
         raise SystemExit(f"Audio clip not found: {audio}")
 
