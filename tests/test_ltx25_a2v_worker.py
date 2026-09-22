@@ -17,6 +17,8 @@ from ai_video_factory.workers.ltx25.a2v import (
     LTXA2VParameters,
     LTXA2VTaskRunner,
     VideoProbe,
+    ltx_a2v_hard_max_seconds,
+    probe_audio,
 )
 from ai_video_factory.workers.ltx25.jobs import ltx_a2v_application_job_id
 
@@ -168,3 +170,33 @@ def test_a2v_job_id_is_content_addressed_and_segment_scoped() -> None:
     assert first == second
     assert first != changed
     assert first.startswith("ltx-a2v-avatar-shot-003-")
+
+
+
+def test_a2v_hard_limit_matches_official_1024_raw_frame_clamp() -> None:
+    assert ltx_a2v_hard_max_seconds(fps=24) == pytest.approx(1024 / 24)
+
+
+def test_a2v_audio_probe_rejects_duration_beyond_upstream_clamp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audio = tmp_path / "long.wav"
+    audio.write_bytes(b"placeholder")
+    monkeypatch.setattr(
+        "ai_video_factory.workers.ltx25.a2v._probe_json",
+        lambda _path: {
+            "format": {"duration": "43.0"},
+            "streams": [
+                {
+                    "codec_type": "audio",
+                    "codec_name": "pcm_s16le",
+                    "sample_rate": "48000",
+                    "channels": 1,
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(ValueError, match="1024-frame"):
+        probe_audio(audio, fps=24)
