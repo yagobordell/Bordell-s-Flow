@@ -153,6 +153,7 @@ request = InferenceJobRequest(
             content_type="application/json",
         )
     },
+    max_attempts=1,
     parameters={
         "generation_profile": LTX_A2V_GENERATION_PROFILE,
         "prompt": prompt,
@@ -165,6 +166,25 @@ request = InferenceJobRequest(
 ```
 
 There is intentionally no `num_frames` field in the A2V parameter model.
+
+## Single-shot generation policy
+
+Avatar generation is deliberately one-shot. Every
+`video.ltx25.audio_to_video` request must set:
+
+```text
+max_attempts=1
+```
+
+The shared worker enforces this before task execution. If Salad delivers the same failed or
+expired application job again, the later delivery is rejected without calling LTX again.
+A completed deterministic R2 artifact may still be replayed as the same result; replay never
+means regeneration.
+
+There is no automatic regeneration based on visual quality, identity stability, lip-sync,
+audio quality, facial motion, or any subjective score. The first generated MP4 is the MP4
+that is kept. A future orchestrator must preserve the same rule and must not add a
+quality-triggered retry loop.
 
 ## Temporal contract
 
@@ -315,14 +335,12 @@ The script:
 7. verifies SHA-256 values;
 8. checks one video stream and one audio stream;
 9. checks 1280x720 and 24 fps;
-10. bounds input/output duration drift to one temporal-grid interval;
-11. rejects silent audio with `volumedetect`;
-12. decodes the full video stream with ffmpeg;
-13. prints benchmark fields and artifact paths;
-14. stops the LTX service in `finally`.
+10. decodes the full video stream with ffmpeg as a technical integrity check only;
+11. prints benchmark fields and artifact paths;
+12. stops the LTX service in `finally`.
 
-Manual review of the resulting MP4 should check identity stability, mouth motion related to
-speech, stable framing/camera, no scene cuts, and no obvious facial deformation.
+These checks do not grade visual quality or lip-sync and never trigger regeneration. There is
+no manual acceptance step: the generated artifact is retained as-is.
 
 ## Benchmark evidence
 
