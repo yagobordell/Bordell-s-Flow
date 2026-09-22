@@ -176,8 +176,13 @@ Avatar generation is deliberately one-shot. Every
 max_attempts=1
 ```
 
-The shared worker enforces this before task execution. If Salad delivers the same failed or
-expired application job again, the later delivery is rejected without calling LTX again.
+The shared worker enforces this from the first execution. Any exception raised after a
+single-shot job has been claimed is persisted as a terminal `NonRetryableTaskError` containing
+the original exception type and message. The HTTP worker returns 422 on that first failure, so
+Salad must not retry the transport as if it were a transient inference failure. If Salad still
+redelivers the same application job, the persisted terminal cause is returned without calling
+LTX again.
+
 A completed deterministic R2 artifact may still be replayed as the same result; replay never
 means regeneration.
 
@@ -306,6 +311,11 @@ By default the smoke uses the real local avatar fixtures in:
 ```text
 data/input/avatar/
 ```
+
+Each invocation of the controlled smoke also creates a unique `smoke-<UTC timestamp>`
+segment id unless `-SegmentId` is supplied explicitly. This keeps separate manual validation
+runs independent while preserving `max_attempts=1` inside each run. Re-running the smoke after
+fixing a bug is therefore a new validation run, not an automatic retry of the failed inference.
 
 That directory must contain exactly one supported image (`.png`, `.jpg`, `.jpeg`, or
 `.webp`) and exactly one supported audio file (`.wav`, `.mp3`, `.m4a`, `.aac`,
