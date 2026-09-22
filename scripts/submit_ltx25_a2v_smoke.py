@@ -291,6 +291,7 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--poll-seconds", type=int, default=15)
+    parser.add_argument("--cleanup-stale-only", action="store_true")
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -336,6 +337,24 @@ def main() -> None:
         height=args.height,
         fps=args.fps,
     )
+    queue_url = (
+        "https://api.salad.com/api/public/organizations/"
+        f"{environment['SALAD_ORGANIZATION']}/projects/{environment['SALAD_PROJECT']}"
+        f"/queues/{args.queue_name}"
+    )
+    base_url = f"{queue_url}/jobs"
+    if args.cleanup_stale_only:
+        _cancel_stale_pending_application_jobs(
+            base_url=base_url,
+            api_key=environment["SALAD_API_KEY"],
+            application_job_id=job_id,
+        )
+        _event(
+            "A2V_STALE_PENDING_PREFLIGHT_DONE",
+            application_job_id=job_id,
+        )
+        return
+
     image_suffix = avatar.suffix.lower() or ".png"
     audio_suffix = audio.suffix.lower() or ".wav"
     image_key = f"ltx25-a2v/smoke/images/{image_sha}{image_suffix}"
@@ -412,12 +431,6 @@ def main() -> None:
     )
     _event("A2V_R2_UPLOAD_DONE")
 
-    queue_url = (
-        "https://api.salad.com/api/public/organizations/"
-        f"{environment['SALAD_ORGANIZATION']}/projects/{environment['SALAD_PROJECT']}"
-        f"/queues/{args.queue_name}"
-    )
-    base_url = f"{queue_url}/jobs"
     _cancel_stale_pending_application_jobs(
         base_url=base_url,
         api_key=environment["SALAD_API_KEY"],
