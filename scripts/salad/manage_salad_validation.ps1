@@ -61,7 +61,7 @@ function Use-ManifestEnvironment {
     $Previous = @{}
     foreach ($Name in Get-SelectedServiceNames) {
         $Definition = $Document.services.PSObject.Properties[$Name].Value
-        foreach ($Property in $Definition.environment.PSObject.Properties) {
+        foreach ($Property in @($Document.stack.shared_environment.PSObject.Properties) + @($Definition.environment.PSObject.Properties)) {
             $EnvironmentName = [string]$Property.Name
             if (-not $Previous.ContainsKey($EnvironmentName)) {
                 $Previous[$EnvironmentName] = [Environment]::GetEnvironmentVariable(

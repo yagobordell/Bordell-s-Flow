@@ -46,7 +46,7 @@ def test_ltx25_salad_manifest_has_dedicated_queue_and_image() -> None:
     assert service["autoscaler"]["min_replicas"] == 0
     assert service["autoscaler"]["max_replicas"] == 4
     assert service["autoscaler"]["max_upscale_per_minute"] == 2
-    assert service["environment"]["INFERENCE_WORKER_MODE"] == "production"
+    assert document["stack"]["shared_environment"]["INFERENCE_WORKER_MODE"] == "production"
     assert "GPU_WORKER_RUNTIME" not in service["environment"]
 
 def test_ltx25_container_is_model_specific() -> None:

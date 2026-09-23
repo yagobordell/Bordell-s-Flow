@@ -7,6 +7,7 @@ def test_prepare_uses_manifest_environment_over_local_env() -> None:
     script = VALIDATION_MANAGER.read_text(encoding="utf-8")
 
     assert "function Use-ManifestEnvironment" in script
+    assert "$Document.stack.shared_environment.PSObject.Properties" in script
     assert "$Definition.environment.PSObject.Properties" in script
     assert "[string]$Property.Value" in script
     assert "if ($StackAction -eq \"Prepare\")" in script
