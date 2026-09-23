@@ -36,10 +36,19 @@ for attempt in $(seq 1 "${attempts}"); do
     curl_args+=(--range "0-$((test_bytes - 1))")
   fi
   if [[ -n "${HF_TOKEN:-}" && "${speed_test_url}" == https://huggingface.co/* ]]; then
-    curl_args+=(--header "Authorization: Bearer ${HF_TOKEN}")
+    if probe_result=$(printf 'header = "Authorization: Bearer %s"\n' "${HF_TOKEN}" | \
+        curl --config - "${curl_args[@]}" "${speed_test_url}"); then
+      probe_ok=true
+    else
+      probe_ok=false
+    fi
+  elif probe_result=$(curl "${curl_args[@]}" "${speed_test_url}"); then
+    probe_ok=true
+  else
+    probe_ok=false
   fi
 
-  if probe_result=$(curl "${curl_args[@]}" "${speed_test_url}"); then
+  if [[ "${probe_ok}" == "true" ]]; then
     http_code="${probe_result%% *}"
     speed_bps="${probe_result#* }"
     if [[ "${http_code}" == "401" || "${http_code}" == "403" ]]; then
