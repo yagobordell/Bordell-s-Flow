@@ -379,7 +379,10 @@ class DirectLTX25Backend:
         with self._lock:
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
-            if self._pipeline is None:
+            if (
+                self._pipeline is None
+                and self._mode_controller.active_mode != "audio_to_video"
+            ):
                 raise RuntimeError("LTX-2.5 pipeline has not been prepared")
 
     def generate(
