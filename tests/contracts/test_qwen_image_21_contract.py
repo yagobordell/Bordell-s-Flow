@@ -99,6 +99,13 @@ def test_qwen_salad_manifest_contract() -> None:
     assert service["resources"]["gpu_class_names"] == ["RTX 5090 (32 GB)"]
     assert service["environment"]["QWEN_IMAGE_21_MODEL_REPOSITORY"] == QWEN_IMAGE_21_MODEL_ID
     assert service["environment"]["QWEN_IMAGE_21_MODEL_REVISION"] == QWEN_IMAGE_21_MODEL_REVISION
+    assert service["environment"]["QWEN_IMAGE_21_DOWNLOAD_STALL_TIMEOUT_SECONDS"] == "720"
+    assert service["environment"]["QWEN_IMAGE_21_DOWNLOAD_HARD_TIMEOUT_SECONDS"] == "7200"
+    assert service["environment"]["QWEN_IMAGE_21_DOWNLOAD_POLL_SECONDS"] == "15"
+    assert (
+        service["environment"]["QWEN_IMAGE_21_DOWNLOAD_MIN_PROGRESS_RESET_BYTES"]
+        == "67108864"
+    )
 
 
 def test_salad_smoke_suite_uses_qwen_image_21() -> None:
@@ -144,4 +151,6 @@ def test_qwen_bootstrap_validates_required_snapshot_files() -> None:
     assert "--stall-timeout-seconds" in script
     assert "--hard-timeout-seconds" in script
     assert "--reallocate-on-slow" in script
+    assert "--min-progress-reset-bytes" in script
+    assert "QWEN_IMAGE_21_DOWNLOAD_MIN_PROGRESS_RESET_BYTES" in script
 
