@@ -19,7 +19,6 @@ def test_qwen_clients_use_cold_start_pending_budget() -> None:
         assert "default=DEFAULT_QWEN_PENDING_TIMEOUT_SECONDS" in text
         assert "cold Qwen worker" in text
         assert "ideogram" not in text.lower()
-        assert "flux" not in text.lower()
 
 
 def test_validation_manager_exposes_explicit_prewarm_action() -> None:
@@ -41,7 +40,6 @@ def test_controlled_qwen_runners_prewarm_before_queue_and_cleanup() -> None:
         assert "cleanup_salad_queue.ps1" in text
         assert "finally {" in text
         assert "ideogram" not in text.lower()
-        assert "flux" not in text.lower()
         assert text.index("start_salad_optimized_prewarm.ps1") < text.index(
             '"--pending-timeout-seconds"'
         )

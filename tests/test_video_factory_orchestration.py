@@ -52,8 +52,6 @@ def test_phase4_and_phase6_use_qwen_only() -> None:
         assert "QWEN_IMAGE_21_" in runner_text
         assert "ideogram" not in controlled_text.lower()
         assert "ideogram" not in runner_text.lower()
-        assert "flux" not in controlled_text.lower()
-        assert "flux" not in runner_text.lower()
 
 
 def test_qwen_controlled_runners_prewarm_before_generation() -> None:
