@@ -188,7 +188,7 @@ output sha256:      ff82d028b04bb5cf91a7198bf75f2e7cf6e585e1cbf25ca8679b376956dc
 
 The final cleanup reported `stopped / replicas=0 / pending=False`.
 
-Full evidence: [`ltx25-salad-validation-2026-09-15.md`](ltx25-salad-validation-2026-09-15.md).
+Full evidence: .
 
 ## Orchestrator queue selection
 
