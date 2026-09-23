@@ -87,6 +87,31 @@ $Definition = $ServiceProperty.Value
 $StackProperty = $Document.PSObject.Properties["stack"]
 $Stack = if ($null -ne $StackProperty) { $StackProperty.Value } else { $null }
 
+$SharedEnvironmentProperty = if ($null -ne $Stack) {
+    $Stack.PSObject.Properties["shared_environment"]
+}
+else {
+    $null
+}
+if ($null -ne $SharedEnvironmentProperty) {
+    foreach ($Property in $SharedEnvironmentProperty.Value.PSObject.Properties) {
+        if ($null -eq $Definition.environment.PSObject.Properties[$Property.Name]) {
+            $Definition.environment | Add-Member `
+                -NotePropertyName $Property.Name `
+                -NotePropertyValue $Property.Value
+        }
+    }
+}
+
+if ($null -eq $Definition.probes.PSObject.Properties["liveness"] -and $null -ne $Stack) {
+    $SharedLivenessProperty = $Stack.PSObject.Properties["shared_liveness_probe"]
+    if ($null -ne $SharedLivenessProperty) {
+        $Definition.probes | Add-Member `
+            -NotePropertyName "liveness" `
+            -NotePropertyValue $SharedLivenessProperty.Value
+    }
+}
+
 function Get-ManifestString {
     param(
         [Parameter(Mandatory)][string]$Name,
