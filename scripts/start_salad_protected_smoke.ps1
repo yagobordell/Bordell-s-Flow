@@ -270,6 +270,7 @@ $Headers = @{
 }
 
 $Queue = Get-Queue
+$InitialQueueAttachment = Test-QueueAttachment -Queue $Queue
 $QueueSummaryLength = [int]$Queue.current_queue_length
 $QueueJobs = Get-ActiveQueueJobs
 if (-not [bool]$QueueJobs.complete) {
@@ -415,10 +416,9 @@ $RunningNotReadyReallocations = 0
 do {
     Start-Sleep -Seconds 5
     $Group = Get-Group
-    $Queue = Get-Queue
     $Instances = @(Get-Instances)
     $Status = [string]$Group.current_state.status
-    $Attached = Test-QueueAttachment -Queue $Queue
+    $Attached = $InitialQueueAttachment
     $StartedInstances = @($Instances | Where-Object { [bool]$_.started })
 
     if (-not $StartedBootstrapDeadlineSet -and $StartedInstances.Count -eq 1) {
@@ -693,7 +693,7 @@ do {
     ) {
         Write-Warning (
             "$Service protected bootstrap verified one started ready instance; " +
-            "queue attachment observation=$Attached; " +
+            "initial queue attachment observation=$Attached; " +
             "the caller must stop and normalize replicas=0 in a finally block."
         )
         exit 0
