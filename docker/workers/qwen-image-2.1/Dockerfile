@@ -5,7 +5,9 @@ RUN apt-get update && apt-get install --yes --no-install-recommends ca-certifica
  && curl --fail --show-error --location "https://github.com/SaladTechnologies/salad-cloud-job-queue-worker/releases/download/${SALAD_WORKER_VERSION}/salad-http-job-queue-worker_x86_64.tar.gz" --output /tmp/salad-worker.tar.gz \
  && echo "${SALAD_WORKER_SHA256}  /tmp/salad-worker.tar.gz" | sha256sum --check --strict \
  && tar --extract --gzip --file /tmp/salad-worker.tar.gz --directory /usr/local/bin salad-http-job-queue-worker \
- && chmod 0755 /usr/local/bin/salad-http-job-queue-worker
+ && chmod 0755 /usr/local/bin/salad-http-job-queue-worker \
+ && rm -f /tmp/salad-worker.tar.gz \
+ && rm -rf /var/lib/apt/lists/*
 
 FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime
 ENV DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DEFAULT_TIMEOUT=300 \
