@@ -84,7 +84,7 @@ jobs:
           node-version: "22"
 
       - name: Install Remotion project
-        run: npm install --prefix remotion --no-audit --no-fund
+        run: npm ci --prefix remotion --no-audit --no-fund
 
       - name: TypeScript
         run: npm --prefix remotion run typecheck
