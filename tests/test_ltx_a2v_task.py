@@ -226,7 +226,17 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
         "calls": [],
         "encodes": [],
         "conditionings": [],
+        "inference_depth": 0,
+        "inference_entries": 0,
     }
+
+    class FakeInferenceMode:
+        def __enter__(self) -> None:
+            state["inference_entries"] += 1
+            state["inference_depth"] += 1
+
+        def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+            state["inference_depth"] -= 1
 
     class FakeChunk:
         shape = (89, 768, 1280, 3)
@@ -237,10 +247,12 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
 
     class FakePipeline:
         def __init__(self, **kwargs: Any) -> None:
+            assert state["inference_depth"] > 0
             state["builds"] += 1
             state["pipeline_init"] = kwargs
 
         def __call__(self, **kwargs: Any) -> Any:
+            assert state["inference_depth"] > 0
             state["calls"].append(kwargs)
             state["tiling_budget"] = FakeTilingHelpers.activation_budget_bytes()
             return SimpleNamespace(
@@ -335,11 +347,16 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
         def device(value: str) -> FakeDevice:
             return FakeDevice(value)
 
+        @staticmethod
+        def inference_mode() -> FakeInferenceMode:
+            return FakeInferenceMode()
+
     def fake_conditioning(**kwargs: Any) -> dict[str, Any]:
         state["conditionings"].append(kwargs)
         return kwargs
 
     def fake_encode_video(**kwargs: Any) -> None:
+        assert state["inference_depth"] > 0
         state["encodes"].append(kwargs)
         Path(kwargs["output_path"]).write_bytes(b"encoded")
 
@@ -413,3 +430,5 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
     assert metadata["peak_vram_bytes"] == 123456
     assert metadata["pipeline_reused"] is False
     assert state["conditionings"][0]["strength"] == 1.0
+    assert state["inference_entries"] == 2
+    assert state["inference_depth"] == 0
