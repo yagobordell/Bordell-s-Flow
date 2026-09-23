@@ -109,6 +109,13 @@ def test_qwen_salad_manifest_contract() -> None:
     assert service["environment"]["QWEN_IMAGE_21_DOWNLOAD_MIN_THROUGHPUT_MIBPS"] == "8"
     assert service["environment"]["SALAD_NETWORK_MIN_DOWNLOAD_MBPS"] == "100"
     assert service["environment"]["SALAD_NETWORK_TEST_ATTEMPTS"] == "3"
+    assert "huggingface.co/Qwen/Qwen-Image-2.1/resolve/" in service["environment"][
+        "SALAD_NETWORK_TEST_URL"
+    ]
+    assert service["environment"]["HF_HUB_DOWNLOAD_TIMEOUT"] == "60"
+    assert service["environment"]["HF_HUB_ETAG_TIMEOUT"] == "15"
+    assert service["environment"]["HF_XET_CLIENT_ENABLE_ADAPTIVE_CONCURRENCY"] == "true"
+    assert "HF_XET_HIGH_PERFORMANCE" not in service["environment"]
 
 
 def test_salad_smoke_suite_uses_qwen_image_21() -> None:
@@ -135,6 +142,7 @@ def test_qwen_worker_pins_qwen_compatible_diffusers_revision() -> None:
     assert "'git+https://github.com/huggingface/diffusers.git'" not in dockerfile
     assert "'transformers==5.17.0'" in dockerfile
     assert "ca-certificates curl git python3-pip" in dockerfile
+    assert "HF_XET_HIGH_PERFORMANCE=1" not in dockerfile
     assert "network_preflight.sh /usr/local/bin/network-preflight" in dockerfile
 
 def test_qwen_bootstrap_validates_required_snapshot_files() -> None:
