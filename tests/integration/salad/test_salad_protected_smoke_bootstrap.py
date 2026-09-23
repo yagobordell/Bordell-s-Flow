@@ -147,6 +147,15 @@ def test_heavy_gpu_allocating_watchdog_aborts_stalled_bootstrap() -> None:
     assert "aborting protected bootstrap" in script
 
 
+def test_running_not_ready_timer_survives_same_machine_container_restarts() -> None:
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+
+    assert "$RunningNotReadyMachineId = \"\"" in script
+    assert "$MachineId -ne $RunningNotReadyMachineId" in script
+    assert "$RunningNotReadyMachineId = $MachineId" in script
+    assert "$RunningNotReadyInstanceId" not in script
+
+
 def test_heavy_gpu_running_not_ready_reallocates_stalled_model_bootstrap() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
 
