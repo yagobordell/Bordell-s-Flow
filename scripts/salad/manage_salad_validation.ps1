@@ -8,6 +8,7 @@ param(
 
     [string]$EnvFile = ".env",
 
+    # Deprecated compatibility option. Smoke validation now runs directly with Python.
     [string]$ComposeFile = "compose.yaml",
 
     [string]$PinnedImage = "",
@@ -22,6 +23,7 @@ param(
 
     [switch]$Recreate,
 
+    # Deprecated compatibility option retained for existing callers.
     [switch]$SkipLocalBuild,
 
     [switch]$NonInteractive
@@ -37,10 +39,7 @@ $ProtectedSmokeBootstrap = Join-Path $PSScriptRoot "start_salad_protected_smoke.
 $ScaleToZeroRestorer = Join-Path $PSScriptRoot "restore_salad_scale_to_zero.ps1"
 $ZeroReplicaGuard = Join-Path $PSScriptRoot "ensure_salad_zero_replicas.ps1"
 $ManifestPath = Join-Path $RepoRoot "deploy\salad\services.json"
-$ComposePath = $ComposeFile
-if (-not [IO.Path]::IsPathRooted($ComposePath)) {
-    $ComposePath = Join-Path $RepoRoot $ComposePath
-}
+$SmokeScript = Join-Path $RepoRoot "scripts\smoke\run_salad_smoke_suite.py"
 
 function Get-SelectedServiceNames {
     if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
@@ -251,41 +250,22 @@ function Invoke-ZeroReplicaFallback {
     )
 }
 
-function Assert-Docker {
-    & docker version *> $null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Docker is not available or Docker Desktop is not running."
-    }
-    & docker compose version *> $null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Docker Compose v2 is not available."
-    }
-}
-
 function Invoke-Smoke {
-    Assert-Docker
-    if (-not (Test-Path -LiteralPath $ComposePath -PathType Leaf)) {
-        throw "Compose file not found: $ComposePath"
+    if (-not (Test-Path -LiteralPath $SmokeScript -PathType Leaf)) {
+        throw "Salad smoke script not found: $SmokeScript"
     }
 
     Set-Location $RepoRoot
-    if (-not $SkipLocalBuild) {
-        & docker compose -f $ComposePath build orchestrator
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to build the local orchestrator image."
-        }
-    }
-
-    & docker compose -f $ComposePath run --rm orchestrator `
-        python scripts/smoke/run_salad_smoke_suite.py `
+    & python $SmokeScript `
         --service $Service `
-        --output-dir /workspace/data/output/deployment-validation
+        --output-dir (Join-Path $RepoRoot "data\output\deployment-validation")
     if ($LASTEXITCODE -ne 0) {
         throw "Real Salad smoke failed for service: $Service"
     }
 
     Write-Host "Real Salad smoke passed for: $Service" -ForegroundColor Green
 }
+
 
 function Invoke-ProtectedSmoke {
     if ($Service -eq "all") {
