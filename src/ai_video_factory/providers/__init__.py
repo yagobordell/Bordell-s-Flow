@@ -9,9 +9,6 @@ from .images import (
     ReferenceAwareImageProvider,
 )
 from .openai import OpenAIProvider
-from .openai_images import OpenAIImageProvider
-from .openai_speech import OpenAISpeechProvider
-from .openai_transcription import OpenAITranscriptionProvider
 from .salad_breeze import BreezeFallbackEligibleError, SaladBreezeSpeechProvider
 from .salad_fish_speech import FishSpeechReference, SaladFishSpeechProvider
 from .salad_whisper import SaladWhisperTranscriptionProvider
@@ -26,10 +23,7 @@ __all__ = [
     "GeneratedSpeech",
     "ImageProvider",
     "ImageReferenceInput",
-    "OpenAIImageProvider",
     "OpenAIProvider",
-    "OpenAISpeechProvider",
-    "OpenAITranscriptionProvider",
     "ReferenceAwareImageProvider",
     "SaladBreezeSpeechProvider",
     "SaladFishSpeechProvider",

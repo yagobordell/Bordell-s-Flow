@@ -2,13 +2,11 @@ import asyncio
 import io
 import wave
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from ai_video_factory.domain import SourceScript
-from ai_video_factory.providers.openai_speech import OpenAISpeechProvider
 from ai_video_factory.providers.speech import GeneratedSpeech
 from ai_video_factory.workflows.narration_audio import generate_narration_audio
 
@@ -43,55 +41,6 @@ def _make_streaming_wav_bytes(
     return bytes(content)
 
 
-class FakeSpeechResource:
-    def __init__(self, payload: bytes) -> None:
-        self.payload = payload
-        self.last_call: dict[str, Any] | None = None
-
-    async def create(self, **kwargs: Any) -> Any:
-        self.last_call = kwargs
-        return SimpleNamespace(content=self.payload)
-
-
-class FakeAudioResource:
-    def __init__(self, payload: bytes) -> None:
-        self.speech = FakeSpeechResource(payload)
-
-
-class FakeOpenAIClient:
-    def __init__(self, payload: bytes) -> None:
-        self.audio = FakeAudioResource(payload)
-
-
-def test_openai_speech_provider_forwards_tts_settings_and_returns_wav() -> None:
-    payload = _make_wav_bytes()
-    client = FakeOpenAIClient(payload)
-    provider = OpenAISpeechProvider(client=client)  # type: ignore[arg-type]
-
-    speech = asyncio.run(
-        provider.generate_speech(
-            text="Japón fue gobernado durante siglos por guerreros.",
-            model="gpt-4o-mini-tts",
-            voice="marin",
-            instructions="Measured documentary narration.",
-            speed=1.0,
-            output_format="wav",
-        )
-    )
-
-    assert speech.content == payload
-    assert speech.media_type == "audio/wav"
-    assert speech.extension == "wav"
-    assert client.audio.speech.last_call == {
-        "model": "gpt-4o-mini-tts",
-        "input": "Japón fue gobernado durante siglos por guerreros.",
-        "voice": "marin",
-        "instructions": "Measured documentary narration.",
-        "response_format": "wav",
-        "speed": 1.0,
-    }
-
-
 class RecordingSpeechProvider:
     def __init__(self, payload: bytes) -> None:
         self.payload = payload
@@ -118,8 +67,8 @@ def test_narration_workflow_preserves_source_text_and_measures_real_duration(
             SourceScript(text=source_text),
             speech_provider=provider,  # type: ignore[arg-type]
             output_dir=output_dir,
-            model="gpt-4o-mini-tts",
-            voice="marin",
+            model="test-tts",
+            voice="test-voice",
             instructions="Natural documentary narration.",
             speed=1.0,
         )
@@ -146,8 +95,8 @@ def test_narration_workflow_measures_actual_frames_for_streaming_wav_header(
             SourceScript(text="Narración de prueba."),
             speech_provider=provider,  # type: ignore[arg-type]
             output_dir=output_dir,
-            model="gpt-4o-mini-tts",
-            voice="marin",
+            model="test-tts",
+            voice="test-voice",
             instructions="Natural narration.",
             speed=1.0,
         )
@@ -167,8 +116,8 @@ def test_narration_workflow_writes_nothing_for_invalid_wav(tmp_path: Path) -> No
                 SourceScript(text="Narración válida."),
                 speech_provider=provider,  # type: ignore[arg-type]
                 output_dir=output_dir,
-                model="gpt-4o-mini-tts",
-                voice="marin",
+                model="test-tts",
+                voice="test-voice",
                 instructions="Natural narration.",
                 speed=1.0,
             )

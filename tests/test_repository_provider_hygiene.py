@@ -1,7 +1,7 @@
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SKIP_PARTS = {".git", ".venv", "node_modules", "__pycache__", ".pytest_cache"}
 RETIRED_MARKERS = (
     bytes((102, 108, 117, 120)),
     bytes((107, 108, 101, 105, 110)),
@@ -10,11 +10,25 @@ RETIRED_MARKERS = (
 )
 
 
+def _tracked_repository_files() -> list[Path]:
+    completed = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    )
+    return [
+        ROOT / relative.decode("utf-8")
+        for relative in completed.stdout.split(b"\0")
+        if relative
+    ]
+
+
 def test_repository_has_no_retired_image_provider_references() -> None:
     offenders: list[str] = []
 
-    for path in ROOT.rglob("*"):
-        if not path.is_file() or any(part in SKIP_PARTS for part in path.parts):
+    for path in _tracked_repository_files():
+        if not path.is_file():
             continue
 
         relative = path.relative_to(ROOT).as_posix()
@@ -32,6 +46,6 @@ def test_repository_has_no_retired_image_provider_references() -> None:
             offenders.append(relative)
 
     assert not offenders, (
-        "Retired image-provider identifiers remain in repository paths or contents: "
+        "Retired image-provider identifiers remain in tracked repository paths or contents: "
         + ", ".join(sorted(offenders))
     )

@@ -18,10 +18,6 @@ class Settings(BaseSettings):
     openai_reasoning_effort: str = "high"
     openai_service_tier: str = "flex"
     openai_fallback_service_tier: str = "default"
-    openai_image_model: str = "gpt-image-2"
-    openai_tts_model: str = "gpt-4o-mini-tts"
-    openai_tts_voice: str = "marin"
-
     qwen_image_21_model: str = "Qwen/Qwen-Image-2.1"
     ideogram4_model: str = "ideogram-ai/ideogram-4-nf4"
 
@@ -60,9 +56,6 @@ class Settings(BaseSettings):
 
     inference_client_poll_seconds: float = 5.0
     inference_client_timeout_seconds: float = 3600.0
-
-    ai33_api_key: str | None = None
-    ai33_base_url: str | None = None
 
     output_dir: Path = Path("data/output")
     temp_dir: Path = Path("data/tmp")

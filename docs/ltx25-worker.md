@@ -48,7 +48,6 @@ The A2V/avatar-specific contract and smoke process are documented in
 - FP8-cast + CPU-offload runtime configuration;
 - deterministic LTX application job IDs.
 
-Legacy imports under `ai_video_factory.gpu.ltx_video` and `ai_video_factory.gpu.ltx_jobs` remain compatibility facades so existing Phase 8 manifests, tests and scripts continue to work while callers migrate.
 
 ## Container
 
@@ -189,7 +188,7 @@ output sha256:      ff82d028b04bb5cf91a7198bf75f2e7cf6e585e1cbf25ca8679b376956dc
 
 The final cleanup reported `stopped / replicas=0 / pending=False`.
 
-Full evidence: [`ltx25-salad-validation-2026-09-15.md`](ltx25-salad-validation-2026-09-15.md).
+Full evidence: .
 
 ## Orchestrator queue selection
 

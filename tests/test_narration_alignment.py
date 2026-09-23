@@ -1,66 +1,11 @@
 import asyncio
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from ai_video_factory.domain import NarrationAudio, SourceScript
-from ai_video_factory.providers.openai_transcription import OpenAITranscriptionProvider
 from ai_video_factory.providers.transcription import TranscribedWord
 from ai_video_factory.workflows.narration_alignment import align_narration_words
-
-
-class FakeTranscriptionsResource:
-    def __init__(self) -> None:
-        self.last_call: dict[str, Any] | None = None
-
-    async def create(self, **kwargs: Any) -> Any:
-        self.last_call = kwargs
-        return SimpleNamespace(
-            words=[
-                SimpleNamespace(word="Japón", start=0.2, end=0.7),
-                SimpleNamespace(word="feudal", start=0.8, end=1.4),
-            ]
-        )
-
-
-class FakeAudioResource:
-    def __init__(self) -> None:
-        self.transcriptions = FakeTranscriptionsResource()
-
-
-class FakeOpenAIClient:
-    def __init__(self) -> None:
-        self.audio = FakeAudioResource()
-
-
-def test_openai_transcription_provider_requests_word_timestamps() -> None:
-    client = FakeOpenAIClient()
-    provider = OpenAITranscriptionProvider(client=client)  # type: ignore[arg-type]
-
-    words = asyncio.run(
-        provider.transcribe_words(
-            b"wav-bytes",
-            filename="narration.wav",
-            model="whisper-1",
-            prompt="Japón feudal",
-            language="es",
-        )
-    )
-
-    assert words == [
-        TranscribedWord(text="Japón", start_seconds=0.2, end_seconds=0.7),
-        TranscribedWord(text="feudal", start_seconds=0.8, end_seconds=1.4),
-    ]
-    assert client.audio.transcriptions.last_call == {
-        "file": ("narration.wav", b"wav-bytes", "audio/wav"),
-        "model": "whisper-1",
-        "prompt": "Japón feudal",
-        "response_format": "verbose_json",
-        "timestamp_granularities": ["word"],
-        "temperature": 0,
-        "language": "es",
-    }
 
 
 class RecordingTranscriptionProvider:

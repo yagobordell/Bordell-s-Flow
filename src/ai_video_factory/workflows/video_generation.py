@@ -12,15 +12,14 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoClip, VideoPrompt
-from ai_video_factory.gpu.contracts import GPUJobRequest, GPUJobResponse, ObjectInput, ObjectOutput
-from ai_video_factory.gpu.ltx_jobs import ltx_video_application_job_id
-from ai_video_factory.gpu.ltx_video import (
-    LTX_GENERATION_PROFILE,
-    LTX_VIDEO_TASK,
-    ltx_num_frames_for_duration,
+from ai_video_factory.inference.contracts import (
+    InferenceJobRequest,
+    InferenceJobResponse,
+    ObjectInput,
+    ObjectOutput,
 )
-from ai_video_factory.gpu.ports import ObjectStorage
-from ai_video_factory.gpu.storage import sha256_file
+from ai_video_factory.inference.ports import ObjectStorage
+from ai_video_factory.inference.storage import sha256_file
 from ai_video_factory.providers.images import inspect_image_payload
 from ai_video_factory.providers.inference_jobs import cached_inference_response
 from ai_video_factory.providers.job_queue import (
@@ -29,6 +28,12 @@ from ai_video_factory.providers.job_queue import (
     QueueJobSnapshot,
     QueueJobStatus,
     TransientQueueError,
+)
+from ai_video_factory.workers.ltx25.jobs import ltx_video_application_job_id
+from ai_video_factory.workers.ltx25.model import (
+    LTX_GENERATION_PROFILE,
+    LTX_VIDEO_TASK,
+    ltx_num_frames_for_duration,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,7 +45,7 @@ class VideoGenerationPlanItem:
     keyframe_path: Path
     keyframe_sha256: str
     input_key: str
-    request: GPUJobRequest
+    request: InferenceJobRequest
 
 
 class VideoGenerationJobState(BaseModel):
@@ -54,7 +59,7 @@ class VideoGenerationJobState(BaseModel):
         "unsubmitted", "pending", "running", "succeeded", "failed", "cancelled"
     ] = "unsubmitted"
     submission_count: int = Field(default=0, ge=0)
-    response: GPUJobResponse | None = None
+    response: InferenceJobResponse | None = None
     last_terminal_transport_job_id: str | None = None
     last_terminal_payload: dict[str, Any] | None = None
 
@@ -131,7 +136,7 @@ def build_video_generation_plan(
         )
         input_key = f"phase8/keyframes/{keyframe_sha256}.png"
         output_key = f"jobs/{job_id}/shot_{keyframe.shot_id:03d}.mp4"
-        request = GPUJobRequest(
+        request = InferenceJobRequest(
             job_id=job_id,
             task=LTX_VIDEO_TASK,
             inputs=[
@@ -593,12 +598,12 @@ def _terminal_failure_detail(state: VideoGenerationJobState) -> str:
     return " ".join(parts)
 
 
-def _parse_success_response(value: object) -> GPUJobResponse:
+def _parse_success_response(value: object) -> InferenceJobResponse:
     if isinstance(value, str):
         value = json.loads(value)
     if not isinstance(value, dict):
         raise ValueError("Succeeded queue job output must be a JSON object")
-    return GPUJobResponse.model_validate(value)
+    return InferenceJobResponse.model_validate(value)
 
 
 def _download_completed_clips(

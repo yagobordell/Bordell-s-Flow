@@ -2,7 +2,7 @@
 
 Status: **CLOSED**
 
-Formal closure record: [`phase9-closure.md`](phase9-closure.md).
+Formal closure record: the current compositor contract.
 
 Phase 9 turns the canonical Real-ESRGAN-upscaled silent shot clips and narration timeline into a final audiovisual
 composition. The compositor is deliberately isolated from Phase 8 GPU transport and LTX internals.
@@ -256,10 +256,7 @@ Phase 9 is closed end-to-end. The later compositor subphases are documented sepa
 
 Detailed records:
 
-- [`phase9.3-remotion.md`](phase9.3-remotion.md)
-- [`phase9.4-motion.md`](phase9.4-motion.md)
-- [`phase9.5-final-mux.md`](phase9.5-final-mux.md)
-- [`phase9-closure.md`](phase9-closure.md)
+- the current compositor contract
 
 The canonical final artifact is `data/output/phase9/final_video.mp4` with the provider-neutral
 `FinalVideo` metadata artifact at `data/output/phase9/final_video.json`.

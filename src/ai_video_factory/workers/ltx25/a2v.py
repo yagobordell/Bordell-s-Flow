@@ -483,78 +483,79 @@ class DirectLTX25AudioToVideoBackend:
             if reset_peak is not None:
                 reset_peak()
 
-            build_started = time.monotonic()
-            pipeline, built_now = self._get_or_build_pipeline(bindings)
-            model_load_seconds = time.monotonic() - build_started if built_now else 0.0
-            _log_cuda_memory(
-                "after_pipeline_build",
-                _cuda_memory_snapshot(bindings.torch, self._device),
-            )
-
-            inference_started = time.monotonic()
-            original_activation_budget = _install_clean_tiling_budget(
-                bindings,
-                self._device,
-            )
-            try:
-                result = pipeline(
-                    prompt=parameters.prompt,
-                    negative_prompt=bindings.default_negative_prompt,
-                    seed=parameters.seed,
-                    height=pipeline_height,
-                    width=pipeline_width,
-                    num_frames=None,
-                    frame_rate=float(parameters.fps),
-                    num_inference_steps=self._pipeline_params.num_inference_steps,
-                    video_guider_params=self._pipeline_params.video_guider_params,
-                    images=[conditioning],
-                    audio_path=str(audio_path.resolve()),
-                    audio_start_time=0.0,
-                    audio_max_duration=None,
-                )
-            except ValueError as exc:
+            with bindings.torch.inference_mode():
+                build_started = time.monotonic()
+                pipeline, built_now = self._get_or_build_pipeline(bindings)
+                model_load_seconds = time.monotonic() - build_started if built_now else 0.0
                 _log_cuda_memory(
-                    "pipeline_value_error",
+                    "after_pipeline_build",
                     _cuda_memory_snapshot(bindings.torch, self._device),
                 )
-                if "decode audio" in str(exc).lower():
-                    raise _input_error("AUDIO_DECODE_FAILED", str(exc)) from exc
-                raise
-            finally:
-                bindings.tiling_helpers.activation_budget_bytes = (
-                    original_activation_budget
+
+                inference_started = time.monotonic()
+                original_activation_budget = _install_clean_tiling_budget(
+                    bindings,
+                    self._device,
                 )
-            inference_seconds = time.monotonic() - inference_started
+                try:
+                    result = pipeline(
+                        prompt=parameters.prompt,
+                        negative_prompt=bindings.default_negative_prompt,
+                        seed=parameters.seed,
+                        height=pipeline_height,
+                        width=pipeline_width,
+                        num_frames=None,
+                        frame_rate=float(parameters.fps),
+                        num_inference_steps=self._pipeline_params.num_inference_steps,
+                        video_guider_params=self._pipeline_params.video_guider_params,
+                        images=[conditioning],
+                        audio_path=str(audio_path.resolve()),
+                        audio_start_time=0.0,
+                        audio_max_duration=None,
+                    )
+                except ValueError as exc:
+                    _log_cuda_memory(
+                        "pipeline_value_error",
+                        _cuda_memory_snapshot(bindings.torch, self._device),
+                    )
+                    if "decode audio" in str(exc).lower():
+                        raise _input_error("AUDIO_DECODE_FAILED", str(exc)) from exc
+                    raise
+                finally:
+                    bindings.tiling_helpers.activation_budget_bytes = (
+                        original_activation_budget
+                    )
+                inference_seconds = time.monotonic() - inference_started
 
-            output_video = result.video
-            if (pipeline_width, pipeline_height) != (
-                parameters.width,
-                parameters.height,
-            ):
-                output_video = _crop_video_to_requested(
-                    output_video,
-                    requested_width=parameters.width,
-                    requested_height=parameters.height,
+                output_video = result.video
+                if (pipeline_width, pipeline_height) != (
+                    parameters.width,
+                    parameters.height,
+                ):
+                    output_video = _crop_video_to_requested(
+                        output_video,
+                        requested_width=parameters.width,
+                        requested_height=parameters.height,
+                    )
+
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                encode_started = time.monotonic()
+                bindings.encode_video(
+                    video=output_video,
+                    fps=parameters.fps,
+                    audio=result.audio,
+                    output_path=str(output_path),
+                    video_chunks_number=bindings.get_video_chunks_number(
+                        result.num_frames,
+                        result.tiling_config,
+                    ),
                 )
+                encode_seconds = time.monotonic() - encode_started
 
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            encode_started = time.monotonic()
-            bindings.encode_video(
-                video=output_video,
-                fps=parameters.fps,
-                audio=result.audio,
-                output_path=str(output_path),
-                video_chunks_number=bindings.get_video_chunks_number(
-                    result.num_frames,
-                    result.tiling_config,
-                ),
-            )
-            encode_seconds = time.monotonic() - encode_started
-
-            peak_vram_bytes = None
-            max_memory = getattr(cuda, "max_memory_allocated", None)
-            if max_memory is not None:
-                peak_vram_bytes = int(max_memory())
+                peak_vram_bytes = None
+                max_memory = getattr(cuda, "max_memory_allocated", None)
+                if max_memory is not None:
+                    peak_vram_bytes = int(max_memory())
 
         effective_audio_duration = _result_audio_duration(result.audio)
         output_video_duration = _output_duration(output_path)

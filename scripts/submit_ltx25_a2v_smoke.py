@@ -591,6 +591,38 @@ def main() -> None:
         )
     if metadata["generation_mode"] != "audio_to_video":
         raise RuntimeError(f"unexpected A2V generation_mode: {metadata['generation_mode']!r}")
+    if (int(metadata["width"]), int(metadata["height"])) != (args.width, args.height):
+        raise RuntimeError(
+            "A2V metadata dimensions do not match the requested output geometry"
+        )
+    if int(metadata["fps"]) != args.fps:
+        raise RuntimeError("A2V metadata fps does not match the requested fps")
+    if int(metadata["seed"]) != args.seed:
+        raise RuntimeError("A2V metadata seed does not match the requested seed")
+
+    metadata_output_duration = float(metadata["output_video_duration_seconds"])
+    effective_audio_duration = float(metadata["effective_audio_duration_seconds"])
+    duration_probe_tolerance = max(0.05, 1.5 / args.fps)
+    if abs(metadata_output_duration - output_duration) > duration_probe_tolerance:
+        raise RuntimeError(
+            "A2V metadata/output duration mismatch: "
+            f"{metadata_output_duration:.6f}s vs {output_duration:.6f}s"
+        )
+    if abs(effective_audio_duration - output_duration) > duration_probe_tolerance:
+        raise RuntimeError(
+            "A2V conditioned audio/video duration mismatch: "
+            f"{effective_audio_duration:.6f}s vs {output_duration:.6f}s"
+        )
+    max_grid_snap_seconds = 8.0 / args.fps
+    if effective_audio_duration > input_audio_duration + duration_probe_tolerance:
+        raise RuntimeError("A2V output audio unexpectedly exceeds the input speech duration")
+    if input_audio_duration - effective_audio_duration > (
+        max_grid_snap_seconds + duration_probe_tolerance
+    ):
+        raise RuntimeError(
+            "A2V output duration lost more than one temporal-grid interval: "
+            f"input={input_audio_duration:.6f}s effective={effective_audio_duration:.6f}s"
+        )
 
     print(f"application_job_id={job_id}")
     print(f"salad_job_id={created['id']}")

@@ -21,6 +21,7 @@ def test_bootstrap_uses_manual_replica_with_scale_to_zero_autoscaler() -> None:
     assert "Test-QueueAttachment" in script
     assert "[ValidateRange(1, 120)]" in script
     assert "[int]$TimeoutMinutes = 90" in script
+    assert '"qwen_image_21"' in script
     assert "$StartedBootstrapDeadlineSet = $false" in script
     assert "-not $StartedBootstrapDeadlineSet -and $StartedInstances.Count -eq 1" in script
     assert "$Deadline = (Get-Date).AddMinutes($TimeoutMinutes)" in script

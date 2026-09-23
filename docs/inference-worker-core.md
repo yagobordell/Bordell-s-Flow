@@ -65,30 +65,15 @@ Model-specific settings live under each worker namespace. LTX reads `LTX_*`, Ide
 `IDEOGRAM_*`, Breeze reads `BREEZE_*` and Whisper reads `WHISPER_*`; those settings do not leak into
 the shared inference package.
 
-## Backward compatibility
+## Active namespace
 
-`ai_video_factory.gpu` remains a compatibility facade for infrastructure primitives that existed
-before the neutral inference namespace:
+Production code imports shared infrastructure directly from `ai_video_factory.inference`.
+Model-specific runtimes live under `ai_video_factory.workers`; there is no compatibility facade
+between the two layers.
 
-```text
-GPUJobRequest  -> InferenceJobRequest
-GPUJobResponse -> InferenceJobResponse
-GPUWorker      -> InferenceWorker
-```
+The physical Postgres table remains `gpu.jobs`. Its name is an implementation detail and can be
+migrated independently of the Python package structure.
 
-Storage, repositories, errors, ports and the FastAPI app are also re-exported from the inference core
-where older Phase 7/8 code still imports them. Canonical model runtimes now live under:
-
-```text
-ai_video_factory.workers.ltx25
-ai_video_factory.workers.ideogram4
-ai_video_factory.workers.breeze_tts2
-ai_video_factory.workers.whisper
-```
-
-The physical Postgres table remains `gpu.jobs` during this migration. Its name is an implementation
-detail, not a public contract; renaming it is intentionally deferred to avoid unnecessary production
-state migration while the worker architecture is changing.
 
 ## Model-specific container rule
 

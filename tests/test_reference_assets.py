@@ -1,7 +1,5 @@
 import asyncio
-import base64
 from io import BytesIO
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -9,52 +7,7 @@ from PIL import Image
 
 from ai_video_factory.domain import VisualReference
 from ai_video_factory.providers.images import GeneratedImage
-from ai_video_factory.providers.openai_images import OpenAIImageProvider
 from ai_video_factory.workflows.reference_assets import generate_reference_assets
-
-
-class FakeImagesResource:
-    def __init__(self, payload: bytes) -> None:
-        self.payload = payload
-        self.last_call: dict[str, Any] | None = None
-
-    async def generate(self, **kwargs: Any) -> Any:
-        self.last_call = kwargs
-        encoded = base64.b64encode(self.payload).decode("ascii")
-        return SimpleNamespace(data=[SimpleNamespace(b64_json=encoded)])
-
-
-class FakeOpenAIClient:
-    def __init__(self, payload: bytes) -> None:
-        self.images = FakeImagesResource(payload)
-
-
-def test_openai_image_provider_decodes_png_and_forwards_generation_settings() -> None:
-    client = FakeOpenAIClient(b"fake-png-bytes")
-    provider = OpenAIImageProvider(client=client)  # type: ignore[arg-type]
-
-    image = asyncio.run(
-        provider.generate_image(
-            prompt="Canonical samurai reference",
-            model="gpt-image-2",
-            size="1536x864",
-            quality="medium",
-            output_format="png",
-        )
-    )
-
-    assert image.content == b"fake-png-bytes"
-    assert image.media_type == "image/png"
-    assert image.extension == "png"
-    assert image.metadata == {}
-    assert client.images.last_call == {
-        "model": "gpt-image-2",
-        "prompt": "Canonical samurai reference",
-        "n": 1,
-        "size": "1536x864",
-        "quality": "medium",
-        "output_format": "png",
-    }
 
 
 def _png_bytes(width: int, height: int) -> bytes:
@@ -99,7 +52,7 @@ def test_reference_asset_workflow_runs_in_parallel_and_writes_deterministic_file
             references,
             image_provider=provider,  # type: ignore[arg-type]
             output_dir=output_dir,
-            model="gpt-image-2",
+            model="test-image-model",
             size="1536x864",
             quality="medium",
         )
@@ -174,7 +127,7 @@ def test_reference_asset_workflow_writes_nothing_when_generation_fails(tmp_path:
                 ],
                 image_provider=FailingImageProvider(),  # type: ignore[arg-type]
                 output_dir=output_dir,
-                model="gpt-image-2",
+                model="test-image-model",
                 size="1024x1024",
                 quality="low",
             )
@@ -217,7 +170,7 @@ def test_reference_asset_workflow_settles_other_generations_before_raising(
                 ],
                 image_provider=provider,  # type: ignore[arg-type]
                 output_dir=output_dir,
-                model="gpt-image-2",
+                model="test-image-model",
                 size="1024x1024",
                 quality="low",
             )
