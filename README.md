@@ -180,12 +180,12 @@ Puntos clave:
 - Breeze puede arrancar/trabajar en paralelo con la rama de continuidad;
 - shots y prompts de referencias se desacoplan cuando sus dependencias lo permiten;
 - prompts de movimiento y keyframes parten en paralelo desde el storyboard;
-- Phase 4 y Phase 6 comparten FLUX.2 Klein sin ejecutarse simultáneamente sobre el recurso limitado;
+- Phase 4 y Phase 6 comparten Qwen-Image-2.1 sin ejecutarse simultáneamente sobre el recurso limitado;
 - Ideogram se conserva como ruta explícita para futuras tareas y alternativas controladas;
 - Breeze, keyframes y LTX auditan R2 antes de prewarm/submission;
 - Fish no se prewarmea de forma especulativa y sigue consumiendo cero GPU-seconds si Breeze funciona;
-- FLUX.2 Klein es el proveedor primario de imagen en Phase 4 y Phase 6; el auditor de R2 sólo
-  precalienta cuando detecta trabajo FLUX no cacheado. Ideogram queda disponible de forma explícita;
+- Qwen-Image-2.1 es el único proveedor activo de imagen en Phase 4 y Phase 6; el auditor de R2 sólo
+  precalienta cuando detecta trabajo Qwen no cacheado. Ideogram queda implementado para uso futuro, pero fuera del flujo activo;
 - el `finally` end-to-end detiene los servicios del proyecto, aplica guard de replicas=0 y limpia
   las queues.
 

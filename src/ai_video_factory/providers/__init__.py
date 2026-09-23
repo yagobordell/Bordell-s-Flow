@@ -12,7 +12,6 @@ from .openai import OpenAIProvider
 from .openai_images import OpenAIImageProvider
 from .openai_speech import OpenAISpeechProvider
 from .openai_transcription import OpenAITranscriptionProvider
-from .safety_fallback import SafetyFallbackImageProvider
 from .salad_breeze import BreezeFallbackEligibleError, SaladBreezeSpeechProvider
 from .salad_fish_speech import FishSpeechReference, SaladFishSpeechProvider
 from .salad_whisper import SaladWhisperTranscriptionProvider
@@ -32,11 +31,10 @@ __all__ = [
     "OpenAISpeechProvider",
     "OpenAITranscriptionProvider",
     "ReferenceAwareImageProvider",
-    "SafetyFallbackImageProvider",
     "SaladBreezeSpeechProvider",
     "SaladFishSpeechProvider",
-    "SaladFlux2KleinImageProvider",
     "SaladIdeogramImageProvider",
+    "SaladQwenImage21Provider",
     "SaladWhisperTranscriptionProvider",
     "SpeechFallbackFailedError",
     "SpeechProvider",
@@ -51,8 +49,8 @@ def __getattr__(name: str):
         from .salad_ideogram import SaladIdeogramImageProvider
 
         return SaladIdeogramImageProvider
-    if name == "SaladFlux2KleinImageProvider":
-        from .salad_flux import SaladFlux2KleinImageProvider
+    if name == "SaladQwenImage21Provider":
+        from .salad_qwen_image import SaladQwenImage21Provider
 
-        return SaladFlux2KleinImageProvider
+        return SaladQwenImage21Provider
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

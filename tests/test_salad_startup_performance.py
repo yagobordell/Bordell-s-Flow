@@ -275,27 +275,22 @@ def test_phase8_archives_stale_manifest_only_after_idle_queue_guard() -> None:
 
 
 
-def test_phase6_reuses_shared_ideogram_replica_before_cold_prewarm() -> None:
+
+def test_phase6_uses_qwen_ready_hold_before_generation() -> None:
     phase6 = Path("scripts/run_phase6_keyframes_controlled.ps1").read_text(
         encoding="utf-8"
     )
     prewarm = PREWARM.read_text(encoding="utf-8")
+    qwen_profile = prewarm.split("    qwen_image_21 = @{", maxsplit=1)[1].split(
+        "    }", maxsplit=1
+    )[0]
 
-    assert '$PrewarmArguments["AdoptReadyReplica"] = $true' in phase6
-    assert "if ($ReleaseSharedIdeogram)" in phase6
-    assert "[switch]$AdoptReadyReplica" in prewarm
-    assert "$AdoptReadyReplica -and" in prewarm
-    assert '$Status -eq "running"' in prewarm
-    assert "[int]$Group.replicas -eq 1" in prewarm
-    assert "[int]$HeldAutoscaler.min_replicas -ne 1" in prewarm
-    assert "function Test-RemoteAutoscalerMatchesManifestExceptMinReplicas" in prewarm
-    assert "Test-RemoteAutoscalerMatchesManifestExceptMinReplicas" in prewarm
-    assert "$HeldInstances.Count -ne 1" in prewarm
-    assert "$HeldStarted" in prewarm
-    assert "$HeldReady" in prewarm
-    assert "Assert-QueueLogicallyEmpty -Queue $Queue -VerificationSeconds 180" in prewarm
-    assert "prewarm adopted one already started+ready shared replica" in prewarm
-
+    assert 'Service = "qwen_image_21"' in phase6
+    assert "HoldReadyReplica = $true" in phase6
+    assert "RunningNotReadySeconds = 1800" in qwen_profile
+    assert "FinalRunningNotReadySeconds = 3000" in qwen_profile
+    assert "[switch]$HoldReadyReplica" in prewarm
+    assert "Test-RemoteAutoscalerBounds" in prewarm
 
 def test_shared_ideogram_adoption_precedes_cold_state_requirement() -> None:
     text = PREWARM.read_text(encoding="utf-8")
@@ -308,28 +303,19 @@ def test_shared_ideogram_adoption_precedes_cold_state_requirement() -> None:
 
 
 
-def test_phase6_recovers_once_from_hung_ideogram_inference() -> None:
+
+def test_phase6_qwen_inference_has_bounded_pending_and_running_timeouts() -> None:
     text = Path("scripts/run_phase6_keyframes_controlled.ps1").read_text(
         encoding="utf-8"
     )
     runner = Path("scripts/run_phase6_keyframes.py").read_text(encoding="utf-8")
 
-    assert "[int]$RunningTimeoutSeconds = 1200" in text
-    assert "[int]$IdeogramRecoveryRetries = 1" in text
-    assert '$MaxPhase6Attempts = if ($PrimaryProvider -eq "ideogram4") {' in text
-    assert "1 + $IdeogramRecoveryRetries" in text
-    assert "$Phase6ExitCode -eq 75" in text
-    assert "Recycling the worker" in text
-    assert text.index("-Action Stop -Service ideogram4") < text.index(
-        "=== Ideogram recovery prewarm: start one fresh ready replica ==="
-    )
-    assert text.index("& $QueueCleanup -Service ideogram4") < text.index(
-        "=== Ideogram recovery prewarm: start one fresh ready replica ==="
-    )
-    assert "PHASE6_IDEOGRAM_RUNNING_TIMEOUT" in runner
-    assert 'exc.job_id.startswith("ideogram-keyframe-")' in runner
-    assert "IDEOGRAM_RUNNING_TIMEOUT_EXIT_CODE = 75" in runner
-
+    assert "[int]$PendingTimeoutSeconds = 1800" in text
+    assert "[int]$RunningTimeoutSeconds = 3600" in text
+    assert '"--pending-timeout-seconds", $PendingTimeoutSeconds' in text
+    assert '"--timeout-seconds", $RunningTimeoutSeconds' in text
+    assert "DEFAULT_QWEN_PENDING_TIMEOUT_SECONDS = 1800.0" in runner
+    assert "SaladQwenImage21Provider" in runner
 
 def test_phase6_emits_inference_progress_logs() -> None:
     runner = Path("scripts/run_phase6_keyframes.py").read_text(encoding="utf-8")
@@ -384,7 +370,8 @@ def test_whisper_default_queue_matches_manifest() -> None:
 
 
 
-def test_ideogram_controlled_runners_pin_canonical_salad_routes() -> None:
+
+def test_qwen_controlled_runners_pin_canonical_salad_route() -> None:
     for path in (
         Path("scripts/run_phase4_assets_controlled.ps1"),
         Path("scripts/run_phase6_keyframes_controlled.ps1"),
@@ -394,29 +381,21 @@ def test_ideogram_controlled_runners_pin_canonical_salad_routes() -> None:
         assert "$env:SALAD_ORGANIZATION = [string]$Services.stack.organization" in text
         assert "$env:SALAD_PROJECT = [string]$Services.stack.project" in text
         assert (
-            "$env:SALAD_IDEOGRAM4_QUEUE_NAME = [string]$IdeogramService.queue_name"
+            "$env:SALAD_QWEN_IMAGE_21_QUEUE_NAME = [string]$QwenService.queue_name"
             in text
         )
-        assert (
-            "$env:SALAD_FLUX2_KLEIN_QUEUE_NAME = [string]$FluxService.queue_name"
-            in text
-        )
-        assert '"--queue-name", $env:SALAD_IDEOGRAM4_QUEUE_NAME' in text
-        assert '"--fallback-queue-name", $env:SALAD_FLUX2_KLEIN_QUEUE_NAME' in text
-        assert "canonical Salad routes: ideogram={0} flux={1}" in text
-
+        assert '"--queue-name", $env:SALAD_QWEN_IMAGE_21_QUEUE_NAME' in text
+        assert "canonical Salad route: qwen_image_21 queue={0}" in text
 
 
 def test_image_queue_defaults_match_manifest() -> None:
     services = json.loads(MANIFEST.read_text(encoding="utf-8"))["services"]
     config = CONFIG.read_text(encoding="utf-8")
 
+    qwen = services["qwen_image_21"]["queue_name"]
     ideogram = services["ideogram4"]["queue_name"]
-    flux = services["flux2_klein"]["queue_name"]
+    assert f'salad_qwen_image_21_queue_name: str = "{qwen}"' in config
     assert f'salad_ideogram4_queue_name: str = "{ideogram}"' in config
-    assert f'salad_flux2_klein_queue_name: str = "{flux}"' in config
-
-
 
 def test_phase8_transport_proof_is_bounded_by_first_dispatch_timeout() -> None:
     ltx_controlled = Path("scripts/run_phase8_videos_controlled.ps1").read_text(

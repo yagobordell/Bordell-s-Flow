@@ -1,9 +1,6 @@
 import argparse
 import asyncio
 import json
-import shutil
-import subprocess
-from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -11,30 +8,21 @@ from r2_client import create_r2_storage
 
 from ai_video_factory.config import settings
 from ai_video_factory.domain import VisualReference
-from ai_video_factory.providers import (
-    SafetyFallbackImageProvider,
-    SaladFlux2KleinImageProvider,
-    SaladIdeogramImageProvider,
-)
+from ai_video_factory.providers import SaladQwenImage21Provider
 from ai_video_factory.providers.images import parse_image_size
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
-from ai_video_factory.workers.flux2_klein import FLUX2_KLEIN_REFERENCE_TASK
-from ai_video_factory.workers.ideogram4 import IDEOGRAM4_REFERENCE_TASK
+from ai_video_factory.workers.qwen_image_21 import QWEN_IMAGE_21_REFERENCE_TASK
 from ai_video_factory.workflows.reference_assets import generate_reference_assets
 
 DEFAULT_SIZE = "1536x864"
 DEFAULT_QUALITY = "high"
-DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS = 300.0
-DEFAULT_FLUX_PENDING_TIMEOUT_SECONDS = 1800.0
+DEFAULT_QWEN_PENDING_TIMEOUT_SECONDS = 1800.0
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=(
-            "Generate canonical Phase 4 references with FLUX.2 Klein 4B by default; "
-            "Ideogram 4 remains an explicit alternative with safety fallback."
-        )
+        description="Generate canonical Phase 4 references with Qwen-Image-2.1 on Salad."
     )
     parser.add_argument(
         "references_file",
@@ -42,31 +30,10 @@ def parse_args() -> argparse.Namespace:
         nargs="?",
         default=settings.output_dir / "phase4" / "visual_references.json",
     )
-    parser.add_argument("--model", default=settings.ideogram4_model)
-    parser.add_argument("--fallback-model", default=settings.flux2_klein_model)
-    parser.add_argument(
-        "--primary-provider",
-        choices=("flux2_klein", "ideogram4"),
-        default="flux2_klein",
-        help=(
-            "Primary image provider. Defaults to FLUX.2 Klein; Ideogram is retained "
-            "for opt-in use."
-        ),
-    )
+    parser.add_argument("--model", default=settings.qwen_image_21_model)
     parser.add_argument("--size", default=DEFAULT_SIZE)
-    parser.add_argument(
-        "--quality",
-        choices=("high", "auto"),
-        default=DEFAULT_QUALITY,
-    )
-    parser.add_argument(
-        "--queue-name",
-        default=settings.salad_ideogram4_queue_name,
-    )
-    parser.add_argument(
-        "--fallback-queue-name",
-        default=settings.salad_flux2_klein_queue_name,
-    )
+    parser.add_argument("--quality", choices=("high", "auto"), default=DEFAULT_QUALITY)
+    parser.add_argument("--queue-name", default=settings.salad_qwen_image_21_queue_name)
     parser.add_argument(
         "--poll-seconds",
         type=float,
@@ -80,31 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pending-timeout-seconds",
         type=float,
-        default=DEFAULT_IDEOGRAM_PENDING_TIMEOUT_SECONDS,
-        help="Maximum seconds for an already-prewarmed Ideogram worker to claim a queued job.",
-    )
-    parser.add_argument(
-        "--fallback-pending-timeout-seconds",
-        type=float,
-        default=DEFAULT_FLUX_PENDING_TIMEOUT_SECONDS,
-        help="Maximum seconds for a cold FLUX fallback worker to claim a queued job.",
-    )
-    parser.add_argument(
-        "--prewarm-fallback-on-demand",
-        action="store_true",
-        help="Prewarm FLUX only after the first terminal Ideogram safety rejection.",
-    )
-    parser.add_argument(
-        "--prefer-fallback-provider",
-        action="store_true",
-        help=(
-            "Deprecated compatibility alias for --primary-provider flux2_klein."
-        ),
-    )
-    parser.add_argument(
-        "--fallback-prewarm-timeout-minutes",
-        type=int,
-        default=60,
+        default=DEFAULT_QWEN_PENDING_TIMEOUT_SECONDS,
+        help="Maximum seconds for a cold Qwen worker to claim a queued job.",
     )
     parser.add_argument(
         "--output-dir",
@@ -134,26 +78,6 @@ def _queue(name: str) -> SaladJobQueueClient:
     )
 
 
-async def _prewarm_flux_fallback(timeout_minutes: int) -> None:
-    executable = shutil.which("powershell.exe") or shutil.which("pwsh")
-    if executable is None:
-        raise RuntimeError("PowerShell is required for on-demand FLUX prewarm.")
-    script = Path(__file__).with_name("start_salad_flux_prewarm.ps1")
-    command = [
-        executable,
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        str(script),
-        "-TimeoutMinutes",
-        str(timeout_minutes),
-        "-NonInteractive",
-    ]
-    print("Ideogram safety rejection confirmed; prewarming FLUX before fallback submission.")
-    await asyncio.to_thread(subprocess.run, command, check=True)
-
-
 async def main() -> None:
     args = parse_args()
     width, height = parse_image_size(args.size)
@@ -175,56 +99,24 @@ async def main() -> None:
         access_key_id=_required_setting("R2_ACCESS_KEY_ID", settings.r2_access_key_id),
         secret_access_key=_required_setting("R2_SECRET_ACCESS_KEY", settings.r2_secret_access_key),
     )
-    ideogram_executor = InferenceJobExecutor(
+    executor = InferenceJobExecutor(
         queue=_queue(args.queue_name),
         storage=storage,
         poll_seconds=args.poll_seconds,
         timeout_seconds=args.timeout_seconds,
         pending_timeout_seconds=args.pending_timeout_seconds,
     )
-    flux_executor = InferenceJobExecutor(
-        queue=_queue(args.fallback_queue_name),
-        storage=storage,
-        poll_seconds=args.poll_seconds,
-        timeout_seconds=args.timeout_seconds,
-        pending_timeout_seconds=args.fallback_pending_timeout_seconds,
+    provider = SaladQwenImage21Provider(
+        executor=executor,
+        temp_dir=settings.temp_dir / "qwen-image-21-reference-client",
+        task_name=QWEN_IMAGE_21_REFERENCE_TASK,
     )
-    ideogram_provider = SaladIdeogramImageProvider(
-        executor=ideogram_executor,
-        temp_dir=settings.temp_dir / "ideogram4-reference-client",
-        task_name=IDEOGRAM4_REFERENCE_TASK,
-    )
-    flux_provider = SaladFlux2KleinImageProvider(
-        executor=flux_executor,
-        temp_dir=settings.temp_dir / "flux2-klein-reference-client",
-        task_name=FLUX2_KLEIN_REFERENCE_TASK,
-    )
-    before_fallback = (
-        partial(_prewarm_flux_fallback, args.fallback_prewarm_timeout_minutes)
-        if args.prewarm_fallback_on_demand
-        else None
-    )
-
-    use_flux = args.primary_provider == "flux2_klein" or args.prefer_fallback_provider
-    if use_flux:
-        provider = flux_provider
-        generation_model = args.fallback_model
-        provider_label = "FLUX.2 Klein primary"
-    else:
-        provider = SafetyFallbackImageProvider(
-            primary=ideogram_provider,
-            fallback=flux_provider,
-            fallback_model=args.fallback_model,
-            before_fallback=before_fallback,
-        )
-        generation_model = args.model
-        provider_label = "Ideogram 4 primary with FLUX safety fallback"
 
     assets = await generate_reference_assets(
         references,
         image_provider=provider,
         output_dir=args.output_dir,
-        model=generation_model,
+        model=args.model,
         size=args.size,
         quality=args.quality,
     )
@@ -235,7 +127,7 @@ async def main() -> None:
         encoding="utf-8",
     )
     print(f"Phase 4 reference assets complete. Metadata: {args.metadata.resolve()}")
-    print(f"Generated {len(assets)} reference PNG files with {provider_label}")
+    print(f"Generated {len(assets)} reference PNG files with Qwen-Image-2.1")
 
 
 if __name__ == "__main__":

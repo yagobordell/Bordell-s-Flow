@@ -15,15 +15,15 @@ from ai_video_factory.inference.contracts import InferenceJobRequest
 from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.ports import LocalArtifact
 
-FLUX2_KLEIN_REFERENCE_TASK = "image.flux2_klein.reference"
-FLUX2_KLEIN_KEYFRAME_TASK = "image.flux2_klein.keyframe"
-FLUX2_KLEIN_MODEL_ID = "black-forest-labs/FLUX.2-klein-4B"
-FLUX2_KLEIN_MODEL_REVISION = "e7b7dc27f91deacad38e78976d1f2b499d76a294"
-FLUX2_KLEIN_GENERATION_PROFILE = "flux2-klein-4b-bf16-v1"
-_SUPPORTED_TASKS = frozenset({FLUX2_KLEIN_REFERENCE_TASK, FLUX2_KLEIN_KEYFRAME_TASK})
+QWEN_IMAGE_21_REFERENCE_TASK = "image.qwen_image_21.reference"
+QWEN_IMAGE_21_KEYFRAME_TASK = "image.qwen_image_21.keyframe"
+QWEN_IMAGE_21_MODEL_ID = "Qwen/Qwen-Image-2.1"
+QWEN_IMAGE_21_MODEL_REVISION = "b3179ad355be050328e483a9dfdd9e60cd62adfa"
+QWEN_IMAGE_21_GENERATION_PROFILE = "qwen-image-2.1-bf16-40step-v1"
+_SUPPORTED_TASKS = frozenset({QWEN_IMAGE_21_REFERENCE_TASK, QWEN_IMAGE_21_KEYFRAME_TASK})
 
 
-class Flux2KleinImageParameters(BaseModel):
+class QwenImage21Parameters(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     generation_profile: str
@@ -33,38 +33,37 @@ class Flux2KleinImageParameters(BaseModel):
     width: int = Field(ge=256, le=2048)
     height: int = Field(ge=256, le=2048)
     seed: int = Field(ge=0, le=2_147_483_647)
-    num_inference_steps: int = Field(default=4, ge=1, le=8)
-    guidance_scale: float = Field(default=1.0, ge=0.0, le=20.0)
+    num_inference_steps: int = Field(default=40, ge=1, le=100)
 
     @model_validator(mode="after")
-    def validate_flux2_klein(self) -> Self:
-        if self.generation_profile != FLUX2_KLEIN_GENERATION_PROFILE:
-            raise ValueError("Unexpected FLUX.2 Klein generation profile")
-        if self.model_id != FLUX2_KLEIN_MODEL_ID:
-            raise ValueError(f"FLUX.2 Klein worker requires model {FLUX2_KLEIN_MODEL_ID!r}")
-        if self.model_revision != FLUX2_KLEIN_MODEL_REVISION:
+    def validate_qwen_image_21(self) -> Self:
+        if self.generation_profile != QWEN_IMAGE_21_GENERATION_PROFILE:
+            raise ValueError("Unexpected Qwen-Image-2.1 generation profile")
+        if self.model_id != QWEN_IMAGE_21_MODEL_ID:
+            raise ValueError(f"Qwen worker requires model {QWEN_IMAGE_21_MODEL_ID!r}")
+        if self.model_revision != QWEN_IMAGE_21_MODEL_REVISION:
             raise ValueError(
-                f"FLUX.2 Klein worker requires revision {FLUX2_KLEIN_MODEL_REVISION!r}"
+                f"Qwen worker requires revision {QWEN_IMAGE_21_MODEL_REVISION!r}"
             )
         if self.width % 16 or self.height % 16:
-            raise ValueError("FLUX.2 Klein width and height must be divisible by 16")
+            raise ValueError("Qwen-Image-2.1 width and height must be divisible by 16")
         return self
 
 
-def flux2_klein_application_job_id(
+def qwen_image_21_application_job_id(
     *,
     task_name: str,
     prompt: str,
     width: int,
     height: int,
-    model_id: str = FLUX2_KLEIN_MODEL_ID,
-    model_revision: str = FLUX2_KLEIN_MODEL_REVISION,
+    model_id: str = QWEN_IMAGE_21_MODEL_ID,
+    model_revision: str = QWEN_IMAGE_21_MODEL_REVISION,
 ) -> str:
     if task_name not in _SUPPORTED_TASKS:
-        raise ValueError(f"Unsupported FLUX.2 Klein application task: {task_name}")
-    purpose = "reference" if task_name == FLUX2_KLEIN_REFERENCE_TASK else "keyframe"
+        raise ValueError(f"Unsupported Qwen-Image-2.1 application task: {task_name}")
+    purpose = "reference" if task_name == QWEN_IMAGE_21_REFERENCE_TASK else "keyframe"
     payload = {
-        "generation_profile": FLUX2_KLEIN_GENERATION_PROFILE,
+        "generation_profile": QWEN_IMAGE_21_GENERATION_PROFILE,
         "height": height,
         "model_id": model_id,
         "model_revision": model_revision,
@@ -73,15 +72,15 @@ def flux2_klein_application_job_id(
         "width": width,
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return f"flux2-klein-{purpose}-{hashlib.sha256(canonical).hexdigest()[:32]}"
+    return f"qwen-image-21-{purpose}-{hashlib.sha256(canonical).hexdigest()[:32]}"
 
 
-def flux2_klein_seed_for_job(job_id: str) -> int:
+def qwen_image_21_seed_for_job(job_id: str) -> int:
     digest = hashlib.sha256(job_id.encode("utf-8")).digest()
     return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
 
 
-class Flux2KleinBackend:
+class QwenImage21Backend:
     def __init__(self, *, model_root: Path, device: str = "cuda") -> None:
         self._model_root = model_root
         self._device = device
@@ -106,16 +105,16 @@ class Flux2KleinBackend:
         with self._lock:
             self._validate_bootstrap()
             if self._pipeline is None:
-                raise RuntimeError("FLUX.2 Klein runtime has not been prepared")
+                raise RuntimeError("Qwen-Image-2.1 runtime has not been prepared")
 
-    def generate(self, *, parameters: Flux2KleinImageParameters, output_path: Path) -> None:
+    def generate(self, *, parameters: QwenImage21Parameters, output_path: Path) -> None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.unlink(missing_ok=True)
         with self._lock:
             pipeline = self._get_or_build_pipeline()
             torch = self._torch
             if torch is None:
-                raise RuntimeError("FLUX.2 Klein torch runtime is unavailable")
+                raise RuntimeError("Qwen-Image-2.1 torch runtime is unavailable")
             generator = torch.Generator(device=self._device).manual_seed(parameters.seed)
             is_cuda = self._device.startswith("cuda") and torch.cuda.is_available()
             if is_cuda:
@@ -127,43 +126,41 @@ class Flux2KleinBackend:
                     prompt=parameters.prompt,
                     width=parameters.width,
                     height=parameters.height,
-                    guidance_scale=parameters.guidance_scale,
                     num_inference_steps=parameters.num_inference_steps,
                     generator=generator,
                 )
                 images = result.images
                 if len(images) != 1:
-                    raise RuntimeError("FLUX.2 Klein did not return exactly one image")
+                    raise RuntimeError("Qwen-Image-2.1 did not return exactly one image")
                 image = images[0]
                 if image.size != (parameters.width, parameters.height):
-                    raise RuntimeError("FLUX.2 Klein returned unexpected image dimensions")
+                    raise RuntimeError("Qwen-Image-2.1 returned unexpected image dimensions")
                 image.save(output_path, format="PNG")
                 elapsed = time.monotonic() - started
                 peak_allocated = torch.cuda.max_memory_allocated() if is_cuda else 0
                 peak_reserved = torch.cuda.max_memory_reserved() if is_cuda else 0
                 print(
-                    "FLUX2_KLEIN_INFERENCE_METRIC "
+                    "QWEN_IMAGE_21_INFERENCE_METRIC "
                     f"elapsed_seconds={elapsed:.3f} seed={parameters.seed} "
                     f"width={parameters.width} height={parameters.height} "
                     f"steps={parameters.num_inference_steps} "
-                    f"guidance={parameters.guidance_scale:g} "
                     f"peak_allocated_bytes={peak_allocated} peak_reserved_bytes={peak_reserved}",
                     flush=True,
                 )
             finally:
                 del result
                 gc.collect()
-                if self._device.startswith("cuda") and torch.cuda.is_available():
+                if is_cuda:
                     torch.cuda.empty_cache()
 
     def _validate_bootstrap(self) -> None:
-        expected = f"{FLUX2_KLEIN_MODEL_ID}@{FLUX2_KLEIN_MODEL_REVISION}"
+        expected = f"{QWEN_IMAGE_21_MODEL_ID}@{QWEN_IMAGE_21_MODEL_REVISION}"
         if not self.bootstrap_marker.is_file() or not self.snapshot_root.is_dir():
-            raise ModelBootstrapPendingError("FLUX.2 Klein model snapshot is not ready")
+            raise ModelBootstrapPendingError("Qwen-Image-2.1 model snapshot is not ready")
         marker = self.bootstrap_marker.read_text(encoding="utf-8").strip()
         if marker != expected:
             raise ModelBootstrapPendingError(
-                "FLUX.2 Klein model snapshot marker does not match configured revision"
+                "Qwen-Image-2.1 model snapshot marker does not match configured revision"
             )
 
     def _get_or_build_pipeline(self) -> Any:
@@ -171,33 +168,27 @@ class Flux2KleinBackend:
             return self._pipeline
         try:
             import torch
-            from diffusers import Flux2KleinPipeline
+            from diffusers import QwenImage21Pipeline
         except ImportError as exc:
-            raise RuntimeError("FLUX.2 Klein runtime dependencies are not installed") from exc
+            raise RuntimeError("Qwen-Image-2.1 runtime dependencies are not installed") from exc
 
         if self._device.startswith("cuda") and not torch.cuda.is_available():
-            raise RuntimeError("CUDA is not available for the FLUX.2 Klein runtime")
+            raise RuntimeError("CUDA is not available for the Qwen-Image-2.1 runtime")
 
         started = time.monotonic()
-        pipeline = Flux2KleinPipeline.from_pretrained(
+        pipeline = QwenImage21Pipeline.from_pretrained(
             str(self.snapshot_root),
             torch_dtype=torch.bfloat16,
             local_files_only=True,
         )
-        pipeline.to(self._device)
+        if self._device != "cuda":
+            raise RuntimeError("Qwen-Image-2.1 worker currently requires device='cuda'")
+        pipeline.enable_model_cpu_offload()
         elapsed = time.monotonic() - started
-        allocated = (
-            torch.cuda.memory_allocated()
-            if self._device.startswith("cuda") and torch.cuda.is_available()
-            else 0
-        )
-        reserved = (
-            torch.cuda.memory_reserved()
-            if self._device.startswith("cuda") and torch.cuda.is_available()
-            else 0
-        )
+        allocated = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
+        reserved = torch.cuda.memory_reserved() if torch.cuda.is_available() else 0
         print(
-            "FLUX2_KLEIN_RUNTIME_READY "
+            "QWEN_IMAGE_21_RUNTIME_READY "
             f"elapsed_seconds={elapsed:.3f} device={self._device} "
             f"allocated_bytes={allocated} reserved_bytes={reserved}",
             flush=True,
@@ -207,10 +198,10 @@ class Flux2KleinBackend:
         return pipeline
 
 
-class Flux2KleinImageTaskRunner:
-    def __init__(self, *, backend: Flux2KleinBackend, task_name: str) -> None:
+class QwenImage21ImageTaskRunner:
+    def __init__(self, *, backend: QwenImage21Backend, task_name: str) -> None:
         if task_name not in _SUPPORTED_TASKS:
-            raise ValueError(f"Unsupported FLUX.2 Klein task runner: {task_name}")
+            raise ValueError(f"Unsupported Qwen-Image-2.1 task runner: {task_name}")
         self._backend = backend
         self.task_name = task_name
 
@@ -227,14 +218,14 @@ class Flux2KleinImageTaskRunner:
         work_dir: Path,
     ) -> LocalArtifact:
         if request.task != self.task_name:
-            raise ValueError(f"FLUX.2 Klein runner cannot execute task {request.task!r}")
+            raise ValueError(f"Qwen runner cannot execute task {request.task!r}")
         if inputs or request.inputs:
-            raise ValueError("FLUX.2 Klein image tasks do not accept object inputs")
+            raise ValueError("Qwen image tasks do not accept object inputs")
         if request.output.content_type != "image/png":
-            raise ValueError("FLUX.2 Klein output must be image/png")
-        parameters = Flux2KleinImageParameters.model_validate(request.parameters)
+            raise ValueError("Qwen image output must be image/png")
+        parameters = QwenImage21Parameters.model_validate(request.parameters)
         output = work_dir / "image.png"
         self._backend.generate(parameters=parameters, output_path=output)
         if not output.is_file() or output.stat().st_size <= 8:
-            raise RuntimeError("FLUX.2 Klein produced no usable PNG output")
+            raise RuntimeError("Qwen-Image-2.1 produced no usable PNG output")
         return LocalArtifact(path=output, content_type="image/png")

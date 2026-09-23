@@ -74,7 +74,7 @@ def _load_services(path: Path) -> dict[str, Any]:
         "breeze_tts2",
         "fish_speech",
         "ideogram4",
-        "flux2_klein",
+        "qwen_image_21",
         "ltx25",
         "realesrgan",
     }

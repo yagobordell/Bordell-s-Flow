@@ -148,7 +148,7 @@ def test_missing_stage_input_is_blocked(tmp_path: Path) -> None:
         runner.run()
 
 
-def test_production_dag_automates_ideogram_keyframes(tmp_path: Path) -> None:
+def test_production_dag_automates_qwen_keyframes(tmp_path: Path) -> None:
     stages = build_production_stages(
         script_file=tmp_path / "script.txt",
         output_dir=tmp_path / "output",
@@ -199,7 +199,7 @@ def test_existing_keyframes_are_adopted_then_stale_inputs_regenerate(tmp_path: P
         [
             ProductionStage(
                 name="phase6-keyframes",
-                description="Ideogram keyframes",
+                description="Qwen keyframes",
                 script=script,
                 inputs=(source,),
                 outputs=(metadata, artifacts),
@@ -448,8 +448,8 @@ def test_real_production_dag_exposes_safe_parallel_branches(tmp_path: Path) -> N
     assert by_name["phase4-reference-prompts"].dependencies == ("phase3-continuity",)
     assert by_name["phase8-video-prompts"].dependencies == ("phase6-storyboard",)
     assert by_name["phase6-keyframes"].dependencies == ("phase6-storyboard",)
-    assert by_name["phase4-reference-assets"].resource_key == "flux2_klein"
-    assert by_name["phase6-keyframes"].resource_key == "flux2_klein"
+    assert by_name["phase4-reference-assets"].resource_key == "qwen_image_21"
+    assert by_name["phase6-keyframes"].resource_key == "qwen_image_21"
     assert by_name["phase8-upscale"].dependencies == ("phase8-videos",)
     assert by_name["phase8-upscale"].resource_key == "realesrgan"
     assert by_name["phase8-upscale"].outputs[0].name == "upscaled_clips.json"

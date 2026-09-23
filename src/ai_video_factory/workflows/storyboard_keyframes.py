@@ -19,7 +19,7 @@ async def generate_storyboard_keyframes(
     size: str,
     quality: ImageQuality,
 ) -> list[StoryboardKeyframe]:
-    """Generate one text-conditioned Ideogram still image for every storyboard frame."""
+    """Generate one text-conditioned still image for every storyboard frame."""
 
     _validate_inputs(frames, shots)
     if not frames:

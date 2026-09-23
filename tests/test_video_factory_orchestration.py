@@ -40,36 +40,34 @@ def test_phase5_checks_breeze_cache_before_primary_prewarm() -> None:
     assert "Fish consumed zero GPU-seconds" in text
 
 
-def test_flux_dynamic_fallback_prewarms_on_first_confirmed_safety_rejection() -> None:
-    phase4 = _read("scripts/run_phase4_assets_controlled.ps1")
-    phase6 = _read("scripts/run_phase6_keyframes_controlled.ps1")
-    phase4_runner = _read("scripts/run_phase4_assets.py")
-    phase6_runner = _read("scripts/run_phase6_keyframes.py")
-
-    for text in (phase4, phase6):
-        assert "--prewarm-fallback-on-demand" in text
-        assert '"start_salad_scale_to_zero.ps1"' not in text
-        assert (
-            '$OnDemandFluxPrewarm = $PrimaryProvider -eq "ideogram4" '
-            "-and $IdeogramNeeded -and -not $FluxNeeded"
-        ) in text
-
-    for text in (phase4_runner, phase6_runner):
-        assert "Ideogram safety rejection confirmed; prewarming FLUX" in text
-        assert '"start_salad_flux_prewarm.ps1"' in text
+def test_phase4_and_phase6_use_qwen_only() -> None:
+    for controlled, runner in (
+        ("scripts/run_phase4_assets_controlled.ps1", "scripts/run_phase4_assets.py"),
+        ("scripts/run_phase6_keyframes_controlled.ps1", "scripts/run_phase6_keyframes.py"),
+    ):
+        controlled_text = _read(controlled)
+        runner_text = _read(runner)
+        assert 'Service = "qwen_image_21"' in controlled_text
+        assert "SaladQwenImage21Provider" in runner_text
+        assert "QWEN_IMAGE_21_" in runner_text
+        assert "ideogram" not in controlled_text.lower()
+        assert "ideogram" not in runner_text.lower()
 
 
-def test_phase6_checks_cache_before_ideogram_and_does_not_eager_prewarm_flux() -> None:
-    text = _read("scripts/run_phase6_keyframes_controlled.ps1")
 
-    audit = text.index("Phase 6 cache plan")
-    ideogram = text.index("Ideogram optimized prewarm")
-    flux = text.index("FLUX.2 Klein primary/fallback: prewarm before queue submission")
-    assert audit < ideogram
-    assert audit < flux
-    assert "--prewarm-fallback-on-demand" in text
-    assert "if ($FluxNeeded)" in text
-
+def test_qwen_controlled_runners_prewarm_before_generation() -> None:
+    for path in (
+        "scripts/run_phase4_assets_controlled.ps1",
+        "scripts/run_phase6_keyframes_controlled.ps1",
+    ):
+        text = _read(path)
+        assert text.index("Qwen-Image-2.1 prewarm") < text.rindex(
+            "& python $Runner @RunnerArguments"
+        )
+        assert "start_salad_optimized_prewarm.ps1" in text
+        assert "manage_salad_validation.ps1" in text
+        assert "-Action Stop -Service qwen_image_21" in text
+        assert "cleanup_salad_queue.ps1" in text
 
 def test_queue_cleanup_cancels_orphaned_active_jobs_after_group_stop() -> None:
     text = _read("scripts/cleanup_salad_queue.ps1")
@@ -86,18 +84,6 @@ def test_phase8_checks_r2_replay_before_ltx_prewarm() -> None:
     prewarm = text.index("LTX optimized prewarm")
     assert audit < prewarm
     assert "All Phase 8 clips are valid R2 replays" in text
-
-
-def test_shared_ideogram_hold_is_explicitly_bounded_to_end_to_end_mode() -> None:
-    production = _read("scripts/run_production.py")
-    phase4 = _read("scripts/run_phase4_assets_controlled.ps1")
-    phase6 = _read("scripts/run_phase6_keyframes_controlled.ps1")
-
-    assert 'arguments.append("-KeepIdeogramWarm")' in production
-    assert 'arguments.append("-ReleaseSharedIdeogram")' in production
-    assert "[switch]$KeepIdeogramWarm" in phase4
-    assert "[switch]$ReleaseSharedIdeogram" in phase6
-    assert "outer orchestration owns cleanup" in phase4
 
 
 def test_phase5_alignment_checks_cache_before_whisper_prewarm() -> None:
@@ -117,7 +103,7 @@ def test_one_command_runner_exposes_narration_language_and_defaults_to_english()
     assert '[string]$NarrationLanguage = "en"' in text
     assert '"--narration-language"' in text
     assert "$NarrationLanguage" in text
-    assert '--narration-language' in production
+    assert "--narration-language" in production
     assert 'default="en"' in production
     assert '[string]$Language = "en"' in controlled
     assert "--language" in controlled

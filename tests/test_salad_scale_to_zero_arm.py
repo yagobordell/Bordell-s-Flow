@@ -14,14 +14,13 @@ def test_scale_to_zero_arm_accepts_deploying_without_waiting_for_running() -> No
     assert "Wait-ForGroupStatus" not in text
 
 
-def test_controlled_image_runners_use_deterministic_flux_prewarm() -> None:
+
+def test_controlled_image_runners_use_qwen_optimized_prewarm() -> None:
     for path in (PHASE4, PHASE6):
         text = path.read_text(encoding="utf-8")
-        assert '"start_salad_flux_prewarm.ps1"' in text
-        assert '"restore_salad_flux_scale_to_zero.ps1"' in text
+        assert '"start_salad_optimized_prewarm.ps1"' in text
+        assert 'Service = "qwen_image_21"' in text
         assert '"arm_salad_scale_to_zero.ps1"' not in text
-        assert "-Action Start -Service flux_schnell" not in text
-
 
 def test_phase4_plan_flattens_json_array_before_counting_hits() -> None:
     text = PHASE4.read_text(encoding="utf-8")
