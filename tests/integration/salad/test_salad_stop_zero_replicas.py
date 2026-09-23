@@ -19,7 +19,10 @@ def test_stack_stop_runs_zero_replica_guard_after_worker_stop() -> None:
 def test_validation_stop_has_zero_replica_fallback_when_stack_stop_errors() -> None:
     script = VALIDATION.read_text(encoding="utf-8")
 
-    assert '$ZeroReplicaGuard = Join-Path $PSScriptRoot "ensure_salad_zero_replicas.ps1"' in script
+    assert (
+        '$ZeroReplicaGuard = Join-Path $PSScriptRoot "../salad/ensure_salad_zero_replicas.ps1"'
+        in script
+    )
     assert "function Invoke-ZeroReplicaFallback" in script
     fallback = script.split("function Invoke-ZeroReplicaFallback", maxsplit=1)[1]
     fallback = fallback.split("function Assert-Docker", maxsplit=1)[0]
