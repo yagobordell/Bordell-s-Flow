@@ -6,9 +6,8 @@ import os
 import threading
 from pathlib import Path
 
-from r2_client import create_r2_storage
-
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
+from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workflows.video_generation import (
     VideoGenerationManifest,
