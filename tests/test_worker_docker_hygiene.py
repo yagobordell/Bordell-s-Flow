@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 WORKER_DOCKERFILES = tuple(sorted(Path("docker/workers").glob("*/Dockerfile")))
 
 
