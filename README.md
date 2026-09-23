@@ -38,6 +38,7 @@ Ideogram permanece implementado para usos futuros, pero no forma parte del flujo
 ## Requisitos
 
 - Python 3.12+
+- uv 0.12.18
 - Windows PowerShell para el runner end-to-end
 - Node.js 22+ y npm
 - FFmpeg + ffprobe
@@ -48,7 +49,9 @@ Ideogram permanece implementado para usos futuros, pero no forma parte del flujo
 ## Instalación
 
 ```powershell
-python -m pip install -e ".[dev]"
+python -m pip install "uv==0.12.18"
+uv sync --locked --extra dev
+.\.venv\Scripts\Activate.ps1
 
 Copy-Item .env.example .env
 
@@ -58,7 +61,8 @@ Pop-Location
 ```
 
 Completa `.env` con las credenciales y configuración necesarias. Los secretos y los artefactos
-generados no deben versionarse.
+generados no deben versionarse. Python se instala desde `uv.lock`; cualquier cambio de dependencias
+debe actualizar `pyproject.toml` y `uv.lock` conjuntamente.
 
 ## Ejecución
 
@@ -91,8 +95,9 @@ data/output/video_factory_metrics.json
 ## Desarrollo
 
 ```powershell
-python -m pytest
-python -m ruff check .
+uv lock --check
+uv run --locked --extra dev python -m pytest
+uv run --locked --extra dev ruff check .
 ```
 
 ## Documentación
