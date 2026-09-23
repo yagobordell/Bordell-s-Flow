@@ -5,9 +5,9 @@ from pathlib import Path
 
 from ai_video_factory.bots import BeatExtractorBot, NarrativeBlockBot, ScenePlannerBot
 from ai_video_factory.config import settings
+from ai_video_factory.domain import SourceScript
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.workflows.narrative_planning import plan_narrative
-from ai_video_factory.workflows.production import prepare_source_script
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,7 +37,7 @@ async def main() -> None:
         raise SystemExit(f"Script file not found: {args.script_file}")
 
     script_text = args.script_file.read_text(encoding="utf-8").strip()
-    source = prepare_source_script(script_text)
+    source = SourceScript(text=script_text)
 
     provider = OpenAIProvider(api_key=settings.openai_api_key)
     block_bot = NarrativeBlockBot(provider=provider, model=settings.openai_model)
