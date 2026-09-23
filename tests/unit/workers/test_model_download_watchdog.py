@@ -91,6 +91,70 @@ def test_shared_watchdog_tiny_writes_do_not_mask_a_stall(
     assert "no meaningful byte progress" in reasons[0]
 
 
+def test_shared_watchdog_reallocates_after_prolonged_downloader_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    progress_root = tmp_path / "model"
+    script = tmp_path / "fails-late.py"
+    script.write_text(
+        "import sys, time\n"
+        "time.sleep(0.2)\n"
+        "raise SystemExit(7)\n",
+        encoding="utf-8",
+    )
+    reasons: list[str] = []
+    monkeypatch.setattr(
+        download_watchdog,
+        "request_salad_reallocation",
+        lambda reason: reasons.append(reason) or True,
+    )
+
+    return_code = download_watchdog.run_with_progress_watchdog(
+        [sys.executable, str(script)],
+        progress_root=progress_root,
+        stall_timeout_seconds=1.0,
+        hard_timeout_seconds=3.0,
+        poll_seconds=0.05,
+        label="late-failure",
+        reallocate_on_slow=True,
+        throughput_grace_seconds=0.1,
+    )
+
+    assert return_code == 7
+    assert len(reasons) == 1
+    assert "downloader exited with code 7" in reasons[0]
+
+
+def test_shared_watchdog_does_not_reallocate_immediate_configuration_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    progress_root = tmp_path / "model"
+    script = tmp_path / "fails-fast.py"
+    script.write_text("raise SystemExit(2)\n", encoding="utf-8")
+    reasons: list[str] = []
+    monkeypatch.setattr(
+        download_watchdog,
+        "request_salad_reallocation",
+        lambda reason: reasons.append(reason) or True,
+    )
+
+    return_code = download_watchdog.run_with_progress_watchdog(
+        [sys.executable, str(script)],
+        progress_root=progress_root,
+        stall_timeout_seconds=1.0,
+        hard_timeout_seconds=3.0,
+        poll_seconds=0.05,
+        label="fast-failure",
+        reallocate_on_slow=True,
+        throughput_grace_seconds=1.0,
+    )
+
+    assert return_code == 2
+    assert reasons == []
+
+
 def test_shared_watchdog_meaningful_progress_resets_stall_timer(
     tmp_path: Path,
 ) -> None:
