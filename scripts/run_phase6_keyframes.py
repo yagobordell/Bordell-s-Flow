@@ -14,7 +14,10 @@ from ai_video_factory.providers import SaladQwenImage21Provider
 from ai_video_factory.providers.images import parse_image_size
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
-from ai_video_factory.workers.qwen_image_21 import QWEN_IMAGE_21_KEYFRAME_TASK
+from ai_video_factory.workers.qwen_image_21 import (
+    QWEN_IMAGE_21_KEYFRAME_TASK,
+    QWEN_IMAGE_21_PRODUCTION_SIZE,
+)
 from ai_video_factory.workflows.storyboard_keyframes import generate_storyboard_keyframes
 
 DEFAULT_QWEN_PENDING_TIMEOUT_SECONDS = 1800.0
@@ -35,7 +38,7 @@ def parse_args() -> argparse.Namespace:
         default=settings.output_dir / "phase3" / "shots.json",
     )
     parser.add_argument("--model", default=settings.qwen_image_21_model)
-    parser.add_argument("--size", default="1536x864")
+    parser.add_argument("--size", default=QWEN_IMAGE_21_PRODUCTION_SIZE)
     parser.add_argument("--quality", choices=("high", "auto"), default="high")
     parser.add_argument("--queue-name", default=settings.salad_qwen_image_21_queue_name)
     parser.add_argument(

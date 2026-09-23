@@ -425,4 +425,5 @@ def test_phase8_transport_proof_is_bounded_by_first_dispatch_timeout() -> None:
         assert "dispatch_timeout_seconds: float = 300.0" in text
         assert "transport_probe_ids" in text
         assert "dispatch_proven" in text
-        assert "queue.cancel(state.transport_job_id)" in text
+        assert "if transport_job_id is None" in text
+        assert "queue.cancel(transport_job_id)" in text

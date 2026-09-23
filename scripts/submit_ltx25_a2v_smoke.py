@@ -252,7 +252,8 @@ def _duration(probe: dict[str, Any]) -> float:
 
 def _validate_decodable_video(path: Path) -> None:
     executable = shutil.which("ffmpeg")
-    assert executable is not None
+    if executable is None:
+        raise RuntimeError("ffmpeg is required to validate the decoded A2V video")
     completed = subprocess.run(
         [executable, "-v", "error", "-i", str(path), "-map", "0:v:0", "-f", "null", "-"],
         check=False,

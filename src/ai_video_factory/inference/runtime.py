@@ -7,6 +7,12 @@ from .tasks import TaskRunnerRegistry
 from .worker import InferenceWorker
 
 
+def _required[T](value: T | None, name: str) -> T:
+    if value is None:
+        raise RuntimeError(f"validated production setting unexpectedly missing: {name}")
+    return value
+
+
 def build_worker(
     settings: InferenceWorkerSettings,
     *,
@@ -16,19 +22,19 @@ def build_worker(
         storage = LocalObjectStorage(settings.local_object_root)
         repository = InMemoryJobRepository()
     else:
-        assert settings.r2_endpoint_url is not None
-        assert settings.r2_bucket is not None
-        assert settings.r2_access_key_id is not None
-        assert settings.r2_secret_access_key is not None
-        assert settings.postgres_dsn is not None
+        endpoint_url = _required(settings.r2_endpoint_url, "r2_endpoint_url")
+        bucket = _required(settings.r2_bucket, "r2_bucket")
+        access_key_id = _required(settings.r2_access_key_id, "r2_access_key_id")
+        secret_access_key = _required(settings.r2_secret_access_key, "r2_secret_access_key")
+        postgres_dsn = _required(settings.postgres_dsn, "postgres_dsn")
         storage = R2ObjectStorage.create(
-            endpoint_url=settings.r2_endpoint_url,
-            bucket=settings.r2_bucket,
-            access_key_id=settings.r2_access_key_id.get_secret_value(),
-            secret_access_key=settings.r2_secret_access_key.get_secret_value(),
+            endpoint_url=endpoint_url,
+            bucket=bucket,
+            access_key_id=access_key_id.get_secret_value(),
+            secret_access_key=secret_access_key.get_secret_value(),
         )
         repository = PostgresJobRepository(
-            settings.postgres_dsn.get_secret_value(),
+            postgres_dsn.get_secret_value(),
             max_connections=settings.worker_max_db_connections,
         )
 

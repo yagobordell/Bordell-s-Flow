@@ -139,7 +139,12 @@ def _looks_like_safety_placeholder(image: Image.Image) -> bool:
     """Detect Ideogram's documented gray safety-filter placeholder without OCR."""
 
     sample = image.convert("RGB").resize(_SAFETY_SAMPLE_SIZE)
-    pixels = list(sample.getdata())
+    get_flattened_data = getattr(sample, "get_flattened_data", None)
+    pixels = (
+        list(get_flattened_data())
+        if callable(get_flattened_data)
+        else list(sample.getdata())
+    )
     if not pixels:
         return False
 

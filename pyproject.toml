@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "ai-video-factory"
 version = "0.1.0"
-description = "Educational multi-stage pipeline for generating short-form AI videos"
+description = "Modular production pipeline for generating AI-assisted videos"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -34,10 +34,16 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+filterwarnings = [
+    "error::DeprecationWarning:ai_video_factory\\..*",
+]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = ["E", "F", "I", "UP", "B", "S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]

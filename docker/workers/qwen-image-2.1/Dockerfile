@@ -5,7 +5,9 @@ RUN apt-get update && apt-get install --yes --no-install-recommends ca-certifica
  && curl --fail --show-error --location "https://github.com/SaladTechnologies/salad-cloud-job-queue-worker/releases/download/${SALAD_WORKER_VERSION}/salad-http-job-queue-worker_x86_64.tar.gz" --output /tmp/salad-worker.tar.gz \
  && echo "${SALAD_WORKER_SHA256}  /tmp/salad-worker.tar.gz" | sha256sum --check --strict \
  && tar --extract --gzip --file /tmp/salad-worker.tar.gz --directory /usr/local/bin salad-http-job-queue-worker \
- && chmod 0755 /usr/local/bin/salad-http-job-queue-worker
+ && chmod 0755 /usr/local/bin/salad-http-job-queue-worker \
+ && rm -f /tmp/salad-worker.tar.gz \
+ && rm -rf /var/lib/apt/lists/*
 
 FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime
 ENV DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DEFAULT_TIMEOUT=300 \
@@ -21,8 +23,8 @@ WORKDIR /opt/factory
 COPY pyproject.toml README.md /opt/factory/
 COPY src /opt/factory/src
 RUN python3 -m pip install --break-system-packages --no-cache-dir '/opt/factory[gpu]' \
- 'transformers>=5.17' 'accelerate>=1.11,<2' 'sentencepiece>=0.2,<0.3' 'protobuf>=5,<7' \
- 'huggingface-hub>=1.32,<2' 'hf-xet>=1.6,<2' 'git+https://github.com/huggingface/diffusers.git'
+ 'transformers==5.17.0' 'accelerate>=1.11,<2' 'sentencepiece>=0.2,<0.3' 'protobuf>=5,<7' \
+ 'huggingface-hub>=1.32,<2' 'hf-xet>=1.6,<2' 'git+https://github.com/huggingface/diffusers.git@0121a91f9d419ff7234c8a5923f82c244e6f1914'
 COPY --from=salad-worker /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/
 COPY docker/workers/qwen-image-2.1/download_models.sh /usr/local/bin/download-models
 COPY docker/workers/qwen-image-2.1/entrypoint.sh /usr/local/bin/worker-entrypoint

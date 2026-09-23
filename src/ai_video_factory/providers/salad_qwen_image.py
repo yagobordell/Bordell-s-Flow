@@ -7,11 +7,17 @@ from pathlib import Path
 
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectOutput
 from ai_video_factory.workers.qwen_image_21 import (
+    QWEN_IMAGE_21_DEFAULT_STEPS,
     QWEN_IMAGE_21_GENERATION_PROFILE,
     QWEN_IMAGE_21_KEYFRAME_TASK,
     QWEN_IMAGE_21_MODEL_ID,
     QWEN_IMAGE_21_MODEL_REVISION,
+    QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+    QWEN_IMAGE_21_PRODUCTION_SIZE,
+    QWEN_IMAGE_21_PRODUCTION_WIDTH,
     QWEN_IMAGE_21_REFERENCE_TASK,
+    QWEN_IMAGE_21_TRUE_CFG_SCALE,
+    QWEN_IMAGE_21_USE_KV_CACHE,
     qwen_image_21_application_job_id,
     qwen_image_21_seed_for_job,
 )
@@ -54,7 +60,9 @@ def build_qwen_image_job_request(
             "width": width,
             "height": height,
             "seed": qwen_image_21_seed_for_job(job_id),
-            "num_inference_steps": 40,
+            "num_inference_steps": QWEN_IMAGE_21_DEFAULT_STEPS,
+            "true_cfg_scale": QWEN_IMAGE_21_TRUE_CFG_SCALE,
+            "use_kv_cache": QWEN_IMAGE_21_USE_KV_CACHE,
         },
     )
 
@@ -150,6 +158,11 @@ def _parse_size(size: str) -> tuple[int, int]:
         width, height = int(width_text), int(height_text)
     except (AttributeError, TypeError, ValueError) as exc:
         raise ValueError(f"Invalid Qwen image size: {size!r}") from exc
-    if width % 16 or height % 16 or width < 256 or height < 256:
-        raise ValueError("Qwen dimensions must be >=256 and divisible by 16")
+    if (width, height) != (
+        QWEN_IMAGE_21_PRODUCTION_WIDTH,
+        QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+    ):
+        raise ValueError(
+            f"Qwen production size must be exactly {QWEN_IMAGE_21_PRODUCTION_SIZE}"
+        )
     return width, height

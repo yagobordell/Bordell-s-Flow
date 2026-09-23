@@ -188,15 +188,8 @@ function Get-Group {
         return Invoke-SaladRequest -Uri $GroupUrl -Operation "read container group"
     }
     catch {
-        $Response = $_.Exception.Response
-        if ($null -ne $Response) {
-            try {
-                if ([int]$Response.StatusCode -eq 404) {
-                    return $null
-                }
-            }
-            catch {
-            }
+        if ((Get-HttpStatusCode -ErrorRecord $_) -eq 404) {
+            return $null
         }
         throw
     }

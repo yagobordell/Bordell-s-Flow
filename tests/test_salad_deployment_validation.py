@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
-from types import ModuleType
 
 SMOKE_SCRIPT = Path("scripts/run_salad_smoke_suite.py")
 VALIDATION_MANAGER = Path("scripts/manage_salad_validation.ps1")
@@ -10,14 +8,6 @@ SCALE_TO_ZERO_STARTER = Path("scripts/start_salad_scale_to_zero.ps1")
 PROTECTED_BOOTSTRAP = Path("scripts/start_salad_protected_smoke.ps1")
 SCALE_TO_ZERO_RESTORER = Path("scripts/restore_salad_scale_to_zero.ps1")
 
-
-def _load_smoke_module() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("run_salad_smoke_suite", SMOKE_SCRIPT)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def test_smoke_suite_uses_dependency_order_and_real_workers() -> None:
@@ -28,7 +18,7 @@ def test_smoke_suite_uses_dependency_order_and_real_workers() -> None:
     assert "SaladWhisperTranscriptionProvider" in text
     assert "SaladQwenImage21Provider" in text
     assert '"scripts/submit_ltx25_smoke.py"' in text
-    assert '"1536x864"' in text
+    assert "QWEN_IMAGE_21_PRODUCTION_SIZE" in text
     assert 'quality="high"' in text
 
 
@@ -38,7 +28,7 @@ def test_smoke_qwen_generation_matches_current_contract() -> None:
     assert "QWEN_IMAGE_21_KEYFRAME_TASK" in text
     assert "QWEN_IMAGE_21_MODEL_ID" in text
     assert 'task_name=QWEN_IMAGE_21_KEYFRAME_TASK' in text
-    assert 'size="1536x864"' in text
+    assert "size=QWEN_IMAGE_21_PRODUCTION_SIZE" in text
     assert 'output_format="png"' in text
 
 

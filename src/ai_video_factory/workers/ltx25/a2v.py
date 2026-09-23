@@ -336,7 +336,7 @@ def _prepare_avatar_image(
     try:
         with Image.open(source) as opened:
             image = opened.convert("RGB")
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         raise _input_error(
             "IMAGE_DECODE_FAILED", f"avatar image decode failed for {source}"
         ) from exc
