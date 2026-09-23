@@ -348,7 +348,8 @@ class DirectRealESRGANBackend:
                 free_value, total_value = bindings.torch.cuda.mem_get_info()
                 free = int(free_value)
                 total = int(total_value)
-            except Exception:
+            except RuntimeError:
+                # CUDA memory telemetry is best-effort and must not fail an inference job.
                 pass
         print(
             "REALESRGAN_PROGRESS "

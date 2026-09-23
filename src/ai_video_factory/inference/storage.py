@@ -99,7 +99,7 @@ class R2ObjectStorage:
 
 
 class LocalObjectStorage:
-    """Filesystem implementation for local Docker smoke tests only."""
+    """Filesystem implementation for tests and local development."""
 
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
@@ -122,7 +122,8 @@ class LocalObjectStorage:
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
         stored = self.stat(key)
-        assert stored is not None
+        if stored is None:  # pragma: no cover - defensive local race protection
+            raise FileNotFoundError(f"local object disappeared after download: {key}")
         return stored
 
     def upload(
@@ -147,7 +148,8 @@ class LocalObjectStorage:
         os.replace(metadata_temporary, metadata_path)
 
         stored = self.stat(key)
-        assert stored is not None
+        if stored is None:  # pragma: no cover - defensive local filesystem protection
+            raise RuntimeError(f"uploaded local object cannot be read back: {key}")
         return stored
 
     def stat(self, key: str) -> StoredObject | None:

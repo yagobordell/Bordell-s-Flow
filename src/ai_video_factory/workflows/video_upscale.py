@@ -371,8 +371,12 @@ def run_video_upscale(
                 and state.transport_status == "pending"
             ]
             for state in pending_probe_states:
-                assert state.transport_job_id is not None
-                queue.cancel(state.transport_job_id)
+                transport_job_id = state.transport_job_id
+                if transport_job_id is None:  # pragma: no cover - manifest invariant
+                    raise RuntimeError(
+                        f"Pending Real-ESRGAN transport lost its job id for shot {state.shot_id}"
+                    )
+                queue.cancel(transport_job_id)
                 state.transport_status = "cancelled"
             _write_manifest(manifest_path, manifest)
             raise TimeoutError(

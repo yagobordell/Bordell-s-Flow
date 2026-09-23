@@ -243,7 +243,8 @@ class PostgresJobRepository:
                 """,
                 (owner, lease_seconds, transport_job_id, request.job_id),
             ).fetchone()
-            assert updated is not None
+            if updated is None:  # pragma: no cover - defensive database invariant
+                raise RuntimeError(f"job row disappeared while claiming: {request.job_id}")
             return JobClaim(ClaimDecision.START, int(updated["attempt_count"]))
 
     def renew_lease(
