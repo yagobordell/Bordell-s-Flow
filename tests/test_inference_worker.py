@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from ai_video_factory.gpu.contracts import GPUJobRequest, ObjectInput, ObjectOutput
-from ai_video_factory.gpu.errors import (
+from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
+from ai_video_factory.inference.errors import (
     InputIntegrityError,
     JobBusyError,
     JobConflictError,
@@ -15,11 +15,11 @@ from ai_video_factory.gpu.errors import (
     NonRetryableTaskError,
     OutputConflictError,
 )
-from ai_video_factory.gpu.ports import LocalArtifact, LocalSidecarArtifact
-from ai_video_factory.gpu.repository import InMemoryJobRepository
-from ai_video_factory.gpu.storage import LocalObjectStorage, sha256_file
-from ai_video_factory.gpu.tasks import TaskRunnerRegistry
-from ai_video_factory.gpu.worker import GPUWorker
+from ai_video_factory.inference.ports import LocalArtifact, LocalSidecarArtifact
+from ai_video_factory.inference.repository import InMemoryJobRepository
+from ai_video_factory.inference.storage import LocalObjectStorage, sha256_file
+from ai_video_factory.inference.tasks import TaskRunnerRegistry
+from ai_video_factory.inference.worker import InferenceWorker
 
 
 class CountingCopyRunner:
@@ -30,7 +30,7 @@ class CountingCopyRunner:
 
     def run(
         self,
-        request: GPUJobRequest,
+        request: InferenceJobRequest,
         inputs: Mapping[str, Path],
         work_dir: Path,
     ) -> LocalArtifact:
@@ -48,7 +48,7 @@ class FailingRunner:
 
     def run(
         self,
-        request: GPUJobRequest,
+        request: InferenceJobRequest,
         inputs: Mapping[str, Path],
         work_dir: Path,
     ) -> LocalArtifact:
@@ -82,7 +82,7 @@ def seed(storage: LocalObjectStorage, path: Path, key: str, content: bytes) -> s
 
 
 def build_request(job_id: str, digest: str, *, parameters: dict[str, object] | None = None):
-    return GPUJobRequest(
+    return InferenceJobRequest(
         job_id=job_id,
         task="infrastructure.copy",
         inputs=[ObjectInput(name="source", key="inputs/source.txt", sha256=digest)],
@@ -95,7 +95,7 @@ def build_worker(tmp_path: Path):
     storage = LocalObjectStorage(tmp_path / "objects")
     repository = InMemoryJobRepository()
     runner = CountingCopyRunner()
-    worker = GPUWorker(
+    worker = InferenceWorker(
         storage=storage,
         repository=repository,
         runners=TaskRunnerRegistry([runner]),
@@ -125,7 +125,7 @@ def test_worker_max_attempts_prevents_second_inference_execution(tmp_path: Path)
     storage = LocalObjectStorage(tmp_path / "objects")
     repository = InMemoryJobRepository()
     runner = FailingRunner()
-    worker = GPUWorker(
+    worker = InferenceWorker(
         storage=storage,
         repository=repository,
         runners=TaskRunnerRegistry([runner]),
@@ -236,7 +236,7 @@ def test_active_lease_is_busy(tmp_path: Path) -> None:
 def test_worker_does_not_upload_after_losing_lease(tmp_path: Path) -> None:
     storage = LocalObjectStorage(tmp_path / "objects")
     runner = CountingCopyRunner()
-    worker = GPUWorker(
+    worker = InferenceWorker(
         storage=storage,
         repository=LeaseLosingRepository(),
         runners=TaskRunnerRegistry([runner]),
@@ -258,7 +258,7 @@ class SidecarRunner:
 
     def run(
         self,
-        request: GPUJobRequest,
+        request: InferenceJobRequest,
         inputs: Mapping[str, Path],
         work_dir: Path,
     ) -> LocalArtifact:
@@ -283,7 +283,7 @@ def test_worker_uploads_and_reconciles_declared_sidecars(tmp_path: Path) -> None
     storage = LocalObjectStorage(tmp_path / "objects")
     repository = InMemoryJobRepository()
     runner = SidecarRunner()
-    worker = GPUWorker(
+    worker = InferenceWorker(
         storage=storage,
         repository=repository,
         runners=TaskRunnerRegistry([runner]),
@@ -294,7 +294,7 @@ def test_worker_uploads_and_reconciles_declared_sidecars(tmp_path: Path) -> None
     )
     digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
     job_id = "job-sidecar"
-    request = GPUJobRequest(
+    request = InferenceJobRequest(
         job_id=job_id,
         task="test.sidecar",
         inputs=[ObjectInput(name="source", key="inputs/source.txt", sha256=digest)],

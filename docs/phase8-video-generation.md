@@ -68,7 +68,7 @@ idempotency boundary remains authoritative for replay and conflict detection.
 
 ## Run fingerprint
 
-Before submitting anything, Python builds every `GPUJobRequest` and hashes the ordered set of:
+Before submitting anything, Python builds every `InferenceJobRequest` and hashes the ordered set of:
 
 ```text
 shot_id + application_job_id + request_sha256

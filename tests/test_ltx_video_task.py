@@ -8,9 +8,10 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-import ai_video_factory.gpu.ltx_video as ltx_video
-from ai_video_factory.gpu.contracts import GPUJobRequest, ObjectInput, ObjectOutput
-from ai_video_factory.gpu.ltx_video import (
+import ai_video_factory.workers.ltx25.model as ltx_video
+from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
+from ai_video_factory.inference.tasks import CopyTaskRunner, TaskRunnerRegistry
+from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
     DirectLTX25Backend,
     LTXModelFiles,
@@ -18,7 +19,6 @@ from ai_video_factory.gpu.ltx_video import (
     LTXVideoTaskRunner,
     ltx_num_frames_for_duration,
 )
-from ai_video_factory.gpu.tasks import CopyTaskRunner, TaskRunnerRegistry
 
 
 class FakeBackend:
@@ -65,9 +65,9 @@ def parameters(**updates: Any) -> dict[str, Any]:
     return values
 
 
-def request(**parameter_updates: Any) -> GPUJobRequest:
+def request(**parameter_updates: Any) -> InferenceJobRequest:
     job_id = "phase8-shot-001-deadbeef"
-    return GPUJobRequest(
+    return InferenceJobRequest(
         job_id=job_id,
         task="video.ltx25.generate",
         inputs=[
@@ -179,10 +179,10 @@ def test_task_runner_rejects_wrong_input_or_output_contract(tmp_path: Path) -> N
     assert backend.calls == []
 
 
-def test_phase8_registry_keeps_smoke_and_runs_lifecycle_hooks() -> None:
+def test_inference_registry_keeps_smoke_and_runs_lifecycle_hooks() -> None:
     backend = FakeBackend()
     video_runner = LTXVideoTaskRunner(backend=backend)
-    registry = TaskRunnerRegistry.phase8(video_runner)
+    registry = TaskRunnerRegistry([CopyTaskRunner(), video_runner])
 
     registry.prepare()
     registry.ready()

@@ -1,85 +1,13 @@
 import asyncio
-import base64
 from io import BytesIO
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from PIL import Image
 
 from ai_video_factory.domain import Shot, StoryboardFrame
-from ai_video_factory.providers.images import GeneratedImage, ImageReferenceInput
-from ai_video_factory.providers.openai_images import OpenAIImageProvider
+from ai_video_factory.providers.images import GeneratedImage
 from ai_video_factory.workflows.storyboard_keyframes import generate_storyboard_keyframes
-
-
-class FakeImagesResource:
-    def __init__(self, payload: bytes) -> None:
-        self.payload = payload
-        self.last_edit: dict[str, Any] | None = None
-        self.last_generate: dict[str, Any] | None = None
-
-    async def edit(self, **kwargs: Any) -> Any:
-        self.last_edit = kwargs
-        encoded = base64.b64encode(self.payload).decode("ascii")
-        return SimpleNamespace(data=[SimpleNamespace(b64_json=encoded)])
-
-    async def generate(self, **kwargs: Any) -> Any:
-        self.last_generate = kwargs
-        encoded = base64.b64encode(self.payload).decode("ascii")
-        return SimpleNamespace(data=[SimpleNamespace(b64_json=encoded)])
-
-
-class FakeOpenAIClient:
-    def __init__(self, payload: bytes) -> None:
-        self.images = FakeImagesResource(payload)
-
-
-def _image_references() -> list[ImageReferenceInput]:
-    return [
-        ImageReferenceInput(content=b"group", media_type="image/png"),
-        ImageReferenceInput(content=b"place", media_type="image/webp"),
-    ]
-
-
-def test_openai_image_provider_omits_input_fidelity_when_not_requested() -> None:
-    client = FakeOpenAIClient(b"edited-png")
-    provider = OpenAIImageProvider(client=client)  # type: ignore[arg-type]
-
-    image = asyncio.run(
-        provider.generate_image_with_references(
-            prompt="New storyboard composition",
-            references=_image_references(),
-            model="gpt-image-2",
-            size="1536x864",
-            quality="medium",
-            output_format="png",
-        )
-    )
-
-    assert image.content == b"edited-png"
-    assert client.images.last_edit is not None
-    assert "input_fidelity" not in client.images.last_edit
-
-
-def test_openai_image_provider_forwards_explicit_input_fidelity() -> None:
-    client = FakeOpenAIClient(b"edited-png")
-    provider = OpenAIImageProvider(client=client)  # type: ignore[arg-type]
-
-    asyncio.run(
-        provider.generate_image_with_references(
-            prompt="New storyboard composition",
-            references=_image_references(),
-            model="compatible-image-model",
-            size="1536x864",
-            quality="medium",
-            output_format="png",
-            input_fidelity="high",
-        )
-    )
-
-    assert client.images.last_edit is not None
-    assert client.images.last_edit["input_fidelity"] == "high"
 
 
 def _png_bytes(width: int, height: int) -> bytes:

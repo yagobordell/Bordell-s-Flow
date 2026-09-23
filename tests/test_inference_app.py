@@ -4,18 +4,18 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from ai_video_factory.gpu.app import create_app
-from ai_video_factory.gpu.repository import InMemoryJobRepository
-from ai_video_factory.gpu.storage import LocalObjectStorage, sha256_file
-from ai_video_factory.gpu.tasks import TaskRunnerRegistry
-from ai_video_factory.gpu.worker import GPUWorker
+from ai_video_factory.inference.app import create_app
 from ai_video_factory.inference.errors import ModelBootstrapPendingError
+from ai_video_factory.inference.repository import InMemoryJobRepository
+from ai_video_factory.inference.storage import LocalObjectStorage, sha256_file
+from ai_video_factory.inference.tasks import CopyTaskRunner, TaskRunnerRegistry
+from ai_video_factory.inference.worker import InferenceWorker
 
 
 def test_http_worker_health_readiness_and_job(tmp_path: Path) -> None:
     storage = LocalObjectStorage(tmp_path / "objects")
     source = tmp_path / "source.txt"
-    source.write_bytes(b"phase 7\n")
+    source.write_bytes(b"smoke\n")
     digest = sha256_file(source)
     storage.upload(
         source,
@@ -23,10 +23,10 @@ def test_http_worker_health_readiness_and_job(tmp_path: Path) -> None:
         content_type="text/plain",
         metadata={"artifact-sha256": digest},
     )
-    worker = GPUWorker(
+    worker = InferenceWorker(
         storage=storage,
         repository=InMemoryJobRepository(),
-        runners=TaskRunnerRegistry.phase7(),
+        runners=TaskRunnerRegistry([CopyTaskRunner()]),
         worker_id="http-worker",
         temp_dir=tmp_path / "temp",
         lease_seconds=60,

@@ -11,8 +11,12 @@ from PIL import Image
 
 import ai_video_factory.workflows.video_generation as video_generation
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
-from ai_video_factory.gpu.contracts import GPUJobRequest, GPUJobResponse, OutputArtifact
-from ai_video_factory.gpu.ports import StoredObject
+from ai_video_factory.inference.contracts import (
+    InferenceJobRequest,
+    InferenceJobResponse,
+    OutputArtifact,
+)
+from ai_video_factory.inference.ports import StoredObject
 from ai_video_factory.providers.job_queue import (
     QueueJobNotFoundError,
     QueueJobSnapshot,
@@ -83,14 +87,14 @@ class FakeStorage:
 class FakeQueue:
     def __init__(self, storage: FakeStorage) -> None:
         self.storage = storage
-        self.requests: dict[str, GPUJobRequest] = {}
+        self.requests: dict[str, InferenceJobRequest] = {}
         self.statuses: dict[str, QueueJobStatus] = {}
         self.operations: list[tuple[str, str]] = []
         self.submit_counts: dict[str, int] = {}
 
     def submit(
         self,
-        request: GPUJobRequest,
+        request: InferenceJobRequest,
         *,
         metadata: Mapping[str, str],
     ) -> QueueJobSnapshot:
@@ -118,7 +122,7 @@ class FakeQueue:
                 "request-sha256": request.fingerprint(),
                 "artifact-sha256": digest,
             }
-            output = GPUJobResponse(
+            output = InferenceJobResponse(
                 job_id=request.job_id,
                 request_sha256=request.fingerprint(),
                 output=OutputArtifact(
