@@ -154,6 +154,8 @@ def test_running_not_ready_timer_survives_same_machine_container_restarts() -> N
     assert "$MachineId -ne $RunningNotReadyMachineId" in script
     assert "$RunningNotReadyMachineId = $MachineId" in script
     assert "$RunningNotReadyInstanceId" not in script
+    assert "$MachineChanged = (" in script
+    assert "if ($Ready -or $MachineChanged)" in script
 
 
 def test_heavy_gpu_running_not_ready_reallocates_stalled_model_bootstrap() -> None:
