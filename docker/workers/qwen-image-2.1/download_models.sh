@@ -32,6 +32,11 @@ rm -f "${marker}"
 rm -rf "${snapshot}"
 mkdir -p "${snapshot}"
 
+download_args=(download "${repository}" --revision "${revision}" --local-dir "${snapshot}")
+if [[ -n "${HF_TOKEN:-}" ]]; then
+  download_args+=(--token "${HF_TOKEN}")
+fi
+
 HF_HUB_OFFLINE=0 python -m ai_video_factory.workers.download_watchdog \
   --progress-root "${snapshot}" \
   --stall-timeout-seconds "${QWEN_IMAGE_21_DOWNLOAD_STALL_TIMEOUT_SECONDS:-600}" \
@@ -40,9 +45,7 @@ HF_HUB_OFFLINE=0 python -m ai_video_factory.workers.download_watchdog \
   --label qwen-image-2.1 \
   --reallocate-on-slow \
   -- \
-  hf download "${repository}" \
-    --revision "${revision}" \
-    --local-dir "${snapshot}"
+  hf "${download_args[@]}"
 
 if ! snapshot_ready; then
   echo "Qwen-Image-2.1 model bootstrap completed with missing required files" >&2
