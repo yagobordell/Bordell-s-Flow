@@ -20,10 +20,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.12"
 
@@ -33,9 +33,6 @@ jobs:
           version: "0.12.18"
           enable-cache: true
 
-      - name: Verify Python lockfile
-        run: uv lock --check
-
       - name: Sync project
         run: uv sync --locked --extra dev
 
@@ -43,16 +40,14 @@ jobs:
         run: uv pip check
 
       - name: Ruff
-        run: uv run --locked --extra dev --no-sync ruff check .
+        run: uv run --no-sync ruff check .
 
       - name: Pytest
-        run: uv run --locked --extra dev --no-sync python -m pytest
+        run: uv run --no-sync python -m pytest
 
       - name: PowerShell syntax
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          $Failed = $false
           Get-ChildItem scripts -Recurse -Filter *.ps1 | ForEach-Object {
               $Tokens = $null
               $Errors = $null
@@ -61,22 +56,14 @@ jobs:
                   [ref]$Tokens,
                   [ref]$Errors
               ) | Out-Null
-              if ($Errors.Count -gt 0) {
-                  Write-Error "PowerShell parse errors in $($_.FullName): $($Errors -join '; ')"
-                  $Failed = $true
+              if ($Errors) {
+                  throw "PowerShell parse errors in $($_.FullName): $($Errors -join '; ')"
               }
-          }
-          if ($Failed) {
-              exit 1
           }
 
       - name: Bash syntax
         shell: bash
-        run: |
-          while IFS= read -r -d '' script; do
-            bash -n "$script"
-          done < <(find docker -type f -name '*.sh' -print0)
-
+        run: find docker -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
 
   remotion:
     runs-on: ubuntu-latest
@@ -84,10 +71,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up Node 22
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: "22"
 
