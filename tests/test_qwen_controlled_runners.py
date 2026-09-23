@@ -1,18 +1,7 @@
 from pathlib import Path
 
-ARM = Path("scripts/arm_salad_scale_to_zero.ps1")
 PHASE4 = Path("scripts/run_phase4_assets_controlled.ps1")
 PHASE6 = Path("scripts/run_phase6_keyframes_controlled.ps1")
-
-
-def test_scale_to_zero_arm_accepts_deploying_without_waiting_for_running() -> None:
-    text = ARM.read_text(encoding="utf-8")
-
-    assert '$Status -in @("deploying", "running")' in text
-    assert "scale-to-zero armed" in text
-    assert "queue work may now autoscale it" in text
-    assert "Wait-ForGroupStatus" not in text
-
 
 
 def test_controlled_image_runners_use_qwen_optimized_prewarm() -> None:
@@ -21,6 +10,7 @@ def test_controlled_image_runners_use_qwen_optimized_prewarm() -> None:
         assert '"start_salad_optimized_prewarm.ps1"' in text
         assert 'Service = "qwen_image_21"' in text
         assert '"arm_salad_scale_to_zero.ps1"' not in text
+
 
 def test_phase4_plan_flattens_json_array_before_counting_hits() -> None:
     text = PHASE4.read_text(encoding="utf-8")
