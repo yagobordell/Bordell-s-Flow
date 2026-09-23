@@ -12,14 +12,14 @@ from pathlib import Path
 from typing import Any
 
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
-from ai_video_factory.gpu.contracts import GPUJobRequest, ObjectInput, ObjectOutput
-from ai_video_factory.gpu.ltx_jobs import ltx_video_application_job_id
-from ai_video_factory.gpu.ltx_video import (
+from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
+from ai_video_factory.inference.storage import R2ObjectStorage, sha256_file
+from ai_video_factory.workers.ltx25.jobs import ltx_video_application_job_id
+from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
     LTX_VIDEO_TASK,
     ltx_num_frames_for_duration,
 )
-from ai_video_factory.gpu.storage import R2ObjectStorage, sha256_file
 
 REQUIRED_ENV = (
     "SALAD_API_KEY",
@@ -213,7 +213,7 @@ def main() -> None:
     )
     input_key = f"phase8/keyframes/{keyframe_sha256}.png"
     output_key = f"jobs/{job_id}/shot_{args.shot_id:03d}.mp4"
-    job = GPUJobRequest(
+    job = InferenceJobRequest(
         job_id=job_id,
         task=LTX_VIDEO_TASK,
         inputs=[
