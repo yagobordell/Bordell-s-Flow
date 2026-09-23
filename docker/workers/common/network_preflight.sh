@@ -7,7 +7,7 @@ attempts="${SALAD_NETWORK_TEST_ATTEMPTS:-3}"
 delay_seconds="${SALAD_NETWORK_TEST_DELAY_SECONDS:-5}"
 speed_test_url="${SALAD_NETWORK_TEST_URL:-https://speed.cloudflare.com/__down?bytes=${test_bytes}}"
 
-if awk -v min="${min_mbps}" 'BEGIN {exit !(min <= 0)}'; then
+if python3 -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) <= 0 else 1)' "${min_mbps}"; then
   echo "SALAD_NETWORK_PREFLIGHT disabled=true"
   exit 0
 fi
@@ -21,13 +21,12 @@ for attempt in $(seq 1 "${attempts}"); do
       --max-time 30 \
       --write-out "%{speed_download}" \
       "${speed_test_url}"); then
-    current_mbps=$(awk -v s="${speed_bps}" 'BEGIN {printf "%.2f", s * 8 / 1000000}')
-    best_mbps=$(awk -v best="${best_mbps}" -v current="${current_mbps}" \
-      'BEGIN {printf "%.2f", (current > best ? current : best)}')
+    current_mbps=$(python3 -c 'import sys; print(f"{float(sys.argv[1]) * 8 / 1_000_000:.2f}")' "${speed_bps}")
+    best_mbps=$(python3 -c 'import sys; print(f"{max(float(sys.argv[1]), float(sys.argv[2])):.2f}")' "${best_mbps}" "${current_mbps}")
     echo "SALAD_NETWORK_PREFLIGHT_SAMPLE attempt=${attempt} download_mbps=${current_mbps}"
 
-    if awk -v current="${current_mbps}" -v min="${min_mbps}" \
-      'BEGIN {exit !(current >= min)}'; then
+    if python3 -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)' \
+      "${current_mbps}" "${min_mbps}"; then
       echo "SALAD_NETWORK_PREFLIGHT_PASS download_mbps=${current_mbps} minimum_mbps=${min_mbps}"
       exit 0
     fi
