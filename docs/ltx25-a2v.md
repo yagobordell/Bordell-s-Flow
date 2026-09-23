@@ -107,6 +107,13 @@ DiffVAE:      CHUNKED_EAGER / eager SDPA compatibility route
 
 The eager-SDPA compatibility route is retained from the existing RTX 5090 I2V validation.
 
+Before DiffVAE resolves its automatic decode tiling budget, the A2V adapter invokes LTX's own
+`cleanup_accelerator_memory` hook. This happens at the exact point where upstream asks
+`activation_budget_bytes` for available VRAM, after prompt encoding but before Stage 1. It only
+releases unreferenced allocator/cache memory; live prompt/audio tensors remain accounted for.
+The worker logs raw free, allocated, reserved, total, and effective activation-budget bytes so a
+future memory failure can distinguish real VRAM pressure from allocator cache retention.
+
 ## Request contract
 
 The public task is deliberately named by capability, not by bot:
