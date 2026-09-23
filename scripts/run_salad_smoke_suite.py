@@ -181,6 +181,7 @@ async def _smoke_breeze(args: argparse.Namespace) -> None:
         "service": "breeze_tts2",
         "model": BREEZE_TTS2_MODEL_ID,
         "wall_seconds": round(time.monotonic() - started, 3),
+        "smoke_id": smoke_id,
         "artifact": destination.as_posix(),
         "size_bytes": destination.stat().st_size,
         "sha256": sha256_file(destination),
@@ -253,10 +254,12 @@ async def _smoke_qwen_image_21(args: argparse.Namespace) -> None:
         temp_dir=settings.temp_dir / "deployment-validation-qwen-image-21",
         task_name=QWEN_IMAGE_21_KEYFRAME_TASK,
     )
+    smoke_id = f"smoke-{time.time_ns()}"
     prompt = (
         "A cinematic 16:9 documentary still of a compact robotic cinema camera on a "
         "clean studio table, realistic materials, soft directional studio lighting, "
-        "stable composition, no text, deployment validation image."
+        "stable composition, no text, deployment validation image. "
+        f"Internal validation id {smoke_id}; do not render the identifier."
     )
     image = await provider.generate_image(
         prompt=prompt,
@@ -265,6 +268,10 @@ async def _smoke_qwen_image_21(args: argparse.Namespace) -> None:
         quality="high",
         output_format="png",
     )
+    if image.metadata.get("replayed") != "false":
+        raise RuntimeError(
+            "Qwen-Image-2.1 smoke must execute fresh inference; cached replay is not accepted"
+        )
     destination = args.output_dir / "qwen-image-21-keyframe.png"
     args.output_dir.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(image.content)
