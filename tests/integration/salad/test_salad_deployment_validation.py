@@ -55,7 +55,7 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     assert 'if (-not $CallSucceeded)' in text
     assert '"Prepare" { Invoke-StackAction -StackAction "Prepare" }' in text
     assert '"Start" { Invoke-ScaleToZeroStart }' in text
-    assert '"Prewarm" { Invoke-ProtectedSmokeBootstrap }' in text
+    assert '"Prewarm" { Invoke-SafePrewarm }' in text
     assert '"ProtectedSmoke" { Invoke-ProtectedSmoke }' in text
     assert '"Stop" { Invoke-SafeStop }' in text
     assert 'ValidateSet("Full"' not in text
