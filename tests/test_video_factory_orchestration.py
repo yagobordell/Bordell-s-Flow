@@ -54,17 +54,20 @@ def test_phase4_and_phase6_use_qwen_only() -> None:
         assert "ideogram" not in runner_text.lower()
 
 
+
 def test_qwen_controlled_runners_prewarm_before_generation() -> None:
     for path in (
         "scripts/run_phase4_assets_controlled.ps1",
         "scripts/run_phase6_keyframes_controlled.ps1",
     ):
         text = _read(path)
-        assert text.index("Qwen-Image-2.1 prewarm") < text.index("python @args")
+        assert text.index("Qwen-Image-2.1 prewarm") < text.index(
+            "& python $Runner @RunnerArguments"
+        )
         assert "start_salad_optimized_prewarm.ps1" in text
-        assert "restore_salad_scale_to_zero.ps1" in text
+        assert "manage_salad_validation.ps1" in text
+        assert "-Action Stop -Service qwen_image_21" in text
         assert "cleanup_salad_queue.ps1" in text
-
 
 def test_queue_cleanup_cancels_orphaned_active_jobs_after_group_stop() -> None:
     text = _read("scripts/cleanup_salad_queue.ps1")
