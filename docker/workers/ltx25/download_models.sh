@@ -9,10 +9,12 @@ DOWNLOAD_STALL_TIMEOUT_SECONDS="${LTX_MODEL_DOWNLOAD_STALL_TIMEOUT_SECONDS:-600}
 
 MODEL_FILES=(
   diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors
+  diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors
   text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors
   vae/ltx-2.5-video-vae-bf16.safetensors
   vae/ltx-2.5-audio-vae-bf16.safetensors
   latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors
+  loras/ltx-2.5-22b-distilled-lora-450-bf16.safetensors
 )
 
 require_positive_integer() {
@@ -160,10 +162,12 @@ import os
 root = Path(os.environ.get("LTX_MODEL_ROOT", "/workspace/models/ltx-2.5"))
 files = [
     "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+    "diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors",
     "text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
     "vae/ltx-2.5-video-vae-bf16.safetensors",
     "vae/ltx-2.5-audio-vae-bf16.safetensors",
     "latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+    "loras/ltx-2.5-22b-distilled-lora-450-bf16.safetensors",
 ]
 for relative in files:
     path = root / relative

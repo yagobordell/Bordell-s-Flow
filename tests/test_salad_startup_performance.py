@@ -103,7 +103,7 @@ def test_manifest_versions_and_download_profiles_are_explicit() -> None:
     assert services["ideogram4"]["environment"]["SALAD_LOG_LEVEL"] == "info"
     assert services["whisper"]["environment"]["SALAD_LOG_LEVEL"] == "info"
     assert services["whisper"]["autostart_policy"] is False
-    assert services["ltx25"]["image"].endswith("ltx25-torch211-cu128-eagersdpa-xet-v4")
+    assert services["ltx25"]["image"].endswith("ltx25-a2v-torch211-cu128-eagersdpa-xet-v5")
     assert services["ltx25"]["environment"]["PYTHONFAULTHANDLER"] == "1"
 
     assert services["ideogram4"]["autoscaler"]["max_replicas"] == 1

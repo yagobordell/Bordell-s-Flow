@@ -12,9 +12,10 @@ from ai_video_factory.gpu.errors import (
     JobBusyError,
     JobConflictError,
     LeaseLostError,
+    NonRetryableTaskError,
     OutputConflictError,
 )
-from ai_video_factory.gpu.ports import LocalArtifact
+from ai_video_factory.gpu.ports import LocalArtifact, LocalSidecarArtifact
 from ai_video_factory.gpu.repository import InMemoryJobRepository
 from ai_video_factory.gpu.storage import LocalObjectStorage, sha256_file
 from ai_video_factory.gpu.tasks import TaskRunnerRegistry
@@ -37,6 +38,23 @@ class CountingCopyRunner:
         output = work_dir / "result.txt"
         shutil.copyfile(inputs["source"], output)
         return LocalArtifact(output, request.output.content_type)
+
+
+class FailingRunner:
+    task_name = "infrastructure.copy"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def run(
+        self,
+        request: GPUJobRequest,
+        inputs: Mapping[str, Path],
+        work_dir: Path,
+    ) -> LocalArtifact:
+        del request, inputs, work_dir
+        self.calls += 1
+        raise RuntimeError("single-shot failure")
 
 
 class LeaseLosingRepository(InMemoryJobRepository):
@@ -100,6 +118,38 @@ def test_worker_executes_once_and_replays_completed_result(tmp_path: Path) -> No
     assert first.replayed is False
     assert second.replayed is True
     assert first.output.sha256 == digest
+    assert runner.calls == 1
+
+
+def test_worker_max_attempts_prevents_second_inference_execution(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    repository = InMemoryJobRepository()
+    runner = FailingRunner()
+    worker = GPUWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-1",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
+    request = build_request("job-single-shot", digest).model_copy(
+        update={"max_attempts": 1}
+    )
+
+    with pytest.raises(
+        NonRetryableTaskError,
+        match="RuntimeError: single-shot failure",
+    ):
+        worker.process(request, transport_job_id="salad-1")
+    with pytest.raises(
+        NonRetryableTaskError,
+        match="RuntimeError: single-shot failure",
+    ):
+        worker.process(request, transport_job_id="salad-2")
+
     assert runner.calls == 1
 
 
@@ -201,3 +251,73 @@ def test_worker_does_not_upload_after_losing_lease(tmp_path: Path) -> None:
     with pytest.raises(LeaseLostError, match="lost"):
         worker.process(request)
     assert storage.stat(request.output.key) is None
+
+
+class SidecarRunner:
+    task_name = "test.sidecar"
+
+    def run(
+        self,
+        request: GPUJobRequest,
+        inputs: Mapping[str, Path],
+        work_dir: Path,
+    ) -> LocalArtifact:
+        output = work_dir / "result.txt"
+        metadata = work_dir / "metadata.json"
+        shutil.copyfile(inputs["source"], output)
+        metadata.write_text('{"ok":true}\n', encoding="utf-8")
+        return LocalArtifact(
+            output,
+            request.output.content_type,
+            sidecars=(
+                LocalSidecarArtifact(
+                    name="metadata",
+                    path=metadata,
+                    content_type="application/json",
+                ),
+            ),
+        )
+
+
+def test_worker_uploads_and_reconciles_declared_sidecars(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    repository = InMemoryJobRepository()
+    runner = SidecarRunner()
+    worker = GPUWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-sidecar",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
+    job_id = "job-sidecar"
+    request = GPUJobRequest(
+        job_id=job_id,
+        task="test.sidecar",
+        inputs=[ObjectInput(name="source", key="inputs/source.txt", sha256=digest)],
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/output.txt",
+            content_type="text/plain",
+        ),
+        sidecar_outputs={
+            "metadata": ObjectOutput(
+                key=f"jobs/{job_id}/metadata.json",
+                content_type="application/json",
+            )
+        },
+    )
+
+    first = worker.process(request)
+    second = worker.process(request)
+
+    assert first.replayed is False
+    assert second.replayed is True
+    metadata = storage.stat(f"jobs/{job_id}/metadata.json")
+    assert metadata is not None
+    assert metadata.content_type == "application/json"
+    assert metadata.metadata["job-id"] == job_id
+    assert metadata.metadata["sidecar-name"] == "metadata"
+    assert metadata.metadata["request-sha256"] == request.fingerprint()

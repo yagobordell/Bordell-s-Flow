@@ -30,13 +30,13 @@
       "group_name": "ai-video-factory-ltx25-worker-v2",
       "queue_name": "ai-video-factory-ltx25-jobs-v2",
       "dockerfile": "docker/workers/ltx25/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:ltx25-torch211-cu128-eagersdpa-xet-v4",
+      "image": "docker.io/yagobordell/ai-video-factory:ltx25-a2v-torch211-cu128-eagersdpa-xet-v5",
       "priority": "high",
       "resources": {
         "cpu": 8,
-        "memory": 40960,
+        "memory": 61440,
         "shm_size": 8192,
-        "storage_amount": 137438953472,
+        "storage_amount": 171798691840,
         "gpu_class_names": [
           "RTX 5090 (32 GB)"
         ]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import math
 import threading
 from collections.abc import Mapping
@@ -310,15 +311,51 @@ def _force_diffvae_eager_sdpa(diffvae_apply: Any) -> None:
     diffvae_apply.triton_na_available = lambda: False
 
 
+class LTXPipelineModeController:
+    """Serialize LTX modes and keep at most one 22B transformer pipeline resident."""
+
+    def __init__(self) -> None:
+        self.lock = threading.RLock()
+        self._active_mode: str | None = None
+        self._releasers: dict[str, Any] = {}
+
+    @property
+    def active_mode(self) -> str | None:
+        return self._active_mode
+
+    def register(self, mode: str, release: Any) -> None:
+        with self.lock:
+            self._releasers[mode] = release
+
+    def activate(self, mode: str) -> None:
+        with self.lock:
+            if self._active_mode == mode:
+                return
+            previous = self._active_mode
+            if previous is not None:
+                release = self._releasers.get(previous)
+                if release is not None:
+                    release()
+            self._active_mode = mode
+
+
 class DirectLTX25Backend:
     """Resident, serialized direct-Python adapter around the validated LTX-2.5 pipeline."""
 
-    def __init__(self, *, model_root: Path, device: str = "cuda") -> None:
+    def __init__(
+        self,
+        *,
+        model_root: Path,
+        device: str = "cuda",
+        mode_controller: LTXPipelineModeController | None = None,
+    ) -> None:
         self._model_files = LTXModelFiles.from_root(model_root)
         self._device = device
         self._pipeline: Any | None = None
         self._bindings: _LTXBindings | None = None
-        self._lock = threading.Lock()
+        self._mode_controller = mode_controller or LTXPipelineModeController()
+        self._lock = self._mode_controller.lock
+        self._mode_controller.register("image_to_video", self._release_pipeline_locked)
 
     @property
     def pipeline_loaded(self) -> bool:
@@ -422,10 +459,22 @@ class DirectLTX25Backend:
         if self._device.startswith("cuda") and not bindings.torch.cuda.is_available():
             raise RuntimeError("CUDA is not available for the LTX-2.5 production runtime")
 
+    def _release_pipeline_locked(self) -> None:
+        if self._pipeline is None:
+            return
+        self._pipeline = None
+        gc.collect()
+        if self._bindings is not None:
+            cuda = getattr(self._bindings.torch, "cuda", None)
+            empty_cache = getattr(cuda, "empty_cache", None)
+            if empty_cache is not None:
+                empty_cache()
+
     def _get_or_build_pipeline(self, bindings: _LTXBindings) -> Any:
         if self._pipeline is not None:
             return self._pipeline
 
+        self._mode_controller.activate("image_to_video")
         model_paths = bindings.model_paths.from_split(
             transformer_path=str(self._model_files.transformer),
             text_encoder_path=str(self._model_files.text_encoder),

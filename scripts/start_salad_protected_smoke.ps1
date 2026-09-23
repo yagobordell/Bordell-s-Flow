@@ -98,12 +98,40 @@ function Get-SaladApiKey {
     return $Value.Trim()
 }
 
+function Invoke-SaladRead {
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [ValidateRange(1, 10)][int]$MaxAttempts = 3,
+        [ValidateRange(1, 120)][int]$TimeoutSec = 30
+    )
+
+    for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
+        try {
+            return Invoke-RestMethod `
+                -Method Get `
+                -Uri $Uri `
+                -Headers $Headers `
+                -TimeoutSec $TimeoutSec
+        }
+        catch {
+            if ($Attempt -eq $MaxAttempts) {
+                throw
+            }
+            Write-Warning (
+                "Transient Salad read failed ($Attempt/$MaxAttempts) for '$Uri': " +
+                "$($_.Exception.Message). Retrying control-plane read."
+            )
+            Start-Sleep -Seconds ([Math]::Min(10, 2 * $Attempt))
+        }
+    }
+}
+
 function Get-Group {
-    return Invoke-RestMethod -Uri $GroupUrl -Headers $Headers -TimeoutSec 30
+    return Invoke-SaladRead -Uri $GroupUrl
 }
 
 function Get-Queue {
-    return Invoke-RestMethod -Uri $QueueUrl -Headers $Headers -TimeoutSec 30
+    return Invoke-SaladRead -Uri $QueueUrl
 }
 
 function Get-RemoteQueueAutoscaler {
@@ -130,7 +158,7 @@ function Test-RemoteAutoscalerMinReplicas {
 }
 
 function Get-Instances {
-    $Response = Invoke-RestMethod -Uri $InstancesUrl -Headers $Headers -TimeoutSec 30
+    $Response = Invoke-SaladRead -Uri $InstancesUrl
     if ($Response.PSObject.Properties.Name -contains "instances") {
         return @($Response.instances)
     }
@@ -164,11 +192,8 @@ function Test-QueueAttachment {
 function Get-ActiveQueueJobs {
     $Active = @()
     for ($Page = 1; $Page -le 100; $Page += 1) {
-        $Response = Invoke-RestMethod `
-            -Method Get `
-            -Uri "$QueueUrl/jobs?page=$Page&page_size=25" `
-            -Headers $Headers `
-            -TimeoutSec 30
+        $Response = Invoke-SaladRead `
+            -Uri "$QueueUrl/jobs?page=$Page&page_size=25"
 
         $Items = @(
             if ($Response.PSObject.Properties.Name -contains "items") {
@@ -245,6 +270,7 @@ $Headers = @{
 }
 
 $Queue = Get-Queue
+$InitialQueueAttachment = Test-QueueAttachment -Queue $Queue
 $QueueSummaryLength = [int]$Queue.current_queue_length
 $QueueJobs = Get-ActiveQueueJobs
 if (-not [bool]$QueueJobs.complete) {
@@ -271,6 +297,40 @@ if ($QueueSummaryLength -ne 0) {
 
 $Group = Get-Group
 $Status = [string]$Group.current_state.status
+if (
+    $Status -eq "stopped" -and
+    -not [bool]$Group.pending_change -and
+    [int]$Group.replicas -ne 0
+) {
+    Write-Warning (
+        "Protected smoke found a stopped group with residual " +
+        "replicas=$([int]$Group.replicas). Normalizing to replicas=0 before bootstrap."
+    )
+    $NormalizeBody = @{ replicas = 0 } | ConvertTo-Json -Depth 10
+    Invoke-RestMethod `
+        -Method Patch `
+        -Uri $GroupUrl `
+        -Headers $Headers `
+        -ContentType "application/merge-patch+json" `
+        -Body $NormalizeBody `
+        -TimeoutSec 60 |
+        Out-Null
+
+    $NormalizeDeadline = (Get-Date).AddMinutes(2)
+    do {
+        Start-Sleep -Seconds 5
+        $Group = Get-Group
+        $Status = [string]$Group.current_state.status
+        if (
+            $Status -eq "stopped" -and
+            -not [bool]$Group.pending_change -and
+            [int]$Group.replicas -eq 0
+        ) {
+            break
+        }
+    }
+    while ((Get-Date) -lt $NormalizeDeadline)
+}
 if ($Status -ne "stopped" -or [bool]$Group.pending_change -or [int]$Group.replicas -ne 0) {
     throw (
         "Protected smoke bootstrap requires '$GroupName' at stopped/replicas=0/pending=False; " +
@@ -356,10 +416,9 @@ $RunningNotReadyReallocations = 0
 do {
     Start-Sleep -Seconds 5
     $Group = Get-Group
-    $Queue = Get-Queue
     $Instances = @(Get-Instances)
     $Status = [string]$Group.current_state.status
-    $Attached = Test-QueueAttachment -Queue $Queue
+    $Attached = $InitialQueueAttachment
     $StartedInstances = @($Instances | Where-Object { [bool]$_.started })
 
     if (-not $StartedBootstrapDeadlineSet -and $StartedInstances.Count -eq 1) {
@@ -634,7 +693,7 @@ do {
     ) {
         Write-Warning (
             "$Service protected bootstrap verified one started ready instance; " +
-            "queue attachment observation=$Attached; " +
+            "initial queue attachment observation=$Attached; " +
             "the caller must stop and normalize replicas=0 in a finally block."
         )
         exit 0

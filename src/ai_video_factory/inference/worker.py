@@ -13,6 +13,7 @@ from .errors import (
     JobExecutionError,
     LeaseLostError,
     NonRetryableTaskError,
+    OutputConflictError,
     UnsupportedTaskError,
 )
 from .ports import ClaimDecision, JobRepository, ObjectStorage, StoredObject
@@ -129,6 +130,14 @@ class InferenceWorker:
             raise JobBusyError(f"job is currently leased by another worker: {request.job_id}")
 
         try:
+            if (
+                request.max_attempts is not None
+                and claim.attempt_count > request.max_attempts
+            ):
+                raise NonRetryableTaskError(
+                    f"job {request.job_id} exceeded max_attempts={request.max_attempts}; "
+                    "refusing to re-run inference"
+                )
             response = self._execute_claimed(request, request_sha256, claim.attempt_count)
         except (
             JobConflictError,
@@ -137,10 +146,16 @@ class InferenceWorker:
             NonRetryableTaskError,
             UnsupportedTaskError,
         ) as exc:
-            self._mark_failed(request, request_sha256, exc)
+            failure = self._single_shot_failure(request, exc)
+            self._mark_failed(request, request_sha256, failure)
+            if failure is not exc:
+                raise failure from exc
             raise
         except Exception as exc:
-            self._mark_failed(request, request_sha256, exc)
+            failure = self._single_shot_failure(request, exc)
+            self._mark_failed(request, request_sha256, failure)
+            if failure is not exc:
+                raise failure from exc
             raise JobExecutionError(f"execution failed for job {request.job_id}") from exc
 
         self.repository.mark_succeeded(
@@ -160,6 +175,7 @@ class InferenceWorker:
         existing = self.storage.stat(request.output.key)
         if existing is not None:
             output = self._reconcile_existing(request, request_sha256, existing)
+            self._reconcile_existing_sidecars(request, request_sha256)
             return InferenceJobResponse(
                 job_id=request.job_id,
                 request_sha256=request_sha256,
@@ -190,6 +206,7 @@ class InferenceWorker:
                 self._validate_local_artifact(artifact.path, work_dir)
                 if artifact.content_type != request.output.content_type:
                     raise ValueError("task output content type does not match the job contract")
+                self._upload_sidecars(request, request_sha256, artifact.sidecars, work_dir)
                 digest = sha256_file(artifact.path)
                 heartbeat.renew_now()
 
@@ -247,6 +264,62 @@ class InferenceWorker:
         if path.is_symlink() or not path.is_file() or path.stat().st_size < 1:
             raise ValueError("task runner produced an empty, missing or unsafe artifact")
 
+    def _upload_sidecars(
+        self,
+        request: InferenceJobRequest,
+        request_sha256: str,
+        sidecars: tuple[object, ...],
+        work_dir: Path,
+    ) -> None:
+        declared = request.sidecar_outputs or {}
+        returned = {item.name: item for item in sidecars}
+        if set(returned) != set(declared):
+            raise ValueError("task sidecar artifacts do not match the request contract")
+        for name, contract in declared.items():
+            artifact = returned[name]
+            path = artifact.path
+            content_type = artifact.content_type
+            self._validate_local_artifact(path, work_dir)
+            if content_type != contract.content_type:
+                raise ValueError(
+                    f"sidecar {name!r} content type does not match the request contract"
+                )
+            digest = sha256_file(path)
+            self.storage.upload(
+                path,
+                contract.key,
+                content_type=content_type,
+                metadata={
+                    "job-id": request.job_id,
+                    "request-sha256": request_sha256,
+                    "artifact-sha256": digest,
+                    "sidecar-name": name,
+                },
+            )
+
+    def _reconcile_existing_sidecars(
+        self,
+        request: InferenceJobRequest,
+        request_sha256: str,
+    ) -> None:
+        for name, contract in (request.sidecar_outputs or {}).items():
+            stored = self.storage.stat(contract.key)
+            if stored is None:
+                raise OutputConflictError(
+                    f"primary output exists but sidecar {name!r} is missing: {contract.key}"
+                )
+            metadata = stored.metadata
+            if (
+                metadata.get("job-id") != request.job_id
+                or metadata.get("request-sha256") != request_sha256
+                or metadata.get("sidecar-name") != name
+                or not metadata.get("artifact-sha256")
+                or stored.content_type != contract.content_type
+            ):
+                raise OutputConflictError(
+                    f"sidecar output exists for a different request: {contract.key}"
+                )
+
     def _reconcile_existing(
         self,
         request: InferenceJobRequest,
@@ -259,8 +332,6 @@ class InferenceWorker:
             or metadata.get("request-sha256") != request_sha256
             or not metadata.get("artifact-sha256")
         ):
-            from .errors import OutputConflictError
-
             raise OutputConflictError(
                 f"output key already exists for a different request: {request.output.key}"
             )
@@ -289,6 +360,17 @@ class InferenceWorker:
             size_bytes=stored.size_bytes,
             sha256=expected_sha256,
             etag=stored.etag,
+        )
+
+    @staticmethod
+    def _single_shot_failure(
+        request: InferenceJobRequest,
+        error: BaseException,
+    ) -> BaseException:
+        if request.max_attempts != 1 or isinstance(error, NonRetryableTaskError):
+            return error
+        return NonRetryableTaskError(
+            f"{type(error).__name__}: {error}"
         )
 
     def _mark_failed(

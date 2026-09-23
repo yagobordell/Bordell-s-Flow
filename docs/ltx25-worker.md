@@ -18,7 +18,8 @@ ai_video_factory.workers.ltx25.runtime
     |
     +--> shared ai_video_factory.inference worker core
     |
-    +--> video.ltx25.generate only
+    +--> video.ltx25.generate
+    +--> video.ltx25.audio_to_video
     |
     +--> LTX-2.5 direct Python/PyTorch runtime
     |
@@ -35,9 +36,12 @@ The shared `ai_video_factory.inference` package owns transport-independent execu
 - `/health`, `/ready` and `/jobs`;
 - model-agnostic task registration.
 
-The dedicated `ai_video_factory.workers.ltx25` package owns only LTX-specific behavior:
+The dedicated `ai_video_factory.workers.ltx25` package owns only LTX-specific behavior.
+The A2V/avatar-specific contract and smoke process are documented in
+[`ltx25-a2v.md`](ltx25-a2v.md).
 
-- the `video.ltx25.generate` task;
+
+- the `video.ltx25.generate` and `video.ltx25.audio_to_video` tasks;
 - LTX parameter and shape validation;
 - model file layout;
 - direct LTX pipeline construction;
@@ -86,9 +90,9 @@ group:        ai-video-factory-ltx25-worker-v2
 queue:        ai-video-factory-ltx25-jobs-v2
 GPU:          RTX 5090 (32 GB)
 CPU:          8
-memory:       40960 MiB
+memory:       61440 MiB
 shared memory:8192 MiB
-storage:      137438953472 bytes
+storage:      171798691840 bytes
 priority:     high
 autoscaler:   min=0, max=4
 ```
@@ -116,14 +120,16 @@ The old `manage_phase8_worker.ps1`, `start_phase8_autoscaled.ps1`, and `status_p
 
 ## Model bootstrap and watchdogs
 
-`docker/workers/ltx25/download_models.sh` materializes the five production checkpoints sequentially under `/workspace/models/ltx-2.5`:
+`docker/workers/ltx25/download_models.sh` materializes the seven production checkpoints sequentially under `/workspace/models/ltx-2.5`:
 
 ```text
 diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors
+diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors
 text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors
 vae/ltx-2.5-video-vae-bf16.safetensors
 vae/ltx-2.5-audio-vae-bf16.safetensors
 latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors
+loras/ltx-2.5-22b-distilled-lora-450-bf16.safetensors
 ```
 
 The downloader emits `MODEL_DOWNLOAD_PROGRESS` every 30 seconds using observed local download bytes. Any byte growth resets the idle timer. Ten minutes with no byte growth produces `MODEL_DOWNLOAD_STALLED` and terminates that download attempt.

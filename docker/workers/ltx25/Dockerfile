@@ -109,7 +109,7 @@ RUN chmod 0755 \
         /opt/factory/data
 
 RUN python3 -c \
-    "import importlib.util, torch, ltx_pipelines.distilled; \
+    "import importlib.util, torch, ltx_pipelines.distilled, ltx_pipelines.a2vid_two_stage; \
      assert torch.__version__.startswith('2.11.0'), torch.__version__; \
      assert torch.version.cuda == '12.8', torch.version.cuda; \
      assert importlib.util.find_spec('natten') is not None; \
@@ -117,7 +117,8 @@ RUN python3 -c \
      print('torch=', torch.__version__); \
      print('cuda=', torch.version.cuda); \
      print('natten=', natten.__version__); \
-     print('ltx_pipeline=OK')"
+     print('ltx_i2v_pipeline=OK'); \
+     print('ltx_a2v_pipeline=OK')"
 
 USER worker
 EXPOSE 8080
