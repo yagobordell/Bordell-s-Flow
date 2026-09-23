@@ -26,7 +26,7 @@ def test_validation_manager_exposes_explicit_prewarm_action() -> None:
     assert '"Prewarm"' in text
     assert '[int]$PrewarmTimeoutMinutes = 90' in text
     assert 'TimeoutMinutes = $PrewarmTimeoutMinutes' in text
-    assert '"Prewarm" { Invoke-ProtectedSmokeBootstrap }' in text
+    assert '"Prewarm" { Invoke-SafePrewarm }' in text
 
 
 
