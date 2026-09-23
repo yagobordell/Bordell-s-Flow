@@ -1,156 +1,68 @@
 # Architecture
 
-Bordell's Flow is a modular video-production pipeline. The production entry point is a finished
-script; experimental topic-to-script generation and historical benchmark infrastructure are not part
-of the active architecture.
+Bordell's Flow turns a finished script into a reproducible 16:9 video.
 
 ## Production flow
 
 ```text
 SourceScript
-  -> narrative planning
-  -> continuity + shots
-  -> narration + timing
-  -> visual references
-  -> storyboard + keyframes
-  -> LTX-2.5 video generation
-  -> Real-ESRGAN x2 upscale
-  -> Remotion + FFmpeg composition
+  -> narrative planning and shots
+  -> narration + word alignment
+  -> references + storyboard keyframes
+  -> LTX 2.5 video (1280x720 @ 24 fps)
+  -> Real-ESRGAN x2 (2560x1440 @ 24 fps)
+  -> Remotion + FFmpeg
   -> FinalVideo
 ```
 
-The default media providers are:
+Production providers are OpenAI for structured planning, Breeze TTS 2 for narration, Fish Speech as
+the classified narration fallback, Whisper Large V3 Turbo for alignment, Qwen Image 2.1 for images,
+LTX 2.5 for video, Real-ESRGAN for upscale and Remotion/FFmpeg for composition.
 
-- OpenAI structured reasoning for planning tasks.
-- Breeze TTS 2 on Salad for narration.
-- Fish Speech S2 Pro on Salad as the classified narration fallback.
-- Whisper Large V3 Turbo on Salad for transcription/alignment.
-- Qwen-Image-2.1 on Salad for production image generation.
-- LTX-2.5 on Salad for video generation, including the audio-to-video avatar path.
-- Real-ESRGAN on Salad for 2x video upscale.
-- Ideogram 4 remains implemented for explicit future use but is outside the normal production path.
+Ideogram 4 remains implemented for explicit future use but is not selected by the normal production
+route.
 
 ## Repository boundaries
 
 ```text
 src/ai_video_factory/
-  bots/         structured planning logic
-  compositor/   final timeline, Remotion and mux integration
-  domain/       canonical audiovisual contracts
-  inference/    provider-neutral remote job/storage/lease core
-  providers/    external provider adapters
+  bots/         structured planning
+  compositor/   final timeline and rendering contracts
+  domain/       audiovisual contracts
+  inference/    model-neutral remote job/storage/lease core
+  providers/    provider adapters
   workers/      model-specific Salad runtimes
-  workflows/    application workflows and resumable orchestration
+  workflows/    resumable application workflows
 
-scripts/        executable orchestration and operational tooling
-deploy/salad/   canonical Salad service definitions
-docker/workers/ model-specific worker images
-remotion/       isolated TypeScript renderer
-infra/sql/      persistent inference job schema
+scripts/        pipeline, Salad, smoke and diagnostic commands
+deploy/salad/   canonical Salad service manifest
+docker/workers/ model worker images
+remotion/       TypeScript renderer
+infra/sql/      persistent inference-job schema
 tests/          regression and contract coverage
 ```
 
-## Canonical contracts
+## Core rules
 
-The production domain intentionally stays small. Operational transport metadata does not leak into
-the audiovisual contracts.
-
-```text
-SourceScript       = { text }
-NarrativeBlock     = { id, text }
-Beat               = { id, block_id, action }
-Scene              = { id, beat_ids }
-ContinuityEntity   = { id, kind, name, description }
-BlockContinuity    = { block_id, entity_ids }
-Shot               = { id, scene_id, beat_ids, entity_ids, action }
-VisualReference    = { entity_id, prompt }
-ReferenceAsset     = { entity_id, uri, metadata }
-NarrationAudio     = { uri, duration_seconds }
-NarrationWord      = { id, text, start_seconds, end_seconds }
-BeatTiming         = { beat_id, start_word_id, end_word_id, start_seconds, end_seconds }
-ShotTiming         = { shot_id, start_seconds, end_seconds }
-StoryboardFrame    = { shot_id, prompt }
-StoryboardKeyframe = { shot_id, uri }
-StoryboardGrid     = { scene_id, uri }
-VideoPrompt        = { shot_id, prompt }
-VideoClip          = { shot_id, uri }
-FinalVideo         = { uri, duration_seconds }
-```
-
-## Inference boundary
-
-All self-hosted model workers use the shared inference core:
-
-```text
-orchestrator
-   |
-   v
-Salad Job Queue
-   |
-   v
-model-specific worker
-   |             \
-   v              v
-R2 artifacts   Postgres job state / leases
-```
-
-`ai_video_factory.inference` owns the provider-neutral job envelope, object storage interfaces,
-idempotency, leases, replay and task dispatch. Model-specific code lives under
-`ai_video_factory.workers` and registers only the tasks it supports.
-
-The canonical deployment inventory is `deploy/salad/services.json`. Production workers scale to zero
-when idle and are started only by controlled orchestration when cache checks show work is required.
-
-## Image generation
-
-Qwen-Image-2.1 is the active production image generator for Phase 4 references and Phase 6
-keyframes. Both paths use deterministic application job identities and persist results in R2 before
-downstream use.
-
-Ideogram remains a separate explicit implementation for future or intentionally selected workflows.
-It is not a silent production fallback.
-
-## Narration and alignment
-
-Breeze TTS 2 is the primary narration worker. Fish Speech is started only for classified Breeze
-failures; it is not prewarmed speculatively.
-
-Whisper performs word-level alignment from the canonical narration asset. Timing workflows derive
-`BeatTiming` and `ShotTiming` deterministically from those words.
-
-## Video generation and upscale
-
-LTX-2.5 consumes storyboard keyframes and motion prompts for normal image-to-video generation.
-The same dedicated worker also exposes the audio-to-video task used by avatar segments. LTX output
-uses the production 1280x720 / 24 fps contract.
-
-Real-ESRGAN then upscales accepted clips 2x to 2560x1440 while preserving timeline semantics.
-
-## Composition
-
-Phase 9 treats `ShotTiming` as the source of truth. Remotion renders deterministic visual motion and
-FFmpeg performs the final audio mux. The final mux preserves the accepted video stream instead of
-regenerating model output.
+- Domain contracts do not contain Salad, R2 or Postgres transport details.
+- Model-specific imports stay outside `ai_video_factory.inference`.
+- GPU jobs use deterministic application identities and cache/replay before new allocation.
+- Qwen Image 2.1 is the active image generator; Ideogram is not a silent fallback.
+- Breeze is primary narration; Fish Speech is used only for classified eligible failures.
+- LTX output is silent 1280x720 video; Real-ESRGAN produces the 2560x1440 compositor input.
+- Phase 9 uses `ShotTiming` as timeline truth and muxes narration without regenerating accepted video.
+- Historical migrations and validation evidence belong in Git history, not active documentation.
 
 ## Orchestration
 
-`scripts/pipeline/run_video_factory.ps1` is the normal end-to-end entry point. It performs:
+The supported end-to-end entry point is:
 
-1. configuration and queue preflight before GPU allocation;
-2. cache/resume inspection;
-3. bounded DAG execution for production stages;
-4. controlled Salad worker lifecycle;
-5. Phase 9 composition;
-6. final stop, zero-replica verification and queue cleanup.
+```text
+scripts/pipeline/run_video_factory.ps1
+```
 
-`scripts/pipeline/run_production.py` owns stage fingerprints and resume semantics. Persisted artifacts remain
-the source of production content; manifests contain only operational state.
+It performs preflight, cache/resume inspection, dependency-aware execution, controlled Salad lifecycle,
+composition and final cleanup. `scripts/pipeline/run_production.py` owns stage fingerprints and resume
+semantics.
 
-## Design rules
-
-- Keep model-specific code out of the provider-neutral inference core.
-- Keep production contracts independent of Salad/R2/Postgres transport details.
-- Prefer deterministic job identities and cache-before-GPU checks.
-- Do not keep historical compatibility layers when the active path has a dedicated replacement.
-- Historical benchmarks, migrations and validation evidence belong in Git history rather than in the
-  active source tree unless they are still required to operate or reproduce the current system.
+The canonical deployment inventory is `deploy/salad/services.json`.
