@@ -11,7 +11,9 @@ RUN apt-get update \
     && echo "${SALAD_WORKER_SHA256}  /tmp/salad-worker.tar.gz" | sha256sum --check --strict \
     && tar --extract --gzip --file /tmp/salad-worker.tar.gz --directory /usr/local/bin \
         salad-http-job-queue-worker \
-    && chmod 0755 /usr/local/bin/salad-http-job-queue-worker
+    && chmod 0755 /usr/local/bin/salad-http-job-queue-worker \
+    && rm -f /tmp/salad-worker.tar.gz \
+    && rm -rf /var/lib/apt/lists/*
 
 FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
 

@@ -11,7 +11,9 @@ RUN apt-get update \
     && echo "${SALAD_WORKER_SHA256}  /tmp/salad-worker.tar.gz" | sha256sum --check --strict \
     && tar --extract --gzip --file /tmp/salad-worker.tar.gz --directory /usr/local/bin \
         salad-http-job-queue-worker \
-    && chmod 0755 /usr/local/bin/salad-http-job-queue-worker
+    && chmod 0755 /usr/local/bin/salad-http-job-queue-worker \
+    && rm -f /tmp/salad-worker.tar.gz \
+    && rm -rf /var/lib/apt/lists/*
 
 FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime
 
