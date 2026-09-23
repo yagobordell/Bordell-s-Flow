@@ -95,14 +95,15 @@ def test_ideogram_prewarm_has_specific_finite_runtime_and_node_budget() -> None:
 
 
 def test_manifest_versions_and_download_profiles_are_explicit() -> None:
-    services = json.loads(MANIFEST.read_text(encoding="utf-8"))["services"]
+    document = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    services = document["services"]
 
     assert services["ideogram4"]["image"].endswith("ideogram4-nf4-quality48-v4")
     assert services["breeze_tts2"]["image"].endswith("breeze-tts2-fast-decode-v6")
     assert services["whisper"]["image"].endswith("whisper-large-v3-turbo-v5")
-    assert services["ideogram4"]["environment"]["SALAD_LOG_LEVEL"] == "info"
-    assert services["whisper"]["environment"]["SALAD_LOG_LEVEL"] == "info"
-    assert services["whisper"]["autostart_policy"] is False
+    assert document["stack"]["shared_environment"]["SALAD_LOG_LEVEL"] == "info"
+    assert document["stack"]["autostart_policy"] is False
+    assert "autostart_policy" not in services["whisper"]
     assert services["ltx25"]["image"].endswith("ltx25-a2v-torch211-cu128-eagersdpa-xet-v5")
     assert services["ltx25"]["environment"]["PYTHONFAULTHANDLER"] == "1"
 
