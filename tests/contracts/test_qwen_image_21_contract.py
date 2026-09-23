@@ -169,4 +169,5 @@ def test_qwen_bootstrap_validates_required_snapshot_files() -> None:
     assert "--min-throughput-mibps" in script
     assert "QWEN_IMAGE_21_DOWNLOAD_MIN_THROUGHPUT_MIBPS" in script
     assert "/usr/local/bin/network-preflight" in script
+    assert 'download_args+=(--token "${HF_TOKEN}")' not in script
 
