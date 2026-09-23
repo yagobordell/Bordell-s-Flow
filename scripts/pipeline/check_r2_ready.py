@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from r2_client import create_r2_storage
-
 from ai_video_factory.config import settings
+from ai_video_factory.providers.r2 import create_r2_storage
 
 
 def _required_setting(name: str, value: str | None) -> str:

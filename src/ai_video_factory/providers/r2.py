@@ -35,7 +35,7 @@ def create_r2_storage(
     access_key_id: str,
     secret_access_key: str,
 ) -> R2ObjectStorage:
-    """Create the local orchestration R2 client with bounded network waits."""
+    """Create an R2 object-storage client with bounded network waits."""
 
     import boto3
 

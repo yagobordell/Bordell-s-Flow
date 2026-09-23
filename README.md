@@ -62,7 +62,7 @@ generados no deben versionarse.
 
 ## Ejecución
 
-Coloca el guion en `data/input/script.txt` y ejecuta:
+Los ejemplos versionados viven en `examples/input/`; `data/input/` queda reservado para inputs locales de ejecución y no se versiona. Copia el guion que quieras usar a `data/input/script.txt` y ejecuta:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File `

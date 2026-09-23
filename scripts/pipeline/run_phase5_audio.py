@@ -7,8 +7,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from r2_client import create_r2_storage
-
 from ai_video_factory.config import settings
 from ai_video_factory.domain import SourceScript
 from ai_video_factory.providers import (
@@ -18,6 +16,7 @@ from ai_video_factory.providers import (
     SaladFishSpeechProvider,
 )
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
+from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.providers.speech import GeneratedSpeech, SpeechProvider
 from ai_video_factory.workers.breeze_tts2 import BREEZE_TTS2_GENERATION_PROFILE

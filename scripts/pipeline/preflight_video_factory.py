@@ -15,11 +15,7 @@ from typing import Any
 from openai import OpenAI
 
 from ai_video_factory.config import settings
-
-try:
-    from .r2_client import create_r2_storage
-except ImportError:  # Direct execution: python scripts/pipeline/preflight_video_factory.py
-    from r2_client import create_r2_storage
+from ai_video_factory.providers.r2 import create_r2_storage
 
 REQUIRED_TOOLS = ("ffmpeg", "ffprobe", "node", "npm")
 
