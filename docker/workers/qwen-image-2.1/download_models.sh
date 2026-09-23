@@ -6,7 +6,23 @@ revision="${QWEN_IMAGE_21_MODEL_REVISION:-b3179ad355be050328e483a9dfdd9e60cd62ad
 snapshot="${model_root}/snapshot"
 marker="${model_root}/.ready"
 expected="${repository}@${revision}"
-if [[ -f "${marker}" ]] && [[ "$(cat "${marker}")" == "${expected}" ]] && [[ -f "${snapshot}/model_index.json" ]]; then
+required_files=(
+  "model_index.json"
+  "processor/tokenizer.json"
+  "scheduler/scheduler_config.json"
+  "text_encoder/model.safetensors.index.json"
+  "transformer/diffusion_pytorch_model.safetensors.index.json"
+  "vae/diffusion_pytorch_model.safetensors"
+)
+
+snapshot_ready() {
+  local relative
+  for relative in "${required_files[@]}"; do
+    [[ -s "${snapshot}/${relative}" ]] || return 1
+  done
+}
+
+if [[ -f "${marker}" ]] && [[ "$(cat "${marker}")" == "${expected}" ]] && snapshot_ready; then
   echo "Qwen-Image-2.1 model bootstrap cache hit"
   exit 0
 fi
@@ -22,6 +38,9 @@ snapshot_download(
     token=os.environ.get("HF_TOKEN"),
 )
 PY
-test -f "${snapshot}/model_index.json"
+if ! snapshot_ready; then
+  echo "Qwen-Image-2.1 model bootstrap completed with missing required files" >&2
+  exit 1
+fi
 printf '%s\n' "${expected}" > "${marker}"
 echo "Qwen-Image-2.1 model bootstrap complete"
