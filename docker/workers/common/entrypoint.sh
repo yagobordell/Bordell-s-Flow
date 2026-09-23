@@ -24,7 +24,7 @@ wait_for_endpoint() {
 
   while (( SECONDS < deadline )); do
     kill -0 "${app_pid}" 2>/dev/null || return 1
-    if python -c       "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080${path}', timeout=3)"       >/dev/null 2>&1; then
+    if python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080${path}', timeout=3)" >/dev/null 2>&1; then
       return 0
     fi
     sleep "${poll_seconds}"
