@@ -1,7 +1,6 @@
 from pathlib import Path
 
 
-
 def test_qwen_image_phases_pin_replica_before_generation() -> None:
     prewarm = Path("scripts/start_salad_optimized_prewarm.ps1").read_text(encoding="utf-8")
 
