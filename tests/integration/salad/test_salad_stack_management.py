@@ -34,11 +34,26 @@ def test_salad_manifest_centralizes_stack_identity_and_shared_environment() -> N
         "R2_ACCESS_KEY_ID",
         "R2_SECRET_ACCESS_KEY",
     ]
+    assert document["stack"]["shared_environment"] == {
+        "INFERENCE_WORKER_MODE": "production",
+        "INFERENCE_WORKER_HEARTBEAT_SECONDS": "30",
+        "SALAD_QUEUE_ENABLED": "true",
+        "SALAD_LOG_LEVEL": "info",
+    }
+    assert document["stack"]["shared_liveness_probe"] == {
+        "path": "/health",
+        "period_seconds": 30,
+        "timeout_seconds": 10,
+        "failure_threshold": 20,
+    }
 
     for service in document["services"].values():
         assert "organization" not in service
         assert "project" not in service
         assert "required_secrets" not in service
+        assert "liveness" not in service["probes"]
+        for name in document["stack"]["shared_environment"]:
+            assert name not in service["environment"]
         assert service["autoscaler"]["min_replicas"] == 0
 
 
@@ -50,14 +65,14 @@ def test_every_model_has_its_own_group_and_queue() -> None:
     assert len(groups) == len(set(groups)) == 7
     assert len(queues) == len(set(queues)) == 7
     assert services["whisper"]["required_environment"] == ["HF_TOKEN"]
-    assert services["breeze_tts2"]["required_environment"] == []
+    assert "required_environment" not in services["breeze_tts2"]
     assert services["breeze_tts2"]["group_name"] == "ai-video-factory-breeze-tts2-worker-v2"
     assert services["fish_speech"]["required_environment"] == ["HF_TOKEN"]
     assert services["fish_speech"]["group_name"] == "ai-video-factory-fish-speech-worker"
     assert services["ideogram4"]["required_environment"] == ["HF_TOKEN"]
     assert services["qwen_image_21"]["required_environment"] == ["HF_TOKEN"]
     assert services["ltx25"]["required_environment"] == ["HF_TOKEN"]
-    assert services["realesrgan"]["required_environment"] == []
+    assert "required_environment" not in services["realesrgan"]
 
 
 def test_worker_queue_display_names_match_salad_api_contract() -> None:
@@ -104,6 +119,7 @@ def test_worker_manager_supports_env_file_and_unattended_deployment() -> None:
     assert "[switch]$NonInteractive" in script
     assert "$Name is missing and -NonInteractive was requested." in script
     assert "shared_required_environment" in script
+    assert "shared_environment" in script
     assert "required_environment" in script
 
 
@@ -269,7 +285,7 @@ def test_whisper_uses_manual_prewarm_lifecycle_consistently() -> None:
     script = WORKER_MANAGER.read_text(encoding="utf-8")
 
     assert document["stack"]["autostart_policy"] is False
-    assert whisper["autostart_policy"] is False
+    assert "autostart_policy" not in whisper
     assert whisper["group_name"] == "ai-video-factory-whisper-worker-v5"
     assert whisper["queue_name"] == "ai-video-factory-whisper-jobs-v2"
     assert (
