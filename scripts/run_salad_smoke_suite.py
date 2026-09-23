@@ -353,7 +353,8 @@ def _smoke_ltx25(args: argparse.Namespace) -> None:
     keyframe_path = args.ltx_keyframe or (args.output_dir / "qwen-image-21-keyframe.png")
     if not keyframe_path.is_file():
         raise SystemExit(
-            "LTX smoke keyframe is missing. Run --service qwen_image_21 first or pass --ltx-keyframe."
+            "LTX smoke keyframe is missing. Run --service qwen_image_21 first "
+            "or pass --ltx-keyframe."
         )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
