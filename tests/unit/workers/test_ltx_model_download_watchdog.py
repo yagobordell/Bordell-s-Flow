@@ -43,3 +43,10 @@ def test_ltx_salad_manifest_prefers_fast_high_priority_5090_nodes() -> None:
     assert service["environment"]["SALAD_NETWORK_MIN_DOWNLOAD_MBPS"] == "100"
     assert service["environment"]["SALAD_NETWORK_TEST_ATTEMPTS"] == "3"
     assert service["environment"]["LTX_MODEL_DOWNLOAD_MIN_THROUGHPUT_MIBPS"] == "8"
+    assert "huggingface.co/Lightricks/LTX-2.5/resolve/" in service["environment"][
+        "SALAD_NETWORK_TEST_URL"
+    ]
+    assert service["environment"]["HF_HUB_DOWNLOAD_TIMEOUT"] == "60"
+    assert service["environment"]["HF_HUB_ETAG_TIMEOUT"] == "15"
+    assert service["environment"]["HF_XET_CLIENT_ENABLE_ADAPTIVE_CONCURRENCY"] == "true"
+    assert "HF_XET_HIGH_PERFORMANCE" not in service["environment"]
