@@ -691,11 +691,10 @@ do {
         $StartedInstances.Count -eq 1 -and
         $Ready
     ) {
-        Write-Warning (
+        Write-Host (
             "$Service protected bootstrap verified one started ready instance; " +
-            "initial queue attachment observation=$Attached; " +
-            "the caller must stop and normalize replicas=0 in a finally block."
-        )
+            "initial queue attachment observation=$Attached."
+        ) -ForegroundColor Green
         exit 0
     }
 }
