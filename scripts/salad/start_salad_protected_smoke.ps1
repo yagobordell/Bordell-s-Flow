@@ -416,7 +416,7 @@ $ReallocatedMachineId = ""
 $AllocatingSince = $null
 $AllocatingInstanceId = ""
 $RunningNotReadySince = $null
-$RunningNotReadyInstanceId = ""
+$RunningNotReadyMachineId = ""
 $RunningNotReadyReallocations = 0
 do {
     Start-Sleep -Seconds 5
@@ -537,10 +537,10 @@ do {
     if ($RunningNotReady) {
         if (
             $null -eq $RunningNotReadySince -or
-            $InstanceId -ne $RunningNotReadyInstanceId
+            $MachineId -ne $RunningNotReadyMachineId
         ) {
             $RunningNotReadySince = Get-Date
-            $RunningNotReadyInstanceId = $InstanceId
+            $RunningNotReadyMachineId = $MachineId
             Write-Host (
                 "{0} service={1} running-not-ready watchdog started limit={2}m" -f
                 (Get-Date -Format "HH:mm:ss"),
@@ -585,7 +585,7 @@ do {
             Request-InstanceReallocation -InstanceId $InstanceId
 
             $RunningNotReadySince = $null
-            $RunningNotReadyInstanceId = ""
+            $RunningNotReadyMachineId = ""
             $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
             $StartedBootstrapDeadlineSet = $false
             continue
@@ -593,7 +593,7 @@ do {
     }
     else {
         $RunningNotReadySince = $null
-        $RunningNotReadyInstanceId = ""
+        $RunningNotReadyMachineId = ""
     }
 
     $HeavyImageDownload = (
