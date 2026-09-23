@@ -39,9 +39,10 @@ fi
 
 HF_HUB_OFFLINE=0 python -m ai_video_factory.workers.download_watchdog \
   --progress-root "${snapshot}" \
-  --stall-timeout-seconds "${QWEN_IMAGE_21_DOWNLOAD_STALL_TIMEOUT_SECONDS:-600}" \
+  --stall-timeout-seconds "${QWEN_IMAGE_21_DOWNLOAD_STALL_TIMEOUT_SECONDS:-720}" \
   --hard-timeout-seconds "${QWEN_IMAGE_21_DOWNLOAD_HARD_TIMEOUT_SECONDS:-7200}" \
   --poll-seconds "${QWEN_IMAGE_21_DOWNLOAD_POLL_SECONDS:-15}" \
+  --min-progress-reset-bytes "${QWEN_IMAGE_21_DOWNLOAD_MIN_PROGRESS_RESET_BYTES:-67108864}" \
   --label qwen-image-2.1 \
   --reallocate-on-slow \
   -- \
