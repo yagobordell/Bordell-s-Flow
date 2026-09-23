@@ -68,9 +68,11 @@ RUN mkdir --parents /workspace/models/realesrgan \
         > /workspace/models/realesrgan/.ready
 
 COPY --from=salad-worker /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/
+COPY docker/workers/common/entrypoint.sh /usr/local/bin/common-worker-entrypoint
 COPY docker/workers/realesrgan/entrypoint.sh /usr/local/bin/worker-entrypoint
 
-RUN chmod 0755 /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/worker-entrypoint \
+RUN chmod 0755 /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/common-worker-entrypoint \
+        /usr/local/bin/worker-entrypoint \
     && useradd --create-home --uid 10001 worker \
     && mkdir --parents /tmp/ai-video-factory /opt/factory/data/inference-local \
     && chown --recursive worker:worker /workspace /tmp/ai-video-factory /opt/factory/data
