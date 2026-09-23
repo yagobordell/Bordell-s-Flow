@@ -2,7 +2,7 @@
 
 Operational executables are grouped by responsibility:
 
-- `pipeline/`: production entry points, preflight, phase runners and shared R2 orchestration helpers.
+- `pipeline/`: production entry points, preflight, phase runners and orchestration wrappers.
 - `salad/`: SaladCloud lifecycle, queue and deployment management.
 - `smoke/`: explicit smoke and validation workloads.
 - `diagnostics/`: cache audits, inspectors, queue diagnostics and metrics collection.
