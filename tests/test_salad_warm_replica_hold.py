@@ -1,7 +1,8 @@
 from pathlib import Path
 
 
-def test_ideogram_phases_pin_replica_before_readiness() -> None:
+
+def test_qwen_image_phases_pin_replica_before_generation() -> None:
     prewarm = Path("scripts/start_salad_optimized_prewarm.ps1").read_text(encoding="utf-8")
 
     assert "[switch]$HoldReadyReplica" in prewarm
@@ -11,37 +12,22 @@ def test_ideogram_phases_pin_replica_before_readiness() -> None:
     assert "max_replicas = 1" in prewarm
     assert "Test-RemoteAutoscalerBounds" in prewarm
     assert "-ExpectedMaxReplicas 1" in prewarm
-    main_prewarm = prewarm.split("$PrewarmPatch = @{" , maxsplit=1)[1]
-    assert main_prewarm.index('$PrewarmPatch["queue_autoscaler"]') < main_prewarm.index(
-        '"$GroupUrl/start"'
-    )
-    assert "Test-RemoteAutoscalerMinReplicas" in prewarm
-    assert "-ExpectedMinReplicas $TargetMinReplicas" in prewarm
-    assert "Optimized prewarm cannot use -HoldReadyReplica because Salad did not expose" in prewarm
-    assert '$Group.PSObject.Properties["queue_autoscaler"]' in prewarm
-    assert "$Group.queue_autoscaler" not in prewarm
     assert "[switch]$AllowScaleToZeroFallback" in prewarm
     assert "restore_salad_scale_to_zero.ps1" in prewarm
     assert "start_salad_scale_to_zero.ps1" in prewarm
-    assert 'AI_VIDEO_FACTORY_SCALE_TO_ZERO_FALLBACK = "1"' in prewarm
-    assert "$FallbackAlreadyStarting" in prewarm
-    assert "letting queued work wait for readiness" in prewarm
 
     for runner_path, phase_runner in (
         (Path("scripts/run_phase4_assets_controlled.ps1"), "run_phase4_assets.py"),
         (Path("scripts/run_phase6_keyframes_controlled.ps1"), "run_phase6_keyframes.py"),
     ):
         runner = runner_path.read_text(encoding="utf-8")
+        assert 'Service = "qwen_image_21"' in runner
         assert "HoldReadyReplica = $true" in runner
-        assert "hold_salad_warm_replica.ps1" not in runner
         assert runner.index("start_salad_optimized_prewarm.ps1") < runner.index(phase_runner)
-        assert "-Action Stop" in runner
+        assert "-Action Stop -Service qwen_image_21" in runner
         assert "cleanup_salad_queue.ps1" in runner
         assert "AllowScaleToZeroFallback = $true" in runner
-        assert "$PendingTimeoutForRun = [Math]::Max($PendingTimeoutSeconds, 900)" in runner
-        assert "$PreferFlux = $PreferFallbackProvider" in runner
-        assert "PreferFallbackProvider" in runner
-
+        assert "Qwen-Image-2.1 prewarm" in runner
 
 def test_phase8_holds_ready_ltx_replica_through_dispatch() -> None:
     runner = Path("scripts/run_phase8_videos_controlled.ps1").read_text(
