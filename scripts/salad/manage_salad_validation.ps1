@@ -324,6 +324,20 @@ function Invoke-SafeStop {
         }
     }
 }
+\nfunction Invoke-SafePrewarm {
+    try {
+        Invoke-ProtectedSmokeBootstrap
+    }
+    finally {
+        Invoke-SafeStop
+    }
+
+    Write-Host (
+        "Salad prewarm readiness validation passed and the worker was returned to " +
+        "stopped/replicas=0."
+    ) -ForegroundColor Green
+}
+
 
 if ($Recreate -and $Action -ne "Prepare") {
     throw "-Recreate is only valid with -Action Prepare."
@@ -336,7 +350,7 @@ switch ($Action) {
     "Validate" { Invoke-StackAction -StackAction "Validate" }
     "Prepare" { Invoke-StackAction -StackAction "Prepare" }
     "Start" { Invoke-ScaleToZeroStart }
-    "Prewarm" { Invoke-ProtectedSmokeBootstrap }
+    "Prewarm" { Invoke-SafePrewarm }
     "Status" { Invoke-StackAction -StackAction "Status" }
     "Smoke" { Invoke-Smoke }
     "ProtectedSmoke" { Invoke-ProtectedSmoke }
