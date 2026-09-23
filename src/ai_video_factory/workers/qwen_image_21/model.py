@@ -19,7 +19,22 @@ QWEN_IMAGE_21_REFERENCE_TASK = "image.qwen_image_21.reference"
 QWEN_IMAGE_21_KEYFRAME_TASK = "image.qwen_image_21.keyframe"
 QWEN_IMAGE_21_MODEL_ID = "Qwen/Qwen-Image-2.1"
 QWEN_IMAGE_21_MODEL_REVISION = "b3179ad355be050328e483a9dfdd9e60cd62adfa"
-QWEN_IMAGE_21_GENERATION_PROFILE = "qwen-image-2.1-bf16-40step-v1"
+QWEN_IMAGE_21_PRODUCTION_WIDTH = 1536
+QWEN_IMAGE_21_PRODUCTION_HEIGHT = 864
+QWEN_IMAGE_21_PRODUCTION_SIZE = "1536x864"
+QWEN_IMAGE_21_DIMENSION_MULTIPLE = 32
+QWEN_IMAGE_21_DEFAULT_STEPS = 40
+QWEN_IMAGE_21_TRUE_CFG_SCALE = 1.0
+QWEN_IMAGE_21_USE_KV_CACHE = True
+QWEN_IMAGE_21_GENERATION_PROFILE = "qwen-image-2.1-bf16-1536x864-40step-kv-v2"
+QWEN_IMAGE_21_REQUIRED_MODEL_FILES = (
+    "model_index.json",
+    "processor/tokenizer.json",
+    "scheduler/scheduler_config.json",
+    "text_encoder/model.safetensors.index.json",
+    "transformer/diffusion_pytorch_model.safetensors.index.json",
+    "vae/diffusion_pytorch_model.safetensors",
+)
 _SUPPORTED_TASKS = frozenset({QWEN_IMAGE_21_REFERENCE_TASK, QWEN_IMAGE_21_KEYFRAME_TASK})
 
 
@@ -30,10 +45,12 @@ class QwenImage21Parameters(BaseModel):
     model_id: str
     model_revision: str
     prompt: str = Field(min_length=1, max_length=100_000)
-    width: int = Field(ge=256, le=2048)
-    height: int = Field(ge=256, le=2048)
+    width: int = Field(ge=256, le=4096)
+    height: int = Field(ge=256, le=4096)
     seed: int = Field(ge=0, le=2_147_483_647)
-    num_inference_steps: int = Field(default=40, ge=1, le=100)
+    num_inference_steps: int = Field(default=QWEN_IMAGE_21_DEFAULT_STEPS, ge=1, le=100)
+    true_cfg_scale: float = Field(default=QWEN_IMAGE_21_TRUE_CFG_SCALE, ge=1.0)
+    use_kv_cache: bool = QWEN_IMAGE_21_USE_KV_CACHE
 
     @model_validator(mode="after")
     def validate_qwen_image_21(self) -> Self:
@@ -45,8 +62,28 @@ class QwenImage21Parameters(BaseModel):
             raise ValueError(
                 f"Qwen worker requires revision {QWEN_IMAGE_21_MODEL_REVISION!r}"
             )
-        if self.width % 16 or self.height % 16:
-            raise ValueError("Qwen-Image-2.1 width and height must be divisible by 16")
+        if self.width % QWEN_IMAGE_21_DIMENSION_MULTIPLE or self.height % QWEN_IMAGE_21_DIMENSION_MULTIPLE:
+            raise ValueError(
+                f"Qwen-Image-2.1 width and height must be divisible by "
+                f"{QWEN_IMAGE_21_DIMENSION_MULTIPLE}"
+            )
+        if (self.width, self.height) != (
+            QWEN_IMAGE_21_PRODUCTION_WIDTH,
+            QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+        ):
+            raise ValueError(
+                "Qwen-Image-2.1 production generation is fixed at "
+                f"{QWEN_IMAGE_21_PRODUCTION_SIZE}"
+            )
+        if self.num_inference_steps != QWEN_IMAGE_21_DEFAULT_STEPS:
+            raise ValueError(
+                f"Qwen-Image-2.1 production generation requires "
+                f"{QWEN_IMAGE_21_DEFAULT_STEPS} inference steps"
+            )
+        if self.true_cfg_scale != QWEN_IMAGE_21_TRUE_CFG_SCALE:
+            raise ValueError("Qwen-Image-2.1 production generation uses guidance-free sampling")
+        if self.use_kv_cache is not QWEN_IMAGE_21_USE_KV_CACHE:
+            raise ValueError("Qwen-Image-2.1 production generation requires KV caching")
         return self
 
 
@@ -127,6 +164,9 @@ class QwenImage21Backend:
                     width=parameters.width,
                     height=parameters.height,
                     num_inference_steps=parameters.num_inference_steps,
+                    true_cfg_scale=parameters.true_cfg_scale,
+                    use_kv_cache=parameters.use_kv_cache,
+                    output_type="pil",
                     generator=generator,
                 )
                 images = result.images
@@ -157,6 +197,16 @@ class QwenImage21Backend:
         expected = f"{QWEN_IMAGE_21_MODEL_ID}@{QWEN_IMAGE_21_MODEL_REVISION}"
         if not self.bootstrap_marker.is_file() or not self.snapshot_root.is_dir():
             raise ModelBootstrapPendingError("Qwen-Image-2.1 model snapshot is not ready")
+        missing = [
+            relative
+            for relative in QWEN_IMAGE_21_REQUIRED_MODEL_FILES
+            if not (self.snapshot_root / relative).is_file()
+            or (self.snapshot_root / relative).stat().st_size <= 0
+        ]
+        if missing:
+            raise ModelBootstrapPendingError(
+                "Qwen-Image-2.1 snapshot is incomplete: " + ", ".join(missing)
+            )
         marker = self.bootstrap_marker.read_text(encoding="utf-8").strip()
         if marker != expected:
             raise ModelBootstrapPendingError(
@@ -178,7 +228,7 @@ class QwenImage21Backend:
         started = time.monotonic()
         pipeline = QwenImage21Pipeline.from_pretrained(
             str(self.snapshot_root),
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             local_files_only=True,
         )
         if self._device != "cuda":
