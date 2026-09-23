@@ -12,10 +12,13 @@ from ai_video_factory.providers import SaladQwenImage21Provider
 from ai_video_factory.providers.images import parse_image_size
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
-from ai_video_factory.workers.qwen_image_21 import QWEN_IMAGE_21_REFERENCE_TASK
+from ai_video_factory.workers.qwen_image_21 import (
+    QWEN_IMAGE_21_PRODUCTION_SIZE,
+    QWEN_IMAGE_21_REFERENCE_TASK,
+)
 from ai_video_factory.workflows.reference_assets import generate_reference_assets
 
-DEFAULT_SIZE = "1536x864"
+DEFAULT_SIZE = QWEN_IMAGE_21_PRODUCTION_SIZE
 DEFAULT_QUALITY = "high"
 DEFAULT_QWEN_PENDING_TIMEOUT_SECONDS = 1800.0
 
