@@ -80,3 +80,15 @@ def test_salad_smoke_suite_uses_qwen_image_21() -> None:
     assert 'image.metadata.get("replayed") != "false"' in script
     assert "ai-video-factory-ltx25-jobs-v2" in script
     assert "ideogram" not in script.lower()
+
+
+def test_qwen_worker_pins_qwen_compatible_diffusers_revision() -> None:
+    dockerfile = Path("docker/workers/qwen-image-2.1/Dockerfile").read_text(encoding="utf-8")
+    pinned = (
+        "git+https://github.com/huggingface/diffusers.git@"
+        "6256aa7666cedd47443adc8f82da9a10e110b09c"
+    )
+
+    assert pinned in dockerfile
+    assert "'git+https://github.com/huggingface/diffusers.git'" not in dockerfile
+
