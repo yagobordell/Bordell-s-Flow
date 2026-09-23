@@ -311,7 +311,7 @@ def _ltx_environment() -> dict[str, str]:
             "R2_SECRET_ACCESS_KEY", settings.r2_secret_access_key
         ),
         "SALAD_LTX25_QUEUE_NAME": os.getenv(
-            "SALAD_LTX25_QUEUE_NAME", "ai-video-factory-ltx25-jobs"
+            "SALAD_LTX25_QUEUE_NAME", "ai-video-factory-ltx25-jobs-v2"
         ),
     }
     return {**os.environ, **values}
