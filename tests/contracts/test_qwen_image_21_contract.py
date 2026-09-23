@@ -106,6 +106,9 @@ def test_qwen_salad_manifest_contract() -> None:
         service["environment"]["QWEN_IMAGE_21_DOWNLOAD_MIN_PROGRESS_RESET_BYTES"]
         == "67108864"
     )
+    assert service["environment"]["QWEN_IMAGE_21_DOWNLOAD_MIN_THROUGHPUT_MIBPS"] == "8"
+    assert service["environment"]["SALAD_NETWORK_MIN_DOWNLOAD_MBPS"] == "100"
+    assert service["environment"]["SALAD_NETWORK_TEST_ATTEMPTS"] == "3"
 
 
 def test_salad_smoke_suite_uses_qwen_image_21() -> None:
@@ -131,6 +134,8 @@ def test_qwen_worker_pins_qwen_compatible_diffusers_revision() -> None:
     assert pinned in dockerfile
     assert "'git+https://github.com/huggingface/diffusers.git'" not in dockerfile
     assert "'transformers==5.17.0'" in dockerfile
+    assert "ca-certificates curl git python3-pip" in dockerfile
+    assert "network_preflight.sh /usr/local/bin/network-preflight" in dockerfile
 
 def test_qwen_bootstrap_validates_required_snapshot_files() -> None:
     script = Path("docker/workers/qwen-image-2.1/download_models.sh").read_text(
@@ -153,4 +158,7 @@ def test_qwen_bootstrap_validates_required_snapshot_files() -> None:
     assert "--reallocate-on-slow" in script
     assert "--min-progress-reset-bytes" in script
     assert "QWEN_IMAGE_21_DOWNLOAD_MIN_PROGRESS_RESET_BYTES" in script
+    assert "--min-throughput-mibps" in script
+    assert "QWEN_IMAGE_21_DOWNLOAD_MIN_THROUGHPUT_MIBPS" in script
+    assert "/usr/local/bin/network-preflight" in script
 
