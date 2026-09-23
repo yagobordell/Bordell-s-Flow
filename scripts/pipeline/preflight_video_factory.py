@@ -15,7 +15,6 @@ from typing import Any
 from openai import OpenAI
 
 from ai_video_factory.config import settings
-
 from ai_video_factory.providers.r2 import create_r2_storage
 
 REQUIRED_TOOLS = ("ffmpeg", "ffprobe", "node", "npm")
