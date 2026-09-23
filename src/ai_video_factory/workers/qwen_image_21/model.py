@@ -62,7 +62,10 @@ class QwenImage21Parameters(BaseModel):
             raise ValueError(
                 f"Qwen worker requires revision {QWEN_IMAGE_21_MODEL_REVISION!r}"
             )
-        if self.width % QWEN_IMAGE_21_DIMENSION_MULTIPLE or self.height % QWEN_IMAGE_21_DIMENSION_MULTIPLE:
+        if (
+            self.width % QWEN_IMAGE_21_DIMENSION_MULTIPLE
+            or self.height % QWEN_IMAGE_21_DIMENSION_MULTIPLE
+        ):
             raise ValueError(
                 f"Qwen-Image-2.1 width and height must be divisible by "
                 f"{QWEN_IMAGE_21_DIMENSION_MULTIPLE}"
