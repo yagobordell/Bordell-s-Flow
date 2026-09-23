@@ -272,13 +272,13 @@ class InferenceWorker:
         work_dir: Path,
     ) -> None:
         declared = request.sidecar_outputs or {}
-        returned = {getattr(item, "name"): item for item in sidecars}
+        returned = {item.name: item for item in sidecars}
         if set(returned) != set(declared):
             raise ValueError("task sidecar artifacts do not match the request contract")
         for name, contract in declared.items():
             artifact = returned[name]
-            path = getattr(artifact, "path")
-            content_type = getattr(artifact, "content_type")
+            path = artifact.path
+            content_type = artifact.content_type
             self._validate_local_artifact(path, work_dir)
             if content_type != contract.content_type:
                 raise ValueError(
