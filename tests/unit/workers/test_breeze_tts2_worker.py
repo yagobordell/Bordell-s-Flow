@@ -216,7 +216,7 @@ def test_breeze_prefers_one_request_when_prompt_fits_runtime_budget() -> None:
 
 
 def test_breeze_output_guard_splits_two_minute_script_without_voice_reset() -> None:
-    text = Path("data/input/script_2min_english.txt").read_text(encoding="utf-8").strip()
+    text = Path("examples/input/script_2min_english.txt").read_text(encoding="utf-8").strip()
 
     chunks = _plan_narration_chunks(
         text,
