@@ -24,20 +24,39 @@ echo "SALAD_NETWORK_PREFLIGHT_START minimum_mbps=${min_mbps} bytes=${test_bytes}
 best_mbps="0"
 for attempt in $(seq 1 "${attempts}"); do
   curl_args=(
-    --fail
     --location
     --output /dev/null
     --silent
     --show-error
     --connect-timeout 5
     --max-time 30
-    --write-out "%{speed_download}"
+    --write-out "%{http_code} %{speed_download}"
   )
   if [[ "${use_range}" == "true" ]]; then
     curl_args+=(--range "0-$((test_bytes - 1))")
   fi
+  if [[ -n "${HF_TOKEN:-}" && "${speed_test_url}" == https://huggingface.co/* ]]; then
+    curl_args+=(--header "Authorization: Bearer ${HF_TOKEN}")
+  fi
 
-  if speed_bps=$(curl "${curl_args[@]}" "${speed_test_url}"); then
+  if probe_result=$(curl "${curl_args[@]}" "${speed_test_url}"); then
+    http_code="${probe_result%% *}"
+    speed_bps="${probe_result#* }"
+    if [[ "${http_code}" == "401" || "${http_code}" == "403" ]]; then
+      echo "SALAD_NETWORK_PREFLIGHT_AUTH_FAILURE http_code=${http_code}" >&2
+      exit 2
+    fi
+    if [[ ! "${http_code}" =~ ^2 ]]; then
+      echo "SALAD_NETWORK_PREFLIGHT_HTTP_FAILURE attempt=${attempt} http_code=${http_code}" >&2
+      if [[ "${http_code}" =~ ^4 ]]; then
+        exit 2
+      fi
+      if [[ "${attempt}" -lt "${attempts}" ]]; then
+        sleep "${delay_seconds}"
+      fi
+      continue
+    fi
+
     current_mbps=$(python3 -c 'import sys; print(f"{float(sys.argv[1]) * 8 / 1_000_000:.2f}")' "${speed_bps}")
     best_mbps=$(python3 -c 'import sys; print(f"{max(float(sys.argv[1]), float(sys.argv[2])):.2f}")' "${best_mbps}" "${current_mbps}")
     echo "SALAD_NETWORK_PREFLIGHT_SAMPLE attempt=${attempt} download_mbps=${current_mbps}"
