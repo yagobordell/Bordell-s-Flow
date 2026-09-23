@@ -35,9 +35,6 @@ rm -rf "${snapshot}"
 mkdir -p "${snapshot}"
 
 download_args=(download "${repository}" --revision "${revision}" --local-dir "${snapshot}")
-if [[ -n "${HF_TOKEN:-}" ]]; then
-  download_args+=(--token "${HF_TOKEN}")
-fi
 
 HF_HUB_OFFLINE=0 python -m ai_video_factory.workers.download_watchdog \
   --progress-root "${snapshot}" \
