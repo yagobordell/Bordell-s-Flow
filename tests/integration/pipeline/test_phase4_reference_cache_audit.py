@@ -4,11 +4,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.diagnostics.audit_phase4_reference_cache import (
-    _load_references,
-    audit_reference_cache,
-)
-
 from ai_video_factory.domain import VisualReference
 from ai_video_factory.inference.ports import StoredObject
 from ai_video_factory.providers.salad_qwen_image import build_qwen_image_job_request
@@ -16,7 +11,10 @@ from ai_video_factory.workers.qwen_image_21 import (
     QWEN_IMAGE_21_MODEL_ID,
     QWEN_IMAGE_21_REFERENCE_TASK,
 )
-
+from scripts.diagnostics.audit_phase4_reference_cache import (
+    _load_references,
+    audit_reference_cache,
+)
 
 class FakeStorage:
     def __init__(self, objects: dict[str, StoredObject]) -> None:

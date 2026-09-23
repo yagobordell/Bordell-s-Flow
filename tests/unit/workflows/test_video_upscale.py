@@ -4,8 +4,6 @@ import hashlib
 import json
 from pathlib import Path
 
-from scripts.diagnostics import inspect_phase8_upscale_manifest as upscale_inspector
-
 from ai_video_factory.compositor.media import MediaProbe
 from ai_video_factory.domain import VideoClip
 from ai_video_factory.inference.contracts import InferenceJobResponse, OutputArtifact
@@ -23,7 +21,7 @@ from ai_video_factory.workers.realesrgan import (
 )
 from ai_video_factory.workers.realesrgan.model import DirectRealESRGANBackend
 from ai_video_factory.workflows import video_upscale as upscale
-
+from scripts.diagnostics import inspect_phase8_upscale_manifest as upscale_inspector
 
 def _probe(path: Path) -> MediaProbe:
     is_output = "upscaled_clips" in path.as_posix()

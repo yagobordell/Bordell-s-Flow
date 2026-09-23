@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import boto3
-from scripts.pipeline.r2_client import create_r2_storage
 
+from scripts.pipeline.r2_client import create_r2_storage
 
 def test_local_r2_client_uses_fast_fail_network_defaults(monkeypatch) -> None:
     captured: dict[str, object] = {}
