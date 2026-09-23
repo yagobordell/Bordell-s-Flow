@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts import preflight_video_factory as preflight
+from scripts.pipeline import preflight_video_factory as preflight
 
 
 def _services() -> dict:

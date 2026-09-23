@@ -20,7 +20,7 @@ def test_scale_to_zero_start_requires_live_queue_config_to_match_manifest() -> N
     assert "$Autoscaler.Value.max_upscale_per_minute" in script
     assert "$Autoscaler.Value.max_downscale_per_minute" in script
     assert "$Group.queue_autoscaler" not in script
-    assert "scripts/salad/repair_salad_queue_attachment.ps1 -Service $Service before Start" in script
+    assert (\n        "scripts/salad/repair_salad_queue_attachment.ps1 -Service $Service before Start"\n        in script\n    )
 
 
 def test_scale_to_zero_start_checks_queue_config_before_starting_group() -> None:

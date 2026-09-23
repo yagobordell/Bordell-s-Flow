@@ -1,6 +1,6 @@
 from pathlib import Path
 
-ROOT = next(parent for parent in Path(__file__).resolve().parents if (parent / "pyproject.toml").is_file())
+ROOT = next(\n    parent\n    for parent in Path(__file__).resolve().parents\n    if (parent / "pyproject.toml").is_file()\n)
 
 
 def _read(relative: str) -> str:
@@ -42,8 +42,8 @@ def test_phase5_checks_breeze_cache_before_primary_prewarm() -> None:
 
 def test_phase4_and_phase6_use_qwen_only() -> None:
     for controlled, runner in (
-        ("scripts/pipeline/run_phase4_assets_controlled.ps1", "scripts/pipeline/run_phase4_assets.py"),
-        ("scripts/pipeline/run_phase6_keyframes_controlled.ps1", "scripts/pipeline/run_phase6_keyframes.py"),
+        (\n            "scripts/pipeline/run_phase4_assets_controlled.ps1",\n            "scripts/pipeline/run_phase4_assets.py",\n        ),
+        (\n            "scripts/pipeline/run_phase6_keyframes_controlled.ps1",\n            "scripts/pipeline/run_phase6_keyframes.py",\n        ),
     ):
         controlled_text = _read(controlled)
         runner_text = _read(runner)
