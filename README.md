@@ -66,7 +66,7 @@ Coloca el guion en `data/input/script.txt` y ejecuta:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-    .\scripts\run_video_factory.ps1 `
+    .\scripts\pipeline\run_video_factory.ps1 `
     -Input .\data\input\script.txt `
     -NonInteractive
 ```
@@ -97,7 +97,7 @@ python -m ruff check .
 
 ## Documentación
 
-- [Arquitectura](docs/architecture.md)
-- [Runner de producción](docs/production-runner.md)
+- [Arquitectura](docs/architecture/overview.md)
+- [Runner de producción](docs/operations/production-runner.md)
 - [Configuración de Salad](deploy/salad/services.json)
-- [Documentación técnica](docs/)
+- [Índice de documentación](docs/README.md)

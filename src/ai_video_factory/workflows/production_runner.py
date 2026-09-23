@@ -600,7 +600,7 @@ def build_production_stages(
         ProductionStage(
             name="phase2-narrative",
             description="plan narrative blocks, beats, and scenes",
-            script=Path("scripts/run_phase2.py"),
+            script=Path("scripts/pipeline/run_phase2.py"),
             arguments=(str(script_file), "--output", str(phase2)),
             inputs=(script_file,),
             outputs=(source_script, narrative_blocks, beats, scenes),
@@ -609,7 +609,7 @@ def build_production_stages(
             name="phase3-continuity",
             description="build the stateful continuity registry",
             dependencies=("phase2-narrative",),
-            script=Path("scripts/run_phase3.py"),
+            script=Path("scripts/pipeline/run_phase3.py"),
             arguments=(str(narrative_blocks), "--output", str(phase3)),
             inputs=(narrative_blocks,),
             outputs=(entities, continuity),
@@ -618,7 +618,7 @@ def build_production_stages(
             name="phase3-shots",
             description="plan ordered shots from scenes and continuity",
             dependencies=("phase3-continuity",),
-            script=Path("scripts/run_phase3_shots.py"),
+            script=Path("scripts/pipeline/run_phase3_shots.py"),
             arguments=(
                 "--beats", str(beats),
                 "--scenes", str(scenes),
@@ -633,7 +633,7 @@ def build_production_stages(
             name="phase4-reference-prompts",
             description="build canonical visual reference prompts",
             dependencies=("phase3-continuity",),
-            script=Path("scripts/run_phase4.py"),
+            script=Path("scripts/pipeline/run_phase4.py"),
             arguments=(
                 str(entities),
                 "--blocks", str(narrative_blocks),
@@ -650,7 +650,7 @@ def build_production_stages(
             dependencies=("phase4-reference-prompts",),
             resource="gpu",
             resource_key="qwen_image_21",
-            script=Path("scripts/run_phase4_assets.py"),
+            script=Path("scripts/pipeline/run_phase4_assets.py"),
             arguments=(
                 str(visual_references),
                 "--size", "1536x864",
@@ -666,7 +666,7 @@ def build_production_stages(
             dependencies=("phase2-narrative",),
             resource="gpu",
             resource_key="speech",
-            script=Path("scripts/run_phase5_audio.py"),
+            script=Path("scripts/pipeline/run_phase5_audio.py"),
             arguments=(
                 str(source_script),
                 "--output-dir", str(phase5),
@@ -681,7 +681,7 @@ def build_production_stages(
             dependencies=("phase5-narration",),
             resource="gpu",
             resource_key="whisper",
-            script=Path("scripts/run_phase5_alignment.py"),
+            script=Path("scripts/pipeline/run_phase5_alignment.py"),
             arguments=(
                 "--source", str(source_script),
                 "--narration", str(narration),
@@ -696,7 +696,7 @@ def build_production_stages(
             name="phase5-beat-timing",
             description="map beats to aligned narration words",
             dependencies=("phase5-alignment",),
-            script=Path("scripts/run_phase5_beat_timing.py"),
+            script=Path("scripts/pipeline/run_phase5_beat_timing.py"),
             arguments=(
                 "--source", str(source_script),
                 "--beats", str(beats),
@@ -711,7 +711,7 @@ def build_production_stages(
             name="phase5-shot-timing",
             description="derive deterministic shot timing",
             dependencies=("phase3-shots", "phase5-beat-timing"),
-            script=Path("scripts/run_phase5_shot_timing.py"),
+            script=Path("scripts/pipeline/run_phase5_shot_timing.py"),
             arguments=(
                 "--shots", str(shots),
                 "--beat-timings", str(beat_timings),
@@ -728,7 +728,7 @@ def build_production_stages(
                 "phase5-shot-timing",
                 "phase4-reference-prompts",
             ),
-            script=Path("scripts/run_phase6_storyboard.py"),
+            script=Path("scripts/pipeline/run_phase6_storyboard.py"),
             arguments=(
                 "--shots", str(shots),
                 "--timings", str(shot_timings),
@@ -743,7 +743,7 @@ def build_production_stages(
             name="phase8-video-prompts",
             description="prepare motion prompts from the storyboard plan",
             dependencies=("phase6-storyboard",),
-            script=Path("scripts/run_phase8_video_prompts.py"),
+            script=Path("scripts/pipeline/run_phase8_video_prompts.py"),
             arguments=(
                 "--shots", str(shots),
                 "--timings", str(shot_timings),
@@ -762,7 +762,7 @@ def build_production_stages(
             dependencies=("phase6-storyboard",),
             resource="gpu",
             resource_key="qwen_image_21",
-            script=Path("scripts/run_phase6_keyframes.py"),
+            script=Path("scripts/pipeline/run_phase6_keyframes.py"),
             arguments=(
                 "--frames", str(storyboard_frames),
                 "--shots", str(shots),
@@ -784,7 +784,7 @@ def build_production_stages(
             ),
             resource="gpu",
             resource_key="ltx25",
-            script=Path("scripts/run_phase8_videos.py"),
+            script=Path("scripts/pipeline/run_phase8_videos.py"),
             arguments=(
                 "--keyframes", str(storyboard_keyframes),
                 "--prompts", str(video_prompts),
@@ -803,7 +803,7 @@ def build_production_stages(
             dependencies=("phase8-videos",),
             resource="gpu",
             resource_key="realesrgan",
-            script=Path("scripts/run_phase8_upscale.py"),
+            script=Path("scripts/pipeline/run_phase8_upscale.py"),
             arguments=(
                 "--clips", str(video_clips),
                 "--output-dir", str(phase8),
