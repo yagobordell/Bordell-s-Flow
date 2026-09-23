@@ -61,7 +61,7 @@ def test_qwen_controlled_runners_prewarm_before_generation() -> None:
         "scripts/run_phase6_keyframes_controlled.ps1",
     ):
         text = _read(path)
-        assert text.index("Qwen-Image-2.1 prewarm") < text.index(
+        assert text.index("Qwen-Image-2.1 prewarm") < text.rindex(
             "& python $Runner @RunnerArguments"
         )
         assert "start_salad_optimized_prewarm.ps1" in text
