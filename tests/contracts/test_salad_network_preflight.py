@@ -11,7 +11,9 @@ def test_network_preflight_uses_salad_reallocation_pattern() -> None:
     assert "https://speed.cloudflare.com/__down?bytes=" in script
     assert "SALAD_NETWORK_TEST_URL" in script
     assert "--range" in script
-    assert "Authorization: Bearer ${HF_TOKEN}" in script
+    assert "Authorization: Bearer %s" in script
+    assert "curl --config -" in script
+    assert 'curl_args+=(--header "Authorization: Bearer' not in script
     assert "SALAD_NETWORK_PREFLIGHT_AUTH_FAILURE" in script
     assert "SALAD_NETWORK_PREFLIGHT_HTTP_FAILURE" in script
     assert "SALAD_NETWORK_MIN_DOWNLOAD_MBPS" in script
