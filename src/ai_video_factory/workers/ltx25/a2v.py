@@ -186,7 +186,11 @@ def _cuda_memory_snapshot(torch_module: Any, device: str) -> dict[str, int | flo
     if cuda is None or not cuda.is_available():
         return {}
     resolved = torch_module.device(device)
-    index = resolved.index if getattr(resolved, "index", None) is not None else cuda.current_device()
+    index = (
+        resolved.index
+        if getattr(resolved, "index", None) is not None
+        else cuda.current_device()
+    )
     free_bytes, total_bytes = cuda.mem_get_info(index)
     return {
         "free_bytes": int(free_bytes),
