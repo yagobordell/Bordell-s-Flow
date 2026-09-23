@@ -109,6 +109,7 @@ def run_with_progress_watchdog(
         f"MODEL_DOWNLOAD_WATCHDOG label={label} initial_tree_bytes={initial_tree_bytes} "
         f"stall_timeout_seconds={stall_timeout_seconds:g} "
         f"hard_timeout_seconds={hard_timeout_seconds:g} "
+        f"min_progress_reset_bytes={min_progress_reset_bytes} "
         f"min_throughput_mibps={min_throughput_mib_per_second:g}",
         flush=True,
     )
