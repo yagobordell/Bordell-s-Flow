@@ -9,6 +9,7 @@ import pytest
 
 from scripts.pipeline import preflight_video_factory as preflight
 
+
 def _services() -> dict:
     return {
         "stack": {

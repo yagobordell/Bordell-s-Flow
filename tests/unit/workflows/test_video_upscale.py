@@ -23,6 +23,7 @@ from ai_video_factory.workers.realesrgan.model import DirectRealESRGANBackend
 from ai_video_factory.workflows import video_upscale as upscale
 from scripts.diagnostics import inspect_phase8_upscale_manifest as upscale_inspector
 
+
 def _probe(path: Path) -> MediaProbe:
     is_output = "upscaled_clips" in path.as_posix()
     return MediaProbe(

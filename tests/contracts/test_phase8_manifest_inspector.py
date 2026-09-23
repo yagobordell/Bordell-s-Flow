@@ -14,6 +14,7 @@ from ai_video_factory.workflows.video_generation import (
 )
 from scripts.diagnostics.inspect_phase8_manifest import inspect_manifest_state
 
+
 def _plan(tmp_path: Path):
     keyframe_dir = tmp_path / "phase6"
     asset_dir = keyframe_dir / "storyboard_keyframes"

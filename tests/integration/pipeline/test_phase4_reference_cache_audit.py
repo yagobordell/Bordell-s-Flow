@@ -16,6 +16,7 @@ from scripts.diagnostics.audit_phase4_reference_cache import (
     audit_reference_cache,
 )
 
+
 class FakeStorage:
     def __init__(self, objects: dict[str, StoredObject]) -> None:
         self.objects = objects
