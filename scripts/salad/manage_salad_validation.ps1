@@ -324,7 +324,8 @@ function Invoke-SafeStop {
         }
     }
 }
-\nfunction Invoke-SafePrewarm {
+
+function Invoke-SafePrewarm {
     try {
         Invoke-ProtectedSmokeBootstrap
     }
