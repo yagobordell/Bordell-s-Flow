@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
+
 from ai_video_factory.config import settings
 from ai_video_factory.domain import Shot, StoryboardFrame
 from ai_video_factory.providers import SaladQwenImage21Provider
