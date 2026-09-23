@@ -67,3 +67,13 @@ def test_qwen_salad_manifest_contract() -> None:
     assert service["resources"]["gpu_class_names"] == ["RTX 5090 (32 GB)"]
     assert service["environment"]["QWEN_IMAGE_21_MODEL_REPOSITORY"] == QWEN_IMAGE_21_MODEL_ID
     assert service["environment"]["QWEN_IMAGE_21_MODEL_REVISION"] == QWEN_IMAGE_21_MODEL_REVISION
+
+
+def test_salad_smoke_suite_uses_qwen_image_21() -> None:
+    script = Path("scripts/run_salad_smoke_suite.py").read_text(encoding="utf-8")
+
+    assert '"qwen_image_21"' in script
+    assert "SaladQwenImage21Provider" in script
+    assert "QWEN_IMAGE_21_KEYFRAME_TASK" in script
+    assert "qwen-image-21-keyframe.png" in script
+    assert "ideogram" not in script.lower()
