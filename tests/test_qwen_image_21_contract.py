@@ -76,4 +76,5 @@ def test_salad_smoke_suite_uses_qwen_image_21() -> None:
     assert "SaladQwenImage21Provider" in script
     assert "QWEN_IMAGE_21_KEYFRAME_TASK" in script
     assert "qwen-image-21-keyframe.png" in script
+    assert "ai-video-factory-ltx25-jobs-v2" in script
     assert "ideogram" not in script.lower()
