@@ -1,7 +1,13 @@
 from pathlib import Path
 
 WORKER_DOCKERFILES = tuple(sorted(Path("docker/workers").glob("*/Dockerfile")))
-WORKER_ENTRYPOINTS = tuple(sorted(Path("docker/workers").glob("*/entrypoint.sh")))
+WORKER_ENTRYPOINTS = tuple(
+    path
+    for path in sorted(Path("docker/workers").glob("*/entrypoint.sh"))
+    if path.parent.name != "common"
+)
+COMMON_ENTRYPOINT = Path("docker/workers/common/entrypoint.sh")
+SPECIAL_ENTRYPOINTS = {"fish-speech", "ideogram4"}
 
 
 def test_worker_images_keep_basic_supply_chain_and_runtime_hygiene() -> None:
@@ -16,11 +22,17 @@ def test_worker_images_keep_basic_supply_chain_and_runtime_hygiene() -> None:
         assert "USER worker" in text, dockerfile
 
 
-def test_worker_entrypoints_fail_if_http_health_never_starts() -> None:
-    assert WORKER_ENTRYPOINTS
+def test_standard_worker_entrypoints_share_lifecycle() -> None:
+    common = COMMON_ENTRYPOINT.read_text(encoding="utf-8")
+    assert "wait_for_endpoint()" in common
+    assert "if ! wait_for_endpoint /health 120 2; then" in common
+    assert "SALAD_QUEUE_ENABLED" in common
+    assert "salad-http-job-queue-worker" in common
 
     for entrypoint in WORKER_ENTRYPOINTS:
         text = entrypoint.read_text(encoding="utf-8")
-        assert "wait_for_health()" in text, entrypoint
-        assert "if ! wait_for_health; then" in text, entrypoint
-        assert "exit 1" in text, entrypoint
+        if entrypoint.parent.name in SPECIAL_ENTRYPOINTS:
+            assert "wait_for_health()" in text, entrypoint
+            assert "if ! wait_for_health; then" in text, entrypoint
+        else:
+            assert "exec /usr/local/bin/common-worker-entrypoint" in text, entrypoint
