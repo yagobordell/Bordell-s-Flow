@@ -6,13 +6,12 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
-from r2_client import create_r2_storage
-
 from ai_video_factory.config import settings
 from ai_video_factory.domain import Shot, StoryboardFrame
 from ai_video_factory.providers import SaladQwenImage21Provider
 from ai_video_factory.providers.images import parse_image_size
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
+from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.qwen_image_21 import (
     QWEN_IMAGE_21_KEYFRAME_TASK,
