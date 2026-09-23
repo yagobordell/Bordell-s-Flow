@@ -27,6 +27,9 @@ from ai_video_factory.workers.breeze_tts2 import BREEZE_TTS2_MODEL_ID
 from ai_video_factory.workers.qwen_image_21 import (
     QWEN_IMAGE_21_KEYFRAME_TASK,
     QWEN_IMAGE_21_MODEL_ID,
+    QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+    QWEN_IMAGE_21_PRODUCTION_SIZE,
+    QWEN_IMAGE_21_PRODUCTION_WIDTH,
 )
 from ai_video_factory.workers.whisper import WHISPER_MODEL_ID
 
@@ -263,7 +266,7 @@ async def _smoke_qwen_image_21(args: argparse.Namespace) -> None:
     image = await provider.generate_image(
         prompt=prompt,
         model=QWEN_IMAGE_21_MODEL_ID,
-        size="1536x864",
+        size=QWEN_IMAGE_21_PRODUCTION_SIZE,
         quality="high",
         output_format="png",
     )
@@ -278,7 +281,10 @@ async def _smoke_qwen_image_21(args: argparse.Namespace) -> None:
         raise RuntimeError("Qwen-Image-2.1 smoke returned an empty PNG")
     with Image.open(destination) as opened:
         opened.load()
-        if opened.size != (1536, 864):
+        if opened.size != (
+            QWEN_IMAGE_21_PRODUCTION_WIDTH,
+            QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+        ):
             raise RuntimeError(
                 "Qwen-Image-2.1 smoke returned unexpected dimensions: "
                 f"{opened.width}x{opened.height}"
@@ -295,7 +301,7 @@ async def _smoke_qwen_image_21(args: argparse.Namespace) -> None:
         "wall_seconds": round(time.monotonic() - started, 3),
         "smoke_id": smoke_id,
         "artifact": destination.as_posix(),
-        "size": "1536x864",
+        "size": QWEN_IMAGE_21_PRODUCTION_SIZE,
         "size_bytes": destination.stat().st_size,
         "sha256": sha256_file(destination),
         "provider_metadata": image.metadata,
