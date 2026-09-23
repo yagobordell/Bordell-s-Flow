@@ -1,7 +1,11 @@
 import subprocess
 from pathlib import Path
 
-ROOT = next(\n    parent\n    for parent in Path(__file__).resolve().parents\n    if (parent / "pyproject.toml").is_file()\n)
+ROOT = next(
+    parent
+    for parent in Path(__file__).resolve().parents
+    if (parent / "pyproject.toml").is_file()
+)
 RETIRED_MARKERS = (
     bytes((102, 108, 117, 120)),
     bytes((107, 108, 101, 105, 110)),

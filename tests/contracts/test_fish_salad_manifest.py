@@ -1,7 +1,11 @@
 import json
 from pathlib import Path
 
-ROOT = next(\n    parent\n    for parent in Path(__file__).resolve().parents\n    if (parent / "pyproject.toml").is_file()\n)
+ROOT = next(
+    parent
+    for parent in Path(__file__).resolve().parents
+    if (parent / "pyproject.toml").is_file()
+)
 
 
 def test_fish_manifest_is_independent_scale_to_zero_service() -> None:

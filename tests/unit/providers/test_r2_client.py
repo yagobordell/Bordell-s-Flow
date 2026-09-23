@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import boto3
-
 from scripts.pipeline.r2_client import create_r2_storage
 
 

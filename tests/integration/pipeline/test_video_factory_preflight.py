@@ -6,7 +6,6 @@ import urllib.error
 from pathlib import Path
 
 import pytest
-
 from scripts.pipeline import preflight_video_factory as preflight
 
 

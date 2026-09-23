@@ -4,6 +4,7 @@ from io import BytesIO
 from pathlib import Path
 
 from PIL import Image
+from scripts.diagnostics.inspect_phase8_manifest import inspect_manifest_state
 
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
 from ai_video_factory.workflows.video_generation import (
@@ -12,7 +13,6 @@ from ai_video_factory.workflows.video_generation import (
     build_video_generation_plan,
     video_generation_run_fingerprint,
 )
-from scripts.inspect_phase8_manifest import inspect_manifest_state
 
 
 def _plan(tmp_path: Path):
