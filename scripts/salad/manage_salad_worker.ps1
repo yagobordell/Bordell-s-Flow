@@ -87,31 +87,6 @@ $Definition = $ServiceProperty.Value
 $StackProperty = $Document.PSObject.Properties["stack"]
 $Stack = if ($null -ne $StackProperty) { $StackProperty.Value } else { $null }
 
-$SharedEnvironmentProperty = if ($null -ne $Stack) {
-    $Stack.PSObject.Properties["shared_environment"]
-}
-else {
-    $null
-}
-if ($null -ne $SharedEnvironmentProperty) {
-    foreach ($Property in $SharedEnvironmentProperty.Value.PSObject.Properties) {
-        if ($null -eq $Definition.environment.PSObject.Properties[$Property.Name]) {
-            $Definition.environment | Add-Member `
-                -NotePropertyName $Property.Name `
-                -NotePropertyValue $Property.Value
-        }
-    }
-}
-
-if ($null -eq $Definition.probes.PSObject.Properties["liveness"] -and $null -ne $Stack) {
-    $SharedLivenessProperty = $Stack.PSObject.Properties["shared_liveness_probe"]
-    if ($null -ne $SharedLivenessProperty) {
-        $Definition.probes | Add-Member `
-            -NotePropertyName "liveness" `
-            -NotePropertyValue $SharedLivenessProperty.Value
-    }
-}
-
 function Get-ManifestString {
     param(
         [Parameter(Mandatory)][string]$Name,
@@ -652,7 +627,7 @@ function New-Probe {
 
 function Get-WorkerEnvironment {
     $Environment = @{}
-    foreach ($Property in $Definition.environment.PSObject.Properties) {
+    foreach ($Property in @($Stack.shared_environment.PSObject.Properties) + @($Definition.environment.PSObject.Properties)) {
         # Runtime behavior belongs to the deployment manifest. Local .env values
         # are intentionally limited to credentials and required external inputs;
         # they must not disable the Salad queue or switch a production worker to
@@ -751,7 +726,7 @@ function New-ContainerGroup {
             -IncludePriority
         startup_probe = New-Probe -Probe $Definition.probes.startup
         readiness_probe = New-Probe -Probe $Definition.probes.readiness
-        liveness_probe = New-Probe -Probe $Definition.probes.liveness
+        liveness_probe = New-Probe -Probe $Stack.shared_liveness_probe
         queue_connection = New-QueueConnectionConfiguration
         queue_autoscaler = New-QueueAutoscalerConfiguration
     } | ConvertTo-Json -Depth 20
@@ -820,7 +795,7 @@ function Update-ContainerGroup {
             -IncludePriority
         startup_probe = New-Probe -Probe $Definition.probes.startup
         readiness_probe = New-Probe -Probe $Definition.probes.readiness
-        liveness_probe = New-Probe -Probe $Definition.probes.liveness
+        liveness_probe = New-Probe -Probe $Stack.shared_liveness_probe
         queue_autoscaler = New-QueueAutoscalerConfiguration
     } | ConvertTo-Json -Depth 20
 
