@@ -1,18 +1,9 @@
-from ai_video_factory.gpu.contracts import GPUJobRequest, GPUJobResponse
-from ai_video_factory.gpu.worker import GPUWorker
 from ai_video_factory.inference.contracts import (
     InferenceJobRequest,
     InferenceJobResponse,
     ObjectOutput,
 )
 from ai_video_factory.inference.settings import InferenceWorkerSettings
-from ai_video_factory.inference.worker import InferenceWorker
-
-
-def test_gpu_contracts_are_backward_compatible_aliases() -> None:
-    assert GPUJobRequest is InferenceJobRequest
-    assert GPUJobResponse is InferenceJobResponse
-    assert GPUWorker is InferenceWorker
 
 
 def test_inference_job_can_start_without_object_inputs() -> None:

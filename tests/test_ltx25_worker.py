@@ -4,14 +4,7 @@ from pathlib import Path
 import pytest
 
 from ai_video_factory.inference.errors import ModelBootstrapPendingError
-from ai_video_factory.workers.ltx25 import (
-    LTX_VIDEO_TASK,
-    DirectLTX25Backend,
-    LTX25WorkerSettings,
-    ltx_video_application_job_id,
-)
-
-
+from ai_video_factory.workers.ltx25 import DirectLTX25Backend, LTX25WorkerSettings
 
 def test_ltx25_prepare_treats_missing_model_files_as_bootstrap_pending(
     tmp_path: Path,
@@ -22,7 +15,6 @@ def test_ltx25_prepare_treats_missing_model_files_as_bootstrap_pending(
 
     with pytest.raises(ModelBootstrapPendingError, match="Missing LTX-2.5 model files"):
         backend.prepare()
-
 
 def test_ltx25_worker_settings_use_shared_inference_core() -> None:
     settings = LTX25WorkerSettings(
@@ -36,7 +28,6 @@ def test_ltx25_worker_settings_use_shared_inference_core() -> None:
     assert settings.model_root.as_posix() == "/workspace/models/ltx-2.5"
     assert settings.model_repository == "Lightricks/LTX-2.5"
     assert settings.device == "cuda"
-
 
 def test_ltx25_salad_manifest_has_dedicated_queue_and_image() -> None:
     manifest_path = Path("deploy/salad/services.json")
@@ -57,7 +48,6 @@ def test_ltx25_salad_manifest_has_dedicated_queue_and_image() -> None:
     assert service["environment"]["INFERENCE_WORKER_MODE"] == "production"
     assert "GPU_WORKER_RUNTIME" not in service["environment"]
 
-
 def test_ltx25_container_is_model_specific() -> None:
     dockerfile = Path("docker/workers/ltx25/Dockerfile")
     text = dockerfile.read_text(encoding="utf-8")
@@ -69,7 +59,6 @@ def test_ltx25_container_is_model_specific() -> None:
     ).read_text(encoding="utf-8")
     assert "COPY src /opt/factory/src" in text
     assert "COPY . /opt/factory" not in text
-
 
 def test_ltx25_model_download_uses_xet_with_resilient_timeouts() -> None:
     dockerfile = Path("docker/workers/ltx25/Dockerfile").read_text(encoding="utf-8")

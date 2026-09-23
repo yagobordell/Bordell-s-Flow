@@ -7,8 +7,8 @@ from typing import Any
 import pytest
 from PIL import Image
 
-import ai_video_factory.gpu.ltx_video as ltx_video
-from ai_video_factory.gpu.ltx_video import (
+import ai_video_factory.workers.ltx25.model as ltx_video
+from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
     DirectLTX25Backend,
     LTXModelFiles,

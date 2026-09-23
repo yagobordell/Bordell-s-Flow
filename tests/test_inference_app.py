@@ -5,11 +5,11 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from ai_video_factory.inference.app import create_app
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.repository import InMemoryJobRepository
 from ai_video_factory.inference.storage import LocalObjectStorage, sha256_file
 from ai_video_factory.inference.tasks import CopyTaskRunner, TaskRunnerRegistry
 from ai_video_factory.inference.worker import InferenceWorker
-from ai_video_factory.inference.errors import ModelBootstrapPendingError
 
 
 def test_http_worker_health_readiness_and_job(tmp_path: Path) -> None:

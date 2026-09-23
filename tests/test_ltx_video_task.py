@@ -10,15 +10,16 @@ from pydantic import ValidationError
 
 import ai_video_factory.workers.ltx25.model as ltx_video
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
+from ai_video_factory.inference.tasks import CopyTaskRunner, TaskRunnerRegistry
 from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
+    LTX_VIDEO_TASK,
     DirectLTX25Backend,
     LTXModelFiles,
     LTXVideoParameters,
     LTXVideoTaskRunner,
     ltx_num_frames_for_duration,
 )
-from ai_video_factory.inference.tasks import CopyTaskRunner, TaskRunnerRegistry
 
 
 class FakeBackend:
