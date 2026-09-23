@@ -45,7 +45,10 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
         '"qwen_image_21", "ltx25", "realesrgan", "all")'
     )
     assert service_set in text
-    assert 'python scripts/smoke/run_salad_smoke_suite.py' in text
+    assert '$SmokeScript = Join-Path $RepoRoot "scripts\\smoke\\run_salad_smoke_suite.py"' in text
+    assert "& python $SmokeScript" in text
+    assert "docker compose" not in text
+    assert "Compose file not found" not in text
     assert "manage_salad_stack.ps1" in text
     assert "start_salad_scale_to_zero.ps1" in text
     assert "start_salad_protected_smoke.ps1" in text
@@ -55,7 +58,7 @@ def test_validation_manager_keeps_expensive_actions_explicit() -> None:
     assert 'if (-not $CallSucceeded)' in text
     assert '"Prepare" { Invoke-StackAction -StackAction "Prepare" }' in text
     assert '"Start" { Invoke-ScaleToZeroStart }' in text
-    assert '"Prewarm" { Invoke-ProtectedSmokeBootstrap }' in text
+    assert '"Prewarm" { Invoke-SafePrewarm }' in text
     assert '"ProtectedSmoke" { Invoke-ProtectedSmoke }' in text
     assert '"Stop" { Invoke-SafeStop }' in text
     assert 'ValidateSet("Full"' not in text

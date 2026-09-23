@@ -54,6 +54,7 @@ def test_bootstrap_gates_on_readiness_not_queue_attachment() -> None:
     assert "one started ready bootstrap instance before timeout" in script
     assert script.count("$Queue = Get-Queue") == 1
     assert "$InitialQueueAttachment = Test-QueueAttachment -Queue $Queue" in script
+    assert "the caller must stop and normalize replicas=0" not in script
 
 def test_restore_returns_autoscaler_to_manifest_before_stop() -> None:
     restore = RESTORE.read_text(encoding="utf-8")
@@ -71,6 +72,19 @@ def test_restore_returns_autoscaler_to_manifest_before_stop() -> None:
     )
 
 
+def test_public_prewarm_always_cleans_up_gpu_replica() -> None:
+    manager = MANAGER.read_text(encoding="utf-8")
+    safe_prewarm = manager.split("function Invoke-SafePrewarm", maxsplit=1)[1].split(
+        "if ($Recreate", maxsplit=1
+    )[0]
+
+    assert "try {" in safe_prewarm
+    assert "Invoke-ProtectedSmokeBootstrap" in safe_prewarm
+    assert "finally {" in safe_prewarm
+    assert "Invoke-SafeStop" in safe_prewarm
+    assert "stopped/replicas=0" in safe_prewarm
+
+
 def test_manual_stop_also_restores_scale_to_zero_configuration() -> None:
     manager = MANAGER.read_text(encoding="utf-8")
     safe_stop = manager.split("function Invoke-SafeStop", maxsplit=1)[1].split(
@@ -81,18 +95,21 @@ def test_manual_stop_also_restores_scale_to_zero_configuration() -> None:
     assert 'Invoke-StackAction -StackAction "Stop"' in safe_stop
 
 
-def test_ltx_image_pull_only_reallocates_after_progress_stalls() -> None:
+def test_heavy_gpu_image_pull_reallocates_stalls_and_hard_timeouts() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
 
     assert "[int]$MaxDownloadReallocations = 3" in script
     assert "[int]$DownloadStallTimeoutMinutes = 10" in script
+    assert "[int]$DownloadHardTimeoutMinutes = 20" in script
     assert "$DownloadProgressThreshold = 0.005" in script
     assert "$DownloadProgressBaseline = $null" in script
     assert "$DownloadProgressSince = $null" in script
     assert "$DownloadProgressInstanceId = \"\"" in script
+    assert "$DownloadStartedAt = $null" in script
+    assert "$DownloadStartedInstanceId = \"\"" in script
     assert 'function Request-InstanceReallocation' in script
     assert '"$InstancesUrl/$InstanceId/reallocate"' in script
-    assert '$Service -eq "ltx25"' in script
+    assert '$Service -in @("qwen_image_21", "ltx25")' in script
     assert '$InstanceState -eq "downloading"' in script
     assert "$PullingProgressValue -gt 0.0" in script
     assert "$PullingProgressValue -lt 1.0" in script
@@ -106,6 +123,9 @@ def test_ltx_image_pull_only_reallocates_after_progress_stalls() -> None:
     ) in script
     assert "$DownloadReallocations -ge $MaxDownloadReallocations" in script
     assert "image-pull watchdog started" in script
+    assert "image-pull hard watchdog started" in script
+    assert "$DownloadElapsed.TotalMinutes -ge $DownloadHardTimeoutMinutes" in script
+    assert "remained in image downloading for at least" in script
     assert "image pull made less than" in script
     assert "$ReallocationPending = $true" in script
     assert "$MachineId -ne $ReallocatedMachineId" in script
@@ -113,7 +133,7 @@ def test_ltx_image_pull_only_reallocates_after_progress_stalls() -> None:
     assert "$StartedBootstrapDeadlineSet = $false" in script
 
 
-def test_ltx_allocating_watchdog_aborts_stalled_bootstrap() -> None:
+def test_heavy_gpu_allocating_watchdog_aborts_stalled_bootstrap() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
 
     assert "[int]$AllocatingTimeoutMinutes = 10" in script
@@ -127,13 +147,24 @@ def test_ltx_allocating_watchdog_aborts_stalled_bootstrap() -> None:
     assert "aborting protected bootstrap" in script
 
 
-def test_ltx_running_not_ready_reallocates_stalled_model_bootstrap() -> None:
+def test_running_not_ready_timer_survives_same_machine_container_restarts() -> None:
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+
+    assert "$RunningNotReadyMachineId = \"\"" in script
+    assert "$MachineId -ne $RunningNotReadyMachineId" in script
+    assert "$RunningNotReadyMachineId = $MachineId" in script
+    assert "$RunningNotReadyInstanceId" not in script
+    assert "$MachineChanged = (" in script
+    assert "if ($Ready -or $MachineChanged)" in script
+
+
+def test_heavy_gpu_running_not_ready_reallocates_stalled_model_bootstrap() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
 
     assert "[int]$RunningNotReadyTimeoutMinutes = 20" in script
     assert "[int]$MaxRunningNotReadyReallocations = 2" in script
     assert "$RunningNotReadySince = $null" in script
-    assert "$RunningNotReadyInstanceId = \"\"" in script
+    assert "$RunningNotReadyMachineId = \"\"" in script
     assert "$RunningNotReadyReallocations = 0" in script
     assert '$InstanceState -eq "running"' in script
     assert "$StartedInstances.Count -eq 1" in script

@@ -94,12 +94,14 @@ RUN python3 -m pip install \
 COPY --from=salad-worker /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/
 COPY docker/workers/ltx25/download_models.sh /usr/local/bin/download-models
 COPY docker/workers/common/entrypoint.sh /usr/local/bin/common-worker-entrypoint
+COPY docker/workers/common/network_preflight.sh /usr/local/bin/network-preflight
 COPY docker/workers/ltx25/entrypoint.sh /usr/local/bin/worker-entrypoint
 
 RUN chmod 0755 \
         /usr/local/bin/salad-http-job-queue-worker \
         /usr/local/bin/download-models \
         /usr/local/bin/common-worker-entrypoint \
+        /usr/local/bin/network-preflight \
         /usr/local/bin/worker-entrypoint \
     && useradd --create-home --uid 10001 worker \
     && mkdir --parents \

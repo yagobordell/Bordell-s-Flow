@@ -12,13 +12,13 @@ RUN apt-get update && apt-get install --yes --no-install-recommends ca-certifica
 FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime
 ENV DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DEFAULT_TIMEOUT=300 \
  HF_HOME=/workspace/.cache/huggingface XDG_CACHE_HOME=/workspace/.cache HF_HUB_OFFLINE=1 \
- HF_HUB_DOWNLOAD_TIMEOUT=120 HF_HUB_ETAG_TIMEOUT=30 HF_XET_HIGH_PERFORMANCE=1 \
+ HF_HUB_DOWNLOAD_TIMEOUT=120 HF_HUB_ETAG_TIMEOUT=30 \
  INFERENCE_WORKER_MODE=production INFERENCE_WORKER_TEMP_DIR=/tmp/ai-video-factory \
  QWEN_IMAGE_21_MODEL_ROOT=/workspace/models/qwen-image-2.1 \
  QWEN_IMAGE_21_MODEL_REPOSITORY=Qwen/Qwen-Image-2.1 \
  QWEN_IMAGE_21_MODEL_REVISION=b3179ad355be050328e483a9dfdd9e60cd62adfa \
  QWEN_IMAGE_21_DEVICE=cuda SALAD_QUEUE_ENABLED=false
-RUN apt-get update && apt-get install --yes --no-install-recommends ca-certificates git python3-pip && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install --yes --no-install-recommends ca-certificates curl git python3-pip && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/factory
 COPY pyproject.toml README.md /opt/factory/
 COPY src /opt/factory/src
@@ -28,9 +28,10 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir '/opt/factory[
 COPY --from=salad-worker /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/
 COPY docker/workers/qwen-image-2.1/download_models.sh /usr/local/bin/download-models
 COPY docker/workers/common/entrypoint.sh /usr/local/bin/common-worker-entrypoint
+COPY docker/workers/common/network_preflight.sh /usr/local/bin/network-preflight
 COPY docker/workers/qwen-image-2.1/entrypoint.sh /usr/local/bin/worker-entrypoint
 RUN chmod 0755 /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/download-models /usr/local/bin/common-worker-entrypoint \
-        /usr/local/bin/worker-entrypoint \
+        /usr/local/bin/network-preflight /usr/local/bin/worker-entrypoint \
  && useradd --create-home --uid 10001 worker \
  && mkdir --parents /workspace/models/qwen-image-2.1 /workspace/.cache/huggingface /tmp/ai-video-factory /opt/factory/data/inference-local \
  && chown --recursive worker:worker /workspace /tmp/ai-video-factory /opt/factory/data

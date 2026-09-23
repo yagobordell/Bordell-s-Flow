@@ -322,6 +322,82 @@ def _validate_audio_duration(audio: AudioProbe, *, fps: int) -> None:
         )
 
 
+def _prepare_pipeline_audio(
+    source: Path,
+    destination: Path,
+    *,
+    probe: AudioProbe,
+) -> tuple[Path, AudioProbe]:
+    """Normalize mono speech to dual-mono stereo for the LTX audio VAE."""
+
+    if probe.channels == 2:
+        return source, probe
+    if probe.channels != 1:
+        raise _input_error(
+            "UNSUPPORTED_AUDIO_CHANNELS",
+            "LTX A2V accepts mono or stereo speech audio; "
+            f"received {probe.channels} channels",
+        )
+
+    executable = shutil.which("ffmpeg")
+    if executable is None:
+        raise RuntimeError("ffmpeg is required to normalize mono LTX A2V audio")
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [
+                executable,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(source),
+                "-map",
+                "0:a:0",
+                "-ac",
+                "2",
+                "-ar",
+                str(probe.sample_rate),
+                "-c:a",
+                "pcm_s16le",
+                str(destination),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip()
+        raise _input_error(
+            "AUDIO_NORMALIZATION_FAILED",
+            "failed to convert mono speech audio to dual-mono stereo"
+            + (f": {detail[-800:]}" if detail else ""),
+        ) from exc
+
+    prepared_probe = probe_audio(destination)
+    if prepared_probe.channels != 2:
+        raise RuntimeError(
+            "LTX A2V mono normalization did not produce a two-channel waveform"
+        )
+
+    duration_tolerance = max(0.05, 1.0 / float(probe.sample_rate))
+    if abs(prepared_probe.duration_seconds - probe.duration_seconds) > duration_tolerance:
+        raise RuntimeError(
+            "LTX A2V mono normalization changed audio duration unexpectedly: "
+            f"{probe.duration_seconds:.6f}s -> {prepared_probe.duration_seconds:.6f}s"
+        )
+
+    logger.info(
+        "LTX25_A2V_AUDIO_UPMIX source_channels=1 conditioning_channels=2 "
+        "sample_rate=%d duration_seconds=%.3f",
+        prepared_probe.sample_rate,
+        prepared_probe.duration_seconds,
+    )
+    return destination, prepared_probe
+
+
 def _prepare_avatar_image(
     source: Path,
     destination: Path,
@@ -458,6 +534,11 @@ class DirectLTX25AudioToVideoBackend:
         generation_started = time.monotonic()
         audio_probe = probe_audio(audio_path)
         _validate_audio_duration(audio_probe, fps=parameters.fps)
+        pipeline_audio_path, pipeline_audio_probe = _prepare_pipeline_audio(
+            audio_path,
+            output_path.parent / "a2v_conditioning_stereo.wav",
+            probe=audio_probe,
+        )
 
         with self._lock:
             bindings = self._get_bindings()
@@ -509,7 +590,7 @@ class DirectLTX25AudioToVideoBackend:
                         num_inference_steps=self._pipeline_params.num_inference_steps,
                         video_guider_params=self._pipeline_params.video_guider_params,
                         images=[conditioning],
-                        audio_path=str(audio_path.resolve()),
+                        audio_path=str(pipeline_audio_path.resolve()),
                         audio_start_time=0.0,
                         audio_max_duration=None,
                     )
@@ -586,6 +667,8 @@ class DirectLTX25AudioToVideoBackend:
             "input_audio_codec": audio_probe.codec,
             "input_audio_sample_rate": audio_probe.sample_rate,
             "input_audio_channels": audio_probe.channels,
+            "conditioning_audio_channels": pipeline_audio_probe.channels,
+            "audio_upmixed_to_stereo": audio_probe.channels == 1,
             "input_audio_duration_seconds": audio_probe.duration_seconds,
             "effective_audio_duration_seconds": effective_audio_duration,
             "output_video_duration_seconds": output_video_duration,

@@ -210,6 +210,89 @@ def test_a2v_model_files_require_dev_transformer_and_distilled_lora(tmp_path: Pa
         files.validate()
 
 
+def test_a2v_mono_audio_is_upmixed_to_stereo_without_duration_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "speech.wav"
+    source.write_bytes(b"mono")
+    destination = tmp_path / "prepared" / "speech-stereo.wav"
+    mono_probe = a2v.AudioProbe(
+        codec="pcm_s16le",
+        sample_rate=24000,
+        channels=1,
+        duration_seconds=5.0,
+    )
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(a2v.shutil, "which", lambda _: "ffmpeg")
+
+    def fake_run(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        assert kwargs["check"] is True
+        assert kwargs["capture_output"] is True
+        assert kwargs["text"] is True
+        calls.append(command)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(b"stereo")
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(a2v.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        a2v,
+        "probe_audio",
+        lambda path: a2v.AudioProbe(
+            codec="pcm_s16le",
+            sample_rate=24000,
+            channels=2,
+            duration_seconds=5.0,
+        )
+        if path == destination
+        else mono_probe,
+    )
+
+    prepared_path, prepared_probe = a2v._prepare_pipeline_audio(
+        source,
+        destination,
+        probe=mono_probe,
+    )
+
+    assert prepared_path == destination
+    assert prepared_probe.channels == 2
+    assert prepared_probe.duration_seconds == 5.0
+    assert len(calls) == 1
+    assert calls[0][calls[0].index("-ac") + 1] == "2"
+    assert calls[0][calls[0].index("-ar") + 1] == "24000"
+
+
+def test_a2v_stereo_audio_passes_through_without_ffmpeg(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "speech-stereo.wav"
+    source.write_bytes(b"stereo")
+    stereo_probe = a2v.AudioProbe(
+        codec="pcm_s16le",
+        sample_rate=24000,
+        channels=2,
+        duration_seconds=5.0,
+    )
+
+    monkeypatch.setattr(
+        a2v.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("ffmpeg should not run for stereo audio"),
+    )
+
+    prepared_path, prepared_probe = a2v._prepare_pipeline_audio(
+        source,
+        tmp_path / "unused.wav",
+        probe=stereo_probe,
+    )
+
+    assert prepared_path == source
+    assert prepared_probe is stereo_probe
+
+
 def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -395,6 +478,19 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
         "probe_audio",
         lambda _: a2v.AudioProbe("pcm_s16le", 24000, 1, 4.0),
     )
+    monkeypatch.setattr(
+        a2v,
+        "_prepare_pipeline_audio",
+        lambda source, destination, *, probe: (
+            source,
+            a2v.AudioProbe(
+                probe.codec,
+                probe.sample_rate,
+                2,
+                probe.duration_seconds,
+            ),
+        ),
+    )
     monkeypatch.setattr(a2v, "_output_duration", lambda _: 3.708333)
 
     backend = DirectLTX25AudioToVideoBackend(model_root=model_root)
@@ -425,6 +521,9 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
     assert state["encodes"][0]["audio"] is not None
     assert list(state["encodes"][0]["video"]) == ["cropped"]
     assert metadata["input_audio_duration_seconds"] == 4.0
+    assert metadata["input_audio_channels"] == 1
+    assert metadata["conditioning_audio_channels"] == 2
+    assert metadata["audio_upmixed_to_stereo"] is True
     assert metadata["effective_audio_duration_seconds"] == pytest.approx(89000 / 24000)
     assert metadata["num_frames"] == 89
     assert metadata["peak_vram_bytes"] == 123456

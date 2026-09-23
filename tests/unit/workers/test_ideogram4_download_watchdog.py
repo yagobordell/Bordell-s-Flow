@@ -39,7 +39,7 @@ def test_download_watchdog_aborts_process_without_byte_progress(tmp_path: Path) 
     script = tmp_path / "stalled.py"
     script.write_text("import time\ntime.sleep(5)\n", encoding="utf-8")
 
-    with pytest.raises(TimeoutError, match="no byte progress"):
+    with pytest.raises(TimeoutError, match="no meaningful byte progress"):
         run_with_progress_watchdog(
             [sys.executable, str(script)],
             progress_root=progress_root,

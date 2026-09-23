@@ -59,7 +59,19 @@
         "LTX_MODEL_REPOSITORY": "Lightricks/LTX-2.5",
         "LTX_MODEL_REVISION": "main",
         "LTX_DEVICE": "cuda",
-        "PYTHONFAULTHANDLER": "1"
+        "PYTHONFAULTHANDLER": "1",
+        "SALAD_NETWORK_MIN_DOWNLOAD_MBPS": "100",
+        "SALAD_NETWORK_TEST_BYTES": "25000000",
+        "SALAD_NETWORK_TEST_ATTEMPTS": "3",
+        "SALAD_NETWORK_TEST_DELAY_SECONDS": "5",
+        "LTX_MODEL_DOWNLOAD_MIN_PROGRESS_RESET_BYTES": "67108864",
+        "LTX_MODEL_DOWNLOAD_MIN_THROUGHPUT_MIBPS": "8",
+        "LTX_MODEL_DOWNLOAD_THROUGHPUT_GRACE_SECONDS": "300",
+        "LTX_MODEL_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS": "180",
+        "SALAD_NETWORK_TEST_URL": "https://huggingface.co/Lightricks/LTX-2.5/resolve/main/diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+        "HF_XET_CLIENT_ENABLE_ADAPTIVE_CONCURRENCY": "true",
+        "HF_HUB_DOWNLOAD_TIMEOUT": "60",
+        "HF_HUB_ETAG_TIMEOUT": "15"
       },
       "required_environment": [
         "HF_TOKEN"
@@ -396,9 +408,21 @@
         "QWEN_IMAGE_21_MODEL_REVISION": "b3179ad355be050328e483a9dfdd9e60cd62adfa",
         "QWEN_IMAGE_21_DEVICE": "cuda",
         "QWEN_IMAGE_21_READY_TIMEOUT_SECONDS": "1800",
-        "HF_HUB_DOWNLOAD_TIMEOUT": "120",
-        "HF_HUB_ETAG_TIMEOUT": "30",
-        "HF_XET_HIGH_PERFORMANCE": "1"
+        "HF_HUB_DOWNLOAD_TIMEOUT": "60",
+        "HF_HUB_ETAG_TIMEOUT": "15",
+        "QWEN_IMAGE_21_DOWNLOAD_STALL_TIMEOUT_SECONDS": "720",
+        "QWEN_IMAGE_21_DOWNLOAD_HARD_TIMEOUT_SECONDS": "7200",
+        "QWEN_IMAGE_21_DOWNLOAD_POLL_SECONDS": "15",
+        "QWEN_IMAGE_21_DOWNLOAD_MIN_PROGRESS_RESET_BYTES": "67108864",
+        "SALAD_NETWORK_MIN_DOWNLOAD_MBPS": "100",
+        "SALAD_NETWORK_TEST_BYTES": "25000000",
+        "SALAD_NETWORK_TEST_ATTEMPTS": "3",
+        "SALAD_NETWORK_TEST_DELAY_SECONDS": "5",
+        "QWEN_IMAGE_21_DOWNLOAD_MIN_THROUGHPUT_MIBPS": "8",
+        "QWEN_IMAGE_21_DOWNLOAD_THROUGHPUT_GRACE_SECONDS": "300",
+        "QWEN_IMAGE_21_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS": "180",
+        "SALAD_NETWORK_TEST_URL": "https://huggingface.co/Qwen/Qwen-Image-2.1/resolve/b3179ad355be050328e483a9dfdd9e60cd62adfa/vae/diffusion_pytorch_model.safetensors",
+        "HF_XET_CLIENT_ENABLE_ADAPTIVE_CONCURRENCY": "true"
       },
       "required_environment": [
         "HF_TOKEN"
