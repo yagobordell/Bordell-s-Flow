@@ -4,11 +4,17 @@ import pytest
 
 from ai_video_factory.providers.salad_qwen_image import build_qwen_image_job_request
 from ai_video_factory.workers.qwen_image_21 import (
+    QWEN_IMAGE_21_DEFAULT_STEPS,
     QWEN_IMAGE_21_GENERATION_PROFILE,
     QWEN_IMAGE_21_KEYFRAME_TASK,
     QWEN_IMAGE_21_MODEL_ID,
     QWEN_IMAGE_21_MODEL_REVISION,
+    QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+    QWEN_IMAGE_21_PRODUCTION_SIZE,
+    QWEN_IMAGE_21_PRODUCTION_WIDTH,
     QWEN_IMAGE_21_REFERENCE_TASK,
+    QWEN_IMAGE_21_TRUE_CFG_SCALE,
+    QWEN_IMAGE_21_USE_KV_CACHE,
 )
 
 
@@ -32,7 +38,9 @@ def test_qwen_reference_request_is_deterministic() -> None:
     assert first.job_id.startswith("qwen-image-21-reference-")
     assert first.parameters["generation_profile"] == QWEN_IMAGE_21_GENERATION_PROFILE
     assert first.parameters["model_revision"] == QWEN_IMAGE_21_MODEL_REVISION
-    assert first.parameters["num_inference_steps"] == 40
+    assert first.parameters["num_inference_steps"] == QWEN_IMAGE_21_DEFAULT_STEPS
+    assert first.parameters["true_cfg_scale"] == QWEN_IMAGE_21_TRUE_CFG_SCALE
+    assert first.parameters["use_kv_cache"] is QWEN_IMAGE_21_USE_KV_CACHE
     assert first.output.content_type == "image/png"
 
 
@@ -49,12 +57,36 @@ def test_qwen_keyframe_request_uses_distinct_task_namespace() -> None:
     assert request.task == QWEN_IMAGE_21_KEYFRAME_TASK
 
 
-@pytest.mark.parametrize("width,height", [(1537, 864), (1536, 865), (128, 128)])
-def test_qwen_request_rejects_invalid_dimensions(width: int, height: int) -> None:
+@pytest.mark.parametrize(
+    "width,height",
+    [
+        (1280, 720),
+        (1024, 576),
+        (1536, 832),
+        (1536, 896),
+        (2752, 1536),
+    ],
+)
+def test_qwen_request_rejects_non_production_dimensions(width: int, height: int) -> None:
     from ai_video_factory.providers.salad_qwen_image import _parse_size
 
     with pytest.raises(ValueError):
         _parse_size(f"{width}x{height}")
+
+
+def test_qwen_production_size_is_exact_16_9_and_diffusers_compatible() -> None:
+    from ai_video_factory.providers.salad_qwen_image import _parse_size
+    from ai_video_factory.workers.qwen_image_21 import QWEN_IMAGE_21_DIMENSION_MULTIPLE
+
+    width, height = _parse_size(QWEN_IMAGE_21_PRODUCTION_SIZE)
+
+    assert (width, height) == (
+        QWEN_IMAGE_21_PRODUCTION_WIDTH,
+        QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+    )
+    assert width * 9 == height * 16
+    assert width % QWEN_IMAGE_21_DIMENSION_MULTIPLE == 0
+    assert height % QWEN_IMAGE_21_DIMENSION_MULTIPLE == 0
 
 
 def test_qwen_salad_manifest_contract() -> None:
@@ -91,4 +123,21 @@ def test_qwen_worker_pins_qwen_compatible_diffusers_revision() -> None:
 
     assert pinned in dockerfile
     assert "'git+https://github.com/huggingface/diffusers.git'" not in dockerfile
+    assert "'transformers==5.17.0'" in dockerfile
+
+def test_qwen_bootstrap_validates_required_snapshot_files() -> None:
+    script = Path("docker/workers/qwen-image-2.1/download_models.sh").read_text(
+        encoding="utf-8"
+    )
+
+    for relative in (
+        "model_index.json",
+        "processor/tokenizer.json",
+        "scheduler/scheduler_config.json",
+        "text_encoder/model.safetensors.index.json",
+        "transformer/diffusion_pytorch_model.safetensors.index.json",
+        "vae/diffusion_pytorch_model.safetensors",
+    ):
+        assert f'"{relative}"' in script
+    assert "snapshot_ready" in script
 
