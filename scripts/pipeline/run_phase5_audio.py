@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from r2_client import create_r2_storage
+from ai_video_factory.providers.r2 import create_r2_storage
 
 from ai_video_factory.config import settings
 from ai_video_factory.domain import SourceScript
