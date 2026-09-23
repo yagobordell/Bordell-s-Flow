@@ -13,13 +13,13 @@ def test_queue_cleanup_keeps_paginated_items_array_shaped() -> None:
     assert "$Items = if (" not in script
 
 
-def test_queue_cleanup_supports_flux2_klein() -> None:
+
+def test_queue_cleanup_supports_qwen_image_21() -> None:
     script = CLEANUP.read_text(encoding="utf-8")
 
-    assert '"flux2_klein"' in script
+    assert '"qwen_image_21"' in script
     assert "Queue cleanup requires" in script
     assert "queue cleanup complete: no active or queued jobs" in script
-
 
 def test_queue_cleanup_fast_paths_empty_summary_before_job_history() -> None:
     script = CLEANUP.read_text(encoding="utf-8")
