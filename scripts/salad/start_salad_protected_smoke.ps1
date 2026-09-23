@@ -592,8 +592,15 @@ do {
         }
     }
     else {
-        $RunningNotReadySince = $null
-        $RunningNotReadyMachineId = ""
+        $MachineChanged = (
+            -not [string]::IsNullOrWhiteSpace($RunningNotReadyMachineId) -and
+            $MachineId -ne "-" -and
+            $MachineId -ne $RunningNotReadyMachineId
+        )
+        if ($Ready -or $MachineChanged) {
+            $RunningNotReadySince = $null
+            $RunningNotReadyMachineId = ""
+        }
     }
 
     $HeavyImageDownload = (
