@@ -162,7 +162,7 @@ def test_heavy_gpu_running_not_ready_reallocates_stalled_model_bootstrap() -> No
     assert "[int]$RunningNotReadyTimeoutMinutes = 20" in script
     assert "[int]$MaxRunningNotReadyReallocations = 2" in script
     assert "$RunningNotReadySince = $null" in script
-    assert "$RunningNotReadyInstanceId = \"\"" in script
+    assert "$RunningNotReadyMachineId = \"\"" in script
     assert "$RunningNotReadyReallocations = 0" in script
     assert '$InstanceState -eq "running"' in script
     assert "$StartedInstances.Count -eq 1" in script
