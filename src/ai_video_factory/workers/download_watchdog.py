@@ -118,6 +118,16 @@ def run_with_progress_watchdog(
         while True:
             return_code = process.poll()
             if return_code is not None:
+                elapsed = time.monotonic() - started
+                if (
+                    return_code != 0
+                    and reallocate_on_slow
+                    and elapsed >= throughput_grace_seconds
+                ):
+                    _request_reallocation_with_log(
+                        f"{label} downloader exited with code {return_code} "
+                        f"after {elapsed:.1f} seconds"
+                    )
                 return return_code
 
             time.sleep(poll_seconds)
