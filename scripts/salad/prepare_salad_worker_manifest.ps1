@@ -35,6 +35,17 @@ if ($null -eq $ServiceProperty) {
 }
 $Definition = $ServiceProperty.Value
 
+$SharedEnvironmentProperty = $Document.stack.PSObject.Properties["shared_environment"]
+if ($null -ne $SharedEnvironmentProperty) {
+    foreach ($Property in $SharedEnvironmentProperty.Value.PSObject.Properties) {
+        if ($null -eq $Definition.environment.PSObject.Properties[$Property.Name]) {
+            $Definition.environment | Add-Member `
+                -NotePropertyName $Property.Name `
+                -NotePropertyValue $Property.Value
+        }
+    }
+}
+
 $Previous = @{}
 foreach ($Property in $Definition.environment.PSObject.Properties) {
     $Name = [string]$Property.Name
