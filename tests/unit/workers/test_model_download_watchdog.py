@@ -75,7 +75,7 @@ def test_shared_watchdog_tiny_writes_do_not_mask_a_stall(
         lambda reason: reasons.append(reason) or True,
     )
 
-    with pytest.raises(TimeoutError, match="no byte progress"):
+    with pytest.raises(TimeoutError, match="no meaningful byte progress"):
         download_watchdog.run_with_progress_watchdog(
             [sys.executable, str(script), str(progress_root)],
             progress_root=progress_root,
@@ -88,7 +88,7 @@ def test_shared_watchdog_tiny_writes_do_not_mask_a_stall(
         )
 
     assert len(reasons) == 1
-    assert "no byte progress" in reasons[0]
+    assert "no meaningful byte progress" in reasons[0]
 
 
 def test_shared_watchdog_meaningful_progress_resets_stall_timer(
