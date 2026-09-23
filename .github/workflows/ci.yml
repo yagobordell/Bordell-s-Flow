@@ -48,6 +48,7 @@ jobs:
       - name: PowerShell syntax
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           Get-ChildItem scripts -Recurse -Filter *.ps1 | ForEach-Object {
               $Tokens = $null
               $Errors = $null
