@@ -12,8 +12,6 @@ if awk -v min="${min_mbps}" 'BEGIN {exit !(min <= 0)}'; then
   exit 0
 fi
 
-echo (
-) >/dev/null 2>&1 || true
 echo "SALAD_NETWORK_PREFLIGHT_START minimum_mbps=${min_mbps} bytes=${test_bytes} attempts=${attempts}"
 
 best_mbps="0"
