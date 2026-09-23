@@ -1,64 +1,36 @@
 # Salad deployment validation
 
-This runbook is for validating a worker after its image, model snapshot or Salad configuration
-changes. Normal video production should use `scripts/pipeline/run_video_factory.ps1` instead.
+Use this runbook after changing a worker image, model bootstrap or Salad configuration. Normal video
+production should use `scripts/pipeline/run_video_factory.ps1`.
 
 ## Prerequisites
 
-Provide the credentials required by `deploy/salad/services.json` in `.env`:
+Required credentials come from `.env` and the selected service definition in
+`deploy/salad/services.json`. Common requirements are Salad API access, Postgres, R2 and Hugging Face
+credentials where the model requires them. Docker is needed only when building or publishing images.
 
-```text
-SALAD_API_KEY
-POSTGRES_DSN
-R2_ENDPOINT_URL
-R2_BUCKET
-R2_ACCESS_KEY_ID
-R2_SECRET_ACCESS_KEY
-HF_TOKEN
-```
-
-Docker is required only when building/publishing worker images. It is not part of the runtime
-control plane.
-
-## Operator command
+## Commands
 
 ```powershell
-.\scripts\manage_salad_validation.ps1 -Service <service> -Action <action>
+.\scripts\salad\manage_salad_validation.ps1 -Service <service> -Action Validate
+.\scripts\salad\manage_salad_validation.ps1 -Service <service> -Action Prepare
+.\scripts\salad\manage_salad_validation.ps1 -Service <service> -Action Status
 ```
 
-Supported services and actions are defined by `deploy/salad/services.json` and the validation
-manager. Use one service at a time when diagnosing a change so GPU cost and failure scope stay
-bounded.
-
-A typical validation cycle is:
-
-```powershell
-.\scripts\manage_salad_validation.ps1 -Service ltx25 -Action Validate
-.\scripts\manage_salad_validation.ps1 -Service ltx25 -Action Prepare
-.\scripts\manage_salad_validation.ps1 -Service ltx25 -Action Status
-```
-
-For a real smoke, use the current dedicated smoke command for that worker rather than manually
-starting extra replicas. Always stop the service and verify zero replicas after paid validation.
+Use the dedicated command under `scripts/smoke/` for a real paid smoke instead of manually changing
+replicas.
 
 ## Acceptance
 
-A worker change is accepted only when:
+A worker change is accepted when the intended immutable image/configuration is deployed, one real
+queue-backed inference succeeds, persisted artifacts validate, the expected runtime operates without
+OOM/bootstrap failure, repository CI is green and the service returns to zero replicas.
 
-- the intended immutable image/configuration is deployed;
-- one real queue-backed inference succeeds;
-- R2 input/output metadata and SHA validation succeed;
-- the expected GPU/runtime is used without OOM or bootstrap failure;
-- the queue returns to an idle state;
-- the container group returns to zero replicas;
-- repository CI remains green.
-
-Persisted cloud logs and generated validation artifacts are evidence for the run, but dated
-validation reports do not belong in the active source tree; Git history is the historical record.
+Cloud logs and generated smoke artifacts are evidence for that run. They should not be copied into
+active documentation; Git history is the historical record.
 
 ## Failure handling
 
-Keep unrelated workers stopped, inspect the failing service status and queue, preserve relevant
-container logs, clean stale transport jobs and fix one cause at a time. Do not increase timeouts to
-hide a stalled model download; use the worker progress/watchdog metrics to distinguish healthy
-transfer from a real stall.
+Keep unrelated workers stopped. Inspect the failing service and queue, preserve relevant logs, clean
+stale transport jobs and fix the specific cause. Do not extend timeouts to hide a stalled model
+download; use worker watchdog/progress signals to distinguish healthy transfer from a real stall.
