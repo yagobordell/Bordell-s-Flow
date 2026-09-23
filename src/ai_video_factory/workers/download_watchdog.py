@@ -78,6 +78,7 @@ def run_with_progress_watchdog(
     throughput_grace_seconds: float = 180.0,
     throughput_window_seconds: float = 120.0,
     reallocate_on_slow: bool = False,
+    min_progress_reset_bytes: int = 1,
 ) -> int:
     """Run a downloader with byte-progress, throughput, and absolute deadlines."""
 
@@ -89,6 +90,8 @@ def run_with_progress_watchdog(
         raise ValueError("stall timeout must be lower than the hard timeout")
     if min_throughput_mib_per_second < 0:
         raise ValueError("minimum throughput cannot be negative")
+    if min_progress_reset_bytes <= 0:
+        raise ValueError("minimum progress reset bytes must be positive")
     if throughput_grace_seconds < 0 or throughput_window_seconds <= 0:
         raise ValueError("throughput grace/window values are invalid")
 
@@ -100,6 +103,7 @@ def run_with_progress_watchdog(
     started = time.monotonic()
     last_progress_at = started
     last_progress_bytes = 0
+    last_meaningful_progress_bytes = 0
     samples: deque[tuple[float, int]] = deque([(started, 0)])
     print(
         f"MODEL_DOWNLOAD_WATCHDOG label={label} initial_tree_bytes={initial_tree_bytes} "
@@ -134,6 +138,11 @@ def run_with_progress_watchdog(
             delta = current_progress_bytes - last_progress_bytes
             if delta > 0:
                 last_progress_bytes = current_progress_bytes
+            meaningful_delta = (
+                current_progress_bytes - last_meaningful_progress_bytes
+            )
+            if meaningful_delta >= min_progress_reset_bytes:
+                last_meaningful_progress_bytes = current_progress_bytes
                 last_progress_at = now
 
             samples.append((now, current_progress_bytes))
@@ -154,6 +163,7 @@ def run_with_progress_watchdog(
                 f"progress_bytes={current_progress_bytes} delta_bytes={delta} "
                 f"tree_bytes={current_tree_bytes} "
                 f"process_write_bytes={process_write_rendered} "
+                f"meaningful_delta_bytes={meaningful_delta} "
                 f"idle_seconds={idle:.1f} window_mibps={throughput_mibps:.2f}",
                 flush=True,
             )
@@ -262,6 +272,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--throughput-grace-seconds", type=float, default=180.0)
     parser.add_argument("--throughput-window-seconds", type=float, default=120.0)
     parser.add_argument("--reallocate-on-slow", action="store_true")
+    parser.add_argument("--min-progress-reset-bytes", type=int, default=1)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.command and args.command[0] == "--":
@@ -283,6 +294,7 @@ def main() -> None:
             throughput_grace_seconds=args.throughput_grace_seconds,
             throughput_window_seconds=args.throughput_window_seconds,
             reallocate_on_slow=args.reallocate_on_slow,
+            min_progress_reset_bytes=args.min_progress_reset_bytes,
         )
     except (TimeoutError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
