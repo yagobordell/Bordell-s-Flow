@@ -1,5 +1,5 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
 NETWORK_PREFLIGHT = Path("docker/workers/common/network_preflight.sh")
 MANIFEST = Path("deploy/salad/services.json")
