@@ -5,9 +5,8 @@ import json
 import os
 from pathlib import Path
 
-from r2_client import create_r2_storage
-
 from ai_video_factory.domain import VideoClip
+from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workflows.video_upscale import (
     build_video_upscale_plan,
