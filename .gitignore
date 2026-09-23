@@ -21,14 +21,11 @@ venv/
 .idea/
 .DS_Store
 
-# Local inputs and generated artifacts
+# Local runtime data
+data/*
+!data/input/
 data/input/*
-data/output/*
-data/tmp/*
-data/inference-local/
 !data/input/.gitkeep
-!data/output/.gitkeep
-!data/tmp/.gitkeep
 
 # Remotion / Node
 remotion/node_modules/
