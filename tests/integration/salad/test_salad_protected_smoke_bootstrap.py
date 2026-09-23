@@ -54,6 +54,7 @@ def test_bootstrap_gates_on_readiness_not_queue_attachment() -> None:
     assert "one started ready bootstrap instance before timeout" in script
     assert script.count("$Queue = Get-Queue") == 1
     assert "$InitialQueueAttachment = Test-QueueAttachment -Queue $Queue" in script
+    assert "the caller must stop and normalize replicas=0" not in script
 
 def test_restore_returns_autoscaler_to_manifest_before_stop() -> None:
     restore = RESTORE.read_text(encoding="utf-8")
