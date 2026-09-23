@@ -26,6 +26,7 @@ if [[ -f "${marker}" ]] && [[ "$(cat "${marker}")" == "${expected}" ]] && snapsh
   echo "Qwen-Image-2.1 model bootstrap cache hit"
   exit 0
 fi
+rm -f "${marker}"
 rm -rf "${snapshot}"
 mkdir -p "${snapshot}"
 HF_HUB_OFFLINE=0 python - <<'PY'
