@@ -18,6 +18,9 @@ param(
     [ValidateRange(1, 60)]
     [int]$DownloadStallTimeoutMinutes = 10,
 
+    [ValidateRange(5, 60)]
+    [int]$DownloadHardTimeoutMinutes = 20,
+
     [ValidateRange(1, 60)]
     [int]$RunningNotReadyTimeoutMinutes = 20,
 
@@ -406,6 +409,8 @@ $DownloadProgressThreshold = 0.005
 $DownloadProgressBaseline = $null
 $DownloadProgressSince = $null
 $DownloadProgressInstanceId = ""
+$DownloadStartedAt = $null
+$DownloadStartedInstanceId = ""
 $ReallocationPending = $false
 $ReallocatedMachineId = ""
 $AllocatingSince = $null
@@ -477,7 +482,7 @@ do {
     Write-Host $Message
 
     if (
-        $Service -eq "ltx25" -and
+        $Service -in @("qwen_image_21", "ltx25") -and
         $Instances.Count -eq 1 -and
         $InstanceState -eq "allocating"
     ) {
@@ -498,7 +503,7 @@ do {
         $AllocatingElapsed = (Get-Date) - $AllocatingSince
         if ($AllocatingElapsed.TotalMinutes -ge $AllocatingTimeoutMinutes) {
             throw (
-                "LTX instance remained in allocating for at least " +
+                "GPU worker instance remained in allocating for at least " +
                 "$AllocatingTimeoutMinutes minute(s); aborting protected bootstrap."
             )
         }
@@ -523,7 +528,7 @@ do {
     }
 
     $RunningNotReady = (
-        $Service -eq "ltx25" -and
+        $Service -in @("qwen_image_21", "ltx25") -and
         $Instances.Count -eq 1 -and
         $StartedInstances.Count -eq 1 -and
         $InstanceState -eq "running" -and
@@ -553,14 +558,14 @@ do {
                 $RunningNotReadyReallocations -ge $MaxRunningNotReadyReallocations
             ) {
                 throw (
-                    "LTX model bootstrap remained running but not ready after " +
+                    "GPU model bootstrap remained running but not ready after " +
                     "$MaxRunningNotReadyReallocations Salad node reallocations."
                 )
             }
 
             if ([string]::IsNullOrWhiteSpace($InstanceId)) {
                 throw (
-                    "Cannot reallocate stalled LTX model bootstrap because " +
+                    "Cannot reallocate stalled GPU model bootstrap because " +
                     "instance id is missing."
                 )
             }
@@ -591,8 +596,66 @@ do {
         $RunningNotReadyInstanceId = ""
     }
 
+    $HeavyImageDownload = (
+        $Service -in @("qwen_image_21", "ltx25") -and
+        $Instances.Count -eq 1 -and
+        -not $ReallocationPending -and
+        $InstanceState -eq "downloading"
+    )
+    if ($HeavyImageDownload) {
+        if (
+            $null -eq $DownloadStartedAt -or
+            $InstanceId -ne $DownloadStartedInstanceId
+        ) {
+            $DownloadStartedAt = Get-Date
+            $DownloadStartedInstanceId = $InstanceId
+            Write-Host (
+                "{0} service={1} image-pull hard watchdog started limit={2}m" -f
+                (Get-Date -Format "HH:mm:ss"),
+                $Service,
+                $DownloadHardTimeoutMinutes
+            ) -ForegroundColor Cyan
+        }
+
+        $DownloadElapsed = (Get-Date) - $DownloadStartedAt
+        if ($DownloadElapsed.TotalMinutes -ge $DownloadHardTimeoutMinutes) {
+            if ($DownloadReallocations -ge $MaxDownloadReallocations) {
+                throw (
+                    "$Service image pull exceeded $DownloadHardTimeoutMinutes minute(s) " +
+                    "after $MaxDownloadReallocations Salad node reallocations."
+                )
+            }
+            if ([string]::IsNullOrWhiteSpace($InstanceId)) {
+                throw "Cannot reallocate slow image pull because instance id is missing."
+            }
+
+            $DownloadReallocations += 1
+            $ReallocationPending = $true
+            $ReallocatedMachineId = $MachineId
+            Write-Warning (
+                "$Service remained in image downloading for at least " +
+                "$DownloadHardTimeoutMinutes minute(s); reallocating to another Salad node " +
+                "($DownloadReallocations/$MaxDownloadReallocations)."
+            )
+            Request-InstanceReallocation -InstanceId $InstanceId
+
+            $DownloadStartedAt = $null
+            $DownloadStartedInstanceId = ""
+            $DownloadProgressBaseline = $null
+            $DownloadProgressSince = $null
+            $DownloadProgressInstanceId = ""
+            $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+            $StartedBootstrapDeadlineSet = $false
+            continue
+        }
+    }
+    else {
+        $DownloadStartedAt = $null
+        $DownloadStartedInstanceId = ""
+    }
+
     $FractionalDownload = (
-        $Service -eq "ltx25" -and
+        $Service -in @("qwen_image_21", "ltx25") -and
         $Instances.Count -eq 1 -and
         -not $ReallocationPending -and
         $InstanceState -eq "downloading" -and
@@ -633,14 +696,14 @@ do {
             if ($DownloadStallElapsed.TotalMinutes -ge $DownloadStallTimeoutMinutes) {
                 if ($DownloadReallocations -ge $MaxDownloadReallocations) {
                     throw (
-                        "LTX image pull remained stalled after " +
+                        "GPU worker image pull remained stalled after " +
                         "$MaxDownloadReallocations Salad node reallocations."
                     )
                 }
 
                 if ([string]::IsNullOrWhiteSpace($InstanceId)) {
                     throw (
-                        "Cannot reallocate stalled LTX image pull because " +
+                        "Cannot reallocate stalled GPU image pull because " +
                         "instance id is missing."
                     )
                 }
