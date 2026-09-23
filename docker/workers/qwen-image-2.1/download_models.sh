@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+
 model_root="${QWEN_IMAGE_21_MODEL_ROOT:-/workspace/models/qwen-image-2.1}"
 repository="${QWEN_IMAGE_21_MODEL_REPOSITORY:-Qwen/Qwen-Image-2.1}"
 revision="${QWEN_IMAGE_21_MODEL_REVISION:-b3179ad355be050328e483a9dfdd9e60cd62adfa}"
@@ -26,22 +27,30 @@ if [[ -f "${marker}" ]] && [[ "$(cat "${marker}")" == "${expected}" ]] && snapsh
   echo "Qwen-Image-2.1 model bootstrap cache hit"
   exit 0
 fi
+
 rm -f "${marker}"
 rm -rf "${snapshot}"
 mkdir -p "${snapshot}"
-HF_HUB_OFFLINE=0 python - <<'PY'
-import os
-from huggingface_hub import snapshot_download
-snapshot_download(
-    repo_id=os.environ.get("QWEN_IMAGE_21_MODEL_REPOSITORY", "Qwen/Qwen-Image-2.1"),
-    revision=os.environ.get("QWEN_IMAGE_21_MODEL_REVISION", "b3179ad355be050328e483a9dfdd9e60cd62adfa"),
-    local_dir=os.path.join(os.environ.get("QWEN_IMAGE_21_MODEL_ROOT", "/workspace/models/qwen-image-2.1"), "snapshot"),
-    token=os.environ.get("HF_TOKEN"),
-)
-PY
+
+download_args=(download "${repository}" --revision "${revision}" --local-dir "${snapshot}")
+if [[ -n "${HF_TOKEN:-}" ]]; then
+  download_args+=(--token "${HF_TOKEN}")
+fi
+
+HF_HUB_OFFLINE=0 python -m ai_video_factory.workers.download_watchdog \
+  --progress-root "${snapshot}" \
+  --stall-timeout-seconds "${QWEN_IMAGE_21_DOWNLOAD_STALL_TIMEOUT_SECONDS:-600}" \
+  --hard-timeout-seconds "${QWEN_IMAGE_21_DOWNLOAD_HARD_TIMEOUT_SECONDS:-7200}" \
+  --poll-seconds "${QWEN_IMAGE_21_DOWNLOAD_POLL_SECONDS:-15}" \
+  --label qwen-image-2.1 \
+  --reallocate-on-slow \
+  -- \
+  hf "${download_args[@]}"
+
 if ! snapshot_ready; then
   echo "Qwen-Image-2.1 model bootstrap completed with missing required files" >&2
   exit 1
 fi
+
 printf '%s\n' "${expected}" > "${marker}"
 echo "Qwen-Image-2.1 model bootstrap complete"

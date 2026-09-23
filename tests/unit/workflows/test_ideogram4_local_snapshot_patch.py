@@ -16,9 +16,8 @@ def test_ideogram_container_uses_downloaded_local_snapshot() -> None:
         "IDEOGRAM_MODEL_LOCAL_SNAPSHOT=/workspace/models/ideogram4/snapshot"
         in dockerfile
     )
-    assert 'hub_call = "hf_hub_download("' in dockerfile
-    assert "text.count(hub_call) != 6" in dockerfile
-    assert 'text = text.replace(hub_call, "_resolve_model_file(")' in dockerfile
+    assert '("hf_hub_download(", "_resolve_model_file(", 6)' in dockerfile
+    assert 'raise RuntimeError("Unexpected Ideogram 4 runtime layout")' in dockerfile
     assert "def _resolve_model_file(repo_id: str, filename: str) -> str:" in dockerfile
     assert "IDEOGRAM_MODEL_LOCAL_SNAPSHOT" in dockerfile
     assert "config.weights_repo = str(local_snapshot)" in dockerfile

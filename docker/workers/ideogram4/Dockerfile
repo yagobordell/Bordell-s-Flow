@@ -61,35 +61,6 @@ from pathlib import Path
 
 path = Path("/opt/ideogram4/src/ideogram4/pipeline_ideogram4.py")
 text = path.read_text(encoding="utf-8")
-import_line = "from huggingface_hub.errors import EntryNotFoundError"
-except_line = "except EntryNotFoundError:"
-hub_call = "hf_hub_download("
-imports_anchor = "import json\nimport warnings\n"
-pathlib_anchor = "from posixpath import dirname as _posix_dirname, join as _posix_join\n"
-helper_anchor = "\ndef _load_subfolder_state_dict(\n"
-config_anchor = (
-    "    config = config or Ideogram4PipelineConfig()\n"
-    "    transformer_config = transformer_config or Ideogram4Config()\n"
-)
-if text.count(import_line) != 1 or text.count(except_line) != 2:
-    raise RuntimeError("Unexpected Ideogram 4 Hugging Face fallback layout")
-if text.count(hub_call) != 6:
-    raise RuntimeError("Unexpected Ideogram 4 Hugging Face download layout")
-if text.count(imports_anchor) != 1 or text.count(pathlib_anchor) != 1:
-    raise RuntimeError("Unexpected Ideogram 4 import layout")
-if text.count(helper_anchor) != 1 or text.count(config_anchor) != 1:
-    raise RuntimeError("Unexpected Ideogram 4 pipeline construction layout")
-text = text.replace(
-    import_line,
-    "from huggingface_hub.errors import EntryNotFoundError, LocalEntryNotFoundError",
-)
-text = text.replace(
-    except_line,
-    "except (EntryNotFoundError, LocalEntryNotFoundError):",
-)
-text = text.replace(imports_anchor, "import json\nimport os\nimport warnings\n")
-text = text.replace(pathlib_anchor, pathlib_anchor + "from pathlib import Path\n")
-text = text.replace(hub_call, "_resolve_model_file(")
 helper = '''
 
 def _resolve_model_file(repo_id: str, filename: str) -> str:
@@ -101,18 +72,41 @@ def _resolve_model_file(repo_id: str, filename: str) -> str:
     return str(local_file)
   return hf_hub_download(repo_id=repo_id, filename=filename)
 '''
-text = text.replace(helper_anchor, helper + helper_anchor)
-local_config = (
-    "    config = config or Ideogram4PipelineConfig()\n"
-    "    local_snapshot = Path(os.environ[\"IDEOGRAM_MODEL_LOCAL_SNAPSHOT\"])\n"
-    "    if not local_snapshot.is_dir():\n"
-    "      raise FileNotFoundError(\n"
-    "        f\"Ideogram local model snapshot is unavailable: {local_snapshot}\"\n"
-    "      )\n"
-    "    config.weights_repo = str(local_snapshot)\n"
-    "    transformer_config = transformer_config or Ideogram4Config()\n"
-)
-text = text.replace(config_anchor, local_config)
+local_config = '''    config = config or Ideogram4PipelineConfig()
+    local_snapshot = Path(os.environ["IDEOGRAM_MODEL_LOCAL_SNAPSHOT"])
+    if not local_snapshot.is_dir():
+      raise FileNotFoundError(
+        f"Ideogram local model snapshot is unavailable: {local_snapshot}"
+      )
+    config.weights_repo = str(local_snapshot)
+    transformer_config = transformer_config or Ideogram4Config()
+'''
+replacements = [
+    ("import json\nimport warnings\n", "import json\nimport os\nimport warnings\n", 1),
+    (
+        "from posixpath import dirname as _posix_dirname, join as _posix_join\n",
+        "from posixpath import dirname as _posix_dirname, join as _posix_join\nfrom pathlib import Path\n",
+        1,
+    ),
+    (
+        "from huggingface_hub.errors import EntryNotFoundError",
+        "from huggingface_hub.errors import EntryNotFoundError, LocalEntryNotFoundError",
+        1,
+    ),
+    ("except EntryNotFoundError:", "except (EntryNotFoundError, LocalEntryNotFoundError):", 2),
+    ("hf_hub_download(", "_resolve_model_file(", 6),
+    ("\ndef _load_subfolder_state_dict(\n", helper + "\ndef _load_subfolder_state_dict(\n", 1),
+    (
+        "    config = config or Ideogram4PipelineConfig()\n"
+        "    transformer_config = transformer_config or Ideogram4Config()\n",
+        local_config,
+        1,
+    ),
+]
+for old, new, count in replacements:
+    if text.count(old) != count:
+        raise RuntimeError("Unexpected Ideogram 4 runtime layout")
+    text = text.replace(old, new)
 path.write_text(text, encoding="utf-8")
 PY
 

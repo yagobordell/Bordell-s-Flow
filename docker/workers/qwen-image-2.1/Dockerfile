@@ -27,8 +27,10 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir '/opt/factory[
  'huggingface-hub>=1.32,<2' 'hf-xet>=1.6,<2' 'git+https://github.com/huggingface/diffusers.git@0121a91f9d419ff7234c8a5923f82c244e6f1914'
 COPY --from=salad-worker /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/
 COPY docker/workers/qwen-image-2.1/download_models.sh /usr/local/bin/download-models
+COPY docker/workers/common/entrypoint.sh /usr/local/bin/common-worker-entrypoint
 COPY docker/workers/qwen-image-2.1/entrypoint.sh /usr/local/bin/worker-entrypoint
-RUN chmod 0755 /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/download-models /usr/local/bin/worker-entrypoint \
+RUN chmod 0755 /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/download-models /usr/local/bin/common-worker-entrypoint \
+        /usr/local/bin/worker-entrypoint \
  && useradd --create-home --uid 10001 worker \
  && mkdir --parents /workspace/models/qwen-image-2.1 /workspace/.cache/huggingface /tmp/ai-video-factory /opt/factory/data/inference-local \
  && chown --recursive worker:worker /workspace /tmp/ai-video-factory /opt/factory/data
