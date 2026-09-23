@@ -97,6 +97,7 @@ def test_worker_prepare_can_create_missing_container_group() -> None:
     assert "-Uri $ContainersBase" in script
     assert "autostart_policy = $AutostartPolicy" in script
     assert "restart_policy = $RestartPolicy" in script
+    assert "liveness_probe = New-Probe -Probe $Stack.shared_liveness_probe" in script
     assert "scheduled_scaling_enabled = $false" in script
     assert "replicas = 0" in script
     assert "Run -Action Prepare first" in script
