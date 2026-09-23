@@ -176,7 +176,8 @@ def run_with_progress_watchdog(
             if idle >= stall_timeout_seconds:
                 _terminate_process_group(process)
                 reason = (
-                    f"{label} model download made no byte progress for "
+                    f"{label} model download made no meaningful byte progress "
+                    f"(minimum reset={min_progress_reset_bytes} bytes) for "
                     f"{stall_timeout_seconds:g} seconds"
                 )
                 if reallocate_on_slow:
