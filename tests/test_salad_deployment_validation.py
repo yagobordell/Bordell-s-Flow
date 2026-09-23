@@ -4,8 +4,6 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
-from ai_video_factory.providers.ideogram_caption import validate_ideogram_caption
-
 SMOKE_SCRIPT = Path("scripts/run_salad_smoke_suite.py")
 VALIDATION_MANAGER = Path("scripts/manage_salad_validation.ps1")
 SCALE_TO_ZERO_STARTER = Path("scripts/start_salad_scale_to_zero.ps1")
@@ -25,21 +23,23 @@ def _load_smoke_module() -> ModuleType:
 def test_smoke_suite_uses_dependency_order_and_real_workers() -> None:
     text = SMOKE_SCRIPT.read_text(encoding="utf-8")
 
-    assert '_SERVICE_ORDER = ("breeze_tts2", "whisper", "ideogram4", "ltx25")' in text
+    assert '_SERVICE_ORDER = ("breeze_tts2", "whisper", "qwen_image_21", "ltx25")' in text
     assert "SaladBreezeSpeechProvider" in text
     assert "SaladWhisperTranscriptionProvider" in text
-    assert "SaladIdeogramImageProvider" in text
+    assert "SaladQwenImage21Provider" in text
     assert '"scripts/submit_ltx25_smoke.py"' in text
-    assert '"1024x1536"' in text
+    assert '"1536x864"' in text
     assert 'quality="high"' in text
 
 
-def test_smoke_ideogram_caption_matches_local_contract() -> None:
-    module = _load_smoke_module()
+def test_smoke_qwen_generation_matches_current_contract() -> None:
+    text = SMOKE_SCRIPT.read_text(encoding="utf-8")
 
-    caption = module._smoke_caption()
-
-    assert validate_ideogram_caption(caption) == caption
+    assert "QWEN_IMAGE_21_KEYFRAME_TASK" in text
+    assert "QWEN_IMAGE_21_MODEL_ID" in text
+    assert 'task_name=QWEN_IMAGE_21_KEYFRAME_TASK' in text
+    assert 'size="1536x864"' in text
+    assert 'output_format="png"' in text
 
 
 def test_validation_manager_keeps_expensive_actions_explicit() -> None:
@@ -142,7 +142,7 @@ def test_scale_to_zero_restore_reinstates_manifest_autoscaler() -> None:
 def test_smoke_suite_persists_evidence_for_each_worker() -> None:
     text = SMOKE_SCRIPT.read_text(encoding="utf-8")
 
-    for service in ("breeze_tts2", "whisper", "ideogram4", "ltx25"):
+    for service in ("breeze_tts2", "whisper", "qwen_image_21", "ltx25"):
         assert f'_write_report(args.output_dir, "{service}"' in text
     assert '"smoke-summary.json"' in text
 
