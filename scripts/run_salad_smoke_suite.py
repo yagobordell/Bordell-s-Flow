@@ -18,26 +18,19 @@ from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
 from ai_video_factory.inference.storage import R2ObjectStorage, sha256_file
 from ai_video_factory.providers import (
     SaladBreezeSpeechProvider,
-    SaladIdeogramImageProvider,
+    SaladQwenImage21Provider,
     SaladWhisperTranscriptionProvider,
-)
-from ai_video_factory.providers.ideogram_caption import (
-    IdeogramCaptionPlan,
-    IdeogramElementPlan,
-    IdeogramStylePlan,
-    render_ideogram_caption,
 )
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.breeze_tts2 import BREEZE_TTS2_MODEL_ID
-from ai_video_factory.workers.ideogram4 import (
-    IDEOGRAM4_KEYFRAME_TASK,
-    IDEOGRAM4_MODEL_ID,
-    IDEOGRAM4_REFERENCE_TASK,
+from ai_video_factory.workers.qwen_image_21 import (
+    QWEN_IMAGE_21_KEYFRAME_TASK,
+    QWEN_IMAGE_21_MODEL_ID,
 )
 from ai_video_factory.workers.whisper import WHISPER_MODEL_ID
 
-_SERVICE_ORDER = ("breeze_tts2", "whisper", "ideogram4", "ltx25")
+_SERVICE_ORDER = ("breeze_tts2", "whisper", "qwen_image_21", "ltx25")
 _DEFAULT_OUTPUT_DIR = Path("data/output/deployment-validation")
 
 
@@ -45,7 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Run one real Salad worker smoke test or the complete Breeze -> Whisper -> "
-            "Ideogram -> LTX validation chain."
+            "Qwen-Image-2.1 -> LTX validation chain."
         )
     )
     parser.add_argument(
@@ -248,80 +241,60 @@ async def _smoke_whisper(args: argparse.Namespace) -> None:
     print(path)
 
 
-def _smoke_caption() -> str:
-    return render_ideogram_caption(
-        IdeogramCaptionPlan(
-            high_level_description=(
-                "A cinematic vertical documentary still of a compact robotic camera on a clean "
-                "studio table, used as a deterministic deployment validation image."
-            ),
-            style=IdeogramStylePlan(
-                aesthetics="clean cinematic documentary photography, realistic materials",
-                lighting="soft directional studio light with subtle practical highlights",
-                medium="digital cinema photography",
-                render_mode="photo",
-                render_description="photorealistic high-detail product documentary frame",
-                color_palette=["#1A1A1A", "#D8D8D8", "#5B7C99"],
-            ),
-            background="minimal dark neutral studio with gentle depth falloff",
-            elements=[
-                IdeogramElementPlan(
-                    description="small robotic cinema camera centered on the table",
-                    bbox=[250, 180, 800, 820],
-                    color_palette=["#1A1A1A", "#D8D8D8"],
-                )
-            ],
-        )
-    )
-
-
-async def _smoke_ideogram(args: argparse.Namespace) -> None:
+async def _smoke_qwen_image_21(args: argparse.Namespace) -> None:
     started = time.monotonic()
     executor = _executor(
-        settings.salad_ideogram4_queue_name,
+        settings.salad_qwen_image_21_queue_name,
         timeout_seconds=args.timeout_seconds,
         poll_seconds=args.poll_seconds,
     )
-    caption = _smoke_caption()
-    artifacts: dict[str, dict[str, Any]] = {}
-    for purpose, task, size in (
-        ("reference", IDEOGRAM4_REFERENCE_TASK, "1024x1024"),
-        ("keyframe", IDEOGRAM4_KEYFRAME_TASK, "1024x1536"),
-    ):
-        provider = SaladIdeogramImageProvider(
-            executor=executor,
-            temp_dir=settings.temp_dir / f"deployment-validation-ideogram-{purpose}",
-            task_name=task,
-        )
-        image = await provider.generate_image(
-            prompt=caption,
-            model=IDEOGRAM4_MODEL_ID,
-            size=size,
-            quality="high",
-            output_format="png",
-        )
-        destination = args.output_dir / f"ideogram-{purpose}.png"
-        args.output_dir.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(image.content)
-        if destination.stat().st_size <= 0:
-            raise RuntimeError(f"Ideogram {purpose} smoke returned an empty PNG")
-        artifacts[purpose] = {
-            "task": task,
-            "size": size,
-            "path": destination.as_posix(),
-            "size_bytes": destination.stat().st_size,
-            "sha256": sha256_file(destination),
-        }
+    provider = SaladQwenImage21Provider(
+        executor=executor,
+        temp_dir=settings.temp_dir / "deployment-validation-qwen-image-21",
+        task_name=QWEN_IMAGE_21_KEYFRAME_TASK,
+    )
+    prompt = (
+        "A cinematic 16:9 documentary still of a compact robotic cinema camera on a "
+        "clean studio table, realistic materials, soft directional studio lighting, "
+        "stable composition, no text, deployment validation image."
+    )
+    image = await provider.generate_image(
+        prompt=prompt,
+        model=QWEN_IMAGE_21_MODEL_ID,
+        size="1536x864",
+        quality="high",
+        output_format="png",
+    )
+    destination = args.output_dir / "qwen-image-21-keyframe.png"
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(image.content)
+    if destination.stat().st_size <= 0:
+        raise RuntimeError("Qwen-Image-2.1 smoke returned an empty PNG")
+    with Image.open(destination) as opened:
+        opened.load()
+        if opened.size != (1536, 864):
+            raise RuntimeError(
+                "Qwen-Image-2.1 smoke returned unexpected dimensions: "
+                f"{opened.width}x{opened.height}"
+            )
+        if opened.format != "PNG":
+            raise RuntimeError(
+                f"Qwen-Image-2.1 smoke returned unexpected format: {opened.format}"
+            )
     report = {
         "status": "succeeded",
-        "service": "ideogram4",
-        "model": IDEOGRAM4_MODEL_ID,
-        "quality": "V4_QUALITY_48",
+        "service": "qwen_image_21",
+        "model": QWEN_IMAGE_21_MODEL_ID,
+        "task": QWEN_IMAGE_21_KEYFRAME_TASK,
         "wall_seconds": round(time.monotonic() - started, 3),
-        "artifacts": artifacts,
+        "artifact": destination.as_posix(),
+        "size": "1536x864",
+        "size_bytes": destination.stat().st_size,
+        "sha256": sha256_file(destination),
+        "provider_metadata": image.metadata,
     }
-    path = _write_report(args.output_dir, "ideogram4", report)
-    print("Ideogram 4 reference + keyframe smoke: OK")
+    path = _write_report(args.output_dir, "qwen_image_21", report)
+    print(f"Qwen-Image-2.1 smoke: OK -> {destination}")
     print(path)
 
 
@@ -377,10 +350,10 @@ def _prepare_ltx_landscape_keyframe(source: Path, destination: Path) -> Path:
 
 def _smoke_ltx25(args: argparse.Namespace) -> None:
     started = time.monotonic()
-    keyframe_path = args.ltx_keyframe or (args.output_dir / "ideogram-keyframe.png")
+    keyframe_path = args.ltx_keyframe or (args.output_dir / "qwen-image-21-keyframe.png")
     if not keyframe_path.is_file():
         raise SystemExit(
-            "LTX smoke keyframe is missing. Run --service ideogram4 first or pass --ltx-keyframe."
+            "LTX smoke keyframe is missing. Run --service qwen_image_21 first or pass --ltx-keyframe."
         )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -489,8 +462,8 @@ async def main() -> None:
                 await _smoke_breeze(args)
             elif service == "whisper":
                 await _smoke_whisper(args)
-            elif service == "ideogram4":
-                await _smoke_ideogram(args)
+            elif service == "qwen_image_21":
+                await _smoke_qwen_image_21(args)
             elif service == "ltx25":
                 _smoke_ltx25(args)
             else:  # pragma: no cover - argparse prevents this branch
