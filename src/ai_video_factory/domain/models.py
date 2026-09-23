@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+
 class SourceScript(BaseModel):
     """Canonical input for the production pipeline."""
 
