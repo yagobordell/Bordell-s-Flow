@@ -58,9 +58,19 @@ function Use-ManifestEnvironment {
     param([Parameter(Mandatory)][scriptblock]$ScriptBlock)
 
     $Document = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    $SharedEnvironmentProperty = $Document.stack.PSObject.Properties["shared_environment"]
     $Previous = @{}
     foreach ($Name in Get-SelectedServiceNames) {
         $Definition = $Document.services.PSObject.Properties[$Name].Value
+        if ($null -ne $SharedEnvironmentProperty) {
+            foreach ($Property in $SharedEnvironmentProperty.Value.PSObject.Properties) {
+                if ($null -eq $Definition.environment.PSObject.Properties[$Property.Name]) {
+                    $Definition.environment | Add-Member `
+                        -NotePropertyName $Property.Name `
+                        -NotePropertyValue $Property.Value
+                }
+            }
+        }
         foreach ($Property in $Definition.environment.PSObject.Properties) {
             $EnvironmentName = [string]$Property.Name
             if (-not $Previous.ContainsKey($EnvironmentName)) {
