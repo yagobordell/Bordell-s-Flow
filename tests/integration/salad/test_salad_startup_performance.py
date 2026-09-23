@@ -172,7 +172,7 @@ def test_controlled_gpu_runners_preflight_r2_before_prewarm() -> None:
 def test_gpu_clients_use_bounded_r2_client() -> None:
     for path in GPU_CLIENTS:
         text = path.read_text(encoding="utf-8")
-        assert "from r2_client import create_r2_storage" in text, path.name
+        assert "from ai_video_factory.providers.r2 import create_r2_storage" in text, path.name
         assert "R2ObjectStorage.create(" not in text, path.name
 
 
