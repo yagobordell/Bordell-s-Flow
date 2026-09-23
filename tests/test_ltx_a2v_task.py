@@ -242,6 +242,7 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
 
         def __call__(self, **kwargs: Any) -> Any:
             state["calls"].append(kwargs)
+            state["tiling_budget"] = FakeTilingHelpers.activation_budget_bytes()
             return SimpleNamespace(
                 video=iter([FakeChunk()]),
                 audio=SimpleNamespace(
@@ -295,12 +296,44 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
         def empty_cache() -> None:
             state["empty_cache"] = True
 
+        @staticmethod
+        def current_device() -> int:
+            return 0
+
+        @staticmethod
+        def mem_get_info(index: int) -> tuple[int, int]:
+            del index
+            return (24_000_000_000, 32_000_000_000)
+
+        @staticmethod
+        def memory_allocated(index: int) -> int:
+            del index
+            return 2_000_000_000
+
+        @staticmethod
+        def memory_reserved(index: int) -> int:
+            del index
+            return 4_000_000_000
+
+        @staticmethod
+        def get_per_process_memory_fraction(index: int) -> float:
+            del index
+            return 1.0
+
+    class FakeDevice:
+        def __init__(self, value: str) -> None:
+            self.value = value
+            self.index = 0
+
+        def __str__(self) -> str:
+            return f"device:{self.value}"
+
     class FakeTorch:
         cuda = FakeCuda()
 
         @staticmethod
-        def device(value: str) -> str:
-            return f"device:{value}"
+        def device(value: str) -> FakeDevice:
+            return FakeDevice(value)
 
     def fake_conditioning(**kwargs: Any) -> dict[str, Any]:
         state["conditionings"].append(kwargs)
@@ -309,6 +342,15 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
     def fake_encode_video(**kwargs: Any) -> None:
         state["encodes"].append(kwargs)
         Path(kwargs["output_path"]).write_bytes(b"encoded")
+
+    class FakeTilingHelpers:
+        @staticmethod
+        def activation_budget_bytes(device: Any = None) -> int:
+            del device
+            return 20_000_000_000
+
+    def fake_cleanup(device: Any = None) -> None:
+        state.setdefault("cleanup_devices", []).append(str(device))
 
     bindings = a2v._A2VBindings(
         torch=FakeTorch,
@@ -320,6 +362,8 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
         encode_video=fake_encode_video,
         get_video_chunks_number=lambda num_frames, tiling: 2,
         diffvae_apply=FakeDiffvaeApply,
+        tiling_helpers=FakeTilingHelpers,
+        cleanup_accelerator_memory=fake_cleanup,
         lora_tuple=lambda path, strength, sd_ops: (path, strength, sd_ops),
         lora_sd_ops="rename-map",
         detect_params=lambda _: SimpleNamespace(
@@ -359,6 +403,8 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
     assert state["calls"][0]["num_inference_steps"] == 30
     assert state["calls"][0]["video_guider_params"] == "official-guider"
     assert state["calls"][0]["height"] == 768
+    assert state["tiling_budget"] == 20_000_000_000
+    assert len(state["cleanup_devices"]) == 2
     assert state["encodes"][0]["audio"] is not None
     assert list(state["encodes"][0]["video"]) == ["cropped"]
     assert metadata["input_audio_duration_seconds"] == 4.0
