@@ -13,7 +13,6 @@ from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInpu
 from ai_video_factory.inference.tasks import CopyTaskRunner, TaskRunnerRegistry
 from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
-    LTX_VIDEO_TASK,
     DirectLTX25Backend,
     LTXModelFiles,
     LTXVideoParameters,

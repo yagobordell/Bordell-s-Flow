@@ -1,6 +1,5 @@
 from ai_video_factory.inference.contracts import (
     InferenceJobRequest,
-    InferenceJobResponse,
     ObjectOutput,
 )
 from ai_video_factory.inference.settings import InferenceWorkerSettings

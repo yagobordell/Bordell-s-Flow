@@ -6,6 +6,7 @@ import pytest
 from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.workers.ltx25 import DirectLTX25Backend, LTX25WorkerSettings
 
+
 def test_ltx25_prepare_treats_missing_model_files_as_bootstrap_pending(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
