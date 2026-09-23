@@ -4,7 +4,7 @@ from pathlib import Path
 
 from botocore.exceptions import ClientError
 
-from ai_video_factory.gpu.storage import R2ObjectStorage
+from ai_video_factory.inference.storage import R2ObjectStorage
 
 
 class FakeS3Client:

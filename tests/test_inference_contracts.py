@@ -1,10 +1,10 @@
 import pytest
 from pydantic import ValidationError
 
-from ai_video_factory.gpu.contracts import GPUJobRequest, ObjectInput, ObjectOutput
+from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
 
 
-def build_request(**updates: object) -> GPUJobRequest:
+def build_request(**updates: object) -> InferenceJobRequest:
     values: dict[str, object] = {
         "job_id": "job-001",
         "task": "infrastructure.copy",
@@ -13,7 +13,7 @@ def build_request(**updates: object) -> GPUJobRequest:
         "parameters": {"alpha": 1, "nested": {"z": 2, "a": 3}},
     }
     values.update(updates)
-    return GPUJobRequest.model_validate(values)
+    return InferenceJobRequest.model_validate(values)
 
 
 def test_request_fingerprint_is_canonical() -> None:

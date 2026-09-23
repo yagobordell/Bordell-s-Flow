@@ -3,8 +3,6 @@ from pathlib import Path
 
 import pytest
 
-from ai_video_factory.gpu.ltx_jobs import ltx_video_application_job_id as legacy_job_id
-from ai_video_factory.gpu.ltx_video import DirectLTX25Backend as LegacyBackend
 from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.workers.ltx25 import (
     LTX_VIDEO_TASK,
@@ -13,11 +11,6 @@ from ai_video_factory.workers.ltx25 import (
     ltx_video_application_job_id,
 )
 
-
-def test_legacy_ltx_imports_resolve_to_dedicated_worker() -> None:
-    assert issubclass(LegacyBackend, DirectLTX25Backend)
-    assert legacy_job_id is ltx_video_application_job_id
-    assert LTX_VIDEO_TASK == "video.ltx25.generate"
 
 
 def test_ltx25_prepare_treats_missing_model_files_as_bootstrap_pending(

@@ -48,7 +48,6 @@ The A2V/avatar-specific contract and smoke process are documented in
 - FP8-cast + CPU-offload runtime configuration;
 - deterministic LTX application job IDs.
 
-Legacy imports under `ai_video_factory.gpu.ltx_video` and `ai_video_factory.gpu.ltx_jobs` remain compatibility facades so existing Phase 8 manifests, tests and scripts continue to work while callers migrate.
 
 ## Container
 
