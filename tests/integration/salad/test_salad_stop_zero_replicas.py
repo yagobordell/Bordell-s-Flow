@@ -19,10 +19,7 @@ def test_stack_stop_runs_zero_replica_guard_after_worker_stop() -> None:
 def test_validation_stop_has_zero_replica_fallback_when_stack_stop_errors() -> None:
     script = VALIDATION.read_text(encoding="utf-8")
 
-    assert (
-        '$ZeroReplicaGuard = Join-Path $PSScriptRoot "../salad/ensure_salad_zero_replicas.ps1"'
-        in script
-    )
+    assert '$ZeroReplicaGuard = Join-Path $PSScriptRoot "ensure_salad_zero_replicas.ps1"' in script
     assert "function Invoke-ZeroReplicaFallback" in script
     fallback = script.split("function Invoke-ZeroReplicaFallback", maxsplit=1)[1]
     fallback = fallback.split("function Assert-Docker", maxsplit=1)[0]
@@ -53,7 +50,10 @@ def test_zero_replica_guard_waits_for_stopped_then_patches_to_zero() -> None:
 def test_global_cleanup_rechecks_zero_replicas_before_queue_cleanup() -> None:
     script = Path("scripts/pipeline/run_video_factory.ps1").read_text(encoding="utf-8")
 
-    assert '$ZeroReplicaGuard = Join-Path $PSScriptRoot "ensure_salad_zero_replicas.ps1"' in script
+    assert (
+        '$ZeroReplicaGuard = Join-Path $PSScriptRoot "../salad/ensure_salad_zero_replicas.ps1"'
+        in script
+    )
     cleanup = script.split("function Invoke-FinalCleanup", maxsplit=1)[1].split(
         "Import-EnvFile -Path $EnvFile", maxsplit=1
     )[0]
