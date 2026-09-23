@@ -140,4 +140,8 @@ def test_qwen_bootstrap_validates_required_snapshot_files() -> None:
     ):
         assert f'"{relative}"' in script
     assert "snapshot_ready" in script
+    assert "ai_video_factory.workers.download_watchdog" in script
+    assert "--stall-timeout-seconds" in script
+    assert "--hard-timeout-seconds" in script
+    assert "--reallocate-on-slow" in script
 
