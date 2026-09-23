@@ -29,6 +29,7 @@ def test_validation_manager_exposes_explicit_prewarm_action() -> None:
     assert '"Prewarm" { Invoke-ProtectedSmokeBootstrap }' in text
 
 
+
 def test_controlled_qwen_runners_prewarm_before_queue_and_cleanup() -> None:
     for script in (PHASE4_CONTROLLED, PHASE6_CONTROLLED):
         text = script.read_text(encoding="utf-8")
@@ -36,10 +37,12 @@ def test_controlled_qwen_runners_prewarm_before_queue_and_cleanup() -> None:
         assert 'Service = "qwen_image_21"' in text
         assert "TimeoutMinutes = $PrewarmTimeoutMinutes" in text
         assert '"--pending-timeout-seconds", $PendingTimeoutSeconds' in text
-        assert "restore_salad_scale_to_zero.ps1" in text
+        assert "manage_salad_validation.ps1" in text
+        assert "-Action Stop -Service qwen_image_21" in text
         assert "cleanup_salad_queue.ps1" in text
         assert "finally {" in text
         assert "ideogram" not in text.lower()
         assert text.index("start_salad_optimized_prewarm.ps1") < text.index(
             '"--pending-timeout-seconds"'
         )
+
