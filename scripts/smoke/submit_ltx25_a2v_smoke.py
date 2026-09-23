@@ -325,6 +325,9 @@ def main() -> None:
     ]
     if not input_audio_streams:
         raise RuntimeError("smoke input does not contain an audio stream")
+    input_audio_channels = int(input_audio_streams[0].get("channels") or 0)
+    if input_audio_channels <= 0:
+        raise RuntimeError("smoke input does not report a valid audio channel count")
 
     image_sha = sha256_file(avatar)
     audio_sha = sha256_file(audio)
@@ -572,6 +575,9 @@ def main() -> None:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     required_metadata = {
         "input_audio_duration_seconds",
+        "input_audio_channels",
+        "conditioning_audio_channels",
+        "audio_upmixed_to_stereo",
         "effective_audio_duration_seconds",
         "output_video_duration_seconds",
         "fps",
@@ -592,6 +598,15 @@ def main() -> None:
         )
     if metadata["generation_mode"] != "audio_to_video":
         raise RuntimeError(f"unexpected A2V generation_mode: {metadata['generation_mode']!r}")
+    if int(metadata["input_audio_channels"]) != input_audio_channels:
+        raise RuntimeError("A2V metadata input channel count does not match smoke input")
+    if int(metadata["conditioning_audio_channels"]) != 2:
+        raise RuntimeError("A2V conditioning audio must be stereo for the LTX audio VAE")
+    expected_upmix = input_audio_channels == 1
+    if bool(metadata["audio_upmixed_to_stereo"]) is not expected_upmix:
+        raise RuntimeError(
+            "A2V stereo-upmix metadata does not match the input audio channel count"
+        )
     if (int(metadata["width"]), int(metadata["height"])) != (args.width, args.height):
         raise RuntimeError(
             "A2V metadata dimensions do not match the requested output geometry"
@@ -628,6 +643,9 @@ def main() -> None:
     print(f"application_job_id={job_id}")
     print(f"salad_job_id={created['id']}")
     print(f"input_audio_duration_seconds={input_audio_duration:.6f}")
+    print(f"input_audio_channels={input_audio_channels}")
+    print(f"conditioning_audio_channels={metadata['conditioning_audio_channels']}")
+    print(f"audio_upmixed_to_stereo={metadata['audio_upmixed_to_stereo']}")
     print(f"output_video_duration_seconds={output_duration:.6f}")
     print(f"resolution={args.width}x{args.height}")
     print(f"fps={actual_fps:.6f}")
