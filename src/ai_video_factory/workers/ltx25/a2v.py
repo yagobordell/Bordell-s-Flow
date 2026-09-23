@@ -33,7 +33,7 @@ from .model import (
 logger = logging.getLogger(__name__)
 
 LTX_A2V_TASK = "video.ltx25.audio_to_video"
-LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdpa-v1"
+LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdpa-v2"
 LTX_A2V_RECOMMENDED_MAX_SECONDS = 12.0
 LTX_A2V_MAX_RAW_FRAMES = 1024
 LTX_A2V_DEFAULT_PROMPT = (
@@ -131,6 +131,8 @@ class _A2VBindings:
     encode_video: Any
     get_video_chunks_number: Any
     diffvae_apply: Any
+    tiling_helpers: Any
+    cleanup_accelerator_memory: Any
     lora_tuple: Any
     lora_sd_ops: Any
     detect_params: Any
@@ -144,9 +146,11 @@ def _load_a2v_bindings() -> _A2VBindings:
             LTXV_LORA_COMFY_RENAMING_MAP,
             LoraPathStrengthAndSDOps,
         )
+        from ltx_core.devices import cleanup_accelerator_memory
         from ltx_core.model.video_vae import get_video_chunks_number
         from ltx_core.model.video_vae.transformer import apply as diffvae_apply
         from ltx_pipelines.a2vid_two_stage import A2VidPipelineTwoStage
+        from ltx_pipelines.utils import helpers as tiling_helpers
         from ltx_pipelines.utils.args import ImageConditioningInput
         from ltx_pipelines.utils.constants import DEFAULT_NEGATIVE_PROMPT, detect_params
         from ltx_pipelines.utils.media_io import encode_video
@@ -168,11 +172,67 @@ def _load_a2v_bindings() -> _A2VBindings:
         encode_video=encode_video,
         get_video_chunks_number=get_video_chunks_number,
         diffvae_apply=diffvae_apply,
+        tiling_helpers=tiling_helpers,
+        cleanup_accelerator_memory=cleanup_accelerator_memory,
         lora_tuple=LoraPathStrengthAndSDOps,
         lora_sd_ops=LTXV_LORA_COMFY_RENAMING_MAP,
         detect_params=detect_params,
         default_negative_prompt=DEFAULT_NEGATIVE_PROMPT,
     )
+
+
+def _cuda_memory_snapshot(torch_module: Any, device: str) -> dict[str, int | float]:
+    cuda = getattr(torch_module, "cuda", None)
+    if cuda is None or not cuda.is_available():
+        return {}
+    resolved = torch_module.device(device)
+    index = resolved.index if getattr(resolved, "index", None) is not None else cuda.current_device()
+    free_bytes, total_bytes = cuda.mem_get_info(index)
+    return {
+        "free_bytes": int(free_bytes),
+        "total_bytes": int(total_bytes),
+        "allocated_bytes": int(cuda.memory_allocated(index)),
+        "reserved_bytes": int(cuda.memory_reserved(index)),
+        "memory_fraction": float(cuda.get_per_process_memory_fraction(index)),
+    }
+
+
+def _log_cuda_memory(stage: str, snapshot: Mapping[str, int | float]) -> None:
+    if not snapshot:
+        return
+    logger.info(
+        "LTX25_A2V_CUDA_MEMORY stage=%s free_bytes=%d total_bytes=%d "
+        "allocated_bytes=%d reserved_bytes=%d memory_fraction=%.3f",
+        stage,
+        snapshot["free_bytes"],
+        snapshot["total_bytes"],
+        snapshot["allocated_bytes"],
+        snapshot["reserved_bytes"],
+        snapshot["memory_fraction"],
+    )
+
+
+def _install_clean_tiling_budget(bindings: _A2VBindings, device: str) -> Any:
+    original = bindings.tiling_helpers.activation_budget_bytes
+
+    def activation_budget_with_cleanup(resolved_device: Any = None) -> int:
+        target = resolved_device if resolved_device is not None else bindings.torch.device(device)
+        _log_cuda_memory(
+            "tiling_before_cleanup",
+            _cuda_memory_snapshot(bindings.torch, device),
+        )
+        bindings.cleanup_accelerator_memory(target)
+        snapshot = _cuda_memory_snapshot(bindings.torch, device)
+        _log_cuda_memory("tiling_after_cleanup", snapshot)
+        budget = int(original(target))
+        logger.info(
+            "LTX25_A2V_TILING_BUDGET activation_budget_bytes=%d",
+            budget,
+        )
+        return budget
+
+    bindings.tiling_helpers.activation_budget_bytes = activation_budget_with_cleanup
+    return original
 
 
 def _ffprobe_json(path: Path) -> dict[str, Any]:
@@ -422,8 +482,16 @@ class DirectLTX25AudioToVideoBackend:
             build_started = time.monotonic()
             pipeline, built_now = self._get_or_build_pipeline(bindings)
             model_load_seconds = time.monotonic() - build_started if built_now else 0.0
+            _log_cuda_memory(
+                "after_pipeline_build",
+                _cuda_memory_snapshot(bindings.torch, self._device),
+            )
 
             inference_started = time.monotonic()
+            original_activation_budget = _install_clean_tiling_budget(
+                bindings,
+                self._device,
+            )
             try:
                 result = pipeline(
                     prompt=parameters.prompt,
@@ -441,9 +509,17 @@ class DirectLTX25AudioToVideoBackend:
                     audio_max_duration=None,
                 )
             except ValueError as exc:
+                _log_cuda_memory(
+                    "pipeline_value_error",
+                    _cuda_memory_snapshot(bindings.torch, self._device),
+                )
                 if "decode audio" in str(exc).lower():
                     raise _input_error("AUDIO_DECODE_FAILED", str(exc)) from exc
                 raise
+            finally:
+                bindings.tiling_helpers.activation_budget_bytes = (
+                    original_activation_budget
+                )
             inference_seconds = time.monotonic() - inference_started
 
             output_video = result.video
