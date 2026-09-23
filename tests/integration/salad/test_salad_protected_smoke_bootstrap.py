@@ -95,18 +95,21 @@ def test_manual_stop_also_restores_scale_to_zero_configuration() -> None:
     assert 'Invoke-StackAction -StackAction "Stop"' in safe_stop
 
 
-def test_ltx_image_pull_only_reallocates_after_progress_stalls() -> None:
+def test_heavy_gpu_image_pull_reallocates_stalls_and_hard_timeouts() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
 
     assert "[int]$MaxDownloadReallocations = 3" in script
     assert "[int]$DownloadStallTimeoutMinutes = 10" in script
+    assert "[int]$DownloadHardTimeoutMinutes = 20" in script
     assert "$DownloadProgressThreshold = 0.005" in script
     assert "$DownloadProgressBaseline = $null" in script
     assert "$DownloadProgressSince = $null" in script
     assert "$DownloadProgressInstanceId = \"\"" in script
+    assert "$DownloadStartedAt = $null" in script
+    assert "$DownloadStartedInstanceId = \"\"" in script
     assert 'function Request-InstanceReallocation' in script
     assert '"$InstancesUrl/$InstanceId/reallocate"' in script
-    assert '$Service -eq "ltx25"' in script
+    assert '$Service -in @("qwen_image_21", "ltx25")' in script
     assert '$InstanceState -eq "downloading"' in script
     assert "$PullingProgressValue -gt 0.0" in script
     assert "$PullingProgressValue -lt 1.0" in script
@@ -120,6 +123,9 @@ def test_ltx_image_pull_only_reallocates_after_progress_stalls() -> None:
     ) in script
     assert "$DownloadReallocations -ge $MaxDownloadReallocations" in script
     assert "image-pull watchdog started" in script
+    assert "image-pull hard watchdog started" in script
+    assert "$DownloadElapsed.TotalMinutes -ge $DownloadHardTimeoutMinutes" in script
+    assert "remained in image downloading for at least" in script
     assert "image pull made less than" in script
     assert "$ReallocationPending = $true" in script
     assert "$MachineId -ne $ReallocatedMachineId" in script
@@ -127,7 +133,7 @@ def test_ltx_image_pull_only_reallocates_after_progress_stalls() -> None:
     assert "$StartedBootstrapDeadlineSet = $false" in script
 
 
-def test_ltx_allocating_watchdog_aborts_stalled_bootstrap() -> None:
+def test_heavy_gpu_allocating_watchdog_aborts_stalled_bootstrap() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
 
     assert "[int]$AllocatingTimeoutMinutes = 10" in script
@@ -141,7 +147,7 @@ def test_ltx_allocating_watchdog_aborts_stalled_bootstrap() -> None:
     assert "aborting protected bootstrap" in script
 
 
-def test_ltx_running_not_ready_reallocates_stalled_model_bootstrap() -> None:
+def test_heavy_gpu_running_not_ready_reallocates_stalled_model_bootstrap() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
 
     assert "[int]$RunningNotReadyTimeoutMinutes = 20" in script
