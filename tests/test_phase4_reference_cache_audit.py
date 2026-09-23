@@ -6,39 +6,12 @@ from typing import Any
 
 from ai_video_factory.domain import VisualReference
 from ai_video_factory.inference.ports import StoredObject
-from ai_video_factory.providers.ideogram_caption import (
-    IdeogramCaptionPlan,
-    IdeogramStylePlan,
-    render_ideogram_caption,
-)
-from ai_video_factory.providers.salad_ideogram import (
-    build_ideogram_job_request,
-    reference_caption_variants,
-)
-from ai_video_factory.workers.ideogram4 import (
-    IDEOGRAM4_MODEL_ID,
-    IDEOGRAM4_REFERENCE_TASK,
+from ai_video_factory.providers.salad_qwen_image import build_qwen_image_job_request
+from ai_video_factory.workers.qwen_image_21 import (
+    QWEN_IMAGE_21_MODEL_ID,
+    QWEN_IMAGE_21_REFERENCE_TASK,
 )
 from scripts.audit_phase4_reference_cache import _load_references, audit_reference_cache
-
-
-def _caption() -> str:
-    return render_ideogram_caption(
-        IdeogramCaptionPlan(
-            high_level_description=(
-                "Canonical location reference. Distant rocky hills beneath a clear sky."
-            ),
-            style=IdeogramStylePlan(
-                aesthetics="cinematic documentary",
-                lighting="even neutral reference lighting with clear readable form",
-                medium="cinematic documentary reference photograph",
-                render_mode="photo",
-                render_description="realistic reference photography",
-            ),
-            background="Stable physical geography and layout.",
-            elements=[],
-        )
-    )
 
 
 class FakeStorage:
@@ -60,11 +33,11 @@ class FakeStorage:
         return None
 
 
-def _request(caption: str | None = None):
-    return build_ideogram_job_request(
-        task_name=IDEOGRAM4_REFERENCE_TASK,
-        caption=_caption() if caption is None else caption,
-        model_id=IDEOGRAM4_MODEL_ID,
+def _request(prompt: str = "Cinematic mountain valley"):
+    return build_qwen_image_job_request(
+        task_name=QWEN_IMAGE_21_REFERENCE_TASK,
+        prompt=prompt,
+        model_id=QWEN_IMAGE_21_MODEL_ID,
         width=1024,
         height=1024,
     )
@@ -84,52 +57,33 @@ def _stored(request: Any, *, artifact_sha256: str = "a" * 64) -> StoredObject:
     )
 
 
-def test_phase4_cache_audit_reports_verified_canonical_hit_without_download() -> None:
-    request = _request()
+def test_phase4_cache_audit_reports_qwen_hit_without_download() -> None:
+    prompt = "Cinematic mountain valley"
+    request = _request(prompt)
     storage = FakeStorage({request.output.key: _stored(request)})
 
     records = audit_reference_cache(
-        [VisualReference(entity_id="location_001", prompt=_caption())],
+        [VisualReference(entity_id="location_001", prompt=prompt)],
         storage=storage,  # type: ignore[arg-type]
-        model_id=IDEOGRAM4_MODEL_ID,
+        model_id=QWEN_IMAGE_21_MODEL_ID,
         size="1024x1024",
     )
 
     record = records[0]
     assert record["status"] == "hit"
-    assert record["matched_variant"] == "canonical"
+    assert record["provider"] == "qwen_image_21"
+    assert record["matched_variant"] == "qwen_image_21"
     assert record["job_id"] == request.job_id
     assert record["stored_job_id"] == request.job_id
     assert record["stored_request_sha256"] == request.fingerprint()
     assert record["stored_artifact_sha256"] == "a" * 64
-    assert record["candidate_job_ids"]["canonical"] == request.job_id
-    assert "safe_fallback" in record["candidate_job_ids"]
-    assert storage.downloads == 0
-
-
-def test_phase4_cache_audit_reports_fallback_hit_without_queue_submission() -> None:
-    variants = reference_caption_variants(
-        _caption(),
-        task_name=IDEOGRAM4_REFERENCE_TASK,
-    )
-    fallback_request = _request(variants[1][1])
-    storage = FakeStorage({fallback_request.output.key: _stored(fallback_request)})
-
-    records = audit_reference_cache(
-        [VisualReference(entity_id="location_001", prompt=_caption())],
-        storage=storage,  # type: ignore[arg-type]
-        model_id=IDEOGRAM4_MODEL_ID,
-        size="1024x1024",
-    )
-
-    assert records[0]["status"] == "hit"
-    assert records[0]["matched_variant"] == "safe_fallback"
-    assert records[0]["job_id"] == fallback_request.job_id
+    assert record["candidate_job_ids"]["qwen_image_21"] == request.job_id
     assert storage.downloads == 0
 
 
 def test_phase4_cache_audit_reports_invalid_metadata_without_mutating_storage() -> None:
-    request = _request()
+    prompt = "Cinematic mountain valley"
+    request = _request(prompt)
     invalid = StoredObject(
         key=request.output.key,
         content_type="image/png",
@@ -144,9 +98,9 @@ def test_phase4_cache_audit_reports_invalid_metadata_without_mutating_storage() 
     storage = FakeStorage({request.output.key: invalid})
 
     records = audit_reference_cache(
-        [VisualReference(entity_id="location_001", prompt=_caption())],
+        [VisualReference(entity_id="location_001", prompt=prompt)],
         storage=storage,  # type: ignore[arg-type]
-        model_id=IDEOGRAM4_MODEL_ID,
+        model_id=QWEN_IMAGE_21_MODEL_ID,
         size="1024x1024",
     )
 
@@ -157,12 +111,14 @@ def test_phase4_cache_audit_reports_invalid_metadata_without_mutating_storage() 
 
 def test_phase4_cache_audit_loads_utf8_bom_reference_files(tmp_path: Path) -> None:
     path = tmp_path / "visual_references.json"
-    payload = [{"entity_id": "location_001", "prompt": _caption()}]
+    payload = [{"entity_id": "location_001", "prompt": "Cinematic mountain valley"}]
     path.write_text("\ufeff" + json.dumps(payload), encoding="utf-8")
 
     references = _load_references(path)
 
-    assert references == [VisualReference(entity_id="location_001", prompt=_caption())]
+    assert references == [
+        VisualReference(entity_id="location_001", prompt="Cinematic mountain valley")
+    ]
 
 
 def test_phase4_cache_audit_script_has_no_salad_queue_client() -> None:
