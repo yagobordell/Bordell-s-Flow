@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install --yes --no-install-recommends ca-certifica
 FROM pytorch/pytorch:2.11.0-cuda12.8-cudnn9-runtime
 ENV DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DEFAULT_TIMEOUT=300 \
  HF_HOME=/workspace/.cache/huggingface XDG_CACHE_HOME=/workspace/.cache HF_HUB_OFFLINE=1 \
- HF_HUB_DOWNLOAD_TIMEOUT=120 HF_HUB_ETAG_TIMEOUT=30 HF_XET_HIGH_PERFORMANCE=1 \
+ HF_HUB_DOWNLOAD_TIMEOUT=120 HF_HUB_ETAG_TIMEOUT=30 \
  INFERENCE_WORKER_MODE=production INFERENCE_WORKER_TEMP_DIR=/tmp/ai-video-factory \
  QWEN_IMAGE_21_MODEL_ROOT=/workspace/models/qwen-image-2.1 \
  QWEN_IMAGE_21_MODEL_REPOSITORY=Qwen/Qwen-Image-2.1 \
