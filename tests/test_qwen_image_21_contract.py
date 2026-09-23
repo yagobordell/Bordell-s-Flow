@@ -86,7 +86,7 @@ def test_qwen_worker_pins_qwen_compatible_diffusers_revision() -> None:
     dockerfile = Path("docker/workers/qwen-image-2.1/Dockerfile").read_text(encoding="utf-8")
     pinned = (
         "git+https://github.com/huggingface/diffusers.git@"
-        "6256aa7666cedd47443adc8f82da9a10e110b09c"
+        "0121a91f9d419ff7234c8a5923f82c244e6f1914"
     )
 
     assert pinned in dockerfile
