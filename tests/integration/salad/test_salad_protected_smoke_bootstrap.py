@@ -71,6 +71,19 @@ def test_restore_returns_autoscaler_to_manifest_before_stop() -> None:
     )
 
 
+def test_public_prewarm_always_cleans_up_gpu_replica() -> None:
+    manager = MANAGER.read_text(encoding="utf-8")
+    safe_prewarm = manager.split("function Invoke-SafePrewarm", maxsplit=1)[1].split(
+        "if ($Recreate", maxsplit=1
+    )[0]
+
+    assert "try {" in safe_prewarm
+    assert "Invoke-ProtectedSmokeBootstrap" in safe_prewarm
+    assert "finally {" in safe_prewarm
+    assert "Invoke-SafeStop" in safe_prewarm
+    assert "stopped/replicas=0" in safe_prewarm
+
+
 def test_manual_stop_also_restores_scale_to_zero_configuration() -> None:
     manager = MANAGER.read_text(encoding="utf-8")
     safe_stop = manager.split("function Invoke-SafeStop", maxsplit=1)[1].split(
