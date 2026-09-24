@@ -20,6 +20,7 @@ class FakeStore:
     ) -> None:
         self.rows = rows
         self.runtimes = runtimes
+        self.drains: dict[str, dict[str, datetime]] = {}
 
     def list_stage_jobs(self, *, binding, statuses):
         return [
@@ -30,6 +31,39 @@ class FakeStore:
 
     def list_recent_stage_runtime_seconds(self, *, binding, limit):
         return list(self.runtimes.get(binding.workload, []))[:limit]
+
+    def list_draining_instances(self, *, stage: str) -> dict[str, datetime]:
+        return dict(self.drains.get(stage, {}))
+
+    def mark_draining_instances(
+        self,
+        *,
+        stage: str,
+        instance_ids: tuple[str, ...],
+        ttl_seconds: float,
+    ) -> None:
+        del ttl_seconds
+        current = self.drains.setdefault(stage, {})
+        observed_at = datetime.now(UTC)
+        for instance_id in instance_ids:
+            current.setdefault(instance_id, observed_at)
+
+    def clear_draining_instances(
+        self,
+        *,
+        stage: str,
+        keep_instance_ids: tuple[str, ...] = (),
+    ) -> None:
+        if not keep_instance_ids:
+            self.drains.pop(stage, None)
+            return
+        keep = set(keep_instance_ids)
+        current = self.drains.setdefault(stage, {})
+        self.drains[stage] = {
+            instance_id: requested_at
+            for instance_id, requested_at in current.items()
+            if instance_id in keep
+        }
 
 
 class FakeSaladClient:
@@ -109,6 +143,8 @@ def _config(
         stage_max_replicas={stage: stage_max_replicas for stage in stages},
         fallback_runtime_seconds={stage: 60.0 for stage in stages},
         stage_cold_start_seconds=stage_cold_start_seconds,
+        drain_grace_seconds=0.0,
+        drain_ttl_seconds=120.0,
     )
 
 
@@ -193,8 +229,11 @@ def test_downscale_protects_running_instance_with_deletion_cost() -> None:
         logger=lambda _message: None,
     )
 
+    first = autoscaler.reconcile()[stage]
     result = autoscaler.reconcile()[stage]
 
+    assert first.applied_replicas == 2
+    assert first.reason == "drain_grace_pending"
     assert result.applied_replicas == 1
     assert ("instance-active", 100_000) in client.deletion_cost_updates
     assert ("instance-idle", 0) in client.deletion_cost_updates
@@ -244,8 +283,12 @@ def test_empty_global_queue_scales_replicas_to_zero() -> None:
         logger=lambda _message: None,
     )
 
+    first = autoscaler.reconcile()[stage]
     result = autoscaler.reconcile()[stage]
 
+    assert first.target_replicas == 0
+    assert first.applied_replicas == 1
+    assert first.reason == "drain_grace_pending"
     assert result.target_replicas == 0
     assert result.applied_replicas == 0
     assert client.replica_updates == [0]
