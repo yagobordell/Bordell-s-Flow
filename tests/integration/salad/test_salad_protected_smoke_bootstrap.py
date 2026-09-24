@@ -138,13 +138,17 @@ def test_heavy_gpu_allocating_watchdog_aborts_stalled_bootstrap() -> None:
 
     assert "[int]$AllocatingTimeoutMinutes = 10" in script
     assert "$AllocatingSince = $null" in script
-    assert "$AllocatingInstanceId = \"\"" in script
+    assert "$WaitingForGpuAllocation = (" in script
     assert '$InstanceState -eq "allocating"' in script
-    assert "$InstanceId -ne $AllocatingInstanceId" in script
+    assert '$Status -eq "allocating"' in script
+    assert '($Status -eq "running" -and $Instances.Count -eq 0)' in script
+    assert "$StartedInstances.Count -eq 0" in script
     assert "$AllocatingSince = Get-Date" in script
     assert "$AllocatingElapsed = (Get-Date) - $AllocatingSince" in script
     assert "$AllocatingElapsed.TotalMinutes -ge $AllocatingTimeoutMinutes" in script
-    assert "aborting protected bootstrap" in script
+    assert "Check the live Salad GPU availability" in script
+    assert "do not reallocate an unassigned GPU" in script
+    assert "$AllocatingInstanceId" not in script
 
 
 def test_running_not_ready_timer_survives_same_machine_container_restarts() -> None:
