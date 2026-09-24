@@ -133,7 +133,9 @@ def test_worker_stop_restores_autoscaler_before_patching_replicas() -> None:
 
     assert "function Ensure-ManifestScaleToZero" in script
     assert '$ScaleToZeroRestore = Join-Path $PSScriptRoot' in script
-    assert "-Mode Manifest -EnvFile $EnvFile -NonInteractive" in script
+    assert "-Mode Manifest `" in script
+    assert "-TimeoutMinutes 10 `" in script
+    assert "-NonInteractive" in script
     assert stop.index("Ensure-ManifestScaleToZero") < stop.index(
         'Operation "normalize stopped container group to zero replicas"'
     )
