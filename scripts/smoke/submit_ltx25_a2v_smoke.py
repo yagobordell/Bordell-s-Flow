@@ -19,6 +19,7 @@ from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInpu
 from ai_video_factory.inference.storage import R2ObjectStorage, sha256_file
 from ai_video_factory.workers.ltx25 import (
     LTX_A2V_DEFAULT_PROMPT,
+    LTX_A2V_DEV_GENERATION_PROFILE,
     LTX_A2V_GENERATION_PROFILE,
     LTX_A2V_TASK,
     ltx_a2v_application_job_id,
@@ -272,6 +273,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--audio", type=Path, required=True)
     parser.add_argument("--prompt", default=LTX_A2V_DEFAULT_PROMPT)
     parser.add_argument("--segment-id", default="smoke-001")
+    parser.add_argument("--profile", choices=("fast", "dev"), default="fast")
     parser.add_argument(
         "--queue-name",
         default=os.getenv("SALAD_LTX25_QUEUE_NAME", "ai-video-factory-ltx25-jobs-v2"),
@@ -303,6 +305,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    generation_profile = (
+        LTX_A2V_GENERATION_PROFILE
+        if args.profile == "fast"
+        else LTX_A2V_DEV_GENERATION_PROFILE
+    )
     environment = _environment()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -340,6 +347,7 @@ def main() -> None:
         width=args.width,
         height=args.height,
         fps=args.fps,
+        generation_profile=generation_profile,
     )
     queue_url = (
         "https://api.salad.com/api/public/organizations/"
@@ -394,7 +402,7 @@ def main() -> None:
         },
         max_attempts=1,
         parameters={
-            "generation_profile": LTX_A2V_GENERATION_PROFILE,
+            "generation_profile": generation_profile,
             "prompt": args.prompt,
             "seed": args.seed,
             "width": args.width,
@@ -590,6 +598,9 @@ def main() -> None:
         "video_cfg_scale",
         "video_stg_scale",
         "video_modality_scale",
+        "transformer_variant",
+        "stage_1_steps",
+        "stage_2_steps",
         "model_load_seconds",
         "inference_seconds",
         "video_encode_mux_seconds",
@@ -602,8 +613,17 @@ def main() -> None:
         )
     if metadata["generation_mode"] != "audio_to_video":
         raise RuntimeError(f"unexpected A2V generation_mode: {metadata['generation_mode']!r}")
-    if metadata["generation_profile"] != LTX_A2V_GENERATION_PROFILE:
-        raise RuntimeError("A2V worker used an outdated generation profile")
+    if metadata["generation_profile"] != generation_profile:
+        raise RuntimeError("A2V worker used a mismatched generation profile")
+    expected_variant = "distilled" if args.profile == "fast" else "dev"
+    expected_steps = 8 if args.profile == "fast" else 30
+    if metadata["transformer_variant"] != expected_variant:
+        raise RuntimeError("A2V worker used the wrong transformer variant")
+    if int(metadata["stage_1_steps"]) != expected_steps or int(metadata["stage_2_steps"]) != 3:
+        raise RuntimeError("A2V worker used an unexpected diffusion schedule")
+    expected_cfg = 1.0 if args.profile == "fast" else 3.0
+    if float(metadata["video_cfg_scale"]) != expected_cfg:
+        raise RuntimeError("A2V worker used an unexpected CFG scale")
     if float(metadata["video_stg_scale"]) != 0.0 or float(metadata["video_modality_scale"]) != 1.0:
         raise RuntimeError("A2V worker did not disable extra STG/modality guidance")
     if int(metadata["input_audio_channels"]) != input_audio_channels:
@@ -658,6 +678,10 @@ def main() -> None:
     print(f"resolution={args.width}x{args.height}")
     print(f"fps={actual_fps:.6f}")
     print(f"num_frames={metadata['num_frames']}")
+    print(f"generation_profile={metadata['generation_profile']}")
+    print(f"transformer_variant={metadata['transformer_variant']}")
+    print(f"stage_1_steps={metadata['stage_1_steps']}")
+    print(f"stage_2_steps={metadata['stage_2_steps']}")
     print(f"video_cfg_scale={metadata['video_cfg_scale']}")
     print(f"video_stg_scale={metadata['video_stg_scale']}")
     print(f"video_modality_scale={metadata['video_modality_scale']}")
