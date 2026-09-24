@@ -1,3 +1,25 @@
+function Resolve-SaladBenchmarkPinnedImage {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object]$Definition)
+
+    $Image = [string]$Definition.image
+    $Inspect = & docker buildx imagetools inspect $Image 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "Cannot inspect published benchmark image '$Image'. Prepare the service first."
+    }
+    $Digest = $null
+    foreach ($Line in $Inspect) {
+        if ([string]$Line -match '^\s*Digest:\s+(sha256:[0-9a-f]{64})\s*$') {
+            $Digest = $Matches[1]
+            break
+        }
+    }
+    if ($null -eq $Digest -or $Image -notmatch '^(?<repo>.+):[^/:]+$') {
+        throw "Could not resolve an immutable digest for benchmark image '$Image'."
+    }
+    return "$($Matches['repo'])@$Digest"
+}
+
 function Assert-SaladPreparedBenchmarkWorker {
     [CmdletBinding()]
     param(
@@ -20,22 +42,7 @@ function Assert-SaladPreparedBenchmarkWorker {
     }
 
     # A mutable Docker tag is not proof that Salad is running the benchmark image.
-    $Image = [string]$Definition.image
-    $Inspect = & docker buildx imagetools inspect $Image 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "Cannot inspect published benchmark image '$Image'. Prepare the service first."
-    }
-    $Digest = $null
-    foreach ($Line in $Inspect) {
-        if ([string]$Line -match '^\s*Digest:\s+(sha256:[0-9a-f]{64})\s*$') {
-            $Digest = $Matches[1]
-            break
-        }
-    }
-    if ($null -eq $Digest -or $Image -notmatch '^(?<repo>.+):[^/:]+$') {
-        throw "Could not resolve an immutable digest for benchmark image '$Image'."
-    }
-    $PinnedImage = "$($Matches['repo'])@$Digest"
+    $PinnedImage = Resolve-SaladBenchmarkPinnedImage -Definition $Definition
     if ([string]$Group.container.image -ne $PinnedImage) {
         throw (
             "Salad does not use the published benchmark image. " +
