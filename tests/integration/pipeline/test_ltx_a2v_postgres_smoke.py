@@ -10,7 +10,9 @@ def test_ltx_a2v_smoke_uses_postgres_transport() -> None:
     assert "/queues/" not in script
     assert "SALAD_LTX25_QUEUE_NAME" not in script
     assert "LTX_A2V_TASK" in script
-    assert "max_attempts=1" in script
+    assert "DEFAULT_GPU_MAX_ATTEMPTS" in script
+    assert "max_attempts=DEFAULT_GPU_MAX_ATTEMPTS" in script
+    assert "max_attempts=1" not in script
 
 
 def test_ltx_a2v_controlled_wrapper_owns_explicit_capacity() -> None:
