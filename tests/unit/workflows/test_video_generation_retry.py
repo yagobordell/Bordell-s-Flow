@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
-
 from _video_generation_support import FakeQueue, FakeStorage, _inputs
+
 from ai_video_factory.providers.job_queue import (
     QueueJobNotFoundError,
     QueueJobSnapshot,
