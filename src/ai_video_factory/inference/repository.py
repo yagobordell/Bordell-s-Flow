@@ -82,6 +82,18 @@ class InMemoryJobRepository:
             ):
                 return JobClaim(ClaimDecision.BUSY, row.attempt_count)
 
+            max_attempts = request.effective_max_attempts
+            if row.attempt_count >= max_attempts:
+                detail = (
+                    f"job {request.job_id} exhausted max_attempts={max_attempts}; "
+                    "refusing to claim another inference attempt"
+                )
+                row.status = "failed"
+                row.last_error = detail
+                row.lease_owner = None
+                row.lease_expires_at = None
+                raise NonRetryableTaskError(detail)
+
             row.status = "running"
             row.attempt_count += 1
             row.lease_owner = owner
@@ -138,6 +150,7 @@ class InMemoryJobRepository:
         *,
         owner: str,
         error: str,
+        retryable: bool,
     ) -> None:
         with self._lock:
             row = self._jobs.get(job_id)
@@ -147,9 +160,7 @@ class InMemoryJobRepository:
                 and row.status == "running"
                 and row.lease_owner == owner
             ):
-                row.status = (
-                    "failed" if error.startswith(_NON_RETRYABLE_PREFIX) else "retryable_failed"
-                )
+                row.status = "retryable_failed" if retryable else "failed"
                 row.last_error = error[:4000]
                 row.lease_owner = None
                 row.lease_expires_at = None
@@ -212,6 +223,7 @@ class PostgresJobRepository:
         from psycopg.types.json import Jsonb
 
         manifest = request.model_dump(mode="json", exclude_none=True)
+        exhausted_detail: str | None = None
         with self._pool.connection() as connection, connection.transaction():
             connection.execute(
                 """
@@ -267,24 +279,48 @@ class PostgresJobRepository:
             ):
                 return JobClaim(ClaimDecision.BUSY, int(row["attempt_count"]))
 
-            updated = connection.execute(
-                """
-                UPDATE gpu.jobs
-                SET status = 'running',
-                    attempt_count = attempt_count + 1,
-                    lease_owner = %s,
-                    lease_expires_at = now() + (%s * interval '1 second'),
-                    transport_job_id = COALESCE(%s, transport_job_id),
-                    last_error = NULL,
-                    updated_at = now()
-                WHERE job_id = %s
-                RETURNING attempt_count
-                """,
-                (owner, lease_seconds, transport_job_id, request.job_id),
-            ).fetchone()
-            if updated is None:  # pragma: no cover - defensive database invariant
-                raise RuntimeError(f"job row disappeared while claiming: {request.job_id}")
-            return JobClaim(ClaimDecision.START, int(updated["attempt_count"]))
+            max_attempts = request.effective_max_attempts
+            if int(row["attempt_count"]) >= max_attempts:
+                exhausted_detail = (
+                    f"job {request.job_id} exhausted max_attempts={max_attempts}; "
+                    "refusing to claim another inference attempt"
+                )
+                connection.execute(
+                    """
+                    UPDATE gpu.jobs
+                    SET status = 'failed',
+                        lease_owner = NULL,
+                        lease_expires_at = NULL,
+                        last_error = %s,
+                        updated_at = now()
+                    WHERE job_id = %s
+                      AND request_sha256 = %s
+                    """,
+                    (exhausted_detail[:4000], request.job_id, request_sha256),
+                )
+            else:
+                updated = connection.execute(
+                    """
+                    UPDATE gpu.jobs
+                    SET status = 'running',
+                        attempt_count = attempt_count + 1,
+                        lease_owner = %s,
+                        lease_expires_at = now() + (%s * interval '1 second'),
+                        transport_job_id = COALESCE(%s, transport_job_id),
+                        last_error = NULL,
+                        updated_at = now()
+                    WHERE job_id = %s
+                    RETURNING attempt_count
+                    """,
+                    (owner, lease_seconds, transport_job_id, request.job_id),
+                ).fetchone()
+                if updated is None:  # pragma: no cover - defensive database invariant
+                    raise RuntimeError(f"job row disappeared while claiming: {request.job_id}")
+                return JobClaim(ClaimDecision.START, int(updated["attempt_count"]))
+
+        if exhausted_detail is not None:
+            raise NonRetryableTaskError(exhausted_detail)
+        raise RuntimeError(f"job claim ended without a decision: {request.job_id}")
 
     def renew_lease(
         self,
@@ -346,6 +382,7 @@ class PostgresJobRepository:
         *,
         owner: str,
         error: str,
+        retryable: bool,
     ) -> None:
         with self._pool.connection() as connection:
             connection.execute(
@@ -362,7 +399,7 @@ class PostgresJobRepository:
                   AND lease_owner = %s
                 """,
                 (
-                    "failed" if error.startswith(_NON_RETRYABLE_PREFIX) else "retryable_failed",
+                    "retryable_failed" if retryable else "failed",
                     error[:4000],
                     job_id,
                     request_sha256,
