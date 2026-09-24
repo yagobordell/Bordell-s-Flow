@@ -180,3 +180,9 @@ Both `Stop` and `Prepare` require three stable zero-replica reads even if
 the first observed count was already zero. They abort on an unexpected running
 group or nonzero remote autoscaler minimum. These are local orchestration
 changes; the already-published Qwen v5 and LTX v9 images do not need rebuilding.
+
+The parallel preparer also reads each existing group\'s queue summary before
+any Stop or Prepare call. A missing queue-length field or nonzero reported
+length aborts before mutating either group; run the read-only inspector and
+resolve the discrepancy first. This does not alter a missing group\'s normal
+first-time queue creation through the manager.

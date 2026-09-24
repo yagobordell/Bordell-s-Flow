@@ -62,6 +62,28 @@ foreach ($Name in $Services) {
     $Groups[$Name] = $Group
 }
 
+# Before mutating either group, refuse an existing queue whose summary claims
+# work. A contradictory or nonzero summary can keep reasserting replicas=1;
+# inspect it read-only rather than fighting the autoscaler with repeated PATCHes.
+$QueueBaseUrl = "https://api.salad.com/api/public/organizations/$($Manifest.stack.organization)/" +
+    "projects/$($Manifest.stack.project)/queues"
+foreach ($Name in $Services) {
+    if ($null -eq $Groups[$Name]) { continue }
+    $QueueName = [string]$Manifest.services.$Name.queue_name
+    $Queue = Invoke-RestMethod -Method Get -Uri "$QueueBaseUrl/$QueueName" `
+        -Headers $Headers -TimeoutSec 30
+    if ($Queue.PSObject.Properties.Name -notcontains "current_queue_length") {
+        throw "$Name queue summary omitted current_queue_length; refusing benchmark preparation."
+    }
+    if ([int]$Queue.current_queue_length -ne 0) {
+        throw (
+            "$Name queue reports current_queue_length=$([int]$Queue.current_queue_length); " +
+            "refusing benchmark preparation. Run " +
+            "scripts/diagnostics/inspect_salad_queue_state.ps1 -Service $Name first."
+        )
+    }
+}
+
 # Salad may leave a stopped group with a residual desired replica after an
 # image upgrade. Recover via the normal Stop lifecycle; never rebuild an image
 # or mutate a group that is running/pending. The manager waits for true zero.

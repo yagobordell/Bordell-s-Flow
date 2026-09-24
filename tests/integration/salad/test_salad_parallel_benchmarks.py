@@ -71,3 +71,14 @@ def test_allocating_deadline_is_not_reset_when_salad_changes_unstarted_instance_
     assert "if ($null -eq $AllocatingSince)" in allocation
     assert "$InstanceId -ne" not in allocation
     assert "$AllocatingElapsed.TotalMinutes -ge $AllocatingTimeoutMinutes" in allocation
+
+
+def test_parallel_prepare_checks_queue_before_mutating_either_group() -> None:
+    script = PREPARE.read_text(encoding="utf-8")
+    summary_check = script.index("queue reports current_queue_length=")
+    replica_repair = script.index('& $Manager -Service $Name -Action Stop')
+    image_prepare = script.index('$Options = @{ Service = $Name; Action = "Prepare"')
+    assert summary_check < replica_repair < image_prepare
+    assert '$Queue.PSObject.Properties.Name -notcontains "current_queue_length"' in script
+    assert "inspect_salad_queue_state.ps1 -Service $Name" in script
+    assert "Invoke-RestMethod -Method Get" in script

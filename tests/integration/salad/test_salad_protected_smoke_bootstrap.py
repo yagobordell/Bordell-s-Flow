@@ -197,7 +197,7 @@ def test_bootstrap_uses_exhaustive_active_jobs_not_stale_queue_summary() -> None
 
     assert "function Get-ActiveQueueJobs" in script
     assert '"$QueueUrl/jobs?page=$Page&page_size=25"' in script
-    assert '$Job.status -in @("pending", "running")' in script
+    assert '$JobStatus -in @("pending", "running")' in script
     assert "$Items.Count -lt 25" in script
     assert "Salad job listing omitted its items/jobs field" in script
     assert "unknown or missing status" in script
