@@ -77,7 +77,14 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
     assert "dev-transformer" in state["model_paths"]["transformer_path"]
     assert state["calls"][0]["num_frames"] is None
     assert state["calls"][0]["num_inference_steps"] == 30
-    assert state["calls"][0]["video_guider_params"] == "official-guider"
+    guider = state["calls"][0]["video_guider_params"]
+    assert guider.cfg_scale == 3.0  # Native dev model, not the distilled CFG=1 preset.
+    assert guider.stg_scale == 0.0
+    assert guider.stg_blocks == []
+    assert guider.modality_scale == 1.0
+    assert state["original_guider"].modality_scale == 3.0
+    assert state["original_guider"].stg_scale == 1.0
+    assert state["calls"][1]["video_guider_params"] == guider
     assert state["calls"][0]["height"] == 768
     assert state["tiling_budget"] == 20_000_000_000
     assert len(state["cleanup_devices"]) == 2
@@ -89,6 +96,10 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
     assert metadata["audio_upmixed_to_stereo"] is True
     assert metadata["effective_audio_duration_seconds"] == pytest.approx(89000 / 24000)
     assert metadata["num_frames"] == 89
+    assert metadata["video_cfg_scale"] == 3.0
+    assert metadata["video_stg_scale"] == 0.0
+    assert metadata["video_modality_scale"] == 1.0
+    assert metadata["generation_profile"].endswith("-v3")
     assert metadata["peak_vram_bytes"] == 123456
     assert metadata["pipeline_reused"] is False
     assert state["conditionings"][0]["strength"] == 1.0
