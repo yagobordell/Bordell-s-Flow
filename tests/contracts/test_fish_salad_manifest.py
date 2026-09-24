@@ -55,7 +55,7 @@ def test_phase5_fish_fallback_validates_before_explicit_gpu_start() -> None:
     )
 
     preflight = content.index("Fish fallback configuration preflight: before GPU allocation")
-    start = content.index('Invoke-Prewarm -Service "fish_speech"')
+    start = content.index('Invoke-Start -Service "fish_speech"')
     assert preflight < start
     assert "--preflight-only" in content
     assert "manage_salad_worker.ps1" in content
