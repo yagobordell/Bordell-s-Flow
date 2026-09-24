@@ -46,6 +46,10 @@ class TaskRunnerRegistry:
         except KeyError as exc:
             raise UnsupportedTaskError(f"unsupported task: {task_name}") from exc
 
+    @property
+    def task_names(self) -> tuple[str, ...]:
+        return tuple(self._runners)
+
     def prepare(self) -> None:
         for runner in self._runners.values():
             prepare = getattr(runner, "prepare", None)
