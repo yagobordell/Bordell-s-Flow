@@ -66,7 +66,11 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "$Phase Qwen cache planning failed; refusing GPU allocation."
     }
-    $Plan = @(Get-Content -LiteralPath $CachePlanPath -Raw | ConvertFrom-Json)
+    $Plan = @(
+        Get-Content -LiteralPath $CachePlanPath -Raw |
+            ConvertFrom-Json |
+            ForEach-Object { $_ }
+    )
 }
 finally {
     Remove-Item -LiteralPath $CachePlanPath -Force -ErrorAction SilentlyContinue
@@ -102,6 +106,7 @@ if ($NonInteractive) {
 }
 
 try {
+    Write-Host "=== $Phase Qwen-Image-2.1 prewarm ===" -ForegroundColor Cyan
     & $OptimizedPrewarm @PrewarmArguments
     if (-not $?) { throw "$Phase Qwen prewarm failed." }
 
