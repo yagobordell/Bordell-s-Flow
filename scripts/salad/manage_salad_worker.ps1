@@ -359,7 +359,10 @@ function New-ContainerGroup {
             return
         }
         catch {
-            $Details = [string]$_.ErrorDetails.Message
+            $Details = ""
+            if ($null -ne $_.ErrorDetails) {
+                $Details = [string]$_.ErrorDetails.Message
+            }
             if ((Get-HttpStatusCode -ErrorRecord $_) -ne 400 -or $Details -notmatch 'name_conflict' -or (Get-Date) -ge $Deadline) { throw }
             Start-Sleep -Seconds 10
         }
