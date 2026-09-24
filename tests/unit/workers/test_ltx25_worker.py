@@ -36,22 +36,20 @@ def test_ltx25_worker_settings_use_shared_inference_core() -> None:
     assert settings.model_repository == "Lightricks/LTX-2.5"
     assert settings.device == "cuda"
 
-def test_ltx25_salad_manifest_has_dedicated_queue_and_image() -> None:
+def test_ltx25_salad_manifest_has_dedicated_group_and_capacity() -> None:
     manifest_path = Path("deploy/salad/services.json")
     document = json.loads(manifest_path.read_text(encoding="utf-8"))
     service = document["services"]["ltx25"]
 
     assert service["group_name"] == "ai-video-factory-ltx25-worker-v2"
-    assert service["queue_name"] == "ai-video-factory-ltx25-jobs-v2"
+    assert "queue_name" not in service
     assert service["dockerfile"] == "docker/workers/ltx25/Dockerfile"
     assert "ltx25" in service["image"]
     assert service["resources"]["gpu_class_names"] == ["RTX 5090 (32 GB)"]
     assert service["resources"]["memory"] == 61440
     assert service["resources"]["storage_amount"] == 171798691840
     assert "gpu_classes" not in service["resources"]
-    assert service["autoscaler"]["min_replicas"] == 0
-    assert service["autoscaler"]["max_replicas"] == 4
-    assert service["autoscaler"]["max_upscale_per_minute"] == 2
+    assert service["capacity"] == {"start_replicas": 1, "max_replicas": 4}
     assert document["stack"]["shared_environment"]["INFERENCE_WORKER_MODE"] == "production"
     assert "GPU_WORKER_RUNTIME" not in service["environment"]
 
