@@ -14,10 +14,46 @@ function Resolve-SaladBenchmarkPinnedImage {
             break
         }
     }
-    if ($null -eq $Digest -or $Image -notmatch '^(?<repo>.+):[^/:]+$') {
+    $TagMatch = [regex]::Match($Image, '^(?<repo>.+):[^/:]+
+}
+
+function Assert-SaladPreparedBenchmarkWorker {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$Group,
+        [Parameter(Mandatory)][object]$Definition
+    )
+
+    if (
+        [string]$Group.current_state.status -ne "stopped" -or
+        [int]$Group.replicas -ne 0 -or
+        [bool]$Group.pending_change
+    ) {
+        throw "Benchmark requires a prepared stopped group with replicas=0/pending=False."
+    }
+    if ([string]$Group.priority -ne [string]$Definition.priority) {
+        throw "Salad group priority does not match the benchmark manifest."
+    }
+    if ([string]$Group.queue_connection.queue_name -ne [string]$Definition.queue_name) {
+        throw "Salad group queue does not match the benchmark manifest."
+    }
+
+    # A mutable Docker tag is not proof that Salad is running the benchmark image.
+    $PinnedImage = Resolve-SaladBenchmarkPinnedImage -Definition $Definition
+    if ([string]$Group.container.image -ne $PinnedImage) {
+        throw (
+            "Salad does not use the published benchmark image. " +
+            "Expected=$PinnedImage actual=$($Group.container.image). Run Prepare first."
+        )
+    }
+
+    Write-Host "Reusing prepared benchmark image: $PinnedImage" -ForegroundColor Green
+}
+)
+    if ($null -eq $Digest -or -not $TagMatch.Success) {
         throw "Could not resolve an immutable digest for benchmark image '$Image'."
     }
-    return "$($Matches['repo'])@$Digest"
+    return "$($TagMatch.Groups['repo'].Value)@$Digest"
 }
 
 function Assert-SaladPreparedBenchmarkWorker {
