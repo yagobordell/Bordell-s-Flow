@@ -7,8 +7,6 @@ import time
 import wave
 from pathlib import Path
 
-from r2_client import create_r2_storage
-
 from ai_video_factory.config import settings
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.salad_fish_speech import (
@@ -17,6 +15,7 @@ from ai_video_factory.providers.salad_fish_speech import (
 )
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.workers.fish_speech import FISH_SPEECH_MODEL_ID
+from r2_client import create_r2_storage
 
 
 def parse_args() -> argparse.Namespace:
