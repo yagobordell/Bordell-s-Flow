@@ -106,6 +106,7 @@ def main() -> None:
         _run_health_check(args, postgres_dsn)
         return
 
+    _required_env("SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS")
     runtime = None
     leadership = None
     try:
