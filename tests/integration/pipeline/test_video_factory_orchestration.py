@@ -11,20 +11,24 @@ def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
-def test_one_command_runner_preflights_before_production_and_always_cleans_up() -> None:
+def test_one_command_runner_requires_global_capacity_controller() -> None:
     text = _read("scripts/pipeline/run_video_factory.ps1")
 
     preflight = text.index("VIDEO FACTORY PREFLIGHT")
+    capacity = text.index("SALAD CAPACITY")
     production = text.index("VIDEO FACTORY DAG")
     phase9 = text.index("PHASE 9")
-    cleanup = text.index("FINAL CLEANUP")
-    assert preflight < production < phase9 < cleanup
+    assert preflight < capacity < production < phase9
     assert "manage_salad_stack.ps1" in text
-    assert "-Action Stop" in text
+    assert "Assert-CapacityControllerHealthy" in text
+    assert "--check-health" in text
+    assert 'SALAD_AUTOSCALER_ENABLED = "true"' in text
+    assert "Start-CapacityController" not in text
+    assert "Stop-CapacityController" not in text
+    assert "Invoke-FinalCleanup" not in text
+    assert "global controller owns shared scale-to-zero" in text
     assert "cleanup_salad_queue.ps1" not in text
-    assert "replicas=0" in text
     assert "Manual intervention: 0" in text
-
 
 def test_one_command_runner_avoids_powershell_automatic_input_collision() -> None:
     text = _read("scripts/pipeline/run_video_factory.ps1")
