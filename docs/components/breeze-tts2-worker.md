@@ -23,8 +23,8 @@ not this document, owns image tags, GPU class, priority, replicas and runtime en
 Prepare or inspect the service with:
 
 ```powershell
-.\scripts\salad\manage_salad_validation.ps1 -Service breeze_tts2 -Action Prepare
-.\scripts\salad\manage_salad_validation.ps1 -Service breeze_tts2 -Action Status
+.\scripts\salad\manage_salad_worker.ps1 -Service breeze_tts2 -Action Prepare
+.\scripts\salad\manage_salad_worker.ps1 -Service breeze_tts2 -Action Status
 ```
 
 Model weights are bootstrapped into the worker model directory and supervised by the shared download
