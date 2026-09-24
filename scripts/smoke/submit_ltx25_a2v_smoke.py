@@ -1,0 +1,364 @@
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import mimetypes
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any
+
+from PIL import Image, ImageDraw
+
+from ai_video_factory.config import settings
+from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
+from ai_video_factory.inference.storage import sha256_file
+from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
+from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
+from ai_video_factory.providers.r2 import create_r2_storage
+from ai_video_factory.workers.ltx25 import (
+    LTX_A2V_DEFAULT_PROMPT,
+    LTX_A2V_DEV_GENERATION_PROFILE,
+    LTX_A2V_GENERATION_PROFILE,
+    LTX_A2V_TASK,
+    ltx_a2v_application_job_id,
+)
+
+
+def _required(name: str, value: str | None) -> str:
+    if value is None or not value.strip():
+        raise SystemExit(f"{name} is required for the real LTX A2V smoke.")
+    return value.strip()
+
+
+def _write_default_avatar(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGB", (1280, 720), (48, 55, 68))
+    draw = ImageDraw.Draw(image)
+    draw.ellipse((460, 100, 820, 460), fill=(205, 168, 138))
+    draw.pieslice((445, 65, 835, 420), 180, 360, fill=(65, 48, 40))
+    draw.ellipse((545, 240, 575, 265), fill=(35, 30, 28))
+    draw.ellipse((705, 240, 735, 265), fill=(35, 30, 28))
+    draw.arc((560, 270, 720, 380), start=20, end=160, fill=(120, 55, 55), width=6)
+    draw.rounded_rectangle((400, 445, 880, 720), radius=90, fill=(55, 86, 116))
+    image.save(path, format="PNG")
+
+
+def _ffprobe(path: Path) -> dict[str, Any]:
+    executable = shutil.which("ffprobe")
+    if executable is None:
+        raise RuntimeError("ffprobe is required for A2V smoke validation")
+    completed = subprocess.run(
+        [
+            executable,
+            "-v",
+            "error",
+            "-show_streams",
+            "-show_format",
+            "-of",
+            "json",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
+
+
+def _duration(probe: dict[str, Any]) -> float:
+    value = (probe.get("format") or {}).get("duration")
+    duration = float(value)
+    if not math.isfinite(duration) or duration <= 0:
+        raise RuntimeError(f"invalid media duration: {value!r}")
+    return duration
+
+
+def _validate_decodable_video(path: Path) -> None:
+    executable = shutil.which("ffmpeg")
+    if executable is None:
+        raise RuntimeError("ffmpeg is required to validate the decoded A2V video")
+    completed = subprocess.run(
+        [executable, "-v", "error", "-i", str(path), "-map", "0:v:0", "-f", "null", "-"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "generated video failed decode validation: " + completed.stderr[-1200:]
+        )
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Submit and verify one real LTX-2.5 image+speech A2V job through Postgres/R2."
+    )
+    parser.add_argument("--avatar-image", type=Path)
+    parser.add_argument("--audio", type=Path, required=True)
+    parser.add_argument("--prompt", default=LTX_A2V_DEFAULT_PROMPT)
+    parser.add_argument("--segment-id", default="smoke-001")
+    parser.add_argument("--profile", choices=("fast", "dev"), default="fast")
+    parser.add_argument("--max-generation-seconds", type=float, default=0.0)
+    parser.add_argument("--width", type=int, default=1280)
+    parser.add_argument("--height", type=int, default=720)
+    parser.add_argument("--fps", type=int, default=24)
+    parser.add_argument("--seed", type=int, default=4242)
+    parser.add_argument("--timeout-seconds", type=float, default=10800.0)
+    parser.add_argument("--pending-timeout-seconds", type=float, default=1800.0)
+    parser.add_argument("--poll-seconds", type=float, default=15.0)
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("data/output/deployment-validation/ltx25-a2v"),
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    profile = (
+        LTX_A2V_GENERATION_PROFILE
+        if args.profile == "fast"
+        else LTX_A2V_DEV_GENERATION_PROFILE
+    )
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    avatar = args.avatar_image
+    if avatar is None:
+        avatar = args.output_dir / "default-avatar.png"
+        _write_default_avatar(avatar)
+    avatar = avatar.resolve()
+    audio = args.audio.resolve()
+    if not avatar.is_file():
+        raise SystemExit(f"Avatar image not found: {avatar}")
+    if not audio.is_file():
+        raise SystemExit(f"Speech audio not found: {audio}")
+
+    input_probe = _ffprobe(audio)
+    input_duration = _duration(input_probe)
+    audio_streams = [
+        item for item in input_probe.get("streams", []) if item.get("codec_type") == "audio"
+    ]
+    if not audio_streams:
+        raise RuntimeError("smoke input does not contain an audio stream")
+    input_channels = int(audio_streams[0].get("channels") or 0)
+    if input_channels <= 0:
+        raise RuntimeError("smoke input does not report a valid audio channel count")
+
+    image_sha = sha256_file(avatar)
+    audio_sha = sha256_file(audio)
+    job_id = ltx_a2v_application_job_id(
+        segment_id=args.segment_id,
+        prompt=args.prompt,
+        image_sha256=image_sha,
+        audio_sha256=audio_sha,
+        seed=args.seed,
+        width=args.width,
+        height=args.height,
+        fps=args.fps,
+        generation_profile=profile,
+    )
+
+    image_suffix = avatar.suffix.lower() or ".png"
+    audio_suffix = audio.suffix.lower() or ".wav"
+    image_key = f"ltx25-a2v/smoke/images/{image_sha}{image_suffix}"
+    audio_key = f"ltx25-a2v/smoke/audio/{audio_sha}{audio_suffix}"
+    output_key = f"jobs/{job_id}/avatar_segment.mp4"
+    metadata_key = f"jobs/{job_id}/metadata.json"
+    image_type = mimetypes.guess_type(avatar.name)[0] or "application/octet-stream"
+    audio_type = mimetypes.guess_type(audio.name)[0] or "application/octet-stream"
+
+    request = InferenceJobRequest(
+        job_id=job_id,
+        task=LTX_A2V_TASK,
+        inputs=[
+            ObjectInput(name="image", key=image_key, sha256=image_sha, content_type=image_type),
+            ObjectInput(name="audio", key=audio_key, sha256=audio_sha, content_type=audio_type),
+        ],
+        output=ObjectOutput(key=output_key, content_type="video/mp4"),
+        sidecar_outputs={
+            "metadata": ObjectOutput(key=metadata_key, content_type="application/json")
+        },
+        max_attempts=1,
+        parameters={
+            "generation_profile": profile,
+            "prompt": args.prompt,
+            "seed": args.seed,
+            "width": args.width,
+            "height": args.height,
+            "fps": args.fps,
+        },
+    )
+    (args.output_dir / f"job-request-{job_id}.json").write_text(
+        request.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    storage = create_r2_storage(
+        endpoint_url=_required("R2_ENDPOINT_URL", settings.r2_endpoint_url),
+        bucket=_required("R2_BUCKET", settings.r2_bucket),
+        access_key_id=_required("R2_ACCESS_KEY_ID", settings.r2_access_key_id),
+        secret_access_key=_required(
+            "R2_SECRET_ACCESS_KEY", settings.r2_secret_access_key
+        ),
+    )
+    executor = InferenceJobExecutor(
+        queue=PostgresJobQueueClient(
+            dsn=_required("POSTGRES_DSN", settings.postgres_dsn),
+        ),
+        storage=storage,
+        poll_seconds=args.poll_seconds,
+        timeout_seconds=args.timeout_seconds,
+        pending_timeout_seconds=args.pending_timeout_seconds,
+    )
+    executor.ensure_input(
+        avatar,
+        key=image_key,
+        sha256=image_sha,
+        content_type=image_type,
+        metadata={"purpose": "ltx25-a2v-avatar"},
+    )
+    executor.ensure_input(
+        audio,
+        key=audio_key,
+        sha256=audio_sha,
+        content_type=audio_type,
+        metadata={"purpose": "ltx25-a2v-speech"},
+    )
+
+    response = executor.execute(
+        request,
+        metadata={
+            "capability": "ltx25-a2v",
+            "segment_id": args.segment_id,
+        },
+    )
+    video_path = args.output_dir / "avatar_segment.mp4"
+    metadata_path = args.output_dir / "metadata.json"
+    executor.download_output(response, video_path)
+
+    metadata_stored = storage.stat(metadata_key)
+    if metadata_stored is None:
+        raise RuntimeError("A2V metadata sidecar was not uploaded")
+    storage.download(metadata_key, metadata_path)
+
+    video_sha = sha256_file(video_path)
+    if video_sha != response.output.sha256:
+        raise RuntimeError("downloaded A2V MP4 sha256 does not match worker response")
+    metadata_sha = sha256_file(metadata_path)
+    if metadata_sha != metadata_stored.metadata.get("artifact-sha256"):
+        raise RuntimeError("downloaded A2V metadata sha256 does not match R2 metadata")
+
+    probe = _ffprobe(video_path)
+    (args.output_dir / "avatar_segment-ffprobe.json").write_text(
+        json.dumps(probe, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    video_streams = [
+        item for item in probe.get("streams", []) if item.get("codec_type") == "video"
+    ]
+    audio_outputs = [
+        item for item in probe.get("streams", []) if item.get("codec_type") == "audio"
+    ]
+    if len(video_streams) != 1 or len(audio_outputs) != 1:
+        raise RuntimeError("A2V output must contain exactly one video and one audio stream")
+
+    video_stream = video_streams[0]
+    if (int(video_stream["width"]), int(video_stream["height"])) != (
+        args.width,
+        args.height,
+    ):
+        raise RuntimeError("A2V output dimensions do not match the requested geometry")
+    numerator, denominator = str(video_stream.get("avg_frame_rate") or "0/1").split("/", 1)
+    actual_fps = float(numerator) / float(denominator)
+    if abs(actual_fps - args.fps) > 1e-6:
+        raise RuntimeError(f"A2V fps {actual_fps} != requested {args.fps}")
+
+    output_duration = _duration(probe)
+    _validate_decodable_video(video_path)
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    required = {
+        "input_audio_duration_seconds",
+        "input_audio_channels",
+        "conditioning_audio_channels",
+        "audio_upmixed_to_stereo",
+        "effective_audio_duration_seconds",
+        "output_video_duration_seconds",
+        "generation_mode",
+        "generation_profile",
+        "video_cfg_scale",
+        "video_stg_scale",
+        "video_modality_scale",
+        "transformer_variant",
+        "stage_1_steps",
+        "stage_2_steps",
+        "model_load_seconds",
+        "inference_seconds",
+        "video_encode_mux_seconds",
+        "total_elapsed_seconds",
+        "real_time_factor",
+    }
+    missing = required - set(metadata)
+    if missing:
+        raise RuntimeError("A2V metadata is missing fields: " + ", ".join(sorted(missing)))
+    if metadata["generation_mode"] != "audio_to_video":
+        raise RuntimeError("A2V worker returned the wrong generation mode")
+    if metadata["generation_profile"] != profile:
+        raise RuntimeError("A2V worker used a mismatched generation profile")
+
+    expected_variant = "distilled" if args.profile == "fast" else "dev"
+    expected_steps = 8 if args.profile == "fast" else 30
+    expected_cfg = 1.0 if args.profile == "fast" else 3.0
+    if metadata["transformer_variant"] != expected_variant:
+        raise RuntimeError("A2V worker used the wrong transformer variant")
+    if int(metadata["stage_1_steps"]) != expected_steps or int(metadata["stage_2_steps"]) != 3:
+        raise RuntimeError("A2V worker used an unexpected diffusion schedule")
+    if float(metadata["video_cfg_scale"]) != expected_cfg:
+        raise RuntimeError("A2V worker used an unexpected CFG scale")
+    if float(metadata["video_stg_scale"]) != 0.0 or float(metadata["video_modality_scale"]) != 1.0:
+        raise RuntimeError("A2V worker did not disable extra STG/modality guidance")
+    if int(metadata["input_audio_channels"]) != input_channels:
+        raise RuntimeError("A2V metadata input channel count does not match smoke input")
+    if int(metadata["conditioning_audio_channels"]) != 2:
+        raise RuntimeError("A2V conditioning audio must be stereo")
+    if bool(metadata["audio_upmixed_to_stereo"]) is not (input_channels == 1):
+        raise RuntimeError("A2V stereo-upmix metadata is inconsistent")
+
+    effective_audio_duration = float(metadata["effective_audio_duration_seconds"])
+    metadata_output_duration = float(metadata["output_video_duration_seconds"])
+    tolerance = max(0.05, 1.5 / args.fps)
+    if abs(metadata_output_duration - output_duration) > tolerance:
+        raise RuntimeError("A2V metadata/output duration mismatch")
+    if abs(effective_audio_duration - output_duration) > tolerance:
+        raise RuntimeError("A2V conditioned audio/video duration mismatch")
+    if effective_audio_duration > input_duration + tolerance:
+        raise RuntimeError("A2V output audio unexpectedly exceeds input speech duration")
+    if input_duration - effective_audio_duration > (8.0 / args.fps) + tolerance:
+        raise RuntimeError("A2V output lost more than one temporal-grid interval")
+
+    if args.max_generation_seconds > 0:
+        actual_seconds = float(metadata["total_elapsed_seconds"])
+        if actual_seconds > args.max_generation_seconds:
+            raise RuntimeError(
+                "A2V generation exceeded the requested performance budget: "
+                f"{actual_seconds:.2f}s > {args.max_generation_seconds:.2f}s"
+            )
+
+    print(f"application_job_id={job_id}")
+    print(f"postgres_job_id={response.job_id}")
+    print(f"replayed={str(response.replayed).lower()}")
+    print(f"input_audio_duration_seconds={input_duration:.6f}")
+    print(f"output_video_duration_seconds={output_duration:.6f}")
+    print(f"generation_profile={metadata['generation_profile']}")
+    print(f"inference_seconds={metadata['inference_seconds']}")
+    print(f"total_elapsed_seconds={metadata['total_elapsed_seconds']}")
+    print(f"video_sha256={video_sha}")
+    print(f"metadata_sha256={metadata_sha}")
+    print(f"video={video_path.resolve()}")
+    print(f"metadata={metadata_path.resolve()}")
+
+
+if __name__ == "__main__":
+    main()
