@@ -76,7 +76,9 @@ def build_salad_capacity_runtime(
     project = _required_text(stack, "project")
     service_order = stack.get("service_order")
     if not isinstance(service_order, list) or not service_order:
-        raise RuntimeError("deploy/salad/services.json stack.service_order must be a non-empty list")
+        raise RuntimeError(
+            "deploy/salad/services.json stack.service_order must be a non-empty list"
+        )
 
     bindings: dict[str, AutoscalerServiceBinding] = {}
     clients: dict[str, SaladClient] = {}
