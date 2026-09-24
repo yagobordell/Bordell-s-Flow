@@ -10,7 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     INFERENCE_WORKER_MODE=production \
     INFERENCE_WORKER_TEMP_DIR=/tmp/ai-video-factory \
     REALESRGAN_MODEL_ROOT=/workspace/models/realesrgan \
-    REALESRGAN_DEVICE=cuda \
+    REALESRGAN_DEVICE=cuda 
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends ca-certificates curl ffmpeg python3-pip \
