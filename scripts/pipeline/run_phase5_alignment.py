@@ -8,7 +8,7 @@ from ai_video_factory.domain import NarrationAudio, SourceScript
 from ai_video_factory.providers import SaladWhisperTranscriptionProvider
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.r2 import create_r2_storage
-from ai_video_factory.providers.salad_queue import SaladJobQueueClient
+from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.workflows.narration_alignment import align_narration_words
 
 
@@ -45,11 +45,6 @@ def parse_args() -> argparse.Namespace:
         help="Whisper language hint; defaults to en for the English video pipeline.",
     )
     parser.add_argument(
-        "--queue-name",
-        default=settings.salad_whisper_queue_name,
-        help="Dedicated Salad queue used by the Whisper worker.",
-    )
-    parser.add_argument(
         "--poll-seconds",
         type=float,
         default=settings.inference_client_poll_seconds,
@@ -58,13 +53,13 @@ def parse_args() -> argparse.Namespace:
         "--timeout-seconds",
         type=float,
         default=settings.inference_client_timeout_seconds,
-        help="Maximum seconds after Salad dispatches the job to a ready worker.",
+        help="Maximum seconds after a worker claims the Postgres job.",
     )
     parser.add_argument(
         "--pending-timeout-seconds",
         type=float,
         default=settings.inference_client_timeout_seconds,
-        help="Maximum queue wait before dispatch; controlled prewarm uses a short value.",
+        help="Maximum wait before a worker claims the Postgres job.",
     )
     parser.add_argument(
         "--output",
@@ -101,11 +96,8 @@ async def main() -> None:
             settings.r2_secret_access_key,
         ),
     )
-    queue = SaladJobQueueClient(
-        organization=_required_setting("SALAD_ORGANIZATION", settings.salad_organization),
-        project=_required_setting("SALAD_PROJECT", settings.salad_project),
-        queue_name=args.queue_name,
-        api_key=_required_setting("SALAD_API_KEY", settings.salad_api_key),
+    queue = PostgresJobQueueClient(
+        dsn=_required_setting("POSTGRES_DSN", settings.postgres_dsn),
     )
     executor = InferenceJobExecutor(
         queue=queue,
@@ -137,7 +129,7 @@ async def main() -> None:
     print(f"Phase 5 word alignment complete. Artifact: {args.output.resolve()}")
     print(
         f"Aligned {len(words)} words from {words[0].start_seconds:.3f}s "
-        f"to {words[-1].end_seconds:.3f}s with {args.model} via Salad"
+        f"to {words[-1].end_seconds:.3f}s with {args.model} via the Postgres job transport"
     )
 
 
