@@ -274,6 +274,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt", default=LTX_A2V_DEFAULT_PROMPT)
     parser.add_argument("--segment-id", default="smoke-001")
     parser.add_argument("--profile", choices=("fast", "dev"), default="fast")
+    parser.add_argument("--max-generation-seconds", type=float, default=0.0)
     parser.add_argument(
         "--queue-name",
         default=os.getenv("SALAD_LTX25_QUEUE_NAME", "ai-video-factory-ltx25-jobs-v2"),
@@ -604,6 +605,7 @@ def main() -> None:
         "model_load_seconds",
         "inference_seconds",
         "video_encode_mux_seconds",
+        "total_elapsed_seconds",
         "real_time_factor",
     }
     missing_metadata = required_metadata - set(metadata)
@@ -686,6 +688,8 @@ def main() -> None:
     print(f"video_stg_scale={metadata['video_stg_scale']}")
     print(f"video_modality_scale={metadata['video_modality_scale']}")
     print(f"inference_seconds={metadata['inference_seconds']}")
+    print(f"video_encode_mux_seconds={metadata['video_encode_mux_seconds']}")
+    print(f"total_elapsed_seconds={metadata['total_elapsed_seconds']}")
     print(f"real_time_factor={metadata['real_time_factor']}")
     print(f"peak_vram_bytes={metadata.get('peak_vram_bytes')}")
     print(f"video_sha256={video_sha}")
@@ -693,6 +697,18 @@ def main() -> None:
     print(f"video={video_path.resolve()}")
     print(f"metadata={metadata_path.resolve()}")
     print(f"ffprobe={probe_path.resolve()}")
+    if args.max_generation_seconds > 0:
+        actual_seconds = float(metadata["total_elapsed_seconds"])
+        _event(
+            "A2V_BENCHMARK",
+            total_seconds=actual_seconds,
+            limit_seconds=args.max_generation_seconds,
+        )
+        if actual_seconds > args.max_generation_seconds:
+            raise RuntimeError(
+                "A2V generation exceeded the requested performance budget: "
+                f"{actual_seconds:.2f}s > {args.max_generation_seconds:.2f}s"
+            )
     _event("A2V_SMOKE_DONE", status="succeeded", salad_job_id=created["id"])
 
 
