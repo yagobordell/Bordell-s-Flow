@@ -76,7 +76,7 @@ class R2ObjectStorage:
             raise RuntimeError(f"uploaded object cannot be read back: {key}")
         return stored
 
-    def create(
+    def create_if_absent(
         self,
         source: Path,
         key: str,
@@ -183,7 +183,7 @@ class LocalObjectStorage:
             raise RuntimeError(f"uploaded local object cannot be read back: {key}")
         return stored
 
-    def create(
+    def create_if_absent(
         self,
         source: Path,
         key: str,
