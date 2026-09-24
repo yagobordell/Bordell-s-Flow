@@ -31,18 +31,22 @@ def test_validation_manager_exposes_explicit_prewarm_action() -> None:
 
 
 def test_controlled_qwen_runners_prewarm_before_queue_and_cleanup() -> None:
+    shared = Path("scripts/pipeline/_qwen_controlled.ps1").read_text(encoding="utf-8")
     for script in (PHASE4_CONTROLLED, PHASE6_CONTROLLED):
-        text = script.read_text(encoding="utf-8")
-        assert "start_salad_optimized_prewarm.ps1" in text
-        assert 'Service = "qwen_image_21"' in text
-        assert "TimeoutMinutes = $PrewarmTimeoutMinutes" in text
-        assert '"--pending-timeout-seconds", $PendingTimeoutSeconds' in text
-        assert "manage_salad_validation.ps1" in text
-        assert "-Action Stop -Service qwen_image_21" in text
-        assert "cleanup_salad_queue.ps1" in text
-        assert "finally {" in text
-        assert "ideogram" not in text.lower()
-        assert text.index("start_salad_optimized_prewarm.ps1") < text.index(
-            '"--pending-timeout-seconds"'
-        )
+        wrapper = script.read_text(encoding="utf-8")
+        assert "_qwen_controlled.ps1" in wrapper
+        assert '"--pending-timeout-seconds", $PendingTimeoutSeconds' in wrapper
+        assert "ideogram" not in wrapper.lower()
 
+    assert "start_salad_optimized_prewarm.ps1" in shared
+    assert 'Service = "qwen_image_21"' in shared
+    assert "TimeoutMinutes = $PrewarmTimeoutMinutes" in shared
+    assert "manage_salad_validation.ps1" in shared
+    assert "-Action Stop -Service qwen_image_21" in shared
+    assert "cleanup_salad_queue.ps1" in shared
+    assert "finally {" in shared
+    assert shared.index("Qwen-Image-2.1 prewarm") < shared.rindex(
+        "& python $RunnerScript @RunnerArguments"
+    )
+    assert shared.index("-Action Stop") < shared.index("& $QueueCleanup")
+    assert shared.index("& $QueueCleanup") < shared.index("-Action Status")
