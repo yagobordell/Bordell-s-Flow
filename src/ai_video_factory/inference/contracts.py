@@ -66,7 +66,7 @@ class ObjectOutput(BaseModel):
 
 
 class InferenceJobRequest(BaseModel):
-    """Provider-neutral inference envelope stored in Salad's ``input`` field."""
+    """Provider-neutral inference envelope persisted by the application job transport."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
