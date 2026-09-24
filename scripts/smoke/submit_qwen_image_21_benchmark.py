@@ -3,9 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import urllib.error
 import statistics
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from uuid import uuid4
