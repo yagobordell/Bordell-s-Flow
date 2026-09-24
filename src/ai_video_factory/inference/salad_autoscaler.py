@@ -41,6 +41,7 @@ class PredictiveAutoscalerConfig:
     idle_deletion_cost: int
     stage_max_replicas: dict[str, int]
     fallback_runtime_seconds: dict[str, float]
+    stage_cold_start_seconds: dict[str, float] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,8 +147,14 @@ def load_predictive_autoscaler_config(
     stage_bindings: tuple[AutoscalerServiceBinding, ...],
 ) -> PredictiveAutoscalerConfig:
     project_max = _int_env("SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS", 30, minimum=1)
+    cold_start_seconds = _float_env(
+        "SALAD_AUTOSCALER_COLD_START_SECONDS",
+        180.0,
+        minimum=0.0,
+    )
     stage_max: dict[str, int] = {}
     fallback_runtime: dict[str, float] = {}
+    stage_cold_start: dict[str, float] = {}
     for binding in stage_bindings:
         configured_max = _int_env(
             f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_MAX_REPLICAS",
@@ -160,6 +167,11 @@ def load_predictive_autoscaler_config(
             binding.fallback_runtime_seconds,
             minimum=1.0,
         )
+        stage_cold_start[binding.workload] = _float_env(
+            f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_COLD_START_SECONDS",
+            cold_start_seconds,
+            minimum=0.0,
+        )
     return PredictiveAutoscalerConfig(
         enabled=_bool_env("SALAD_AUTOSCALER_ENABLED", default=False),
         project_max_replicas=project_max,
@@ -169,11 +181,7 @@ def load_predictive_autoscaler_config(
             minimum=1.0,
         )
         * 60.0,
-        cold_start_seconds=_float_env(
-            "SALAD_AUTOSCALER_COLD_START_SECONDS",
-            180.0,
-            minimum=0.0,
-        ),
+        cold_start_seconds=cold_start_seconds,
         target_utilization=_bounded_float_env(
             "SALAD_AUTOSCALER_TARGET_UTILIZATION",
             0.85,
@@ -218,6 +226,7 @@ def load_predictive_autoscaler_config(
         ),
         stage_max_replicas=stage_max,
         fallback_runtime_seconds=fallback_runtime,
+        stage_cold_start_seconds=stage_cold_start,
     )
 
 
@@ -445,12 +454,18 @@ def build_global_demands(
     now: datetime | None = None,
 ) -> dict[str, StageDemand]:
     observed_at = now or datetime.now(UTC)
-    available_drain_seconds = max(
-        config.target_drain_seconds - config.cold_start_seconds,
-        60.0,
-    )
     demands: dict[str, StageDemand] = {}
     for stage, rows in rows_by_stage.items():
+        cold_start_seconds = config.cold_start_seconds
+        if config.stage_cold_start_seconds is not None:
+            cold_start_seconds = config.stage_cold_start_seconds.get(
+                stage,
+                cold_start_seconds,
+            )
+        available_drain_seconds = max(
+            config.target_drain_seconds - cold_start_seconds,
+            60.0,
+        )
         expected_runtime = max(float(runtime_by_stage[stage]), 1.0)
         status_counts = Counter(str(row.get("status") or "unknown") for row in rows)
         run_counts = Counter(str(row.get("run_id") or "<unknown>") for row in rows)
