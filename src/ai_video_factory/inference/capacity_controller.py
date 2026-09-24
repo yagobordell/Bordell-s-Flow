@@ -84,7 +84,24 @@ class PostgresCapacityControllerLeadership:
             raise
 
     def heartbeat(self) -> None:
-        self._update_state(status="starting", last_error=None, reconciled=False)
+        if self._connection.closed:
+            raise CapacityControllerLeadershipError(
+                "capacity controller leadership connection is closed"
+            )
+        cursor = self._connection.execute(
+            """
+            UPDATE gpu.capacity_controller_state
+            SET last_heartbeat_at = now(),
+                updated_at = now()
+            WHERE controller_name = %s
+              AND controller_id = %s
+            """,
+            (self.controller_name, self.controller_id),
+        )
+        if cursor.rowcount != 1:
+            raise CapacityControllerLeadershipError(
+                "capacity controller lost ownership of its health record"
+            )
 
     def record_success(self) -> None:
         self._update_state(status="running", last_error=None, reconciled=True)
