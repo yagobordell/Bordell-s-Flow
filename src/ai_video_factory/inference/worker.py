@@ -136,6 +136,14 @@ class InferenceWorker:
         *,
         transport_job_id: str | None = None,
     ) -> InferenceJobResponse:
+        if (
+            self.salad_instance_id is not None
+            and self.repository.is_instance_draining(self.salad_instance_id)
+        ):
+            raise JobBusyError(
+                f"worker {self.worker_id} is draining and cannot claim new inference jobs"
+            )
+
         request_sha256 = request.fingerprint()
         claim = self.repository.claim(
             request,
