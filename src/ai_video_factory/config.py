@@ -39,13 +39,6 @@ class Settings(BaseSettings):
     whisper_model: str = "openai/whisper-large-v3-turbo"
 
     salad_api_key: str | None = None
-    salad_organization: str | None = None
-    salad_project: str | None = None
-    salad_breeze_tts2_queue_name: str = "ai-video-factory-breeze-tts2-jobs"
-    salad_fish_speech_queue_name: str = "ai-video-factory-fish-speech-jobs"
-    salad_qwen_image_21_queue_name: str = "ai-video-factory-qwen-image-21-jobs"
-    salad_ideogram4_queue_name: str = "ai-video-factory-ideogram4-jobs"
-    salad_whisper_queue_name: str = "ai-video-factory-whisper-jobs-v2"
     hf_token: str | None = None
     postgres_dsn: str | None = None
 
