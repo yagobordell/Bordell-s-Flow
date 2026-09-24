@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 
 import pytest
-
 from _video_generation_support import FakeQueue, FakeStorage, _inputs
+
 from ai_video_factory.inference.ports import StoredObject
 from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
 from ai_video_factory.workflows.video_generation import (
