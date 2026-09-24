@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import gc
 
-DEFAULT_GPU_MAX_ATTEMPTS = 5
+from .contracts import DEFAULT_INFERENCE_MAX_ATTEMPTS
+
+DEFAULT_GPU_MAX_ATTEMPTS = DEFAULT_INFERENCE_MAX_ATTEMPTS
 RETRYABLE_GPU_FAILURE_KINDS = frozenset({"oom", "cuda_device", "cudnn_sdpa"})
 
 
