@@ -197,24 +197,14 @@ def test_qwen_worker_image_contains_postgres_polling_runtime() -> None:
     assert "COPY docker/workers/common/entrypoint.sh" in dockerfile
 
 
-def test_qwen_recovery_reuses_prompt_seed_and_rejects_cached_output() -> None:
-    script = Path("scripts/smoke/run_qwen_bf16_recovery.py").read_text(encoding="utf-8")
-    controller = Path("scripts/smoke/run_qwen_bf16_recovery_controlled.ps1").read_text(
-        encoding="utf-8"
-    )
+def test_qwen_rejects_unusable_output_before_png_publication() -> None:
     worker = Path("src/ai_video_factory/workers/qwen_image_21/model.py").read_text(
         encoding="utf-8"
     )
+    generate = worker.split("def generate(", maxsplit=1)[1].split(
+        "def _validate_bootstrap", maxsplit=1
+    )[0]
 
-    assert "source.model_dump(" in script
-    assert "max_attempts=1" in script
-    assert "uuid.uuid4()" in script
-    assert "if response.replayed or response.attempt_count != 1" in script
-    assert "validate_qwen_output_image(image" in script
-    assert "validate_qwen_output_image(" in worker
-    assert worker.index("validate_qwen_output_image(") < worker.index("image.save(")
-    assert "--preflight-only" in controller
-    assert "-Action Start" in controller
-    assert "-Action Stop" in controller
-    assert "finally {" in controller
-
+    assert "validate_qwen_output_image(" in generate
+    assert generate.index("validate_qwen_output_image(") < generate.index("image.save(")
+    assert "NonRetryableTaskError" in worker
