@@ -18,6 +18,7 @@ from ai_video_factory.workers.qwen_image_21.model import (
     QWEN_IMAGE_21_BENCHMARK_PROFILE,
     QwenImage21ImageTaskRunner,
     QwenImage21Parameters,
+    _validate_int8_cuda_device_map,
 )
 from scripts.smoke.submit_qwen_image_21_benchmark import _make_request, _validate_metrics
 
@@ -157,3 +158,22 @@ def test_qwen_rejects_a_restarted_worker_or_pipeline() -> None:
             worker_id="same-worker",
             generation=2,
         )
+
+
+@pytest.mark.parametrize(
+    "device_map",
+    ["cuda", "cuda:0", 0, {"transformer": "cuda", "text_encoder": 0, "vae": "cuda:0"}],
+)
+def test_qwen_int8_cuda_placement_accepts_single_device_or_map(device_map: object) -> None:
+    if isinstance(device_map, int):
+        device_map = {"transformer": device_map}
+    _validate_int8_cuda_device_map(device_map)
+
+
+@pytest.mark.parametrize(
+    "device_map",
+    [None, "", {}, "cpu", "disk", "balanced", {"transformer": "cuda", "vae": "cpu"}],
+)
+def test_qwen_int8_cuda_placement_rejects_missing_or_offloaded_map(device_map: object) -> None:
+    with pytest.raises(RuntimeError, match="device map|not fully on CUDA"):
+        _validate_int8_cuda_device_map(device_map)
