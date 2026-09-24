@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import urllib.error
 import statistics
 import time
 import urllib.request
@@ -35,19 +36,52 @@ def _required(name: str) -> str:
     return value
 
 
-def _ready_instance(
+def _list_instances(
     *, api_key: str, organization: str, project: str, group_name: str
-) -> tuple[str, str]:
+) -> list[dict[str, object]]:
     url = (
         f"https://api.salad.com/api/public/organizations/{organization}/projects/"
         f"{project}/containers/{group_name}/instances"
     )
+    # Match the PowerShell bootstrap that successfully queried this exact
+    # endpoint. urllib's default Python-urllib/X.Y agent can be denied by
+    # HTTP gateways; keep the API key header and use an explicit client agent.
     request = urllib.request.Request(
-        url, headers={"Salad-Api-Key": api_key, "Accept": "application/json"}
+        url,
+        headers={
+            "Salad-Api-Key": api_key,
+            "Accept": "application/json",
+            "User-Agent": "ai-video-factory-protected-smoke-bootstrap/1.0",
+        },
     )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        payload = json.load(response)
-    instances = payload.get("instances", payload.get("items", []))
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 403:
+            raise RuntimeError(
+                "Salad instance API returned HTTP 403 for the benchmark client. "
+                "Verify the API key and access to the container group using "
+                "manage_salad_worker.ps1 -Service qwen_image_21 -Action Status; "
+                "do not start a GPU until the Python --preflight-only check succeeds."
+            ) from exc
+        raise
+    if not isinstance(payload, dict):
+        raise RuntimeError("Salad instance API returned a non-object response")
+    instances = payload.get("instances", payload.get("items"))
+    if not isinstance(instances, list) or not all(
+        isinstance(instance, dict) for instance in instances
+    ):
+        raise RuntimeError("Salad instance API returned an invalid instances list")
+    return instances
+
+
+def _ready_instance(
+    *, api_key: str, organization: str, project: str, group_name: str
+) -> tuple[str, str]:
+    instances = _list_instances(
+        api_key=api_key, organization=organization, project=project, group_name=group_name
+    )
     ready = [
         instance for instance in instances if instance.get("started") and instance.get("ready")
     ]
@@ -134,6 +168,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=4242)
     parser.add_argument("--timeout-seconds", type=float, default=600)
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="Validate Python access to the Salad instances API without starting GPU jobs.",
+    )
     return parser.parse_args()
 
 
@@ -154,6 +193,19 @@ def main() -> None:
     api_key = _required("SALAD_API_KEY")
     if service["environment"]["QWEN_IMAGE_21_MEMORY_MODE"] != "int8_cuda":
         raise RuntimeError("Qwen benchmark requires the manifest INT8 CUDA profile")
+    if args.preflight_only:
+        instances = _list_instances(
+            api_key=api_key,
+            organization=organization,
+            project=project,
+            group_name=service["group_name"],
+        )
+        if any(instance.get("started") for instance in instances):
+            raise RuntimeError(
+                "Qwen preflight requires no started worker instances before bootstrap"
+            )
+        print("Qwen Salad Python instance API preflight passed; no GPU jobs submitted.")
+        return
     storage = R2ObjectStorage.create(
         endpoint_url=_required("R2_ENDPOINT_URL"),
         bucket=_required("R2_BUCKET"),
