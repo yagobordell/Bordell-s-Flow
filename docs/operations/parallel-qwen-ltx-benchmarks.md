@@ -139,3 +139,29 @@ alone can be stale. If the queue is truly empty and Salad still reasserts
 one replica, collect the group's status, minimum and queue observations
 for Salad support. Do not bypass the benchmark's zero-replica ownership
 guard or repeatedly patch the desired replica count.
+
+
+## LTX queue summary/list divergence: read-only evidence collection
+
+The user's 2026-09-24 Salad group has `status=stopped`, remote
+`queue_autoscaler.min_replicas=0` and `replicas=1`. After a manual
+`replicas=0` PATCH it returned to one replica at the next 15-second
+check. The Job Queue summary repeatedly reports
+`current_queue_length=33`, but the user's page-by-page job enumeration
+completed without identifying any `pending` or `running` jobs.
+These observations support a queue/control-plane inconsistency; they
+do not prove whether the summary is stale, the job list is incomplete
+for another reason, or a separate scaler is writing the desired count.
+
+Use `scripts/diagnostics/inspect_salad_queue_state.ps1 -Service ltx25`
+for read-only group/queue snapshots and a complete, bounded listing
+with the official list-jobs API (100 jobs per page). It prints only job
+transport IDs, statuses, and creation times for active jobs; never
+prints sensitive inputs or outputs and never mutates the queue or group.
+If it confirms a persistent mismatch, preserve its sanitized output,
+the group version, the queue name, and the time of the zero-to-one
+replica rebound for Salad support. Do not run
+`cleanup_salad_queue.ps1` on an unverified list or bypass the
+benchmark's stopped/zero-replica guard. Replacing the queue/group or
+cancelling active work requires a separate ownership check and
+user-authorized migration; no automatic recreation was added.
