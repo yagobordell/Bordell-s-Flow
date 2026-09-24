@@ -370,9 +370,7 @@ def _smoke_ltx25(args: argparse.Namespace) -> None:
     cloud_dir = args.output_dir / "ltx25-cloud"
     command = [
         sys.executable,
-        "scripts/smoke/submit_ltx25_smoke.py",
-        "--shot-id",
-        "1",
+        "scripts/pipeline/run_phase8_videos.py",
         "--keyframes",
         str(keyframes_path),
         "--prompts",
