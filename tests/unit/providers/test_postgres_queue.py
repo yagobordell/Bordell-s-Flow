@@ -19,7 +19,10 @@ def _row(status: str, **extra):
 
 def test_snapshot_maps_canonical_postgres_states() -> None:
     assert PostgresJobQueueClient._snapshot(_row("pending")).status is QueueJobStatus.PENDING
-    assert PostgresJobQueueClient._snapshot(_row("retryable_failed")).status is QueueJobStatus.PENDING
+    assert (
+        PostgresJobQueueClient._snapshot(_row("retryable_failed")).status
+        is QueueJobStatus.PENDING
+    )
     assert PostgresJobQueueClient._snapshot(_row("running")).status is QueueJobStatus.RUNNING
     assert PostgresJobQueueClient._snapshot(_row("succeeded")).status is QueueJobStatus.SUCCEEDED
     assert PostgresJobQueueClient._snapshot(_row("failed")).status is QueueJobStatus.FAILED
