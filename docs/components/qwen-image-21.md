@@ -85,3 +85,43 @@ older v4/v5 digests for a Postgres-backed deployment. The local API `--preflight
 incident remains active. CI covers nonblocking readiness and identity
 recovery; live Salad five-run performance and visual quality remain to
 be measured.
+
+### BF16 diagnostic after the invalid v6 PNG (2026-09-25)
+
+A real Postgres-backed v6 smoke succeeded in one attempt, but the stored 1280x736 PNG
+was largely purple and transparent (approximately 96% of pixels had alpha <=16).
+R2 SHA-256, format, dimensions, and transport success did not establish image quality.
+The original output remains stored and must not be used as an LTX keyframe.
+
+The suspect INT8 path quantized both the transformer and text encoder. To isolate
+that variable, the recovery branch stages
+`qwen-image-2.1-bf16-offload-1280x736-postgres-v7` with
+`QWEN_IMAGE_21_MEMORY_MODE=bf16_offload`. This is a diagnostic configuration,
+not yet a verified quality or performance improvement. The 40-step, 1280x736,
+guidance-free, KV-cache profile and the Qwen checkpoint are unchanged.
+
+The worker now rejects nearly transparent production output before R2 publication;
+the normal Qwen smoke also performs this check. This catches the observed
+failure, but cannot replace a visual quality review. Never flatten a nearly
+transparent RGBA frame to RGB to conceal the failure.
+
+From a clean recovery branch with Docker running and the group stopped at zero:
+
+```powershell
+pwsh -NoProfile -File .\scripts\salad\manage_salad_worker.ps1 -Service qwen_image_21 -Action Prepare -NonInteractive
+pwsh -NoProfile -File .\scripts\smoke\run_qwen_bf16_recovery_controlled.ps1 -SourceJobId <previous-succeeded-qwen-keyframe-job-id> -NonInteractive
+```
+
+The controlled test preflights R2 and Postgres before allocating a GPU, verifies
+that Salad's stopped group uses the published BF16 digest, and rejects other
+active Qwen jobs. It copies the original prompt, seed, resolution and diffusion
+parameters to a **new job ID and R2 output key** with a single permitted attempt,
+then validates the returned PNG. A PowerShell `finally` block stops Qwen and
+returns the service to zero replicas even if the test fails. The test image and
+report are saved to `data/output/qwen-bf16-recovery/`.
+
+Do not merge the recovery PR or promote BF16 to a production default until the
+new image passes visual inspection. If BF16 produces the same defect, investigate
+latent statistics and the VAE decode rather than publishing another untested
+quantization preset. The previous five-run INT8 benchmark is not a BF16 quality
+acceptance test and should not be run with the diagnostic image.
