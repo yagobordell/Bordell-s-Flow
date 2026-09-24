@@ -359,7 +359,7 @@
       "display_name": "AI Video Factory Qwen-Image-2.1",
       "group_name": "ai-video-factory-qwen-image-21-worker-v2",
       "dockerfile": "docker/workers/qwen-image-2.1/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:qwen-image-2.1-int8-1280x736-v5",
+      "image": "docker.io/yagobordell/ai-video-factory:qwen-image-2.1-int8-1280x736-postgres-v6",
       "priority": "high",
       "resources": {
         "cpu": 8,
