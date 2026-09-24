@@ -46,4 +46,5 @@ def build_worker(
         temp_dir=settings.worker_temp_dir,
         lease_seconds=settings.worker_lease_seconds,
         heartbeat_seconds=settings.worker_heartbeat_seconds,
+        gpu_retry_cooldown_seconds=settings.worker_gpu_retry_cooldown_seconds,
     )
