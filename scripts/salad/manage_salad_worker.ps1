@@ -784,7 +784,12 @@ function Ensure-ManifestScaleToZero {
         "$Service remote queue_autoscaler.min_replicas=$RemoteMin differs from " +
         "the scale-to-zero manifest; restoring the manifest before replica cleanup."
     )
-    & $ScaleToZeroRestore -Service $Service -Mode Manifest -EnvFile $EnvFile -NonInteractive
+    & $ScaleToZeroRestore `
+        -Service $Service `
+        -Mode Manifest `
+        -EnvFile $EnvFile `
+        -TimeoutMinutes 10 `
+        -NonInteractive
     if (-not $?) {
         throw "$Service autoscaler restore failed; refusing to patch replicas."
     }
