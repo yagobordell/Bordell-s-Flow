@@ -67,20 +67,10 @@ def test_shared_http_status_supports_missing_and_numeric_status() -> None:
     )
 
 
-def test_salad_scripts_use_shared_helpers() -> None:
-    environment_scripts = (
-        "start_salad_optimized_prewarm.ps1",
-        "restore_salad_scale_to_zero.ps1",
-        "start_salad_scale_to_zero.ps1",
-        "ensure_salad_zero_replicas.ps1",
-        "manage_salad_worker.ps1",
-    )
-    http_scripts = (*environment_scripts, "cleanup_salad_queue.ps1")
-    for name in environment_scripts:
-        source = (SALAD_SCRIPTS / name).read_text(encoding="utf-8")
-        assert '. (Join-Path $PSScriptRoot "_env_file.ps1")' in source
-        assert "function Import-EnvFile {" not in source
-    for name in http_scripts:
-        source = (SALAD_SCRIPTS / name).read_text(encoding="utf-8")
-        assert '. (Join-Path $PSScriptRoot "_http_status.ps1")' in source
-        assert "function Get-HttpStatusCode {" not in source
+def test_salad_manager_uses_shared_helpers() -> None:
+    source = (SALAD_SCRIPTS / "manage_salad_worker.ps1").read_text(encoding="utf-8")
+
+    assert '. (Join-Path $PSScriptRoot "_env_file.ps1")' in source
+    assert '. (Join-Path $PSScriptRoot "_http_status.ps1")' in source
+    assert "function Import-EnvFile {" not in source
+    assert "function Get-HttpStatusCode {" not in source

@@ -44,4 +44,6 @@ logging.basicConfig(level=logging.INFO)
 app = create_app(
     build_ideogram4_worker(runtime_settings),
     prepare_in_background=True,
+    poll_jobs_from_repository=runtime_settings.worker_poll_jobs,
+    job_poll_seconds=runtime_settings.worker_job_poll_seconds,
 )

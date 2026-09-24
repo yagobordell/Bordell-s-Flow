@@ -1,20 +1,3 @@
-FROM python:3.12-slim-bookworm AS salad-worker
-
-ARG SALAD_WORKER_VERSION=v0.7.0
-ARG SALAD_WORKER_SHA256=074a329cf6462e77fc7b72100f59d8a690831456d9420186a834a8f30634c9e4
-
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends ca-certificates curl \
-    && curl --fail --show-error --location \
-        "https://github.com/SaladTechnologies/salad-cloud-job-queue-worker/releases/download/${SALAD_WORKER_VERSION}/salad-http-job-queue-worker_x86_64.tar.gz" \
-        --output /tmp/salad-worker.tar.gz \
-    && echo "${SALAD_WORKER_SHA256}  /tmp/salad-worker.tar.gz" | sha256sum --check --strict \
-    && tar --extract --gzip --file /tmp/salad-worker.tar.gz --directory /usr/local/bin \
-        salad-http-job-queue-worker \
-    && chmod 0755 /usr/local/bin/salad-http-job-queue-worker \
-    && rm -f /tmp/salad-worker.tar.gz \
-    && rm -rf /var/lib/apt/lists/*
-
 FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
 
 ARG FISH_RUNTIME_COMMIT=214da3cd841bda85da2496b96cd3c4d7edb1337e
@@ -42,8 +25,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     FISH_SPEECH_RUNTIME_COMMIT=214da3cd841bda85da2496b96cd3c4d7edb1337e \
     FISH_SPEECH_DEVICE=cuda \
     FISH_SPEECH_MAX_CHUNK_BYTES=800 \
-    FISH_SPEECH_INTER_CHUNK_PAUSE_MS=80 \
-    SALAD_QUEUE_ENABLED=false
+    FISH_SPEECH_INTER_CHUNK_PAUSE_MS=80 
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
@@ -80,12 +62,10 @@ RUN uv pip install --python /opt/fish-speech/.venv/bin/python '/opt/factory[gpu]
     && uv pip install --python /opt/fish-speech/.venv/bin/python \
         'huggingface-hub==0.36.0' 'hf-xet==1.6.0'
 
-COPY --from=salad-worker /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/
 COPY docker/workers/fish-speech/download_models.sh /usr/local/bin/download-models
 COPY docker/workers/fish-speech/entrypoint.sh /usr/local/bin/worker-entrypoint
 
 RUN chmod 0755 \
-        /usr/local/bin/salad-http-job-queue-worker \
         /usr/local/bin/download-models \
         /usr/local/bin/worker-entrypoint \
     && useradd --create-home --uid 10001 worker \

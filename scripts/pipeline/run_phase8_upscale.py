@@ -6,17 +6,15 @@ import os
 from pathlib import Path
 
 from ai_video_factory.domain import VideoClip
+from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.r2 import create_r2_storage
-from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workflows.video_upscale import (
     build_video_upscale_plan,
     run_video_upscale,
 )
 
 REQUIRED_ENV = (
-    "SALAD_API_KEY",
-    "SALAD_ORGANIZATION",
-    "SALAD_PROJECT",
+    "POSTGRES_DSN",
     "R2_ENDPOINT_URL",
     "R2_BUCKET",
     "R2_ACCESS_KEY_ID",
@@ -31,10 +29,6 @@ def _environment() -> dict[str, str]:
     return {name: os.environ[name] for name in REQUIRED_ENV}
 
 
-def _default_queue_name() -> str:
-    return os.getenv("SALAD_REALESRGAN_QUEUE_NAME", "ai-video-factory-realesrgan-jobs")
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Upscale Phase 8 LTX clips 2x with self-hosted Real-ESRGAN on Salad."
@@ -44,7 +38,6 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("data/output/phase8/video_clips.json"),
     )
-    parser.add_argument("--queue-name", default=_default_queue_name())
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -74,12 +67,7 @@ def main() -> None:
         access_key_id=environment["R2_ACCESS_KEY_ID"],
         secret_access_key=environment["R2_SECRET_ACCESS_KEY"],
     )
-    queue = SaladJobQueueClient(
-        organization=environment["SALAD_ORGANIZATION"],
-        project=environment["SALAD_PROJECT"],
-        queue_name=args.queue_name,
-        api_key=environment["SALAD_API_KEY"],
-    )
+    queue = PostgresJobQueueClient(dsn=environment["POSTGRES_DSN"])
     manifest, upscaled = run_video_upscale(
         plan,
         queue=queue,

@@ -392,11 +392,10 @@ def test_ideogram_worker_settings_and_salad_manifest() -> None:
 
     assert settings.model_repository == IDEOGRAM4_MODEL_ID
     assert settings.sampler_preset == "V4_QUALITY_48"
-    assert service["queue_name"] == "ai-video-factory-ideogram4-jobs"
+    assert "queue_name" not in service
     assert service["image"].endswith("ideogram4-nf4-quality48-v4")
     assert service["resources"]["gpu_class_names"] == ["RTX 4090 (24 GB)"]
-    assert service["autoscaler"]["min_replicas"] == 0
-    assert service["autoscaler"]["max_replicas"] == 1
+    assert service["capacity"] == {"start_replicas": 1, "max_replicas": 1}
     assert service["environment"]["IDEOGRAM_BOOTSTRAP_STALL_TIMEOUT_SECONDS"] == "720"
     assert service["environment"]["IDEOGRAM_BOOTSTRAP_HARD_TIMEOUT_SECONDS"] == "900"
     assert service["required_environment"] == ["HF_TOKEN"]

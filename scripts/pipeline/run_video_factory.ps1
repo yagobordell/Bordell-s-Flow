@@ -27,8 +27,6 @@ $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $ProductionRunner = Join-Path $PSScriptRoot "run_production.py"
 $Preflight = Join-Path $PSScriptRoot "preflight_video_factory.py"
 $SaladStack = Join-Path $PSScriptRoot "../salad/manage_salad_stack.ps1"
-$ZeroReplicaGuard = Join-Path $PSScriptRoot "../salad/ensure_salad_zero_replicas.ps1"
-$QueueCleanup = Join-Path $PSScriptRoot "../salad/cleanup_salad_queue.ps1"
 $Phase9Plan = Join-Path $PSScriptRoot "run_phase9_compositor.py"
 $Phase9Motion = Join-Path $PSScriptRoot "run_phase9_motion.py"
 $Phase9Final = Join-Path $PSScriptRoot "run_phase9_final.py"
@@ -125,44 +123,9 @@ function Ensure-RemotionDependencies {
 function Invoke-FinalCleanup {
     param([Parameter(Mandatory)][string[]]$Services)
 
-    $Failures = @()
-    try {
-        & $SaladStack -Action Stop -Services $Services -EnvFile $EnvFile -NonInteractive
-        if (-not $?) {
-            throw "Salad stack stop returned failure."
-        }
-    }
-    catch {
-        $Failures += $_
-        Write-Warning "Global Salad stop failed: $($_.Exception.Message)"
-    }
-
-    foreach ($Service in $Services) {
-        try {
-            & $ZeroReplicaGuard `
-                -Service $Service `
-                -EnvFile $EnvFile `
-                -NonInteractive
-            if (-not $?) {
-                throw "Zero-replica recheck failed for $Service."
-            }
-
-            & $QueueCleanup `
-                -Service $Service `
-                -EnvFile $EnvFile `
-                -TimeoutSeconds 180 `
-                -NonInteractive
-            if (-not $?) {
-                throw "Queue cleanup failed for $Service."
-            }
-        }
-        catch {
-            $Failures += $_
-            Write-Warning "Final queue cleanup failed for ${Service}: $($_.Exception.Message)"
-        }
-    }
-    if ($Failures.Count -gt 0) {
-        throw $Failures[0]
+    & $SaladStack -Action Stop -Services $Services -EnvFile $EnvFile -NonInteractive
+    if (-not $?) {
+        throw "Salad stack stop returned failure."
     }
 }
 
@@ -195,13 +158,6 @@ try {
             throw "Salad control-plane preflight failed."
         }
         $SaladPreflightPassed = $true
-        # The preflight has already enumerated every Salad queue and confirmed that
-        # no pending/running job exists. Let the controlled GPU runners reuse that
-        # same proof during this process; otherwise a stale queue counter forces a
-        # second slow historical pagination pass before every prewarm.
-        $env:AI_VIDEO_FACTORY_PREFLIGHT_QUEUE_EMPTY = "1"
-        $env:AI_VIDEO_FACTORY_PREFLIGHT_REPORT = Join-Path $OutputDir "preflight_report.json"
-
         Ensure-RemotionDependencies
 
         Write-Host "=== VIDEO FACTORY DAG: cache/resume + bounded parallel execution ===" `
@@ -247,7 +203,7 @@ catch {
 finally {
     $Overall.Stop()
     if ($SaladPreflightPassed) {
-        Write-Host "=== FINAL CLEANUP: stop workers, replicas=0, clean queues ===" `
+        Write-Host "=== FINAL CLEANUP: stop workers and converge replicas=0 ===" `
             -ForegroundColor Cyan
         try {
             Invoke-FinalCleanup -Services $Services
@@ -286,7 +242,7 @@ $Metrics = [ordered]@{
     phase9_seconds = $Phase9Seconds
     final_video = $FinalVideo
     manual_intervention = 0
-    cleanup = "all project GPU services stopped; replicas=0 guard applied; queues cleaned"
+    cleanup = "all project GPU services stopped with replicas=0"
 }
 $Metrics | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $RunMetrics -Encoding UTF8
 
@@ -305,5 +261,5 @@ if ($null -ne $ProductionDocument) {
     Write-Host ("Cache/resume stage hits: {0}" -f $CacheHits)
 }
 Write-Host "Manual intervention: 0"
-Write-Host "Final cleanup: all project GPU services stopped; replicas=0; queues cleaned"
+Write-Host "Final cleanup: all project GPU services stopped; replicas=0"
 Write-Host ("Metrics: {0}" -f $RunMetrics)

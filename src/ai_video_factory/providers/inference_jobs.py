@@ -100,7 +100,7 @@ def cached_inference_response(
 
 
 class InferenceJobExecutor:
-    """Synchronous submit/poll/download client shared by Salad-backed providers."""
+    """Synchronous submit/poll/download client shared by inference providers."""
 
     def __init__(
         self,
@@ -348,7 +348,7 @@ def _reconcile_cached_response(
     storage: ObjectStorage,
     request: InferenceJobRequest,
 ) -> InferenceJobResponse | None:
-    """Recover a completed R2 artifact when the queue status is stale at a deadline."""
+    """Recover a completed R2 artifact when transport state is stale at a deadline."""
 
     try:
         return cached_inference_response(storage, request)

@@ -1,74 +1,91 @@
 # Salad stack deployment
 
-`deploy/salad/services.json` is the source of truth for Salad deployment.
+## Source of truth
 
-The current service inventory is:
+`deploy/salad/services.json` is the canonical deployment manifest.
 
-```text
-whisper
-breeze_tts2
-fish_speech
-ideogram4
-qwen_image_21
-ltx25
-realesrgan
+Schema version 3 uses:
+
+```json
+{
+  "stack": {
+    "job_transport": "postgres"
+  }
+}
 ```
 
-Each model has its own container group and queue. Postgres/R2 infrastructure is shared. Service
-definitions declare image, Dockerfile, resources, probes, autoscaling, model environment and any
-additional required credentials.
+Each model has its own Salad container group. Postgres is the canonical job/control plane and R2 is
+shared object storage. Salad provides compute only.
 
-Do not duplicate mutable GPU classes, replica ceilings, queue names or image tags in documentation;
-read them from the manifest.
+Do not duplicate mutable image tags, GPU classes, group names or capacity ceilings in scripts or
+documentation.
 
-## Stack commands
+## Validate
 
-Validate the manifest and local paths:
+Run the stack manager in validation mode before touching remote resources:
 
 ```powershell
-pwsh scripts/salad/manage_salad_stack.ps1 -Action Validate
+./scripts/salad/manage_salad_stack.ps1 -Action Validate
 ```
 
-Prepare all services:
+Validation checks manifest schema, service names, capacity bounds, GPU-class declarations and local
+Dockerfile paths. It does not allocate a GPU.
+
+## Prepare
+
+`Prepare` builds/pushes an image unless `-SkipBuild` is used, resolves the immutable digest, resolves
+GPU class names through Salad's organization API, and creates or updates the container group while
+leaving it stopped at `replicas=0`.
+
+A group created by the old architecture may still expose `queue_connection` or
+`queue_autoscaler`. The manager never tries to partially patch those fields away. Migration is
+allowed only when the group is already stopped at zero replicas; the manager then recreates the group
+without queue state.
 
 ```powershell
-pwsh scripts/salad/manage_salad_stack.ps1 -Action Prepare
+./scripts/salad/manage_salad_worker.ps1 -Action Prepare -Service ltx25 -NonInteractive
 ```
 
-Operate the stack:
+Preparation verifies the activated immutable image, container priority, absence of legacy queue
+attachments and zero replicas.
+
+## Start
+
+`Start` sets an explicit replica count and starts the group. The requested count must not exceed
+`capacity.max_replicas`.
 
 ```powershell
-pwsh scripts/salad/manage_salad_stack.ps1 -Action Start
-pwsh scripts/salad/manage_salad_stack.ps1 -Action Status
-pwsh scripts/salad/manage_salad_stack.ps1 -Action Stop
+./scripts/salad/manage_salad_worker.ps1 -Action Start -Service ltx25 -Replicas 4 -NonInteractive
 ```
 
-Use `-Services` to target a subset and `-SkipBuild` when immutable images are already available.
+The command waits until the group is running, the change has settled and the observed replica count
+matches the request.
 
-The lower-level single-service manager is:
+There is no queue-triggered autoscaling. The caller owns the capacity decision.
+
+## Stop
+
+`Stop` stops the group, patches replicas to zero when necessary, and requires repeated stable
+`stopped / replicas=0 / pending_change=false` observations before returning success.
 
 ```powershell
-pwsh scripts/salad/manage_salad_worker.ps1 -Service ltx25 -Action Prepare
+./scripts/salad/manage_salad_worker.ps1 -Action Stop -Service ltx25 -NonInteractive
 ```
 
-## Prepare semantics
+The full pipeline runs a final stack stop even after failures.
 
-`Prepare` ensures the queue exists, builds/pushes the image when requested, resolves its immutable
-digest, resolves configured GPU names to Salad class IDs, creates or patches the container group,
-applies probes/autoscaling/environment and leaves the service stopped.
+## Status
 
-Runtime values declared in the manifest are authoritative. Local `.env` supplies required secrets
-and external credentials; it must not override deployment-managed worker mode or queue policy.
+`Status` reports the group state, explicit capacity bounds, image and whether a legacy queue
+attachment is still visible.
 
-## Scale to zero
+Any `legacy_queue=True` result is a migration issue: stop the service at zero replicas and run
+`Prepare` before production use.
 
-Production services use queue autoscaling with `min_replicas=0`. A started group may therefore remain
-in Salad's `deploying` state with zero replicas and no pending change until a queued job triggers
-allocation. The management scripts treat that as a valid active scale-to-zero state.
+## Secrets and runtime configuration
 
-Always stop paid services after validation and verify zero replicas.
+The manager loads `.env` by default. Required secrets such as `POSTGRES_DSN`, R2 credentials,
+`HF_TOKEN` and `SALAD_API_KEY` are injected into the worker environment according to the manifest.
 
-## Safety
-
-Repository changes and `Prepare` do not intentionally keep paid GPUs running. Use `Start` only when
-work is ready to submit, and rely on controlled wrappers for normal pipeline execution.
+Production workers poll Postgres directly. Do not add `SALAD_QUEUE_ENABLED`, per-model queue names
+or queue-autoscaler configuration back into deployment state.

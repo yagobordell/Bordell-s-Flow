@@ -102,11 +102,30 @@ class InferenceWorker:
         self.temp_dir = temp_dir
         self.lease_seconds = lease_seconds
         self.heartbeat_seconds = heartbeat_seconds
+        self._execution_lock = threading.Lock()
 
     def prepare(self) -> None:
         self.runners.prepare()
 
     def process(
+        self,
+        request: InferenceJobRequest,
+        *,
+        transport_job_id: str | None = None,
+    ) -> InferenceJobResponse:
+        if not self._execution_lock.acquire(blocking=False):
+            raise JobBusyError(
+                f"worker {self.worker_id} is already executing another inference job"
+            )
+        try:
+            return self._process_claimed_request(
+                request,
+                transport_job_id=transport_job_id,
+            )
+        finally:
+            self._execution_lock.release()
+
+    def _process_claimed_request(
         self,
         request: InferenceJobRequest,
         *,
@@ -388,6 +407,9 @@ class InferenceWorker:
             )
         except Exception:
             logger.exception("failed to persist job failure for %s", request.job_id)
+
+    def next_pending_request(self) -> InferenceJobRequest | None:
+        return self.repository.next_pending_request(self.runners.task_names)
 
     def ready(self) -> None:
         self.repository.ping()

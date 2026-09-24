@@ -13,7 +13,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 ```
 
 The runner performs preflight, the resumable production DAG, Phase 9 composition, final validation,
-worker shutdown, zero-replica verification and queue cleanup.
+worker shutdown and stable zero-replica verification.
 
 ## Active DAG
 
@@ -52,8 +52,8 @@ shots      reference prompts   alignment [Whisper]
 `data/output/production_manifest.json` stores deterministic stage fingerprints. Valid artifacts are
 reused; changed inputs invalidate only affected stages and their dependants.
 
-GPU stages inspect durable R2 state before prewarming. Phase 8 also persists transport state so an
-interrupted run can resume without changing logical application-job identity.
+GPU stages inspect durable R2 state before starting Salad capacity. Inference jobs live in Postgres,
+and deterministic application identity plus R2 metadata allow interrupted work to resume safely.
 
 Inspect the plan without mutation:
 
@@ -83,4 +83,4 @@ data/output/phase9/final_video.mp4
 ```
 
 The outer wrapper always attempts cleanup after a failure. A production run is not operationally
-complete until project workers are stopped, replicas return to zero and queues are clean.
+complete until project workers are stopped and replicas return to stable zero.

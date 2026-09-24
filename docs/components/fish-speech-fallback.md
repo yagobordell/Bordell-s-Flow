@@ -19,11 +19,11 @@ script
 Fallback is explicit and conservative. Ordinary transient/control-plane problems should be retried or
 reported rather than silently changing the voice backend.
 
-The controlled narration workflow owns the eligibility classification, releases Breeze before Fish is
-prewarmed and preserves the same canonical narration contract for downstream stages.
+The controlled narration workflow owns the eligibility classification, releases Breeze before Fish
+capacity is started and preserves the same canonical narration contract for downstream stages.
 
-Fish runs as its own Salad service, queue and container image. Mutable deployment values are defined in
-`deploy/salad/services.json`.
+Fish runs as its own Salad container group and image. Jobs remain in Postgres; mutable deployment
+values are defined in `deploy/salad/services.json`.
 
 ## Voice and output
 
@@ -42,7 +42,7 @@ scripts/pipeline/run_phase5_audio_controlled.ps1
 ```
 
 Targeted paid validation uses the Fish-specific command under `scripts/smoke/`. Prepare/status/stop
-operations use `scripts/salad/manage_salad_validation.ps1`.
+operations use `scripts/salad/manage_salad_worker.ps1`.
 
 Historical smoke timings, transport IDs and artifact hashes are intentionally kept in Git history
 rather than this document.

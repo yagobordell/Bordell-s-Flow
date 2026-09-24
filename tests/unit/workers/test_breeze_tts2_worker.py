@@ -268,11 +268,10 @@ def test_breeze_worker_settings_and_salad_manifest() -> None:
     assert settings.model_repository == BREEZE_TTS2_MODEL_ID
     assert settings.device == "cuda"
     assert settings.max_chunk_chars == 1200
-    assert service["queue_name"] == "ai-video-factory-breeze-tts2-jobs"
+    assert "queue_name" not in service
     assert service["resources"]["gpu_class_names"] == ["RTX 4090 (24 GB)"]
     assert service["dockerfile"] == "docker/workers/breeze-tts2/Dockerfile"
-    assert service["autoscaler"]["min_replicas"] == 0
-    assert service["autoscaler"]["max_replicas"] == 2
+    assert service["capacity"] == {"start_replicas": 1, "max_replicas": 2}
 
 
 def test_breeze_container_pins_runtime_and_targets_4090() -> None:

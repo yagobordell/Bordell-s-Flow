@@ -23,6 +23,7 @@ def _raise_if_non_retryable(last_error: str | None) -> None:
 
 @dataclass(slots=True)
 class _MemoryJob:
+    request: InferenceJobRequest
     request_sha256: str
     status: str = "pending"
     attempt_count: int = 0
@@ -51,7 +52,10 @@ class InMemoryJobRepository:
         del transport_job_id
         now = datetime.now(UTC)
         with self._lock:
-            row = self._jobs.setdefault(request.job_id, _MemoryJob(request_sha256))
+            row = self._jobs.setdefault(
+                request.job_id,
+                _MemoryJob(request=request, request_sha256=request_sha256),
+            )
             if row.request_sha256 != request_sha256:
                 raise JobConflictError(
                     f"job_id {request.job_id!r} is already bound to a different request"
@@ -64,6 +68,13 @@ class InMemoryJobRepository:
                 )
             if row.status == "retryable_failed":
                 _raise_if_non_retryable(row.last_error)
+            if row.status == "failed":
+                _raise_if_non_retryable(row.last_error)
+                raise NonRetryableTaskError(
+                    row.last_error or f"job {request.job_id} is terminally failed"
+                )
+            if row.status == "cancelled":
+                raise NonRetryableTaskError(f"job {request.job_id} was cancelled")
             if (
                 row.status == "running"
                 and row.lease_expires_at is not None
@@ -136,10 +147,31 @@ class InMemoryJobRepository:
                 and row.status == "running"
                 and row.lease_owner == owner
             ):
-                row.status = "retryable_failed"
+                row.status = (
+                    "failed" if error.startswith(_NON_RETRYABLE_PREFIX) else "retryable_failed"
+                )
                 row.last_error = error[:4000]
                 row.lease_owner = None
                 row.lease_expires_at = None
+
+    def next_pending_request(
+        self,
+        task_names: tuple[str, ...],
+    ) -> InferenceJobRequest | None:
+        now = datetime.now(UTC)
+        with self._lock:
+            for row in self._jobs.values():
+                if row.request.task not in task_names:
+                    continue
+                if row.status in {"pending", "retryable_failed"}:
+                    return row.request.model_copy(deep=True)
+                if (
+                    row.status == "running"
+                    and row.lease_expires_at is not None
+                    and row.lease_expires_at <= now
+                ):
+                    return row.request.model_copy(deep=True)
+        return None
 
     def ping(self) -> None:
         return None
@@ -220,6 +252,13 @@ class PostgresJobRepository:
                 )
             if row["status"] == "retryable_failed":
                 _raise_if_non_retryable(row["last_error"])
+            if row["status"] == "failed":
+                _raise_if_non_retryable(row["last_error"])
+                raise NonRetryableTaskError(
+                    row["last_error"] or f"job {request.job_id} is terminally failed"
+                )
+            if row["status"] == "cancelled":
+                raise NonRetryableTaskError(f"job {request.job_id} was cancelled")
             now = datetime.now(UTC)
             if (
                 row["status"] == "running"
@@ -312,7 +351,7 @@ class PostgresJobRepository:
             connection.execute(
                 """
                 UPDATE gpu.jobs
-                SET status = 'retryable_failed',
+                SET status = %s,
                     lease_owner = NULL,
                     lease_expires_at = NULL,
                     last_error = %s,
@@ -322,8 +361,49 @@ class PostgresJobRepository:
                   AND status = 'running'
                   AND lease_owner = %s
                 """,
-                (error[:4000], job_id, request_sha256, owner),
+                (
+                    "failed" if error.startswith(_NON_RETRYABLE_PREFIX) else "retryable_failed",
+                    error[:4000],
+                    job_id,
+                    request_sha256,
+                    owner,
+                ),
             )
+
+    def next_pending_request(
+        self,
+        task_names: tuple[str, ...],
+    ) -> InferenceJobRequest | None:
+        if not task_names:
+            return None
+        with self._pool.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT request
+                FROM gpu.jobs
+                WHERE task = ANY(%s)
+                  AND (
+                      status = 'pending'
+                      OR status = 'retryable_failed'
+                      OR (
+                          status = 'running'
+                          AND lease_expires_at IS NOT NULL
+                          AND lease_expires_at <= now()
+                      )
+                  )
+                  AND (
+                      status <> 'retryable_failed'
+                      OR last_error IS NULL
+                      OR last_error NOT LIKE %s
+                  )
+                ORDER BY created_at ASC, job_id ASC
+                LIMIT 1
+                """,
+                (list(task_names), f"{_NON_RETRYABLE_PREFIX}%"),
+            ).fetchone()
+        if row is None:
+            return None
+        return InferenceJobRequest.model_validate(row["request"])
 
     def ping(self) -> None:
         with self._pool.connection() as connection:

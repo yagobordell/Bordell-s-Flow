@@ -11,11 +11,11 @@ from r2_client import create_r2_storage
 
 from ai_video_factory.config import settings
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
+from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.salad_fish_speech import (
     FishSpeechReference,
     SaladFishSpeechProvider,
 )
-from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workers.fish_speech import FISH_SPEECH_MODEL_ID
 
 
@@ -97,11 +97,8 @@ def validate_reference_object(reference: FishSpeechReference | None) -> None:
 
 def build_provider(*, allow_unconditioned: bool) -> SaladFishSpeechProvider:
     storage = build_storage()
-    queue = SaladJobQueueClient(
-        organization=required("SALAD_ORGANIZATION", settings.salad_organization),
-        project=required("SALAD_PROJECT", settings.salad_project),
-        queue_name=settings.salad_fish_speech_queue_name,
-        api_key=required("SALAD_API_KEY", settings.salad_api_key),
+    queue = PostgresJobQueueClient(
+        dsn=required("POSTGRES_DSN", settings.postgres_dsn),
     )
     executor = InferenceJobExecutor(
         queue=queue,

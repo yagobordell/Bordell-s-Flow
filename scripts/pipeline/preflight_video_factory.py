@@ -63,8 +63,11 @@ def _load_services(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise RuntimeError(f"Salad service manifest not found: {path}")
     document = json.loads(path.read_text(encoding="utf-8"))
-    if document.get("schema_version") != "2":
-        raise RuntimeError("deploy/salad/services.json must use schema_version=2")
+    if document.get("schema_version") != 3:
+        raise RuntimeError("deploy/salad/services.json must use schema_version=3")
+    stack = document.get("stack", {})
+    if stack.get("job_transport") != "postgres":
+        raise RuntimeError("Salad manifest must declare job_transport=postgres")
     required = {
         "whisper",
         "breeze_tts2",
@@ -81,9 +84,15 @@ def _load_services(path: Path) -> dict[str, Any]:
     if missing:
         raise RuntimeError("Salad manifest is missing services: " + ", ".join(missing))
     for name, service in services.items():
-        autoscaler = service.get("autoscaler", {})
-        if autoscaler.get("min_replicas") != 0:
-            raise RuntimeError(f"Salad service {name} must retain min_replicas=0")
+        capacity = service.get("capacity", {})
+        start_replicas = capacity.get("start_replicas")
+        max_replicas = capacity.get("max_replicas")
+        if not isinstance(start_replicas, int) or start_replicas < 1:
+            raise RuntimeError(f"Salad service {name} has invalid capacity.start_replicas")
+        if not isinstance(max_replicas, int) or max_replicas < start_replicas:
+            raise RuntimeError(f"Salad service {name} has invalid capacity.max_replicas")
+        if "queue_name" in service or "autoscaler" in service:
+            raise RuntimeError(f"Salad service {name} still contains legacy queue configuration")
     return document
 
 
@@ -490,14 +499,11 @@ def main() -> None:
             "salad_manifest": "ok",
         }
         _required("SALAD_API_KEY", settings.salad_api_key)
-        _required("SALAD_ORGANIZATION", settings.salad_organization)
-        _required("SALAD_PROJECT", settings.salad_project)
         if not args.skip_network:
             checks["r2"] = _check_r2_and_fish_reference()
             checks["postgres"] = _check_postgres()
             checks["openai"] = _check_openai()
             checks["hugging_face"] = _check_hugging_face(services)
-            checks["salad_queues"] = _check_salad_queues(services, args.output_dir)
         else:
             checks["network"] = "skipped"
     except (OSError, RuntimeError, ValueError) as exc:

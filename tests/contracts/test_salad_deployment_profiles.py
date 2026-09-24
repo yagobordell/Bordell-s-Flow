@@ -2,8 +2,12 @@ import json
 from pathlib import Path
 
 
+def _document() -> dict:
+    return json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
+
+
 def test_salad_services_use_named_gpu_classes() -> None:
-    document = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
+    document = _document()
 
     assert document["services"]["ltx25"]["resources"]["gpu_class_names"] == [
         "RTX 5090 (32 GB)"
@@ -28,7 +32,7 @@ def test_salad_services_use_named_gpu_classes() -> None:
 
 
 def test_salad_probe_failure_thresholds_stay_within_api_limit() -> None:
-    document = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
+    document = _document()
 
     for service_name, service in document["services"].items():
         for probe_name, probe in service["probes"].items():
@@ -39,15 +43,15 @@ def test_salad_probe_failure_thresholds_stay_within_api_limit() -> None:
     assert breeze_startup["period_seconds"] * breeze_startup["failure_threshold"] == 600
 
     ideogram = document["services"]["ideogram4"]["probes"]
-    ideogram_startup_window = (
+    assert (
         ideogram["startup"]["period_seconds"] * ideogram["startup"]["failure_threshold"]
+        == 600
     )
-    ideogram_readiness_window = (
+    assert (
         ideogram["readiness"]["period_seconds"]
         * ideogram["readiness"]["failure_threshold"]
+        == 600
     )
-    assert ideogram_startup_window == 600
-    assert ideogram_readiness_window == 600
 
 
 def test_salad_manager_resolves_gpu_names_through_organization_api() -> None:
@@ -55,48 +59,37 @@ def test_salad_manager_resolves_gpu_names_through_organization_api() -> None:
 
     assert '"$OrganizationApiBase/gpu-classes"' in script
     assert "function Resolve-GpuClassIds" in script
-    assert 'PSObject.Properties["gpu_class_names"]' in script
+    assert "$Definition.resources.gpu_class_names" in script
     assert "$GpuClassIds = @(Resolve-GpuClassIds -Headers $Headers)" in script
     assert "gpu_classes = $GpuClassIds" in script
 
 
-def test_ltx_autoscaler_allows_parallel_shot_workers() -> None:
-    document = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
-    service = document["services"]["ltx25"]
-    autoscaler = service["autoscaler"]
+def test_ltx_capacity_allows_parallel_shot_workers() -> None:
+    service = _document()["services"]["ltx25"]
 
     assert service["image"].endswith("ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v9")
-
-    assert autoscaler["min_replicas"] == 0
-    assert autoscaler["max_replicas"] == 4
-    assert autoscaler["desired_queue_length"] == 1
-    assert autoscaler["max_upscale_per_minute"] == 2
+    assert service["capacity"] == {"start_replicas": 1, "max_replicas": 4}
+    assert "queue_name" not in service
+    assert "autoscaler" not in service
 
 
-def test_breeze_autoscaler_allows_parallel_narration_workers() -> None:
-    document = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
-    autoscaler = document["services"]["breeze_tts2"]["autoscaler"]
+def test_breeze_capacity_allows_parallel_narration_workers() -> None:
+    service = _document()["services"]["breeze_tts2"]
 
-    assert autoscaler["min_replicas"] == 0
-    assert autoscaler["max_replicas"] == 2
-    assert autoscaler["desired_queue_length"] == 1
+    assert service["capacity"] == {"start_replicas": 1, "max_replicas": 2}
+    assert "autoscaler" not in service
 
 
-def test_ideogram_autoscaler_hard_caps_gpu_cost_during_queue_stabilization() -> None:
-    document = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
-    service = document["services"]["ideogram4"]
-    autoscaler = service["autoscaler"]
+def test_ideogram_capacity_hard_caps_gpu_cost() -> None:
+    service = _document()["services"]["ideogram4"]
 
-    assert service["queue_name"] == "ai-video-factory-ideogram4-jobs"
-    assert autoscaler["min_replicas"] == 0
-    assert autoscaler["max_replicas"] == 1
-    assert autoscaler["desired_queue_length"] == 1
-    assert autoscaler["max_upscale_per_minute"] == 1
+    assert service["capacity"] == {"start_replicas": 1, "max_replicas": 1}
+    assert "queue_name" not in service
+    assert "autoscaler" not in service
 
 
 def test_ideogram_deployment_pins_download_and_runtime_watchdogs_and_v4_image() -> None:
-    document = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
-    service = document["services"]["ideogram4"]
+    service = _document()["services"]["ideogram4"]
     environment = service["environment"]
 
     assert service["image"].endswith("ideogram4-nf4-quality48-v4")

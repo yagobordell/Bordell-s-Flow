@@ -1,61 +1,92 @@
-# Shared inference worker core
+# Inference worker core
 
-`ai_video_factory.inference` is the model-neutral execution boundary used by Salad workers.
+## Control plane
 
-```text
-Salad Job Queue
-      |
-      v
-InferenceJobRequest
-      |
-      v
-InferenceWorker
-  |       |       |
-  |       |       +--> TaskRunnerRegistry -> model adapter
-  |       +----------> JobRepository -> Postgres leases/idempotency
-  +------------------> ObjectStorage -> R2 artifacts
-      |
-      v
-InferenceJobResponse
-```
-
-## Responsibilities
-
-The shared core owns request fingerprints, application job identity, Postgres claims and leases,
-R2/local object transfer, replay, output reconciliation, `/health`, `/ready`, `/jobs` and task
-dispatch.
-
-Model packages under `ai_video_factory.workers` own only model settings, bootstrap/runtime preparation
-and task runners. Model-specific dependencies must not leak into the shared inference package.
-
-## Contracts
-
-Schema v1 represents one primary artifact per inference request. Prompt-only jobs may omit binary
-inputs. A future multi-artifact response should use an explicit schema change rather than changing the
-meaning of the current envelope.
-
-Shared infrastructure configuration uses `INFERENCE_*`, `R2_*` and `POSTGRES_DSN`. Model settings
-stay namespaced under their worker prefix.
-
-The physical Postgres table remains `gpu.jobs`; its name is an implementation detail retained for
-compatibility with deployed state.
-
-## Worker boundary
-
-Production and preserved model workers live under:
+The application has one canonical inference job authority:
 
 ```text
-src/ai_video_factory/workers/
-docker/workers/
-deploy/salad/services.json
+Pipeline / provider
+      |
+      v
+Postgres gpu.jobs
+  - deterministic job_id
+  - request fingerprint
+  - pending/running/terminal state
+  - leases and heartbeats
+      |
+      v
+Inference worker on Salad
+  - polls only supported task names
+  - claims one job per GPU process
+  - downloads inputs from R2
+  - runs the model
+  - uploads outputs to R2
+  - completes the Postgres job
 ```
 
-The current manifest defines Whisper, Breeze TTS 2, Fish Speech, Ideogram 4, Qwen Image 2.1,
-LTX 2.5 and Real-ESRGAN. Each service has its own queue and container group while sharing the same
-inference core.
+Salad is the execution host. It owns container groups, instances, GPU allocation and explicit replica
+capacity. It is not an application queue and it does not decide whether an inference job exists.
 
-Workers process one model call at a time per GPU. Horizontal parallelism comes from Salad replicas,
-not concurrent inference inside one worker process.
+## Shared core
 
-`InferenceJobExecutor` provides the reusable client-side submit/poll/verify/download path for simple
-one-artifact providers.
+The shared inference core owns:
+
+- deterministic request fingerprints and application job identity;
+- Postgres claims, leases, lease renewal and terminal state;
+- replay/idempotency when an output already exists in R2;
+- `/health`, `/ready` and `/jobs`;
+- repository polling for the task names registered by the worker;
+- one-model-call-at-a-time execution inside a worker process;
+- task dispatch through `TaskRunnerRegistry`;
+- object-storage input/output integrity.
+
+The physical table is `gpu.jobs`. The name is retained for compatibility, but the table is the
+canonical application queue for all interruptible inference work.
+
+## Worker lifecycle
+
+Production workers set:
+
+- `INFERENCE_WORKER_MODE=production`
+- `INFERENCE_WORKER_POLL_JOBS=true`
+- `INFERENCE_WORKER_JOB_POLL_SECONDS=2`
+
+A worker starts its HTTP process first so health probes remain responsive during model bootstrap.
+Once the runtime is ready, a background poller asks the repository for the oldest reclaimable job
+whose task is supported by that worker.
+
+The worker then uses the normal claim/lease path before inference. An expired running lease is
+reclaimable. Active leases remain exclusive. Terminal failures and cancellations are not silently
+resubmitted.
+
+The local execution lock prevents accidental concurrent inference inside one GPU process. Postgres
+leases provide distributed exclusivity across replicas.
+
+## Horizontal capacity
+
+Each model has its own Salad container group. Horizontal parallelism comes from explicit replicas,
+bounded by `capacity.max_replicas` in `deploy/salad/services.json`.
+
+The pipeline checks R2/cache state before asking Salad for GPU capacity. Controlled wrappers then:
+
+1. start the required number of replicas;
+2. submit deterministic jobs to Postgres;
+3. wait for application completion;
+4. stop the group and converge to `replicas=0`.
+
+No Salad Job Queue sidecar, queue attachment or queue autoscaler participates in this lifecycle.
+
+## Configuration
+
+Shared infrastructure configuration uses `INFERENCE_*`, `R2_*` and `POSTGRES_DSN`.
+Model-specific settings stay under their model prefix.
+
+`deploy/salad/services.json` is the deployment source of truth for:
+
+- organization and project;
+- container-group names;
+- images and Dockerfiles;
+- GPU classes and resource limits;
+- probes and priority;
+- explicit start/max replica capacity;
+- production worker environment.

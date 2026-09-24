@@ -21,8 +21,7 @@ contract.
 
 ## Deployment
 
-The service definition is `whisper` in `deploy/salad/services.json`. GPU class, image, queue,
-replicas and model environment are manifest-owned.
+The service definition is `whisper` in `deploy/salad/services.json`. GPU class, image, replica capacity and model environment are manifest-owned.
 
 Model bootstrap uses the shared download watchdog and validates the local snapshot before the worker
 becomes ready.
@@ -34,7 +33,7 @@ python scripts/pipeline/run_phase5_alignment.py
 ```
 
 Normal production uses the controlled wrapper and end-to-end runner. Service lifecycle operations use
-`scripts/salad/manage_salad_validation.ps1`.
+`scripts/salad/manage_salad_worker.ps1`.
 
 OpenAI transcription remains an optional compatibility provider in code; it is not the normal Phase 5
 alignment path.

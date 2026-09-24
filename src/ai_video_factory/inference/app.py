@@ -27,9 +27,17 @@ def create_app(
     *,
     prepare_in_background: bool = False,
     prepare_retry_seconds: float = 5.0,
+    poll_jobs_from_repository: bool = False,
+    job_poll_seconds: float = 2.0,
 ) -> FastAPI:
+    if prepare_retry_seconds <= 0:
+        raise ValueError("prepare_retry_seconds must be positive")
+    if job_poll_seconds <= 0:
+        raise ValueError("job_poll_seconds must be positive")
+
     preparation_complete = threading.Event()
     preparation_stop = threading.Event()
+    job_poll_stop = threading.Event()
     preparation_error: Exception | None = None
 
     def prepare_worker() -> None:
@@ -53,9 +61,53 @@ def create_app(
             logger.info("inference runtime prepared")
             return
 
+    def poll_repository_jobs() -> None:
+        while not job_poll_stop.is_set():
+            if not preparation_complete.is_set():
+                job_poll_stop.wait(min(job_poll_seconds, 1.0))
+                continue
+            if preparation_error is not None:
+                return
+
+            try:
+                request = worker.next_pending_request()
+            except Exception:
+                logger.exception("failed to read the canonical Postgres inference queue")
+                job_poll_stop.wait(job_poll_seconds)
+                continue
+
+            if request is None:
+                job_poll_stop.wait(job_poll_seconds)
+                continue
+
+            try:
+                worker.process(request, transport_job_id=request.job_id)
+            except JobBusyError:
+                job_poll_stop.wait(job_poll_seconds)
+            except NonRetryableTaskError:
+                logger.warning(
+                    "terminal inference rejection persisted job_id=%s",
+                    request.job_id,
+                    exc_info=True,
+                )
+                job_poll_stop.wait(job_poll_seconds)
+            except (
+                InputIntegrityError,
+                JobConflictError,
+                JobExecutionError,
+                LeaseLostError,
+                UnsupportedTaskError,
+            ):
+                logger.exception("inference job failed job_id=%s", request.job_id)
+                job_poll_stop.wait(job_poll_seconds)
+            except Exception:
+                logger.exception("unexpected repository job failure job_id=%s", request.job_id)
+                job_poll_stop.wait(job_poll_seconds)
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         prepare_thread: threading.Thread | None = None
+        poll_thread: threading.Thread | None = None
         logger.info("preparing inference runtime")
         if prepare_in_background:
             prepare_thread = threading.Thread(
@@ -69,10 +121,21 @@ def create_app(
             preparation_complete.set()
             logger.info("inference runtime prepared")
 
+        if poll_jobs_from_repository:
+            poll_thread = threading.Thread(
+                target=poll_repository_jobs,
+                name="inference-postgres-job-poller",
+                daemon=True,
+            )
+            poll_thread.start()
+
         try:
             yield
         finally:
+            job_poll_stop.set()
             preparation_stop.set()
+            if poll_thread is not None:
+                poll_thread.join(timeout=max(job_poll_seconds * 2, 1))
             if prepare_thread is not None:
                 prepare_thread.join(timeout=1)
             worker.close()

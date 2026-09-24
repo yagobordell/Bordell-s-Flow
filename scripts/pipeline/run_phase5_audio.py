@@ -16,8 +16,8 @@ from ai_video_factory.providers import (
     SaladFishSpeechProvider,
 )
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
+from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.r2 import create_r2_storage
-from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.providers.speech import GeneratedSpeech, SpeechProvider
 from ai_video_factory.workers.breeze_tts2 import BREEZE_TTS2_GENERATION_PROFILE
 from ai_video_factory.workflows.narration_audio import generate_narration_audio
@@ -112,14 +112,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfg-scale", type=float, default=settings.breeze_tts_cfg_scale)
     parser.add_argument("--primary-seed", type=int, default=settings.breeze_tts_seed)
     parser.add_argument("--fallback-seed", type=int, default=settings.fish_speech_seed)
-    parser.add_argument(
-        "--primary-queue-name",
-        default=settings.salad_breeze_tts2_queue_name,
-    )
-    parser.add_argument(
-        "--fallback-queue-name",
-        default=settings.salad_fish_speech_queue_name,
-    )
     parser.add_argument(
         "--poll-seconds",
         type=float,
@@ -226,15 +218,11 @@ def _validate_reference_object(storage: Any, reference: FishSpeechReference | No
 
 def _executor(
     *,
-    queue_name: str,
     storage: Any,
     args: argparse.Namespace,
 ) -> InferenceJobExecutor:
-    queue = SaladJobQueueClient(
-        organization=_required_setting("SALAD_ORGANIZATION", settings.salad_organization),
-        project=_required_setting("SALAD_PROJECT", settings.salad_project),
-        queue_name=queue_name,
-        api_key=_required_setting("SALAD_API_KEY", settings.salad_api_key),
+    queue = PostgresJobQueueClient(
+        dsn=_required_setting("POSTGRES_DSN", settings.postgres_dsn),
     )
     return InferenceJobExecutor(
         queue=queue,
@@ -262,7 +250,7 @@ async def main() -> None:
     )
 
     if args.provider == "breeze":
-        executor = _executor(queue_name=args.primary_queue_name, storage=storage, args=args)
+        executor = _executor(storage=storage, args=args)
         provider: SpeechProvider = SaladBreezeSpeechProvider(
             executor=executor,
             temp_dir=settings.temp_dir / "breeze-client",
@@ -274,7 +262,7 @@ async def main() -> None:
     else:
         reference = _build_reference(args)
         _validate_reference_object(storage, reference)
-        executor = _executor(queue_name=args.fallback_queue_name, storage=storage, args=args)
+        executor = _executor(storage=storage, args=args)
         provider = SaladFishSpeechProvider(
             executor=executor,
             temp_dir=settings.temp_dir / "fish-speech-client",

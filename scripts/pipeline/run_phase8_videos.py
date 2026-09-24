@@ -7,8 +7,8 @@ import threading
 from pathlib import Path
 
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
+from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.r2 import create_r2_storage
-from ai_video_factory.providers.salad_queue import SaladJobQueueClient
 from ai_video_factory.workflows.video_generation import (
     VideoGenerationManifest,
     build_video_generation_plan,
@@ -16,9 +16,7 @@ from ai_video_factory.workflows.video_generation import (
 )
 
 REQUIRED_ENV = (
-    "SALAD_API_KEY",
-    "SALAD_ORGANIZATION",
-    "SALAD_PROJECT",
+    "POSTGRES_DSN",
     "R2_ENDPOINT_URL",
     "R2_BUCKET",
     "R2_ACCESS_KEY_ID",
@@ -31,10 +29,6 @@ def _environment() -> dict[str, str]:
     if missing:
         raise SystemExit("Missing required environment variables: " + ", ".join(missing))
     return {name: os.environ[name] for name in REQUIRED_ENV}
-
-
-def _default_queue_name() -> str:
-    return os.getenv("SALAD_LTX25_QUEUE_NAME", "ai-video-factory-ltx25-jobs-v2")
 
 
 def _read_models[ModelT](path: Path, model_type: type[ModelT]) -> list[ModelT]:
@@ -99,11 +93,10 @@ def _watch_manifest(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fan out, resume and verify all LTX-2.5 video jobs through Salad/R2."
-    )
-    parser.add_argument(
-        "--queue-name",
-        default=_default_queue_name(),
+        description=(
+            "Fan out, resume and verify LTX-2.5 video jobs through "
+            "Postgres/R2 on Salad compute."
+        )
     )
     parser.add_argument(
         "--keyframes",
@@ -181,12 +174,7 @@ def main() -> None:
         access_key_id=environment["R2_ACCESS_KEY_ID"],
         secret_access_key=environment["R2_SECRET_ACCESS_KEY"],
     )
-    queue = SaladJobQueueClient(
-        organization=environment["SALAD_ORGANIZATION"],
-        project=environment["SALAD_PROJECT"],
-        queue_name=args.queue_name,
-        api_key=environment["SALAD_API_KEY"],
-    )
+    queue = PostgresJobQueueClient(dsn=environment["POSTGRES_DSN"])
 
     manifest_path = args.output_dir / "video_generation_manifest.json"
     clips_dir = args.output_dir / "video_clips"
@@ -215,7 +203,7 @@ def main() -> None:
             poll_seconds=args.poll_seconds,
             timeout_seconds=args.timeout_seconds,
             dispatch_timeout_seconds=args.dispatch_timeout_seconds,
-            transport_route=args.queue_name,
+            transport_route="postgres:ltx25",
         )
     finally:
         if progress_thread is not None:

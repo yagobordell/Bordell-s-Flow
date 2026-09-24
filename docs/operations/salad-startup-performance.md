@@ -1,41 +1,60 @@
 # Salad startup performance
 
-Cold-start latency is treated as a sequence of observable stages: allocation, image pull, model
-download, runtime preparation, queue dispatch and inference.
+Cold start is now split into four observable stages:
 
-## Prewarm
+1. Salad node allocation and image pull;
+2. model download/bootstrap;
+3. worker readiness and Postgres polling;
+4. inference.
 
-`scripts/salad/start_salad_optimized_prewarm.ps1` temporarily requests one replica while preserving
-queue autoscaling at `min_replicas=0`. It applies bounded allocation/startup checks and may reallocate
-an unhealthy or unproductive node.
+Queue dispatch is not part of the Salad lifecycle.
 
-Controlled pipeline wrappers prewarm only when cache inspection proves GPU work is still required.
-They restore scale-to-zero and stop services during cleanup.
+## Allocate only after cache inspection
 
-## Model download watchdog
+Controlled pipeline wrappers inspect R2/cache state before requesting GPU capacity. A complete replay
+must never start a Salad replica.
 
-Hugging Face-backed workers use
-`ai_video_factory.workers.download_watchdog` to supervise downloads. The shared watchdog tracks
-filesystem/process write progress and enforces bounded stall/hard-timeout policies. Services may also
-request node reallocation for sustained poor transfer performance.
+When work remains, the wrapper calls `manage_salad_worker.ps1 -Action Start` with an explicit,
+bounded replica count. On completion or failure it calls `Stop`.
 
-Breeze TTS 2, Fish Speech, Ideogram 4, Qwen Image 2.1, LTX 2.5 and Whisper reuse this shared mechanism.
-Service-specific thresholds remain deployment settings rather than separate downloader implementations.
+Qwen, Whisper and speech fallback use one replica per controlled invocation. LTX and Real-ESRGAN may
+request multiple replicas based on cache misses, capped by `capacity.max_replicas`.
 
-Real-ESRGAN ships its model artifact through its image/bootstrap path and does not require the Hugging
-Face watchdog.
+## Model bootstrap
 
-## Queue timing
+Workers expose `/health` before long model bootstrap so Salad can distinguish an alive process from
+a ready model runtime. `/ready` becomes successful only after required model/runtime preparation.
 
-Controlled production flows wait for the selected worker to become ready before charging normal job
-dispatch time. Queue pending time should therefore represent dispatch/inference pressure rather than
-model cold start.
+Model download/watchdog logic remains model-specific. Network preflight may request Salad instance
+reallocation when a node cannot sustain the required Hugging Face download path. This is a node
+selection mechanism, not a job-state mechanism.
 
-LTX may scale horizontally after initial prewarm according to the replica ceiling in
-`deploy/salad/services.json`.
+Do not weaken checksum, revision, gated-model or required-file validation to improve startup time.
 
-## Tuning rule
+## Postgres polling
 
-Do not optimize cold start by weakening model integrity checks or silently extending timeouts. Change
-thresholds only from measured logs, and validate that cleanup still returns the service to zero
-replicas.
+After readiness, the worker polls the canonical `gpu.jobs` table. It only considers registered task
+names and processes one inference call at a time per GPU process.
+
+The application job may already be `pending` before the worker becomes ready. That is intentional:
+pending time now measures real capacity/bootstrap pressure rather than a separate Salad queue.
+
+## Scale to zero
+
+Scale-to-zero is explicit. There is no queue autoscaler and no remote `min_replicas` to restore.
+
+Cleanup succeeds only after the container group is stopped and replicas have remained zero across
+multiple observations. A replica rebound after this architecture is therefore a direct Salad
+container-group anomaly rather than a race between queue autoscaling and local scripts.
+
+## Performance tuning
+
+Prefer, in order:
+
+1. R2 replay/cache hits that avoid GPU allocation entirely;
+2. immutable images with stable dependency layering;
+3. reliable model download paths and bounded watchdogs;
+4. correct explicit parallel replica count for known outstanding work;
+5. model/runtime optimizations.
+
+Do not reintroduce an additional queue or scaler solely to reduce cold-start latency.
