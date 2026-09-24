@@ -31,3 +31,21 @@ between separate container starts. The four-run generation-total target is media
 30-35 s is initially acceptable without OOM, and >35 s or >20% spread requires review.
 A separate production-resolution measurement should use 1280x736; never use this
 benchmark profile in normal Phase 4/6 requests.
+
+### Benchmark Salad control-plane preflight
+
+The five-run PowerShell benchmark first invokes the exact Python Salad instances
+API client with `--preflight-only`, before deploying, starting or paying for a
+worker. It does not submit a job or access R2. The Python client explicitly
+identifies itself with the same user agent as the successful protected PowerShell
+bootstrap; Python's default `Python-urllib/X.Y` client identity can be rejected
+by API gateways even when PowerShell can access the same endpoint. The official
+Salad API documents GET `/organizations/{organization}/projects/{project}/containers/{group}/instances`
+with the `Salad-Api-Key` header.
+
+If the preflight reports HTTP 403, inspect the API key's scope and Python's
+network/proxy policy; do not repeatedly allocate a GPU for a control-plane
+authentication problem. The runner still verifies the same started Salad instance
+before and after each job and validates the worker process and pipeline across all
+five generations. This is a local benchmark-client change only: the deployed
+Qwen worker image and INT8 generation settings do not need to change.
