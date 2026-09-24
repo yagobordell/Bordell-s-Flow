@@ -44,6 +44,7 @@ def build_worker(
         runners=runners,
         worker_id=settings.worker_id,
         temp_dir=settings.worker_temp_dir,
+        salad_instance_id=settings.salad_instance_id,
         lease_seconds=settings.worker_lease_seconds,
         heartbeat_seconds=settings.worker_heartbeat_seconds,
         gpu_retry_cooldown_seconds=settings.worker_gpu_retry_cooldown_seconds,
