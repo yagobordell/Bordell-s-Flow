@@ -1,4 +1,8 @@
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 WORKER = Path("scripts/salad/manage_salad_worker.ps1")
 STACK = Path("scripts/salad/manage_salad_stack.ps1")
@@ -79,3 +83,63 @@ def test_stop_converges_to_stable_zero_without_autoscaler_repair() -> None:
     assert "Wait-ForStoppedZeroReplicas" in stop
     assert "Ensure-ManifestScaleToZero" not in stop
     assert "queue_autoscaler" not in stop
+
+
+def test_prepare_reads_priority_from_get_container_group_response() -> None:
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell is unavailable")
+
+    probe = r"""
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+$Tokens = $null
+$Errors = $null
+$Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    "scripts/salad/manage_salad_worker.ps1", [ref]$Tokens, [ref]$Errors
+)
+if ($Errors) { throw "Worker manager has PowerShell syntax errors." }
+$Assert = $Ast.Find({
+    param($Node)
+    $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $Node.Name -eq "Assert-PreparedGroup"
+}, $true)
+if ($null -eq $Assert) { throw "Assert-PreparedGroup is missing." }
+. ([scriptblock]::Create($Assert.Extent.Text))
+$Definition = [pscustomobject]@{ priority = "high" }
+function Test-LegacyQueueAttachment { param($Group) return $false }
+$Group = [pscustomobject]@{
+    container = [pscustomobject]@{ image = "pinned-image" }
+    priority = "high"
+    replicas = 0
+}
+Assert-PreparedGroup -Group $Group -ResolvedImage "pinned-image"
+$Group.priority = "low"
+try {
+    Assert-PreparedGroup -Group $Group -ResolvedImage "pinned-image"
+    throw "Missing priority mismatch rejection."
+}
+catch {
+    if ($_.Exception.Message -notmatch "expected container group priority") { throw }
+}
+$Group.PSObject.Properties.Remove("priority")
+try {
+    Assert-PreparedGroup -Group $Group -ResolvedImage "pinned-image"
+    throw "Missing absent-priority rejection."
+}
+catch {
+    if ($_.Exception.Message -notmatch "expected container group priority") { throw }
+}
+Write-Output "PASS: Salad container group priority contract"
+"""
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-NonInteractive", "-Command", probe],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + "\n" + result.stderr
+    assert "PASS: Salad container group priority contract" in result.stdout
+
