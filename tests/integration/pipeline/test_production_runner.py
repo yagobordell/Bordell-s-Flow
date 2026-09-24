@@ -1,8 +1,8 @@
 from pathlib import Path
 
 import pytest
-
 from _production_runner_support import RecordingExecutor, _script
+
 from ai_video_factory.workflows.production_runner import (
     ProductionRunManifest,
     ProductionRunner,
