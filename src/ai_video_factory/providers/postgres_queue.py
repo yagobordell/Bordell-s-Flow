@@ -100,27 +100,10 @@ class PostgresJobQueueClient(JobQueueClient):
                     (request.job_id,),
                 )
                 row = {**row, "status": "pending", "lease_expires_at": None}
-            elif status in {"retryable_failed", "failed", "cancelled"}:
-                connection.execute(
-                    """
-                    UPDATE gpu.jobs
-                    SET status = 'pending',
-                        lease_owner = NULL,
-                        lease_expires_at = NULL,
-                        result = NULL,
-                        last_error = NULL,
-                        updated_at = now()
-                    WHERE job_id = %s
-                    """,
-                    (request.job_id,),
-                )
-                row = {
-                    **row,
-                    "status": "pending",
-                    "lease_expires_at": None,
-                    "result": None,
-                    "last_error": None,
-                }
+
+            # Preserve retryable and terminal application state on idempotent resubmission.
+            # retryable_failed is already observable as PENDING and can be reclaimed by a worker;
+            # failed/cancelled must remain terminal until a deliberate new job_id is created.
 
             return self._snapshot(row)
 
