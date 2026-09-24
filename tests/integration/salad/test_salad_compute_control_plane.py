@@ -46,6 +46,19 @@ def test_prepare_creates_stopped_group_with_valid_replicas_and_waits_for_visibil
     assert "-AllowInitialNotFound" in prepare
 
 
+
+def test_prepare_preserves_original_api_error_when_details_are_missing() -> None:
+    script = WORKER.read_text(encoding="utf-8")
+    create = script.split("function New-ContainerGroup {", maxsplit=1)[1].split(
+        "function Update-ContainerGroup {", maxsplit=1
+    )[0]
+
+    assert '$Details = ""' in create
+    assert "if ($null -ne $_.ErrorDetails)" in create
+    assert '$Details = [string]$_.ErrorDetails.Message' in create
+    assert "if ((Get-HttpStatusCode -ErrorRecord $_) -ne 400" in create
+
+
 def test_start_sets_explicit_replicas_before_starting_group() -> None:
     script = WORKER.read_text(encoding="utf-8")
     start = script.split('"Start" {', maxsplit=1)[1].split('"Prepare" {', maxsplit=1)[0]
