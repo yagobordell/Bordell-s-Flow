@@ -42,7 +42,7 @@ def test_benchmarks_use_distinct_services_with_prepared_mode_and_final_stop() ->
         assert "Assert-SaladPreparedBenchmarkWorker" in content
         assert "-AllocatingTimeoutMinutes $AllocatingTimeoutMinutes" in content
         assert f'Service = "{service}"' in content
-        assert '"Stop"' in content
+        assert "-Action Stop" in content
         assert "finally {" in content
         assert 'if ($UsePreparedImage) {' in content
 
