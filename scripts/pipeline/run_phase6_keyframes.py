@@ -13,7 +13,7 @@ from ai_video_factory.providers import SaladQwenImage21Provider
 from ai_video_factory.providers.images import parse_image_size
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.r2 import create_r2_storage
-from ai_video_factory.providers.salad_queue import SaladJobQueueClient
+from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.workers.qwen_image_21 import (
     QWEN_IMAGE_21_KEYFRAME_TASK,
     QWEN_IMAGE_21_PRODUCTION_SIZE,
@@ -40,7 +40,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default=settings.qwen_image_21_model)
     parser.add_argument("--size", default=QWEN_IMAGE_21_PRODUCTION_SIZE)
     parser.add_argument("--quality", choices=("high", "auto"), default="high")
-    parser.add_argument("--queue-name", default=settings.salad_qwen_image_21_queue_name)
     parser.add_argument(
         "--poll-seconds",
         type=float,
@@ -76,12 +75,9 @@ def _required_setting(name: str, value: str | None) -> str:
     return value.strip()
 
 
-def _queue(name: str) -> SaladJobQueueClient:
-    return SaladJobQueueClient(
-        organization=_required_setting("SALAD_ORGANIZATION", settings.salad_organization),
-        project=_required_setting("SALAD_PROJECT", settings.salad_project),
-        queue_name=name,
-        api_key=_required_setting("SALAD_API_KEY", settings.salad_api_key),
+def _queue() -> PostgresJobQueueClient:
+    return PostgresJobQueueClient(
+        dsn=_required_setting("POSTGRES_DSN", settings.postgres_dsn),
     )
 
 
@@ -107,7 +103,7 @@ async def main() -> None:
         secret_access_key=_required_setting("R2_SECRET_ACCESS_KEY", settings.r2_secret_access_key),
     )
     executor = InferenceJobExecutor(
-        queue=_queue(args.queue_name),
+        queue=_queue(),
         storage=storage,
         poll_seconds=args.poll_seconds,
         timeout_seconds=args.timeout_seconds,
