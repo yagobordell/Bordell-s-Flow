@@ -320,3 +320,33 @@ def test_stage_specific_cold_start_changes_capacity_estimate() -> None:
 
     assert demands["qwen_image_21"].ideal_replicas == 4
     assert demands["whisper"].ideal_replicas == 1
+
+
+def test_rebounded_demand_cancels_pending_instance_drains() -> None:
+    stage = "ltx25"
+    store = FakeStore(rows={stage: []}, runtimes={stage: [60.0]})
+    client = FakeSaladClient(
+        replicas=2,
+        instances=[
+            {"id": "idle-a", "deletion_cost": 0},
+            {"id": "idle-b", "deletion_cost": 0},
+        ],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,)),
+        store=store,
+        clients={stage: client},
+        bindings={stage: _binding(stage)},
+        logger=lambda _message: None,
+    )
+
+    first = autoscaler.reconcile()[stage]
+    assert first.reason == "drain_grace_pending"
+    assert store.drains[stage]
+
+    store.rows[stage] = _pending_rows(20)
+    second = autoscaler.reconcile()[stage]
+
+    assert second.target_replicas == 2
+    assert store.drains.get(stage) in (None, {})
+    assert client.replica_updates == []
