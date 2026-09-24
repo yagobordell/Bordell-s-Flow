@@ -829,7 +829,8 @@ function Ensure-PreparedZeroReplicas {
         -TimeoutSec 60 |
         Out-Null
 
-    return Wait-ForStoppedZeroReplicas -Headers $Headers -TimeoutSeconds 180
+    $Updated = Wait-ForStoppedZeroReplicas -Headers $Headers -TimeoutSeconds 180
+    return $Updated
 }
 
 function Assert-PreparedGroup {
