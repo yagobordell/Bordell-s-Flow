@@ -42,6 +42,8 @@ class PredictiveAutoscalerConfig:
     stage_max_replicas: dict[str, int]
     fallback_runtime_seconds: dict[str, float]
     stage_cold_start_seconds: dict[str, float] | None = None
+    drain_grace_seconds: float = 5.0
+    drain_ttl_seconds: float = 120.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,6 +229,16 @@ def load_predictive_autoscaler_config(
         stage_max_replicas=stage_max,
         fallback_runtime_seconds=fallback_runtime,
         stage_cold_start_seconds=stage_cold_start,
+        drain_grace_seconds=_float_env(
+            "SALAD_AUTOSCALER_DRAIN_GRACE_SECONDS",
+            5.0,
+            minimum=0.0,
+        ),
+        drain_ttl_seconds=_float_env(
+            "SALAD_AUTOSCALER_DRAIN_TTL_SECONDS",
+            120.0,
+            minimum=5.0,
+        ),
     )
 
 
