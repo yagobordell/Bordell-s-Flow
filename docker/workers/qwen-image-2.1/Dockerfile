@@ -23,7 +23,7 @@ WORKDIR /opt/factory
 COPY pyproject.toml README.md /opt/factory/
 COPY src /opt/factory/src
 RUN python3 -m pip install --break-system-packages --no-cache-dir '/opt/factory[gpu]' \
- 'transformers==5.17.0' 'accelerate>=1.11,<2' 'sentencepiece>=0.2,<0.3' 'protobuf>=5,<7' \
+ 'transformers==5.17.0' 'bitsandbytes>=0.49,<1' 'accelerate>=1.11,<2' 'sentencepiece>=0.2,<0.3' 'protobuf>=5,<7' \
  'huggingface-hub>=1.32,<2' 'hf-xet>=1.6,<2' 'git+https://github.com/huggingface/diffusers.git@0121a91f9d419ff7234c8a5923f82c244e6f1914'
 COPY --from=salad-worker /usr/local/bin/salad-http-job-queue-worker /usr/local/bin/
 COPY docker/workers/qwen-image-2.1/download_models.sh /usr/local/bin/download-models
