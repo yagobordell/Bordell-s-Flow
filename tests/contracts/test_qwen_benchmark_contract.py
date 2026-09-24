@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 from PIL import Image
@@ -20,7 +22,12 @@ from ai_video_factory.workers.qwen_image_21.model import (
     QwenImage21Parameters,
     _validate_int8_cuda_device_map,
 )
-from scripts.smoke.submit_qwen_image_21_benchmark import _make_request, _validate_metrics
+from scripts.smoke.submit_qwen_image_21_benchmark import (
+    _list_instances,
+    _make_request,
+    _ready_instance,
+    _validate_metrics,
+)
 
 
 def _parameters(profile: str, width: int, height: int) -> dict[str, object]:
@@ -177,3 +184,86 @@ def test_qwen_int8_cuda_placement_accepts_single_device_or_map(device_map: objec
 def test_qwen_int8_cuda_placement_rejects_missing_or_offloaded_map(device_map: object) -> None:
     with pytest.raises(RuntimeError, match="device map|not fully on CUDA"):
         _validate_int8_cuda_device_map(device_map)
+
+
+
+def test_qwen_salad_instance_lookup_uses_the_successful_bootstrap_user_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def respond(request: object, timeout: int) -> io.BytesIO:
+        assert timeout == 30
+        assert request.get_header("Salad-api-key") == "example-key"
+        assert request.get_header("Accept") == "application/json"
+        assert request.get_header("User-agent") == (
+            "ai-video-factory-protected-smoke-bootstrap/1.0"
+        )
+        assert request.full_url.endswith("/containers/test-qwen/instances")
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "instances": [
+                        {
+                            "id": "instance-one",
+                            "machine_id": "machine-one",
+                            "started": True,
+                            "ready": True,
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+        )
+
+    monkeypatch.setattr(
+        "scripts.smoke.submit_qwen_image_21_benchmark.urllib.request.urlopen", respond
+    )
+    assert _ready_instance(
+        api_key="example-key",
+        organization="org",
+        project="project",
+        group_name="test-qwen",
+    ) == ("instance-one", "machine-one")
+
+
+def test_qwen_instance_403_has_actionable_preflight_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(request: object, timeout: int) -> io.BytesIO:
+        raise HTTPError(
+            url=request.full_url, code=403, msg="Forbidden", hdrs=None,
+            fp=io.BytesIO(b"Forbidden"),
+        )
+
+    monkeypatch.setattr(
+        "scripts.smoke.submit_qwen_image_21_benchmark.urllib.request.urlopen", forbidden
+    )
+    with pytest.raises(RuntimeError, match="HTTP 403.*preflight-only"):
+        _list_instances(
+            api_key="example-key",
+            organization="org",
+            project="project",
+            group_name="test-qwen",
+        )
+
+
+@pytest.mark.parametrize("payload", [{}, {"instances": {}}, {"instances": [None]}])
+def test_qwen_instance_lookup_rejects_malformed_responses(
+    payload: dict[str, object], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "scripts.smoke.submit_qwen_image_21_benchmark.urllib.request.urlopen",
+        lambda request, timeout: io.BytesIO(json.dumps(payload).encode("utf-8")),
+    )
+    with pytest.raises(RuntimeError, match="invalid instances list"):
+        _list_instances(
+            api_key="example-key",
+            organization="org",
+            project="project",
+            group_name="test-qwen",
+        )
+
+
+def test_qwen_power_shell_preflights_before_taking_worker_ownership() -> None:
+    runner = Path("scripts/smoke/benchmark_qwen_image_21.ps1").read_text(encoding="utf-8")
+    assert runner.index("--preflight-only") < runner.index("$OwnsWorker = $true")
+    assert runner.index("$OwnsWorker = $true") < runner.index("-Action Prepare")
+    assert "refusing to allocate a GPU" in runner
