@@ -27,6 +27,25 @@ def test_prepare_recreates_only_stopped_zero_replica_legacy_groups() -> None:
     assert "Prepared group must remain stopped." in script
 
 
+
+def test_prepare_creates_stopped_group_with_valid_replicas_and_waits_for_visibility() -> None:
+    script = WORKER.read_text(encoding="utf-8")
+    create = script.split("function New-ContainerGroup {", maxsplit=1)[1].split(
+        "function Update-ContainerGroup {", maxsplit=1
+    )[0]
+    wait = script.split("function Wait-ForGroupSettled {", maxsplit=1)[1].split(
+        "function Wait-ForRunningCapacity {", maxsplit=1
+    )[0]
+    prepare = script.split('"Prepare" {', maxsplit=1)[1]
+
+    assert "replicas = $StartReplicas" in create
+    assert "autostart_policy = $AutostartPolicy" in create
+    assert "replicas = 0" in prepare
+    assert "Try-Get-Group -Headers $Headers" in wait
+    assert "$VisibilityDeadline" in wait
+    assert "-AllowInitialNotFound" in prepare
+
+
 def test_start_sets_explicit_replicas_before_starting_group() -> None:
     script = WORKER.read_text(encoding="utf-8")
     start = script.split('"Start" {', maxsplit=1)[1].split('"Prepare" {', maxsplit=1)[0]
