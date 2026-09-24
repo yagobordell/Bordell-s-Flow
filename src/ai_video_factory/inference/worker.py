@@ -205,14 +205,27 @@ class InferenceWorker:
         existing = self.storage.stat(request.output.key)
         if existing is not None:
             output = self._reconcile_existing(request, request_sha256, existing)
-            self._reconcile_existing_sidecars(request, request_sha256)
-            return InferenceJobResponse(
-                job_id=request.job_id,
-                request_sha256=request_sha256,
-                output=output,
-                attempt_count=attempt_count,
-                replayed=True,
-            )
+            try:
+                self._reconcile_existing_sidecars(
+                    request,
+                    request_sha256,
+                    primary_sha256=output.sha256,
+                )
+            except OutputConflictError:
+                missing_sidecar = any(
+                    self.storage.stat(contract.key) is None
+                    for contract in (request.sidecar_outputs or {}).values()
+                )
+                if not missing_sidecar:
+                    raise
+            else:
+                return InferenceJobResponse(
+                    job_id=request.job_id,
+                    request_sha256=request_sha256,
+                    output=output,
+                    attempt_count=attempt_count,
+                    replayed=True,
+                )
 
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         with _LeaseHeartbeat(
@@ -236,11 +249,10 @@ class InferenceWorker:
                 self._validate_local_artifact(artifact.path, work_dir)
                 if artifact.content_type != request.output.content_type:
                     raise ValueError("task output content type does not match the job contract")
-                self._upload_sidecars(request, request_sha256, artifact.sidecars, work_dir)
+
                 digest = sha256_file(artifact.path)
                 heartbeat.renew_now()
-
-                uploaded = self.storage.upload(
+                publication = self.storage.create(
                     artifact.path,
                     request.output.key,
                     content_type=artifact.content_type,
@@ -251,14 +263,35 @@ class InferenceWorker:
                     },
                 )
                 heartbeat.ensure_owned()
-                output = self._artifact_from_stored(request, digest, uploaded)
+                if publication.created:
+                    output = self._artifact_from_stored(
+                        request,
+                        digest,
+                        publication.stored,
+                    )
+                else:
+                    output = self._reconcile_existing(
+                        request,
+                        request_sha256,
+                        publication.stored,
+                    )
+
+                heartbeat.renew_now()
+                self._upload_sidecars(
+                    request,
+                    request_sha256,
+                    artifact.sidecars,
+                    work_dir,
+                    primary_sha256=output.sha256,
+                )
+                heartbeat.ensure_owned()
 
         return InferenceJobResponse(
             job_id=request.job_id,
             request_sha256=request_sha256,
             output=output,
             attempt_count=attempt_count,
-            replayed=False,
+            replayed=not publication.created,
         )
 
     def _download_inputs(
@@ -300,6 +333,8 @@ class InferenceWorker:
         request_sha256: str,
         sidecars: tuple[object, ...],
         work_dir: Path,
+        *,
+        primary_sha256: str,
     ) -> None:
         declared = request.sidecar_outputs or {}
         returned = {item.name: item for item in sidecars}
@@ -315,7 +350,7 @@ class InferenceWorker:
                     f"sidecar {name!r} content type does not match the request contract"
                 )
             digest = sha256_file(path)
-            self.storage.upload(
+            publication = self.storage.create(
                 path,
                 contract.key,
                 content_type=content_type,
@@ -324,13 +359,33 @@ class InferenceWorker:
                     "request-sha256": request_sha256,
                     "artifact-sha256": digest,
                     "sidecar-name": name,
+                    "primary-artifact-sha256": primary_sha256,
                 },
             )
+            stored = publication.stored
+            metadata = stored.metadata
+            if (
+                metadata.get("job-id") != request.job_id
+                or metadata.get("request-sha256") != request_sha256
+                or metadata.get("sidecar-name") != name
+                or not metadata.get("artifact-sha256")
+                or (
+                    metadata.get("primary-artifact-sha256") is not None
+                    and metadata.get("primary-artifact-sha256") != primary_sha256
+                )
+                or stored.content_type != contract.content_type
+                or stored.size_bytes < 1
+            ):
+                raise OutputConflictError(
+                    f"sidecar output exists for a different publication: {contract.key}"
+                )
 
     def _reconcile_existing_sidecars(
         self,
         request: InferenceJobRequest,
         request_sha256: str,
+        *,
+        primary_sha256: str,
     ) -> None:
         for name, contract in (request.sidecar_outputs or {}).items():
             stored = self.storage.stat(contract.key)
@@ -344,7 +399,12 @@ class InferenceWorker:
                 or metadata.get("request-sha256") != request_sha256
                 or metadata.get("sidecar-name") != name
                 or not metadata.get("artifact-sha256")
+                or (
+                    metadata.get("primary-artifact-sha256") is not None
+                    and metadata.get("primary-artifact-sha256") != primary_sha256
+                )
                 or stored.content_type != contract.content_type
+                or stored.size_bytes < 1
             ):
                 raise OutputConflictError(
                     f"sidecar output exists for a different request: {contract.key}"
