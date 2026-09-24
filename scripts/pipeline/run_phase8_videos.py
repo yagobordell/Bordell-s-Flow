@@ -7,8 +7,8 @@ import threading
 from pathlib import Path
 
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
-from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
+from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.workflows.video_generation import (
     VideoGenerationManifest,
     build_video_generation_plan,
@@ -93,7 +93,10 @@ def _watch_manifest(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fan out, resume and verify all LTX-2.5 video jobs through Postgres/R2 on Salad compute."
+        description=(
+            "Fan out, resume and verify LTX-2.5 video jobs through "
+            "Postgres/R2 on Salad compute."
+        )
     )
     parser.add_argument(
         "--keyframes",
