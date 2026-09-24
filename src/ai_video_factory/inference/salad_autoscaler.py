@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections import Counter
-from dataclasses import dataclass
-from datetime import UTC, datetime
 import math
 import os
-from typing import Callable
+from collections import Counter
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from .salad import SaladClient
 
