@@ -1,5 +1,5 @@
-from PIL import Image
 import pytest
+from PIL import Image
 
 from ai_video_factory.workers.qwen_image_21.model import validate_qwen_output_image
 
