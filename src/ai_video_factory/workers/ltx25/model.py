@@ -15,6 +15,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from ai_video_factory.inference.contracts import InferenceJobRequest
 from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.ports import LocalArtifact
+from ai_video_factory.workers.qwen_image_21 import (
+    QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+    QWEN_IMAGE_21_PRODUCTION_WIDTH,
+)
 
 LTX_VIDEO_TASK = "video.ltx25.generate"
 LTX_GENERATION_PROFILE = "ltx25-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
@@ -89,6 +93,42 @@ def _pipeline_dimensions(parameters: LTXVideoParameters) -> tuple[int, int]:
     )
 
 
+def _fit_image_with_edge_padding(
+    image: Image.Image, *, width: int, height: int
+) -> Image.Image:
+    """Fit the whole image without cropping or stretching, extending edge pixels."""
+
+    scale = min(width / image.width, height / image.height)
+    fitted_width = min(width, max(1, round(image.width * scale)))
+    fitted_height = min(height, max(1, round(image.height * scale)))
+    fitted = image.resize((fitted_width, fitted_height), Image.Resampling.LANCZOS)
+    left = (width - fitted_width) // 2
+    top = (height - fitted_height) // 2
+    right = width - fitted_width - left
+    bottom = height - fitted_height - top
+    canvas = Image.new("RGB", (width, height))
+    canvas.paste(fitted, (left, top))
+    if left:
+        canvas.paste(fitted.crop((0, 0, 1, fitted_height)).resize((left, fitted_height)), (0, top))
+    if right:
+        canvas.paste(
+            fitted.crop((fitted_width - 1, 0, fitted_width, fitted_height)).resize(
+                (right, fitted_height)
+            ),
+            (left + fitted_width, top),
+        )
+    if top:
+        canvas.paste(canvas.crop((0, top, width, top + 1)).resize((width, top)), (0, 0))
+    if bottom:
+        canvas.paste(
+            canvas.crop((0, top + fitted_height - 1, width, top + fitted_height)).resize(
+                (width, bottom)
+            ),
+            (0, top + fitted_height),
+        )
+    return canvas
+
+
 def _prepare_grid_keyframe(
     source: Path,
     destination: Path,
@@ -98,17 +138,23 @@ def _prepare_grid_keyframe(
     pipeline_width: int,
     pipeline_height: int,
 ) -> Path:
-    """Resize same-aspect conditioning and extend only model-grid padding with edge pixels."""
+    """Preserve the full keyframe before extending only the LTX model-grid margins."""
 
     with Image.open(source) as opened:
         image = opened.convert("RGB")
-    if image.width * requested_height != image.height * requested_width:
+    is_qwen_keyframe = (image.width, image.height) == (
+        QWEN_IMAGE_21_PRODUCTION_WIDTH,
+        QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+    )
+    if image.width * requested_height != image.height * requested_width and not is_qwen_keyframe:
         raise ValueError(
-            "LTX keyframe aspect ratio must match the requested video; refusing to stretch "
-            f"{image.width}x{image.height} into {requested_width}x{requested_height}"
+            "LTX keyframe must match the requested video aspect ratio or use the "
+            f"Qwen 1280x736 size; found {image.width}x{image.height}"
         )
 
-    resized = image.resize((requested_width, requested_height), Image.Resampling.LANCZOS)
+    resized = _fit_image_with_edge_padding(
+        image, width=requested_width, height=requested_height
+    )
     if (pipeline_width, pipeline_height) == (requested_width, requested_height):
         destination.parent.mkdir(parents=True, exist_ok=True)
         resized.save(destination, format="PNG")

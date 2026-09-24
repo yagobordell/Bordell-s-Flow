@@ -30,6 +30,10 @@ from ai_video_factory.providers.job_queue import (
     TransientQueueError,
 )
 from ai_video_factory.workers.ltx25.jobs import ltx_video_application_job_id
+from ai_video_factory.workers.qwen_image_21 import (
+    QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+    QWEN_IMAGE_21_PRODUCTION_WIDTH,
+)
 from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
     LTX_VIDEO_TASK,
@@ -116,10 +120,15 @@ def build_video_generation_plan(
         )
         if image_format != "png":
             raise ValueError(f"Shot {keyframe.shot_id} keyframe must be a PNG")
-        if keyframe_width * 9 != keyframe_height * 16:
+        native_16_9 = keyframe_width * 9 == keyframe_height * 16
+        qwen_landscape = (keyframe_width, keyframe_height) == (
+            QWEN_IMAGE_21_PRODUCTION_WIDTH,
+            QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+        )
+        if not (native_16_9 or qwen_landscape):
             raise ValueError(
-                f"Shot {keyframe.shot_id} keyframe must be native 16:9; "
-                f"found {keyframe_width}x{keyframe_height}"
+                f"Shot {keyframe.shot_id} keyframe must be native 16:9 or "
+                f"Qwen 1280x736; found {keyframe_width}x{keyframe_height}"
             )
         if keyframe_width < width or keyframe_height < height:
             raise ValueError(
