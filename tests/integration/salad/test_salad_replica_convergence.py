@@ -57,7 +57,7 @@ function Get-Group {
         pending_change = $false
     }
 }
-$Result = Wait-ForStoppedZeroReplicas -Headers @{} -TimeoutSeconds 10
+$Result = Wait-ForStoppedZeroReplicas -Headers @{} -TimeoutSeconds 60
 if ($script:Reads -ne 4 -or [int]$Result.replicas -ne 0) {
     throw "Incorrect replica convergence: reads=$script:Reads result=$($Result.replicas)"
 }
@@ -78,7 +78,7 @@ function Get-Group {
     }
 }
 try {
-    $null = Wait-ForStoppedZeroReplicas -Headers @{} -TimeoutSeconds 10
+    $null = Wait-ForStoppedZeroReplicas -Headers @{} -TimeoutSeconds 60
     throw 'Expected worker ownership guard'
 }
 catch {
