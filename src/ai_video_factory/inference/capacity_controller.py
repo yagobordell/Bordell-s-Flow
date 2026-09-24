@@ -213,7 +213,7 @@ def read_capacity_controller_health(
     status = str(row["status"])
     last_error = str(row["last_error"]) if row["last_error"] else None
 
-    if status != "running":
+    if status not in {"running", "degraded"}:
         reason = f"capacity controller status is {status!r}"
     elif heartbeat_age > max_heartbeat_age_seconds:
         reason = (
@@ -227,17 +227,21 @@ def read_capacity_controller_health(
             f"capacity controller reconciliation is stale ({reconcile_age:.1f}s > "
             f"{max_reconcile_age_seconds:.1f}s)"
         )
-    elif last_error:
-        reason = f"capacity controller reports an error: {last_error}"
     else:
+        reason = "healthy"
+        if status == "degraded":
+            reason = (
+                "degraded but within reconciliation grace"
+                + (f": {last_error}" if last_error else "")
+            )
         return CapacityControllerHealth(
             healthy=True,
             controller_id=str(row["controller_id"]),
             status=status,
             heartbeat_age_seconds=heartbeat_age,
             reconcile_age_seconds=reconcile_age,
-            last_error=None,
-            reason="healthy",
+            last_error=last_error,
+            reason=reason,
         )
 
     return CapacityControllerHealth(
