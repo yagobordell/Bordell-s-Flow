@@ -8,7 +8,8 @@ def test_queue_inventory_is_read_only_and_uses_documented_paginated_jobs_api() -
     source = INSPECTOR.read_text(encoding="utf-8")
     assert 'Invoke-RestMethod -Method Get' in source
     assert '"$QueueUrl/jobs?page=$Page&page_size=$PageSize"' in source
-    assert '$PageSize = 100' in source
+    assert '$PageSize = 25' in source
+    assert '$PageSize = 100' not in source
     assert 'for ($Page = 1; $Page -le 100; $Page++)' in source
     assert '$_ .status' not in source
     assert '$_ .input' not in source
