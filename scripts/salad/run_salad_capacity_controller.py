@@ -6,6 +6,8 @@ import signal
 import threading
 from pathlib import Path
 
+import psycopg
+
 from ai_video_factory.inference.salad_capacity import build_salad_capacity_runtime
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -34,14 +36,28 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _validate_autoscaling_schema(postgres_dsn: str) -> None:
+    try:
+        with psycopg.connect(postgres_dsn) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT started_at, finished_at FROM gpu.jobs LIMIT 0")
+    except psycopg.Error as error:
+        raise SystemExit(
+            "Predictive Salad autoscaling requires infra/sql/003_gpu_job_runtime_autoscaling.sql "
+            "to be applied before production starts."
+        ) from error
+
+
 def main() -> None:
     args = parse_args()
     if args.poll_seconds <= 0:
         raise SystemExit("--poll-seconds must be positive")
 
+    postgres_dsn = _required_env("POSTGRES_DSN")
+    _validate_autoscaling_schema(postgres_dsn)
     runtime = build_salad_capacity_runtime(
         services_path=args.services,
-        postgres_dsn=_required_env("POSTGRES_DSN"),
+        postgres_dsn=postgres_dsn,
         salad_api_key=_required_env("SALAD_API_KEY"),
     )
     if not runtime.autoscaler.config.enabled:
