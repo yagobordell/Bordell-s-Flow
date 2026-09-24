@@ -14,7 +14,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LTX_MODEL_ROOT=/workspace/models/ltx-2.5 \
     LTX_MODEL_REPOSITORY=Lightricks/LTX-2.5 \
     LTX_MODEL_REVISION=main \
-    LTX_DEVICE=cuda \
+    LTX_DEVICE=cuda 
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
