@@ -23,11 +23,11 @@ prompt-only provider. Use `scripts/smoke/benchmark_qwen_image_21.ps1 -PromptFile
 with the **exact** historical prompt as a UTF-8 file. The runner builds and publishes the
 manifest image, protects one RTX 5090 instance, submits five distinct application jobs
 with identical prompt and seed, and stops the worker in `finally`. Run 1 warms CUDA;
-runs 2-5 supply the inference median/mean/min/max. Each run writes PNG and worker metrics
+runs 2-5 supply the generation-total median/mean/min/max and separate inference/PNG-save statistics. Each run writes PNG and worker metrics
 (inference, PNG save, total, peak CUDA allocated/reserved memory, worker identity).
 Model download and runtime initialization are operational timings, not inference.
 A same-instance check and a per-run worker process ID guard prevent silent comparisons
-between separate container starts. The four-run inference target is median <=30 s;
+between separate container starts. The four-run generation-total target is median <=30 s;
 30-35 s is initially acceptable without OOM, and >35 s or >20% spread requires review.
 A separate production-resolution measurement should use 1280x736; never use this
 benchmark profile in normal Phase 4/6 requests.
