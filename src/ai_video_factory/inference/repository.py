@@ -184,6 +184,10 @@ class InMemoryJobRepository:
                     return row.request.model_copy(deep=True)
         return None
 
+    def is_instance_draining(self, instance_id: str) -> bool:
+        del instance_id
+        return False
+
     def ping(self) -> None:
         return None
 
@@ -441,6 +445,23 @@ class PostgresJobRepository:
         if row is None:
             return None
         return InferenceJobRequest.model_validate(row["request"])
+
+    def is_instance_draining(self, instance_id: str) -> bool:
+        resolved = str(instance_id or "").strip()
+        if not resolved:
+            return False
+        with self._pool.connection() as connection:
+            row = connection.execute(
+                """
+                SELECT 1
+                FROM gpu.capacity_drains
+                WHERE instance_id = %s
+                  AND expires_at > now()
+                LIMIT 1
+                """,
+                (resolved,),
+            ).fetchone()
+        return row is not None
 
     def ping(self) -> None:
         with self._pool.connection() as connection:
