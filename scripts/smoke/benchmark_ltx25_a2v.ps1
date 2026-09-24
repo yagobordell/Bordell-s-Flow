@@ -83,6 +83,64 @@ $Headers = @{
     "Salad-Api-Key" = $env:SALAD_API_KEY
     "Accept" = "application/json"
 }
+function Wait-LTXBenchmarkReadyInstance {
+    param(
+        [string]$ExpectedInstanceId = "",
+        [string]$ExpectedMachineId = "",
+        [ValidateRange(5, 180)][int]$TimeoutSeconds = 60
+    )
+
+    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $Response = Invoke-RestMethod -Method Get -Uri "$GroupUrl/instances" `
+            -Headers $Headers -TimeoutSec 30
+        $Raw = if ($Response.PSObject.Properties.Name -contains "instances") {
+            $Response.instances
+        }
+        elseif ($Response.PSObject.Properties.Name -contains "items") {
+            $Response.items
+        }
+        else {
+            $null
+        }
+        $Instances = if ($null -eq $Raw) { @() } else { @($Raw) }
+        if ($Instances.Count -ne 1) {
+            throw "LTX benchmark lost its single Salad worker; instances=$($Instances.Count)."
+        }
+        $Instance = $Instances[0]
+        $InstanceId = [string]$Instance.id
+        $MachineId = [string]$Instance.machine_id
+        if ([string]::IsNullOrWhiteSpace($InstanceId) -or [string]::IsNullOrWhiteSpace($MachineId)) {
+            throw "LTX benchmark instance identity is incomplete; refusing an unverifiable warm run."
+        }
+        if (
+            (-not [string]::IsNullOrWhiteSpace($ExpectedInstanceId) -and
+                $InstanceId -ne $ExpectedInstanceId) -or
+            (-not [string]::IsNullOrWhiteSpace($ExpectedMachineId) -and
+                $MachineId -ne $ExpectedMachineId)
+        ) {
+            throw "LTX benchmark worker identity changed; do not mix warm runs from different machines."
+        }
+        if (
+            [bool]$Instance.started -and
+            [bool]$Instance.ready -and
+            [string]$Instance.state -eq "running"
+        ) {
+            return $Instance
+        }
+        Write-Host (
+            "LTX_WARM_WORKER_NOT_READY instance={0} state={1} started={2} ready={3}" -f
+            $InstanceId,
+            [string]$Instance.state,
+            [bool]$Instance.started,
+            [bool]$Instance.ready
+        )
+        Start-Sleep -Seconds 5
+    }
+    while ((Get-Date) -lt $Deadline)
+    throw "LTX worker did not recover readiness before the next warm generation."
+}
+
 $Group = $null
 try {
     $Group = Invoke-RestMethod -Method Get -Uri $GroupUrl -Headers $Headers -TimeoutSec 30
@@ -133,7 +191,17 @@ try {
     & $Bootstrap @Common -TimeoutMinutes 60 -RunningNotReadyTimeoutMinutes 60 -AllocatingTimeoutMinutes $AllocatingTimeoutMinutes
     if (-not $?) { throw "LTX protected bootstrap failed." }
 
+    $OriginalInstance = Wait-LTXBenchmarkReadyInstance -TimeoutSeconds 60
+    Write-Host (
+        "LTX_WARM_WORKER_IDENTITY instance={0} machine={1}" -f
+        [string]$OriginalInstance.id,
+        [string]$OriginalInstance.machine_id
+    )
     for ($Index = 1; $Index -le 5; $Index++) {
+        $null = Wait-LTXBenchmarkReadyInstance `
+            -ExpectedInstanceId ([string]$OriginalInstance.id) `
+            -ExpectedMachineId ([string]$OriginalInstance.machine_id) `
+            -TimeoutSeconds 60
         $SegmentId = "a2v-benchmark-$BatchId-$Index"
         $RunDir = Join-Path $BatchDir ("run-{0:00}" -f $Index)
         New-Item -ItemType Directory -Path $RunDir -Force | Out-Null
