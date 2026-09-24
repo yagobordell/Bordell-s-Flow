@@ -10,6 +10,12 @@ param(
 
     [string]$SegmentId = "",
 
+    [ValidateSet("fast", "dev")]
+    [string]$Profile = "fast",
+
+    [ValidateRange(0, 36000)]
+    [int]$MaxGenerationSeconds = 0,
+
     [string]$EnvFile = ".env",
 
     [string]$OutputDir = "data/output/deployment-validation/ltx25-a2v",
@@ -175,6 +181,7 @@ try {
         $Submit,
         "--audio", $ResolvedAudio,
         "--avatar-image", $ResolvedAvatar,
+        "--profile", $Profile,
         "--segment-id", $ResolvedSegmentId,
         "--output-dir", (Join-Path $RepoRoot $OutputDir),
         "--cleanup-stale-only"
@@ -206,10 +213,14 @@ try {
     $PythonArgs = @(
         $Submit,
         "--audio", $ResolvedAudio,
+        "--profile", $Profile,
         "--segment-id", $ResolvedSegmentId,
         "--output-dir", (Join-Path $RepoRoot $OutputDir)
     )
     $PythonArgs += @("--avatar-image", $ResolvedAvatar)
+    if ($MaxGenerationSeconds -gt 0) {
+        $PythonArgs += @("--max-generation-seconds", "$MaxGenerationSeconds")
+    }
     if (-not [string]::IsNullOrWhiteSpace($Prompt)) {
         $PythonArgs += @("--prompt", $Prompt)
     }

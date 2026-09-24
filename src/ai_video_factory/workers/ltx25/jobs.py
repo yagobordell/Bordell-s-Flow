@@ -47,6 +47,7 @@ def ltx_a2v_application_job_id(
     width: int,
     height: int,
     fps: int,
+    generation_profile: str = LTX_A2V_GENERATION_PROFILE,
 ) -> str:
     """Return a stable job ID for one audio-driven LTX segment."""
 
@@ -54,7 +55,7 @@ def ltx_a2v_application_job_id(
     normalized_segment_id = normalized_segment_id[:40] or "segment"
     plan = {
         "segment_id": segment_id,
-        "generation_profile": LTX_A2V_GENERATION_PROFILE,
+        "generation_profile": generation_profile,
         "prompt": prompt,
         "image_sha256": image_sha256,
         "audio_sha256": audio_sha256,

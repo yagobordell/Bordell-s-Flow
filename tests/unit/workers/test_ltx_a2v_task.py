@@ -12,6 +12,7 @@ import ai_video_factory.workers.ltx25.a2v as a2v
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
 from ai_video_factory.inference.errors import NonRetryableTaskError
 from ai_video_factory.workers.ltx25 import (
+    LTX_A2V_DEV_GENERATION_PROFILE,
     LTX_A2V_GENERATION_PROFILE,
     LTX_A2V_TASK,
     LTXA2VModelFiles,
@@ -111,6 +112,12 @@ def test_a2v_parameters_are_audio_driven_and_keep_720p24_defaults() -> None:
     parameters = LTXAudioToVideoParameters()
 
     assert parameters.generation_profile == LTX_A2V_GENERATION_PROFILE
+    assert "distilled" in parameters.generation_profile
+    assert LTXAudioToVideoParameters(
+        generation_profile=LTX_A2V_DEV_GENERATION_PROFILE
+    ).generation_profile == LTX_A2V_DEV_GENERATION_PROFILE
+    with pytest.raises(ValidationError, match="generation_profile"):
+        LTXAudioToVideoParameters(generation_profile="ltx25-a2v-unknown")
     assert parameters.width == 1280
     assert parameters.height == 720
     assert parameters.fps == 24
@@ -189,6 +196,18 @@ def test_a2v_job_id_fingerprints_image_audio_and_segment() -> None:
 
     assert first == same
     assert first != changed
+    dev = ltx_a2v_application_job_id(
+        segment_id="003",
+        prompt="talk",
+        image_sha256="a" * 64,
+        audio_sha256="b" * 64,
+        seed=42,
+        width=1280,
+        height=720,
+        fps=24,
+        generation_profile=LTX_A2V_DEV_GENERATION_PROFILE,
+    )
+    assert first != dev
     assert first.startswith("ltx-a2v-003-")
 
 

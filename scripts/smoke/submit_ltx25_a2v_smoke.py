@@ -19,6 +19,7 @@ from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInpu
 from ai_video_factory.inference.storage import R2ObjectStorage, sha256_file
 from ai_video_factory.workers.ltx25 import (
     LTX_A2V_DEFAULT_PROMPT,
+    LTX_A2V_DEV_GENERATION_PROFILE,
     LTX_A2V_GENERATION_PROFILE,
     LTX_A2V_TASK,
     ltx_a2v_application_job_id,
@@ -272,6 +273,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--audio", type=Path, required=True)
     parser.add_argument("--prompt", default=LTX_A2V_DEFAULT_PROMPT)
     parser.add_argument("--segment-id", default="smoke-001")
+    parser.add_argument("--profile", choices=("fast", "dev"), default="fast")
+    parser.add_argument("--max-generation-seconds", type=float, default=0.0)
     parser.add_argument(
         "--queue-name",
         default=os.getenv("SALAD_LTX25_QUEUE_NAME", "ai-video-factory-ltx25-jobs-v2"),
@@ -303,6 +306,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    generation_profile = (
+        LTX_A2V_GENERATION_PROFILE
+        if args.profile == "fast"
+        else LTX_A2V_DEV_GENERATION_PROFILE
+    )
     environment = _environment()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -340,6 +348,7 @@ def main() -> None:
         width=args.width,
         height=args.height,
         fps=args.fps,
+        generation_profile=generation_profile,
     )
     queue_url = (
         "https://api.salad.com/api/public/organizations/"
@@ -394,7 +403,7 @@ def main() -> None:
         },
         max_attempts=1,
         parameters={
-            "generation_profile": LTX_A2V_GENERATION_PROFILE,
+            "generation_profile": generation_profile,
             "prompt": args.prompt,
             "seed": args.seed,
             "width": args.width,
@@ -586,9 +595,17 @@ def main() -> None:
         "height",
         "seed",
         "generation_mode",
+        "generation_profile",
+        "video_cfg_scale",
+        "video_stg_scale",
+        "video_modality_scale",
+        "transformer_variant",
+        "stage_1_steps",
+        "stage_2_steps",
         "model_load_seconds",
         "inference_seconds",
         "video_encode_mux_seconds",
+        "total_elapsed_seconds",
         "real_time_factor",
     }
     missing_metadata = required_metadata - set(metadata)
@@ -598,6 +615,19 @@ def main() -> None:
         )
     if metadata["generation_mode"] != "audio_to_video":
         raise RuntimeError(f"unexpected A2V generation_mode: {metadata['generation_mode']!r}")
+    if metadata["generation_profile"] != generation_profile:
+        raise RuntimeError("A2V worker used a mismatched generation profile")
+    expected_variant = "distilled" if args.profile == "fast" else "dev"
+    expected_steps = 8 if args.profile == "fast" else 30
+    if metadata["transformer_variant"] != expected_variant:
+        raise RuntimeError("A2V worker used the wrong transformer variant")
+    if int(metadata["stage_1_steps"]) != expected_steps or int(metadata["stage_2_steps"]) != 3:
+        raise RuntimeError("A2V worker used an unexpected diffusion schedule")
+    expected_cfg = 1.0 if args.profile == "fast" else 3.0
+    if float(metadata["video_cfg_scale"]) != expected_cfg:
+        raise RuntimeError("A2V worker used an unexpected CFG scale")
+    if float(metadata["video_stg_scale"]) != 0.0 or float(metadata["video_modality_scale"]) != 1.0:
+        raise RuntimeError("A2V worker did not disable extra STG/modality guidance")
     if int(metadata["input_audio_channels"]) != input_audio_channels:
         raise RuntimeError("A2V metadata input channel count does not match smoke input")
     if int(metadata["conditioning_audio_channels"]) != 2:
@@ -650,7 +680,16 @@ def main() -> None:
     print(f"resolution={args.width}x{args.height}")
     print(f"fps={actual_fps:.6f}")
     print(f"num_frames={metadata['num_frames']}")
+    print(f"generation_profile={metadata['generation_profile']}")
+    print(f"transformer_variant={metadata['transformer_variant']}")
+    print(f"stage_1_steps={metadata['stage_1_steps']}")
+    print(f"stage_2_steps={metadata['stage_2_steps']}")
+    print(f"video_cfg_scale={metadata['video_cfg_scale']}")
+    print(f"video_stg_scale={metadata['video_stg_scale']}")
+    print(f"video_modality_scale={metadata['video_modality_scale']}")
     print(f"inference_seconds={metadata['inference_seconds']}")
+    print(f"video_encode_mux_seconds={metadata['video_encode_mux_seconds']}")
+    print(f"total_elapsed_seconds={metadata['total_elapsed_seconds']}")
     print(f"real_time_factor={metadata['real_time_factor']}")
     print(f"peak_vram_bytes={metadata.get('peak_vram_bytes')}")
     print(f"video_sha256={video_sha}")
@@ -658,6 +697,18 @@ def main() -> None:
     print(f"video={video_path.resolve()}")
     print(f"metadata={metadata_path.resolve()}")
     print(f"ffprobe={probe_path.resolve()}")
+    if args.max_generation_seconds > 0:
+        actual_seconds = float(metadata["total_elapsed_seconds"])
+        _event(
+            "A2V_BENCHMARK",
+            total_seconds=actual_seconds,
+            limit_seconds=args.max_generation_seconds,
+        )
+        if actual_seconds > args.max_generation_seconds:
+            raise RuntimeError(
+                "A2V generation exceeded the requested performance budget: "
+                f"{actual_seconds:.2f}s > {args.max_generation_seconds:.2f}s"
+            )
     _event("A2V_SMOKE_DONE", status="succeeded", salad_job_id=created["id"])
 
 
