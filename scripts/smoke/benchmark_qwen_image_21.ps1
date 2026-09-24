@@ -99,6 +99,14 @@ $Stopped = $false
 $OwnsWorker = $false
 
 try {
+    # A Python control-plane 403 previously arrived only after the 33 GB model
+    # download and CUDA initialization. Verify the same client before GPU start.
+    Write-Host "Preflighting Python access to the Qwen Salad instances API (no GPU)."
+    & uv run --no-sync python $Submit --prompt-file $PromptFile --seed $Seed --output-dir $BatchDir --preflight-only
+    if ($LASTEXITCODE -ne 0) {
+        throw "Qwen Python Salad API preflight failed; refusing to allocate a GPU."
+    }
+
     $OwnsWorker = $true
     if ($UsePreparedImage) {
         . (Join-Path $PSScriptRoot "_salad_prepared_benchmark_worker.ps1")
