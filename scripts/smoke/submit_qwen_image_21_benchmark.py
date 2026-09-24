@@ -220,7 +220,8 @@ def main() -> None:
                 raise RuntimeError("Qwen benchmark received a cached or retried result")
             output = directory / "image.png"
             executor.download_output(response, output)
-            assert request.sidecar_outputs is not None
+            if request.sidecar_outputs is None:
+                raise RuntimeError("Benchmark request omitted its required metrics sidecar")
             metadata_key = request.sidecar_outputs["metadata"].key
             stored = storage.stat(metadata_key)
             if stored is None:
