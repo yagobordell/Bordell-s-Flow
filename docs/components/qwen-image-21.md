@@ -49,3 +49,33 @@ authentication problem. The runner still verifies the same started Salad instanc
 before and after each job and validates the worker process and pipeline across all
 five generations. This is a local benchmark-client change only: the deployed
 Qwen worker image and INT8 generation settings do not need to change.
+
+
+### Warm five-run readiness regression (2026-09-24)
+
+The v4 RTX 5090 worker reached `ready=True` and received benchmark job 1.
+The benchmark downloaded and verified the PNG and its R2 metadata, but
+immediately afterward Salad's instances endpoint temporarily reported no
+`started && ready` instance, so the old client discarded a completed warmup.
+Its `ready()` held the same mutex as the complete 40-step `generate()`
+call; concurrent HTTP readiness probes could therefore time out while the
+GPU was busy. The captured CSV contains the job receipt and many repeated
+bitsandbytes dtype-cast warnings, but its 1,000-row export ends before the
+later readiness transition; these warnings alone do not establish a GPU
+failure or out-of-memory condition.
+
+Qwen worker v5 keeps the inference lock for pipeline creation and each
+generation while checking already prepared state and the immutable model
+snapshot **without acquiring that lock** in `ready()`. The five-run client
+now waits at most 60 seconds for a transient ready=false to recover, records
+its last observation on timeout and rejects a changed instance or machine
+immediately; it still requires the exact original instance before and after
+every job and checks worker process/pipeline identity through the metadata.
+Never interpret a replaced or restarted worker as a valid warm benchmark.
+
+Deploy `qwen-image-2.1-int8-1280x736-v5` through a fresh Qwen Prepare.
+The earlier v4 image cannot receive the backend fix from a local
+`git pull`. The local API `--preflight-only` protection from the 403
+incident remains active. CI covers nonblocking readiness and identity
+recovery; live Salad five-run performance and visual quality remain to
+be measured.
