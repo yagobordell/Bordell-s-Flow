@@ -23,7 +23,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     BREEZE_RUNTIME_ROOT=/opt/breeze-infer \
     BREEZE_DEVICE=cuda \
     BREEZE_MAX_CHUNK_CHARS=1200 \
-    BREEZE_INTER_CHUNK_PAUSE_MS=120 \
+    BREEZE_INTER_CHUNK_PAUSE_MS=120 
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
