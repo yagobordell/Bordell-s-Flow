@@ -107,3 +107,35 @@ If either group is still running or updating, do not run the preparer.
 If Salad still refuses zero replicas after the bounded wait, inspect the
 remote group and queue; do not recreate the group, retry builds, or launch
 GPU benchmarks while a residual replica remains.
+
+
+## Stopped LTX replica rebounds from zero to one
+
+A subsequent real Salad run showed `Stop` reading
+`stopped/replicas=0/pending=False`, immediately followed by a new `Status`
+reading `stopped/replicas=1/pending=False`. Waiting until the first
+successful GET was therefore insufficient. The full remote autoscaler
+configuration and job-queue snapshot were not present in that capture:
+the specific cause of the rebound remains unconfirmed.
+
+Salad's queue autoscaler adjusts desired replicas based on queued work
+and `min_replicas`. LTX also has a temporary `WarmScaleOut` mode that
+sets the *remote* minimum to one; it must be restored to the manifest
+minimum of zero when the warm worker is no longer owned. The manager now
+reports the remote minimum and current queue length in `-Action Status`.
+Its `Stop` and `Prepare` paths restore an exposed nonzero remote
+autoscaler minimum through the existing manifest-restore command **only
+while the group is stopped and has no pending update**. They then check
+three consecutive `stopped/replicas=0/pending=False` observations, spaced
+15 seconds apart. A running group aborts immediately. The parallel
+preparer also detects a stale remote minimum even when the initial
+replica count is zero; the prepared-image guard rejects that state.
+
+This fix does not cancel unknown queue jobs, override a running worker,
+change model code or build new images. If the remote minimum is zero but
+replicas still return to one, inspect the queue's pending/running jobs
+with the protected bootstrap's exhaustive preflight; a positive summary
+alone can be stale. If the queue is truly empty and Salad still reasserts
+one replica, collect the group's status, minimum and queue observations
+for Salad support. Do not bypass the benchmark's zero-replica ownership
+guard or repeatedly patch the desired replica count.
