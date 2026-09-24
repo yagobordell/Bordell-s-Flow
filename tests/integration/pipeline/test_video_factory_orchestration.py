@@ -45,6 +45,9 @@ def test_phase5_checks_breeze_cache_before_primary_prewarm() -> None:
 
 
 def test_phase4_and_phase6_use_qwen_only() -> None:
+    shared = _read("scripts/pipeline/_qwen_controlled.ps1")
+    assert 'Service = "qwen_image_21"' in shared
+    assert "ideogram" not in shared.lower()
     for controlled, runner in (
         (
             "scripts/pipeline/run_phase4_assets_controlled.ps1",
@@ -57,27 +60,28 @@ def test_phase4_and_phase6_use_qwen_only() -> None:
     ):
         controlled_text = _read(controlled)
         runner_text = _read(runner)
-        assert 'Service = "qwen_image_21"' in controlled_text
+        assert "_qwen_controlled.ps1" in controlled_text
         assert "SaladQwenImage21Provider" in runner_text
         assert "QWEN_IMAGE_21_" in runner_text
         assert "ideogram" not in controlled_text.lower()
         assert "ideogram" not in runner_text.lower()
 
 
-
 def test_qwen_controlled_runners_prewarm_before_generation() -> None:
+    shared = _read("scripts/pipeline/_qwen_controlled.ps1")
+    assert shared.index("Qwen-Image-2.1 prewarm") < shared.rindex(
+        "& python $RunnerScript @RunnerArguments"
+    )
+    assert "start_salad_optimized_prewarm.ps1" in shared
+    assert "manage_salad_validation.ps1" in shared
+    assert "-Action Stop -Service qwen_image_21" in shared
+    assert "cleanup_salad_queue.ps1" in shared
     for path in (
         "scripts/pipeline/run_phase4_assets_controlled.ps1",
         "scripts/pipeline/run_phase6_keyframes_controlled.ps1",
     ):
-        text = _read(path)
-        assert text.index("Qwen-Image-2.1 prewarm") < text.rindex(
-            "& python $Runner @RunnerArguments"
-        )
-        assert "start_salad_optimized_prewarm.ps1" in text
-        assert "manage_salad_validation.ps1" in text
-        assert "-Action Stop -Service qwen_image_21" in text
-        assert "cleanup_salad_queue.ps1" in text
+        assert "_qwen_controlled.ps1" in _read(path)
+
 
 def test_queue_cleanup_cancels_orphaned_active_jobs_after_group_stop() -> None:
     text = _read("scripts/salad/cleanup_salad_queue.ps1")

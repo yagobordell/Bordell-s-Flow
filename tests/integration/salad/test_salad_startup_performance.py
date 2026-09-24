@@ -6,6 +6,11 @@ PREWARM = Path("scripts/salad/start_salad_optimized_prewarm.ps1")
 PRODUCTION_RUNNER = Path("scripts/pipeline/run_production.py")
 R2_PREFLIGHT = Path("scripts/pipeline/check_r2_ready.py")
 QUEUE_CLEANUP = Path("scripts/salad/cleanup_salad_queue.ps1")
+QWEN_CONTROLLER = Path("scripts/pipeline/_qwen_controlled.ps1")
+QWEN_WRAPPERS = (
+    Path("scripts/pipeline/run_phase4_assets_controlled.ps1"),
+    Path("scripts/pipeline/run_phase6_keyframes_controlled.ps1"),
+)
 CONFIG = Path("src/ai_video_factory/config.py")
 
 WORKERS = {
@@ -127,16 +132,23 @@ def test_manifest_versions_and_download_profiles_are_explicit() -> None:
     assert ideogram["IDEOGRAM_BOOTSTRAP_REALLOCATE_ON_STALL"] == "true"
 
 
+def _lifecycle_source(path: Path) -> str:
+    source = QWEN_CONTROLLER if path in QWEN_WRAPPERS else path
+    return source.read_text(encoding="utf-8")
+
+
 def test_controlled_gpu_runners_prewarm_and_always_stop() -> None:
     for path in ALL_CONTROLLED_RUNNERS:
-        text = path.read_text(encoding="utf-8")
+        text = _lifecycle_source(path)
         assert "start_salad_optimized_prewarm.ps1" in text, path.name
         assert "finally" in text, path.name
         assert "-Action Stop" in text, path.name
         assert "-Action Status" in text, path.name
+    for path in QWEN_WRAPPERS:
+        assert "_qwen_controlled.ps1" in path.read_text(encoding="utf-8")
 
 
-def test_ideogram_controlled_runners_pin_warm_and_clean_queue() -> None:
+def test_qwen_controlled_runners_pin_warm_and_clean_queue() -> None:
     assert QUEUE_CLEANUP.is_file()
     cleanup = QUEUE_CLEANUP.read_text(encoding="utf-8")
     assert "foreach ($Job in $ActiveJobs)" in cleanup
@@ -144,22 +156,21 @@ def test_ideogram_controlled_runners_pin_warm_and_clean_queue() -> None:
     assert "Waiting for cancelled running job(s)" in cleanup
     assert "requires '$GroupName' fully stopped first" in cleanup
 
-    for path in (
-        Path("scripts/pipeline/run_phase4_assets_controlled.ps1"),
-        Path("scripts/pipeline/run_phase6_keyframes_controlled.ps1"),
-    ):
-        text = path.read_text(encoding="utf-8")
-        assert "HoldReadyReplica = $true" in text, path.name
-        assert "hold_salad_warm_replica.ps1" not in text, path.name
-        assert "cleanup_salad_queue.ps1" in text, path.name
-        assert text.index("-Action Stop") < text.index("& $QueueCleanup"), path.name
-        assert text.index("& $QueueCleanup") < text.index("-Action Status"), path.name
+    text = QWEN_CONTROLLER.read_text(encoding="utf-8")
+    assert "HoldReadyReplica = $true" in text
+    assert "hold_salad_warm_replica.ps1" not in text
+    assert "cleanup_salad_queue.ps1" in text
+    assert text.index("-Action Stop") < text.index("& $QueueCleanup")
+    assert text.index("& $QueueCleanup") < text.index("-Action Status")
+    assert text.index("if ($Misses -eq 0 -and $Hits -eq $Plan.Count)") < text.index(
+        "$PrewarmArguments = @{"
+    )
 
 
 def test_controlled_gpu_runners_preflight_r2_before_prewarm() -> None:
     assert R2_PREFLIGHT.is_file()
     for path in ALL_CONTROLLED_RUNNERS:
-        text = path.read_text(encoding="utf-8")
+        text = _lifecycle_source(path)
         assert "check_r2_ready.py" in text, path.name
         assert "R2 preflight failed; refusing to allocate" in text, path.name
         prewarm_call = (
@@ -281,17 +292,20 @@ def test_phase6_uses_qwen_ready_hold_before_generation() -> None:
     phase6 = Path("scripts/pipeline/run_phase6_keyframes_controlled.ps1").read_text(
         encoding="utf-8"
     )
+    controlled = QWEN_CONTROLLER.read_text(encoding="utf-8")
     prewarm = PREWARM.read_text(encoding="utf-8")
     qwen_profile = prewarm.split("    qwen_image_21 = @{", maxsplit=1)[1].split(
         "    }", maxsplit=1
     )[0]
 
-    assert 'Service = "qwen_image_21"' in phase6
-    assert "HoldReadyReplica = $true" in phase6
+    assert 'Phase = "Phase 6"' in phase6
+    assert 'Service = "qwen_image_21"' in controlled
+    assert "HoldReadyReplica = $true" in controlled
     assert "RunningNotReadySeconds = 1800" in qwen_profile
     assert "FinalRunningNotReadySeconds = 3000" in qwen_profile
     assert "[switch]$HoldReadyReplica" in prewarm
     assert "Test-RemoteAutoscalerBounds" in prewarm
+
 
 def test_shared_ideogram_adoption_precedes_cold_state_requirement() -> None:
     text = PREWARM.read_text(encoding="utf-8")
@@ -373,20 +387,17 @@ def test_whisper_default_queue_matches_manifest() -> None:
 
 
 def test_qwen_controlled_runners_pin_canonical_salad_route() -> None:
-    for path in (
-        Path("scripts/pipeline/run_phase4_assets_controlled.ps1"),
-        Path("scripts/pipeline/run_phase6_keyframes_controlled.ps1"),
-    ):
-        text = path.read_text(encoding="utf-8")
-        assert "deploy\\salad\\services.json" in text, path.name
-        assert "$env:SALAD_ORGANIZATION = [string]$Services.stack.organization" in text
-        assert "$env:SALAD_PROJECT = [string]$Services.stack.project" in text
-        assert (
-            "$env:SALAD_QWEN_IMAGE_21_QUEUE_NAME = [string]$QwenService.queue_name"
-            in text
-        )
-        assert '"--queue-name", $env:SALAD_QWEN_IMAGE_21_QUEUE_NAME' in text
-        assert "canonical Salad route: qwen_image_21 queue={0}" in text
+    text = QWEN_CONTROLLER.read_text(encoding="utf-8")
+    assert "deploy\\salad\\services.json" in text
+    assert "$env:SALAD_ORGANIZATION = [string]$Services.stack.organization" in text
+    assert "$env:SALAD_PROJECT = [string]$Services.stack.project" in text
+    assert "$env:SALAD_QWEN_IMAGE_21_QUEUE_NAME = [string]$QwenService.queue_name" in text
+    assert '"--queue-name", $env:SALAD_QWEN_IMAGE_21_QUEUE_NAME' in text
+    assert "canonical Salad route: qwen_image_21 queue={1}" in text
+    for path, phase in zip(QWEN_WRAPPERS, ("Phase 4", "Phase 6"), strict=True):
+        wrapper = path.read_text(encoding="utf-8")
+        assert f'Phase = "{phase}"' in wrapper
+        assert "_qwen_controlled.ps1" in wrapper
 
 
 def test_image_queue_defaults_match_manifest() -> None:
