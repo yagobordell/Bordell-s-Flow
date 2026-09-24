@@ -15,7 +15,7 @@ Flujo principal:
 guion
   -> planificación narrativa y shots
   -> narración + alineación temporal
-  -> referencias visuales y keyframes
+  -> Qwen-Image-2.1: referencias y keyframes 1280x736 sin recorte
   -> LTX-2.5: vídeo 1280x720 @ 24 fps
   -> Real-ESRGAN x2: 2560x1440 @ 24 fps
   -> Remotion + FFmpeg

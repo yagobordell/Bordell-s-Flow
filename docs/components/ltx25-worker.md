@@ -16,6 +16,11 @@ Production video geometry is:
 silent H.264 MP4
 ```
 
+Qwen text-to-image keyframes are 1280x736 rather than exact 16:9. For I2V, the worker
+preserves the entire source frame using proportional fit and narrow edge-extended side margins
+before padding the internal model grid to 1280x768. Only that internal grid padding is removed
+from the decoded output. The public MP4 remains 1280x720; no Qwen content is center-cropped.
+
 Accepted clips are subsequently upscaled by Real-ESRGAN to 2560x1440.
 
 ## Container and bootstrap

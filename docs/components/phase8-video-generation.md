@@ -53,6 +53,11 @@ Keyframes are content-addressed in R2. Completed MP4s are downloaded only after 
 object size and SHA-256 metadata validate. Durable R2 replay is checked before unnecessary new GPU
 work.
 
+Qwen keyframes are generated natively at 1280x736. Phase 8 accepts these images directly,
+without a pre-crop. The LTX worker fits the complete frame proportionally into its 1280x720
+output, extending the narrow side margins with edge pixels, then pads only the internal model
+grid to 1280x768. Existing native 16:9 keyframes remain accepted.
+
 LTX output is 1280x720 at 24 fps and contains no audio.
 
 ## Upscale

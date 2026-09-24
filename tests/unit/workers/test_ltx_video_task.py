@@ -333,6 +333,32 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     assert all(call["audio"] is None for call in state["encodes"])
 
 
+def test_qwen_keyframe_fits_ltx_grid_without_losing_image_edges(tmp_path: Path) -> None:
+    source = tmp_path / "qwen.png"
+    image = Image.new("RGB", (1280, 736), (48, 48, 48))
+    image.paste((255, 0, 0), (0, 0, 30, 736))
+    image.paste((0, 0, 255), (1250, 0, 1280, 736))
+    image.paste((0, 255, 0), (30, 0, 1250, 6))
+    image.paste((255, 255, 0), (30, 730, 1250, 736))
+    image.save(source, format="PNG")
+
+    adapted = ltx_video._prepare_grid_keyframe(
+        source,
+        tmp_path / "adapted.png",
+        requested_width=1280,
+        requested_height=720,
+        pipeline_width=1280,
+        pipeline_height=768,
+    )
+    with Image.open(adapted) as result:
+        assert result.size == (1280, 768)
+        assert result.getpixel((5, 384)) == (255, 0, 0)
+        assert result.getpixel((1275, 384)) == (0, 0, 255)
+        assert result.getpixel((640, 0)) == (0, 255, 0)
+        assert result.getpixel((640, 767)) == (255, 255, 0)
+        assert result.getpixel((640, 384)) == (48, 48, 48)
+
+
 def test_direct_backend_rejects_missing_cuda_before_pipeline_build(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
