@@ -33,8 +33,9 @@ def test_worker_update_sends_priority_inside_container() -> None:
 def test_prepare_rejects_a_priority_mismatch() -> None:
     script = WORKER_MANAGER.read_text(encoding="utf-8")
 
-    assert "[string]$Group.container.priority -ne [string]$Definition.priority" in script
-    assert "Salad did not activate the expected container priority" in script
+    assert '$Group.PSObject.Properties["priority"]' in script
+    assert '$Priority.Value -ne [string]$Definition.priority' in script
+    assert "Salad did not report the expected container group priority" in script
 
 
 def test_ltx_uses_high_priority_for_rtx5090_capacity() -> None:
