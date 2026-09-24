@@ -414,7 +414,7 @@ def test_worker_repairs_missing_sidecar_without_overwriting_primary(
     authoritative = tmp_path / "authoritative.txt"
     authoritative.write_bytes(b"hello\n")
     authoritative_sha = sha256_file(authoritative)
-    storage.create(
+    storage.create_if_absent(
         authoritative,
         request.output.key,
         content_type="text/plain",
