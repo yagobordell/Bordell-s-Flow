@@ -68,6 +68,13 @@ class InMemoryJobRepository:
                 )
             if row.status == "retryable_failed":
                 _raise_if_non_retryable(row.last_error)
+            if row.status == "failed":
+                _raise_if_non_retryable(row.last_error)
+                raise NonRetryableTaskError(
+                    row.last_error or f"job {request.job_id} is terminally failed"
+                )
+            if row.status == "cancelled":
+                raise NonRetryableTaskError(f"job {request.job_id} was cancelled")
             if (
                 row.status == "running"
                 and row.lease_expires_at is not None
