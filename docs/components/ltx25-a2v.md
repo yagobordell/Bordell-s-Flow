@@ -77,3 +77,37 @@ contract does not establish lip-sync quality: inspect the avatar's mouth movemen
 provided speech before accepting the visual result. The smoke does not replace production
 orchestration.
 Transport IDs, timings and artifact hashes from individual validation runs belong in Git history.
+
+
+## Five-run Salad warm benchmark: readiness regression
+
+The September 24 Salad run completed its first 1280x720 A2V segment in
+102.145 seconds (85.567 seconds inference, 15.338 seconds encoding), but
+the second job remained pending and was cancelled after the 180-second
+pending limit. During generation 1, the Salad Job Queue sidecar logged
+`readiness changed ready=false` after the probe had been blocked for
+roughly a minute. Previously, both I2V and A2V `ready()` methods acquired
+the same `LTXPipelineModeController` lock held for the entire A2V inference.
+Six 10-second probes with a 5-second request timeout can therefore remove
+the running instance from eligible dispatch before inference completes.
+
+Image-to-video and audio-to-video now retain the **shared inference lock**
+for model construction and generation, but their readiness checks use
+already prepared bindings and read-only runtime validation without taking
+that lock. The service's R2 and database readiness checks remain in place;
+workers that have not prepared still fail readiness. This avoids a false
+not-ready transition during a long GPU generation without advertising an
+unprepared worker as healthy.
+
+The five-run benchmark additionally checks that the original instance and
+machine are still started and ready before each sequential job, with a
+bounded 60-second readiness-recovery window. It does not reallocate the
+worker or merge results across machines. A no-progress condition fails
+before submitting another job and the wrapper stops the LTX service.
+
+The worker change is deployed as
+`ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v9`, not the previous v8
+image. CI tests the concurrent-readiness regression; actual queue
+dispatch over five warm jobs and lip-sync quality still require a real
+Salad run. The first video from the failed v8 batch remains a valid
+individual output but does not establish four warm-generation timings.
