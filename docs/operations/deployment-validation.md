@@ -11,26 +11,48 @@ credentials where the model requires them. Docker is needed only when building o
 
 ## Commands
 
+Validate, prepare and inspect a single service with the compute manager:
+
 ```powershell
-.\scripts\salad\manage_salad_validation.ps1 -Service <service> -Action Validate
-.\scripts\salad\manage_salad_validation.ps1 -Service <service> -Action Prepare
-.\scripts\salad\manage_salad_validation.ps1 -Service <service> -Action Status
+.\scripts\salad\manage_salad_worker.ps1 -Service <service> -Action Validate
+.\scripts\salad\manage_salad_worker.ps1 -Service <service> -Action Prepare
+.\scripts\salad\manage_salad_worker.ps1 -Service <service> -Action Status
 ```
 
-Use the dedicated command under `scripts/smoke/` for a real paid smoke instead of manually changing
-replicas.
+Start paid capacity only for an intentional real smoke:
+
+```powershell
+.\scripts\salad\manage_salad_worker.ps1 -Service <service> -Action Start -Replicas 1
+```
+
+Always stop it afterwards:
+
+```powershell
+.\scripts\salad\manage_salad_worker.ps1 -Service <service> -Action Stop
+```
+
+The model-specific controlled smoke scripts under `scripts/smoke/` own this lifecycle when one is
+available.
 
 ## Acceptance
 
-A worker change is accepted when the intended immutable image/configuration is deployed, one real
-queue-backed inference succeeds, persisted artifacts validate, the expected runtime operates without
-OOM/bootstrap failure, repository CI is green and the service returns to zero replicas.
+A worker change is accepted when:
 
-Cloud logs and generated smoke artifacts are evidence for that run. They should not be copied into
-active documentation; Git history is the historical record.
+- the intended immutable image/configuration is deployed;
+- a real Postgres-backed inference succeeds;
+- persisted R2 artifacts validate;
+- the expected runtime operates without OOM/bootstrap failure;
+- repository CI is green;
+- the service returns to stable stopped `replicas=0`.
+
+Cloud logs and generated smoke artifacts are evidence for that run. Git history is the historical
+record; active docs should describe only the current architecture.
 
 ## Failure handling
 
-Keep unrelated workers stopped. Inspect the failing service and queue, preserve relevant logs, clean
-stale transport jobs and fix the specific cause. Do not extend timeouts to hide a stalled model
-download; use worker watchdog/progress signals to distinguish healthy transfer from a real stall.
+Keep unrelated workers stopped. Inspect the application job in Postgres, the worker logs and the
+container-group state. Do not clean or repair a provider queue: the production architecture has no
+Salad Job Queue.
+
+Do not extend timeouts to hide a stalled model download. Use worker watchdog/progress signals to
+distinguish healthy transfer from a real stall.
