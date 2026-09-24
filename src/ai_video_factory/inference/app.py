@@ -17,6 +17,7 @@ from .errors import (
     NonRetryableTaskError,
     UnsupportedTaskError,
 )
+from .gpu_failures import is_retryable_gpu_failure
 from .worker import InferenceWorker
 
 logger = logging.getLogger(__name__)
@@ -91,10 +92,17 @@ def create_app(
                     exc_info=True,
                 )
                 job_poll_stop.wait(job_poll_seconds)
+            except JobExecutionError as exc:
+                logger.exception("inference job failed job_id=%s", request.job_id)
+                delay = (
+                    worker.gpu_retry_cooldown_seconds
+                    if is_retryable_gpu_failure(exc)
+                    else job_poll_seconds
+                )
+                job_poll_stop.wait(delay)
             except (
                 InputIntegrityError,
                 JobConflictError,
-                JobExecutionError,
                 LeaseLostError,
                 UnsupportedTaskError,
             ):
