@@ -378,6 +378,8 @@ class PredictiveSaladAutoscaler:
             target = targets[stage]
             if target >= current[stage]:
                 self._downscale_candidates.pop(stage, None)
+                if target > current[stage]:
+                    self.store.clear_draining_instances(stage=stage)
                 continue
             stable_count = self._record_downscale_candidate(stage, target)
             if stable_count < self.config.downscale_stable_polls:
@@ -386,9 +388,10 @@ class PredictiveSaladAutoscaler:
                 target,
                 current[stage] - self.config.max_downscale_per_poll,
             )
-            protected, reason = self._protect_running_instances(
+            protected, reason = self._prepare_drained_downscale(
                 stage=stage,
                 rows=list(demands[stage].rows),
+                remove_count=current[stage] - applied_target,
             )
             if not protected:
                 results[stage] = AutoscaleResult(
@@ -448,36 +451,75 @@ class PredictiveSaladAutoscaler:
         self._downscale_candidates[stage] = (target, count)
         return count
 
-    def _protect_running_instances(
+    def _prepare_drained_downscale(
         self,
         *,
         stage: str,
         rows: list[dict[str, object]],
+        remove_count: int,
     ) -> tuple[bool, str]:
+        if remove_count <= 0:
+            return True, "no_downscale_required"
+
         running_worker_ids = {
             str(row.get("worker_id") or "").strip()
             for row in rows
             if str(row.get("status") or "").strip() == "running"
             and str(row.get("worker_id") or "").strip()
         }
-        if not running_worker_ids:
-            return True, "no_running_jobs"
         try:
             instances = self.clients[stage].list_container_group_instances()
             matched_worker_ids: set[str] = set()
+            active_instance_ids: set[str] = set()
+            instance_by_id: dict[str, dict[str, object]] = {}
             for instance in instances:
                 instance_id = str(instance.get("id") or "").strip()
                 if not instance_id:
                     continue
+                instance_by_id[instance_id] = instance
                 instance_worker_ids = {
                     worker_id for worker_id in running_worker_ids if instance_id in worker_id
                 }
-                is_active = bool(instance_worker_ids)
-                matched_worker_ids.update(instance_worker_ids)
+                if instance_worker_ids:
+                    active_instance_ids.add(instance_id)
+                    matched_worker_ids.update(instance_worker_ids)
+
+            if matched_worker_ids != running_worker_ids:
+                return False, "active_instance_mapping_incomplete"
+
+            idle_instance_ids = [
+                instance_id
+                for instance_id in instance_by_id
+                if instance_id not in active_instance_ids
+            ]
+            if len(idle_instance_ids) < remove_count:
+                return False, "insufficient_idle_instances"
+
+            existing_drains = self.store.list_draining_instances(stage=stage)
+            idle_instance_ids.sort(
+                key=lambda instance_id: (
+                    instance_id not in existing_drains,
+                    _optional_int(instance_by_id[instance_id].get("deletion_cost"))
+                    or 0,
+                    instance_id,
+                )
+            )
+            draining_ids = tuple(idle_instance_ids[:remove_count])
+            self.store.mark_draining_instances(
+                stage=stage,
+                instance_ids=draining_ids,
+                ttl_seconds=self.config.drain_ttl_seconds,
+            )
+            self.store.clear_draining_instances(
+                stage=stage,
+                keep_instance_ids=draining_ids,
+            )
+
+            for instance_id, instance in instance_by_id.items():
                 desired_cost = (
-                    self.config.active_deletion_cost
-                    if is_active
-                    else self.config.idle_deletion_cost
+                    self.config.idle_deletion_cost
+                    if instance_id in draining_ids
+                    else self.config.active_deletion_cost
                 )
                 current_cost = _optional_int(instance.get("deletion_cost"))
                 if current_cost != desired_cost:
@@ -485,15 +527,25 @@ class PredictiveSaladAutoscaler:
                         instance_id,
                         desired_cost,
                     )
-            if matched_worker_ids != running_worker_ids:
-                return False, "active_instance_mapping_incomplete"
+
+            observed_at = datetime.now(UTC)
+            drain_ready = all(
+                instance_id in existing_drains
+                and (
+                    observed_at - existing_drains[instance_id]
+                ).total_seconds()
+                >= self.config.drain_grace_seconds
+                for instance_id in draining_ids
+            )
+            if not drain_ready:
+                return False, "drain_grace_pending"
         except Exception as error:
             self.logger(
-                f"Autoscaler {stage}: could not protect deletion_cost; "
+                f"Autoscaler {stage}: could not establish a safe drain; "
                 f"downscale deferred ({error})."
             )
-            return False, "deletion_cost_protection_failed"
-        return True, "active_instances_protected"
+            return False, "drain_protection_failed"
+        return True, "drained_instances_ready"
 
     def _log_result(self, result: AutoscaleResult) -> None:
         demand = result.demand
