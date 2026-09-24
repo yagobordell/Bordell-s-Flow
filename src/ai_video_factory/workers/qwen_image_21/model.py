@@ -42,6 +42,18 @@ QWEN_IMAGE_21_REQUIRED_MODEL_FILES = (
 _SUPPORTED_TASKS = frozenset({QWEN_IMAGE_21_REFERENCE_TASK, QWEN_IMAGE_21_KEYFRAME_TASK})
 
 
+def _validate_int8_cuda_device_map(device_map: Any) -> None:
+    """Accept Diffusers' CUDA device string or a component map, never CPU/disk offload."""
+    if isinstance(device_map, str):
+        devices = (device_map,)
+    elif isinstance(device_map, Mapping) and device_map:
+        devices = device_map.values()
+    else:
+        raise RuntimeError(f"Qwen int8 pipeline has no usable device map: {device_map!r}")
+    if any(str(device) not in ("cuda", "cuda:0", "0") for device in devices):
+        raise RuntimeError(f"Qwen int8 pipeline is not fully on CUDA: {device_map!r}")
+
+
 class QwenImage21Parameters(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -280,10 +292,16 @@ class QwenImage21Backend:
                 device_map="cuda",
                 local_files_only=True,
             )
-            # Fail at startup rather than silently spilling model weights to CPU.
-            device_map = getattr(pipeline, "hf_device_map", None) or {}
-            if any(str(device) not in ("cuda", "cuda:0", "0") for device in device_map.values()):
-                raise RuntimeError(f"Qwen int8 pipeline is not fully on CUDA: {device_map}")
+            # Diffusers may expose hf_device_map as "cuda" for a single-device pipeline
+            # or as a component map. Both must exclude CPU and disk offloading.
+            _validate_int8_cuda_device_map(getattr(pipeline, "hf_device_map", None))
+            for component_name in ("transformer", "text_encoder", "vae"):
+                component = getattr(pipeline, component_name, None)
+                if component is None:
+                    raise RuntimeError(f"Qwen pipeline is missing {component_name!r}")
+                component_map = getattr(component, "hf_device_map", None)
+                if component_map is not None:
+                    _validate_int8_cuda_device_map(component_map)
         elif memory_mode == "bf16_offload":
             pipeline = QwenImage21Pipeline.from_pretrained(
                 str(self.snapshot_root), dtype=torch.bfloat16, local_files_only=True,
