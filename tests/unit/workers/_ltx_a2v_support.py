@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import ai_video_factory.workers.ltx25.a2v as a2v
 from ai_video_factory.workers.ltx25 import LTXA2VModelFiles
+
+
+@dataclass(frozen=True)
+class FakeVideoGuiderParams:
+    cfg_scale: float = 3.0
+    stg_scale: float = 1.0
+    modality_scale: float = 3.0
+    stg_blocks: list[int] = field(default_factory=lambda: [28])
 
 
 def _seed_model_files(root: Path) -> None:
@@ -155,6 +164,7 @@ def make_a2v_bindings(state: dict[str, Any]) -> a2v._A2VBindings:
     def fake_cleanup(device: Any = None) -> None:
         state.setdefault("cleanup_devices", []).append(str(device))
 
+    state["original_guider"] = FakeVideoGuiderParams()
     bindings = a2v._A2VBindings(
         torch=FakeTorch,
         a2v_pipeline=FakePipeline,
@@ -171,7 +181,7 @@ def make_a2v_bindings(state: dict[str, Any]) -> a2v._A2VBindings:
         lora_sd_ops="rename-map",
         detect_params=lambda _: SimpleNamespace(
             num_inference_steps=30,
-            video_guider_params="official-guider",
+            video_guider_params=state["original_guider"],
         ),
         default_negative_prompt="negative",
     )
