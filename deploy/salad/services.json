@@ -42,7 +42,7 @@
       "group_name": "ai-video-factory-ltx25-worker-v2",
       "queue_name": "ai-video-factory-ltx25-jobs-v2",
       "dockerfile": "docker/workers/ltx25/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:ltx25-a2v-torch211-cu128-eagersdpa-xet-lipsync-v6",
+      "image": "docker.io/yagobordell/ai-video-factory:ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v7",
       "priority": "high",
       "resources": {
         "cpu": 8,
