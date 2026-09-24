@@ -49,17 +49,42 @@ function Get-BenchmarkGroup {
     }
 }
 
-# Inspect both services before modifying either one: no mid-benchmark upgrades.
+# Check both groups before modifying either: never interrupt running workers
+# or a group whose deployment update is still pending.
 foreach ($Name in $Services) {
     $Group = Get-BenchmarkGroup -Name $Name
     if ($null -ne $Group -and (
         [string]$Group.current_state.status -ne "stopped" -or
-        [int]$Group.replicas -ne 0 -or
         [bool]$Group.pending_change
     )) {
-        throw "$Name must be stopped/replicas=0/pending=False before parallel preparation."
+        throw "$Name must be stopped/pending=False before parallel preparation."
     }
     $Groups[$Name] = $Group
+}
+
+# Salad may leave a stopped group with a residual desired replica after an
+# image upgrade. Recover via the normal Stop lifecycle; never rebuild an image
+# or mutate a group that is running/pending. The manager waits for true zero.
+foreach ($Name in $Services) {
+    $Group = $Groups[$Name]
+    if ($null -ne $Group -and [int]$Group.replicas -ne 0) {
+        Write-Warning (
+            "$Name is stopped with replicas=$([int]$Group.replicas); " +
+            "normalizing before any benchmark preparation."
+        )
+        & $Manager -Service $Name -Action Stop -EnvFile $EnvFile -NonInteractive
+        if (-not $?) { throw "$Name zero-replica cleanup failed." }
+        $Group = Get-BenchmarkGroup -Name $Name
+        if (
+            $null -eq $Group -or
+            [string]$Group.current_state.status -ne "stopped" -or
+            [int]$Group.replicas -ne 0 -or
+            [bool]$Group.pending_change
+        ) {
+            throw "$Name did not reach stopped/replicas=0/pending=False after cleanup."
+        }
+        $Groups[$Name] = $Group
+    }
 }
 
 foreach ($Name in $Services) {
