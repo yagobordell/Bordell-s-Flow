@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw
 
 from ai_video_factory.config import settings
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
+from ai_video_factory.inference.gpu_failures import DEFAULT_GPU_MAX_ATTEMPTS
 from ai_video_factory.inference.storage import sha256_file
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
@@ -181,7 +182,7 @@ def main() -> None:
         sidecar_outputs={
             "metadata": ObjectOutput(key=metadata_key, content_type="application/json")
         },
-        max_attempts=1,
+        max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
         parameters={
             "generation_profile": profile,
             "prompt": args.prompt,

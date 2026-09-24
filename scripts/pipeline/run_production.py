@@ -18,7 +18,7 @@ from ai_video_factory.workflows.production_runner import (
 
 
 class OptimizedGpuStageExecutor:
-    """Use ready-before-queue Salad wrappers for GPU-backed production stages."""
+    """Run provider-neutral stages when the global capacity controller owns Salad."""
 
     def __init__(
         self,
@@ -35,6 +35,16 @@ class OptimizedGpuStageExecutor:
         self._default = SubprocessStageExecutor(repo_root=repo_root)
 
     def __call__(self, stage: ProductionStage) -> None:
+        autoscaler_enabled = os.getenv("SALAD_AUTOSCALER_ENABLED", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if autoscaler_enabled:
+            self._default(stage)
+            return
+
         arguments = self._controlled_arguments(stage.name)
         if arguments is None:
             self._default(stage)

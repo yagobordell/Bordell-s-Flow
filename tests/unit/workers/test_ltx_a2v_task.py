@@ -12,6 +12,7 @@ from pydantic import ValidationError
 import ai_video_factory.workers.ltx25.a2v as a2v
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
 from ai_video_factory.inference.errors import NonRetryableTaskError
+from ai_video_factory.inference.gpu_failures import DEFAULT_GPU_MAX_ATTEMPTS
 from ai_video_factory.workers.ltx25 import (
     LTX_A2V_DEV_GENERATION_PROFILE,
     LTX_A2V_GENERATION_PROFILE,
@@ -28,12 +29,16 @@ class FakeBackend:
         self.calls: list[dict[str, Any]] = []
         self.prepare_calls = 0
         self.ready_calls = 0
+        self.invalidate_calls = 0
 
     def prepare(self) -> None:
         self.prepare_calls += 1
 
     def ready(self) -> None:
         self.ready_calls += 1
+
+    def invalidate_pipeline(self) -> None:
+        self.invalidate_calls += 1
 
     def generate(
         self,
@@ -66,7 +71,9 @@ class FakeBackend:
         }
 
 
-def _request(*, max_attempts: int | None = 1, **updates: Any) -> InferenceJobRequest:
+def _request(
+    *, max_attempts: int | None = DEFAULT_GPU_MAX_ATTEMPTS, **updates: Any
+) -> InferenceJobRequest:
     parameters: dict[str, Any] = {
         "generation_profile": LTX_A2V_GENERATION_PROFILE,
         "prompt": "A stable talking head.",
@@ -155,12 +162,67 @@ def test_a2v_runner_requires_image_audio_and_metadata_sidecar(tmp_path: Path) ->
     with pytest.raises(NonRetryableTaskError, match="image.*audio"):
         runner.run(_request(), {"image": image}, tmp_path / "bad")
 
-    with pytest.raises(NonRetryableTaskError, match="max_attempts=1"):
+    with pytest.raises(
+        NonRetryableTaskError,
+        match=rf"max_attempts={DEFAULT_GPU_MAX_ATTEMPTS}",
+    ):
         runner.run(
             _request(max_attempts=2),
             {"image": image, "audio": audio},
-            tmp_path / "retryable",
+            tmp_path / "invalid-retry-budget",
         )
+
+
+def test_a2v_runner_invalidates_pipeline_after_retryable_gpu_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = FakeBackend()
+    runner = LTXAudioToVideoTaskRunner(backend=backend)
+    image = tmp_path / "avatar.png"
+    audio = tmp_path / "speech.wav"
+    image.write_bytes(b"png")
+    audio.write_bytes(b"wav")
+
+    def fail_generation(**kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("CUDA out of memory while executing A2V")
+
+    monkeypatch.setattr(backend, "generate", fail_generation)
+
+    with pytest.raises(RuntimeError, match="CUDA out of memory"):
+        runner.run(
+            _request(),
+            {"image": image, "audio": audio},
+            tmp_path / "retryable-gpu-failure",
+        )
+
+    assert backend.invalidate_calls == 1
+
+
+def test_a2v_runner_keeps_pipeline_for_non_gpu_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = FakeBackend()
+    runner = LTXAudioToVideoTaskRunner(backend=backend)
+    image = tmp_path / "avatar.png"
+    audio = tmp_path / "speech.wav"
+    image.write_bytes(b"png")
+    audio.write_bytes(b"wav")
+
+    def fail_generation(**kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("unexpected media encoder failure")
+
+    monkeypatch.setattr(backend, "generate", fail_generation)
+
+    with pytest.raises(RuntimeError, match="media encoder failure"):
+        runner.run(
+            _request(),
+            {"image": image, "audio": audio},
+            tmp_path / "non-gpu-failure",
+        )
+
+    assert backend.invalidate_calls == 0
 
 
 def test_a2v_job_id_fingerprints_image_audio_and_segment() -> None:
