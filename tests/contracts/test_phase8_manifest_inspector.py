@@ -176,10 +176,11 @@ def test_phase8_inspector_and_controlled_wrapper_pin_landscape_contract() -> Non
         '"Phase 8 manifest inspection contract is exactly 1280x720 at 24 fps"'
         in inspector
     )
-    assert wrapper.count("--width 1280 `") == 6
-    assert wrapper.count("--height 720 `") == 6
-    assert wrapper.count("--fps 24 `") == 6
-    assert wrapper.count("--transport-route $env:SALAD_LTX25_QUEUE_NAME `") == 3
+    assert '"--width", 1280' in wrapper
+    assert '"--height", 720' in wrapper
+    assert '"--fps", 24' in wrapper
+    assert "SALAD_LTX25_QUEUE_NAME" not in wrapper
+    assert "Postgres" in wrapper
 
 
 
