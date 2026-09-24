@@ -148,6 +148,7 @@ class QwenImage21Backend:
         self._device = device
         self._pipeline: Any | None = None
         self._torch: Any | None = None
+        self._prepared = False
         self._lock = threading.Lock()
 
     @property
@@ -162,12 +163,16 @@ class QwenImage21Backend:
         with self._lock:
             self._validate_bootstrap()
             self._get_or_build_pipeline()
+            self._prepared = True
 
     def ready(self) -> None:
-        with self._lock:
-            self._validate_bootstrap()
-            if self._pipeline is None:
-                raise RuntimeError("Qwen-Image-2.1 runtime has not been prepared")
+        # /ready is served in a different FastAPI thread while generate() holds
+        # the inference lock for all 40 diffusion steps. Never wait for that
+        # lock from a Salad readiness probe; only inspect prepared state and
+        # the immutable on-disk model snapshot. Inference remains serialized.
+        if not self._prepared or self._pipeline is None:
+            raise RuntimeError("Qwen-Image-2.1 runtime has not been prepared")
+        self._validate_bootstrap()
 
     def generate(self, *, parameters: QwenImage21Parameters, output_path: Path) -> dict[str, Any]:
         output_path.parent.mkdir(parents=True, exist_ok=True)
