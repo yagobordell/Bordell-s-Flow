@@ -120,15 +120,14 @@ def test_realesrgan_contract_rejects_non_exact_two_x_target() -> None:
         raise AssertionError("non-2x target unexpectedly accepted")
 
 
-def test_realesrgan_salad_service_scales_to_zero() -> None:
+def test_realesrgan_salad_service_has_bounded_explicit_capacity() -> None:
     document = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
     service = document["services"]["realesrgan"]
 
     assert document["stack"]["service_order"][-1] == "realesrgan"
-    assert service["queue_name"] == "ai-video-factory-realesrgan-jobs"
+    assert "queue_name" not in service
     assert service["resources"]["gpu_class_names"] == ["RTX 3090 (24 GB)"]
-    assert service["autoscaler"]["min_replicas"] == 0
-    assert service["autoscaler"]["max_replicas"] == 2
+    assert service["capacity"] == {"start_replicas": 1, "max_replicas": 2}
     assert service["environment"]["INFERENCE_WORKER_LEASE_SECONDS"] == "180"
     assert document["stack"]["shared_environment"]["INFERENCE_WORKER_HEARTBEAT_SECONDS"] == "30"
 
