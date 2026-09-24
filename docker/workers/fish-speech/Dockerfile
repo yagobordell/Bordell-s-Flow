@@ -25,7 +25,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     FISH_SPEECH_RUNTIME_COMMIT=214da3cd841bda85da2496b96cd3c4d7edb1337e \
     FISH_SPEECH_DEVICE=cuda \
     FISH_SPEECH_MAX_CHUNK_BYTES=800 \
-    FISH_SPEECH_INTER_CHUNK_PAUSE_MS=80 \
+    FISH_SPEECH_INTER_CHUNK_PAUSE_MS=80 
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
