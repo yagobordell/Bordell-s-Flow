@@ -252,7 +252,7 @@ class InferenceWorker:
 
                 digest = sha256_file(artifact.path)
                 heartbeat.renew_now()
-                publication = self.storage.create(
+                publication = self.storage.create_if_absent(
                     artifact.path,
                     request.output.key,
                     content_type=artifact.content_type,
@@ -350,7 +350,7 @@ class InferenceWorker:
                     f"sidecar {name!r} content type does not match the request contract"
                 )
             digest = sha256_file(path)
-            publication = self.storage.create(
+            publication = self.storage.create_if_absent(
                 path,
                 contract.key,
                 content_type=content_type,
