@@ -32,6 +32,18 @@ separate Salad groups.
 
 The worker-specific deployment contract is documented in [LTX 2.5 worker](ltx25-worker.md).
 
+## Speech-driven avatar settings
+
+The native two-stage pipeline uses the dev transformer in stage 1 and the official distilled
+LoRA in stage 2. Both stages condition on the **same frozen input audio**; the original
+waveform is retained in the output. The avatar-specific video guider preserves dev CFG,
+but disables extra modality guidance (`modality_scale=1`) and STG (`stg_scale=0`). Do not
+copy CFG=1 from the separate fully distilled ComfyUI workflow into this dev pipeline.
+
+Changing the avatar guider bumps `LTX_A2V_GENERATION_PROFILE` so old R2 results are not
+replayed under new generation settings. The LTX Salad image tag must be rebuilt and
+published before running a real smoke with this profile.
+
 ## Validation
 
 Targeted real validation uses:
@@ -40,5 +52,6 @@ Targeted real validation uses:
 scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1
 ```
 
-The smoke is for validating the worker capability, not for replacing production orchestration.
+The smoke verifies that the deployed worker uses the updated guider, but a passing MP4/audio
+contract does not establish lip-sync quality: inspect the avatar's mouth movement against the\nprovided speech before accepting the visual result. The smoke does not replace production\norchestration.
 Transport IDs, timings and artifact hashes from individual validation runs belong in Git history.
