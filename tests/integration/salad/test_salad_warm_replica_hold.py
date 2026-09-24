@@ -3,6 +3,7 @@ from pathlib import Path
 
 def test_qwen_image_phases_pin_replica_before_generation() -> None:
     prewarm = Path("scripts/salad/start_salad_optimized_prewarm.ps1").read_text(encoding="utf-8")
+    shared = Path("scripts/pipeline/_qwen_controlled.ps1").read_text(encoding="utf-8")
 
     assert "[switch]$HoldReadyReplica" in prewarm
     assert "$TargetMinReplicas = if ($HoldReadyReplica) { 1 } else { 0 }" in prewarm
@@ -15,18 +16,24 @@ def test_qwen_image_phases_pin_replica_before_generation() -> None:
     assert "restore_salad_scale_to_zero.ps1" in prewarm
     assert "start_salad_scale_to_zero.ps1" in prewarm
 
+    assert 'Service = "qwen_image_21"' in shared
+    assert "HoldReadyReplica = $true" in shared
+    assert "AllowScaleToZeroFallback = $true" in shared
+    assert "-Action Stop -Service qwen_image_21" in shared
+    assert "cleanup_salad_queue.ps1" in shared
+    assert "Qwen-Image-2.1 prewarm" in shared
+    assert shared.index("& $OptimizedPrewarm @PrewarmArguments") < shared.rindex(
+        "& python $RunnerScript @RunnerArguments"
+    )
+
     for runner_path, phase_runner in (
         (Path("scripts/pipeline/run_phase4_assets_controlled.ps1"), "run_phase4_assets.py"),
         (Path("scripts/pipeline/run_phase6_keyframes_controlled.ps1"), "run_phase6_keyframes.py"),
     ):
         runner = runner_path.read_text(encoding="utf-8")
-        assert 'Service = "qwen_image_21"' in runner
-        assert "HoldReadyReplica = $true" in runner
-        assert runner.index("start_salad_optimized_prewarm.ps1") < runner.index(phase_runner)
-        assert "-Action Stop -Service qwen_image_21" in runner
-        assert "cleanup_salad_queue.ps1" in runner
-        assert "AllowScaleToZeroFallback = $true" in runner
-        assert "Qwen-Image-2.1 prewarm" in runner
+        assert "_qwen_controlled.ps1" in runner
+        assert phase_runner in runner
+
 
 def test_phase8_holds_ready_ltx_replica_through_dispatch() -> None:
     runner = Path("scripts/pipeline/run_phase8_videos_controlled.ps1").read_text(
