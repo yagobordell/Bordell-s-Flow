@@ -3,7 +3,9 @@ param(
     [Parameter(Mandatory)][string]$PromptFile,
     [ValidateRange(0, 2147483647)][int]$Seed = 4242,
     [string]$EnvFile = ".env",
-    [string]$OutputDir = "data/output/deployment-validation/qwen-image-21-benchmark"
+    [string]$OutputDir = "data/output/deployment-validation/qwen-image-21-benchmark",
+    [switch]$UsePreparedImage,
+    [ValidateRange(1, 60)][int]$AllocatingTimeoutMinutes = 10
 )
 
 Set-StrictMode -Version Latest
@@ -98,12 +100,18 @@ $OwnsWorker = $false
 
 try {
     $OwnsWorker = $true
-    Write-Host "Building, publishing and applying Qwen image: $($Definition.image)"
-    & $Manager @Common -Action Prepare
-    if (-not $?) { throw "Qwen Prepare failed." }
+    if ($UsePreparedImage) {
+        . (Join-Path $PSScriptRoot "_salad_prepared_benchmark_worker.ps1")
+        Assert-SaladPreparedBenchmarkWorker -Group $Group -Definition $Definition
+    }
+    else {
+        Write-Host "Building, publishing and applying Qwen image: $($Definition.image)"
+        & $Manager @Common -Action Prepare
+        if (-not $?) { throw "Qwen Prepare failed." }
+    }
 
     Write-Host "Bootstrapping one protected RTX 5090 for all five generations."
-    & $Bootstrap @Common -TimeoutMinutes 60 -RunningNotReadyTimeoutMinutes 60
+    & $Bootstrap @Common -TimeoutMinutes 60 -RunningNotReadyTimeoutMinutes 60 -AllocatingTimeoutMinutes $AllocatingTimeoutMinutes
     if (-not $?) { throw "Qwen protected bootstrap failed." }
 
     Set-Location $RepoRoot
