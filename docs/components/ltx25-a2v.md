@@ -35,6 +35,12 @@ the shared replay/idempotency path.
 A2V and normal image-to-video share the same LTX service and resident model family. They do not require
 separate Salad groups.
 
+A2V uses the shared GPU retry budget (`DEFAULT_GPU_MAX_ATTEMPTS=5`). OOM, CUDA-device and
+cuDNN/SDPA failures remain retryable through the Postgres job state machine. Before a later
+attempt, the A2V runner invalidates its resident pipeline so the next worker claim rebuilds clean
+GPU state instead of reusing a potentially damaged model instance. Input/contract failures remain
+non-retryable.
+
 The worker-specific deployment contract is documented in [LTX 2.5 worker](ltx25-worker.md).
 
 ## Speech-driven avatar settings
