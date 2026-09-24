@@ -768,7 +768,7 @@ class DirectLTX25AudioToVideoBackend:
         self._mode_controller.activate("audio_to_video")
         fast = generation_profile == LTX_A2V_GENERATION_PROFILE
         transformer = (
-            self._model_files.shared.distilled_transformer
+            self._model_files.shared.transformer
             if fast
             else self._model_files.dev_transformer
         )
