@@ -91,6 +91,7 @@ def _config(
     project_max_replicas: int = 30,
     stage_max_replicas: int = 4,
     downscale_stable_polls: int = 1,
+    stage_cold_start_seconds: dict[str, float] | None = None,
 ) -> PredictiveAutoscalerConfig:
     return PredictiveAutoscalerConfig(
         enabled=True,
@@ -107,6 +108,7 @@ def _config(
         idle_deletion_cost=0,
         stage_max_replicas={stage: stage_max_replicas for stage in stages},
         fallback_runtime_seconds={stage: 60.0 for stage in stages},
+        stage_cold_start_seconds=stage_cold_start_seconds,
     )
 
 
@@ -247,3 +249,31 @@ def test_empty_global_queue_scales_replicas_to_zero() -> None:
     assert result.target_replicas == 0
     assert result.applied_replicas == 0
     assert client.replica_updates == [0]
+
+
+def test_stage_specific_cold_start_changes_capacity_estimate() -> None:
+    stages = ("qwen_image_21", "whisper")
+    config = _config(
+        stages,
+        stage_max_replicas=4,
+        stage_cold_start_seconds={
+            "qwen_image_21": 500.0,
+            "whisper": 0.0,
+        },
+    )
+
+    demands = build_global_demands(
+        rows_by_stage={
+            "qwen_image_21": _pending_rows(6),
+            "whisper": _pending_rows(6),
+        },
+        runtime_by_stage={
+            "qwen_image_21": 100.0,
+            "whisper": 100.0,
+        },
+        config=config,
+        now=datetime(2026, 9, 24, tzinfo=UTC),
+    )
+
+    assert demands["qwen_image_21"].ideal_replicas == 4
+    assert demands["whisper"].ideal_replicas == 1
