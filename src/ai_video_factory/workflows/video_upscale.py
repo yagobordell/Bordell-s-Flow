@@ -37,17 +37,17 @@ from ai_video_factory.workers.realesrgan import (
     realesrgan_application_job_id,
 )
 
-SOURCE_WIDTH = 1280
-SOURCE_HEIGHT = 720
-TARGET_WIDTH = 2560
-TARGET_HEIGHT = 1440
-UPSCALE_FPS = 24
-
 from ai_video_factory.workflows._video_jobs import (
     archive_manifest,
     download_verified_mp4,
     terminal_failure_detail as _terminal_failure_detail,
 )
+
+SOURCE_WIDTH = 1280
+SOURCE_HEIGHT = 720
+TARGET_WIDTH = 2560
+TARGET_HEIGHT = 1440
+UPSCALE_FPS = 24
 
 logger = logging.getLogger(__name__)
 
