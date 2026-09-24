@@ -364,6 +364,9 @@ function Update-ContainerGroup {
 function Assert-PreparedGroup {
     param([Parameter(Mandatory)][object]$Group, [Parameter(Mandatory)][string]$ResolvedImage)
     if ([string]$Group.container.image -ne $ResolvedImage) { throw "Salad did not activate expected image." }
+    if ([string]$Group.container.priority -ne [string]$Definition.priority) {
+        throw "Salad did not activate the expected container priority."
+    }
     if ([int]$Group.replicas -ne 0) { throw "Prepared group must remain at replicas=0." }
     if (Test-LegacyQueueAttachment -Group $Group) { throw "Legacy Salad queue attachment remains after Prepare." }
 }
