@@ -198,17 +198,23 @@ function Get-ActiveQueueJobs {
         $Response = Invoke-SaladRead `
             -Uri "$QueueUrl/jobs?page=$Page&page_size=25"
 
-        $Items = @(
-            if ($Response.PSObject.Properties.Name -contains "items") {
-                $Response.items
-            }
-            elseif ($Response.PSObject.Properties.Name -contains "jobs") {
-                $Response.jobs
-            }
-        )
+        if ($Response.PSObject.Properties.Name -contains "items") {
+            $RawJobs = $Response.items
+        }
+        elseif ($Response.PSObject.Properties.Name -contains "jobs") {
+            $RawJobs = $Response.jobs
+        }
+        else {
+            throw "Salad job listing omitted its items/jobs field; refusing an incomplete queue inventory."
+        }
+        $Items = @($RawJobs | Where-Object { $null -ne $_ })
 
         foreach ($Job in $Items) {
-            if ([string]$Job.status -in @("pending", "running")) {
+            $JobStatus = [string]$Job.status
+            if ($JobStatus -notin @("pending", "running", "succeeded", "cancelled", "failed")) {
+                throw "Salad job listing contained an unknown or missing status; refusing GPU allocation."
+            }
+            if ($JobStatus -in @("pending", "running")) {
                 $Active += $Job
             }
         }
@@ -274,6 +280,9 @@ $Headers = @{
 
 $Queue = Get-Queue
 $InitialQueueAttachment = Test-QueueAttachment -Queue $Queue
+if ($Queue.PSObject.Properties.Name -notcontains "current_queue_length") {
+    throw "Salad queue summary omitted current_queue_length; refusing GPU allocation."
+}
 $QueueSummaryLength = [int]$Queue.current_queue_length
 $QueueJobs = Get-ActiveQueueJobs
 if (-not [bool]$QueueJobs.complete) {
@@ -361,6 +370,9 @@ if ($null -eq $RemoteAutoscaler) {
 # Repeat the read-only queue check immediately before taking ownership: jobs may
 # have been submitted while a stopped residual replica was being normalized.
 $QueueBeforeAllocation = Get-Queue
+if ($QueueBeforeAllocation.PSObject.Properties.Name -notcontains "current_queue_length") {
+    throw "Salad queue recheck omitted current_queue_length; refusing GPU allocation."
+}
 $JobsBeforeAllocation = Get-ActiveQueueJobs
 if (-not [bool]$JobsBeforeAllocation.complete) {
     throw "Protected smoke could not completely recheck the queue before GPU allocation."

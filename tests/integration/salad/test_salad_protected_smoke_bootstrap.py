@@ -195,6 +195,9 @@ def test_bootstrap_uses_exhaustive_active_jobs_not_stale_queue_summary() -> None
     assert '"$QueueUrl/jobs?page=$Page&page_size=25"' in script
     assert '$Job.status -in @("pending", "running")' in script
     assert "$Items.Count -lt 25" in script
+    assert "Salad job listing omitted its items/jobs field" in script
+    assert "unknown or missing status" in script
+    assert "Salad queue summary omitted current_queue_length" in script
     assert "could not exhaustively enumerate" in script
     assert "requires no pending/running jobs before bootstrap" in script
     assert "Protected smoke found conflicting Salad queue state" in script
@@ -203,3 +206,31 @@ def test_bootstrap_uses_exhaustive_active_jobs_not_stale_queue_summary() -> None
     assert "$JobsBeforeAllocation = Get-ActiveQueueJobs" in script
     assert "Protected smoke queue changed or remains inconsistent" in script
     assert "contains $([int]$Queue.current_queue_length) job(s)" not in script
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell Core is unavailable")
+def test_bootstrap_rejects_malformed_job_inventory_before_gpu(tmp_path: Path) -> None:
+    import subprocess
+
+    helper = BOOTSTRAP.read_text(encoding="utf-8").split(
+        "function Get-ActiveQueueJobs", 1
+    )[1].split("function Format-ActiveQueueJobs", 1)[0]
+    source = (
+        "$ErrorActionPreference = 'Stop'\n"
+        "function Invoke-SaladRead { return [pscustomobject]@{ unexpected = @() } }\n"
+        "function Get-ActiveQueueJobs"
+        + helper
+        + "\ntry { $null = Get-ActiveQueueJobs; throw 'Missing inventory guard' }\n"
+        + "catch { if ($_.Exception.Message -notmatch 'omitted its items/jobs field') "
+        + "{ throw } }\n"
+    )
+    script = tmp_path / "malformed-queue.ps1"
+    script.write_text(source, encoding="utf-8")
+    result = subprocess.run(
+        ["pwsh", "-NoProfile", "-NonInteractive", "-File", str(script)],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
