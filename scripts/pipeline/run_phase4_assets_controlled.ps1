@@ -24,12 +24,12 @@ $Arguments = @{
     CacheAuditArguments = @($ReferencesFile)
     RunnerScript = (Join-Path $PSScriptRoot "run_phase4_assets.py")
     RunnerArguments = @(
-    $ReferencesFile,
-    "--poll-seconds", $PollSeconds,
-    "--pending-timeout-seconds", $PendingTimeoutSeconds,
-    "--timeout-seconds", $RunningTimeoutSeconds,
-    "--output-dir", $OutputDir,
-    "--metadata", $Metadata
+        $ReferencesFile,
+        "--poll-seconds", $PollSeconds,
+        "--pending-timeout-seconds", $PendingTimeoutSeconds,
+        "--timeout-seconds", $RunningTimeoutSeconds,
+        "--output-dir", $OutputDir,
+        "--metadata", $Metadata
     )
     PrewarmTimeoutMinutes = $PrewarmTimeoutMinutes
     NonInteractive = [bool]$NonInteractive
