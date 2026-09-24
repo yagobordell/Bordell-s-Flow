@@ -5,7 +5,9 @@ param(
     [string]$Prompt = "An elderly monk speaking calmly to the camera.",
     [ValidateRange(0, 2147483647)][int]$Seed = 4242,
     [string]$EnvFile = ".env",
-    [string]$OutputDir = "data/output/deployment-validation/ltx25-a2v-benchmark"
+    [string]$OutputDir = "data/output/deployment-validation/ltx25-a2v-benchmark",
+    [switch]$UsePreparedImage,
+    [ValidateRange(1, 60)][int]$AllocatingTimeoutMinutes = 10
 )
 
 Set-StrictMode -Version Latest
@@ -114,12 +116,21 @@ $Common = @{ Service = "ltx25"; EnvFile = $EnvFile; NonInteractive = $true }
 
 try {
     $OwnsWorker = $true
-    Write-Host "Building and publishing manifest image: $($Definition.image)"
-    & $Manager @Common -Action Prepare
-    if (-not $?) { throw "LTX Prepare failed." }
+    if ($UsePreparedImage) {
+        if ($null -eq $Group) {
+            throw "LTX has no prepared worker group; run Prepare before -UsePreparedImage."
+        }
+        . (Join-Path $PSScriptRoot "_salad_prepared_benchmark_worker.ps1")
+        Assert-SaladPreparedBenchmarkWorker -Group $Group -Definition $Definition
+    }
+    else {
+        Write-Host "Building and publishing manifest image: $($Definition.image)"
+        & $Manager @Common -Action Prepare
+        if (-not $?) { throw "LTX Prepare failed." }
+    }
 
     Write-Host "Starting one protected RTX 5090 worker for all five runs."
-    & $Bootstrap @Common -TimeoutMinutes 60 -RunningNotReadyTimeoutMinutes 60
+    & $Bootstrap @Common -TimeoutMinutes 60 -RunningNotReadyTimeoutMinutes 60 -AllocatingTimeoutMinutes $AllocatingTimeoutMinutes
     if (-not $?) { throw "LTX protected bootstrap failed." }
 
     for ($Index = 1; $Index -le 5; $Index++) {
