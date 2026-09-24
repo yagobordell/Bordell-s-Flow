@@ -116,7 +116,9 @@ def test_worker_manager_supports_env_file_and_unattended_deployment() -> None:
     script = WORKER_MANAGER.read_text(encoding="utf-8")
 
     assert '[string]$EnvFile = ".env"' in script
-    assert "function Import-EnvFile" in script
+    assert '. (Join-Path $PSScriptRoot "_env_file.ps1")' in script
+    loader = Path("scripts/salad/_env_file.ps1").read_text(encoding="utf-8")
+    assert "function Import-EnvFile" in loader
     assert "[switch]$NonInteractive" in script
     assert "$Name is missing and -NonInteractive was requested." in script
     assert "shared_required_environment" in script

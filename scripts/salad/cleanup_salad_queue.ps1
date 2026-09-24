@@ -56,20 +56,7 @@ function Get-SaladApiKey {
     return ([PSCredential]::new("salad-queue-cleanup", $SecureValue)).GetNetworkCredential().Password
 }
 
-function Get-HttpStatusCode {
-    param([Parameter(Mandatory)][object]$ErrorRecord)
-
-    $Response = $ErrorRecord.Exception.Response
-    if ($null -eq $Response) {
-        return $null
-    }
-    try {
-        return [int]$Response.StatusCode
-    }
-    catch {
-        return $null
-    }
-}
+. (Join-Path $PSScriptRoot "_http_status.ps1")
 
 function Test-TransientSaladFailure {
     param([Parameter(Mandatory)][object]$ErrorRecord)
