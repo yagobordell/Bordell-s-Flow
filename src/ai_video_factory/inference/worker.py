@@ -93,6 +93,7 @@ class InferenceWorker:
         runners: TaskRunnerRegistry,
         worker_id: str,
         temp_dir: Path,
+        salad_instance_id: str | None = None,
         lease_seconds: int = 90,
         heartbeat_seconds: int = 30,
         gpu_retry_cooldown_seconds: float = 60.0,
@@ -101,6 +102,7 @@ class InferenceWorker:
         self.repository = repository
         self.runners = runners
         self.worker_id = worker_id
+        self.salad_instance_id = str(salad_instance_id or "").strip() or None
         self.temp_dir = temp_dir
         self.lease_seconds = lease_seconds
         self.heartbeat_seconds = heartbeat_seconds
@@ -410,6 +412,11 @@ class InferenceWorker:
             logger.exception("failed to persist job failure for %s", request.job_id)
 
     def next_pending_request(self) -> InferenceJobRequest | None:
+        if (
+            self.salad_instance_id is not None
+            and self.repository.is_instance_draining(self.salad_instance_id)
+        ):
+            return None
         return self.repository.next_pending_request(self.runners.task_names)
 
     def ready(self) -> None:
