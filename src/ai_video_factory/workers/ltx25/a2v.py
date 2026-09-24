@@ -27,9 +27,9 @@ from ai_video_factory.inference.errors import (
 from ai_video_factory.inference.ports import LocalArtifact, LocalSidecarArtifact
 
 from .model import (
+    _CANONICAL_LANDSCAPE_SIZE,
     LTXModelFiles,
     LTXPipelineModeController,
-    _CANONICAL_LANDSCAPE_SIZE,
     _crop_video_to_requested,
     _fit_image_with_edge_padding,
     _force_diffvae_eager_sdpa,

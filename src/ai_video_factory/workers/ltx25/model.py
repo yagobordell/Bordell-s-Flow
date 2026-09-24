@@ -12,13 +12,13 @@ from typing import Any, Protocol
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from ai_video_factory.inference.contracts import InferenceJobRequest
-from ai_video_factory.inference.errors import ModelBootstrapPendingError
-from ai_video_factory.inference.ports import LocalArtifact
 from ai_video_factory.image_contracts import (
     QWEN_IMAGE_21_PRODUCTION_HEIGHT,
     QWEN_IMAGE_21_PRODUCTION_WIDTH,
 )
+from ai_video_factory.inference.contracts import InferenceJobRequest
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
+from ai_video_factory.inference.ports import LocalArtifact
 
 LTX_VIDEO_TASK = "video.ltx25.generate"
 LTX_GENERATION_PROFILE = "ltx25-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
