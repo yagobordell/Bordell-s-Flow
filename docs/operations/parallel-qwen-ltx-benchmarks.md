@@ -79,3 +79,31 @@ memory/CPU/storage usage before proposing a different manifest profile.
 Salad bills for running instances, not allocation, image download or
 container cold start; two simultaneous *running* RTX 5090s incur two
 instances' charges.
+
+
+## Interrupted preparation: stopped group with one replica
+
+Salad can finish a container image upgrade with `pending_change=false` while
+the group still reports a residual desired replica (`status=stopped`,
+`replicas=1`). The manager used to consider the follow-up replica PATCH
+settled as soon as `pending_change` became false, even if `replicas` had
+not converged to zero. This produced a premature Prepare failure after a
+successful image build, push and version upgrade.
+
+The manager's Prepare and Stop cleanup now wait for **all three** state
+conditions (stopped, replicas=0 and pending_change=false) after the
+zero-replica PATCH; they poll for at most 180 seconds and fail with current
+state if Salad does not converge. The wait aborts immediately if another
+workflow has started the group. The parallel preparer checks both groups
+for stopped/no-pending first, then uses the existing Stop lifecycle for
+a stopped group with a residual replica before inspecting immutable
+published image digests. It never rebuilds an already published image just
+because a previous Prepare aborted in the normalization phase.
+
+To resume after the September 24 LTX v9 preparation failure, first check
+both groups are stopped and have no pending change, update the checkout
+to PR #204, and rerun `scripts/smoke/prepare_parallel_benchmarks.ps1`.
+If either group is still running or updating, do not run the preparer.
+If Salad still refuses zero replicas after the bounded wait, inspect the
+remote group and queue; do not recreate the group, retry builds, or launch
+GPU benchmarks while a residual replica remains.
