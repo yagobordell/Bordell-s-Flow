@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import socket
 import threading
 import time
 from collections.abc import Mapping
@@ -18,7 +19,7 @@ from ai_video_factory.image_contracts import (
 )
 from ai_video_factory.inference.contracts import InferenceJobRequest
 from ai_video_factory.inference.errors import ModelBootstrapPendingError
-from ai_video_factory.inference.ports import LocalArtifact
+from ai_video_factory.inference.ports import LocalArtifact, LocalSidecarArtifact
 
 QWEN_IMAGE_21_REFERENCE_TASK = "image.qwen_image_21.reference"
 QWEN_IMAGE_21_KEYFRAME_TASK = "image.qwen_image_21.keyframe"
@@ -29,6 +30,7 @@ QWEN_IMAGE_21_DEFAULT_STEPS = 40
 QWEN_IMAGE_21_TRUE_CFG_SCALE = 1.0
 QWEN_IMAGE_21_USE_KV_CACHE = True
 QWEN_IMAGE_21_GENERATION_PROFILE = "qwen-image-2.1-1280x736-40step-kv-v3"
+QWEN_IMAGE_21_BENCHMARK_PROFILE = "qwen-image-2.1-1536x864-40step-kv-benchmark-v1"
 QWEN_IMAGE_21_REQUIRED_MODEL_FILES = (
     "model_index.json",
     "processor/tokenizer.json",
@@ -56,7 +58,10 @@ class QwenImage21Parameters(BaseModel):
 
     @model_validator(mode="after")
     def validate_qwen_image_21(self) -> Self:
-        if self.generation_profile != QWEN_IMAGE_21_GENERATION_PROFILE:
+        if self.generation_profile not in (
+            QWEN_IMAGE_21_GENERATION_PROFILE,
+            QWEN_IMAGE_21_BENCHMARK_PROFILE,
+        ):
             raise ValueError("Unexpected Qwen-Image-2.1 generation profile")
         if self.model_id != QWEN_IMAGE_21_MODEL_ID:
             raise ValueError(f"Qwen worker requires model {QWEN_IMAGE_21_MODEL_ID!r}")
@@ -72,13 +77,15 @@ class QwenImage21Parameters(BaseModel):
                 f"Qwen-Image-2.1 width and height must be divisible by "
                 f"{QWEN_IMAGE_21_DIMENSION_MULTIPLE}"
             )
-        if (self.width, self.height) != (
-            QWEN_IMAGE_21_PRODUCTION_WIDTH,
-            QWEN_IMAGE_21_PRODUCTION_HEIGHT,
-        ):
+        expected_size = (
+            (1536, 864)
+            if self.generation_profile == QWEN_IMAGE_21_BENCHMARK_PROFILE
+            else (QWEN_IMAGE_21_PRODUCTION_WIDTH, QWEN_IMAGE_21_PRODUCTION_HEIGHT)
+        )
+        if (self.width, self.height) != expected_size:
             raise ValueError(
-                "Qwen-Image-2.1 production generation is fixed at "
-                f"{QWEN_IMAGE_21_PRODUCTION_SIZE}"
+                f"Qwen-Image-2.1 profile {self.generation_profile!r} requires "
+                f"{expected_size[0]}x{expected_size[1]}"
             )
         if self.num_inference_steps != QWEN_IMAGE_21_DEFAULT_STEPS:
             raise ValueError(
@@ -149,10 +156,11 @@ class QwenImage21Backend:
             if self._pipeline is None:
                 raise RuntimeError("Qwen-Image-2.1 runtime has not been prepared")
 
-    def generate(self, *, parameters: QwenImage21Parameters, output_path: Path) -> None:
+    def generate(self, *, parameters: QwenImage21Parameters, output_path: Path) -> dict[str, Any]:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.unlink(missing_ok=True)
         with self._lock:
+            pipeline_reused = self._pipeline is not None
             pipeline = self._get_or_build_pipeline()
             torch = self._torch
             if torch is None:
@@ -183,19 +191,38 @@ class QwenImage21Backend:
                 image = images[0]
                 if image.size != (parameters.width, parameters.height):
                     raise RuntimeError("Qwen-Image-2.1 returned unexpected image dimensions")
+                save_started = time.monotonic()
                 image.save(output_path, format="PNG")
+                png_save_seconds = time.monotonic() - save_started
                 elapsed = time.monotonic() - started
                 peak_allocated = torch.cuda.max_memory_allocated() if is_cuda else 0
                 peak_reserved = torch.cuda.max_memory_reserved() if is_cuda else 0
                 print(
                     "QWEN_IMAGE_21_INFERENCE_METRIC "
                     f"elapsed_seconds={elapsed:.3f} inference_seconds={inference_seconds:.3f} "
-                    f"encode_seconds={elapsed - inference_seconds:.3f} seed={parameters.seed} "
+                    f"encode_seconds={png_save_seconds:.3f} seed={parameters.seed} "
                     f"width={parameters.width} height={parameters.height} "
                     f"steps={parameters.num_inference_steps} "
                     f"peak_allocated_bytes={peak_allocated} peak_reserved_bytes={peak_reserved}",
                     flush=True,
                 )
+                return {
+                    "schema_version": "1",
+                    "generation_profile": parameters.generation_profile,
+                    "model_revision": parameters.model_revision,
+                    "width": parameters.width,
+                    "height": parameters.height,
+                    "num_inference_steps": parameters.num_inference_steps,
+                    "seed": parameters.seed,
+                    "memory_mode": os.environ.get("QWEN_IMAGE_21_MEMORY_MODE", "int8_cuda"),
+                    "worker_id": f"{socket.gethostname()}-{os.getpid()}",
+                    "pipeline_reused": pipeline_reused,
+                    "inference_seconds": inference_seconds,
+                    "png_save_seconds": png_save_seconds,
+                    "total_elapsed_seconds": elapsed,
+                    "peak_vram_allocated_bytes": peak_allocated,
+                    "peak_vram_reserved_bytes": peak_reserved,
+                }
             finally:
                 del result
                 # Keep the CUDA caching allocator warm between requests.
@@ -302,9 +329,29 @@ class QwenImage21ImageTaskRunner:
             raise ValueError("Qwen image tasks do not accept object inputs")
         if request.output.content_type != "image/png":
             raise ValueError("Qwen image output must be image/png")
+        sidecars = request.sidecar_outputs or {}
+        if sidecars and (
+            set(sidecars) != {"metadata"}
+            or sidecars["metadata"].content_type != "application/json"
+        ):
+            raise ValueError("Qwen benchmark requires one JSON metadata sidecar")
         parameters = QwenImage21Parameters.model_validate(request.parameters)
         output = work_dir / "image.png"
-        self._backend.generate(parameters=parameters, output_path=output)
+        metrics = self._backend.generate(parameters=parameters, output_path=output)
         if not output.is_file() or output.stat().st_size <= 8:
             raise RuntimeError("Qwen-Image-2.1 produced no usable PNG output")
-        return LocalArtifact(path=output, content_type="image/png")
+        if not sidecars:
+            return LocalArtifact(path=output, content_type="image/png")
+        metadata_path = work_dir / "metadata.json"
+        metadata_path.write_text(
+            json.dumps(metrics, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return LocalArtifact(
+            path=output,
+            content_type="image/png",
+            sidecars=(
+                LocalSidecarArtifact(
+                    name="metadata", path=metadata_path, content_type="application/json"
+                ),
+            ),
+        )
