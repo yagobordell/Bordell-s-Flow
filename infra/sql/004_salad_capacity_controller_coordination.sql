@@ -18,4 +18,18 @@ COMMENT ON COLUMN gpu.capacity_controller_state.controller_id IS
 COMMENT ON COLUMN gpu.capacity_controller_state.last_reconcile_at IS
     'Time of the latest successful full Salad capacity reconciliation.';
 
+CREATE TABLE IF NOT EXISTS gpu.capacity_drains (
+    service text NOT NULL,
+    instance_id text NOT NULL,
+    requested_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL,
+    PRIMARY KEY (service, instance_id)
+);
+
+CREATE INDEX IF NOT EXISTS capacity_drains_expires_idx
+    ON gpu.capacity_drains (expires_at);
+
+COMMENT ON TABLE gpu.capacity_drains IS
+    'Short-lived drain intents that stop selected Salad instances from claiming new jobs.';
+
 COMMIT;
