@@ -97,7 +97,8 @@ def test_qwen_salad_manifest_contract() -> None:
     service = manifest["services"]["qwen_image_21"]
 
     assert service["priority"] == "high"
-    assert service["image"].endswith("qwen-image-2.1-int8-1280x736-v5")
+    assert service["image"].endswith("qwen-image-2.1-int8-1280x736-postgres-v6")
+    assert manifest["stack"]["shared_environment"]["INFERENCE_WORKER_POLL_JOBS"] == "true"
     assert service["environment"]["QWEN_IMAGE_21_MEMORY_MODE"] == "int8_cuda"
     assert service["resources"]["gpu_class_names"] == ["RTX 5090 (32 GB)"]
     assert service["environment"]["QWEN_IMAGE_21_MODEL_REPOSITORY"] == QWEN_IMAGE_21_MODEL_ID
@@ -176,3 +177,20 @@ def test_qwen_bootstrap_validates_required_snapshot_files() -> None:
     assert "/usr/local/bin/network-preflight" in script
     assert 'download_args+=(--token "${HF_TOKEN}")' not in script
 
+
+def test_qwen_worker_image_contains_postgres_polling_runtime() -> None:
+    runtime = Path("src/ai_video_factory/workers/qwen_image_21/runtime.py").read_text(
+        encoding="utf-8"
+    )
+    entrypoint = Path("docker/workers/common/entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+    dockerfile = Path("docker/workers/qwen-image-2.1/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+
+    assert "poll_jobs_from_repository=runtime_settings.worker_poll_jobs" in runtime
+    assert "polling canonical Postgres jobs" in entrypoint
+    assert "queue transport disabled" not in entrypoint
+    assert "COPY src /opt/factory/src" in dockerfile
+    assert "COPY docker/workers/common/entrypoint.sh" in dockerfile
