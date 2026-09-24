@@ -136,6 +136,72 @@ class PostgresAutoscalerStore:
             ).fetchall()
         return [float(row["runtime_seconds"]) for row in rows]
 
+    def list_draining_instances(self, *, stage: str) -> dict[str, datetime]:
+        with self._pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT instance_id, requested_at
+                FROM gpu.capacity_drains
+                WHERE service = %s
+                  AND expires_at > now()
+                """,
+                (stage,),
+            ).fetchall()
+        return {
+            str(row["instance_id"]): _parse_datetime(row["requested_at"]) or datetime.now(UTC)
+            for row in rows
+        }
+
+    def mark_draining_instances(
+        self,
+        *,
+        stage: str,
+        instance_ids: tuple[str, ...],
+        ttl_seconds: float,
+    ) -> None:
+        if not instance_ids:
+            return
+        with self._pool.connection() as connection, connection.transaction():
+            for instance_id in instance_ids:
+                connection.execute(
+                    """
+                    INSERT INTO gpu.capacity_drains (
+                        service,
+                        instance_id,
+                        requested_at,
+                        expires_at
+                    ) VALUES (%s, %s, now(), now() + (%s * interval '1 second'))
+                    ON CONFLICT (service, instance_id) DO UPDATE
+                    SET expires_at = EXCLUDED.expires_at
+                    """,
+                    (stage, instance_id, ttl_seconds),
+                )
+
+    def clear_draining_instances(
+        self,
+        *,
+        stage: str,
+        keep_instance_ids: tuple[str, ...] = (),
+    ) -> None:
+        with self._pool.connection() as connection:
+            if keep_instance_ids:
+                connection.execute(
+                    """
+                    DELETE FROM gpu.capacity_drains
+                    WHERE service = %s
+                      AND (
+                          expires_at <= now()
+                          OR NOT (instance_id = ANY(%s))
+                      )
+                    """,
+                    (stage, list(keep_instance_ids)),
+                )
+            else:
+                connection.execute(
+                    "DELETE FROM gpu.capacity_drains WHERE service = %s",
+                    (stage,),
+                )
+
     def ping(self) -> None:
         with self._pool.connection() as connection:
             connection.execute("SELECT 1").fetchone()
