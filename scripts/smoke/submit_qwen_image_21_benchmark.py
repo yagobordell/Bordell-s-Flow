@@ -141,7 +141,7 @@ def main() -> None:
     args = parse_args()
     if not 0 <= args.seed <= 2_147_483_647:
         raise ValueError("Seed must be between 0 and 2147483647")
-    prompt = args.prompt_file.read_text(encoding="utf-8").strip()
+    prompt = args.prompt_file.read_text(encoding="utf-8-sig").strip()
     if not prompt:
         raise ValueError("Benchmark prompt file is empty")
     manifest = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
