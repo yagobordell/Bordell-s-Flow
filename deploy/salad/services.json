@@ -390,7 +390,7 @@
       "group_name": "ai-video-factory-qwen-image-21-worker",
       "queue_name": "ai-video-factory-qwen-image-21-jobs",
       "dockerfile": "docker/workers/qwen-image-2.1/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:qwen-image-2.1-int8-1280x736-v2",
+      "image": "docker.io/yagobordell/ai-video-factory:qwen-image-2.1-int8-1280x736-v3",
       "priority": "high",
       "resources": {
         "cpu": 8,
