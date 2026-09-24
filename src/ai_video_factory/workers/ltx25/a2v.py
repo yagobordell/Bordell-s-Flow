@@ -26,8 +26,8 @@ from .model import (
     LTXModelFiles,
     LTXPipelineModeController,
     _crop_video_to_requested,
-    _force_diffvae_eager_sdpa,
     _fit_image_with_edge_padding,
+    _force_diffvae_eager_sdpa,
     _pipeline_dimensions,
 )
 

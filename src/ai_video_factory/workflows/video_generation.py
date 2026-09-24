@@ -30,14 +30,14 @@ from ai_video_factory.providers.job_queue import (
     TransientQueueError,
 )
 from ai_video_factory.workers.ltx25.jobs import ltx_video_application_job_id
-from ai_video_factory.workers.qwen_image_21 import (
-    QWEN_IMAGE_21_PRODUCTION_HEIGHT,
-    QWEN_IMAGE_21_PRODUCTION_WIDTH,
-)
 from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
     LTX_VIDEO_TASK,
     ltx_num_frames_for_duration,
+)
+from ai_video_factory.workers.qwen_image_21 import (
+    QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+    QWEN_IMAGE_21_PRODUCTION_WIDTH,
 )
 from ai_video_factory.workflows._video_jobs import (
     archive_manifest,
