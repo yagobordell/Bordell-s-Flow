@@ -61,7 +61,9 @@ attachments and zero replicas.
 The command waits until the group is running, the change has settled and the observed replica count
 matches the request.
 
-There is no queue-triggered autoscaling. The caller owns the capacity decision.
+There is no Salad Job Queue autoscaling. In production, the singleton Postgres-elected Capacity
+Controller owns replica decisions. Explicit `Start` is reserved for isolated smoke tests and
+operator intervention when the global controller is intentionally not managing the service.
 
 ## Stop
 
@@ -72,7 +74,8 @@ There is no queue-triggered autoscaling. The caller owns the capacity decision.
 ./scripts/salad/manage_salad_worker.ps1 -Action Stop -Service ltx25 -NonInteractive
 ```
 
-The full pipeline runs a final stack stop even after failures.
+Normal production pipelines never run a project-wide stop. The global Capacity Controller observes
+aggregate Postgres demand and owns scale-to-zero. Manual `Stop` remains an operator/smoke command.
 
 ## Status
 

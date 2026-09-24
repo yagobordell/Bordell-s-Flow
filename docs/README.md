@@ -24,6 +24,7 @@ old image digests and retired implementation handoffs belong in Git history.
 
 - [Production runner](operations/production-runner.md)
 - [Salad stack deployment](operations/salad-stack-deployment.md)
+- [Salad Capacity Controller](operations/salad-capacity-controller.md)
 - [Salad startup performance](operations/salad-startup-performance.md)
 - [Deployment validation](operations/deployment-validation.md)
 

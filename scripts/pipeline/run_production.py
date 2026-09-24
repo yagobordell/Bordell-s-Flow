@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from ai_video_factory.config import settings
+from ai_video_factory.inference.capacity_controller import read_capacity_controller_health
 from ai_video_factory.workflows.production_runner import (
     PRODUCTION_STAGE_NAMES,
     ProductionRunner,
@@ -15,6 +16,57 @@ from ai_video_factory.workflows.production_runner import (
     SubprocessStageExecutor,
     build_production_stages,
 )
+
+
+def _autoscaler_enabled() -> bool:
+    return os.getenv("SALAD_AUTOSCALER_ENABLED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _positive_float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    value = default if raw is None or not raw.strip() else float(raw)
+    if value <= 0:
+        raise RuntimeError(f"{name} must be positive")
+    return value
+
+
+def _capacity_health_check():
+    if not _autoscaler_enabled():
+        return None
+
+    postgres_dsn = os.getenv("POSTGRES_DSN", "").strip()
+    if not postgres_dsn:
+        raise RuntimeError(
+            "POSTGRES_DSN is required while the global Salad capacity controller is enabled"
+        )
+    max_heartbeat_age = _positive_float_env(
+        "SALAD_CAPACITY_CONTROLLER_MAX_HEARTBEAT_AGE_SECONDS",
+        120.0,
+    )
+    max_reconcile_age = _positive_float_env(
+        "SALAD_CAPACITY_CONTROLLER_MAX_RECONCILE_AGE_SECONDS",
+        120.0,
+    )
+
+    def check() -> None:
+        health = read_capacity_controller_health(
+            postgres_dsn,
+            max_heartbeat_age_seconds=max_heartbeat_age,
+            max_reconcile_age_seconds=max_reconcile_age,
+        )
+        if not health.healthy:
+            raise RuntimeError(
+                "Salad capacity controller is unhealthy: "
+                f"controller_id={health.controller_id or '<none>'} "
+                f"status={health.status or '<none>'} reason={health.reason}"
+            )
+
+    return check
 
 
 class OptimizedGpuStageExecutor:
@@ -35,13 +87,7 @@ class OptimizedGpuStageExecutor:
         self._default = SubprocessStageExecutor(repo_root=repo_root)
 
     def __call__(self, stage: ProductionStage) -> None:
-        autoscaler_enabled = os.getenv("SALAD_AUTOSCALER_ENABLED", "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
-        if autoscaler_enabled:
+        if _autoscaler_enabled():
             self._default(stage)
             return
 
@@ -242,6 +288,7 @@ def main() -> None:
     )
     max_workers = 1 if args.serial else args.max_parallel_stages
     max_gpu_stages = 1 if args.serial else args.max_parallel_gpu_stages
+    capacity_health_check = _capacity_health_check()
     runner = ProductionRunner(
         stages,
         manifest_path=manifest_path,
@@ -254,6 +301,8 @@ def main() -> None:
         ),
         max_workers=max_workers,
         max_gpu_stages=max_gpu_stages,
+        health_check=capacity_health_check,
+        health_check_interval_seconds=15.0,
     )
 
     if args.plan:

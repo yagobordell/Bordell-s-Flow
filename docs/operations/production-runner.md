@@ -1,7 +1,7 @@
 # Production runner
 
-The supported end-to-end path accepts a finished script, reuses valid artifacts, starts GPU workers
-only when needed and cleans them up on success or failure.
+The supported end-to-end path accepts a finished script, reuses valid artifacts and submits GPU
+work to Postgres. A separate long-lived Salad Capacity Controller owns all shared replica changes.
 
 ## Run
 
@@ -12,8 +12,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
     -NonInteractive
 ```
 
-The runner performs preflight, the resumable production DAG, Phase 9 composition, final validation,
-worker shutdown and stable zero-replica verification.
+The runner performs preflight, verifies that the global Capacity Controller is healthy, runs the
+resumable production DAG, and continuously re-checks controller health while stages are active.
+Phase 9 remains local composition. The individual video run never stops project-wide GPU capacity.
 
 ## Active DAG
 
@@ -82,5 +83,6 @@ Primary output:
 data/output/phase9/final_video.mp4
 ```
 
-The outer wrapper always attempts cleanup after a failure. A production run is not operationally
-complete until project workers are stopped and replicas return to stable zero.
+Replica cleanup belongs exclusively to the global Capacity Controller. When all Postgres demand is
+gone, the controller converges the affected groups to zero. This prevents one video finishing from
+stopping GPUs that are still serving another concurrent video.

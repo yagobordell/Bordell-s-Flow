@@ -117,6 +117,13 @@ def build_salad_capacity_runtime(
         )
 
     config = load_predictive_autoscaler_config(stage_bindings=tuple(bindings.values()))
+    total_stage_capacity = sum(config.stage_max_replicas.values())
+    if config.project_max_replicas >= total_stage_capacity:
+        logger(
+            "Warning: SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS="
+            f"{config.project_max_replicas} does not constrain the configured "
+            f"per-service maximum of {total_stage_capacity} replicas."
+        )
     store = PostgresAutoscalerStore(postgres_dsn)
     autoscaler = PredictiveSaladAutoscaler(
         config=config,

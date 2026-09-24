@@ -41,6 +41,9 @@ class PredictiveAutoscalerConfig:
     idle_deletion_cost: int
     stage_max_replicas: dict[str, int]
     fallback_runtime_seconds: dict[str, float]
+    stage_cold_start_seconds: dict[str, float] | None = None
+    drain_grace_seconds: float = 5.0
+    drain_ttl_seconds: float = 120.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +136,72 @@ class PostgresAutoscalerStore:
             ).fetchall()
         return [float(row["runtime_seconds"]) for row in rows]
 
+    def list_draining_instances(self, *, stage: str) -> dict[str, datetime]:
+        with self._pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT instance_id, requested_at
+                FROM gpu.capacity_drains
+                WHERE service = %s
+                  AND expires_at > now()
+                """,
+                (stage,),
+            ).fetchall()
+        return {
+            str(row["instance_id"]): _parse_datetime(row["requested_at"]) or datetime.now(UTC)
+            for row in rows
+        }
+
+    def mark_draining_instances(
+        self,
+        *,
+        stage: str,
+        instance_ids: tuple[str, ...],
+        ttl_seconds: float,
+    ) -> None:
+        if not instance_ids:
+            return
+        with self._pool.connection() as connection, connection.transaction():
+            for instance_id in instance_ids:
+                connection.execute(
+                    """
+                    INSERT INTO gpu.capacity_drains (
+                        service,
+                        instance_id,
+                        requested_at,
+                        expires_at
+                    ) VALUES (%s, %s, now(), now() + (%s * interval '1 second'))
+                    ON CONFLICT (service, instance_id) DO UPDATE
+                    SET expires_at = EXCLUDED.expires_at
+                    """,
+                    (stage, instance_id, ttl_seconds),
+                )
+
+    def clear_draining_instances(
+        self,
+        *,
+        stage: str,
+        keep_instance_ids: tuple[str, ...] = (),
+    ) -> None:
+        with self._pool.connection() as connection:
+            if keep_instance_ids:
+                connection.execute(
+                    """
+                    DELETE FROM gpu.capacity_drains
+                    WHERE service = %s
+                      AND (
+                          expires_at <= now()
+                          OR NOT (instance_id = ANY(%s))
+                      )
+                    """,
+                    (stage, list(keep_instance_ids)),
+                )
+            else:
+                connection.execute(
+                    "DELETE FROM gpu.capacity_drains WHERE service = %s",
+                    (stage,),
+                )
+
     def ping(self) -> None:
         with self._pool.connection() as connection:
             connection.execute("SELECT 1").fetchone()
@@ -146,8 +215,14 @@ def load_predictive_autoscaler_config(
     stage_bindings: tuple[AutoscalerServiceBinding, ...],
 ) -> PredictiveAutoscalerConfig:
     project_max = _int_env("SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS", 30, minimum=1)
+    cold_start_seconds = _float_env(
+        "SALAD_AUTOSCALER_COLD_START_SECONDS",
+        180.0,
+        minimum=0.0,
+    )
     stage_max: dict[str, int] = {}
     fallback_runtime: dict[str, float] = {}
+    stage_cold_start: dict[str, float] = {}
     for binding in stage_bindings:
         configured_max = _int_env(
             f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_MAX_REPLICAS",
@@ -160,6 +235,11 @@ def load_predictive_autoscaler_config(
             binding.fallback_runtime_seconds,
             minimum=1.0,
         )
+        stage_cold_start[binding.workload] = _float_env(
+            f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_COLD_START_SECONDS",
+            cold_start_seconds,
+            minimum=0.0,
+        )
     return PredictiveAutoscalerConfig(
         enabled=_bool_env("SALAD_AUTOSCALER_ENABLED", default=False),
         project_max_replicas=project_max,
@@ -169,11 +249,7 @@ def load_predictive_autoscaler_config(
             minimum=1.0,
         )
         * 60.0,
-        cold_start_seconds=_float_env(
-            "SALAD_AUTOSCALER_COLD_START_SECONDS",
-            180.0,
-            minimum=0.0,
-        ),
+        cold_start_seconds=cold_start_seconds,
         target_utilization=_bounded_float_env(
             "SALAD_AUTOSCALER_TARGET_UTILIZATION",
             0.85,
@@ -218,6 +294,17 @@ def load_predictive_autoscaler_config(
         ),
         stage_max_replicas=stage_max,
         fallback_runtime_seconds=fallback_runtime,
+        stage_cold_start_seconds=stage_cold_start,
+        drain_grace_seconds=_float_env(
+            "SALAD_AUTOSCALER_DRAIN_GRACE_SECONDS",
+            5.0,
+            minimum=0.0,
+        ),
+        drain_ttl_seconds=_float_env(
+            "SALAD_AUTOSCALER_DRAIN_TTL_SECONDS",
+            120.0,
+            minimum=5.0,
+        ),
     )
 
 
@@ -291,6 +378,7 @@ class PredictiveSaladAutoscaler:
             target = targets[stage]
             if target >= current[stage]:
                 self._downscale_candidates.pop(stage, None)
+                self.store.clear_draining_instances(stage=stage)
                 continue
             stable_count = self._record_downscale_candidate(stage, target)
             if stable_count < self.config.downscale_stable_polls:
@@ -299,9 +387,10 @@ class PredictiveSaladAutoscaler:
                 target,
                 current[stage] - self.config.max_downscale_per_poll,
             )
-            protected, reason = self._protect_running_instances(
+            protected, reason = self._prepare_drained_downscale(
                 stage=stage,
                 rows=list(demands[stage].rows),
+                remove_count=current[stage] - applied_target,
             )
             if not protected:
                 results[stage] = AutoscaleResult(
@@ -361,36 +450,75 @@ class PredictiveSaladAutoscaler:
         self._downscale_candidates[stage] = (target, count)
         return count
 
-    def _protect_running_instances(
+    def _prepare_drained_downscale(
         self,
         *,
         stage: str,
         rows: list[dict[str, object]],
+        remove_count: int,
     ) -> tuple[bool, str]:
+        if remove_count <= 0:
+            return True, "no_downscale_required"
+
         running_worker_ids = {
             str(row.get("worker_id") or "").strip()
             for row in rows
             if str(row.get("status") or "").strip() == "running"
             and str(row.get("worker_id") or "").strip()
         }
-        if not running_worker_ids:
-            return True, "no_running_jobs"
         try:
             instances = self.clients[stage].list_container_group_instances()
             matched_worker_ids: set[str] = set()
+            active_instance_ids: set[str] = set()
+            instance_by_id: dict[str, dict[str, object]] = {}
             for instance in instances:
                 instance_id = str(instance.get("id") or "").strip()
                 if not instance_id:
                     continue
+                instance_by_id[instance_id] = instance
                 instance_worker_ids = {
                     worker_id for worker_id in running_worker_ids if instance_id in worker_id
                 }
-                is_active = bool(instance_worker_ids)
-                matched_worker_ids.update(instance_worker_ids)
+                if instance_worker_ids:
+                    active_instance_ids.add(instance_id)
+                    matched_worker_ids.update(instance_worker_ids)
+
+            if matched_worker_ids != running_worker_ids:
+                return False, "active_instance_mapping_incomplete"
+
+            idle_instance_ids = [
+                instance_id
+                for instance_id in instance_by_id
+                if instance_id not in active_instance_ids
+            ]
+            if len(idle_instance_ids) < remove_count:
+                return False, "insufficient_idle_instances"
+
+            existing_drains = self.store.list_draining_instances(stage=stage)
+            idle_instance_ids.sort(
+                key=lambda instance_id: (
+                    instance_id not in existing_drains,
+                    _optional_int(instance_by_id[instance_id].get("deletion_cost"))
+                    or 0,
+                    instance_id,
+                )
+            )
+            draining_ids = tuple(idle_instance_ids[:remove_count])
+            self.store.mark_draining_instances(
+                stage=stage,
+                instance_ids=draining_ids,
+                ttl_seconds=self.config.drain_ttl_seconds,
+            )
+            self.store.clear_draining_instances(
+                stage=stage,
+                keep_instance_ids=draining_ids,
+            )
+
+            for instance_id, instance in instance_by_id.items():
                 desired_cost = (
-                    self.config.active_deletion_cost
-                    if is_active
-                    else self.config.idle_deletion_cost
+                    self.config.idle_deletion_cost
+                    if instance_id in draining_ids
+                    else self.config.active_deletion_cost
                 )
                 current_cost = _optional_int(instance.get("deletion_cost"))
                 if current_cost != desired_cost:
@@ -398,15 +526,25 @@ class PredictiveSaladAutoscaler:
                         instance_id,
                         desired_cost,
                     )
-            if matched_worker_ids != running_worker_ids:
-                return False, "active_instance_mapping_incomplete"
+
+            observed_at = datetime.now(UTC)
+            drain_ready = all(
+                instance_id in existing_drains
+                and (
+                    observed_at - existing_drains[instance_id]
+                ).total_seconds()
+                >= self.config.drain_grace_seconds
+                for instance_id in draining_ids
+            )
+            if not drain_ready:
+                return False, "drain_grace_pending"
         except Exception as error:
             self.logger(
-                f"Autoscaler {stage}: could not protect deletion_cost; "
+                f"Autoscaler {stage}: could not establish a safe drain; "
                 f"downscale deferred ({error})."
             )
-            return False, "deletion_cost_protection_failed"
-        return True, "active_instances_protected"
+            return False, "drain_protection_failed"
+        return True, "drained_instances_ready"
 
     def _log_result(self, result: AutoscaleResult) -> None:
         demand = result.demand
@@ -445,12 +583,18 @@ def build_global_demands(
     now: datetime | None = None,
 ) -> dict[str, StageDemand]:
     observed_at = now or datetime.now(UTC)
-    available_drain_seconds = max(
-        config.target_drain_seconds - config.cold_start_seconds,
-        60.0,
-    )
     demands: dict[str, StageDemand] = {}
     for stage, rows in rows_by_stage.items():
+        cold_start_seconds = config.cold_start_seconds
+        if config.stage_cold_start_seconds is not None:
+            cold_start_seconds = config.stage_cold_start_seconds.get(
+                stage,
+                cold_start_seconds,
+            )
+        available_drain_seconds = max(
+            config.target_drain_seconds - cold_start_seconds,
+            60.0,
+        )
         expected_runtime = max(float(runtime_by_stage[stage]), 1.0)
         status_counts = Counter(str(row.get("status") or "unknown") for row in rows)
         run_counts = Counter(str(row.get("run_id") or "<unknown>") for row in rows)

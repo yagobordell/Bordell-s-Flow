@@ -20,6 +20,7 @@ class FakeStore:
     ) -> None:
         self.rows = rows
         self.runtimes = runtimes
+        self.drains: dict[str, dict[str, datetime]] = {}
 
     def list_stage_jobs(self, *, binding, statuses):
         return [
@@ -30,6 +31,39 @@ class FakeStore:
 
     def list_recent_stage_runtime_seconds(self, *, binding, limit):
         return list(self.runtimes.get(binding.workload, []))[:limit]
+
+    def list_draining_instances(self, *, stage: str) -> dict[str, datetime]:
+        return dict(self.drains.get(stage, {}))
+
+    def mark_draining_instances(
+        self,
+        *,
+        stage: str,
+        instance_ids: tuple[str, ...],
+        ttl_seconds: float,
+    ) -> None:
+        del ttl_seconds
+        current = self.drains.setdefault(stage, {})
+        observed_at = datetime.now(UTC)
+        for instance_id in instance_ids:
+            current.setdefault(instance_id, observed_at)
+
+    def clear_draining_instances(
+        self,
+        *,
+        stage: str,
+        keep_instance_ids: tuple[str, ...] = (),
+    ) -> None:
+        if not keep_instance_ids:
+            self.drains.pop(stage, None)
+            return
+        keep = set(keep_instance_ids)
+        current = self.drains.setdefault(stage, {})
+        self.drains[stage] = {
+            instance_id: requested_at
+            for instance_id, requested_at in current.items()
+            if instance_id in keep
+        }
 
 
 class FakeSaladClient:
@@ -91,6 +125,7 @@ def _config(
     project_max_replicas: int = 30,
     stage_max_replicas: int = 4,
     downscale_stable_polls: int = 1,
+    stage_cold_start_seconds: dict[str, float] | None = None,
 ) -> PredictiveAutoscalerConfig:
     return PredictiveAutoscalerConfig(
         enabled=True,
@@ -107,6 +142,9 @@ def _config(
         idle_deletion_cost=0,
         stage_max_replicas={stage: stage_max_replicas for stage in stages},
         fallback_runtime_seconds={stage: 60.0 for stage in stages},
+        stage_cold_start_seconds=stage_cold_start_seconds,
+        drain_grace_seconds=0.0,
+        drain_ttl_seconds=120.0,
     )
 
 
@@ -191,8 +229,11 @@ def test_downscale_protects_running_instance_with_deletion_cost() -> None:
         logger=lambda _message: None,
     )
 
+    first = autoscaler.reconcile()[stage]
     result = autoscaler.reconcile()[stage]
 
+    assert first.applied_replicas == 2
+    assert first.reason == "drain_grace_pending"
     assert result.applied_replicas == 1
     assert ("instance-active", 100_000) in client.deletion_cost_updates
     assert ("instance-idle", 0) in client.deletion_cost_updates
@@ -233,7 +274,10 @@ def test_downscale_is_deferred_when_running_worker_cannot_map_to_instance() -> N
 
 def test_empty_global_queue_scales_replicas_to_zero() -> None:
     stage = "realesrgan"
-    client = FakeSaladClient(replicas=1)
+    client = FakeSaladClient(
+        replicas=1,
+        instances=[{"id": "idle-instance", "deletion_cost": 0}],
+    )
     autoscaler = PredictiveSaladAutoscaler(
         config=_config((stage,)),
         store=FakeStore(rows={stage: []}, runtimes={stage: [53.0]}),
@@ -242,8 +286,70 @@ def test_empty_global_queue_scales_replicas_to_zero() -> None:
         logger=lambda _message: None,
     )
 
+    first = autoscaler.reconcile()[stage]
     result = autoscaler.reconcile()[stage]
 
+    assert first.target_replicas == 0
+    assert first.applied_replicas == 1
+    assert first.reason == "drain_grace_pending"
     assert result.target_replicas == 0
     assert result.applied_replicas == 0
     assert client.replica_updates == [0]
+
+
+def test_stage_specific_cold_start_changes_capacity_estimate() -> None:
+    stages = ("qwen_image_21", "whisper")
+    config = _config(
+        stages,
+        stage_max_replicas=4,
+        stage_cold_start_seconds={
+            "qwen_image_21": 500.0,
+            "whisper": 0.0,
+        },
+    )
+
+    demands = build_global_demands(
+        rows_by_stage={
+            "qwen_image_21": _pending_rows(6),
+            "whisper": _pending_rows(6),
+        },
+        runtime_by_stage={
+            "qwen_image_21": 100.0,
+            "whisper": 100.0,
+        },
+        config=config,
+        now=datetime(2026, 9, 24, tzinfo=UTC),
+    )
+
+    assert demands["qwen_image_21"].ideal_replicas == 4
+    assert demands["whisper"].ideal_replicas == 1
+
+
+def test_rebounded_demand_cancels_pending_instance_drains() -> None:
+    stage = "ltx25"
+    store = FakeStore(rows={stage: []}, runtimes={stage: [60.0]})
+    client = FakeSaladClient(
+        replicas=2,
+        instances=[
+            {"id": "idle-a", "deletion_cost": 0},
+            {"id": "idle-b", "deletion_cost": 0},
+        ],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,)),
+        store=store,
+        clients={stage: client},
+        bindings={stage: _binding(stage)},
+        logger=lambda _message: None,
+    )
+
+    first = autoscaler.reconcile()[stage]
+    assert first.reason == "drain_grace_pending"
+    assert store.drains[stage]
+
+    store.rows[stage] = _pending_rows(20)
+    second = autoscaler.reconcile()[stage]
+
+    assert second.target_replicas == 2
+    assert store.drains.get(stage) in (None, {})
+    assert client.replica_updates == []

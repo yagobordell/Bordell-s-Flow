@@ -19,20 +19,25 @@ Validate, prepare and inspect a single service with the compute manager:
 .\scripts\salad\manage_salad_worker.ps1 -Service <service> -Action Status
 ```
 
-Start paid capacity only for an intentional real smoke:
+For production-path validation, keep the global Capacity Controller running and submit the smoke
+job through Postgres. The controller must own the resulting `0 -> N -> 0` replica lifecycle.
+
+Explicit paid capacity is reserved for an isolated operator smoke when the global controller is
+intentionally not managing that service:
 
 ```powershell
 .\scripts\salad\manage_salad_worker.ps1 -Service <service> -Action Start -Replicas 1
 ```
 
-Always stop it afterwards:
+Always stop isolated manual capacity afterwards:
 
 ```powershell
 .\scripts\salad\manage_salad_worker.ps1 -Service <service> -Action Stop
 ```
 
-The model-specific controlled smoke scripts under `scripts/smoke/` own this lifecycle when one is
-available.
+Some model-specific controlled smoke scripts under `scripts/smoke/` still own this isolated
+lifecycle. Do not run them against a service that the global Capacity Controller is actively
+managing; use the controller-backed path for production certification.
 
 ## Acceptance
 
@@ -43,7 +48,9 @@ A worker change is accepted when:
 - persisted R2 artifacts validate;
 - the expected runtime operates without OOM/bootstrap failure;
 - repository CI is green;
-- the service returns to stable stopped `replicas=0`.
+- the singleton controller remains healthy throughout the run;
+- no second controller can acquire leadership;
+- after aggregate Postgres demand disappears, the service converges back to `replicas=0`.
 
 Cloud logs and generated smoke artifacts are evidence for that run. Git history is the historical
 record; active docs should describe only the current architecture.

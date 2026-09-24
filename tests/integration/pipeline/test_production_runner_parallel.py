@@ -229,3 +229,60 @@ def test_dag_failure_cancels_active_sibling_before_waiting_for_pool(tmp_path: Pa
 
     assert executor.cancel_calls == 1
     assert executor.release.is_set()
+
+
+class HealthAwareExecutor:
+    def __init__(self) -> None:
+        self.release = threading.Event()
+        self.started = threading.Event()
+        self.cancel_calls = 0
+
+    def __call__(self, stage: ProductionStage) -> None:
+        self.started.set()
+        assert self.release.wait(timeout=2)
+        if not stage.outputs[0].exists():
+            stage.outputs[0].write_text("cancelled", encoding="utf-8")
+
+    def cancel_running(self) -> None:
+        self.cancel_calls += 1
+        self.release.set()
+
+
+def test_capacity_health_failure_cancels_running_stages(tmp_path: Path) -> None:
+    source = tmp_path / "source.txt"
+    source.write_text("source", encoding="utf-8")
+    executor = HealthAwareExecutor()
+    checks = 0
+
+    def health_check() -> None:
+        nonlocal checks
+        checks += 1
+        if checks >= 2:
+            raise RuntimeError("capacity controller unhealthy")
+
+    runner = ProductionRunner(
+        [
+            ProductionStage(
+                name="gpu",
+                description="gpu",
+                script=_script(tmp_path, "gpu.py"),
+                inputs=(source,),
+                outputs=(tmp_path / "gpu.json",),
+                resource="gpu",
+            )
+        ],
+        manifest_path=tmp_path / "manifest.json",
+        repo_root=tmp_path,
+        executor=executor,
+        max_workers=1,
+        max_gpu_stages=1,
+        health_check=health_check,
+        health_check_interval_seconds=0.01,
+    )
+
+    with pytest.raises(RuntimeError, match="capacity controller unhealthy"):
+        runner.run()
+
+    assert executor.started.is_set()
+    assert executor.cancel_calls == 1
+    assert executor.release.is_set()

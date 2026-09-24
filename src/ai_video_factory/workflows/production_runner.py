@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
@@ -205,6 +206,8 @@ class ProductionRunner:
         executor: StageExecutor | None = None,
         max_workers: int = 1,
         max_gpu_stages: int = 1,
+        health_check: Callable[[], None] | None = None,
+        health_check_interval_seconds: float = 15.0,
     ) -> None:
         if not stages:
             raise ValueError("Production runner requires at least one stage")
@@ -212,6 +215,8 @@ class ProductionRunner:
             raise ValueError("Production runner max_workers must be at least 1")
         if max_gpu_stages < 1:
             raise ValueError("Production runner max_gpu_stages must be at least 1")
+        if health_check is not None and health_check_interval_seconds <= 0:
+            raise ValueError("Production runner health check interval must be positive")
         names = [stage.name for stage in stages]
         if len(names) != len(set(names)):
             raise ValueError("Production stage names must be unique")
@@ -232,6 +237,8 @@ class ProductionRunner:
         self._executor = executor or SubprocessStageExecutor(repo_root=repo_root)
         self._max_workers = max_workers
         self._max_gpu_stages = max_gpu_stages
+        self._health_check = health_check
+        self._health_check_interval_seconds = health_check_interval_seconds
 
     @property
     def stages(self) -> tuple[ProductionStage, ...]:
@@ -283,6 +290,8 @@ class ProductionRunner:
         )
         try:
             while pending or running:
+                if self._health_check is not None:
+                    self._health_check()
                 made_progress = False
 
                 for stage in selected:
@@ -362,7 +371,17 @@ class ProductionRunner:
                         )
                     continue
 
-                done, _ = wait(running, return_when=FIRST_COMPLETED)
+                done, _ = wait(
+                    running,
+                    timeout=(
+                        self._health_check_interval_seconds
+                        if self._health_check is not None
+                        else None
+                    ),
+                    return_when=FIRST_COMPLETED,
+                )
+                if not done:
+                    continue
                 for future in done:
                     stage, stage_started = running.pop(future)
                     if stage.resource == "gpu":

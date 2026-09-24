@@ -18,6 +18,12 @@ class StoredObject:
     metadata: Mapping[str, str]
 
 
+@dataclass(frozen=True, slots=True)
+class ObjectCreateResult:
+    stored: StoredObject
+    created: bool
+
+
 class ObjectStorage(Protocol):
     def download(self, key: str, destination: Path) -> StoredObject: ...
 
@@ -29,6 +35,15 @@ class ObjectStorage(Protocol):
         content_type: str,
         metadata: Mapping[str, str],
     ) -> StoredObject: ...
+
+    def create_if_absent(
+        self,
+        source: Path,
+        key: str,
+        *,
+        content_type: str,
+        metadata: Mapping[str, str],
+    ) -> ObjectCreateResult: ...
 
     def stat(self, key: str) -> StoredObject | None: ...
 
@@ -84,12 +99,15 @@ class JobRepository(Protocol):
         *,
         owner: str,
         error: str,
+        retryable: bool,
     ) -> None: ...
 
     def next_pending_request(
         self,
         task_names: tuple[str, ...],
     ) -> InferenceJobRequest | None: ...
+
+    def is_instance_draining(self, instance_id: str) -> bool: ...
 
     def ping(self) -> None: ...
 

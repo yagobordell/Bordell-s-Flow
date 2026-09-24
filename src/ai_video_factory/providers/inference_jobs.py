@@ -90,6 +90,36 @@ def cached_inference_response(
     if stored.size_bytes < 1:
         raise RuntimeError(f"Cached inference output is empty for request {request.job_id}")
 
+    for name, contract in (request.sidecar_outputs or {}).items():
+        sidecar = storage.stat(contract.key)
+        if sidecar is None:
+            return None
+        sidecar_sha256 = sidecar.metadata.get("artifact-sha256")
+        primary_sha256 = sidecar.metadata.get("primary-artifact-sha256")
+        if (
+            sidecar.metadata.get("job-id") != request.job_id
+            or sidecar.metadata.get("request-sha256") != request_sha256
+            or sidecar.metadata.get("sidecar-name") != name
+            or sidecar_sha256 is None
+            or (
+                primary_sha256 is not None
+                and primary_sha256 != artifact_sha256
+            )
+        ):
+            raise RuntimeError(
+                f"Cached inference sidecar metadata does not match request {request.job_id}: "
+                f"{name}"
+            )
+        if sidecar.content_type != contract.content_type:
+            raise RuntimeError(
+                f"Cached inference sidecar content type does not match request "
+                f"{request.job_id}: {name}"
+            )
+        if sidecar.size_bytes < 1:
+            raise RuntimeError(
+                f"Cached inference sidecar is empty for request {request.job_id}: {name}"
+            )
+
     return InferenceJobResponse(
         job_id=request.job_id,
         request_sha256=request_sha256,

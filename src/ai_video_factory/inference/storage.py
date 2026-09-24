@@ -11,7 +11,7 @@ from typing import Any
 
 from botocore.exceptions import ClientError
 
-from .ports import StoredObject
+from .ports import ObjectCreateResult, StoredObject
 
 
 def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
@@ -75,6 +75,37 @@ class R2ObjectStorage:
         if stored is None:  # pragma: no cover - defensive provider protection
             raise RuntimeError(f"uploaded object cannot be read back: {key}")
         return stored
+
+    def create_if_absent(
+        self,
+        source: Path,
+        key: str,
+        *,
+        content_type: str,
+        metadata: Mapping[str, str],
+    ) -> ObjectCreateResult:
+        created = False
+        try:
+            with source.open("rb") as stream:
+                self._client.put_object(
+                    Bucket=self.bucket,
+                    Key=key,
+                    Body=stream,
+                    ContentType=content_type,
+                    Metadata=dict(metadata),
+                    IfNoneMatch="*",
+                )
+            created = True
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if code != "PreconditionFailed" and status != 412:
+                raise
+
+        stored = self.stat(key)
+        if stored is None:  # pragma: no cover - defensive provider protection
+            raise RuntimeError(f"create-only object cannot be read back: {key}")
+        return ObjectCreateResult(stored=stored, created=created)
 
     def stat(self, key: str) -> StoredObject | None:
         try:
@@ -151,6 +182,43 @@ class LocalObjectStorage:
         if stored is None:  # pragma: no cover - defensive local filesystem protection
             raise RuntimeError(f"uploaded local object cannot be read back: {key}")
         return stored
+
+    def create_if_absent(
+        self,
+        source: Path,
+        key: str,
+        *,
+        content_type: str,
+        metadata: Mapping[str, str],
+    ) -> ObjectCreateResult:
+        destination = self._path(key)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        created = False
+        try:
+            with destination.open("xb") as target, source.open("rb") as stream:
+                shutil.copyfileobj(stream, target)
+            created = True
+        except FileExistsError:
+            pass
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
+
+        if created:
+            self._metadata_root.mkdir(parents=True, exist_ok=True)
+            metadata_path = self._metadata_path(key)
+            metadata_temporary = metadata_path.with_suffix(".tmp")
+            document = {"content_type": content_type, "metadata": dict(metadata)}
+            metadata_temporary.write_text(
+                json.dumps(document, sort_keys=True),
+                encoding="utf-8",
+            )
+            os.replace(metadata_temporary, metadata_path)
+
+        stored = self.stat(key)
+        if stored is None:  # pragma: no cover - defensive local protection
+            raise RuntimeError(f"create-only local object cannot be read back: {key}")
+        return ObjectCreateResult(stored=stored, created=created)
 
     def stat(self, key: str) -> StoredObject | None:
         path = self._path(key)

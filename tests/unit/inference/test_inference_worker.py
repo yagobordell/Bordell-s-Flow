@@ -11,6 +11,7 @@ from ai_video_factory.inference.errors import (
     InputIntegrityError,
     JobBusyError,
     JobConflictError,
+    JobExecutionError,
     LeaseLostError,
     NonRetryableTaskError,
     OutputConflictError,
@@ -55,6 +56,15 @@ class FailingRunner:
         del request, inputs, work_dir
         self.calls += 1
         raise RuntimeError("single-shot failure")
+
+
+class DrainingRepository(InMemoryJobRepository):
+    def is_instance_draining(self, instance_id: str) -> bool:
+        assert instance_id == "instance-draining"
+        return True
+
+    def next_pending_request(self, task_names: tuple[str, ...]) -> InferenceJobRequest | None:
+        raise AssertionError(f"draining worker must not poll jobs: {task_names}")
 
 
 class LeaseLosingRepository(InMemoryJobRepository):
@@ -153,6 +163,34 @@ def test_worker_max_attempts_prevents_second_inference_execution(tmp_path: Path)
     assert runner.calls == 1
 
 
+def test_worker_default_retry_budget_stops_after_five_attempts(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    repository = InMemoryJobRepository()
+    runner = FailingRunner()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-1",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
+    request = build_request("job-default-retries", digest)
+
+    for _ in range(4):
+        with pytest.raises(JobExecutionError, match="execution failed"):
+            worker.process(request)
+
+    with pytest.raises(NonRetryableTaskError, match="single-shot failure"):
+        worker.process(request)
+    with pytest.raises(NonRetryableTaskError, match="single-shot failure"):
+        worker.process(request)
+
+    assert runner.calls == 5
+
+
 def test_worker_rejects_same_job_id_with_different_request(tmp_path: Path) -> None:
     worker, storage, _, _ = build_worker(tmp_path)
     digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
@@ -217,6 +255,19 @@ def test_worker_rejects_corrupted_input(tmp_path: Path) -> None:
     assert runner.calls == 0
 
 
+def test_input_integrity_failure_is_terminal_without_retry(tmp_path: Path) -> None:
+    worker, storage, _, runner = build_worker(tmp_path)
+    seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
+    request = build_request("job-corrupt-terminal", "0" * 64)
+
+    with pytest.raises(InputIntegrityError, match="sha256 mismatch"):
+        worker.process(request)
+    with pytest.raises(NonRetryableTaskError, match="InputIntegrityError"):
+        worker.process(request)
+
+    assert runner.calls == 0
+
+
 def test_active_lease_is_busy(tmp_path: Path) -> None:
     worker, storage, repository, _ = build_worker(tmp_path)
     digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
@@ -256,12 +307,16 @@ def test_worker_does_not_upload_after_losing_lease(tmp_path: Path) -> None:
 class SidecarRunner:
     task_name = "test.sidecar"
 
+    def __init__(self) -> None:
+        self.calls = 0
+
     def run(
         self,
         request: InferenceJobRequest,
         inputs: Mapping[str, Path],
         work_dir: Path,
     ) -> LocalArtifact:
+        self.calls += 1
         output = work_dir / "result.txt"
         metadata = work_dir / "metadata.json"
         shutil.copyfile(inputs["source"], output)
@@ -321,3 +376,104 @@ def test_worker_uploads_and_reconciles_declared_sidecars(tmp_path: Path) -> None
     assert metadata.metadata["job-id"] == job_id
     assert metadata.metadata["sidecar-name"] == "metadata"
     assert metadata.metadata["request-sha256"] == request.fingerprint()
+
+
+def test_worker_repairs_missing_sidecar_without_overwriting_primary(
+    tmp_path: Path,
+) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    repository = InMemoryJobRepository()
+    runner = SidecarRunner()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-sidecar-repair",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
+    job_id = "job-sidecar-repair"
+    request = InferenceJobRequest(
+        job_id=job_id,
+        task="test.sidecar",
+        inputs=[ObjectInput(name="source", key="inputs/source.txt", sha256=digest)],
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/output.txt",
+            content_type="text/plain",
+        ),
+        sidecar_outputs={
+            "metadata": ObjectOutput(
+                key=f"jobs/{job_id}/metadata.json",
+                content_type="application/json",
+            )
+        },
+    )
+
+    authoritative = tmp_path / "authoritative.txt"
+    authoritative.write_bytes(b"hello\n")
+    authoritative_sha = sha256_file(authoritative)
+    storage.create_if_absent(
+        authoritative,
+        request.output.key,
+        content_type="text/plain",
+        metadata={
+            "job-id": request.job_id,
+            "request-sha256": request.fingerprint(),
+            "artifact-sha256": authoritative_sha,
+        },
+    )
+
+    response = worker.process(request)
+
+    assert response.replayed is True
+    assert response.output.sha256 == authoritative_sha
+    assert runner.calls == 1
+    metadata = storage.stat(request.sidecar_outputs["metadata"].key)
+    assert metadata is not None
+    assert metadata.metadata["primary-artifact-sha256"] == authoritative_sha
+
+    downloaded = tmp_path / "downloaded.txt"
+    storage.download(request.output.key, downloaded)
+    assert downloaded.read_bytes() == b"hello\n"
+
+
+def test_draining_salad_instance_does_not_claim_new_jobs(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    runner = CountingCopyRunner()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=DrainingRepository(),
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-instance-draining",
+        salad_instance_id="instance-draining",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+
+    assert worker.next_pending_request() is None
+
+
+def test_draining_salad_instance_rechecks_before_direct_claim(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    repository = DrainingRepository()
+    runner = CountingCopyRunner()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-instance-draining",
+        salad_instance_id="instance-draining",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
+    request = build_request("job-drain-race", digest)
+
+    with pytest.raises(JobBusyError, match="draining"):
+        worker.process(request)
+
+    assert runner.calls == 0
