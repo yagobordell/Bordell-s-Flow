@@ -274,7 +274,10 @@ def test_downscale_is_deferred_when_running_worker_cannot_map_to_instance() -> N
 
 def test_empty_global_queue_scales_replicas_to_zero() -> None:
     stage = "realesrgan"
-    client = FakeSaladClient(replicas=1)
+    client = FakeSaladClient(
+        replicas=1,
+        instances=[{"id": "idle-instance", "deletion_cost": 0}],
+    )
     autoscaler = PredictiveSaladAutoscaler(
         config=_config((stage,)),
         store=FakeStore(rows={stage: []}, runtimes={stage: [53.0]}),
