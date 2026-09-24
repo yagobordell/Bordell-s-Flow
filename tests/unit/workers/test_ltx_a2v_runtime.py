@@ -74,11 +74,15 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
     assert state["builds"] == 1
     assert state["pipeline_init"]["quantization"] == "fp8-policy"
     assert state["pipeline_init"]["offload_mode"] == "cpu"
-    assert "dev-transformer" in state["model_paths"]["transformer_path"]
+    assert "distilled-transformer" in state["model_paths"]["transformer_path"]
+    assert state["pipeline_init"]["distilled_lora"] == []
     assert state["calls"][0]["num_frames"] is None
-    assert state["calls"][0]["num_inference_steps"] == 30
+    assert state["calls"][0]["num_inference_steps"] == 8
+    assert state["calls"][0]["stage_1_sigmas"] == bindings.distilled_sigmas
+    assert state["calls"][0]["stage_2_sigmas"] == bindings.stage_2_sigmas
     guider = state["calls"][0]["video_guider_params"]
-    assert guider.cfg_scale == 3.0  # Native dev model, not the distilled CFG=1 preset.
+    assert guider.cfg_scale == 1.0
+    assert guider.rescale_scale == 0.0
     assert guider.stg_scale == 0.0
     assert guider.stg_blocks == []
     assert guider.modality_scale == 1.0
@@ -96,12 +100,46 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
     assert metadata["audio_upmixed_to_stereo"] is True
     assert metadata["effective_audio_duration_seconds"] == pytest.approx(89000 / 24000)
     assert metadata["num_frames"] == 89
-    assert metadata["video_cfg_scale"] == 3.0
+    assert metadata["video_cfg_scale"] == 1.0
+    assert metadata["stage_1_steps"] == 8
+    assert metadata["stage_2_steps"] == 3
+    assert metadata["transformer_variant"] == "distilled"
     assert metadata["video_stg_scale"] == 0.0
     assert metadata["video_modality_scale"] == 1.0
-    assert metadata["generation_profile"].endswith("-v3")
+    assert metadata["generation_profile"].endswith("-v4")
     assert metadata["peak_vram_bytes"] == 123456
     assert metadata["pipeline_reused"] is False
     assert state["conditionings"][0]["strength"] == 1.0
     assert state["inference_entries"] == 2
     assert state["inference_depth"] == 0
+
+    # Changing profiles must rebuild the correct transformer instead of reusing
+    # the cached distilled pipeline with incompatible dev sigmas/LoRA.
+    dev_metadata = backend.generate(
+        image_path=image,
+        audio_path=audio,
+        output_path=tmp_path / "dev.mp4",
+        parameters=LTXAudioToVideoParameters(
+            generation_profile=a2v.LTX_A2V_DEV_GENERATION_PROFILE,
+            prompt="A stable talking head.",
+        ),
+    )
+    assert state["builds"] == 2
+    assert "dev-transformer" in state["pipeline_inits"][1]["model_paths"]["transformer_path"]
+    assert len(state["pipeline_inits"][1]["distilled_lora"]) == 1
+    assert state["calls"][2]["num_inference_steps"] == 30
+    assert state["calls"][2]["stage_1_sigmas"] is None
+    assert state["calls"][2]["video_guider_params"].cfg_scale == 3.0
+    assert dev_metadata["generation_profile"] == a2v.LTX_A2V_DEV_GENERATION_PROFILE
+    assert dev_metadata["transformer_variant"] == "dev"
+    assert dev_metadata["stage_1_steps"] == 30
+
+    backend.generate(
+        image_path=image,
+        audio_path=audio,
+        output_path=tmp_path / "fast-again.mp4",
+        parameters=LTXAudioToVideoParameters(prompt="A stable talking head."),
+    )
+    assert state["builds"] == 3
+    assert state["pipeline_inits"][2]["distilled_lora"] == []
+    assert state["calls"][3]["num_inference_steps"] == 8
