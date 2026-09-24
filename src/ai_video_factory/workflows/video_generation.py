@@ -12,6 +12,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoClip, VideoPrompt
+from ai_video_factory.image_contracts import (
+    QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+    QWEN_IMAGE_21_PRODUCTION_WIDTH,
+)
 from ai_video_factory.inference.contracts import (
     InferenceJobRequest,
     InferenceJobResponse,
@@ -34,10 +38,6 @@ from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
     LTX_VIDEO_TASK,
     ltx_num_frames_for_duration,
-)
-from ai_video_factory.workers.qwen_image_21 import (
-    QWEN_IMAGE_21_PRODUCTION_HEIGHT,
-    QWEN_IMAGE_21_PRODUCTION_WIDTH,
 )
 from ai_video_factory.workflows._video_jobs import (
     archive_manifest,

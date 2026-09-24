@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 from _ltx_a2v_support import _seed_model_files
-from PIL import Image
+from PIL import Image, ImageChops, ImageOps
 from pydantic import ValidationError
 
 import ai_video_factory.workers.ltx25.a2v as a2v
@@ -246,6 +246,53 @@ def test_a2v_avatar_preserves_qwen_image_edges(tmp_path: Path) -> None:
         assert result.getpixel((640, 0)) == (0, 255, 0)
         assert result.getpixel((640, 767)) == (255, 255, 0)
         assert result.getpixel((640, 384)) == (48, 48, 48)
+
+
+@pytest.mark.parametrize(
+    ("source_size", "output_size", "grid_size"),
+    [
+        ((720, 1280), (1280, 720), (1280, 768)),
+        ((1920, 800), (1280, 720), (1280, 768)),
+        ((1536, 864), (1280, 720), (1280, 768)),
+        ((1280, 736), (768, 1280), (768, 1280)),
+    ],
+)
+def test_a2v_noncanonical_avatar_retains_center_crop(
+    tmp_path: Path,
+    source_size: tuple[int, int],
+    output_size: tuple[int, int],
+    grid_size: tuple[int, int],
+) -> None:
+    source = tmp_path / "source.png"
+    width, height = source_size
+    image = Image.new("RGB", source_size, (48, 48, 48))
+    image.paste((255, 0, 0), (0, 0, width // 4, height))
+    image.paste((0, 0, 255), (3 * width // 4, 0, width, height))
+    image.paste((0, 255, 0), (0, 0, width, height // 4))
+    image.paste((255, 255, 0), (0, 3 * height // 4, width, height))
+    image.save(source, format="PNG")
+
+    adapted = a2v._prepare_avatar_image(
+        source,
+        tmp_path / "adapted.png",
+        requested_width=output_size[0],
+        requested_height=output_size[1],
+        pipeline_width=grid_size[0],
+        pipeline_height=grid_size[1],
+    )
+    expected = ImageOps.fit(
+        image,
+        output_size,
+        method=Image.Resampling.LANCZOS,
+        centering=(0.5, 0.5),
+    )
+    pad_top = (grid_size[1] - output_size[1]) // 2
+    with Image.open(adapted) as result:
+        assert result.size == grid_size
+        actual = result.crop(
+            (0, pad_top, output_size[0], pad_top + output_size[1])
+        )
+        assert ImageChops.difference(actual, expected).getbbox() is None
 
 
 def test_a2v_mono_audio_is_upmixed_to_stereo_without_duration_change(

@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from ai_video_factory.inference.contracts import InferenceJobRequest
 from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.ports import LocalArtifact
-from ai_video_factory.workers.qwen_image_21 import (
+from ai_video_factory.image_contracts import (
     QWEN_IMAGE_21_PRODUCTION_HEIGHT,
     QWEN_IMAGE_21_PRODUCTION_WIDTH,
 )

@@ -12,9 +12,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from PIL import Image
+from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from ai_video_factory.image_contracts import (
+    QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+    QWEN_IMAGE_21_PRODUCTION_WIDTH,
+)
 from ai_video_factory.inference.contracts import InferenceJobRequest
 from ai_video_factory.inference.errors import (
     ModelBootstrapPendingError,
@@ -25,6 +29,7 @@ from ai_video_factory.inference.ports import LocalArtifact, LocalSidecarArtifact
 from .model import (
     LTXModelFiles,
     LTXPipelineModeController,
+    _CANONICAL_LANDSCAPE_SIZE,
     _crop_video_to_requested,
     _fit_image_with_edge_padding,
     _force_diffvae_eager_sdpa,
@@ -428,9 +433,23 @@ def _prepare_avatar_image(
             "IMAGE_DECODE_FAILED", f"avatar image decode failed for {source}"
         ) from exc
 
-    fitted = _fit_image_with_edge_padding(
-        image, width=requested_width, height=requested_height
-    )
+    # Preserve native Qwen framing only for its canonical landscape target.
+    # Other sources retain the original centered crop, avoiding large repeated
+    # margins when a portrait or wide reference is used.
+    if image.size == (
+        QWEN_IMAGE_21_PRODUCTION_WIDTH,
+        QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+    ) and (requested_width, requested_height) == _CANONICAL_LANDSCAPE_SIZE:
+        fitted = _fit_image_with_edge_padding(
+            image, width=requested_width, height=requested_height
+        )
+    else:
+        fitted = ImageOps.fit(
+            image,
+            (requested_width, requested_height),
+            method=Image.Resampling.LANCZOS,
+            centering=(0.5, 0.5),
+        )
     pad_total = pipeline_height - requested_height
     if pipeline_width != requested_width or pad_total < 0:
         raise _input_error(

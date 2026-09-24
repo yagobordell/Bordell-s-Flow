@@ -17,9 +17,10 @@ segments.
 
 The worker does not infer timeline ownership itself. An avatar image supplied at the Qwen
 1280x736 size is proportionally fitted to the existing 1280x720 A2V output with edge-extended
-side margins, rather than cropping its top and bottom. Internal padding to the 1280x768 model
-grid is removed after decoding. A2V is still a standalone worker capability, not a production
-stage.
+side margins, rather than cropping its top and bottom. Other source aspect ratios retain
+the previous centered crop, avoiding large repeated margins for portrait or wide references.
+Internal padding to the 1280x768 model grid is removed after decoding. A2V is still a
+standalone worker capability, not a production stage.
 
 ## Output
 
