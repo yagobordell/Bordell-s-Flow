@@ -5,8 +5,8 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from PIL import Image
 from _ltx_a2v_support import _seed_model_files
+from PIL import Image
 from pydantic import ValidationError
 
 import ai_video_factory.workers.ltx25.a2v as a2v
