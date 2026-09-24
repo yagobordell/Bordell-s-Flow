@@ -67,10 +67,23 @@ foreach ($Name in $Services) {
 # or mutate a group that is running/pending. The manager waits for true zero.
 foreach ($Name in $Services) {
     $Group = $Groups[$Name]
-    if ($null -ne $Group -and [int]$Group.replicas -ne 0) {
+    $RemoteAutoscaler = if ($null -ne $Group) {
+        $Group.PSObject.Properties["queue_autoscaler"]
+    }
+    else {
+        $null
+    }
+    $WrongMinimum = (
+        $null -ne $RemoteAutoscaler -and
+        $null -ne $RemoteAutoscaler.Value -and
+        [int]$RemoteAutoscaler.Value.min_replicas -ne 0
+    )
+    if ($null -ne $Group -and ([int]$Group.replicas -ne 0 -or $WrongMinimum)) {
         Write-Warning (
-            "$Name is stopped with replicas=$([int]$Group.replicas); " +
-            "normalizing before any benchmark preparation."
+            "$Name is stopped with replicas=$([int]$Group.replicas) " +
+            "and remote autoscaler min_replicas=" +
+            "$(if ($null -ne $RemoteAutoscaler) { $RemoteAutoscaler.Value.min_replicas } else { 'unknown' }); " +
+            "restoring scale-to-zero before benchmark preparation."
         )
         & $Manager -Service $Name -Action Stop -EnvFile $EnvFile -NonInteractive
         if (-not $?) { throw "$Name zero-replica cleanup failed." }
@@ -79,9 +92,13 @@ foreach ($Name in $Services) {
             $null -eq $Group -or
             [string]$Group.current_state.status -ne "stopped" -or
             [int]$Group.replicas -ne 0 -or
-            [bool]$Group.pending_change
+            [bool]$Group.pending_change -or
+            (
+                $null -ne $Group.PSObject.Properties["queue_autoscaler"] -and
+                [int]$Group.queue_autoscaler.min_replicas -ne 0
+            )
         ) {
-            throw "$Name did not reach stopped/replicas=0/pending=False after cleanup."
+            throw "$Name did not reach stopped/replicas=0/pending=False/min_replicas=0 after cleanup."
         }
         $Groups[$Name] = $Group
     }
