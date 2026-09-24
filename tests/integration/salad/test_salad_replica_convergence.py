@@ -96,7 +96,7 @@ def test_parallel_prepare_safely_recovers_a_stopped_residual_replica() -> None:
     repair = script.index('& $Manager -Service $Name -Action Stop')
     prepare = script.index('$Options = @{ Service = $Name; Action = "Prepare"')
     assert guard < repair < prepare
-    assert "$Name did not reach stopped/replicas=0/pending=False after cleanup." in script
+    assert "did not reach stopped/replicas=0/pending=False/min_replicas=0" in script
     assert '"Prepare"' not in script[guard:repair]
     assert "-Recreate" not in script
 
@@ -143,3 +143,15 @@ def test_worker_stop_restores_autoscaler_before_patching_replicas() -> None:
     assert "AutoscalerMin" in script
     assert "queue current_queue_length=" in script
     assert "$ConsecutiveZero -ge 3" in script
+
+
+def test_parallel_prepare_and_prepared_guard_require_scale_to_zero_autoscaler() -> None:
+    prepare = PARALLEL.read_text(encoding="utf-8")
+    prepared = Path("scripts/smoke/_salad_prepared_benchmark_worker.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "$WrongMinimum" in prepare
+    assert "[int]$RemoteAutoscaler.Value.min_replicas -ne 0" in prepare
+    assert "restoring scale-to-zero before benchmark preparation." in prepare
+    assert "[int]$RemoteAutoscaler.Value.min_replicas -ne 0" in prepared
+    assert "restore the manifest before starting the GPU worker." in prepared
