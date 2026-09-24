@@ -755,6 +755,53 @@ function Update-ContainerGroup {
         Out-Null
 }
 
+function Wait-ForStoppedZeroReplicas {
+    param(
+        [Parameter(Mandatory)][hashtable]$Headers,
+        [ValidateRange(10, 600)][int]$TimeoutSeconds = 180
+    )
+
+    # pending_change=False signals completion of a config upgrade, not
+    # necessarily convergence of a subsequent replica-count PATCH. Verify
+    # the complete stopped/zero-replica state before returning.
+    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        Start-Sleep -Seconds 5
+        $Group = Get-Group -Headers $Headers
+        $Status = Get-GroupStatus -Group $Group
+        Write-Host (
+            "{0} service={1} status={2} replicas={3} pending={4} description={5}" -f `
+            (Get-Date -Format "HH:mm:ss"),
+            $Service,
+            $Status,
+            $Group.replicas,
+            $Group.pending_change,
+            (Get-GroupDescription -Group $Group)
+        )
+        if ($Status -eq "running") {
+            throw (
+                "Refusing to normalize '$GroupName' while it is running; " +
+                "another process may own its GPU worker."
+            )
+        }
+        if (
+            $Status -eq "stopped" -and
+            -not [bool]$Group.pending_change -and
+            [int]$Group.replicas -eq 0
+        ) {
+            return $Group
+        }
+    }
+    while ((Get-Date) -lt $Deadline)
+
+    throw (
+        "Salad did not converge '$GroupName' to stopped/replicas=0/pending=False " +
+        "within $TimeoutSeconds seconds; status=$Status " +
+        "replicas=$([int]$Group.replicas) pending=$([bool]$Group.pending_change). " +
+        "Check the live group and queue before retrying; the published image is reusable."
+    )
+}
+
 function Ensure-PreparedZeroReplicas {
     param(
         [Parameter(Mandatory)][hashtable]$Headers,
@@ -763,6 +810,9 @@ function Ensure-PreparedZeroReplicas {
 
     if ([int]$Group.replicas -eq 0) {
         return $Group
+    }
+    if ((Get-GroupStatus -Group $Group) -ne "stopped" -or [bool]$Group.pending_change) {
+        throw "Prepare will not normalize a group that is running or has a pending update."
     }
 
     Write-Warning (
@@ -779,16 +829,7 @@ function Ensure-PreparedZeroReplicas {
         -TimeoutSec 60 |
         Out-Null
 
-    $Updated = Wait-ForGroupSettled `
-        -Headers $Headers `
-        -TimeoutMinutes $PrepareTimeoutMinutes
-    if ([int]$Updated.replicas -ne 0) {
-        throw (
-            "Prepared service '$Service' could not be normalized to zero replicas; " +
-            "current replicas=$([int]$Updated.replicas)."
-        )
-    }
-    return $Updated
+    return Wait-ForStoppedZeroReplicas -Headers $Headers -TimeoutSeconds 180
 }
 
 function Assert-PreparedGroup {
@@ -947,9 +988,9 @@ switch ($Action) {
                 -Body $Body `
                 -TimeoutSec 60 |
                 Out-Null
-            $Group = Wait-ForGroupSettled `
+            $Group = Wait-ForStoppedZeroReplicas `
                 -Headers $Headers `
-                -TimeoutMinutes 10
+                -TimeoutSeconds 180
         }
 
         $FinalStatus = Get-GroupStatus -Group $Group
