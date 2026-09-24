@@ -586,6 +586,10 @@ def main() -> None:
         "height",
         "seed",
         "generation_mode",
+        "generation_profile",
+        "video_cfg_scale",
+        "video_stg_scale",
+        "video_modality_scale",
         "model_load_seconds",
         "inference_seconds",
         "video_encode_mux_seconds",
@@ -598,6 +602,10 @@ def main() -> None:
         )
     if metadata["generation_mode"] != "audio_to_video":
         raise RuntimeError(f"unexpected A2V generation_mode: {metadata['generation_mode']!r}")
+    if metadata["generation_profile"] != LTX_A2V_GENERATION_PROFILE:
+        raise RuntimeError("A2V worker used an outdated generation profile")
+    if float(metadata["video_stg_scale"]) != 0.0 or float(metadata["video_modality_scale"]) != 1.0:
+        raise RuntimeError("A2V worker did not disable extra STG/modality guidance")
     if int(metadata["input_audio_channels"]) != input_audio_channels:
         raise RuntimeError("A2V metadata input channel count does not match smoke input")
     if int(metadata["conditioning_audio_channels"]) != 2:
@@ -650,6 +658,9 @@ def main() -> None:
     print(f"resolution={args.width}x{args.height}")
     print(f"fps={actual_fps:.6f}")
     print(f"num_frames={metadata['num_frames']}")
+    print(f"video_cfg_scale={metadata['video_cfg_scale']}")
+    print(f"video_stg_scale={metadata['video_stg_scale']}")
+    print(f"video_modality_scale={metadata['video_modality_scale']}")
     print(f"inference_seconds={metadata['inference_seconds']}")
     print(f"real_time_factor={metadata['real_time_factor']}")
     print(f"peak_vram_bytes={metadata.get('peak_vram_bytes')}")
