@@ -89,13 +89,6 @@ def _required(name: str, value: str | None) -> str:
     return value.strip()
 
 
-def _stack_identity() -> tuple[str, str]:
-    manifest = json.loads(Path("deploy/salad/services.json").read_text(encoding="utf-8"))
-    stack = manifest["stack"]
-    organization = settings.salad_organization or str(stack["organization"])
-    project = settings.salad_project or str(stack["project"])
-    return organization, project
-
 
 def _storage() -> R2ObjectStorage:
     return R2ObjectStorage.create(
