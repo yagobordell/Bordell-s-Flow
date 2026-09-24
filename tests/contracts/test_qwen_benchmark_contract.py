@@ -1,0 +1,360 @@
+from __future__ import annotations
+
+import io
+import json
+import threading
+from pathlib import Path
+from urllib.error import HTTPError
+
+import pytest
+from PIL import Image
+
+from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectOutput
+from ai_video_factory.providers.salad_qwen_image import build_qwen_image_job_request
+from ai_video_factory.workers.qwen_image_21 import (
+    QWEN_IMAGE_21_GENERATION_PROFILE,
+    QWEN_IMAGE_21_KEYFRAME_TASK,
+    QWEN_IMAGE_21_MODEL_ID,
+    QWEN_IMAGE_21_MODEL_REVISION,
+)
+from ai_video_factory.workers.qwen_image_21.model import (
+    QWEN_IMAGE_21_BENCHMARK_PROFILE,
+    QwenImage21Backend,
+    QwenImage21ImageTaskRunner,
+    QwenImage21Parameters,
+    _validate_int8_cuda_device_map,
+)
+from scripts.smoke.submit_qwen_image_21_benchmark import (
+    _list_instances,
+    _make_request,
+    _ready_instance,
+    _validate_metrics,
+)
+
+
+def _parameters(profile: str, width: int, height: int) -> dict[str, object]:
+    return {
+        "generation_profile": profile,
+        "model_id": QWEN_IMAGE_21_MODEL_ID,
+        "model_revision": QWEN_IMAGE_21_MODEL_REVISION,
+        "prompt": "A monk speaking.",
+        "width": width,
+        "height": height,
+        "seed": 4242,
+    }
+
+
+def test_benchmark_profile_does_not_change_the_production_size() -> None:
+    with pytest.raises(ValueError, match="production generation is fixed"):
+        QwenImage21Parameters.model_validate(
+            _parameters(QWEN_IMAGE_21_GENERATION_PROFILE, 1536, 864)
+        )
+    with pytest.raises(ValueError, match="benchmark requires 1536x864"):
+        QwenImage21Parameters.model_validate(
+            _parameters(QWEN_IMAGE_21_BENCHMARK_PROFILE, 1280, 736)
+        )
+    validated = QwenImage21Parameters.model_validate(
+        _parameters(QWEN_IMAGE_21_BENCHMARK_PROFILE, 1536, 864)
+    )
+    assert validated.num_inference_steps == 40
+    assert validated.use_kv_cache is True
+    assert validated.true_cfg_scale == 1.0
+
+
+def test_benchmark_requests_keep_exact_prompt_and_seed_but_never_replay() -> None:
+    first = _make_request(job_id="qwen-benchmark-a-01", prompt="Original prompt.", seed=4242)
+    second = _make_request(job_id="qwen-benchmark-b-02", prompt="Original prompt.", seed=4242)
+    assert first.parameters == second.parameters
+    assert first.fingerprint() != second.fingerprint()
+    assert first.output.key != second.output.key
+    assert first.max_attempts == second.max_attempts == 1
+    assert first.sidecar_outputs is not None
+    assert set(first.sidecar_outputs) == {"metadata"}
+    assert first.parameters["generation_profile"] == QWEN_IMAGE_21_BENCHMARK_PROFILE
+    assert first.parameters["width"] == 1536
+    assert first.parameters["height"] == 864
+
+    production = build_qwen_image_job_request(
+        task_name=QWEN_IMAGE_21_KEYFRAME_TASK,
+        prompt="Original prompt.",
+        model_id=QWEN_IMAGE_21_MODEL_ID,
+        width=1280,
+        height=736,
+    )
+    assert production.sidecar_outputs is None
+    assert production.parameters["generation_profile"] == QWEN_IMAGE_21_GENERATION_PROFILE
+
+
+class _FakeBackend:
+    def generate(self, *, parameters: QwenImage21Parameters, output_path: Path) -> dict:
+        Image.new("RGB", (parameters.width, parameters.height)).save(output_path, format="PNG")
+        return {"inference_seconds": 1.0, "worker_id": "worker-test"}
+
+
+def test_qwen_benchmark_metadata_sidecar_is_optional_for_production(tmp_path: Path) -> None:
+    runner = QwenImage21ImageTaskRunner(
+        backend=_FakeBackend(), task_name=QWEN_IMAGE_21_KEYFRAME_TASK
+    )
+    benchmark = _make_request(
+        job_id="qwen-benchmark-a-03", prompt="Original prompt.", seed=4242
+    )
+    artifact = runner.run(benchmark, {}, tmp_path)
+    assert artifact.path.is_file()
+    assert len(artifact.sidecars) == 1
+    sidecar = artifact.sidecars[0]
+    assert sidecar.name == "metadata"
+    assert sidecar.content_type == "application/json"
+    assert json.loads(sidecar.path.read_text(encoding="utf-8")) == {
+        "inference_seconds": 1.0,
+        "worker_id": "worker-test",
+    }
+
+    production = build_qwen_image_job_request(
+        task_name=QWEN_IMAGE_21_KEYFRAME_TASK,
+        prompt="Original prompt.",
+        model_id=QWEN_IMAGE_21_MODEL_ID,
+        width=1280,
+        height=736,
+    )
+    result = runner.run(production, {}, tmp_path)
+    assert result.sidecars == ()
+
+
+def test_qwen_rejects_unexpected_sidecars_before_inference(tmp_path: Path) -> None:
+    runner = QwenImage21ImageTaskRunner(
+        backend=_FakeBackend(), task_name=QWEN_IMAGE_21_KEYFRAME_TASK
+    )
+    request = _make_request(job_id="qwen-benchmark-a-04", prompt="P", seed=4242)
+    invalid = InferenceJobRequest(
+        job_id=request.job_id,
+        task=request.task,
+        output=request.output,
+        parameters=request.parameters,
+        sidecar_outputs={
+            "unexpected": ObjectOutput(
+                key=f"jobs/{request.job_id}/unknown.json", content_type="application/json"
+            )
+        },
+    )
+    with pytest.raises(ValueError, match="one JSON metadata sidecar"):
+        runner.run(invalid, {}, tmp_path)
+
+
+def test_qwen_rejects_a_restarted_worker_or_pipeline() -> None:
+    metrics = {
+        "generation_profile": QWEN_IMAGE_21_BENCHMARK_PROFILE,
+        "model_revision": QWEN_IMAGE_21_MODEL_REVISION,
+        "width": 1536,
+        "height": 864,
+        "num_inference_steps": 40,
+        "seed": 4242,
+        "memory_mode": "int8_cuda",
+        "worker_id": "same-worker",
+        "pipeline_reused": True,
+        "inference_seconds": 29.0,
+        "png_save_seconds": 0.3,
+        "total_elapsed_seconds": 29.4,
+        "peak_vram_allocated_bytes": 1024,
+    }
+    assert _validate_metrics(metrics, seed=4242, worker_id=None, generation=1) == "same-worker"
+    assert _validate_metrics(metrics, seed=4242, worker_id="same-worker", generation=2)
+    with pytest.raises(RuntimeError, match="worker process changed"):
+        _validate_metrics(metrics, seed=4242, worker_id="other-worker", generation=2)
+    with pytest.raises(RuntimeError, match="rebuilt"):
+        _validate_metrics(
+            {**metrics, "pipeline_reused": False},
+            seed=4242,
+            worker_id="same-worker",
+            generation=2,
+        )
+
+
+@pytest.mark.parametrize(
+    "device_map",
+    ["cuda", "cuda:0", 0, {"transformer": "cuda", "text_encoder": 0, "vae": "cuda:0"}],
+)
+def test_qwen_int8_cuda_placement_accepts_single_device_or_map(device_map: object) -> None:
+    if isinstance(device_map, int):
+        device_map = {"transformer": device_map}
+    _validate_int8_cuda_device_map(device_map)
+
+
+@pytest.mark.parametrize(
+    "device_map",
+    [None, "", {}, "cpu", "disk", "balanced", {"transformer": "cuda", "vae": "cpu"}],
+)
+def test_qwen_int8_cuda_placement_rejects_missing_or_offloaded_map(device_map: object) -> None:
+    with pytest.raises(RuntimeError, match="device map|not fully on CUDA"):
+        _validate_int8_cuda_device_map(device_map)
+
+
+
+def test_qwen_salad_instance_lookup_uses_the_successful_bootstrap_user_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def respond(request: object, timeout: int) -> io.BytesIO:
+        assert timeout == 30
+        assert request.get_header("Salad-api-key") == "example-key"
+        assert request.get_header("Accept") == "application/json"
+        assert request.get_header("User-agent") == (
+            "ai-video-factory-protected-smoke-bootstrap/1.0"
+        )
+        assert request.full_url.endswith("/containers/test-qwen/instances")
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "instances": [
+                        {
+                            "id": "instance-one",
+                            "machine_id": "machine-one",
+                            "started": True,
+                            "ready": True,
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+        )
+
+    monkeypatch.setattr(
+        "scripts.smoke.submit_qwen_image_21_benchmark.urllib.request.urlopen", respond
+    )
+    assert _ready_instance(
+        api_key="example-key",
+        organization="org",
+        project="project",
+        group_name="test-qwen",
+    ) == ("instance-one", "machine-one")
+
+
+def test_qwen_instance_403_has_actionable_preflight_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden(request: object, timeout: int) -> io.BytesIO:
+        raise HTTPError(
+            url=request.full_url, code=403, msg="Forbidden", hdrs=None,
+            fp=io.BytesIO(b"Forbidden"),
+        )
+
+    monkeypatch.setattr(
+        "scripts.smoke.submit_qwen_image_21_benchmark.urllib.request.urlopen", forbidden
+    )
+    with pytest.raises(RuntimeError, match="HTTP 403.*preflight-only"):
+        _list_instances(
+            api_key="example-key",
+            organization="org",
+            project="project",
+            group_name="test-qwen",
+        )
+
+
+@pytest.mark.parametrize("payload", [{}, {"instances": {}}, {"instances": [None]}])
+def test_qwen_instance_lookup_rejects_malformed_responses(
+    payload: dict[str, object], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "scripts.smoke.submit_qwen_image_21_benchmark.urllib.request.urlopen",
+        lambda request, timeout: io.BytesIO(json.dumps(payload).encode("utf-8")),
+    )
+    with pytest.raises(RuntimeError, match="invalid instances list"):
+        _list_instances(
+            api_key="example-key",
+            organization="org",
+            project="project",
+            group_name="test-qwen",
+        )
+
+
+def test_qwen_power_shell_preflights_before_taking_worker_ownership() -> None:
+    runner = Path("scripts/smoke/benchmark_qwen_image_21.ps1").read_text(encoding="utf-8")
+    assert runner.index("--preflight-only") < runner.index("$OwnsWorker = $true")
+    assert runner.index("$OwnsWorker = $true") < runner.index("-Action Prepare")
+    assert "refusing to allocate a GPU" in runner
+
+
+def test_qwen_readiness_never_waits_for_held_inference_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = QwenImage21Backend(model_root=tmp_path)
+    backend._pipeline = object()
+    monkeypatch.setattr(backend, "_validate_bootstrap", lambda: None)
+    with pytest.raises(RuntimeError, match="has not been prepared"):
+        backend.ready()
+    backend._prepared = True
+    errors: list[Exception] = []
+
+    def check_ready() -> None:
+        try:
+            backend.ready()
+        except Exception as exc:
+            errors.append(exc)
+
+    with backend._lock:
+        probe = threading.Thread(target=check_ready, daemon=True)
+        probe.start()
+        probe.join(timeout=2)
+        assert not probe.is_alive(), "Qwen readiness blocked on the GPU inference lock"
+    assert not errors
+
+
+def test_qwen_post_job_readiness_recovers_on_original_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.smoke import submit_qwen_image_21_benchmark as benchmark
+
+    expected = ("original-instance", "original-machine")
+    observations = iter([
+        [{"id": expected[0], "machine_id": expected[1], "state": "running",
+          "started": True, "ready": False}],
+        [{"id": expected[0], "machine_id": expected[1], "state": "running",
+          "started": True, "ready": True}],
+    ])
+    monkeypatch.setattr(benchmark, "_list_instances", lambda **kwargs: next(observations))
+    monkeypatch.setattr(benchmark.time, "sleep", lambda _: None)
+    assert _ready_instance(
+        api_key="key", organization="org", project="project", group_name="qwen",
+        expected_identity=expected, timeout_seconds=60,
+    ) == expected
+
+
+def test_qwen_post_job_readiness_rejects_replacement_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.smoke import submit_qwen_image_21_benchmark as benchmark
+
+    monkeypatch.setattr(
+        benchmark, "_list_instances",
+        lambda **kwargs: [{"id": "replacement", "machine_id": "new-machine",
+                           "state": "running", "started": True, "ready": True}],
+    )
+    with pytest.raises(RuntimeError, match="instance or machine changed"):
+        _ready_instance(
+            api_key="key", organization="org", project="project", group_name="qwen",
+            expected_identity=("original-instance", "original-machine"),
+        )
+
+
+def test_qwen_post_job_readiness_timeout_reports_observed_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.smoke import submit_qwen_image_21_benchmark as benchmark
+
+    monkeypatch.setattr(
+        benchmark, "_list_instances",
+        lambda **kwargs: [{"id": "original-instance", "machine_id": "original-machine",
+                           "state": "running", "started": True, "ready": False}],
+    )
+    with pytest.raises(TimeoutError, match="last_observation=.*ready=False"):
+        _ready_instance(
+            api_key="key", organization="org", project="project", group_name="qwen",
+            expected_identity=("original-instance", "original-machine"),
+            timeout_seconds=0,
+        )
+
+
+def test_qwen_benchmark_validates_original_identity_before_and_after_every_job() -> None:
+    from inspect import getsource
+
+    from scripts.smoke import submit_qwen_image_21_benchmark as benchmark
+
+    source = getsource(benchmark.main)
+    assert source.count("expected_identity=(instance_id, machine_id)") == 2

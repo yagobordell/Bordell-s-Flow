@@ -198,17 +198,23 @@ function Get-ActiveQueueJobs {
         $Response = Invoke-SaladRead `
             -Uri "$QueueUrl/jobs?page=$Page&page_size=25"
 
-        $Items = @(
-            if ($Response.PSObject.Properties.Name -contains "items") {
-                $Response.items
-            }
-            elseif ($Response.PSObject.Properties.Name -contains "jobs") {
-                $Response.jobs
-            }
-        )
+        if ($Response.PSObject.Properties.Name -contains "items") {
+            $RawJobs = $Response.items
+        }
+        elseif ($Response.PSObject.Properties.Name -contains "jobs") {
+            $RawJobs = $Response.jobs
+        }
+        else {
+            throw "Salad job listing omitted its items/jobs field; refusing an incomplete queue inventory."
+        }
+        $Items = @($RawJobs | Where-Object { $null -ne $_ })
 
         foreach ($Job in $Items) {
-            if ([string]$Job.status -in @("pending", "running")) {
+            $JobStatus = [string]$Job.status
+            if ($JobStatus -notin @("pending", "running", "succeeded", "cancelled", "failed")) {
+                throw "Salad job listing contained an unknown or missing status; refusing GPU allocation."
+            }
+            if ($JobStatus -in @("pending", "running")) {
                 $Active += $Job
             }
         }
@@ -274,6 +280,9 @@ $Headers = @{
 
 $Queue = Get-Queue
 $InitialQueueAttachment = Test-QueueAttachment -Queue $Queue
+if ($Queue.PSObject.Properties.Name -notcontains "current_queue_length") {
+    throw "Salad queue summary omitted current_queue_length; refusing GPU allocation."
+}
 $QueueSummaryLength = [int]$Queue.current_queue_length
 $QueueJobs = Get-ActiveQueueJobs
 if (-not [bool]$QueueJobs.complete) {
@@ -291,10 +300,11 @@ if ($ActiveQueueJobs.Count -gt 0) {
     )
 }
 if ($QueueSummaryLength -ne 0) {
-    Write-Warning (
-        "Protected smoke queue summary is stale: current_queue_length=$QueueSummaryLength, " +
-        "but exhaustive pagination across $([int]$QueueJobs.pages) page(s) found no " +
-        "pending/running jobs. Treating '$QueueName' as logically empty."
+    throw (
+        "Protected smoke found conflicting Salad queue state: current_queue_length=$QueueSummaryLength, " +
+        "but complete pagination across $([int]$QueueJobs.pages) page(s) found no " +
+        "pending/running jobs. Refusing GPU allocation until the queue is reconciled; " +
+        "run inspect_salad_queue_state.ps1 -Service $Service and preserve the evidence."
     )
 }
 
@@ -357,6 +367,21 @@ if ($null -eq $RemoteAutoscaler) {
     ) -ForegroundColor Yellow
 }
 
+# Repeat the read-only queue check immediately before taking ownership: jobs may
+# have been submitted while a stopped residual replica was being normalized.
+$QueueBeforeAllocation = Get-Queue
+if ($QueueBeforeAllocation.PSObject.Properties.Name -notcontains "current_queue_length") {
+    throw "Salad queue recheck omitted current_queue_length; refusing GPU allocation."
+}
+$JobsBeforeAllocation = Get-ActiveQueueJobs
+if (-not [bool]$JobsBeforeAllocation.complete) {
+    throw "Protected smoke could not completely recheck the queue before GPU allocation."
+}
+if (@($JobsBeforeAllocation.jobs).Count -gt 0 -or
+    [int]$QueueBeforeAllocation.current_queue_length -ne 0) {
+    throw "Protected smoke queue changed or remains inconsistent; refusing GPU allocation."
+}
+
 $Body = @{ replicas = 1 } | ConvertTo-Json -Depth 10
 Write-Host (
     "$Service protected smoke temporarily setting replicas=1 while keeping " +
@@ -414,7 +439,6 @@ $DownloadStartedInstanceId = ""
 $ReallocationPending = $false
 $ReallocatedMachineId = ""
 $AllocatingSince = $null
-$AllocatingInstanceId = ""
 $RunningNotReadySince = $null
 $RunningNotReadyMachineId = ""
 $RunningNotReadyReallocations = 0
@@ -481,36 +505,47 @@ do {
     )
     Write-Host $Message
 
-    if (
+    # Salad can report allocating on the group before an instance exists. The
+    # previous watchdog only covered an instance whose state was "allocating".
+    $WaitingForGpuAllocation = (
         $Service -in @("qwen_image_21", "ltx25") -and
-        $Instances.Count -eq 1 -and
-        $InstanceState -eq "allocating"
-    ) {
-        if (
-            $null -eq $AllocatingSince -or
-            $InstanceId -ne $AllocatingInstanceId
-        ) {
+        $StartedInstances.Count -eq 0 -and
+        $Instances.Count -le 1 -and
+        (
+            $Status -eq "allocating" -or
+            $InstanceState -eq "allocating" -or
+            ($Status -eq "running" -and $Instances.Count -eq 0)
+        )
+    )
+    if ($WaitingForGpuAllocation) {
+        if ($null -eq $AllocatingSince) {
             $AllocatingSince = Get-Date
-            $AllocatingInstanceId = $InstanceId
             Write-Host (
-                "{0} service={1} allocating watchdog started limit={2}m" -f
+                "{0} service={1} GPU allocation watchdog started limit={2}m " +
+                "group_status={3} instances={4} state={5}" -f
                 (Get-Date -Format "HH:mm:ss"),
                 $Service,
-                $AllocatingTimeoutMinutes
+                $AllocatingTimeoutMinutes,
+                $Status,
+                $Instances.Count,
+                $InstanceState
             ) -ForegroundColor Cyan
         }
 
         $AllocatingElapsed = (Get-Date) - $AllocatingSince
         if ($AllocatingElapsed.TotalMinutes -ge $AllocatingTimeoutMinutes) {
             throw (
-                "GPU worker instance remained in allocating for at least " +
-                "$AllocatingTimeoutMinutes minute(s); aborting protected bootstrap."
+                "$Service GPU allocation did not yield a started instance within " +
+                "$AllocatingTimeoutMinutes minute(s); group_status=$Status " +
+                "instances=$($Instances.Count) instance_state=$InstanceState " +
+                "description=$(Get-GroupDescription -Group $Group). " +
+                "Check the live Salad GPU availability for the manifest CPU/RAM/storage " +
+                "requirements before retrying; do not reallocate an unassigned GPU."
             )
         }
     }
     else {
         $AllocatingSince = $null
-        $AllocatingInstanceId = ""
     }
 
     if (

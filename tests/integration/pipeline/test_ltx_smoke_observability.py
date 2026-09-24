@@ -86,3 +86,22 @@ def test_phase8_smoke_requires_ffprobe_for_verified_success() -> None:
     assert "ffprobe is required for Phase 8 smoke validation" in text
     assert "refusing unverified success" in text
     assert "if probe is not None:" not in text
+
+
+def test_ltx_five_run_benchmark_waits_for_same_ready_instance() -> None:
+    script = Path("scripts/smoke/benchmark_ltx25_a2v.ps1").read_text(encoding="utf-8")
+
+    assert "function Wait-LTXBenchmarkReadyInstance" in script
+    assert '"$GroupUrl/instances"' in script
+    assert '"LTX_WARM_WORKER_NOT_READY' in script
+    assert "LTX worker did not recover readiness before the next warm generation." in script
+    assert "-ExpectedInstanceId ([string]$OriginalInstance.id)" in script
+    assert "-ExpectedMachineId ([string]$OriginalInstance.machine_id)" in script
+    assert script.index("Wait-LTXBenchmarkReadyInstance -TimeoutSeconds 60") < script.index(
+        'for ($Index = 1; $Index -le 5; $Index++)'
+    )
+    assert script.index('for ($Index = 1; $Index -le 5; $Index++)') < script.index(
+        '            $Submit, "--avatar-image"'
+    )
+    # Replacing the original instance would invalidate the warm baseline.
+    assert '"--max-pending-reallocations", "0"' in script

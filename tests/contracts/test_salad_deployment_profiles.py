@@ -65,7 +65,7 @@ def test_ltx_autoscaler_allows_parallel_shot_workers() -> None:
     service = document["services"]["ltx25"]
     autoscaler = service["autoscaler"]
 
-    assert service["image"].endswith("ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v8")
+    assert service["image"].endswith("ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v9")
 
     assert autoscaler["min_replicas"] == 0
     assert autoscaler["max_replicas"] == 4

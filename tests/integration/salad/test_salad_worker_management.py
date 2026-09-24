@@ -24,7 +24,9 @@ def test_worker_prepare_normalizes_unexpected_replicas_to_zero() -> None:
     assert "function Ensure-PreparedZeroReplicas" in script
     assert "Forcing replicas back to zero before Prepare completes." in script
     assert "$Group = Ensure-PreparedZeroReplicas -Headers $Headers -Group $Group" in script
-    assert "could not be normalized to zero replicas" in script
+    assert "function Wait-ForStoppedZeroReplicas" in script
+    assert "$Updated = Wait-ForStoppedZeroReplicas -Headers $Headers -TimeoutSeconds 180" in script
+    assert "Salad did not converge" in script
 
 
 def test_worker_manager_supports_env_file_and_unattended_deployment() -> None:

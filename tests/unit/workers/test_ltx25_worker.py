@@ -90,17 +90,14 @@ def test_ltx25_model_download_uses_xet_with_resilient_timeouts() -> None:
     assert "xet_disabled=" in bootstrap
 
     assert service["image"].endswith(
-        ":ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v8"
+        ":ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v9"
     )
     assert "ltx_pipelines.a2vid_two_stage" in dockerfile
     assert "ltx-2.5-22b-dev-transformer-bf16.safetensors" in bootstrap
     assert "ltx-2.5-22b-distilled-lora-450-bf16.safetensors" in bootstrap
 
 
-def test_ltx_i2v_ready_stays_true_while_a2v_mode_is_active(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_ltx_i2v_ready_stays_true_while_a2v_mode_is_active(tmp_path: Path) -> None:
     for path in LTXModelFiles.from_root(tmp_path).paths():
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"model")
@@ -112,11 +109,8 @@ def test_ltx_i2v_ready_stays_true_while_a2v_mode_is_active(
 
     controller = LTXPipelineModeController()
     backend = DirectLTX25Backend(model_root=tmp_path, mode_controller=controller)
-    monkeypatch.setattr(
-        backend,
-        "_get_bindings",
-        lambda: SimpleNamespace(torch=SimpleNamespace(cuda=FakeCuda())),
-    )
+    backend._bindings = SimpleNamespace(torch=SimpleNamespace(cuda=FakeCuda()))
+    backend._prepared = True
     backend._pipeline = object()
 
     controller.activate("image_to_video")

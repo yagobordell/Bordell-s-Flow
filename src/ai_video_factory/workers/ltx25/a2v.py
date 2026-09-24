@@ -525,6 +525,7 @@ class DirectLTX25AudioToVideoBackend:
         self._mode_controller = mode_controller or LTXPipelineModeController()
         self._lock = self._mode_controller.lock
         self._bindings: _A2VBindings | None = None
+        self._prepared = False
         self._pipeline: Any | None = None
         self._pipeline_profile: str | None = None
         self._pipeline_params: Any | None = None
@@ -546,10 +547,15 @@ class DirectLTX25AudioToVideoBackend:
             self._pipeline_params = bindings.detect_params(
                 str(self._model_files.dev_transformer)
             )
+            self._prepared = True
 
     def ready(self) -> None:
-        with self._lock:
-            self._validate_runtime(self._get_bindings())
+        # Read-only dependency checks must never wait for the inference/mode
+        # lock: Salad polls /ready while a >60-second A2V job is executing.
+        bindings = self._bindings
+        if not self._prepared or bindings is None:
+            raise RuntimeError("LTX-2.5 A2V runtime has not been prepared")
+        self._validate_runtime(bindings)
 
     def generate(
         self,

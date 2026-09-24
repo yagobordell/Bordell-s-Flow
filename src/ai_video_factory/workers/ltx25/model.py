@@ -399,6 +399,7 @@ class DirectLTX25Backend:
         self._device = device
         self._pipeline: Any | None = None
         self._bindings: _LTXBindings | None = None
+        self._prepared = False
         self._mode_controller = mode_controller or LTXPipelineModeController()
         self._lock = self._mode_controller.lock
         self._mode_controller.register("image_to_video", self._release_pipeline_locked)
@@ -418,18 +419,20 @@ class DirectLTX25Backend:
                 raise ModelBootstrapPendingError(str(exc)) from exc
             with _torch_inference_context(bindings.torch):
                 self._get_or_build_pipeline(bindings)
+            self._prepared = True
 
     def ready(self) -> None:
-        """Verify the warmed runtime remains usable without rebuilding the pipeline."""
+        """Check prepared dependencies without waiting on a long GPU generation.
 
-        with self._lock:
-            bindings = self._get_bindings()
-            self._validate_runtime(bindings)
-            if (
-                self._pipeline is None
-                and self._mode_controller.active_mode != "audio_to_video"
-            ):
-                raise RuntimeError("LTX-2.5 pipeline has not been prepared")
+        The same mode lock still serializes model construction and inference.
+        A readiness probe must not acquire it: a 100-second A2V job otherwise
+        causes repeated five-second probe timeouts and removes this instance
+        from Salad job-queue dispatch midway through the job.
+        """
+        bindings = self._bindings
+        if not self._prepared or bindings is None:
+            raise RuntimeError("LTX-2.5 pipeline has not been prepared")
+        self._validate_runtime(bindings)
 
     def generate(
         self,

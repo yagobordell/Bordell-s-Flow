@@ -97,7 +97,7 @@ def test_qwen_salad_manifest_contract() -> None:
     service = manifest["services"]["qwen_image_21"]
 
     assert service["priority"] == "high"
-    assert service["image"].endswith("qwen-image-2.1-int8-1280x736-v2")
+    assert service["image"].endswith("qwen-image-2.1-int8-1280x736-v5")
     assert service["environment"]["QWEN_IMAGE_21_MEMORY_MODE"] == "int8_cuda"
     assert service["resources"]["gpu_class_names"] == ["RTX 5090 (32 GB)"]
     assert service["environment"]["QWEN_IMAGE_21_MODEL_REPOSITORY"] == QWEN_IMAGE_21_MODEL_ID
