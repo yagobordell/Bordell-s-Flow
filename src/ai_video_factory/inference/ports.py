@@ -84,6 +84,7 @@ class JobRepository(Protocol):
         *,
         owner: str,
         error: str,
+        retryable: bool,
     ) -> None: ...
 
     def next_pending_request(
