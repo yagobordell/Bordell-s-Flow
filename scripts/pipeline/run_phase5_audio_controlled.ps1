@@ -12,7 +12,7 @@ param(
     [string]$Provenance = "",
 
     [ValidateRange(10, 120)]
-    [int]$PrewarmTimeoutMinutes = 90,
+    [int]$StartTimeoutMinutes = 90,
 
     [ValidateRange(30, 900)]
     [int]$PendingTimeoutSeconds = 300,
@@ -31,10 +31,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$ValidationManager = Join-Path $PSScriptRoot "../salad/manage_salad_validation.ps1"
-$OptimizedPrewarm = Join-Path $PSScriptRoot "../salad/start_salad_optimized_prewarm.ps1"
-$QueueCleanup = Join-Path $PSScriptRoot "../salad/cleanup_salad_queue.ps1"
-$ZeroReplicaGuard = Join-Path $PSScriptRoot "../salad/ensure_salad_zero_replicas.ps1"
+$WorkerManager = Join-Path $PSScriptRoot "../salad/manage_salad_worker.ps1"
 $R2Preflight = Join-Path $PSScriptRoot "check_r2_ready.py"
 $CacheAudit = Join-Path $PSScriptRoot "../diagnostics/audit_phase5_audio_cache.py"
 $Runner = Join-Path $PSScriptRoot "run_phase5_audio.py"
@@ -50,58 +47,34 @@ if (-not (Test-Path -LiteralPath $SourceFile -PathType Leaf)) {
 function Invoke-ServiceStopAndVerify {
     param([Parameter(Mandatory)][string]$Service)
 
-    try {
-        & $ValidationManager -Action Stop -Service $Service -NonInteractive
-        if (-not $?) {
-            throw "Failed to stop Salad service '$Service'."
-        }
-    }
-    finally {
-        try {
-            & $QueueCleanup -Service $Service -NonInteractive
-            if (-not $?) {
-                throw "Failed to clean Salad queue for '$Service'."
-            }
-        }
-        finally {
-            & $ZeroReplicaGuard -Service $Service -NonInteractive
-            if (-not $?) {
-                throw "Salad service '$Service' did not settle at replicas=0."
-            }
-        }
-    }
+    & $WorkerManager -Action Stop -Service $Service -NonInteractive
+    if (-not $?) { throw "Failed to stop Salad service '$Service'." }
+    & $WorkerManager -Action Status -Service $Service -NonInteractive
 }
 
-function Invoke-Prewarm {
+function Invoke-Start {
     param([Parameter(Mandatory)][string]$Service)
 
-    $Arguments = @{
-        Service = $Service
-        TimeoutMinutes = $PrewarmTimeoutMinutes
-    }
-    if ($NonInteractive) {
-        $Arguments["NonInteractive"] = $true
-    }
-
-    & $OptimizedPrewarm @Arguments
-    if (-not $?) {
-        throw "$Service optimized prewarm failed."
-    }
+    $Arguments = @{ Action = "Start"; Service = $Service; Replicas = 1 }
+    if ($NonInteractive) { $Arguments["NonInteractive"] = $true }
+    & $WorkerManager @Arguments
+    if (-not $?) { throw "$Service explicit-capacity start failed." }
 }
 
-
-function Test-BreezePrewarmFallbackEligible {
+function Test-BreezeStartFallbackEligible {
     param([Parameter(Mandatory)][string]$Message)
 
     $Patterns = @(
-        "entered failed state during prewarm",
+        "entered failed state during start",
         "exceeded the global node-change budget",
         "could not make allocation/container-creation progress",
         "image pull remained stalled during the final",
         "image pull remained below minimum sustained progress",
         "image pull completed but the container never started during",
         "remained running but not ready during the final",
-        "did not become ready within the overall"
+        "did not become ready within the overall",
+        "did not reach running",
+        "explicit-capacity start failed"
     )
     foreach ($Pattern in $Patterns) {
         if ($Message.IndexOf($Pattern, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
@@ -117,7 +90,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "R2 preflight failed; refusing to allocate any Phase 5 GPU."
 }
 
-& $ValidationManager -Action Status -Service breeze_tts2 -NonInteractive
+& $WorkerManager -Action Status -Service breeze_tts2 -NonInteractive
 if (-not $?) {
     throw "Breeze Salad control-plane status preflight failed."
 }
@@ -169,18 +142,18 @@ $BreezeSucceeded = $false
 
 try {
     try {
-        Write-Host "=== Breeze prewarm: exactly one ready primary replica ===" -ForegroundColor Cyan
-        Invoke-Prewarm -Service breeze_tts2
+        Write-Host "=== Breeze start: exactly one ready primary replica ===" -ForegroundColor Cyan
+        Invoke-Start -Service breeze_tts2
     }
     catch {
-        $PrewarmError = [string]$_.Exception.Message
-        if (-not (Test-BreezePrewarmFallbackEligible -Message $PrewarmError)) {
+        $StartError = [string]$_.Exception.Message
+        if (-not (Test-BreezeStartFallbackEligible -Message $StartError)) {
             throw
         }
-        $FallbackReason = "breeze_prewarm_terminal_failure"
+        $FallbackReason = "breeze_start_terminal_failure"
         Write-Warning (
-            "Breeze prewarm reached a classified terminal operational failure; " +
-            "this is eligible for Fish fallback. Error: $PrewarmError"
+            "Breeze start reached a classified terminal operational failure; " +
+            "this is eligible for Fish fallback. Error: $StartError"
         )
     }
 
@@ -217,7 +190,7 @@ finally {
 
 if ($BreezeSucceeded) {
     Write-Host "Phase 5 complete with Breeze; Fish consumed zero GPU-seconds." -ForegroundColor Green
-    & $ValidationManager -Action Status -Service breeze_tts2 -NonInteractive
+    & $WorkerManager -Action Status -Service breeze_tts2 -NonInteractive
     exit 0
 }
 
@@ -252,14 +225,14 @@ if ($LASTEXITCODE -ne 0) {
     throw "Fish fallback configuration preflight failed; refusing Fish GPU allocation."
 }
 
-& $ValidationManager -Action Status -Service fish_speech -NonInteractive
+& $WorkerManager -Action Status -Service fish_speech -NonInteractive
 if (-not $?) {
     throw "Fish Salad control-plane status preflight failed."
 }
 
 try {
-    Write-Host "=== Fish prewarm: exactly one ready fallback replica ===" -ForegroundColor Cyan
-    Invoke-Prewarm -Service fish_speech
+    Write-Host "=== Fish start: exactly one ready fallback replica ===" -ForegroundColor Cyan
+    Invoke-Start -Service fish_speech
 
     Write-Host "=== Phase 5 fallback narration: Fish Speech ===" -ForegroundColor Cyan
     & python $Runner @FishArguments
@@ -273,6 +246,6 @@ finally {
 }
 
 Write-Host "=== Final Phase 5 Salad state ===" -ForegroundColor Cyan
-& $ValidationManager -Action Status -Service breeze_tts2 -NonInteractive
-& $ValidationManager -Action Status -Service fish_speech -NonInteractive
+& $WorkerManager -Action Status -Service breeze_tts2 -NonInteractive
+& $WorkerManager -Action Status -Service fish_speech -NonInteractive
 Write-Host "Phase 5 complete through Fish fallback." -ForegroundColor Green
