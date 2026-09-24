@@ -36,6 +36,12 @@ from ai_video_factory.workers.ltx25.model import (
     ltx_num_frames_for_duration,
 )
 
+from ai_video_factory.workflows._video_jobs import (
+    archive_manifest,
+    download_verified_mp4,
+    terminal_failure_detail as _terminal_failure_detail,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -498,19 +504,7 @@ def _validate_manifest_against_plan(
 
 
 def _archive_manifest(path: Path, run_fingerprint: str) -> Path:
-    raw = path.read_bytes()
-    state_sha = hashlib.sha256(raw).hexdigest()[:12]
-    archive = path.with_name(
-        f"{path.stem}.archive-{run_fingerprint[:12]}-{state_sha}{path.suffix}"
-    )
-    if archive.exists():
-        if archive.read_bytes() != raw:
-            raise ValueError(f"Video generation manifest archive collision: {archive}")
-        path.unlink()
-    else:
-        os.replace(path, archive)
-    print(f"Archived superseded video generation manifest: {archive}")
-    return archive
+    return archive_manifest(path, run_fingerprint, phase="generation")
 
 
 def _write_manifest(path: Path, manifest: VideoGenerationManifest) -> None:
@@ -584,24 +578,6 @@ def _apply_snapshot(
     state.response = response
 
 
-def _terminal_failure_detail(state: VideoGenerationJobState) -> str:
-    parts = [
-        f"shot {state.shot_id}={state.transport_status}",
-        f"transport_job_id={state.transport_job_id or '<none>'}",
-    ]
-    if state.last_terminal_payload is not None:
-        rendered = json.dumps(
-            state.last_terminal_payload,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        )
-        if len(rendered) > 1800:
-            rendered = rendered[:1797] + "..."
-        parts.append(f"provider_payload={rendered}")
-    return " ".join(parts)
-
-
 def _parse_success_response(value: object) -> InferenceJobResponse:
     if isinstance(value, str):
         value = json.loads(value)
@@ -629,18 +605,9 @@ def _download_completed_clips(
         artifact = state.response.output
         destination = clips_dir / f"shot_{item.shot_id:03d}.mp4"
 
-        valid_local = (
-            destination.is_file()
-            and destination.stat().st_size == artifact.size_bytes
-            and sha256_file(destination) == artifact.sha256
+        download_verified_mp4(
+            storage, artifact, destination, shot_id=item.shot_id, kind="video"
         )
-        if not valid_local:
-            storage.download(artifact.key, destination)
-
-        if destination.stat().st_size != artifact.size_bytes:
-            raise ValueError(f"Downloaded video size mismatch for shot {item.shot_id}")
-        if sha256_file(destination) != artifact.sha256:
-            raise ValueError(f"Downloaded video SHA mismatch for shot {item.shot_id}")
 
         uri = f"{clip_uri_prefix.rstrip('/')}/shot_{item.shot_id:03d}.mp4"
         clips.append(VideoClip(shot_id=item.shot_id, uri=uri))
