@@ -25,7 +25,7 @@ def test_worker_prepare_normalizes_unexpected_replicas_to_zero() -> None:
     assert "Forcing replicas back to zero before Prepare completes." in script
     assert "$Group = Ensure-PreparedZeroReplicas -Headers $Headers -Group $Group" in script
     assert "function Wait-ForStoppedZeroReplicas" in script
-    assert "return Wait-ForStoppedZeroReplicas -Headers $Headers -TimeoutSeconds 180" in script
+    assert "$Updated = Wait-ForStoppedZeroReplicas -Headers $Headers -TimeoutSeconds 180" in script
     assert "Salad did not converge" in script
 
 
