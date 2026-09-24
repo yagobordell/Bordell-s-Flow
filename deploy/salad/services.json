@@ -42,7 +42,7 @@
       "group_name": "ai-video-factory-ltx25-worker-v2",
       "queue_name": "ai-video-factory-ltx25-jobs-v2",
       "dockerfile": "docker/workers/ltx25/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v7",
+      "image": "docker.io/yagobordell/ai-video-factory:ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v8",
       "priority": "high",
       "resources": {
         "cpu": 8,
@@ -390,7 +390,7 @@
       "group_name": "ai-video-factory-qwen-image-21-worker",
       "queue_name": "ai-video-factory-qwen-image-21-jobs",
       "dockerfile": "docker/workers/qwen-image-2.1/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:qwen-image-2.1-bf16-v1",
+      "image": "docker.io/yagobordell/ai-video-factory:qwen-image-2.1-int8-1280x736-v2",
       "priority": "high",
       "resources": {
         "cpu": 8,
@@ -407,6 +407,7 @@
         "QWEN_IMAGE_21_MODEL_REPOSITORY": "Qwen/Qwen-Image-2.1",
         "QWEN_IMAGE_21_MODEL_REVISION": "b3179ad355be050328e483a9dfdd9e60cd62adfa",
         "QWEN_IMAGE_21_DEVICE": "cuda",
+        "QWEN_IMAGE_21_MEMORY_MODE": "int8_cuda",
         "QWEN_IMAGE_21_READY_TIMEOUT_SECONDS": "1800",
         "HF_HUB_DOWNLOAD_TIMEOUT": "60",
         "HF_HUB_ETAG_TIMEOUT": "15",

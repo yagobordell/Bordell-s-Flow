@@ -92,9 +92,10 @@ async def main() -> None:
     )
     args = parse_args()
     width, height = parse_image_size(args.size)
-    if width * 9 != height * 16:
+    if f"{width}x{height}" != QWEN_IMAGE_21_PRODUCTION_SIZE:
         raise SystemExit(
-            f"Phase 6 production keyframes must be exact 16:9; received {width}x{height}"
+            f"Phase 6 production keyframes must be {QWEN_IMAGE_21_PRODUCTION_SIZE}; "
+            f"received {width}x{height}"
         )
     frames = _read_models(args.frames, StoryboardFrame)
     shots = _read_models(args.shots, Shot)

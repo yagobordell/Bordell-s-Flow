@@ -53,7 +53,7 @@ def test_reference_asset_workflow_runs_in_parallel_and_writes_deterministic_file
             image_provider=provider,  # type: ignore[arg-type]
             output_dir=output_dir,
             model="test-image-model",
-            size="1536x864",
+            size="1280x736",
             quality="medium",
         )
     )
@@ -72,9 +72,9 @@ def test_reference_asset_workflow_runs_in_parallel_and_writes_deterministic_file
         },
     ]
     with Image.open(output_dir / "group_001.png") as image:
-        assert image.size == (1536, 864)
+        assert image.size == (1280, 736)
     with Image.open(output_dir / "location_001.png") as image:
-        assert image.size == (1536, 864)
+        assert image.size == (1280, 736)
 
 
 class WrongSizeImageProvider:
@@ -89,14 +89,14 @@ class WrongSizeImageProvider:
 def test_reference_asset_workflow_rejects_wrong_provider_geometry(tmp_path: Any) -> None:
     output_dir = tmp_path / "phase4" / "reference_assets"
 
-    with pytest.raises(ValueError, match="expected exactly 1536x864"):
+    with pytest.raises(ValueError, match="expected exactly 1280x736"):
         asyncio.run(
             generate_reference_assets(
                 [VisualReference(entity_id="location_001", prompt="wide city")],
                 image_provider=WrongSizeImageProvider(),  # type: ignore[arg-type]
                 output_dir=output_dir,
                 model="test",
-                size="1536x864",
+                size="1280x736",
                 quality="high",
             )
         )

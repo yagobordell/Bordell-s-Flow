@@ -77,7 +77,7 @@ def test_ltx_suite_invokes_landscape_720p_smoke() -> None:
     assert '"--width",\n        "768"' not in ltx
     assert '"--height",\n        "1280"' not in ltx
     assert "_prepare_ltx_landscape_keyframe(" in ltx
-    assert 'inputs_dir / "ltx-keyframe-16x9.png"' in ltx
+    assert 'inputs_dir / "ltx-keyframe-original.png"' in ltx
 
 
 def test_phase8_smoke_requires_ffprobe_for_verified_success() -> None:

@@ -106,7 +106,7 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
     assert metadata["transformer_variant"] == "distilled"
     assert metadata["video_stg_scale"] == 0.0
     assert metadata["video_modality_scale"] == 1.0
-    assert metadata["generation_profile"].endswith("-v4")
+    assert metadata["generation_profile"].endswith("-v5")
     assert metadata["peak_vram_bytes"] == 123456
     assert metadata["pipeline_reused"] is False
     assert state["conditionings"][0]["strength"] == 1.0

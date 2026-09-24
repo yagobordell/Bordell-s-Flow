@@ -81,7 +81,7 @@ def test_manifest_versions_and_download_profiles_are_explicit() -> None:
     assert document["stack"]["shared_environment"]["SALAD_LOG_LEVEL"] == "info"
     assert document["stack"]["autostart_policy"] is False
     assert "autostart_policy" not in services["whisper"]
-    assert services["ltx25"]["image"].endswith("ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v7")
+    assert services["ltx25"]["image"].endswith("ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v8")
     assert services["ltx25"]["environment"]["PYTHONFAULTHANDLER"] == "1"
 
     assert services["ideogram4"]["autoscaler"]["max_replicas"] == 1

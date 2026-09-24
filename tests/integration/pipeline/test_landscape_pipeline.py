@@ -27,12 +27,15 @@ def _generation_inputs(
     )
 
 
-def test_ltx_plan_accepts_native_landscape_keyframe_and_pins_720p24(tmp_path: Path) -> None:
+@pytest.mark.parametrize("width,height", [(1280, 736), (1536, 864)])
+def test_ltx_plan_accepts_qwen_or_native_landscape_keyframe_and_pins_720p24(
+    tmp_path: Path, width: int, height: int
+) -> None:
     base_dir = tmp_path / "phase6"
     _write_png(
         base_dir / "storyboard_keyframes" / "shot_001.png",
-        width=1536,
-        height=864,
+        width=width,
+        height=height,
     )
     keyframes, prompts, timings = _generation_inputs(base_dir)
 
@@ -80,7 +83,7 @@ def test_ltx_manifest_archives_inactive_previous_plan_but_blocks_active_one(
     manifest_path = tmp_path / "phase8" / "video_generation_manifest.json"
     keyframes, prompts, timings = _generation_inputs(base_dir)
 
-    _write_png(keyframe_path, width=1536, height=864, value=10)
+    _write_png(keyframe_path, width=1280, height=736, value=10)
     first_plan = generation.build_video_generation_plan(
         keyframes,
         prompts,
@@ -91,7 +94,7 @@ def test_ltx_manifest_archives_inactive_previous_plan_but_blocks_active_one(
     first_manifest.jobs[0].transport_status = "succeeded"
     generation._write_manifest(manifest_path, first_manifest)
 
-    _write_png(keyframe_path, width=1536, height=864, value=20)
+    _write_png(keyframe_path, width=1280, height=736, value=20)
     second_plan = generation.build_video_generation_plan(
         keyframes,
         prompts,
@@ -106,7 +109,7 @@ def test_ltx_manifest_archives_inactive_previous_plan_but_blocks_active_one(
     second_manifest.jobs[0].transport_status = "running"
     second_manifest.jobs[0].transport_job_id = "transport-active"
     generation._write_manifest(manifest_path, second_manifest)
-    _write_png(keyframe_path, width=1536, height=864, value=30)
+    _write_png(keyframe_path, width=1280, height=736, value=30)
     third_plan = generation.build_video_generation_plan(
         keyframes,
         prompts,

@@ -83,9 +83,10 @@ def _queue(name: str) -> SaladJobQueueClient:
 async def main() -> None:
     args = parse_args()
     width, height = parse_image_size(args.size)
-    if width * 9 != height * 16:
+    if f"{width}x{height}" != QWEN_IMAGE_21_PRODUCTION_SIZE:
         raise SystemExit(
-            f"Phase 4 production references must be exact 16:9; received {width}x{height}"
+            f"Phase 4 production references must be {QWEN_IMAGE_21_PRODUCTION_SIZE}; "
+            f"received {width}x{height}"
         )
     if not args.references_file.is_file():
         raise SystemExit(f"Visual references file not found: {args.references_file}")

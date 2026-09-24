@@ -338,26 +338,12 @@ def _write_model_list(path: Path, values: list[Any]) -> None:
 
 
 def _prepare_ltx_landscape_keyframe(source: Path, destination: Path) -> Path:
-    """Create a deterministic 16:9 conditioning image for the LTX landscape smoke."""
+    """Keep the complete source frame; LTX performs the content-preserving fit."""
 
     with Image.open(source) as opened:
         image = opened.convert("RGB")
-    target_ratio = 16 / 9
-    source_ratio = image.width / image.height
-    if source_ratio > target_ratio:
-        crop_width = round(image.height * target_ratio)
-        left = (image.width - crop_width) // 2
-        image = image.crop((left, 0, left + crop_width, image.height))
-    elif source_ratio < target_ratio:
-        crop_height = round(image.width / target_ratio)
-        top = (image.height - crop_height) // 2
-        image = image.crop((0, top, image.width, top + crop_height))
-
     destination.parent.mkdir(parents=True, exist_ok=True)
-    image.resize((1280, 720), Image.Resampling.LANCZOS).save(
-        destination,
-        format="PNG",
-    )
+    image.save(destination, format="PNG")
     return destination
 
 
@@ -375,7 +361,7 @@ def _smoke_ltx25(args: argparse.Namespace) -> None:
     inputs_dir.mkdir(parents=True, exist_ok=True)
     local_keyframe = _prepare_ltx_landscape_keyframe(
         keyframe_path,
-        inputs_dir / "ltx-keyframe-16x9.png",
+        inputs_dir / "ltx-keyframe-original.png",
     )
 
     keyframes_path = inputs_dir / "storyboard_keyframes.json"

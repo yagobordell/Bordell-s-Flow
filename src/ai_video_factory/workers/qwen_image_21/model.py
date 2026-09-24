@@ -11,6 +11,11 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ai_video_factory.image_contracts import (
+    QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+    QWEN_IMAGE_21_PRODUCTION_SIZE,
+    QWEN_IMAGE_21_PRODUCTION_WIDTH,
+)
 from ai_video_factory.inference.contracts import InferenceJobRequest
 from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.ports import LocalArtifact
@@ -19,14 +24,11 @@ QWEN_IMAGE_21_REFERENCE_TASK = "image.qwen_image_21.reference"
 QWEN_IMAGE_21_KEYFRAME_TASK = "image.qwen_image_21.keyframe"
 QWEN_IMAGE_21_MODEL_ID = "Qwen/Qwen-Image-2.1"
 QWEN_IMAGE_21_MODEL_REVISION = "b3179ad355be050328e483a9dfdd9e60cd62adfa"
-QWEN_IMAGE_21_PRODUCTION_WIDTH = 1536
-QWEN_IMAGE_21_PRODUCTION_HEIGHT = 864
-QWEN_IMAGE_21_PRODUCTION_SIZE = "1536x864"
 QWEN_IMAGE_21_DIMENSION_MULTIPLE = 32
 QWEN_IMAGE_21_DEFAULT_STEPS = 40
 QWEN_IMAGE_21_TRUE_CFG_SCALE = 1.0
 QWEN_IMAGE_21_USE_KV_CACHE = True
-QWEN_IMAGE_21_GENERATION_PROFILE = "qwen-image-2.1-bf16-1536x864-40step-kv-v2"
+QWEN_IMAGE_21_GENERATION_PROFILE = "qwen-image-2.1-1280x736-40step-kv-v3"
 QWEN_IMAGE_21_REQUIRED_MODEL_FILES = (
     "model_index.json",
     "processor/tokenizer.json",

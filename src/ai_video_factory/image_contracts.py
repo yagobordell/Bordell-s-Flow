@@ -1,0 +1,7 @@
+"""Shared image geometry for Qwen generation and downstream video conditioning."""
+
+QWEN_IMAGE_21_PRODUCTION_WIDTH = 1280
+QWEN_IMAGE_21_PRODUCTION_HEIGHT = 736
+QWEN_IMAGE_21_PRODUCTION_SIZE = (
+    f"{QWEN_IMAGE_21_PRODUCTION_WIDTH}x{QWEN_IMAGE_21_PRODUCTION_HEIGHT}"
+)

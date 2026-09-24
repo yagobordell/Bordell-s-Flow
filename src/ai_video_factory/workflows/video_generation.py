@@ -12,6 +12,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoClip, VideoPrompt
+from ai_video_factory.image_contracts import (
+    QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+    QWEN_IMAGE_21_PRODUCTION_WIDTH,
+)
 from ai_video_factory.inference.contracts import (
     InferenceJobRequest,
     InferenceJobResponse,
@@ -116,10 +120,15 @@ def build_video_generation_plan(
         )
         if image_format != "png":
             raise ValueError(f"Shot {keyframe.shot_id} keyframe must be a PNG")
-        if keyframe_width * 9 != keyframe_height * 16:
+        native_16_9 = keyframe_width * 9 == keyframe_height * 16
+        qwen_landscape = (keyframe_width, keyframe_height) == (
+            QWEN_IMAGE_21_PRODUCTION_WIDTH,
+            QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+        )
+        if not (native_16_9 or qwen_landscape):
             raise ValueError(
-                f"Shot {keyframe.shot_id} keyframe must be native 16:9; "
-                f"found {keyframe_width}x{keyframe_height}"
+                f"Shot {keyframe.shot_id} keyframe must be native 16:9 or "
+                f"Qwen 1280x736; found {keyframe_width}x{keyframe_height}"
             )
         if keyframe_width < width or keyframe_height < height:
             raise ValueError(

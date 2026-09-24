@@ -16,6 +16,11 @@ Production video geometry is:
 silent H.264 MP4
 ```
 
+Qwen text-to-image keyframes are 1280x736 rather than exact 16:9. For I2V, the worker
+preserves the entire source frame using proportional fit and narrow edge-extended side margins
+before padding the internal model grid to 1280x768. Only that internal grid padding is removed
+from the decoded output. The public MP4 remains 1280x720; no Qwen content is center-cropped.
+
 Accepted clips are subsequently upscaled by Real-ESRGAN to 2560x1440.
 
 ## Container and bootstrap
@@ -28,6 +33,9 @@ Required model checkpoints are downloaded under the configured model root. LTX n
 Existing non-empty checkpoint files take the fast path and are not downloaded again.
 
 ## Deployment
+
+Build and publish the new LTX Docker image tag before deploying the Qwen 1280x736 input
+contract: the old worker image rejects that keyframe geometry.
 
 The canonical service entry is `ltx25` in `deploy/salad/services.json`. The manifest owns the
 container group, queue, RTX 5090 profile, priority, replica ceiling and runtime environment.

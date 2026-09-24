@@ -14,6 +14,7 @@ old image digests and retired implementation handoffs belong in Git history.
 - [Fish Speech fallback](components/fish-speech-fallback.md)
 - [Whisper worker](components/whisper-worker.md)
 - [Ideogram 4 worker](components/ideogram4-worker.md)
+- [Qwen Image 2.1 worker](components/qwen-image-21.md)
 - [LTX 2.5 worker](components/ltx25-worker.md)
 - [LTX 2.5 audio-to-video mode](components/ltx25-a2v.md)
 - [Phase 8 video generation](components/phase8-video-generation.md)
