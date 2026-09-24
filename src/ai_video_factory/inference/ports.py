@@ -36,7 +36,7 @@ class ObjectStorage(Protocol):
         metadata: Mapping[str, str],
     ) -> StoredObject: ...
 
-    def create(
+    def create_if_absent(
         self,
         source: Path,
         key: str,
