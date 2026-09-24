@@ -77,23 +77,60 @@ def _list_instances(
 
 
 def _ready_instance(
-    *, api_key: str, organization: str, project: str, group_name: str
+    *,
+    api_key: str,
+    organization: str,
+    project: str,
+    group_name: str,
+    expected_identity: tuple[str, str] | None = None,
+    timeout_seconds: float = 60,
 ) -> tuple[str, str]:
-    instances = _list_instances(
-        api_key=api_key, organization=organization, project=project, group_name=group_name
-    )
-    ready = [
-        instance for instance in instances if instance.get("started") and instance.get("ready")
-    ]
-    if len(ready) != 1:
-        raise RuntimeError(
-            f"Expected exactly one started/ready Qwen instance, got {len(ready)}"
+    """Wait for readiness without accepting a replacement benchmark worker.
+
+    Salad readiness is eventually observed by the control plane. A completed
+    GPU job may briefly leave its original instance not-ready; do not discard
+    an already validated PNG or silently switch to another machine.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    observed = "no instance response"
+    while True:
+        instances = _list_instances(
+            api_key=api_key, organization=organization, project=project,
+            group_name=group_name,
         )
-    instance = ready[0]
-    identifier = str(instance.get("id") or "")
-    if not identifier:
-        raise RuntimeError("Salad ready instance has no identifier")
-    return identifier, str(instance.get("machine_id") or "")
+        if len(instances) > 1:
+            raise RuntimeError(
+                f"Qwen benchmark expected one Salad instance, got {len(instances)}"
+            )
+        if instances:
+            instance = instances[0]
+            identity = (
+                str(instance.get("id") or ""),
+                str(instance.get("machine_id") or ""),
+            )
+            if not all(identity):
+                raise RuntimeError("Salad Qwen instance has an incomplete identity")
+            if expected_identity is not None and identity != expected_identity:
+                raise RuntimeError(
+                    "Qwen Salad instance or machine changed during benchmark; "
+                    "refusing to mix warm-generation results"
+                )
+            if instance.get("started") and instance.get("ready"):
+                return identity
+            observed = (
+                f"instance={identity[0]} state={instance.get('state')} "
+                f"started={instance.get('started')} ready={instance.get('ready')}"
+            )
+        else:
+            observed = "instances=0"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(
+                "Qwen original Salad instance did not become ready within "
+                f"{timeout_seconds:g}s; last_observation={observed}"
+            )
+        print(f"QWEN_BENCHMARK_WAIT_READY {observed}", flush=True)
+        time.sleep(min(5, remaining))
 
 
 def _make_request(*, job_id: str, prompt: str, seed: int) -> InferenceJobRequest:
@@ -250,14 +287,13 @@ def main() -> None:
     }
     try:
         for generation in range(1, 6):
-            current_id, current_machine = _ready_instance(
+            _ready_instance(
                 api_key=api_key,
                 organization=organization,
                 project=project,
                 group_name=group_name,
+                expected_identity=(instance_id, machine_id),
             )
-            if (current_id, current_machine) != (instance_id, machine_id):
-                raise RuntimeError("Qwen Salad instance changed before a benchmark generation")
             job_id = f"qwen-benchmark-{uuid4().hex}-{generation:02d}"
             request = _make_request(job_id=job_id, prompt=prompt, seed=args.seed)
             directory = args.output_dir / f"run-{generation:02d}"
@@ -292,14 +328,13 @@ def main() -> None:
                 image.load()
                 if image.format != "PNG" or image.size != (WIDTH, HEIGHT):
                     raise RuntimeError("Qwen benchmark produced an invalid PNG geometry or format")
-            current_id, current_machine = _ready_instance(
+            _ready_instance(
                 api_key=api_key,
                 organization=organization,
                 project=project,
                 group_name=group_name,
+                expected_identity=(instance_id, machine_id),
             )
-            if (current_id, current_machine) != (instance_id, machine_id):
-                raise RuntimeError("Qwen Salad instance changed during a benchmark generation")
             row: dict[str, object] = {
                 "generation": generation,
                 "warmup": generation == 1,
