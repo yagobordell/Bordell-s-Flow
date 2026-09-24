@@ -10,6 +10,9 @@ param(
 
     [string]$SegmentId = "",
 
+    [ValidateSet("fast", "dev")]
+    [string]$Profile = "fast",
+
     [string]$EnvFile = ".env",
 
     [string]$OutputDir = "data/output/deployment-validation/ltx25-a2v",
@@ -175,6 +178,7 @@ try {
         $Submit,
         "--audio", $ResolvedAudio,
         "--avatar-image", $ResolvedAvatar,
+        "--profile", $Profile,
         "--segment-id", $ResolvedSegmentId,
         "--output-dir", (Join-Path $RepoRoot $OutputDir),
         "--cleanup-stale-only"
@@ -206,6 +210,7 @@ try {
     $PythonArgs = @(
         $Submit,
         "--audio", $ResolvedAudio,
+        "--profile", $Profile,
         "--segment-id", $ResolvedSegmentId,
         "--output-dir", (Join-Path $RepoRoot $OutputDir)
     )
