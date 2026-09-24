@@ -121,57 +121,12 @@ function Ensure-RemotionDependencies {
     }
 }
 
-function Start-CapacityController {
-    $LogDir = Join-Path $RepoRoot "data\output"
-    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
-    $Stdout = Join-Path $LogDir "salad_capacity_controller.log"
-    $Stderr = Join-Path $LogDir "salad_capacity_controller.err.log"
-    Remove-Item -LiteralPath $Stdout, $Stderr -Force -ErrorAction SilentlyContinue
-
-    $env:SALAD_AUTOSCALER_ENABLED = "true"
-    $Process = Start-Process `
-        -FilePath "python" `
-        -ArgumentList @($CapacityController, "--poll-seconds", "15") `
-        -WorkingDirectory $RepoRoot `
-        -RedirectStandardOutput $Stdout `
-        -RedirectStandardError $Stderr `
-        -PassThru
-
-    Start-Sleep -Milliseconds 750
-    if ($Process.HasExited) {
-        $Detail = ""
-        if (Test-Path -LiteralPath $Stderr -PathType Leaf) {
-            $Detail = (Get-Content -LiteralPath $Stderr -Raw).Trim()
-        }
-        throw "Salad capacity controller exited during startup. $Detail"
-    }
-    return $Process
-}
-
-function Stop-CapacityController {
-    param([Diagnostics.Process]$Process)
-
-    if ($null -eq $Process -or $Process.HasExited) {
-        return
-    }
-    Stop-Process -Id $Process.Id -ErrorAction SilentlyContinue
-    try {
-        $Process.WaitForExit(5000)
-    }
-    catch {
-        Write-Warning "Capacity controller did not report a clean exit: $($_.Exception.Message)"
+function Assert-CapacityControllerHealthy {
+    & python $CapacityController --check-health
+    if ($LASTEXITCODE -ne 0) {
+        throw "Global Salad capacity controller is not healthy."
     }
 }
-
-function Invoke-FinalCleanup {
-    param([Parameter(Mandatory)][string[]]$Services)
-
-    & $SaladStack -Action Stop -Services $Services -EnvFile $EnvFile -NonInteractive
-    if (-not $?) {
-        throw "Salad stack stop returned failure."
-    }
-}
-
 Import-EnvFile -Path $EnvFile
 $ResolvedInput = Resolve-InputPath -Path $ScriptFile
 $Document = Get-Content -LiteralPath $ServicesPath -Raw | ConvertFrom-Json
@@ -180,12 +135,9 @@ $OutputDir = Join-Path $RepoRoot "data\output"
 $FinalVideo = Join-Path $OutputDir "phase9\final_video.mp4"
 $ProductionMetrics = Join-Path $OutputDir "production_metrics.json"
 $RunMetrics = Join-Path $OutputDir "video_factory_metrics.json"
-$SaladPreflightPassed = $false
-$CapacityControllerProcess = $null
 $Overall = [Diagnostics.Stopwatch]::StartNew()
 $Phase9Seconds = 0.0
 $PrimaryFailure = $null
-$CleanupFailure = $null
 
 try {
     Write-Host "=== VIDEO FACTORY PREFLIGHT: no GPU allocation ===" -ForegroundColor Cyan
@@ -201,11 +153,11 @@ try {
         if (-not $?) {
             throw "Salad control-plane preflight failed."
         }
-        $SaladPreflightPassed = $true
         Ensure-RemotionDependencies
 
-        Write-Host "=== SALAD CAPACITY: predictive Postgres controller ===" -ForegroundColor Cyan
-        $CapacityControllerProcess = Start-CapacityController
+        Write-Host "=== SALAD CAPACITY: require healthy global controller ===" -ForegroundColor Cyan
+        Assert-CapacityControllerHealthy
+        $env:SALAD_AUTOSCALER_ENABLED = "true"
 
         Write-Host "=== VIDEO FACTORY DAG: cache/resume + bounded parallel execution ===" `
             -ForegroundColor Cyan
@@ -249,30 +201,10 @@ catch {
 }
 finally {
     $Overall.Stop()
-    Stop-CapacityController -Process $CapacityControllerProcess
-    if ($SaladPreflightPassed) {
-        Write-Host "=== FINAL CLEANUP: stop workers and converge replicas=0 ===" `
-            -ForegroundColor Cyan
-        try {
-            Invoke-FinalCleanup -Services $Services
-        }
-        catch {
-            $CleanupFailure = $_
-        }
-    }
 }
 
 if ($null -ne $PrimaryFailure) {
-    if ($null -ne $CleanupFailure) {
-        Write-Warning (
-            "Final cleanup also failed; preserving the original pipeline error. " +
-            "Cleanup error: $($CleanupFailure.Exception.Message)"
-        )
-    }
     throw $PrimaryFailure
-}
-if ($null -ne $CleanupFailure) {
-    throw $CleanupFailure
 }
 
 $ProductionDocument = $null
@@ -290,7 +222,8 @@ $Metrics = [ordered]@{
     phase9_seconds = $Phase9Seconds
     final_video = $FinalVideo
     manual_intervention = 0
-    cleanup = "all project GPU services stopped with replicas=0"
+    capacity_control = "global Postgres-elected Salad controller"
+    cleanup = "pipeline does not stop shared GPU services; global controller owns scale-to-zero"
 }
 $Metrics | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $RunMetrics -Encoding UTF8
 
@@ -309,5 +242,5 @@ if ($null -ne $ProductionDocument) {
     Write-Host ("Cache/resume stage hits: {0}" -f $CacheHits)
 }
 Write-Host "Manual intervention: 0"
-Write-Host "Final cleanup: all project GPU services stopped; replicas=0"
+Write-Host "Capacity cleanup: global controller owns shared scale-to-zero"
 Write-Host ("Metrics: {0}" -f $RunMetrics)
