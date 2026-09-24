@@ -18,7 +18,7 @@ from ai_video_factory.image_contracts import (
     QWEN_IMAGE_21_PRODUCTION_WIDTH,
 )
 from ai_video_factory.inference.contracts import InferenceJobRequest
-from ai_video_factory.inference.errors import ModelBootstrapPendingError
+from ai_video_factory.inference.errors import ModelBootstrapPendingError, NonRetryableTaskError
 from ai_video_factory.inference.ports import LocalArtifact, LocalSidecarArtifact
 
 QWEN_IMAGE_21_REFERENCE_TASK = "image.qwen_image_21.reference"
@@ -56,23 +56,23 @@ def _validate_int8_cuda_device_map(device_map: Any) -> None:
 
 
 def validate_qwen_output_image(image: Any, *, width: int, height: int) -> None:
-    """Reject broken text-to-image frames before a worker publishes them to R2.
+    """Reject invalid text-to-image frames without a deterministic GPU retry.
 
     Production references and keyframes are opaque. Qwen 2.1 can return RGBA,
     but a nearly transparent frame is not usable as an LTX keyframe. Do not
     flatten RGBA to RGB: that would hide a broken decode without fixing it.
     """
     if image.size != (width, height):
-        raise RuntimeError("Qwen-Image-2.1 returned unexpected image dimensions")
+        raise NonRetryableTaskError("Qwen-Image-2.1 returned unexpected image dimensions")
     if image.mode not in {"RGB", "RGBA"}:
-        raise RuntimeError(f"Qwen-Image-2.1 returned unexpected image mode: {image.mode}")
+        raise NonRetryableTaskError(f"Qwen-Image-2.1 returned unexpected image mode: {image.mode}")
     if image.mode == "RGBA":
         alpha_histogram = image.getchannel("A").histogram()
         total_pixels = width * height
         nearly_transparent = sum(alpha_histogram[:17])
         mostly_opaque = sum(alpha_histogram[240:])
         if nearly_transparent >= total_pixels * 0.90 or mostly_opaque < total_pixels * 0.50:
-            raise RuntimeError(
+            raise NonRetryableTaskError(
                 "Qwen-Image-2.1 decoded image is predominantly transparent; "
                 "refusing to publish an unusable production keyframe"
             )
