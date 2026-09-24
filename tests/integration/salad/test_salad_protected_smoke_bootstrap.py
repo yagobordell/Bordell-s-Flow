@@ -1,4 +1,8 @@
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 BOOTSTRAP = Path("scripts/salad/start_salad_protected_smoke.ps1")
 RESTORE = Path("scripts/salad/restore_salad_scale_to_zero.ps1")
@@ -210,8 +214,6 @@ def test_bootstrap_uses_exhaustive_active_jobs_not_stale_queue_summary() -> None
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell Core is unavailable")
 def test_bootstrap_rejects_malformed_job_inventory_before_gpu(tmp_path: Path) -> None:
-    import subprocess
-
     helper = BOOTSTRAP.read_text(encoding="utf-8").split(
         "function Get-ActiveQueueJobs", 1
     )[1].split("function Format-ActiveQueueJobs", 1)[0]
