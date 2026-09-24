@@ -9,8 +9,8 @@ from ai_video_factory.domain import VisualReference
 from ai_video_factory.providers import SaladQwenImage21Provider
 from ai_video_factory.providers.images import parse_image_size
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
-from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
+from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.workers.qwen_image_21 import (
     QWEN_IMAGE_21_PRODUCTION_SIZE,
     QWEN_IMAGE_21_REFERENCE_TASK,
