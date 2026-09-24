@@ -3,8 +3,8 @@ import time
 from pathlib import Path
 
 import pytest
-
 from _production_runner_support import _script
+
 from ai_video_factory.workflows.production_runner import (
     ProductionRunner,
     ProductionStage,
