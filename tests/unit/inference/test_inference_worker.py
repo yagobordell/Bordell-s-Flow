@@ -11,6 +11,7 @@ from ai_video_factory.inference.errors import (
     InputIntegrityError,
     JobBusyError,
     JobConflictError,
+    JobExecutionError,
     LeaseLostError,
     NonRetryableTaskError,
     OutputConflictError,
@@ -153,6 +154,34 @@ def test_worker_max_attempts_prevents_second_inference_execution(tmp_path: Path)
     assert runner.calls == 1
 
 
+def test_worker_default_retry_budget_stops_after_five_attempts(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    repository = InMemoryJobRepository()
+    runner = FailingRunner()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-1",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
+    request = build_request("job-default-retries", digest)
+
+    for _ in range(4):
+        with pytest.raises(JobExecutionError, match="execution failed"):
+            worker.process(request)
+
+    with pytest.raises(NonRetryableTaskError, match="single-shot failure"):
+        worker.process(request)
+    with pytest.raises(NonRetryableTaskError, match="single-shot failure"):
+        worker.process(request)
+
+    assert runner.calls == 5
+
+
 def test_worker_rejects_same_job_id_with_different_request(tmp_path: Path) -> None:
     worker, storage, _, _ = build_worker(tmp_path)
     digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
@@ -214,6 +243,19 @@ def test_worker_rejects_corrupted_input(tmp_path: Path) -> None:
 
     with pytest.raises(InputIntegrityError, match="sha256 mismatch"):
         worker.process(request)
+    assert runner.calls == 0
+
+
+def test_input_integrity_failure_is_terminal_without_retry(tmp_path: Path) -> None:
+    worker, storage, _, runner = build_worker(tmp_path)
+    seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
+    request = build_request("job-corrupt-terminal", "0" * 64)
+
+    with pytest.raises(InputIntegrityError, match="sha256 mismatch"):
+        worker.process(request)
+    with pytest.raises(NonRetryableTaskError, match="InputIntegrityError"):
+        worker.process(request)
+
     assert runner.calls == 0
 
 
