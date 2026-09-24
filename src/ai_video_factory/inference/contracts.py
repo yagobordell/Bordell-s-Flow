@@ -78,8 +78,14 @@ class InferenceJobRequest(BaseModel):
     inputs: list[ObjectInput] = Field(default_factory=list, max_length=16)
     output: ObjectOutput
     sidecar_outputs: dict[str, ObjectOutput] | None = None
-    max_attempts: int = Field(default=DEFAULT_INFERENCE_MAX_ATTEMPTS, ge=1, le=100)
+    max_attempts: int | None = Field(default=None, ge=1, le=100)
     parameters: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @property
+    def effective_max_attempts(self) -> int:
+        """Bound retries without changing fingerprints for legacy requests that omit the field."""
+
+        return self.max_attempts or DEFAULT_INFERENCE_MAX_ATTEMPTS
 
     @field_validator("job_id")
     @classmethod
