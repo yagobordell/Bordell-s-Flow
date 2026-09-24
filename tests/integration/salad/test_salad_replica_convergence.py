@@ -23,7 +23,7 @@ def _run_ps(tmp_path: Path, scenario: str) -> subprocess.CompletedProcess[str]:
         "$Service = 'ltx25'\n"
         "$GroupName = 'ai-video-factory-ltx25-worker-v2'\n"
         "function Start-Sleep { param([int]$Seconds) }\n"
-        "function Get-GroupStatus { param([object]$Group) return [string]$Group.current_state.status }\n"
+        "function Get-GroupStatus { param([object]$Group) "\n        "return [string]$Group.current_state.status }\n"
         "function Get-GroupDescription { param([object]$Group) return '' }\n"
         + _zero_replica_helper()
         + "\n"
