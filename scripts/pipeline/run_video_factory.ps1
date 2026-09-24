@@ -261,5 +261,5 @@ if ($null -ne $ProductionDocument) {
     Write-Host ("Cache/resume stage hits: {0}" -f $CacheHits)
 }
 Write-Host "Manual intervention: 0"
-Write-Host "Final cleanup: all project GPU services stopped; replicas=0; queues cleaned"
+Write-Host "Final cleanup: all project GPU services stopped; replicas=0"
 Write-Host ("Metrics: {0}" -f $RunMetrics)
