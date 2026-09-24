@@ -1,25 +1,21 @@
-from __future__ import annotations
-
 from pathlib import Path
 
 SMOKE_SCRIPT = Path("scripts/smoke/run_salad_smoke_suite.py")
-VALIDATION_MANAGER = Path("scripts/salad/manage_salad_validation.ps1")
-SCALE_TO_ZERO_STARTER = Path("scripts/salad/start_salad_scale_to_zero.ps1")
-PROTECTED_BOOTSTRAP = Path("scripts/salad/start_salad_protected_smoke.ps1")
-SCALE_TO_ZERO_RESTORER = Path("scripts/salad/restore_salad_scale_to_zero.ps1")
+WORKER_MANAGER = Path("scripts/salad/manage_salad_worker.ps1")
+STACK_MANAGER = Path("scripts/salad/manage_salad_stack.ps1")
 
 
-
-def test_smoke_suite_uses_dependency_order_and_real_workers() -> None:
+def test_smoke_suite_uses_real_workers_and_postgres_transport() -> None:
     text = SMOKE_SCRIPT.read_text(encoding="utf-8")
 
     assert '_SERVICE_ORDER = ("breeze_tts2", "whisper", "qwen_image_21", "ltx25")' in text
     assert "SaladBreezeSpeechProvider" in text
     assert "SaladWhisperTranscriptionProvider" in text
     assert "SaladQwenImage21Provider" in text
-    assert '"scripts/smoke/submit_ltx25_smoke.py"' in text
-    assert "QWEN_IMAGE_21_PRODUCTION_SIZE" in text
-    assert 'quality="high"' in text
+    assert "PostgresJobQueueClient" in text
+    assert "scripts/pipeline/run_phase8_videos.py" in text
+    assert "SaladJobQueueClient" not in text
+    assert "submit_ltx25_smoke.py" not in text
 
 
 def test_smoke_qwen_generation_matches_current_contract() -> None:
@@ -27,109 +23,31 @@ def test_smoke_qwen_generation_matches_current_contract() -> None:
 
     assert "QWEN_IMAGE_21_KEYFRAME_TASK" in text
     assert "QWEN_IMAGE_21_MODEL_ID" in text
-    assert 'task_name=QWEN_IMAGE_21_KEYFRAME_TASK' in text
     assert "size=QWEN_IMAGE_21_PRODUCTION_SIZE" in text
     assert 'output_format="png"' in text
 
 
-def test_validation_manager_keeps_expensive_actions_explicit() -> None:
-    text = VALIDATION_MANAGER.read_text(encoding="utf-8")
-    action_set = (
-        'ValidateSet("Validate", "Prepare", "Start", "Prewarm", "Status", "Smoke", '
-        '"ProtectedSmoke", "Stop")'
-    )
+def test_worker_manager_keeps_expensive_actions_explicit() -> None:
+    text = WORKER_MANAGER.read_text(encoding="utf-8")
 
-    assert action_set in text
-    service_set = (
-        'ValidateSet("whisper", "breeze_tts2", "fish_speech", "ideogram4", '
-        '"qwen_image_21", "ltx25", "realesrgan", "all")'
-    )
-    assert service_set in text
-    assert '$SmokeScript = Join-Path $RepoRoot "scripts\\smoke\\run_salad_smoke_suite.py"' in text
-    assert "& python $SmokeScript" in text
-    assert "docker compose" not in text
-    assert "Compose file not found" not in text
-    assert "manage_salad_stack.ps1" in text
-    assert "start_salad_scale_to_zero.ps1" in text
-    assert "start_salad_protected_smoke.ps1" in text
-    assert "restore_salad_scale_to_zero.ps1" in text
-    assert "ensure_salad_zero_replicas.ps1" in text
-    assert '$CallSucceeded = $?' in text
-    assert 'if (-not $CallSucceeded)' in text
-    assert '"Prepare" { Invoke-StackAction -StackAction "Prepare" }' in text
-    assert '"Start" { Invoke-ScaleToZeroStart }' in text
-    assert '"Prewarm" { Invoke-SafePrewarm }' in text
-    assert '"ProtectedSmoke" { Invoke-ProtectedSmoke }' in text
-    assert '"Stop" { Invoke-SafeStop }' in text
-    assert 'ValidateSet("Full"' not in text
+    assert 'ValidateSet("Validate", "Prepare", "Start", "Status", "Stop")' in text
+    assert "capacity.start_replicas" in text
+    assert "capacity.max_replicas" in text
+    assert "set explicit replica capacity" in text
+    assert "Wait-ForStoppedZeroReplicas" in text
+    assert "queue_autoscaler =" not in text
+    assert "queue_connection =" not in text
 
 
-def test_scale_to_zero_start_keeps_idle_deploying_for_normal_start() -> None:
-    text = SCALE_TO_ZERO_STARTER.read_text(encoding="utf-8")
+def test_stack_manager_only_delegates_compute_lifecycle() -> None:
+    text = STACK_MANAGER.read_text(encoding="utf-8")
 
-    assert "function Test-ScaleToZeroActive" in text
-    assert '[int]$Definition.autoscaler.min_replicas -ne 0' in text
-    assert '$Status -ne "deploying"' in text
-    assert '$Status -eq "running"' in text
-    assert 'return [int]$Group.replicas -eq 0' in text
-    assert '"$GroupUrl/start"' in text
-    assert "first queued job may trigger a cold start" in text
-
-
-def test_protected_smoke_bootstraps_through_manual_replica_and_real_instance() -> None:
-    bootstrap = PROTECTED_BOOTSTRAP.read_text(encoding="utf-8")
-    manager = VALIDATION_MANAGER.read_text(encoding="utf-8")
-
-    assert "@{ replicas = 1 }" in bootstrap
-    assert "min_replicas = 1" not in bootstrap
-    assert '$Group.PSObject.Properties["queue_autoscaler"]' in bootstrap
-    assert "Test-RemoteAutoscalerMinReplicas" in bootstrap
-    assert "-ExpectedMinReplicas 0" in bootstrap
-    assert "$Group.queue_autoscaler" not in bootstrap
-    assert '"$GroupUrl/start"' in bootstrap
-    assert '"$GroupUrl/instances"' in bootstrap
-    assert "Test-QueueAttachment" in bootstrap
-    assert "current_queue_length" in bootstrap
-    assert "$StartedInstances.Count -eq 1" in bootstrap
-    assert "$Instances.Count -gt 1" in bootstrap
-
-    protected = manager.split("function Invoke-ProtectedSmoke {", maxsplit=1)[1].split(
-        "function Invoke-SafeStop", maxsplit=1
-    )[0]
-    assert '$Service -eq "all"' in protected
-    assert "Invoke-ProtectedSmokeBootstrap" in protected
-    assert "Invoke-Smoke" in protected
-    assert "Invoke-ScaleToZeroRestore" in protected
-    assert "finally" in protected
-    assert 'Invoke-StackAction -StackAction "Stop"' in protected
-    assert "Invoke-ZeroReplicaFallback -StopFailure $_" in protected
-    assert protected.index("Invoke-ProtectedSmokeBootstrap") < protected.index("Invoke-Smoke")
-    assert protected.index("Invoke-Smoke") < protected.index("Invoke-ScaleToZeroRestore")
-    assert protected.index("Invoke-ScaleToZeroRestore") < protected.index(
-        'Invoke-StackAction -StackAction "Stop"'
-    )
-
-
-def test_scale_to_zero_restore_reinstates_manifest_autoscaler() -> None:
-    restorer = SCALE_TO_ZERO_RESTORER.read_text(encoding="utf-8")
-    manager = VALIDATION_MANAGER.read_text(encoding="utf-8")
-
-    assert "function New-ManifestAutoscaler" in restorer
-    assert "function Test-ManifestAutoscaler" in restorer
-    assert "Definition.autoscaler.min_replicas" in restorer
-    assert "queue_autoscaler = New-ManifestAutoscaler" in restorer
-    assert '-Method "Patch"' in restorer
-    assert 'Operation "restore manifest autoscaler"' in restorer
-
-    safe_stop = manager.split("function Invoke-SafeStop", maxsplit=1)[1].split(
-        "switch ($Action)", maxsplit=1
-    )[0]
-    assert "Invoke-ScaleToZeroRestore" in safe_stop
-    assert 'Invoke-StackAction -StackAction "Stop"' in safe_stop
-    assert "Invoke-ZeroReplicaFallback -StopFailure $_" in safe_stop
-    assert safe_stop.index("Invoke-ScaleToZeroRestore") < safe_stop.index(
-        'Invoke-StackAction -StackAction "Stop"'
-    )
+    assert 'ValidateSet("Validate", "Prepare", "Start", "Status", "Stop")' in text
+    assert "$Document.stack.job_transport" in text
+    assert "postgres" in text
+    assert "start_salad_scale_to_zero.ps1" not in text
+    assert "restore_salad_scale_to_zero.ps1" not in text
+    assert "cleanup_salad_queue.ps1" not in text
 
 
 def test_smoke_suite_persists_evidence_for_each_worker() -> None:
@@ -140,19 +58,10 @@ def test_smoke_suite_persists_evidence_for_each_worker() -> None:
     assert '"smoke-summary.json"' in text
 
 
-def test_validation_manager_exposes_targeted_prepare_recreate() -> None:
-    text = VALIDATION_MANAGER.read_text(encoding="utf-8")
+def test_worker_manager_exposes_targeted_prepare_recreate_and_pinned_image() -> None:
+    text = WORKER_MANAGER.read_text(encoding="utf-8")
 
     assert "[switch]$Recreate" in text
-    assert '$Arguments["Recreate"] = $true' in text
-    assert "-Recreate is only valid with -Action Prepare." in text
-    assert "-Recreate requires one explicit service" in text
-
-
-
-def test_validation_manager_forwards_explicit_pinned_image_for_recovery() -> None:
-    text = VALIDATION_MANAGER.read_text(encoding="utf-8")
-
     assert "[string]$PinnedImage" in text
-    assert '$Arguments["PinnedImage"] = $PinnedImage' in text
-    assert "-PinnedImage requires one explicit service." in text
+    assert "-Recreate is only valid with Prepare." in text
+    assert "Remove-StoppedContainerGroup" in text
