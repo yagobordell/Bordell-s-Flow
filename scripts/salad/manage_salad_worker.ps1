@@ -26,6 +26,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $ServicesPath = Join-Path $RepoRoot "deploy\salad\services.json"
+$ScaleToZeroRestore = Join-Path $PSScriptRoot "restore_salad_scale_to_zero.ps1"
 if (-not (Test-Path -LiteralPath $ServicesPath -PathType Leaf)) {
     throw "Salad service manifest not found: $ServicesPath"
 }
@@ -755,6 +756,52 @@ function Update-ContainerGroup {
         Out-Null
 }
 
+function Ensure-ManifestScaleToZero {
+    param(
+        [Parameter(Mandatory)][hashtable]$Headers,
+        [Parameter(Mandatory)][object]$Group
+    )
+
+    $Property = $Group.PSObject.Properties["queue_autoscaler"]
+    if ($null -eq $Property -or $null -eq $Property.Value) {
+        Write-Warning (
+            "$Service Salad response does not expose queue_autoscaler; " +
+            "cannot confirm whether an autoscaler is reasserting replicas=1."
+        )
+        return $Group
+    }
+    $RemoteMin = [int]$Property.Value.min_replicas
+    if ($RemoteMin -eq [int]$Definition.autoscaler.min_replicas) {
+        return $Group
+    }
+    if ((Get-GroupStatus -Group $Group) -ne "stopped" -or [bool]$Group.pending_change) {
+        throw (
+            "Refusing to restore '$GroupName' autoscaler while the group is " +
+            "running or updating; remote min_replicas=$RemoteMin."
+        )
+    }
+    Write-Warning (
+        "$Service remote queue_autoscaler.min_replicas=$RemoteMin differs from " +
+        "the scale-to-zero manifest; restoring the manifest before replica cleanup."
+    )
+    & $ScaleToZeroRestore -Service $Service -Mode Manifest -EnvFile $EnvFile -NonInteractive
+    if (-not $?) {
+        throw "$Service autoscaler restore failed; refusing to patch replicas."
+    }
+    $Updated = Get-Group -Headers $Headers
+    $UpdatedAutoscaler = $Updated.PSObject.Properties["queue_autoscaler"]
+    if (
+        (Get-GroupStatus -Group $Updated) -ne "stopped" -or
+        [bool]$Updated.pending_change -or
+        $null -eq $UpdatedAutoscaler -or
+        $null -eq $UpdatedAutoscaler.Value -or
+        [int]$UpdatedAutoscaler.Value.min_replicas -ne 0
+    ) {
+        throw "$Service autoscaler restore did not reach stopped/pending=False/min_replicas=0."
+    }
+    return $Updated
+}
+
 function Wait-ForStoppedZeroReplicas {
     param(
         [Parameter(Mandatory)][hashtable]$Headers,
@@ -765,8 +812,9 @@ function Wait-ForStoppedZeroReplicas {
     # necessarily convergence of a subsequent replica-count PATCH. Verify
     # the complete stopped/zero-replica state before returning.
     $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $ConsecutiveZero = 0
     do {
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 15
         $Group = Get-Group -Headers $Headers
         $Status = Get-GroupStatus -Group $Group
         Write-Host (
@@ -789,14 +837,20 @@ function Wait-ForStoppedZeroReplicas {
             -not [bool]$Group.pending_change -and
             [int]$Group.replicas -eq 0
         ) {
-            return $Group
+            $ConsecutiveZero += 1
+            if ($ConsecutiveZero -ge 3) {
+                return $Group
+            }
+        }
+        else {
+            $ConsecutiveZero = 0
         }
     }
     while ((Get-Date) -lt $Deadline)
 
     throw (
         "Salad did not converge '$GroupName' to stopped/replicas=0/pending=False " +
-        "within $TimeoutSeconds seconds; status=$Status " +
+        "within $TimeoutSeconds seconds (three consecutive 15s observations); status=$Status " +
         "replicas=$([int]$Group.replicas) pending=$([bool]$Group.pending_change). " +
         "Check the live group and queue before retrying; the published image is reusable."
     )
@@ -876,6 +930,16 @@ function Show-Status {
         $ConfiguredGpu = @($ConfiguredGpuProperty.Value) -join ","
     }
 
+    $AutoscalerProperty = $Group.PSObject.Properties["queue_autoscaler"]
+    $AutoscalerMin = if (
+        $null -ne $AutoscalerProperty -and $null -ne $AutoscalerProperty.Value
+    ) {
+        [string]$AutoscalerProperty.Value.min_replicas
+    }
+    else {
+        "not exposed"
+    }
+
     $Group |
         Select-Object `
             name,
@@ -883,6 +947,7 @@ function Show-Status {
             replicas,
             priority,
             pending_change,
+            @{Name = "AutoscalerMin"; Expression = {$AutoscalerMin}},
             @{Name = "Service"; Expression = {$Service}},
             @{Name = "Queue"; Expression = {$QueueName}},
             @{Name = "RequestedGPU"; Expression = {$ConfiguredGpu}},
@@ -893,6 +958,18 @@ function Show-Status {
             @{Name = "MemoryMiB"; Expression = {$_.container.resources.memory}},
             @{Name = "GPUClasses"; Expression = {$_.container.resources.gpu_classes -join ","}} |
         Format-List
+
+    try {
+        $QueueSummary = Invoke-SaladRequest `
+            -Headers $Headers `
+            -Uri "$QueuesBase/$QueueName" `
+            -Operation "read queue length" `
+            -TimeoutSec 30
+        Write-Host "$Service queue current_queue_length=$([int]$QueueSummary.current_queue_length)"
+    }
+    catch {
+        Write-Warning "Could not read $Service queue length: $($_.Exception.Message)"
+    }
 
     try {
         $Response = Invoke-SaladRequest `
@@ -973,6 +1050,8 @@ switch ($Action) {
         else {
             Write-Host "$Service worker is already stopped." -ForegroundColor Green
         }
+
+        $Group = Ensure-ManifestScaleToZero -Headers $Headers -Group $Group
 
         if ([int]$Group.replicas -ne 0) {
             Write-Warning (
@@ -1123,6 +1202,7 @@ switch ($Action) {
             }
         }
 
+        $Group = Ensure-ManifestScaleToZero -Headers $Headers -Group $Group
         $Group = Ensure-PreparedZeroReplicas -Headers $Headers -Group $Group
         Assert-PreparedGroup -Group $Group -PinnedImage $ResolvedPinnedImage
         $WorkerEnvironment = $null
