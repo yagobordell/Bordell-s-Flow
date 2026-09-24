@@ -90,7 +90,7 @@ def test_ltx25_model_download_uses_xet_with_resilient_timeouts() -> None:
     assert "xet_disabled=" in bootstrap
 
     assert service["image"].endswith(
-        ":ltx25-a2v-torch211-cu128-eagersdpa-xet-v5"
+        ":ltx25-a2v-torch211-cu128-eagersdpa-xet-lipsync-v6"
     )
     assert "ltx_pipelines.a2vid_two_stage" in dockerfile
     assert "ltx-2.5-22b-dev-transformer-bf16.safetensors" in bootstrap
