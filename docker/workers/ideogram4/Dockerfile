@@ -19,7 +19,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     IDEOGRAM_MODEL_REVISION=main \
     IDEOGRAM_DEVICE=cuda \
     IDEOGRAM_DTYPE=bfloat16 \
-    IDEOGRAM_SAMPLER_PRESET=V4_QUALITY_48 \
+    IDEOGRAM_SAMPLER_PRESET=V4_QUALITY_48 
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
