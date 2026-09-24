@@ -133,7 +133,7 @@ class FakeQueue:
 
 def _png_bytes(value: int) -> bytes:
     buffer = BytesIO()
-    Image.new("RGB", (1536, 864), color=(value, value, value)).save(buffer, format="PNG")
+    Image.new("RGB", (1280, 736), color=(value, value, value)).save(buffer, format="PNG")
     return buffer.getvalue()
 
 

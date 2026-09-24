@@ -76,8 +76,8 @@ def test_storyboard_keyframes_run_in_parallel_without_binary_reference_inputs(
             _shots(),
             image_provider=provider,  # type: ignore[arg-type]
             output_dir=output_dir,
-            model="ideogram-ai/ideogram-4-nf4",
-            size="1536x864",
+            model="Qwen/Qwen-Image-2.1",
+            size="1280x736",
             quality="high",
         )
     )
@@ -93,9 +93,9 @@ def test_storyboard_keyframes_run_in_parallel_without_binary_reference_inputs(
     ]
     assert all("references" not in call for call in provider.calls)
     with Image.open(output_dir / "shot_001.png") as image:
-        assert image.size == (1536, 864)
+        assert image.size == (1280, 736)
     with Image.open(output_dir / "shot_002.png") as image:
-        assert image.size == (1536, 864)
+        assert image.size == (1280, 736)
 
 
 class WrongSizeStoryboardProvider:
@@ -110,7 +110,7 @@ class WrongSizeStoryboardProvider:
 def test_storyboard_keyframes_reject_non_landscape_provider_geometry(tmp_path: Any) -> None:
     output_dir = tmp_path / "phase6" / "storyboard_keyframes"
 
-    with pytest.raises(ValueError, match="expected exactly 1536x864"):
+    with pytest.raises(ValueError, match="expected exactly 1280x736"):
         asyncio.run(
             generate_storyboard_keyframes(
                 _frames(),
@@ -118,7 +118,7 @@ def test_storyboard_keyframes_reject_non_landscape_provider_geometry(tmp_path: A
                 image_provider=WrongSizeStoryboardProvider(),  # type: ignore[arg-type]
                 output_dir=output_dir,
                 model="test",
-                size="1536x864",
+                size="1280x736",
                 quality="high",
             )
         )
@@ -151,8 +151,8 @@ def test_storyboard_keyframe_failure_writes_no_partial_batch(tmp_path: Any) -> N
                 shots,
                 image_provider=FailingStoryboardProvider(),  # type: ignore[arg-type]
                 output_dir=output_dir,
-                model="ideogram-ai/ideogram-4-nf4",
-                size="1536x864",
+                model="Qwen/Qwen-Image-2.1",
+                size="1280x736",
                 quality="high",
             )
         )

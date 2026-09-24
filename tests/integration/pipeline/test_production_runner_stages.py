@@ -30,13 +30,13 @@ def test_production_dag_automates_qwen_keyframes(tmp_path: Path) -> None:
     assert "--quality" in keyframe.arguments
     assert "high" in keyframe.arguments
     assert "--size" in keyframe.arguments
-    assert "1536x864" in keyframe.arguments
+    assert "1280x736" in keyframe.arguments
     assert {path.name for path in keyframe.inputs} == {
         "storyboard_frames.json",
         "shots.json",
     }
     assert "reference_assets.json" not in {path.name for path in keyframe.inputs}
-    assert "1536x864" in references.arguments
+    assert "1280x736" in references.arguments
     assert "16:9" in storyboard.arguments
     assert "16:9" in video_prompts.arguments
     assert "1280" in videos.arguments

@@ -23,15 +23,15 @@ def test_qwen_reference_request_is_deterministic() -> None:
         task_name=QWEN_IMAGE_21_REFERENCE_TASK,
         prompt="cinematic mountain valley",
         model_id=QWEN_IMAGE_21_MODEL_ID,
-        width=1536,
-        height=864,
+        width=QWEN_IMAGE_21_PRODUCTION_WIDTH,
+        height=QWEN_IMAGE_21_PRODUCTION_HEIGHT,
     )
     second = build_qwen_image_job_request(
         task_name=QWEN_IMAGE_21_REFERENCE_TASK,
         prompt="cinematic mountain valley",
         model_id=QWEN_IMAGE_21_MODEL_ID,
-        width=1536,
-        height=864,
+        width=QWEN_IMAGE_21_PRODUCTION_WIDTH,
+        height=QWEN_IMAGE_21_PRODUCTION_HEIGHT,
     )
 
     assert first == second
@@ -49,8 +49,8 @@ def test_qwen_keyframe_request_uses_distinct_task_namespace() -> None:
         task_name=QWEN_IMAGE_21_KEYFRAME_TASK,
         prompt="wide establishing shot",
         model_id=QWEN_IMAGE_21_MODEL_ID,
-        width=1536,
-        height=864,
+        width=QWEN_IMAGE_21_PRODUCTION_WIDTH,
+        height=QWEN_IMAGE_21_PRODUCTION_HEIGHT,
     )
 
     assert request.job_id.startswith("qwen-image-21-keyframe-")
@@ -61,6 +61,7 @@ def test_qwen_keyframe_request_uses_distinct_task_namespace() -> None:
     "width,height",
     [
         (1280, 720),
+        (1536, 864),
         (1024, 576),
         (1536, 832),
         (1536, 896),
@@ -74,7 +75,7 @@ def test_qwen_request_rejects_non_production_dimensions(width: int, height: int)
         _parse_size(f"{width}x{height}")
 
 
-def test_qwen_production_size_is_exact_16_9_and_diffusers_compatible() -> None:
+def test_qwen_production_size_uses_native_grid_without_post_crop() -> None:
     from ai_video_factory.providers.salad_qwen_image import _parse_size
     from ai_video_factory.workers.qwen_image_21 import QWEN_IMAGE_21_DIMENSION_MULTIPLE
 
@@ -84,7 +85,7 @@ def test_qwen_production_size_is_exact_16_9_and_diffusers_compatible() -> None:
         QWEN_IMAGE_21_PRODUCTION_WIDTH,
         QWEN_IMAGE_21_PRODUCTION_HEIGHT,
     )
-    assert width * 9 == height * 16
+    assert (width, height) == (1280, 736)
     assert width % QWEN_IMAGE_21_DIMENSION_MULTIPLE == 0
     assert height % QWEN_IMAGE_21_DIMENSION_MULTIPLE == 0
 
@@ -96,6 +97,8 @@ def test_qwen_salad_manifest_contract() -> None:
     service = manifest["services"]["qwen_image_21"]
 
     assert service["priority"] == "high"
+    assert service["image"].endswith("qwen-image-2.1-int8-1280x736-v2")
+    assert service["environment"]["QWEN_IMAGE_21_MEMORY_MODE"] == "int8_cuda"
     assert service["resources"]["gpu_class_names"] == ["RTX 5090 (32 GB)"]
     assert service["environment"]["QWEN_IMAGE_21_MODEL_REPOSITORY"] == QWEN_IMAGE_21_MODEL_ID
     assert service["environment"]["QWEN_IMAGE_21_MODEL_REVISION"] == QWEN_IMAGE_21_MODEL_REVISION
