@@ -32,6 +32,7 @@ def test_prepared_image_guard_requires_current_immutable_digest() -> None:
     assert "$Group.queue_connection.queue_name" in content
     assert "pending_change" in content
     assert "[int]$Group.replicas -ne 0" in content
+    assert "queue_autoscaler.min_replicas=0" in content
 
 
 def test_benchmarks_use_distinct_services_with_prepared_mode_and_final_stop() -> None:
