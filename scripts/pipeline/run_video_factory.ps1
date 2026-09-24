@@ -27,6 +27,7 @@ $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $ProductionRunner = Join-Path $PSScriptRoot "run_production.py"
 $Preflight = Join-Path $PSScriptRoot "preflight_video_factory.py"
 $SaladStack = Join-Path $PSScriptRoot "../salad/manage_salad_stack.ps1"
+$CapacityController = Join-Path $PSScriptRoot "../salad/run_salad_capacity_controller.py"
 $Phase9Plan = Join-Path $PSScriptRoot "run_phase9_compositor.py"
 $Phase9Motion = Join-Path $PSScriptRoot "run_phase9_motion.py"
 $Phase9Final = Join-Path $PSScriptRoot "run_phase9_final.py"
@@ -120,6 +121,48 @@ function Ensure-RemotionDependencies {
     }
 }
 
+function Start-CapacityController {
+    $LogDir = Join-Path $RepoRoot "data\output"
+    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+    $Stdout = Join-Path $LogDir "salad_capacity_controller.log"
+    $Stderr = Join-Path $LogDir "salad_capacity_controller.err.log"
+    Remove-Item -LiteralPath $Stdout, $Stderr -Force -ErrorAction SilentlyContinue
+
+    $env:SALAD_AUTOSCALER_ENABLED = "true"
+    $Process = Start-Process `
+        -FilePath "python" `
+        -ArgumentList @($CapacityController, "--poll-seconds", "15") `
+        -WorkingDirectory $RepoRoot `
+        -RedirectStandardOutput $Stdout `
+        -RedirectStandardError $Stderr `
+        -PassThru
+
+    Start-Sleep -Milliseconds 750
+    if ($Process.HasExited) {
+        $Detail = ""
+        if (Test-Path -LiteralPath $Stderr -PathType Leaf) {
+            $Detail = (Get-Content -LiteralPath $Stderr -Raw).Trim()
+        }
+        throw "Salad capacity controller exited during startup. $Detail"
+    }
+    return $Process
+}
+
+function Stop-CapacityController {
+    param([Diagnostics.Process]$Process)
+
+    if ($null -eq $Process -or $Process.HasExited) {
+        return
+    }
+    Stop-Process -Id $Process.Id -ErrorAction SilentlyContinue
+    try {
+        $Process.WaitForExit(5000)
+    }
+    catch {
+        Write-Warning "Capacity controller did not report a clean exit: $($_.Exception.Message)"
+    }
+}
+
 function Invoke-FinalCleanup {
     param([Parameter(Mandatory)][string[]]$Services)
 
@@ -138,6 +181,7 @@ $FinalVideo = Join-Path $OutputDir "phase9\final_video.mp4"
 $ProductionMetrics = Join-Path $OutputDir "production_metrics.json"
 $RunMetrics = Join-Path $OutputDir "video_factory_metrics.json"
 $SaladPreflightPassed = $false
+$CapacityControllerProcess = $null
 $Overall = [Diagnostics.Stopwatch]::StartNew()
 $Phase9Seconds = 0.0
 $PrimaryFailure = $null
@@ -159,6 +203,9 @@ try {
         }
         $SaladPreflightPassed = $true
         Ensure-RemotionDependencies
+
+        Write-Host "=== SALAD CAPACITY: predictive Postgres controller ===" -ForegroundColor Cyan
+        $CapacityControllerProcess = Start-CapacityController
 
         Write-Host "=== VIDEO FACTORY DAG: cache/resume + bounded parallel execution ===" `
             -ForegroundColor Cyan
@@ -202,6 +249,7 @@ catch {
 }
 finally {
     $Overall.Stop()
+    Stop-CapacityController -Process $CapacityControllerProcess
     if ($SaladPreflightPassed) {
         Write-Host "=== FINAL CLEANUP: stop workers and converge replicas=0 ===" `
             -ForegroundColor Cyan
