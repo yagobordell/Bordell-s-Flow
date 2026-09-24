@@ -48,7 +48,9 @@ def _ready_instance(
     with urllib.request.urlopen(request, timeout=30) as response:
         payload = json.load(response)
     instances = payload.get("instances", payload.get("items", []))
-    ready = [instance for instance in instances if instance.get("started") and instance.get("ready")]
+    ready = [
+        instance for instance in instances if instance.get("started") and instance.get("ready")
+    ]
     if len(ready) != 1:
         raise RuntimeError(
             f"Expected exactly one started/ready Qwen instance, got {len(ready)}"
@@ -104,7 +106,9 @@ def _validate_metrics(
     }
     for key, value in expected.items():
         if metrics.get(key) != value:
-            raise RuntimeError(f"Qwen generation {generation}: unexpected {key}={metrics.get(key)!r}")
+            raise RuntimeError(
+                f"Qwen generation {generation}: unexpected {key}={metrics.get(key)!r}"
+            )
     identity = str(metrics.get("worker_id") or "")
     if not identity:
         raise RuntimeError("Qwen metadata did not identify the container process")
@@ -216,7 +220,8 @@ def main() -> None:
                 raise RuntimeError("Qwen benchmark received a cached or retried result")
             output = directory / "image.png"
             executor.download_output(response, output)
-            metadata_key = request.sidecar_outputs["metadata"].key  # type: ignore[index]
+            assert request.sidecar_outputs is not None
+            metadata_key = request.sidecar_outputs["metadata"].key
             stored = storage.stat(metadata_key)
             if stored is None:
                 raise RuntimeError("Qwen benchmark did not upload its metrics sidecar")
