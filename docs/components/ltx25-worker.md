@@ -34,6 +34,9 @@ Existing non-empty checkpoint files take the fast path and are not downloaded ag
 
 ## Deployment
 
+Build and publish the new LTX Docker image tag before deploying the Qwen 1280x736 input
+contract: the old worker image rejects that keyframe geometry.
+
 The canonical service entry is `ltx25` in `deploy/salad/services.json`. The manifest owns the
 container group, queue, RTX 5090 profile, priority, replica ceiling and runtime environment.
 
