@@ -43,7 +43,8 @@ function Read-Queue {
 
 function Read-JobInventory {
     $Rows = [Collections.Generic.List[object]]::new()
-    $PageSize = 100
+    # Salad Job Queue list-jobs API rejects page_size values greater than 25.
+    $PageSize = 25
     for ($Page = 1; $Page -le 100; $Page++) {
         $Response = Invoke-RestMethod -Method Get -Headers $Headers -TimeoutSec 30 `
             -Uri "$QueueUrl/jobs?page=$Page&page_size=$PageSize"
