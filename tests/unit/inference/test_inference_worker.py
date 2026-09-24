@@ -454,3 +454,26 @@ def test_draining_salad_instance_does_not_claim_new_jobs(tmp_path: Path) -> None
     )
 
     assert worker.next_pending_request() is None
+
+
+def test_draining_salad_instance_rechecks_before_direct_claim(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    repository = DrainingRepository()
+    runner = CountingCopyRunner()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-instance-draining",
+        salad_instance_id="instance-draining",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
+    request = build_request("job-drain-race", digest)
+
+    with pytest.raises(JobBusyError, match="draining"):
+        worker.process(request)
+
+    assert runner.calls == 0
