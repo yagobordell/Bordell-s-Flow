@@ -69,8 +69,7 @@ The controlled PowerShell smoke defaults to `-Profile fast` and accepts `-Profil
 for a dev baseline using the same avatar and speech. The underlying Python smoke verifies
 the selected checkpoint family, both stage step counts, CFG and frozen-audio contract.
 For a five-second audio clip, pass `-MaxGenerationSeconds 120` to fail validation if
-`total_elapsed_seconds` exceeds the two-minute acceptance target. This measures the
-worker's generation, not Salad queue delay or cold model downloads.
+`total_elapsed_seconds` exceeds the two-minute acceptance target. This measures the worker's generation, not Postgres pending time or cold model downloads.
 
 The smoke verifies that the deployed worker uses the updated guider, but a passing MP4/audio
 contract does not establish lip-sync quality: inspect the avatar's mouth movement against the
@@ -79,35 +78,20 @@ orchestration.
 Transport IDs, timings and artifact hashes from individual validation runs belong in Git history.
 
 
-## Five-run Salad warm benchmark: readiness regression
+## Historical readiness regression
 
-The September 24 Salad run completed its first 1280x720 A2V segment in
-102.145 seconds (85.567 seconds inference, 15.338 seconds encoding), but
-the second job remained pending and was cancelled after the 180-second
-pending limit. During generation 1, the Salad Job Queue sidecar logged
-`readiness changed ready=false` after the probe had been blocked for
-roughly a minute. Previously, both I2V and A2V `ready()` methods acquired
-the same `LTXPipelineModeController` lock held for the entire A2V inference.
-Six 10-second probes with a 5-second request timeout can therefore remove
-the running instance from eligible dispatch before inference completes.
+A September 24, 2026 warm run exposed a real worker bug: the readiness path attempted to acquire the
+same long-running LTX mode lock held during A2V inference. Repeated probe timeouts could therefore
+make a healthy instance appear not ready while the GPU was still generating.
 
-Image-to-video and audio-to-video now retain the **shared inference lock**
-for model construction and generation, but their readiness checks use
-already prepared bindings and read-only runtime validation without taking
-that lock. The service's R2 and database readiness checks remain in place;
-workers that have not prepared still fail readiness. This avoids a false
-not-ready transition during a long GPU generation without advertising an
-unprepared worker as healthy.
+The worker now keeps the shared inference lock for model construction/generation while readiness uses
+prepared bindings and read-only validation without taking that lock. R2 and database readiness checks
+remain active.
 
-The five-run benchmark additionally checks that the original instance and
-machine are still started and ready before each sequential job, with a
-bounded 60-second readiness-recovery window. It does not reallocate the
-worker or merge results across machines. A no-progress condition fails
-before submitting another job and the wrapper stops the LTX service.
+The current controlled smoke uses explicit Salad capacity and the Postgres job transport. It does not
+depend on provider-queue dispatch, queue autoscaling or transport IDs.
 
-The worker change is deployed as
-`ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v9`, not the previous v8
-image. CI tests the concurrent-readiness regression; actual queue
-dispatch over five warm jobs and lip-sync quality still require a real
-Salad run. The first video from the failed v8 batch remains a valid
-individual output but does not establish four warm-generation timings.
+The worker image carrying the readiness fix is
+`ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v9`. A passing MP4/audio contract still does not prove
+lip-sync quality; visually inspect mouth movement against the supplied speech before accepting an A2V
+profile.
