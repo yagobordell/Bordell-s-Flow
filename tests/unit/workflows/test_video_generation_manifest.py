@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
+from _video_generation_support import FakeQueue, FakeStorage, _inputs
 
 import ai_video_factory.workflows.video_generation as video_generation
-from _video_generation_support import FakeQueue, FakeStorage, _inputs
 from ai_video_factory.domain import VideoPrompt
 from ai_video_factory.workflows.video_generation import (
     VideoGenerationJobState,
