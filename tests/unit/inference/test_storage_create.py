@@ -10,7 +10,7 @@ def test_local_create_is_first_writer_wins(tmp_path: Path) -> None:
     first.write_text("winner\n", encoding="utf-8")
     stale.write_text("stale\n", encoding="utf-8")
 
-    created = storage.create(
+    created = storage.create_if_absent(
         first,
         "jobs/job/output.txt",
         content_type="text/plain",
@@ -20,7 +20,7 @@ def test_local_create_is_first_writer_wins(tmp_path: Path) -> None:
             "artifact-sha256": sha256_file(first),
         },
     )
-    rejected = storage.create(
+    rejected = storage.create_if_absent(
         stale,
         "jobs/job/output.txt",
         content_type="text/plain",
