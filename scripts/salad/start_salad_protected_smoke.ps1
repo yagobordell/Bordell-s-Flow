@@ -291,10 +291,11 @@ if ($ActiveQueueJobs.Count -gt 0) {
     )
 }
 if ($QueueSummaryLength -ne 0) {
-    Write-Warning (
-        "Protected smoke queue summary is stale: current_queue_length=$QueueSummaryLength, " +
-        "but exhaustive pagination across $([int]$QueueJobs.pages) page(s) found no " +
-        "pending/running jobs. Treating '$QueueName' as logically empty."
+    throw (
+        "Protected smoke found conflicting Salad queue state: current_queue_length=$QueueSummaryLength, " +
+        "but complete pagination across $([int]$QueueJobs.pages) page(s) found no " +
+        "pending/running jobs. Refusing GPU allocation until the queue is reconciled; " +
+        "run inspect_salad_queue_state.ps1 -Service $Service and preserve the evidence."
     )
 }
 
@@ -355,6 +356,18 @@ if ($null -eq $RemoteAutoscaler) {
         "Salad did not expose queue_autoscaler for '$GroupName'; " +
         "continuing protected smoke with explicit replicas=1."
     ) -ForegroundColor Yellow
+}
+
+# Repeat the read-only queue check immediately before taking ownership: jobs may
+# have been submitted while a stopped residual replica was being normalized.
+$QueueBeforeAllocation = Get-Queue
+$JobsBeforeAllocation = Get-ActiveQueueJobs
+if (-not [bool]$JobsBeforeAllocation.complete) {
+    throw "Protected smoke could not completely recheck the queue before GPU allocation."
+}
+if (@($JobsBeforeAllocation.jobs).Count -gt 0 -or
+    [int]$QueueBeforeAllocation.current_queue_length -ne 0) {
+    throw "Protected smoke queue changed or remains inconsistent; refusing GPU allocation."
 }
 
 $Body = @{ replicas = 1 } | ConvertTo-Json -Depth 10

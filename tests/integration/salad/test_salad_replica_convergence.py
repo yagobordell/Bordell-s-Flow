@@ -145,6 +145,10 @@ def test_worker_stop_restores_autoscaler_before_patching_replicas() -> None:
     assert "AutoscalerMin" in script
     assert "queue current_queue_length=" in script
     assert "$ConsecutiveZero -ge 3" in script
+    assert "Remote autoscaler minimum became nonzero" in script
+    assert "Always observe a stable zero" in stop
+    assert stop.index("Wait-ForStoppedZeroReplicas") > stop.index("Ensure-ManifestScaleToZero")
+    assert "return Wait-ForStoppedZeroReplicas -Headers $Headers" in script
 
 
 def test_parallel_prepare_and_prepared_guard_require_scale_to_zero_autoscaler() -> None:
@@ -157,3 +161,38 @@ def test_parallel_prepare_and_prepared_guard_require_scale_to_zero_autoscaler() 
     assert "restoring scale-to-zero before benchmark preparation." in prepare
     assert "[int]$RemoteAutoscaler.Value.min_replicas -ne 0" in prepared
     assert "restore the manifest before starting the GPU worker." in prepared
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell Core is unavailable")
+def test_stop_observes_zero_rebound_without_unnecessary_patch(tmp_path: Path) -> None:
+    """Stop must not succeed on its first zero GET when a replica rebounds."""
+    script = MANAGER.read_text(encoding="utf-8")
+    stop = script.split('    "Stop" {', 1)[1].split('    "Start" {', 1)[0]
+    scenario = """
+$Headers = @{}
+$script:Reads = 0
+function New-Group { param([int]$Count) return [pscustomobject]@{
+    current_state = [pscustomobject]@{ status = 'stopped' }
+    replicas = $Count
+    pending_change = $false
+    queue_autoscaler = [pscustomobject]@{ min_replicas = 0 }
+} }
+function Try-Get-Group { param([hashtable]$Headers) return (New-Group 0) }
+function Get-Group {
+    param([hashtable]$Headers)
+    $script:Reads += 1
+    if ($script:Reads -eq 5) { Write-Host 'CONFIRMED_FIVE_READS' }
+    $Count = if ($script:Reads -eq 2) { 1 } else { 0 }
+    return (New-Group $Count)
+}
+function Ensure-ManifestScaleToZero {
+    param([hashtable]$Headers, [object]$Group)
+    return $Group
+}
+function Invoke-SaladRequest { throw 'Stop attempted an unnecessary PATCH' }
+switch ('Stop') { \"Stop\" {
+""" + stop + "\n}\n"
+    result = _run_ps(tmp_path, scenario)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "CONFIRMED_FIVE_READS" in result.stdout
+    assert "worker stopped with replicas=0" in result.stdout

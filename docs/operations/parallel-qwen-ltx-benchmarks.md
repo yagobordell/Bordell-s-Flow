@@ -127,7 +127,7 @@ Its `Stop` and `Prepare` paths restore an exposed nonzero remote
 autoscaler minimum through the existing manifest-restore command **only
 while the group is stopped and has no pending update**. They then check
 three consecutive `stopped/replicas=0/pending=False` observations, spaced
-15 seconds apart. A running group aborts immediately. The parallel
+15 seconds apart, including when the initial GET already reports zero. A running group aborts immediately. The parallel
 preparer also detects a stale remote minimum even when the initial
 replica count is zero; the prepared-image guard rejects that state.
 
@@ -155,7 +155,7 @@ for another reason, or a separate scaler is writing the desired count.
 
 Use `scripts/diagnostics/inspect_salad_queue_state.ps1 -Service ltx25`
 for read-only group/queue snapshots and a complete, bounded listing
-with the official list-jobs API (100 jobs per page). It prints only job
+with the official list-jobs API (25 jobs per page). It prints only job
 transport IDs, statuses, and creation times for active jobs; never
 prints sensitive inputs or outputs and never mutates the queue or group.
 If it confirms a persistent mismatch, preserve its sanitized output,
@@ -165,3 +165,18 @@ replica rebound for Salad support. Do not run
 benchmark's stopped/zero-replica guard. Replacing the queue/group or
 cancelling active work requires a separate ownership check and
 user-authorized migration; no automatic recreation was added.
+
+
+## Safe benchmark gate after the queue discrepancy
+
+The protected bootstrap now refuses GPU allocation if Salad reports a nonzero
+`current_queue_length` while a complete job listing finds no pending/running
+work. It also rechecks the queue before raising the manual replica. This
+prevents a contradictory control-plane snapshot from being treated as proof
+of exclusive ownership. The diagnostic is read-only; no automatic
+cancellation, group recreation or repeated replica PATCH is attempted.
+
+Both `Stop` and `Prepare` require three stable zero-replica reads even if
+the first observed count was already zero. They abort on an unexpected running
+group or nonzero remote autoscaler minimum. These are local orchestration
+changes; the already-published Qwen v5 and LTX v9 images do not need rebuilding.

@@ -837,6 +837,13 @@ function Wait-ForStoppedZeroReplicas {
                 "another process may own its GPU worker."
             )
         }
+        $Autoscaler = $Group.PSObject.Properties["queue_autoscaler"]
+        if (
+            $null -ne $Autoscaler -and $null -ne $Autoscaler.Value -and
+            [int]$Autoscaler.Value.min_replicas -ne 0
+        ) {
+            throw "Remote autoscaler minimum became nonzero during zero-replica convergence."
+        }
         if (
             $Status -eq "stopped" -and
             -not [bool]$Group.pending_change -and
@@ -867,11 +874,12 @@ function Ensure-PreparedZeroReplicas {
         [Parameter(Mandatory)][object]$Group
     )
 
-    if ([int]$Group.replicas -eq 0) {
-        return $Group
-    }
     if ((Get-GroupStatus -Group $Group) -ne "stopped" -or [bool]$Group.pending_change) {
         throw "Prepare will not normalize a group that is running or has a pending update."
+    }
+    if ([int]$Group.replicas -eq 0) {
+        # A first zero GET is not convergence: the stopped group can rebound to one.
+        return Wait-ForStoppedZeroReplicas -Headers $Headers -TimeoutSeconds 180
     }
 
     Write-Warning (
@@ -1073,11 +1081,10 @@ switch ($Action) {
                 -Body $Body `
                 -TimeoutSec 60 |
                 Out-Null
-            $Group = Wait-ForStoppedZeroReplicas `
-                -Headers $Headers `
-                -TimeoutSeconds 180
         }
 
+        # Always observe a stable zero, even when the first Stop GET was already zero.
+        $Group = Wait-ForStoppedZeroReplicas -Headers $Headers -TimeoutSeconds 180
         $FinalStatus = Get-GroupStatus -Group $Group
         if (
             $FinalStatus -ne "stopped" -or

@@ -197,6 +197,9 @@ def test_bootstrap_uses_exhaustive_active_jobs_not_stale_queue_summary() -> None
     assert "$Items.Count -lt 25" in script
     assert "could not exhaustively enumerate" in script
     assert "requires no pending/running jobs before bootstrap" in script
-    assert "Protected smoke queue summary is stale" in script
-    assert "Treating '$QueueName' as logically empty." in script
+    assert "Protected smoke found conflicting Salad queue state" in script
+    assert "Refusing GPU allocation until the queue is reconciled" in script
+    assert "$QueueBeforeAllocation = Get-Queue" in script
+    assert "$JobsBeforeAllocation = Get-ActiveQueueJobs" in script
+    assert "Protected smoke queue changed or remains inconsistent" in script
     assert "contains $([int]$Queue.current_queue_length) job(s)" not in script
