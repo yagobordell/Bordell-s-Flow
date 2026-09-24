@@ -97,9 +97,9 @@ def test_qwen_salad_manifest_contract() -> None:
     service = manifest["services"]["qwen_image_21"]
 
     assert service["priority"] == "high"
-    assert service["image"].endswith("qwen-image-2.1-int8-1280x736-postgres-v6")
+    assert service["image"].endswith("qwen-image-2.1-bf16-offload-1280x736-postgres-v7")
     assert manifest["stack"]["shared_environment"]["INFERENCE_WORKER_POLL_JOBS"] == "true"
-    assert service["environment"]["QWEN_IMAGE_21_MEMORY_MODE"] == "int8_cuda"
+    assert service["environment"]["QWEN_IMAGE_21_MEMORY_MODE"] == "bf16_offload"
     assert service["resources"]["gpu_class_names"] == ["RTX 5090 (32 GB)"]
     assert service["environment"]["QWEN_IMAGE_21_MODEL_REPOSITORY"] == QWEN_IMAGE_21_MODEL_ID
     assert service["environment"]["QWEN_IMAGE_21_MODEL_REVISION"] == QWEN_IMAGE_21_MODEL_REVISION
@@ -133,6 +133,7 @@ def test_salad_smoke_suite_uses_qwen_image_21() -> None:
     assert 'image.metadata.get("replayed") != "false"' in script
     assert "PostgresJobQueueClient" in script
     assert '"POSTGRES_DSN"' in script
+    assert "validate_qwen_output_image(" in script
     assert "SaladJobQueueClient" not in script
     assert "ideogram" not in script.lower()
 
@@ -194,3 +195,26 @@ def test_qwen_worker_image_contains_postgres_polling_runtime() -> None:
     assert "queue transport disabled" not in entrypoint
     assert "COPY src /opt/factory/src" in dockerfile
     assert "COPY docker/workers/common/entrypoint.sh" in dockerfile
+
+
+def test_qwen_recovery_reuses_prompt_seed_and_rejects_cached_output() -> None:
+    script = Path("scripts/smoke/run_qwen_bf16_recovery.py").read_text(encoding="utf-8")
+    controller = Path("scripts/smoke/run_qwen_bf16_recovery_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    worker = Path("src/ai_video_factory/workers/qwen_image_21/model.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "source.model_dump(" in script
+    assert "max_attempts=1" in script
+    assert "uuid.uuid4()" in script
+    assert "if response.replayed or response.attempt_count != 1" in script
+    assert "validate_qwen_output_image(image" in script
+    assert "validate_qwen_output_image(" in worker
+    assert worker.index("validate_qwen_output_image(") < worker.index("image.save(")
+    assert "--preflight-only" in controller
+    assert "-Action Start" in controller
+    assert "-Action Stop" in controller
+    assert "finally {" in controller
+
