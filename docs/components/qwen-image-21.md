@@ -73,9 +73,15 @@ immediately; it still requires the exact original instance before and after
 every job and checks worker process/pipeline identity through the metadata.
 Never interpret a replaced or restarted worker as a valid warm benchmark.
 
-Deploy `qwen-image-2.1-int8-1280x736-v5` through a fresh Qwen Prepare.
-The earlier v4 image cannot receive the backend fix from a local
-`git pull`. The local API `--preflight-only` protection from the 403
+The v5 image addressed the earlier readiness regression, but the deployed v5 digest
+predates the Postgres polling refactor. Its legacy startup banner
+`queue transport disabled` indicates the old Salad queue consumer is disabled;
+it does not provide the Postgres job poller required by the current smoke test.
+Build and publish `qwen-image-2.1-int8-1280x736-postgres-v6` from the
+current branch before running Qwen Prepare, then confirm the new immutable
+digest is active while the group remains stopped at zero replicas.
+A local `git pull` does not update container contents. Do not reuse the
+older v4/v5 digests for a Postgres-backed deployment. The local API `--preflight-only` protection from the 403
 incident remains active. CI covers nonblocking readiness and identity
 recovery; live Salad five-run performance and visual quality remain to
 be measured.
