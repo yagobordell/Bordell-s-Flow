@@ -34,15 +34,23 @@ The worker-specific deployment contract is documented in [LTX 2.5 worker](ltx25-
 
 ## Speech-driven avatar settings
 
-The native two-stage pipeline uses the dev transformer in stage 1 and the official distilled
-LoRA in stage 2. Both stages condition on the **same frozen input audio**; the original
-waveform is retained in the output. The avatar-specific video guider preserves dev CFG,
-but disables extra modality guidance (`modality_scale=1`) and STG (`stg_scale=0`). Do not
-copy CFG=1 from the separate fully distilled ComfyUI workflow into this dev pipeline.
+The default **fast** profile uses the official distilled transformer directly in both
+stages (no distilled LoRA), the upstream 8-step `DISTILLED_SIGMAS` schedule, a 3-step
+refine pass, and CFG 1 with STG and isolated-modality guidance disabled. It retains the
+supplied speech as frozen conditioning in both stages and muxes the original audio.
+The explicit **dev** profile keeps the dev transformer, native 30-step schedule and
+stage-2 distilled LoRA with dev CFG, while also disabling STG and modality guidance.
 
-Changing the avatar guider bumps `LTX_A2V_GENERATION_PROFILE` so old R2 results are not
-replayed under new generation settings. The LTX Salad image tag must be rebuilt and
-published before running a real smoke with this profile.
+Both profiles use FP8_CAST, CPU block streaming and the stable eager-SDPA video VAE on the
+RTX 5090. The latter remains necessary because the NATTEN path previously crashed on
+this deployment; faster decoding or reduced CPU offload require separate GPU safety
+validation. `model_load_seconds` measures pipeline construction, not all transformer
+loading: upstream stages create/stream transformer weights inside `inference_seconds`.
+
+Profile is part of the job identity to prevent R2 replay across modes. The new LTX Salad
+image tag must be built and published before running a real smoke. The 1–2 minute target
+for a five-second clip is an **acceptance target**, not a guaranteed runtime: compare the
+actual `inference_seconds`, encode/mux and total against the prior 230.55-second run.
 
 ## Validation
 
@@ -51,6 +59,10 @@ Targeted real validation uses:
 ```text
 scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1
 ```
+
+The controlled PowerShell smoke defaults to `-Profile fast` and accepts `-Profile dev`
+for a dev baseline using the same avatar and speech. The underlying Python smoke verifies
+the selected checkpoint family, both stage step counts, CFG and frozen-audio contract.
 
 The smoke verifies that the deployed worker uses the updated guider, but a passing MP4/audio
 contract does not establish lip-sync quality: inspect the avatar's mouth movement against the
