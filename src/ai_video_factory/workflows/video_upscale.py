@@ -36,7 +36,6 @@ from ai_video_factory.workers.realesrgan import (
     REALESRGAN_TASK,
     realesrgan_application_job_id,
 )
-
 from ai_video_factory.workflows._video_jobs import (
     archive_manifest,
     download_verified_mp4,
