@@ -152,35 +152,38 @@ class InferenceWorker:
             raise JobBusyError(f"job is currently leased by another worker: {request.job_id}")
 
         try:
-            if (
-                request.max_attempts is not None
-                and claim.attempt_count > request.max_attempts
-            ):
-                raise NonRetryableTaskError(
-                    f"job {request.job_id} exceeded max_attempts={request.max_attempts}; "
-                    "refusing to re-run inference"
-                )
             response = self._execute_claimed(request, request_sha256, claim.attempt_count)
+        except LeaseLostError:
+            # Ownership has already moved elsewhere. This worker must not mutate job state.
+            raise
         except (
             JobConflictError,
             InputIntegrityError,
-            LeaseLostError,
             NonRetryableTaskError,
             UnsupportedTaskError,
         ) as exc:
-            failure = self._single_shot_failure(request, exc)
-            self._mark_failed(request, request_sha256, failure)
-            if failure is not exc:
-                raise failure from exc
+            self._mark_failed(
+                request,
+                request_sha256,
+                exc,
+                retryable=False,
+            )
             raise
         except Exception as exc:
             retryable_gpu_failure = is_retryable_gpu_failure(exc)
-            failure = self._single_shot_failure(request, exc)
-            self._mark_failed(request, request_sha256, failure)
+            can_retry = claim.attempt_count < request.effective_max_attempts
+            self._mark_failed(
+                request,
+                request_sha256,
+                exc,
+                retryable=can_retry,
+            )
             if retryable_gpu_failure:
                 cleanup_cuda_memory()
-            if failure is not exc:
-                raise failure from exc
+            if not can_retry:
+                raise NonRetryableTaskError(
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
             raise JobExecutionError(f"execution failed for job {request.job_id}") from exc
 
         self.repository.mark_succeeded(
@@ -387,22 +390,13 @@ class InferenceWorker:
             etag=stored.etag,
         )
 
-    @staticmethod
-    def _single_shot_failure(
-        request: InferenceJobRequest,
-        error: BaseException,
-    ) -> BaseException:
-        if request.max_attempts != 1 or isinstance(error, NonRetryableTaskError):
-            return error
-        return NonRetryableTaskError(
-            f"{type(error).__name__}: {error}"
-        )
-
     def _mark_failed(
         self,
         request: InferenceJobRequest,
         request_sha256: str,
         error: BaseException,
+        *,
+        retryable: bool,
     ) -> None:
         try:
             self.repository.mark_failed(
@@ -410,6 +404,7 @@ class InferenceWorker:
                 request_sha256,
                 owner=self.worker_id,
                 error=f"{type(error).__name__}: {error}",
+                retryable=retryable,
             )
         except Exception:
             logger.exception("failed to persist job failure for %s", request.job_id)
