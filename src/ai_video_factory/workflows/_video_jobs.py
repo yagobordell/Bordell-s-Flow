@@ -20,7 +20,9 @@ class TerminalJobState(Protocol):
     last_terminal_payload: dict[str, Any] | None
 
 
-def archive_manifest(path: Path, run_fingerprint: str, *, phase: Literal["generation", "upscale"]) -> Path:
+def archive_manifest(
+    path: Path, run_fingerprint: str, *, phase: Literal["generation", "upscale"]
+) -> Path:
     raw = path.read_bytes()
     state_sha = hashlib.sha256(raw).hexdigest()[:12]
     archive = path.with_name(
