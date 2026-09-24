@@ -34,7 +34,7 @@ foreach ($Path in @($AvatarImage, $Audio, $Manager, $Bootstrap, $Submit)) {
         throw "Required benchmark file not found: $Path"
     }
 }
-foreach ($Command in @("docker", "python", "ffprobe")) {
+foreach ($Command in @("docker", "uv", "ffprobe")) {
     if (-not (Get-Command $Command -ErrorAction SilentlyContinue)) {
         throw "Required benchmark executable not found: $Command"
     }
