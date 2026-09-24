@@ -7,8 +7,8 @@ from ai_video_factory.config import settings
 from ai_video_factory.domain import NarrationAudio, SourceScript
 from ai_video_factory.providers import SaladWhisperTranscriptionProvider
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
-from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
+from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.workflows.narration_alignment import align_narration_words
 
 
