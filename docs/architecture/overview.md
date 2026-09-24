@@ -1,68 +1,67 @@
-# Architecture
+# Architecture overview
 
-Bordell's Flow turns a finished script into a reproducible 16:9 video.
+The production pipeline transforms a script into a rendered video through planning, narration,
+alignment, visual generation, video generation, upscaling and composition.
 
-## Production flow
-
-```text
-SourceScript
-  -> narrative planning and shots
-  -> narration + word alignment
-  -> references + storyboard keyframes
-  -> LTX 2.5 video (1280x720 @ 24 fps)
-  -> Real-ESRGAN x2 (2560x1440 @ 24 fps)
-  -> Remotion + FFmpeg
-  -> FinalVideo
-```
-
-Production providers are OpenAI for structured planning, Breeze TTS 2 for narration, Fish Speech as
-the classified narration fallback, Whisper Large V3 Turbo for alignment, Qwen Image 2.1 for images,
-LTX 2.5 for video, Real-ESRGAN for upscale and Remotion/FFmpeg for composition.
-
-Ideogram 4 remains implemented for explicit future use but is not selected by the normal production
-route.
-
-## Repository boundaries
+## Pipeline stages
 
 ```text
-src/ai_video_factory/
-  bots/         structured planning
-  compositor/   final timeline and rendering contracts
-  domain/       audiovisual contracts
-  inference/    model-neutral remote job/storage/lease core
-  providers/    provider adapters
-  workers/      model-specific Salad runtimes
-  workflows/    resumable application workflows
-
-scripts/        pipeline, Salad, smoke and diagnostic commands
-deploy/salad/   canonical Salad service manifest
-docker/workers/ model worker images
-remotion/       TypeScript renderer
-infra/sql/      persistent inference-job schema
-tests/          regression and contract coverage
+script
+  -> planning / shot structure
+  -> narration (Breeze, Fish fallback)
+  -> word alignment (Whisper)
+  -> reference images / storyboard keyframes (Qwen Image)
+  -> LTX 2.5 video clips
+  -> Real-ESRGAN upscale
+  -> Remotion / FFmpeg composition
+  -> final output
 ```
 
-## Core rules
+OpenAI is used for language/planning tasks. GPU inference workers run on Salad.
 
-- Domain contracts do not contain Salad, R2 or Postgres transport details.
-- Model-specific imports stay outside `ai_video_factory.inference`.
-- GPU jobs use deterministic application identities and cache/replay before new allocation.
-- Qwen Image 2.1 is the active image generator; Ideogram is not a silent fallback.
-- Breeze is primary narration; Fish Speech is used only for classified eligible failures.
-- LTX output is silent 1280x720 video; Real-ESRGAN produces the 2560x1440 compositor input.
-- Phase 9 uses `ShotTiming` as timeline truth and muxes narration without regenerating accepted video.
-- Historical migrations and validation evidence belong in Git history, not active documentation.
+## Application control plane
 
-## Orchestration
+GPU inference has one application source of truth: Postgres `gpu.jobs`.
 
-The supported end-to-end entry point is:
+Providers build deterministic `InferenceJobRequest` objects and submit them through the Postgres
+job transport. Workers poll Postgres, claim jobs with leases, download inputs from R2, perform
+inference, upload outputs and complete the job.
 
-```text
-scripts/pipeline/run_video_factory.ps1
+R2 output metadata plus deterministic request fingerprints provide replay/idempotency before new GPU
+work is allocated.
+
+## Salad's role
+
+Salad is a compute host, not a business-state or queue authority.
+
+`deploy/salad/services.json` defines one container group per model, GPU requirements, probes,
+priority and explicit replica bounds. Controlled pipeline wrappers inspect cache state before
+starting capacity and stop groups back to zero when work finishes.
+
+No Salad Job Queue or queue autoscaler is part of the production path.
+
+## Worker design
+
+All model services use the shared inference core for:
+
+- health/readiness;
+- task registration;
+- Postgres claims, leases and heartbeat;
+- object-storage integrity;
+- replay;
+- one-model-call-at-a-time process serialization.
+
+Model-specific packages own bootstrap and inference implementation only.
+
+Domain contracts do not contain Salad, R2 or Postgres transport details.
+
+## Supported end-to-end entrypoint
+
+The supported production entrypoint is:
+
+```powershell
+./scripts/pipeline/run_video_factory.ps1
 ```
 
-It performs preflight, cache/resume inspection, dependency-aware execution, controlled Salad lifecycle,
-composition and final cleanup. `scripts/pipeline/run_production.py` owns stage fingerprints and resume
-semantics.
-
-The canonical deployment inventory is `deploy/salad/services.json`.
+It performs preflight checks, cache/resume planning, bounded GPU lifecycle, production DAG execution,
+composition and final cleanup.
