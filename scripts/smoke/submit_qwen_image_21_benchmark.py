@@ -265,11 +265,20 @@ def main() -> None:
             }
             runs.append(row)
             _write_summary(report, summary)
-        warm = [float(row["inference_seconds"]) for row in runs[1:]]
-        median = statistics.median(warm)
-        mean = statistics.mean(warm)
-        spread = max(warm) - min(warm)
-        high_variation = spread > 0.20 * median
+        def describe(values: list[float]) -> dict[str, float]:
+            return {
+                "median_seconds": statistics.median(values),
+                "mean_seconds": statistics.mean(values),
+                "min_seconds": min(values),
+                "max_seconds": max(values),
+                "range_seconds": max(values) - min(values),
+            }
+
+        warm_total = describe([float(row["total_seconds"]) for row in runs[1:]])
+        warm_inference = describe([float(row["inference_seconds"]) for row in runs[1:]])
+        warm_png_save = describe([float(row["png_save_seconds"]) for row in runs[1:]])
+        median = warm_total["median_seconds"]
+        high_variation = warm_total["range_seconds"] > 0.20 * median
         category = (
             "investigate"
             if median > 35 or high_variation
@@ -277,16 +286,17 @@ def main() -> None:
             if median <= 30
             else "initially_acceptable"
         )
-        summary["warm_inference"] = {
-            "median_seconds": median,
-            "mean_seconds": mean,
-            "min_seconds": min(warm),
-            "max_seconds": max(warm),
-            "range_seconds": spread,
+        summary["warm_total"] = {
+            **warm_total,
             "high_variation_over_20_percent": high_variation,
             "category": category,
         }
-        print(f"Qwen warm median={median:.3f}s mean={mean:.3f}s category={category}")
+        summary["warm_inference"] = warm_inference
+        summary["warm_png_save"] = warm_png_save
+        print(
+            f"Qwen warm total median={median:.3f}s "
+            f"mean={warm_total['mean_seconds']:.3f}s category={category}"
+        )
     except Exception as exc:
         summary["run_error"] = str(exc)
         raise
