@@ -53,5 +53,7 @@ scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1
 ```
 
 The smoke verifies that the deployed worker uses the updated guider, but a passing MP4/audio
-contract does not establish lip-sync quality: inspect the avatar's mouth movement against the\nprovided speech before accepting the visual result. The smoke does not replace production\norchestration.
+contract does not establish lip-sync quality: inspect the avatar's mouth movement against the
+provided speech before accepting the visual result. The smoke does not replace production
+orchestration.
 Transport IDs, timings and artifact hashes from individual validation runs belong in Git history.
