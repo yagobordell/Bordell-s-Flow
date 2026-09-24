@@ -63,6 +63,9 @@ scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1
 The controlled PowerShell smoke defaults to `-Profile fast` and accepts `-Profile dev`
 for a dev baseline using the same avatar and speech. The underlying Python smoke verifies
 the selected checkpoint family, both stage step counts, CFG and frozen-audio contract.
+For a five-second audio clip, pass `-MaxGenerationSeconds 120` to fail validation if
+`total_elapsed_seconds` exceeds the two-minute acceptance target. This measures the
+worker's generation, not Salad queue delay or cold model downloads.
 
 The smoke verifies that the deployed worker uses the updated guider, but a passing MP4/audio
 contract does not establish lip-sync quality: inspect the avatar's mouth movement against the
