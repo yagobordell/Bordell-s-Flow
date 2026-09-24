@@ -22,12 +22,14 @@ def test_worker_images_keep_basic_supply_chain_and_runtime_hygiene() -> None:
         assert "USER worker" in text, dockerfile
 
 
-def test_standard_worker_entrypoints_share_lifecycle() -> None:
+def test_standard_worker_entrypoints_share_postgres_polling_lifecycle() -> None:
     common = COMMON_ENTRYPOINT.read_text(encoding="utf-8")
     assert "wait_for_endpoint()" in common
     assert "if ! wait_for_endpoint /health 120 2; then" in common
-    assert "SALAD_QUEUE_ENABLED" in common
-    assert "salad-http-job-queue-worker" in common
+    assert "wait_for_endpoint /ready" in common
+    assert "polling canonical Postgres jobs" in common
+    assert "SALAD_QUEUE_ENABLED" not in common
+    assert "salad-http-job-queue-worker" not in common
 
     for entrypoint in WORKER_ENTRYPOINTS:
         text = entrypoint.read_text(encoding="utf-8")
