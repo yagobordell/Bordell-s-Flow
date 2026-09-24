@@ -135,7 +135,7 @@ try {
             "--timeout-seconds", "600", "--max-pending-reallocations", "0",
             "--output-dir", $RunDir
         )
-        & python @SubmitArgs
+        & uv run --no-sync python @SubmitArgs
         if (-not $?) { throw "A2V submission/validation failed for generation $Index." }
 
         $Metadata = Get-Content -LiteralPath (Join-Path $RunDir "metadata.json") -Raw |
