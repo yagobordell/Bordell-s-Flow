@@ -2,22 +2,14 @@
 param(
     [ValidateSet("Validate", "Prepare", "Start", "Status", "Stop")]
     [string]$Action = "Status",
-
     [string]$Service = "ltx25",
-
     [string]$Image = "",
-
     [string]$PinnedImage = "",
-
     [string]$EnvFile = ".env",
-
-    [ValidateRange(10, 180)]
-    [int]$PrepareTimeoutMinutes = 120,
-
+    [ValidateRange(10, 180)][int]$PrepareTimeoutMinutes = 120,
+    [ValidateRange(0, 64)][int]$Replicas = 0,
     [switch]$SkipBuild,
-
     [switch]$Recreate,
-
     [switch]$NonInteractive
 )
 
@@ -26,48 +18,40 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $ServicesPath = Join-Path $RepoRoot "deploy\salad\services.json"
-$ScaleToZeroRestore = Join-Path $PSScriptRoot "restore_salad_scale_to_zero.ps1"
 if (-not (Test-Path -LiteralPath $ServicesPath -PathType Leaf)) {
     throw "Salad service manifest not found: $ServicesPath"
 }
 
 . (Join-Path $PSScriptRoot "_env_file.ps1")
-
+. (Join-Path $PSScriptRoot "_http_status.ps1")
 Import-EnvFile -Path $EnvFile
 
 $Document = Get-Content -LiteralPath $ServicesPath -Raw | ConvertFrom-Json
+if ([int]$Document.schema_version -ne 3) { throw "Salad manifest must use schema_version=3." }
+if ([string]$Document.stack.job_transport -ne "postgres") {
+    throw "Salad deployment must use Postgres as the canonical job transport."
+}
+
 $ServiceProperty = $Document.services.PSObject.Properties[$Service]
 if ($null -eq $ServiceProperty) {
-    $Available = @($Document.services.PSObject.Properties.Name) -join ", "
-    throw "Unknown Salad service '$Service'. Available services: $Available"
+    throw "Unknown Salad service '$Service'."
 }
 $Definition = $ServiceProperty.Value
-
-$StackProperty = $Document.PSObject.Properties["stack"]
-$Stack = if ($null -ne $StackProperty) { $StackProperty.Value } else { $null }
+$Stack = $Document.stack
 
 function Get-ManifestString {
-    param(
-        [Parameter(Mandatory)][string]$Name,
-        [object]$Primary,
-        [object]$Fallback
-    )
-
+    param([Parameter(Mandatory)][string]$Name, [object]$Primary, [object]$Fallback)
     $Value = ""
     if ($null -ne $Primary) {
         $Property = $Primary.PSObject.Properties[$Name]
-        if ($null -ne $Property) {
-            $Value = [string]$Property.Value
-        }
+        if ($null -ne $Property) { $Value = [string]$Property.Value }
     }
     if ([string]::IsNullOrWhiteSpace($Value) -and $null -ne $Fallback) {
         $Property = $Fallback.PSObject.Properties[$Name]
-        if ($null -ne $Property) {
-            $Value = [string]$Property.Value
-        }
+        if ($null -ne $Property) { $Value = [string]$Property.Value }
     }
     if ([string]::IsNullOrWhiteSpace($Value)) {
-        throw "Salad manifest is missing '$Name' for service '$Service'."
+        throw "Salad manifest is missing '$Name' for '$Service'."
     }
     return $Value.Trim()
 }
@@ -75,148 +59,63 @@ function Get-ManifestString {
 $Organization = Get-ManifestString -Name "organization" -Primary $Stack -Fallback $Definition
 $Project = Get-ManifestString -Name "project" -Primary $Stack -Fallback $Definition
 $GroupName = Get-ManifestString -Name "group_name" -Primary $Definition -Fallback $null
-$QueueName = Get-ManifestString -Name "queue_name" -Primary $Definition -Fallback $null
 $Dockerfile = Join-Path $RepoRoot (Get-ManifestString -Name "dockerfile" -Primary $Definition -Fallback $null)
 if ([string]::IsNullOrWhiteSpace($Image)) {
     $Image = Get-ManifestString -Name "image" -Primary $Definition -Fallback $null
 }
 
-$QueuePath = "/jobs"
-$ContainerPort = 8080
-$AutostartPolicy = $false
-$RestartPolicy = "always"
-if ($null -ne $Stack) {
-    $Property = $Stack.PSObject.Properties["queue_path"]
-    if ($null -ne $Property) {
-        $QueuePath = [string]$Property.Value
-    }
-    $Property = $Stack.PSObject.Properties["container_port"]
-    if ($null -ne $Property) {
-        $ContainerPort = [int]$Property.Value
-    }
-    $Property = $Stack.PSObject.Properties["autostart_policy"]
-    if ($null -ne $Property) {
-        $AutostartPolicy = [bool]$Property.Value
-    }
-    $Property = $Stack.PSObject.Properties["restart_policy"]
-    if ($null -ne $Property) {
-        $RestartPolicy = [string]$Property.Value
-    }
-}
+$ContainerPort = [int]$Stack.container_port
+$AutostartPolicy = [bool]$Stack.autostart_policy
+$RestartPolicy = [string]$Stack.restart_policy
+$ServiceAutostart = $Definition.PSObject.Properties["autostart_policy"]
+if ($null -ne $ServiceAutostart) { $AutostartPolicy = [bool]$ServiceAutostart.Value }
 
-$ServiceAutostartProperty = $Definition.PSObject.Properties["autostart_policy"]
-if ($null -ne $ServiceAutostartProperty) {
-    $AutostartPolicy = [bool]$ServiceAutostartProperty.Value
-}
-
+$StartReplicas = [int]$Definition.capacity.start_replicas
+$MaxReplicas = [int]$Definition.capacity.max_replicas
+$DesiredReplicas = if ($Replicas -gt 0) { $Replicas } else { $StartReplicas }
 $OrganizationApiBase = "https://api.salad.com/api/public/organizations/$Organization"
 $GpuClassesBase = "$OrganizationApiBase/gpu-classes"
-$ApiBase = "$OrganizationApiBase/projects/$Project"
-$ContainersBase = "$ApiBase/containers"
-$QueuesBase = "$ApiBase/queues"
-$SecretNames = @(
-    "POSTGRES_DSN",
-    "R2_ACCESS_KEY_ID",
-    "R2_SECRET_ACCESS_KEY",
-    "HF_TOKEN",
-    "SALAD_API_KEY"
-)
+$ContainersBase = "$OrganizationApiBase/projects/$Project/containers"
+$SecretNames = @("POSTGRES_DSN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "HF_TOKEN", "SALAD_API_KEY")
 
 function Get-RequiredEnvironmentNames {
     $Names = @()
-    if ($null -ne $Stack) {
-        $SharedProperty = $Stack.PSObject.Properties["shared_required_environment"]
-        if ($null -ne $SharedProperty) {
-            $Names += @($SharedProperty.Value | ForEach-Object { [string]$_ })
-        }
-    }
-
-    $ServiceProperty = $Definition.PSObject.Properties["required_environment"]
-    if ($null -ne $ServiceProperty) {
-        $Names += @($ServiceProperty.Value | ForEach-Object { [string]$_ })
-    }
-    else {
-        $LegacyProperty = $Definition.PSObject.Properties["required_secrets"]
-        if ($null -ne $LegacyProperty) {
-            $Names += @($LegacyProperty.Value | ForEach-Object { [string]$_ })
-        }
-    }
-
+    $Shared = $Stack.PSObject.Properties["shared_required_environment"]
+    if ($null -ne $Shared) { $Names += @($Shared.Value | ForEach-Object { [string]$_ }) }
+    $Required = $Definition.PSObject.Properties["required_environment"]
+    if ($null -ne $Required) { $Names += @($Required.Value | ForEach-Object { [string]$_ }) }
     return @($Names | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
 }
 
 function Assert-ServiceDefinition {
-    if (-not (Test-Path -LiteralPath $Dockerfile -PathType Leaf)) {
-        throw "Dockerfile for service '$Service' does not exist: $Dockerfile"
+    if (-not (Test-Path -LiteralPath $Dockerfile -PathType Leaf)) { throw "Missing Dockerfile: $Dockerfile" }
+    if ($Image -notmatch '^[^\s]+:[^\s/:]+$') { throw "Image must include an explicit tag: $Image" }
+    if (-not [string]::IsNullOrWhiteSpace($PinnedImage) -and $PinnedImage -notmatch '^[^\s]+@sha256:[0-9a-fA-F]{64}$') {
+        throw "-PinnedImage must be an immutable sha256 reference."
     }
-    if ($Image -notmatch '^[^\s]+:[^\s/:]+$') {
-        throw "Service '$Service' image must include an explicit mutable tag: $Image"
-    }
-    if (
-        -not [string]::IsNullOrWhiteSpace($PinnedImage) -and
-        $PinnedImage -notmatch '^[^\s]+@sha256:[0-9a-fA-F]{64}$'
-    ) {
-        throw "Service '$Service' -PinnedImage must be an immutable sha256 image reference."
-    }
-    if ($QueuePath -ne "/jobs") {
-        throw "Service '$Service' queue path must remain /jobs for the shared worker HTTP contract."
-    }
-    if ($ContainerPort -ne 8080) {
-        throw "Service '$Service' container port must remain 8080 for the shared worker contract."
-    }
-    if ($RestartPolicy -notin @("always", "on_failure", "never")) {
-        throw "Unsupported Salad restart policy '$RestartPolicy'."
-    }
-
-    $NamesProperty = $Definition.resources.PSObject.Properties["gpu_class_names"]
-    if ($null -eq $NamesProperty -or @($NamesProperty.Value).Count -eq 0) {
-        throw "Service '$Service' must declare at least one resources.gpu_class_names entry."
-    }
-    if ([int]$Definition.autoscaler.min_replicas -ne 0) {
-        throw "Service '$Service' must keep min_replicas=0 so idle model workers scale to zero."
-    }
-    if ([int]$Definition.autoscaler.max_replicas -lt 1) {
-        throw "Service '$Service' must allow at least one autoscaled replica."
-    }
+    if ($ContainerPort -ne 8080) { throw "Shared worker container port must remain 8080." }
+    if ($RestartPolicy -notin @("always", "on_failure", "never")) { throw "Unsupported restart policy '$RestartPolicy'." }
+    if ($StartReplicas -lt 1) { throw "capacity.start_replicas must be at least 1." }
+    if ($MaxReplicas -lt $StartReplicas) { throw "capacity.max_replicas must be >= start_replicas." }
+    if ($DesiredReplicas -gt $MaxReplicas) { throw "replicas=$DesiredReplicas exceeds max_replicas=$MaxReplicas." }
+    if (@($Definition.resources.gpu_class_names).Count -eq 0) { throw "At least one GPU class name is required." }
 }
 
 function Get-Setting {
-    param(
-        [Parameter(Mandatory)][string]$Name,
-        [Parameter(Mandatory)][string]$Prompt,
-        [switch]$Secret
-    )
-
-    $Value = [Environment]::GetEnvironmentVariable(
-        $Name,
-        [EnvironmentVariableTarget]::Process
-    )
-    if (-not [string]::IsNullOrWhiteSpace($Value)) {
-        return $Value.Trim()
-    }
-
-    if ($NonInteractive) {
-        throw "$Name is missing and -NonInteractive was requested."
-    }
-
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Prompt, [switch]$Secret)
+    $Value = [Environment]::GetEnvironmentVariable($Name, [EnvironmentVariableTarget]::Process)
+    if (-not [string]::IsNullOrWhiteSpace($Value)) { return $Value.Trim() }
+    if ($NonInteractive) { throw "$Name is missing and -NonInteractive was requested." }
     if ($Secret) {
         $SecureValue = Read-Host $Prompt -AsSecureString
-        $Credential = [PSCredential]::new("salad-worker", $SecureValue)
-        $Value = $Credential.GetNetworkCredential().Password
+        $Value = [PSCredential]::new("salad-worker", $SecureValue).GetNetworkCredential().Password
     }
     else {
         $Value = Read-Host $Prompt
     }
-
-    if ([string]::IsNullOrWhiteSpace($Value)) {
-        throw "$Name is empty."
-    }
+    if ([string]::IsNullOrWhiteSpace($Value)) { throw "$Name is empty." }
     $Value = $Value.Trim()
-    [Environment]::SetEnvironmentVariable(
-        $Name,
-        $Value,
-        [EnvironmentVariableTarget]::Process
-    )
+    [Environment]::SetEnvironmentVariable($Name, $Value, [EnvironmentVariableTarget]::Process)
     return $Value
 }
 
@@ -225,24 +124,15 @@ function Get-Headers {
     return @{
         "Salad-Api-Key" = $ApiKey
         "Accept" = "application/json"
-        "User-Agent" = "ai-video-factory-worker-manager/2.0"
+        "User-Agent" = "ai-video-factory-worker-manager/3.0"
     }
 }
 
-. (Join-Path $PSScriptRoot "_http_status.ps1")
-
 function Test-TransientSaladFailure {
     param([Parameter(Mandatory)][object]$ErrorRecord)
-
     $StatusCode = Get-HttpStatusCode -ErrorRecord $ErrorRecord
-    if ($StatusCode -in @(408, 429, 500, 502, 503, 504)) {
-        return $true
-    }
-    $Message = [string]$ErrorRecord.Exception.Message
-    return $Message -match (
-        "(?i)timed out|timeout|upstream connect error|disconnect/reset|" +
-        "remote connection failure|server unavailable|gateway timeout"
-    )
+    if ($StatusCode -in @(408, 429, 500, 502, 503, 504)) { return $true }
+    return [string]$ErrorRecord.Exception.Message -match "(?i)timed out|timeout|disconnect|reset|server unavailable|gateway timeout"
 }
 
 function Invoke-SaladRequest {
@@ -256,313 +146,120 @@ function Invoke-SaladRequest {
         [string]$ContentType = "",
         [object]$Body = $null
     )
-
     for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
         try {
-            $Request = @{
-                Method = $Method
-                Uri = $Uri
-                Headers = $Headers
-                TimeoutSec = $TimeoutSec
-            }
-            if (-not [string]::IsNullOrWhiteSpace($ContentType)) {
-                $Request["ContentType"] = $ContentType
-            }
-            if ($null -ne $Body) {
-                $Request["Body"] = $Body
-            }
+            $Request = @{ Method = $Method; Uri = $Uri; Headers = $Headers; TimeoutSec = $TimeoutSec }
+            if (-not [string]::IsNullOrWhiteSpace($ContentType)) { $Request["ContentType"] = $ContentType }
+            if ($null -ne $Body) { $Request["Body"] = $Body }
             return Invoke-RestMethod @Request
         }
         catch {
-            if (-not (Test-TransientSaladFailure -ErrorRecord $_) -or $Attempt -ge $MaxAttempts) {
-                throw
-            }
-            $DelaySeconds = [Math]::Min(15, 2 * $Attempt)
-            Write-Warning (
-                "$Service Salad operation '$Operation' failed transiently " +
-                "(attempt $Attempt/$MaxAttempts): $($_.Exception.Message). " +
-                "Retrying in ${DelaySeconds}s."
-            )
-            Start-Sleep -Seconds $DelaySeconds
+            if (-not (Test-TransientSaladFailure -ErrorRecord $_) -or $Attempt -ge $MaxAttempts) { throw }
+            $Delay = [Math]::Min(15, 2 * $Attempt)
+            Write-Warning "$Service Salad '$Operation' transient failure ($Attempt/$MaxAttempts); retrying in $Delay seconds."
+            Start-Sleep -Seconds $Delay
         }
     }
-    throw "Unreachable Salad retry state for '$Operation'."
 }
 
 function Resolve-GpuClassIds {
     param([Parameter(Mandatory)][hashtable]$Headers)
-
-    $NameProperty = $Definition.resources.PSObject.Properties["gpu_class_names"]
-    $Names = @()
-    if ($null -ne $NameProperty) {
-        $Names = @($NameProperty.Value)
-    }
-
-    if ($Names.Count -eq 0) {
-        $LegacyProperty = $Definition.resources.PSObject.Properties["gpu_classes"]
-        if ($null -eq $LegacyProperty) {
-            throw "Service '$Service' must define resources.gpu_class_names or gpu_classes."
-        }
-        $LegacyIds = @($LegacyProperty.Value | ForEach-Object { [string]$_ })
-        if ($LegacyIds.Count -eq 0) {
-            throw "Service '$Service' has no configured GPU classes."
-        }
-        Write-Warning "Service '$Service' still uses legacy GPU class UUIDs."
-        return $LegacyIds
-    }
-
-    $Response = Invoke-RestMethod `
-        -Uri $GpuClassesBase `
-        -Headers $Headers `
-        -TimeoutSec 30
-    $Items = @()
-    if ($Response.PSObject.Properties.Name -contains "items") {
-        $Items = @($Response.items)
-    }
-    else {
-        $Items = @($Response)
-    }
-
+    $Response = Invoke-SaladRequest -Headers $Headers -Uri $GpuClassesBase -Operation "list GPU classes"
+    $Items = if ($Response.PSObject.Properties.Name -contains "items") { @($Response.items) } else { @($Response) }
     $Resolved = @()
-    foreach ($ConfiguredName in $Names) {
-        $Name = [string]$ConfiguredName
-        $Matches = @($Items | Where-Object { [string]$_.name -eq $Name })
-        if ($Matches.Count -eq 0) {
-            $Available = @($Items | ForEach-Object { [string]$_.name }) -join ", "
-            throw "Salad GPU class '$Name' was not found. Available classes: $Available"
-        }
-        if ($Matches.Count -gt 1) {
-            throw "Salad returned multiple GPU classes named '$Name'."
-        }
-        $Resolved += [string]$Matches[0].id
+    foreach ($ConfiguredName in @($Definition.resources.gpu_class_names)) {
+        $MatchesByName = @($Items | Where-Object { [string]$_.name -eq [string]$ConfiguredName })
+        if ($MatchesByName.Count -ne 1) { throw "GPU class '$ConfiguredName' did not resolve exactly once." }
+        $Resolved += [string]$MatchesByName[0].id
     }
-
-    Write-Host (
-        "Resolved GPU profile for {0}: {1}" -f $Service, (@($Names) -join ", ")
-    ) -ForegroundColor Green
     return $Resolved
 }
 
-function Ensure-Queue {
-    param([Parameter(Mandatory)][hashtable]$Headers)
-
-    try {
-        Invoke-RestMethod `
-            -Uri "$QueuesBase/$QueueName" `
-            -Headers $Headers `
-            -TimeoutSec 30 |
-            Out-Null
-        Write-Host "Queue exists: $QueueName" -ForegroundColor Green
-        return
-    }
-    catch {
-        if ((Get-HttpStatusCode -ErrorRecord $_) -ne 404) {
-            throw
-        }
-    }
-
-    $QueueBody = @{
-        name = $QueueName
-        display_name = "$($Definition.display_name) Jobs"
-        description = "AI Video Factory jobs for the $Service inference worker"
-    } | ConvertTo-Json
-
-    Write-Host "Creating queue: $QueueName" -ForegroundColor Cyan
-    Invoke-RestMethod `
-        -Method Post `
-        -Uri $QueuesBase `
-        -Headers $Headers `
-        -ContentType "application/json" `
-        -Body $QueueBody `
-        -TimeoutSec 60 |
-        Out-Null
+function Get-GroupStatus {
+    param([Parameter(Mandatory)][object]$Group)
+    $State = $Group.PSObject.Properties["current_state"]
+    if ($null -eq $State -or $null -eq $State.Value) { return "unknown" }
+    $Status = $State.Value.PSObject.Properties["status"]
+    if ($null -eq $Status -or $null -eq $Status.Value) { return "unknown" }
+    return [string]$Status.Value
 }
 
 function Try-Get-Group {
     param([Parameter(Mandatory)][hashtable]$Headers)
-
     try {
-        return Invoke-SaladRequest `
-            -Headers $Headers `
-            -Uri "$ContainersBase/$GroupName" `
-            -Operation "read container group" `
-            -TimeoutSec 30
+        return Invoke-SaladRequest -Headers $Headers -Uri "$ContainersBase/$GroupName" -Operation "read container group"
     }
     catch {
-        if ((Get-HttpStatusCode -ErrorRecord $_) -eq 404) {
-            return $null
-        }
+        if ((Get-HttpStatusCode -ErrorRecord $_) -eq 404) { return $null }
         throw
     }
 }
 
 function Get-Group {
     param([Parameter(Mandatory)][hashtable]$Headers)
-
     $Group = Try-Get-Group -Headers $Headers
-    if ($null -eq $Group) {
-        throw "Container group '$GroupName' does not exist. Run -Action Prepare first."
-    }
+    if ($null -eq $Group) { throw "Container group '$GroupName' does not exist. Run Prepare first." }
     return $Group
 }
 
-function Remove-StoppedContainerGroup {
+function Wait-ForGroupSettled {
+    param([Parameter(Mandatory)][hashtable]$Headers, [ValidateRange(1, 180)][int]$TimeoutMinutes)
+    $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    do {
+        Start-Sleep -Seconds 10
+        $Group = Get-Group -Headers $Headers
+        Write-Host ("{0} service={1} status={2} replicas={3} pending={4}" -f (Get-Date -Format "HH:mm:ss"), $Service, (Get-GroupStatus -Group $Group), [int]$Group.replicas, [bool]$Group.pending_change)
+        if (-not [bool]$Group.pending_change) { return $Group }
+    } while ((Get-Date) -lt $Deadline)
+    throw "Salad did not settle '$Service' before timeout."
+}
+
+function Wait-ForRunningCapacity {
+    param([Parameter(Mandatory)][hashtable]$Headers, [Parameter(Mandatory)][int]$ExpectedReplicas)
+    $Deadline = (Get-Date).AddMinutes(30)
+    do {
+        Start-Sleep -Seconds 10
+        $Group = Get-Group -Headers $Headers
+        if ((Get-GroupStatus -Group $Group) -eq "running" -and -not [bool]$Group.pending_change -and [int]$Group.replicas -eq $ExpectedReplicas) {
+            return $Group
+        }
+    } while ((Get-Date) -lt $Deadline)
+    throw "'$GroupName' did not reach running/replicas=$ExpectedReplicas."
+}
+
+function Wait-ForStoppedZeroReplicas {
     param([Parameter(Mandatory)][hashtable]$Headers)
-
-    $Group = Get-Group -Headers $Headers
-    if ((Get-GroupStatus -Group $Group) -ne "stopped") {
-        throw "Container group '$GroupName' must be stopped before -Recreate."
-    }
-    if ([int]$Group.replicas -ne 0) {
-        throw "Container group '$GroupName' must have replicas=0 before -Recreate."
-    }
-
-    Write-Warning (
-        "Recreating stopped container group '$GroupName' so Salad can establish " +
-        "a fresh Job Queue attachment."
-    )
-    Invoke-RestMethod `
-        -Method Delete `
-        -Uri "$ContainersBase/$GroupName" `
-        -Headers $Headers `
-        -TimeoutSec 60 |
-        Out-Null
-
-    $Deadline = (Get-Date).AddMinutes(5)
+    $Deadline = (Get-Date).AddMinutes(3)
+    $StableReads = 0
     do {
         Start-Sleep -Seconds 5
-        $Remaining = Try-Get-Group -Headers $Headers
-        if ($null -eq $Remaining) {
-            Write-Host "Container group '$GroupName' deleted; ready for clean recreation." `
-                -ForegroundColor Green
-            return
-        }
-    }
-    while ((Get-Date) -lt $Deadline)
-
-    throw "Container group '$GroupName' was not deleted within 5 minutes."
-}
-
-function Get-GroupStatus {
-    param([Parameter(Mandatory)][object]$Group)
-
-    $CurrentStateProperty = $Group.PSObject.Properties["current_state"]
-    if ($null -eq $CurrentStateProperty -or $null -eq $CurrentStateProperty.Value) {
-        return "unknown"
-    }
-    $StatusProperty = $CurrentStateProperty.Value.PSObject.Properties["status"]
-    if ($null -eq $StatusProperty -or $null -eq $StatusProperty.Value) {
-        return "unknown"
-    }
-    return [string]$StatusProperty.Value
-}
-
-function Get-GroupDescription {
-    param([Parameter(Mandatory)][object]$Group)
-
-    $CurrentStateProperty = $Group.PSObject.Properties["current_state"]
-    if ($null -eq $CurrentStateProperty -or $null -eq $CurrentStateProperty.Value) {
-        return ""
-    }
-    $DescriptionProperty = $CurrentStateProperty.Value.PSObject.Properties["description"]
-    if ($null -eq $DescriptionProperty -or $null -eq $DescriptionProperty.Value) {
-        return ""
-    }
-    return [string]$DescriptionProperty.Value
-}
-
-function Wait-ForGroupStatus {
-    param(
-        [Parameter(Mandatory)][hashtable]$Headers,
-        [Parameter(Mandatory)][string]$Expected,
-        [ValidateRange(1, 180)][int]$TimeoutMinutes = 30
-    )
-
-    $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
-    do {
-        Start-Sleep -Seconds 15
         $Group = Get-Group -Headers $Headers
-        $Status = Get-GroupStatus -Group $Group
-        Write-Host (
-            "{0} service={1} status={2} replicas={3} pending={4} description={5}" -f `
-            (Get-Date -Format "HH:mm:ss"),
-            $Service,
-            $Status,
-            $Group.replicas,
-            $Group.pending_change,
-            (Get-GroupDescription -Group $Group)
-        )
-        if ($Status -eq $Expected -and -not $Group.pending_change) {
-            return $Group
+        if ((Get-GroupStatus -Group $Group) -eq "stopped" -and -not [bool]$Group.pending_change -and [int]$Group.replicas -eq 0) {
+            $StableReads += 1
+            if ($StableReads -ge 2) { return $Group }
         }
-    }
-    while ((Get-Date) -lt $Deadline)
-
-    throw "Container group did not reach status '$Expected' before timeout."
-}
-
-function Wait-ForGroupSettled {
-    param(
-        [Parameter(Mandatory)][hashtable]$Headers,
-        [ValidateRange(1, 180)][int]$TimeoutMinutes
-    )
-
-    $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
-    do {
-        Start-Sleep -Seconds 15
-        $Group = Get-Group -Headers $Headers
-        Write-Host (
-            "{0} service={1} version={2} pending={3} status={4} description={5}" -f `
-            (Get-Date -Format "HH:mm:ss"),
-            $Service,
-            $Group.version,
-            $Group.pending_change,
-            (Get-GroupStatus -Group $Group),
-            (Get-GroupDescription -Group $Group)
-        )
-        if (-not $Group.pending_change) {
-            return $Group
-        }
-    }
-    while ((Get-Date) -lt $Deadline)
-
-    throw "Salad did not finish preparing service '$Service' before the timeout."
+        else { $StableReads = 0 }
+    } while ((Get-Date) -lt $Deadline)
+    throw "'$GroupName' did not converge to stable stopped/replicas=0."
 }
 
 function Resolve-PinnedImage {
     param([Parameter(Mandatory)][string]$MutableImage)
-
     $Inspect = & docker buildx imagetools inspect $MutableImage 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "Published image cannot be inspected: $MutableImage"
-    }
-
+    if ($LASTEXITCODE -ne 0) { throw "Published image cannot be inspected: $MutableImage" }
     $Digest = $null
     foreach ($Line in $Inspect) {
-        if ([string]$Line -match '^\s*Digest:\s+(sha256:[0-9a-f]{64})\s*$') {
-            $Digest = $Matches[1]
-            break
-        }
+        if ([string]$Line -match '^\s*Digest:\s+(sha256:[0-9a-f]{64})\s*$') { $Digest = $Matches[1]; break }
     }
-    if ($null -eq $Digest) {
-        throw "Could not resolve image digest from docker buildx imagetools inspect."
-    }
-    if ($MutableImage -notmatch '^(?<repo>.+):[^/:]+$') {
-        throw "Image must include an explicit tag: $MutableImage"
-    }
-    return "$($Matches['repo'])@$Digest"
+    if ($null -eq $Digest) { throw "Could not resolve image digest for $MutableImage." }
+    if ($MutableImage -notmatch '^(?<repo>.+):[^/:]+$') { throw "Image must include an explicit tag." }
+    return "$([string]$Matches['repo'])@$Digest"
 }
 
 function New-Probe {
     param([Parameter(Mandatory)][object]$Probe)
-
     return @{
-        http = @{
-            headers = @()
-            path = [string]$Probe.path
-            port = $ContainerPort
-            scheme = "http"
-        }
+        http = @{ headers = @(); path = [string]$Probe.path; port = $ContainerPort; scheme = "http" }
         initial_delay_seconds = 0
         period_seconds = [int]$Probe.period_seconds
         failure_threshold = [int]$Probe.failure_threshold
@@ -574,33 +271,18 @@ function New-Probe {
 function Get-WorkerEnvironment {
     $Environment = @{}
     foreach ($Property in @($Stack.shared_environment.PSObject.Properties) + @($Definition.environment.PSObject.Properties)) {
-        # Runtime behavior belongs to the deployment manifest. Local .env values
-        # are intentionally limited to credentials and required external inputs;
-        # they must not disable the Salad queue or switch a production worker to
-        # local mode during Prepare.
         $Environment[$Property.Name] = [string]$Property.Value
     }
-
     foreach ($Name in Get-RequiredEnvironmentNames) {
-        $IsSecret = $SecretNames -contains [string]$Name
-        $Environment[[string]$Name] = Get-Setting `
-            -Name ([string]$Name) `
-            -Prompt ([string]$Name) `
-            -Secret:$IsSecret
+        $Environment[[string]$Name] = Get-Setting -Name ([string]$Name) -Prompt ([string]$Name) -Secret:($SecretNames -contains [string]$Name)
     }
     return $Environment
 }
 
 function New-ContainerConfiguration {
-    param(
-        [Parameter(Mandatory)][string]$PinnedImage,
-        [Parameter(Mandatory)][hashtable]$WorkerEnvironment,
-        [Parameter(Mandatory)][string[]]$GpuClassIds,
-        [switch]$IncludePriority
-    )
-
-    $Container = @{
-        image = $PinnedImage
+    param([Parameter(Mandatory)][string]$ResolvedImage, [Parameter(Mandatory)][hashtable]$WorkerEnvironment, [Parameter(Mandatory)][string[]]$GpuClassIds)
+    return @{
+        image = $ResolvedImage
         resources = @{
             cpu = [int]$Definition.resources.cpu
             memory = [int]$Definition.resources.memory
@@ -610,54 +292,36 @@ function New-ContainerConfiguration {
         }
         environment_variables = $WorkerEnvironment
         image_caching = $true
-    }
-    if ($IncludePriority) {
-        $Container["priority"] = [string]$Definition.priority
-    }
-    return $Container
-}
-
-function New-QueueAutoscalerConfiguration {
-    return @{
-        min_replicas = [int]$Definition.autoscaler.min_replicas
-        max_replicas = [int]$Definition.autoscaler.max_replicas
-        desired_queue_length = [int]$Definition.autoscaler.desired_queue_length
-        polling_period = [int]$Definition.autoscaler.polling_period
-        max_upscale_per_minute = [int]$Definition.autoscaler.max_upscale_per_minute
-        max_downscale_per_minute = [int]$Definition.autoscaler.max_downscale_per_minute
+        priority = [string]$Definition.priority
     }
 }
 
-function New-QueueConnectionConfiguration {
-    return @{
-        path = $QueuePath
-        port = $ContainerPort
-        queue_name = $QueueName
+function Test-LegacyQueueAttachment {
+    param([Parameter(Mandatory)][object]$Group)
+    foreach ($Name in @("queue_connection", "queue_autoscaler")) {
+        $Property = $Group.PSObject.Properties[$Name]
+        if ($null -ne $Property -and $null -ne $Property.Value) { return $true }
     }
+    return $false
 }
 
-function Test-NameConflictFailure {
-    param([Parameter(Mandatory)][object]$ErrorRecord)
-
-    if ((Get-HttpStatusCode -ErrorRecord $ErrorRecord) -ne 400) {
-        return $false
+function Remove-StoppedContainerGroup {
+    param([Parameter(Mandatory)][hashtable]$Headers)
+    $Group = Get-Group -Headers $Headers
+    if ((Get-GroupStatus -Group $Group) -ne "stopped" -or [int]$Group.replicas -ne 0) {
+        throw "'$GroupName' must be stopped at replicas=0 before recreation."
     }
-    $Details = [string]$ErrorRecord.ErrorDetails.Message
-    $Message = [string]$ErrorRecord.Exception.Message
-    return (
-        $Details -match '"type"\s*:\s*"name_conflict"' -or
-        $Message -match 'name_conflict'
-    )
+    Invoke-SaladRequest -Headers $Headers -Method "Delete" -Uri "$ContainersBase/$GroupName" -Operation "delete legacy container group" -TimeoutSec 60 | Out-Null
+    $Deadline = (Get-Date).AddMinutes(5)
+    do {
+        Start-Sleep -Seconds 5
+        if ($null -eq (Try-Get-Group -Headers $Headers)) { return }
+    } while ((Get-Date) -lt $Deadline)
+    throw "'$GroupName' was not deleted within 5 minutes."
 }
 
 function New-ContainerGroup {
-    param(
-        [Parameter(Mandatory)][hashtable]$Headers,
-        [Parameter(Mandatory)][string]$PinnedImage,
-        [Parameter(Mandatory)][hashtable]$WorkerEnvironment,
-        [Parameter(Mandatory)][string[]]$GpuClassIds
-    )
-
+    param([Parameter(Mandatory)][hashtable]$Headers, [Parameter(Mandatory)][string]$ResolvedImage, [Parameter(Mandatory)][hashtable]$WorkerEnvironment, [Parameter(Mandatory)][string[]]$GpuClassIds)
     $CreateBody = @{
         name = $GroupName
         display_name = [string]$Definition.display_name
@@ -665,373 +329,61 @@ function New-ContainerGroup {
         replicas = 0
         restart_policy = $RestartPolicy
         scheduled_scaling_enabled = $false
-        container = New-ContainerConfiguration `
-            -PinnedImage $PinnedImage `
-            -WorkerEnvironment $WorkerEnvironment `
-            -GpuClassIds $GpuClassIds `
-            -IncludePriority
+        container = New-ContainerConfiguration -ResolvedImage $ResolvedImage -WorkerEnvironment $WorkerEnvironment -GpuClassIds $GpuClassIds
         startup_probe = New-Probe -Probe $Definition.probes.startup
         readiness_probe = New-Probe -Probe $Definition.probes.readiness
         liveness_probe = New-Probe -Probe $Stack.shared_liveness_probe
-        queue_connection = New-QueueConnectionConfiguration
-        queue_autoscaler = New-QueueAutoscalerConfiguration
     } | ConvertTo-Json -Depth 20
 
-    Write-Host "Creating container group: $GroupName" -ForegroundColor Cyan
-    $CreateDeadline = (Get-Date).AddMinutes(5)
-    $CreateAttempt = 0
-    while ($true) {
-        $CreateAttempt += 1
+    $Deadline = (Get-Date).AddMinutes(5)
+    do {
         try {
-            Invoke-RestMethod `
-                -Method Post `
-                -Uri $ContainersBase `
-                -Headers $Headers `
-                -ContentType "application/json" `
-                -Body $CreateBody `
-                -TimeoutSec 60 |
-                Out-Null
+            Invoke-SaladRequest -Headers $Headers -Method "Post" -Uri $ContainersBase -Operation "create container group" -ContentType "application/json" -Body $CreateBody -TimeoutSec 60 | Out-Null
             return
         }
         catch {
-            if (-not (Test-NameConflictFailure -ErrorRecord $_)) {
-                throw
-            }
-
-            $VisibleGroup = Try-Get-Group -Headers $Headers
-            if ($null -ne $VisibleGroup) {
-                Write-Warning (
-                    "Create returned name_conflict, but '$GroupName' is visible again. " +
-                    "Continuing with normal post-create validation."
-                )
-                return
-            }
-
-            if ((Get-Date) -ge $CreateDeadline) {
-                throw (
-                    "Salad kept container-group name '$GroupName' reserved for more than " +
-                    "5 minutes after deletion; refusing unbounded recreate retries."
-                )
-            }
-
-            $DelaySeconds = [Math]::Min(30, 5 + (5 * $CreateAttempt))
-            Write-Warning (
-                "Salad still reserves deleted container-group name '$GroupName' " +
-                "(name_conflict attempt $CreateAttempt). Retrying in ${DelaySeconds}s."
-            )
-            Start-Sleep -Seconds $DelaySeconds
+            $Details = [string]$_.ErrorDetails.Message
+            if ((Get-HttpStatusCode -ErrorRecord $_) -ne 400 -or $Details -notmatch 'name_conflict' -or (Get-Date) -ge $Deadline) { throw }
+            Start-Sleep -Seconds 10
         }
-    }
+    } while ((Get-Date) -lt $Deadline)
 }
 
 function Update-ContainerGroup {
-    param(
-        [Parameter(Mandatory)][hashtable]$Headers,
-        [Parameter(Mandatory)][string]$PinnedImage,
-        [Parameter(Mandatory)][hashtable]$WorkerEnvironment,
-        [Parameter(Mandatory)][string[]]$GpuClassIds
-    )
-
+    param([Parameter(Mandatory)][hashtable]$Headers, [Parameter(Mandatory)][string]$ResolvedImage, [Parameter(Mandatory)][hashtable]$WorkerEnvironment, [Parameter(Mandatory)][string[]]$GpuClassIds)
     $PatchBody = @{
         replicas = 0
-        container = New-ContainerConfiguration `
-            -PinnedImage $PinnedImage `
-            -WorkerEnvironment $WorkerEnvironment `
-            -GpuClassIds $GpuClassIds `
-            -IncludePriority
+        container = New-ContainerConfiguration -ResolvedImage $ResolvedImage -WorkerEnvironment $WorkerEnvironment -GpuClassIds $GpuClassIds
         startup_probe = New-Probe -Probe $Definition.probes.startup
         readiness_probe = New-Probe -Probe $Definition.probes.readiness
         liveness_probe = New-Probe -Probe $Stack.shared_liveness_probe
-        queue_autoscaler = New-QueueAutoscalerConfiguration
     } | ConvertTo-Json -Depth 20
-
-    Write-Host "Submitting $Service worker upgrade..." -ForegroundColor Cyan
-    Invoke-RestMethod `
-        -Method Patch `
-        -Uri "$ContainersBase/$GroupName" `
-        -Headers $Headers `
-        -ContentType "application/merge-patch+json" `
-        -Body $PatchBody `
-        -TimeoutSec 60 |
-        Out-Null
-}
-
-function Ensure-ManifestScaleToZero {
-    param(
-        [Parameter(Mandatory)][hashtable]$Headers,
-        [Parameter(Mandatory)][object]$Group
-    )
-
-    $Property = $Group.PSObject.Properties["queue_autoscaler"]
-    if ($null -eq $Property -or $null -eq $Property.Value) {
-        Write-Warning (
-            "$Service Salad response does not expose queue_autoscaler; " +
-            "cannot confirm whether an autoscaler is reasserting replicas=1."
-        )
-        return $Group
-    }
-    $RemoteMin = [int]$Property.Value.min_replicas
-    if ($RemoteMin -eq [int]$Definition.autoscaler.min_replicas) {
-        return $Group
-    }
-    if ((Get-GroupStatus -Group $Group) -ne "stopped" -or [bool]$Group.pending_change) {
-        throw (
-            "Refusing to restore '$GroupName' autoscaler while the group is " +
-            "running or updating; remote min_replicas=$RemoteMin."
-        )
-    }
-    Write-Warning (
-        "$Service remote queue_autoscaler.min_replicas=$RemoteMin differs from " +
-        "the scale-to-zero manifest; restoring the manifest before replica cleanup."
-    )
-    & $ScaleToZeroRestore `
-        -Service $Service `
-        -Mode Manifest `
-        -EnvFile $EnvFile `
-        -TimeoutMinutes 10 `
-        -NonInteractive
-    if (-not $?) {
-        throw "$Service autoscaler restore failed; refusing to patch replicas."
-    }
-    $Updated = Get-Group -Headers $Headers
-    $UpdatedAutoscaler = $Updated.PSObject.Properties["queue_autoscaler"]
-    if (
-        (Get-GroupStatus -Group $Updated) -ne "stopped" -or
-        [bool]$Updated.pending_change -or
-        $null -eq $UpdatedAutoscaler -or
-        $null -eq $UpdatedAutoscaler.Value -or
-        [int]$UpdatedAutoscaler.Value.min_replicas -ne 0
-    ) {
-        throw "$Service autoscaler restore did not reach stopped/pending=False/min_replicas=0."
-    }
-    return $Updated
-}
-
-function Wait-ForStoppedZeroReplicas {
-    param(
-        [Parameter(Mandatory)][hashtable]$Headers,
-        [ValidateRange(45, 600)][int]$TimeoutSeconds = 180
-    )
-
-    # pending_change=False signals completion of a config upgrade, not
-    # necessarily convergence of a subsequent replica-count PATCH. Verify
-    # the complete stopped/zero-replica state before returning.
-    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $ConsecutiveZero = 0
-    do {
-        Start-Sleep -Seconds 15
-        $Group = Get-Group -Headers $Headers
-        $Status = Get-GroupStatus -Group $Group
-        Write-Host (
-            "{0} service={1} status={2} replicas={3} pending={4} description={5}" -f `
-            (Get-Date -Format "HH:mm:ss"),
-            $Service,
-            $Status,
-            $Group.replicas,
-            $Group.pending_change,
-            (Get-GroupDescription -Group $Group)
-        )
-        if ($Status -eq "running") {
-            throw (
-                "Refusing to normalize '$GroupName' while it is running; " +
-                "another process may own its GPU worker."
-            )
-        }
-        $Autoscaler = $Group.PSObject.Properties["queue_autoscaler"]
-        if (
-            $null -ne $Autoscaler -and $null -ne $Autoscaler.Value -and
-            [int]$Autoscaler.Value.min_replicas -ne 0
-        ) {
-            throw "Remote autoscaler minimum became nonzero during zero-replica convergence."
-        }
-        if (
-            $Status -eq "stopped" -and
-            -not [bool]$Group.pending_change -and
-            [int]$Group.replicas -eq 0
-        ) {
-            $ConsecutiveZero += 1
-            if ($ConsecutiveZero -ge 3) {
-                return $Group
-            }
-        }
-        else {
-            $ConsecutiveZero = 0
-        }
-    }
-    while ((Get-Date) -lt $Deadline)
-
-    throw (
-        "Salad did not converge '$GroupName' to stopped/replicas=0/pending=False " +
-        "within $TimeoutSeconds seconds (three consecutive 15s observations); status=$Status " +
-        "replicas=$([int]$Group.replicas) pending=$([bool]$Group.pending_change). " +
-        "Check the live group and queue before retrying; the published image is reusable."
-    )
-}
-
-function Ensure-PreparedZeroReplicas {
-    param(
-        [Parameter(Mandatory)][hashtable]$Headers,
-        [Parameter(Mandatory)][object]$Group
-    )
-
-    if ((Get-GroupStatus -Group $Group) -ne "stopped" -or [bool]$Group.pending_change) {
-        throw "Prepare will not normalize a group that is running or has a pending update."
-    }
-    if ([int]$Group.replicas -eq 0) {
-        # A first zero GET is not convergence: the stopped group can rebound to one.
-        return Wait-ForStoppedZeroReplicas -Headers $Headers -TimeoutSeconds 180
-    }
-
-    Write-Warning (
-        "Salad raised '$GroupName' to replicas=$([int]$Group.replicas) while preparing $Service. " +
-        "Forcing replicas back to zero before Prepare completes."
-    )
-    $Body = @{ replicas = 0 } | ConvertTo-Json
-    Invoke-RestMethod `
-        -Method Patch `
-        -Uri "$ContainersBase/$GroupName" `
-        -Headers $Headers `
-        -ContentType "application/merge-patch+json" `
-        -Body $Body `
-        -TimeoutSec 60 |
-        Out-Null
-
-    $Updated = Wait-ForStoppedZeroReplicas -Headers $Headers -TimeoutSeconds 180
-    return $Updated
+    Invoke-SaladRequest -Headers $Headers -Method "Patch" -Uri "$ContainersBase/$GroupName" -Operation "update container group" -ContentType "application/merge-patch+json" -Body $PatchBody -TimeoutSec 60 | Out-Null
 }
 
 function Assert-PreparedGroup {
-    param(
-        [Parameter(Mandatory)][object]$Group,
-        [Parameter(Mandatory)][string]$PinnedImage
-    )
-
-    if ($Group.container.image -ne $PinnedImage) {
-        throw "Salad did not activate the expected image. Received: $($Group.container.image)"
-    }
-    if ([string]$Group.priority -ne [string]$Definition.priority) {
-        throw (
-            "Salad did not activate the expected priority '$([string]$Definition.priority)'. " +
-            "Received: $([string]$Group.priority)"
-        )
-    }
-    if ([string]$Group.queue_connection.queue_name -ne $QueueName) {
-        throw "Salad did not activate the expected queue: $QueueName"
-    }
-    if ([int]$Group.replicas -ne 0) {
-        throw "Prepared service '$Service' must remain at zero replicas."
-    }
+    param([Parameter(Mandatory)][object]$Group, [Parameter(Mandatory)][string]$ResolvedImage)
+    if ([string]$Group.container.image -ne $ResolvedImage) { throw "Salad did not activate expected image." }
+    if ([int]$Group.replicas -ne 0) { throw "Prepared group must remain at replicas=0." }
+    if (Test-LegacyQueueAttachment -Group $Group) { throw "Legacy Salad queue attachment remains after Prepare." }
 }
 
 function Show-Status {
     param([Parameter(Mandatory)][hashtable]$Headers)
-
     $Group = Try-Get-Group -Headers $Headers
     if ($null -eq $Group) {
-        Write-Host (
-            "service={0} group={1} queue={2} status=missing" -f `
-            $Service,
-            $GroupName,
-            $QueueName
-        ) -ForegroundColor Yellow
+        Write-Host "service=$Service group=$GroupName status=missing" -ForegroundColor Yellow
         return
     }
-
-    $ConfiguredGpuProperty = $Definition.resources.PSObject.Properties["gpu_class_names"]
-    $ConfiguredGpu = "legacy UUIDs"
-    if ($null -ne $ConfiguredGpuProperty) {
-        $ConfiguredGpu = @($ConfiguredGpuProperty.Value) -join ","
-    }
-
-    $AutoscalerProperty = $Group.PSObject.Properties["queue_autoscaler"]
-    $AutoscalerMin = if (
-        $null -ne $AutoscalerProperty -and $null -ne $AutoscalerProperty.Value
-    ) {
-        [string]$AutoscalerProperty.Value.min_replicas
-    }
-    else {
-        "not exposed"
-    }
-
-    $Group |
-        Select-Object `
-            name,
-            version,
-            replicas,
-            priority,
-            pending_change,
-            @{Name = "AutoscalerMin"; Expression = {$AutoscalerMin}},
-            @{Name = "Service"; Expression = {$Service}},
-            @{Name = "Queue"; Expression = {$QueueName}},
-            @{Name = "RequestedGPU"; Expression = {$ConfiguredGpu}},
-            @{Name = "Status"; Expression = {Get-GroupStatus -Group $_}},
-            @{Name = "Description"; Expression = {Get-GroupDescription -Group $_}},
-            @{Name = "Image"; Expression = {$_.container.image}},
-            @{Name = "CPU"; Expression = {$_.container.resources.cpu}},
-            @{Name = "MemoryMiB"; Expression = {$_.container.resources.memory}},
-            @{Name = "GPUClasses"; Expression = {$_.container.resources.gpu_classes -join ","}} |
-        Format-List
-
-    try {
-        $QueueSummary = Invoke-SaladRequest `
-            -Headers $Headers `
-            -Uri "$QueuesBase/$QueueName" `
-            -Operation "read queue length" `
-            -TimeoutSec 30
-        Write-Host "$Service queue current_queue_length=$([int]$QueueSummary.current_queue_length)"
-    }
-    catch {
-        Write-Warning "Could not read $Service queue length: $($_.Exception.Message)"
-    }
-
-    try {
-        $Response = Invoke-SaladRequest `
-            -Headers $Headers `
-            -Uri "$ContainersBase/$GroupName/instances" `
-            -Operation "list container instances" `
-            -TimeoutSec 30
-        $InstanceRows = @()
-        if ($Response.PSObject.Properties.Name -contains "instances") {
-            $InstanceRows = @($Response.instances)
-        }
-        elseif ($Response.PSObject.Properties.Name -contains "items") {
-            $InstanceRows = @($Response.items)
-        }
-        if ($InstanceRows.Count -gt 0) {
-            $InstanceRows |
-                Select-Object `
-                    id,
-                    machine_id,
-                    state,
-                    pulling_progress,
-                    ready,
-                    started,
-                    update_time |
-                Format-Table -AutoSize
-        }
-    }
-    catch {
-        Write-Warning "Could not list container instances: $($_.Exception.Message)"
-    }
+    Write-Host ("service={0} group={1} status={2} replicas={3} pending={4} transport=postgres legacy_queue={5} capacity={6}-{7} image={8}" -f $Service, $GroupName, (Get-GroupStatus -Group $Group), [int]$Group.replicas, [bool]$Group.pending_change, (Test-LegacyQueueAttachment -Group $Group), $StartReplicas, $MaxReplicas, [string]$Group.container.image)
 }
 
-Set-Location $RepoRoot
 Assert-ServiceDefinition
-
-if ($Recreate -and $Action -ne "Prepare") {
-    throw "-Recreate is only valid with -Action Prepare."
-}
+Set-Location $RepoRoot
+if ($Recreate -and $Action -ne "Prepare") { throw "-Recreate is only valid with Prepare." }
 
 if ($Action -eq "Validate") {
-    $Required = Get-RequiredEnvironmentNames
-    Write-Host (
-        "VALID service={0} group={1} queue={2} gpu={3} required_env={4}" -f `
-        $Service,
-        $GroupName,
-        $QueueName,
-        (@($Definition.resources.gpu_class_names) -join ","),
-        ($Required -join ",")
-    ) -ForegroundColor Green
+    Write-Host ("VALID service={0} group={1} transport=postgres capacity={2}-{3}" -f $Service, $GroupName, $StartReplicas, $MaxReplicas) -ForegroundColor Green
     exit 0
 }
 
@@ -1042,186 +394,87 @@ switch ($Action) {
         Show-Status -Headers $Headers
         exit 0
     }
-
     "Stop" {
         $Group = Try-Get-Group -Headers $Headers
-        if ($null -eq $Group) {
-            Write-Host "$Service worker group does not exist; nothing to stop." -ForegroundColor Green
-            exit 0
-        }
-
+        if ($null -eq $Group) { Write-Host "$Service group does not exist." -ForegroundColor Green; exit 0 }
         if ((Get-GroupStatus -Group $Group) -ne "stopped") {
-            Invoke-SaladRequest `
-                -Headers $Headers `
-                -Method "Post" `
-                -Uri "$ContainersBase/$GroupName/stop" `
-                -Operation "stop container group" `
-                -TimeoutSec 60 |
-                Out-Null
-            $Group = Wait-ForGroupStatus -Headers $Headers -Expected "stopped"
+            Invoke-SaladRequest -Headers $Headers -Method "Post" -Uri "$ContainersBase/$GroupName/stop" -Operation "stop container group" -TimeoutSec 60 | Out-Null
+            $Group = Wait-ForGroupSettled -Headers $Headers -TimeoutMinutes 30
         }
-        else {
-            Write-Host "$Service worker is already stopped." -ForegroundColor Green
-        }
-
-        $Group = Ensure-ManifestScaleToZero -Headers $Headers -Group $Group
-
         if ([int]$Group.replicas -ne 0) {
-            Write-Warning (
-                "$Service is stopped but retains replicas=$([int]$Group.replicas). " +
-                "Normalizing the stopped group to replicas=0."
-            )
             $Body = @{ replicas = 0 } | ConvertTo-Json
-            Invoke-SaladRequest `
-                -Headers $Headers `
-                -Method "Patch" `
-                -Uri "$ContainersBase/$GroupName" `
-                -Operation "normalize stopped container group to zero replicas" `
-                -ContentType "application/merge-patch+json" `
-                -Body $Body `
-                -TimeoutSec 60 |
-                Out-Null
+            Invoke-SaladRequest -Headers $Headers -Method "Patch" -Uri "$ContainersBase/$GroupName" -Operation "set replicas to zero" -ContentType "application/merge-patch+json" -Body $Body -TimeoutSec 60 | Out-Null
         }
-
-        # Always observe a stable zero, even when the first Stop GET was already zero.
-        $Group = Wait-ForStoppedZeroReplicas -Headers $Headers -TimeoutSeconds 180
-        $FinalStatus = Get-GroupStatus -Group $Group
-        if (
-            $FinalStatus -ne "stopped" -or
-            [bool]$Group.pending_change -or
-            [int]$Group.replicas -ne 0
-        ) {
-            throw (
-                "Stop cleanup did not normalize '$GroupName' to " +
-                "stopped/replicas=0/pending=False; " +
-                "status=$FinalStatus replicas=$([int]$Group.replicas) " +
-                "pending=$([bool]$Group.pending_change)."
-            )
-        }
-
-        Write-Host "$Service worker stopped with replicas=0." -ForegroundColor Green
+        Wait-ForStoppedZeroReplicas -Headers $Headers | Out-Null
+        Write-Host "$Service stopped with stable replicas=0." -ForegroundColor Green
         exit 0
     }
-
     "Start" {
-        Ensure-Queue -Headers $Headers
         $Group = Get-Group -Headers $Headers
-        if ((Get-GroupStatus -Group $Group) -eq "running") {
-            Write-Host "$Service worker is already running." -ForegroundColor Green
-            Show-Status -Headers $Headers
-            exit 0
+        if (Test-LegacyQueueAttachment -Group $Group) {
+            throw "'$Service' still has Salad Job Queue config. Run Prepare once to migrate it."
         }
-        Invoke-SaladRequest `
-            -Headers $Headers `
-            -Method "Post" `
-            -Uri "$ContainersBase/$GroupName/start" `
-            -Operation "start container group" `
-            -TimeoutSec 60 |
-            Out-Null
-        Wait-ForGroupStatus -Headers $Headers -Expected "running" | Out-Null
-        Write-Host (
-            "Container group is running with autoscaler min=0; replicas start only when jobs queue."
-        ) -ForegroundColor Cyan
-        Show-Status -Headers $Headers
+        if ([int]$Group.replicas -ne $DesiredReplicas) {
+            $Body = @{ replicas = $DesiredReplicas } | ConvertTo-Json
+            Invoke-SaladRequest -Headers $Headers -Method "Patch" -Uri "$ContainersBase/$GroupName" -Operation "set explicit replica capacity" -ContentType "application/merge-patch+json" -Body $Body -TimeoutSec 60 | Out-Null
+            $Group = Wait-ForGroupSettled -Headers $Headers -TimeoutMinutes 30
+        }
+        if ((Get-GroupStatus -Group $Group) -ne "running") {
+            Invoke-SaladRequest -Headers $Headers -Method "Post" -Uri "$ContainersBase/$GroupName/start" -Operation "start container group" -TimeoutSec 60 | Out-Null
+        }
+        Wait-ForRunningCapacity -Headers $Headers -ExpectedReplicas $DesiredReplicas | Out-Null
+        Write-Host "$Service running with explicit replicas=$DesiredReplicas; Postgres owns demand." -ForegroundColor Green
         exit 0
     }
-
     "Prepare" {
-        Ensure-Queue -Headers $Headers
-        $ExistingGroup = Try-Get-Group -Headers $Headers
-        if ($null -ne $ExistingGroup) {
-            $ExistingStatus = Get-GroupStatus -Group $ExistingGroup
-            if ($ExistingStatus -notin @("stopped", "running")) {
-                throw (
-                    "Container group must be stopped or running at zero replicas before Prepare. " +
-                    "Current status=$ExistingStatus."
-                )
+        $Existing = Try-Get-Group -Headers $Headers
+        if ($null -ne $Existing) {
+            if ((Get-GroupStatus -Group $Existing) -ne "stopped" -or [int]$Existing.replicas -ne 0) {
+                throw "'$GroupName' must be stopped at replicas=0 before Prepare."
             }
-            if ([int]$ExistingGroup.replicas -ne 0) {
-                throw "Container group must have replicas=0 before Prepare."
-            }
-            if ($Recreate -and $ExistingStatus -ne "stopped") {
-                throw "Container group must be stopped before -Recreate."
+            if ($Recreate -or (Test-LegacyQueueAttachment -Group $Existing)) {
+                if (Test-LegacyQueueAttachment -Group $Existing) {
+                    Write-Host "Recreating '$GroupName' to remove Salad Job Queue/autoscaler state." -ForegroundColor Cyan
+                }
+                Remove-StoppedContainerGroup -Headers $Headers
+                $Existing = $null
             }
         }
-        $ResolvedPinnedImage = ""
+
         if (-not [string]::IsNullOrWhiteSpace($PinnedImage)) {
-            $ResolvedPinnedImage = $PinnedImage.Trim()
-            Write-Host "Using explicit pinned image: $ResolvedPinnedImage" -ForegroundColor Green
+            $ResolvedImage = $PinnedImage.Trim()
         }
-        elseif (
-            $SkipBuild -and
-            $null -ne $ExistingGroup -and
-            [string]$ExistingGroup.container.image -match '@sha256:[0-9a-fA-F]{64}$'
-        ) {
-            $ResolvedPinnedImage = [string]$ExistingGroup.container.image
-            Write-Host (
-                "Reusing existing immutable image before any group recreation: " +
-                $ResolvedPinnedImage
-            ) -ForegroundColor Green
+        elseif ($SkipBuild -and $null -ne $Existing -and [string]$Existing.container.image -match '@sha256:[0-9a-fA-F]{64}$') {
+            $ResolvedImage = [string]$Existing.container.image
         }
         else {
             if (-not $SkipBuild) {
                 & docker version *> $null
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Docker Desktop is not running."
-                }
-                Write-Host "Building and publishing $Image" -ForegroundColor Cyan
-                & docker buildx build `
-                    --platform linux/amd64 `
-                    --file $Dockerfile `
-                    --tag $Image `
-                    --push `
-                    .
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Docker build or push failed."
-                }
+                if ($LASTEXITCODE -ne 0) { throw "Docker is not running." }
+                & docker buildx build --platform linux/amd64 --file $Dockerfile --tag $Image --push .
+                if ($LASTEXITCODE -ne 0) { throw "Docker build or push failed." }
             }
-            $ResolvedPinnedImage = Resolve-PinnedImage -MutableImage $Image
-        }
-        Write-Host "Pinned image: $ResolvedPinnedImage" -ForegroundColor Green
-
-        if ($Recreate -and $null -ne $ExistingGroup) {
-            Remove-StoppedContainerGroup -Headers $Headers
-            $ExistingGroup = $null
+            $ResolvedImage = Resolve-PinnedImage -MutableImage $Image
         }
 
         $WorkerEnvironment = Get-WorkerEnvironment
         $GpuClassIds = @(Resolve-GpuClassIds -Headers $Headers)
-
-        if ($null -eq $ExistingGroup) {
-            New-ContainerGroup `
-                -Headers $Headers `
-                -PinnedImage $ResolvedPinnedImage `
-                -WorkerEnvironment $WorkerEnvironment `
-                -GpuClassIds $GpuClassIds
-            $Group = Wait-ForGroupSettled `
-                -Headers $Headers `
-                -TimeoutMinutes $PrepareTimeoutMinutes
+        if ($null -eq $Existing) {
+            New-ContainerGroup -Headers $Headers -ResolvedImage $ResolvedImage -WorkerEnvironment $WorkerEnvironment -GpuClassIds $GpuClassIds
         }
         else {
-            $PreviousVersion = [int]$ExistingGroup.version
-            Update-ContainerGroup `
-                -Headers $Headers `
-                -PinnedImage $ResolvedPinnedImage `
-                -WorkerEnvironment $WorkerEnvironment `
-                -GpuClassIds $GpuClassIds
-            $Group = Wait-ForGroupSettled `
-                -Headers $Headers `
-                -TimeoutMinutes $PrepareTimeoutMinutes
-            if ([int]$Group.version -le $PreviousVersion) {
-                throw "Container group version did not increase."
-            }
+            Update-ContainerGroup -Headers $Headers -ResolvedImage $ResolvedImage -WorkerEnvironment $WorkerEnvironment -GpuClassIds $GpuClassIds
         }
 
-        $Group = Ensure-ManifestScaleToZero -Headers $Headers -Group $Group
-        $Group = Ensure-PreparedZeroReplicas -Headers $Headers -Group $Group
-        Assert-PreparedGroup -Group $Group -PinnedImage $ResolvedPinnedImage
-        $WorkerEnvironment = $null
-        $GpuClassIds = $null
-
-        Write-Host "$Service worker image/config prepared; group remains at zero replicas." `
-            -ForegroundColor Green
-        Show-Status -Headers $Headers
+        $Prepared = Wait-ForGroupSettled -Headers $Headers -TimeoutMinutes $PrepareTimeoutMinutes
+        if ((Get-GroupStatus -Group $Prepared) -ne "stopped") { throw "Prepared group must remain stopped." }
+        if ([int]$Prepared.replicas -ne 0) {
+            $Body = @{ replicas = 0 } | ConvertTo-Json
+            Invoke-SaladRequest -Headers $Headers -Method "Patch" -Uri "$ContainersBase/$GroupName" -Operation "normalize prepared replicas" -ContentType "application/merge-patch+json" -Body $Body -TimeoutSec 60 | Out-Null
+            $Prepared = Wait-ForStoppedZeroReplicas -Headers $Headers
+        }
+        Assert-PreparedGroup -Group $Prepared -ResolvedImage $ResolvedImage
+        Write-Host "$Service prepared without Salad queue/autoscaler; replicas=0." -ForegroundColor Green
+        exit 0
     }
 }
