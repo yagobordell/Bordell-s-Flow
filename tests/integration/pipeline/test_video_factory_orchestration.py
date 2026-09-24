@@ -39,7 +39,7 @@ def test_phase5_checks_breeze_cache_before_primary_gpu_start() -> None:
     text = _read("scripts/pipeline/run_phase5_audio_controlled.ps1")
 
     audit = text.index("Phase 5 cache plan")
-    start = text.index('Invoke-Start -Service "breeze_tts2"')
+    start = text.index("Invoke-Start -Service breeze_tts2")
     assert audit < start
     assert "no Breeze or Fish GPU allocation required" in text
     assert "Fish consumed zero GPU-seconds" in text
