@@ -24,6 +24,10 @@ from ai_video_factory.inference.errors import (
     ModelBootstrapPendingError,
     NonRetryableTaskError,
 )
+from ai_video_factory.inference.gpu_failures import (
+    DEFAULT_GPU_MAX_ATTEMPTS,
+    is_retryable_gpu_failure,
+)
 from ai_video_factory.inference.ports import LocalArtifact, LocalSidecarArtifact
 
 from .model import (
@@ -535,6 +539,12 @@ class DirectLTX25AudioToVideoBackend:
     def pipeline_loaded(self) -> bool:
         return self._pipeline is not None
 
+    def invalidate_pipeline(self) -> None:
+        """Drop resident GPU state so a retry rebuilds the A2V pipeline cleanly."""
+
+        with self._lock:
+            self._release_pipeline_locked()
+
     def prepare(self) -> None:
         # Validate every A2V asset during readiness, but do not keep a second 22B pipeline
         # resident beside the already-warmed I2V pipeline.
@@ -854,12 +864,24 @@ class LTXAudioToVideoTaskRunner:
         self._validate_request(request, inputs)
         parameters = LTXAudioToVideoParameters.model_validate(request.parameters)
         output = work_dir / "output.mp4"
-        metadata = self._backend.generate(
-            image_path=inputs["image"],
-            audio_path=inputs["audio"],
-            output_path=output,
-            parameters=parameters,
-        )
+        try:
+            metadata = self._backend.generate(
+                image_path=inputs["image"],
+                audio_path=inputs["audio"],
+                output_path=output,
+                parameters=parameters,
+            )
+        except Exception as exc:
+            if is_retryable_gpu_failure(exc):
+                invalidator = getattr(self._backend, "invalidate_pipeline", None)
+                if callable(invalidator):
+                    try:
+                        invalidator()
+                    except Exception:
+                        logger.exception(
+                            "failed to invalidate LTX A2V pipeline after transient GPU failure"
+                        )
+            raise
         if not output.is_file() or output.stat().st_size <= 0:
             raise ValueError("LTX-2.5 A2V backend did not produce a non-empty MP4 artifact")
 
@@ -890,10 +912,11 @@ class LTXAudioToVideoTaskRunner:
                 "INVALID_REQUEST",
                 f"LTXAudioToVideoTaskRunner cannot execute task {request.task!r}",
             )
-        if request.max_attempts != 1:
+        if request.max_attempts != DEFAULT_GPU_MAX_ATTEMPTS:
             raise _input_error(
                 "INVALID_REQUEST",
-                "video.ltx25.audio_to_video requires max_attempts=1",
+                "video.ltx25.audio_to_video requires "
+                f"max_attempts={DEFAULT_GPU_MAX_ATTEMPTS}",
             )
         if set(inputs) != {"image", "audio"}:
             raise _input_error(
