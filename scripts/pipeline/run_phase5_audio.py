@@ -16,8 +16,8 @@ from ai_video_factory.providers import (
     SaladFishSpeechProvider,
 )
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
-from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
+from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.providers.speech import GeneratedSpeech, SpeechProvider
 from ai_video_factory.workers.breeze_tts2 import BREEZE_TTS2_GENERATION_PROFILE
 from ai_video_factory.workflows.narration_audio import generate_narration_audio
