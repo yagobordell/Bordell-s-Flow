@@ -33,7 +33,8 @@ from .model import (
 logger = logging.getLogger(__name__)
 
 LTX_A2V_TASK = "video.ltx25.audio_to_video"
-LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdpa-v3"
+LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
+LTX_A2V_DEV_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdpa-v3"
 LTX_A2V_RECOMMENDED_MAX_SECONDS = 12.0
 LTX_A2V_MAX_RAW_FRAMES = 1024
 LTX_A2V_DEFAULT_PROMPT = (
@@ -66,10 +67,8 @@ class LTXAudioToVideoParameters(BaseModel):
     @field_validator("generation_profile")
     @classmethod
     def validate_generation_profile(cls, value: str) -> str:
-        if value != LTX_A2V_GENERATION_PROFILE:
-            raise ValueError(
-                f"generation_profile must be exactly {LTX_A2V_GENERATION_PROFILE!r}"
-            )
+        if value not in (LTX_A2V_GENERATION_PROFILE, LTX_A2V_DEV_GENERATION_PROFILE):
+            raise ValueError("generation_profile must be a supported fast or dev A2V profile")
         return value
 
     @field_validator("prompt")
@@ -138,6 +137,8 @@ class _A2VBindings:
     lora_tuple: Any
     lora_sd_ops: Any
     detect_params: Any
+    distilled_sigmas: Any
+    stage_2_sigmas: Any
     default_negative_prompt: str
 
 
@@ -154,7 +155,12 @@ def _load_a2v_bindings() -> _A2VBindings:
         from ltx_pipelines.a2vid_two_stage import A2VidPipelineTwoStage
         from ltx_pipelines.utils import helpers as tiling_helpers
         from ltx_pipelines.utils.args import ImageConditioningInput
-        from ltx_pipelines.utils.constants import DEFAULT_NEGATIVE_PROMPT, detect_params
+        from ltx_pipelines.utils.constants import (
+            DEFAULT_NEGATIVE_PROMPT,
+            DISTILLED_SIGMAS,
+            STAGE_2_DISTILLED_SIGMAS,
+            detect_params,
+        )
         from ltx_pipelines.utils.media_io import encode_video
         from ltx_pipelines.utils.model_paths import ModelPaths
         from ltx_pipelines.utils.quantization_factory import QuantizationKind
@@ -179,6 +185,8 @@ def _load_a2v_bindings() -> _A2VBindings:
         lora_tuple=LoraPathStrengthAndSDOps,
         lora_sd_ops=LTXV_LORA_COMFY_RENAMING_MAP,
         detect_params=detect_params,
+        distilled_sigmas=DISTILLED_SIGMAS,
+        stage_2_sigmas=STAGE_2_DISTILLED_SIGMAS,
         default_negative_prompt=DEFAULT_NEGATIVE_PROMPT,
     )
 
@@ -501,6 +509,7 @@ class DirectLTX25AudioToVideoBackend:
         self._lock = self._mode_controller.lock
         self._bindings: _A2VBindings | None = None
         self._pipeline: Any | None = None
+        self._pipeline_profile: str | None = None
         self._pipeline_params: Any | None = None
         self._mode_controller.register("audio_to_video", self._release_pipeline_locked)
 
@@ -568,21 +577,34 @@ class DirectLTX25AudioToVideoBackend:
 
             with bindings.torch.inference_mode():
                 build_started = time.monotonic()
-                pipeline, built_now = self._get_or_build_pipeline(bindings)
+                pipeline, built_now = self._get_or_build_pipeline(
+                    bindings, generation_profile=parameters.generation_profile
+                )
                 model_load_seconds = time.monotonic() - build_started if built_now else 0.0
                 _log_cuda_memory(
                     "after_pipeline_build",
                     _cuda_memory_snapshot(bindings.torch, self._device),
                 )
 
-                # The upstream pipeline freezes the supplied audio in both stages.
-                # Avoid extra modality/STG passes for speech-driven avatar motion;
-                # retain the dev checkpoint's text CFG (CFG=1 is a distilled preset).
+                # The upstream pipeline freezes the original audio in both stages.
+                # The distilled checkpoint uses its trained 8-step schedule and CFG=1;
+                # the original dev checkpoint retains native text CFG as an alternative.
+                fast = parameters.generation_profile == LTX_A2V_GENERATION_PROFILE
+                stage_1_sigmas = bindings.distilled_sigmas if fast else None
+                stage_1_steps = (
+                    len(bindings.distilled_sigmas) - 1
+                    if fast
+                    else self._pipeline_params.num_inference_steps
+                )
+                guider_updates = {
+                    "modality_scale": 1.0,
+                    "stg_scale": 0.0,
+                    "stg_blocks": [],
+                }
+                if fast:
+                    guider_updates.update(cfg_scale=1.0, rescale_scale=0.0)
                 video_guider = replace(
-                    self._pipeline_params.video_guider_params,
-                    modality_scale=1.0,
-                    stg_scale=0.0,
-                    stg_blocks=[],
+                    self._pipeline_params.video_guider_params, **guider_updates
                 )
                 logger.info(
                     "LTX25_A2V_GUIDANCE cfg_scale=%.2f stg_scale=%.2f modality_scale=%.2f",
@@ -604,7 +626,9 @@ class DirectLTX25AudioToVideoBackend:
                         width=pipeline_width,
                         num_frames=None,
                         frame_rate=float(parameters.fps),
-                        num_inference_steps=self._pipeline_params.num_inference_steps,
+                        num_inference_steps=stage_1_steps,
+                        stage_1_sigmas=stage_1_sigmas,
+                        stage_2_sigmas=bindings.stage_2_sigmas,
                         video_guider_params=video_guider,
                         images=[conditioning],
                         audio_path=str(pipeline_audio_path.resolve()),
@@ -684,6 +708,9 @@ class DirectLTX25AudioToVideoBackend:
             "video_cfg_scale": video_guider.cfg_scale,
             "video_stg_scale": video_guider.stg_scale,
             "video_modality_scale": video_guider.modality_scale,
+            "stage_1_steps": stage_1_steps,
+            "stage_2_steps": len(bindings.stage_2_sigmas) - 1,
+            "transformer_variant": "distilled" if fast else "dev",
             "input_audio_codec": audio_probe.codec,
             "input_audio_sample_rate": audio_probe.sample_rate,
             "input_audio_channels": audio_probe.channels,
@@ -723,33 +750,48 @@ class DirectLTX25AudioToVideoBackend:
         if self._pipeline is None:
             return
         self._pipeline = None
+        self._pipeline_profile = None
         gc.collect()
         if self._bindings is not None:
             empty_cache = getattr(self._bindings.torch.cuda, "empty_cache", None)
             if empty_cache is not None:
                 empty_cache()
 
-    def _get_or_build_pipeline(self, bindings: _A2VBindings) -> tuple[Any, bool]:
+    def _get_or_build_pipeline(
+        self, bindings: _A2VBindings, *, generation_profile: str
+    ) -> tuple[Any, bool]:
         if self._pipeline is not None:
-            return self._pipeline, False
+            if self._pipeline_profile == generation_profile:
+                return self._pipeline, False
+            self._release_pipeline_locked()
 
         self._mode_controller.activate("audio_to_video")
+        fast = generation_profile == LTX_A2V_GENERATION_PROFILE
+        transformer = (
+            self._model_files.shared.distilled_transformer
+            if fast
+            else self._model_files.dev_transformer
+        )
         model_paths = bindings.model_paths.from_split(
-            transformer_path=str(self._model_files.dev_transformer),
+            transformer_path=str(transformer),
             text_encoder_path=str(self._model_files.shared.text_encoder),
             video_vae_path=str(self._model_files.shared.video_vae),
             audio_vae_path=str(self._model_files.shared.audio_vae),
         )
         quantization = bindings.quantization_kind.FP8_CAST.to_policy(
-            checkpoint_path=str(self._model_files.dev_transformer)
+            checkpoint_path=str(transformer)
         )
-        distilled_lora = [
-            bindings.lora_tuple(
-                str(self._model_files.distilled_lora),
-                1.0,
-                bindings.lora_sd_ops,
-            )
-        ]
+        distilled_lora = (
+            []
+            if fast
+            else [
+                bindings.lora_tuple(
+                    str(self._model_files.distilled_lora),
+                    1.0,
+                    bindings.lora_sd_ops,
+                )
+            ]
+        )
         _force_diffvae_eager_sdpa(bindings.diffvae_apply)
         self._pipeline = bindings.a2v_pipeline(
             model_paths=model_paths,
@@ -760,6 +802,7 @@ class DirectLTX25AudioToVideoBackend:
             quantization=quantization,
             offload_mode=bindings.offload_mode.CPU,
         )
+        self._pipeline_profile = generation_profile
         if self._pipeline_params is None:
             self._pipeline_params = bindings.detect_params(
                 str(self._model_files.dev_transformer)
