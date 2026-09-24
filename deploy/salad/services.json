@@ -1,5 +1,5 @@
 {
-  "schema_version": "2",
+  "schema_version": 3,
   "stack": {
     "organization": "yagobordellorg",
     "project": "aivideofactory",
@@ -22,8 +22,8 @@
     "shared_environment": {
       "INFERENCE_WORKER_MODE": "production",
       "INFERENCE_WORKER_HEARTBEAT_SECONDS": "30",
-      "SALAD_QUEUE_ENABLED": "true",
-      "SALAD_LOG_LEVEL": "info"
+      "INFERENCE_WORKER_POLL_JOBS": "true",
+      "INFERENCE_WORKER_JOB_POLL_SECONDS": "2"
     },
     "shared_liveness_probe": {
       "path": "/health",
@@ -33,14 +33,13 @@
     },
     "autostart_policy": false,
     "restart_policy": "always",
-    "queue_path": "/jobs",
-    "container_port": 8080
+    "container_port": 8080,
+    "job_transport": "postgres"
   },
   "services": {
     "ltx25": {
       "display_name": "AI Video Factory LTX 2.5",
       "group_name": "ai-video-factory-ltx25-worker-v2",
-      "queue_name": "ai-video-factory-ltx25-jobs-v2",
       "dockerfile": "docker/workers/ltx25/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v9",
       "priority": "high",
@@ -90,19 +89,14 @@
           "failure_threshold": 6
         }
       },
-      "autoscaler": {
-        "min_replicas": 0,
-        "max_replicas": 4,
-        "desired_queue_length": 1,
-        "polling_period": 30,
-        "max_upscale_per_minute": 2,
-        "max_downscale_per_minute": 1
+      "capacity": {
+        "start_replicas": 1,
+        "max_replicas": 4
       }
     },
     "breeze_tts2": {
       "display_name": "AI Video Factory Breeze TTS 2",
       "group_name": "ai-video-factory-breeze-tts2-worker-v2",
-      "queue_name": "ai-video-factory-breeze-tts2-jobs",
       "dockerfile": "docker/workers/breeze-tts2/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:breeze-tts2-fast-decode-v6",
       "priority": "high",
@@ -147,19 +141,14 @@
           "failure_threshold": 12
         }
       },
-      "autoscaler": {
-        "min_replicas": 0,
-        "max_replicas": 2,
-        "desired_queue_length": 1,
-        "polling_period": 30,
-        "max_upscale_per_minute": 1,
-        "max_downscale_per_minute": 1
+      "capacity": {
+        "start_replicas": 1,
+        "max_replicas": 2
       }
     },
     "ideogram4": {
       "display_name": "AI Video Factory Ideogram 4 Quality",
       "group_name": "ai-video-factory-ideogram4-worker",
-      "queue_name": "ai-video-factory-ideogram4-jobs",
       "dockerfile": "docker/workers/ideogram4/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:ideogram4-nf4-quality48-v4",
       "priority": "high",
@@ -211,19 +200,14 @@
           "failure_threshold": 20
         }
       },
-      "autoscaler": {
-        "min_replicas": 0,
-        "max_replicas": 1,
-        "desired_queue_length": 1,
-        "polling_period": 30,
-        "max_upscale_per_minute": 1,
-        "max_downscale_per_minute": 1
+      "capacity": {
+        "start_replicas": 1,
+        "max_replicas": 1
       }
     },
     "whisper": {
       "display_name": "AI Video Factory Whisper",
       "group_name": "ai-video-factory-whisper-worker-v5",
-      "queue_name": "ai-video-factory-whisper-jobs-v2",
       "dockerfile": "docker/workers/whisper/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:whisper-large-v3-turbo-v5",
       "priority": "medium",
@@ -270,19 +254,14 @@
           "failure_threshold": 6
         }
       },
-      "autoscaler": {
-        "min_replicas": 0,
-        "max_replicas": 1,
-        "desired_queue_length": 1,
-        "polling_period": 30,
-        "max_upscale_per_minute": 1,
-        "max_downscale_per_minute": 1
+      "capacity": {
+        "start_replicas": 1,
+        "max_replicas": 1
       }
     },
     "fish_speech": {
       "display_name": "AI Video Factory Fish Speech S2 Pro Fallback",
       "group_name": "ai-video-factory-fish-speech-worker",
-      "queue_name": "ai-video-factory-fish-speech-jobs",
       "dockerfile": "docker/workers/fish-speech/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:fish-s2-pro-bf16-v1",
       "priority": "high",
@@ -332,19 +311,14 @@
           "failure_threshold": 20
         }
       },
-      "autoscaler": {
-        "min_replicas": 0,
-        "max_replicas": 1,
-        "desired_queue_length": 1,
-        "polling_period": 30,
-        "max_upscale_per_minute": 1,
-        "max_downscale_per_minute": 1
+      "capacity": {
+        "start_replicas": 1,
+        "max_replicas": 1
       }
     },
     "realesrgan": {
       "display_name": "AI Video Factory Real-ESRGAN x2",
       "group_name": "ai-video-factory-realesrgan-worker",
-      "queue_name": "ai-video-factory-realesrgan-jobs",
       "dockerfile": "docker/workers/realesrgan/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:realesrgan-x2plus-v2",
       "priority": "medium",
@@ -376,19 +350,14 @@
           "failure_threshold": 6
         }
       },
-      "autoscaler": {
-        "min_replicas": 0,
-        "max_replicas": 2,
-        "desired_queue_length": 1,
-        "polling_period": 30,
-        "max_upscale_per_minute": 2,
-        "max_downscale_per_minute": 1
+      "capacity": {
+        "start_replicas": 1,
+        "max_replicas": 2
       }
     },
     "qwen_image_21": {
       "display_name": "AI Video Factory Qwen-Image-2.1",
       "group_name": "ai-video-factory-qwen-image-21-worker",
-      "queue_name": "ai-video-factory-qwen-image-21-jobs",
       "dockerfile": "docker/workers/qwen-image-2.1/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:qwen-image-2.1-int8-1280x736-v5",
       "priority": "high",
@@ -442,13 +411,9 @@
           "failure_threshold": 20
         }
       },
-      "autoscaler": {
-        "min_replicas": 0,
-        "max_replicas": 1,
-        "desired_queue_length": 1,
-        "polling_period": 30,
-        "max_upscale_per_minute": 1,
-        "max_downscale_per_minute": 1
+      "capacity": {
+        "start_replicas": 1,
+        "max_replicas": 1
       }
     }
   }
