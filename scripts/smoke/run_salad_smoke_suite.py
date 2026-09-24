@@ -22,7 +22,7 @@ from ai_video_factory.providers import (
     SaladWhisperTranscriptionProvider,
 )
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
-from ai_video_factory.providers.salad_queue import SaladJobQueueClient
+from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.workers.breeze_tts2 import BREEZE_TTS2_MODEL_ID
 from ai_video_factory.workers.qwen_image_21 import (
     QWEN_IMAGE_21_KEYFRAME_TASK,
@@ -66,7 +66,7 @@ def parse_args() -> argparse.Namespace:
         "--poll-seconds",
         type=float,
         default=settings.inference_client_poll_seconds,
-        help="Queue polling interval used by provider-backed smoke tests.",
+        help="Postgres job polling interval used by provider-backed smoke tests.",
     )
     parser.add_argument(
         "--whisper-audio",
@@ -107,17 +107,12 @@ def _storage() -> R2ObjectStorage:
 
 
 def _executor(
-    queue_name: str,
     *,
     timeout_seconds: float,
     poll_seconds: float,
 ) -> InferenceJobExecutor:
-    organization, project = _stack_identity()
-    queue = SaladJobQueueClient(
-        organization=organization,
-        project=project,
-        queue_name=queue_name,
-        api_key=_required("SALAD_API_KEY", settings.salad_api_key),
+    queue = PostgresJobQueueClient(
+        dsn=_required("POSTGRES_DSN", settings.postgres_dsn),
     )
     return InferenceJobExecutor(
         queue=queue,
@@ -150,7 +145,6 @@ def _update_summary(output_dir: Path) -> None:
 async def _smoke_breeze(args: argparse.Namespace) -> None:
     started = time.monotonic()
     executor = _executor(
-        settings.salad_breeze_tts2_queue_name,
         timeout_seconds=args.timeout_seconds,
         poll_seconds=args.poll_seconds,
     )
@@ -206,7 +200,6 @@ async def _smoke_whisper(args: argparse.Namespace) -> None:
             "or pass --whisper-audio."
         )
     executor = _executor(
-        settings.salad_whisper_queue_name,
         timeout_seconds=args.timeout_seconds,
         poll_seconds=args.poll_seconds,
     )
@@ -247,7 +240,6 @@ async def _smoke_whisper(args: argparse.Namespace) -> None:
 async def _smoke_qwen_image_21(args: argparse.Namespace) -> None:
     started = time.monotonic()
     executor = _executor(
-        settings.salad_qwen_image_21_queue_name,
         timeout_seconds=args.timeout_seconds,
         poll_seconds=args.poll_seconds,
     )
@@ -312,20 +304,14 @@ async def _smoke_qwen_image_21(args: argparse.Namespace) -> None:
 
 
 def _ltx_environment() -> dict[str, str]:
-    organization, project = _stack_identity()
     values = {
-        "SALAD_API_KEY": _required("SALAD_API_KEY", settings.salad_api_key),
-        "SALAD_ORGANIZATION": organization,
-        "SALAD_PROJECT": project,
+        "POSTGRES_DSN": _required("POSTGRES_DSN", settings.postgres_dsn),
         "R2_ENDPOINT_URL": _required("R2_ENDPOINT_URL", settings.r2_endpoint_url),
         "R2_BUCKET": _required("R2_BUCKET", settings.r2_bucket),
         "R2_ACCESS_KEY_ID": _required("R2_ACCESS_KEY_ID", settings.r2_access_key_id),
         "R2_SECRET_ACCESS_KEY": _required(
             "R2_SECRET_ACCESS_KEY", settings.r2_secret_access_key
-        ),
-        "SALAD_LTX25_QUEUE_NAME": os.getenv(
-            "SALAD_LTX25_QUEUE_NAME", "ai-video-factory-ltx25-jobs-v2"
-        ),
+        )
     }
     return {**os.environ, **values}
 
