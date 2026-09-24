@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import time
@@ -149,7 +150,7 @@ def main() -> None:
             "job_id": job_id,
             "replayed": response.replayed,
             "seed": params.seed,
-            "prompt_sha256": __import__("hashlib").sha256(params.prompt.encode("utf-8")).hexdigest(),
+            "prompt_sha256": hashlib.sha256(params.prompt.encode("utf-8")).hexdigest(),
             "width": params.width,
             "height": params.height,
             "steps": params.num_inference_steps,
