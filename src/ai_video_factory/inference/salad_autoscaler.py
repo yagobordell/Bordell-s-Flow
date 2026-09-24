@@ -1,0 +1,625 @@
+from __future__ import annotations
+
+from collections import Counter
+from dataclasses import dataclass
+from datetime import UTC, datetime
+import math
+import os
+from typing import Callable
+
+from .salad import SaladClient
+
+ACTIVE_STATUSES = (
+    "pending",
+    "retryable_failed",
+    "running",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class AutoscalerServiceBinding:
+    workload: str
+    task_names: tuple[str, ...]
+    autoscaler_env_prefix: str
+    fallback_runtime_seconds: float
+    max_replicas: int
+
+
+@dataclass(frozen=True, slots=True)
+class PredictiveAutoscalerConfig:
+    enabled: bool
+    project_max_replicas: int
+    target_drain_seconds: float
+    cold_start_seconds: float
+    target_utilization: float
+    runtime_percentile: float
+    runtime_history_limit: int
+    downscale_stable_polls: int
+    max_upscale_per_poll: int
+    max_downscale_per_poll: int
+    active_deletion_cost: int
+    idle_deletion_cost: int
+    stage_max_replicas: dict[str, int]
+    fallback_runtime_seconds: dict[str, float]
+
+
+@dataclass(frozen=True, slots=True)
+class StageDemand:
+    stage: str
+    rows: tuple[dict[str, object], ...]
+    status_counts: dict[str, int]
+    run_counts: dict[str, int]
+    expected_runtime_seconds: float
+    remaining_work_seconds: float
+    running_count: int
+    forecast_blocked_count: int
+    ideal_replicas: int
+
+
+@dataclass(frozen=True, slots=True)
+class AutoscaleResult:
+    stage: str
+    current_replicas: int
+    target_replicas: int
+    applied_replicas: int
+    changed: bool
+    demand: StageDemand
+    reason: str
+
+
+class PostgresAutoscalerStore:
+    """Global demand/runtime view over the canonical ``gpu.jobs`` control plane."""
+
+    def __init__(self, dsn: str, *, max_connections: int = 2) -> None:
+        from psycopg.rows import dict_row
+        from psycopg_pool import ConnectionPool
+
+        self._pool = ConnectionPool(
+            conninfo=dsn,
+            min_size=0,
+            max_size=max_connections,
+            kwargs={"row_factory": dict_row, "prepare_threshold": None},
+            open=True,
+        )
+
+    def list_stage_jobs(
+        self,
+        *,
+        binding: AutoscalerServiceBinding,
+        statuses: tuple[str, ...],
+    ) -> list[dict[str, object]]:
+        with self._pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    job_id,
+                    COALESCE(
+                        request ->> 'run_id',
+                        request #>> '{parameters,run_id}',
+                        '<unknown>'
+                    ) AS run_id,
+                    status,
+                    lease_owner AS worker_id,
+                    started_at
+                FROM gpu.jobs
+                WHERE task = ANY(%s)
+                  AND status = ANY(%s)
+                ORDER BY created_at ASC, job_id ASC
+                """,
+                (list(binding.task_names), list(statuses)),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_recent_stage_runtime_seconds(
+        self,
+        *,
+        binding: AutoscalerServiceBinding,
+        limit: int,
+    ) -> list[float]:
+        with self._pool.connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT EXTRACT(EPOCH FROM (finished_at - started_at)) AS runtime_seconds
+                FROM gpu.jobs
+                WHERE task = ANY(%s)
+                  AND status = 'succeeded'
+                  AND started_at IS NOT NULL
+                  AND finished_at IS NOT NULL
+                  AND finished_at > started_at
+                ORDER BY finished_at DESC
+                LIMIT %s
+                """,
+                (list(binding.task_names), limit),
+            ).fetchall()
+        return [float(row["runtime_seconds"]) for row in rows]
+
+    def ping(self) -> None:
+        with self._pool.connection() as connection:
+            connection.execute("SELECT 1").fetchone()
+
+    def close(self) -> None:
+        self._pool.close()
+
+
+def load_predictive_autoscaler_config(
+    *,
+    stage_bindings: tuple[AutoscalerServiceBinding, ...],
+) -> PredictiveAutoscalerConfig:
+    project_max = _int_env("SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS", 30, minimum=1)
+    stage_max: dict[str, int] = {}
+    fallback_runtime: dict[str, float] = {}
+    for binding in stage_bindings:
+        configured_max = _int_env(
+            f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_MAX_REPLICAS",
+            binding.max_replicas,
+            minimum=0,
+        )
+        stage_max[binding.workload] = min(configured_max, binding.max_replicas)
+        fallback_runtime[binding.workload] = _float_env(
+            f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_RUNTIME_SECONDS",
+            binding.fallback_runtime_seconds,
+            minimum=1.0,
+        )
+    return PredictiveAutoscalerConfig(
+        enabled=_bool_env("SALAD_AUTOSCALER_ENABLED", default=False),
+        project_max_replicas=project_max,
+        target_drain_seconds=_float_env(
+            "SALAD_AUTOSCALER_TARGET_DRAIN_MINUTES",
+            20.0,
+            minimum=1.0,
+        )
+        * 60.0,
+        cold_start_seconds=_float_env(
+            "SALAD_AUTOSCALER_COLD_START_SECONDS",
+            180.0,
+            minimum=0.0,
+        ),
+        target_utilization=_bounded_float_env(
+            "SALAD_AUTOSCALER_TARGET_UTILIZATION",
+            0.85,
+            minimum=0.1,
+            maximum=1.0,
+        ),
+        runtime_percentile=_bounded_float_env(
+            "SALAD_AUTOSCALER_RUNTIME_PERCENTILE",
+            0.75,
+            minimum=0.5,
+            maximum=1.0,
+        ),
+        runtime_history_limit=_int_env(
+            "SALAD_AUTOSCALER_RUNTIME_HISTORY_JOBS",
+            200,
+            minimum=1,
+        ),
+        downscale_stable_polls=_int_env(
+            "SALAD_AUTOSCALER_DOWNSCALE_STABLE_POLLS",
+            2,
+            minimum=1,
+        ),
+        max_upscale_per_poll=_int_env(
+            "SALAD_AUTOSCALER_MAX_UPSCALE_PER_POLL",
+            10,
+            minimum=1,
+        ),
+        max_downscale_per_poll=_int_env(
+            "SALAD_AUTOSCALER_MAX_DOWNSCALE_PER_POLL",
+            10,
+            minimum=1,
+        ),
+        active_deletion_cost=_int_env(
+            "SALAD_AUTOSCALER_ACTIVE_DELETION_COST",
+            100_000,
+            minimum=1,
+        ),
+        idle_deletion_cost=_int_env(
+            "SALAD_AUTOSCALER_IDLE_DELETION_COST",
+            0,
+            minimum=0,
+        ),
+        stage_max_replicas=stage_max,
+        fallback_runtime_seconds=fallback_runtime,
+    )
+
+
+class PredictiveSaladAutoscaler:
+    """Media Pipeline predictive autoscaling policy over Bordell's Postgres jobs."""
+
+    def __init__(
+        self,
+        *,
+        config: PredictiveAutoscalerConfig,
+        store: PostgresAutoscalerStore,
+        clients: dict[str, SaladClient],
+        bindings: dict[str, AutoscalerServiceBinding],
+        logger: Callable[[str], None] = print,
+    ) -> None:
+        self.config = config
+        self.store = store
+        self.clients = dict(clients)
+        self.bindings = dict(bindings)
+        self.logger = logger
+        self._downscale_candidates: dict[str, tuple[int, int]] = {}
+        self._last_log_snapshot: dict[str, tuple[object, ...]] = {}
+
+    def reconcile(self) -> dict[str, AutoscaleResult]:
+        if not self.config.enabled or not self.clients:
+            return {}
+        rows_by_stage = {
+            stage: self.store.list_stage_jobs(
+                binding=self.bindings[stage],
+                statuses=ACTIVE_STATUSES,
+            )
+            for stage in self.clients
+        }
+        runtime_by_stage = {
+            stage: _runtime_percentile(
+                self.store.list_recent_stage_runtime_seconds(
+                    binding=self.bindings[stage],
+                    limit=self.config.runtime_history_limit,
+                ),
+                percentile=self.config.runtime_percentile,
+                fallback=self.config.fallback_runtime_seconds[stage],
+            )
+            for stage in self.clients
+        }
+        demands = build_global_demands(
+            rows_by_stage=rows_by_stage,
+            runtime_by_stage=runtime_by_stage,
+            config=self.config,
+        )
+        targets = allocate_project_quota(
+            demands=demands,
+            project_max_replicas=self.config.project_max_replicas,
+        )
+        groups = {
+            stage: self.clients[stage].describe_container_group() for stage in self.clients
+        }
+        group_status = {stage: _group_status(groups[stage]) for stage in self.clients}
+        current = {
+            stage: (
+                0
+                if group_status[stage] == "stopped"
+                else max(int(groups[stage].get("replicas") or 0), 0)
+            )
+            for stage in self.clients
+        }
+        initial_current = dict(current)
+        results: dict[str, AutoscaleResult] = {}
+
+        # Preserve Media Pipeline ordering: release quota before assigning new capacity.
+        for stage in self.clients:
+            target = targets[stage]
+            if target >= current[stage]:
+                self._downscale_candidates.pop(stage, None)
+                continue
+            stable_count = self._record_downscale_candidate(stage, target)
+            if stable_count < self.config.downscale_stable_polls:
+                continue
+            applied_target = max(
+                target,
+                current[stage] - self.config.max_downscale_per_poll,
+            )
+            protected, reason = self._protect_running_instances(
+                stage=stage,
+                rows=list(demands[stage].rows),
+            )
+            if not protected:
+                results[stage] = AutoscaleResult(
+                    stage=stage,
+                    current_replicas=current[stage],
+                    target_replicas=target,
+                    applied_replicas=current[stage],
+                    changed=False,
+                    demand=demands[stage],
+                    reason=reason,
+                )
+                continue
+            self.clients[stage].set_container_group_replicas(applied_target)
+            current[stage] = applied_target
+
+        available = max(
+            self.config.project_max_replicas - sum(current.values()),
+            0,
+        )
+        for stage in self.clients:
+            target = targets[stage]
+            before = current[stage]
+            if target > before and available > 0:
+                increase = min(
+                    target - before,
+                    self.config.max_upscale_per_poll,
+                    available,
+                )
+                if increase > 0:
+                    self.clients[stage].set_container_group_replicas(before + increase)
+                    if group_status[stage] == "stopped":
+                        self.clients[stage].start_container_group_if_needed(
+                            warning_logger=lambda _message: None,
+                        )
+                        group_status[stage] = "start_requested"
+                    current[stage] = before + increase
+                    available -= increase
+
+        for stage in self.clients:
+            previous = initial_current[stage]
+            result = results.get(stage) or AutoscaleResult(
+                stage=stage,
+                current_replicas=previous,
+                target_replicas=targets[stage],
+                applied_replicas=current[stage],
+                changed=current[stage] != previous,
+                demand=demands[stage],
+                reason="reconciled" if current[stage] != previous else "stable",
+            )
+            results[stage] = result
+            self._log_result(result)
+        return results
+
+    def _record_downscale_candidate(self, stage: str, target: int) -> int:
+        previous_target, previous_count = self._downscale_candidates.get(stage, (-1, 0))
+        count = previous_count + 1 if previous_target == target else 1
+        self._downscale_candidates[stage] = (target, count)
+        return count
+
+    def _protect_running_instances(
+        self,
+        *,
+        stage: str,
+        rows: list[dict[str, object]],
+    ) -> tuple[bool, str]:
+        running_worker_ids = {
+            str(row.get("worker_id") or "").strip()
+            for row in rows
+            if str(row.get("status") or "").strip() == "running"
+            and str(row.get("worker_id") or "").strip()
+        }
+        if not running_worker_ids:
+            return True, "no_running_jobs"
+        try:
+            instances = self.clients[stage].list_container_group_instances()
+            matched_worker_ids: set[str] = set()
+            for instance in instances:
+                instance_id = str(instance.get("id") or "").strip()
+                if not instance_id:
+                    continue
+                instance_worker_ids = {
+                    worker_id for worker_id in running_worker_ids if instance_id in worker_id
+                }
+                is_active = bool(instance_worker_ids)
+                matched_worker_ids.update(instance_worker_ids)
+                desired_cost = (
+                    self.config.active_deletion_cost
+                    if is_active
+                    else self.config.idle_deletion_cost
+                )
+                current_cost = _optional_int(instance.get("deletion_cost"))
+                if current_cost != desired_cost:
+                    self.clients[stage].set_container_group_instance_deletion_cost(
+                        instance_id,
+                        desired_cost,
+                    )
+            if matched_worker_ids != running_worker_ids:
+                return False, "active_instance_mapping_incomplete"
+        except Exception as error:
+            self.logger(
+                f"Autoscaler {stage}: could not protect deletion_cost; "
+                f"downscale deferred ({error})."
+            )
+            return False, "deletion_cost_protection_failed"
+        return True, "active_instances_protected"
+
+    def _log_result(self, result: AutoscaleResult) -> None:
+        demand = result.demand
+        snapshot = (
+            result.current_replicas,
+            result.target_replicas,
+            result.applied_replicas,
+            tuple(sorted(demand.status_counts.items())),
+            tuple(sorted(demand.run_counts.items())),
+            round(demand.expected_runtime_seconds, 1),
+            result.reason,
+        )
+        if self._last_log_snapshot.get(result.stage) == snapshot:
+            return
+        self._last_log_snapshot[result.stage] = snapshot
+        statuses = (
+            ", ".join(
+                f"{status}={count}" for status, count in sorted(demand.status_counts.items())
+            )
+            or "empty"
+        )
+        self.logger(
+            f"Autoscaler {result.stage}: replicas "
+            f"{result.current_replicas}->{result.applied_replicas} "
+            f"(target={result.target_replicas}), jobs [{statuses}], "
+            f"runs={len(demand.run_counts)}, runtime_p="
+            f"{demand.expected_runtime_seconds:.1f}s."
+        )
+
+
+def build_global_demands(
+    *,
+    rows_by_stage: dict[str, list[dict[str, object]]],
+    runtime_by_stage: dict[str, float],
+    config: PredictiveAutoscalerConfig,
+    now: datetime | None = None,
+) -> dict[str, StageDemand]:
+    observed_at = now or datetime.now(UTC)
+    available_drain_seconds = max(
+        config.target_drain_seconds - config.cold_start_seconds,
+        60.0,
+    )
+    demands: dict[str, StageDemand] = {}
+    for stage, rows in rows_by_stage.items():
+        expected_runtime = max(float(runtime_by_stage[stage]), 1.0)
+        status_counts = Counter(str(row.get("status") or "unknown") for row in rows)
+        run_counts = Counter(str(row.get("run_id") or "<unknown>") for row in rows)
+        queued_count = (
+            status_counts.get("pending", 0) + status_counts.get("retryable_failed", 0)
+        )
+        running_rows = [row for row in rows if str(row.get("status") or "") == "running"]
+        running_work = sum(
+            _remaining_running_seconds(
+                row=row,
+                expected_runtime_seconds=expected_runtime,
+                now=observed_at,
+            )
+            for row in running_rows
+        )
+        forecast_blocked = 0
+        work_seconds = queued_count * expected_runtime + running_work
+        ideal = (
+            max(
+                len(running_rows),
+                math.ceil(
+                    work_seconds / (available_drain_seconds * config.target_utilization)
+                ),
+            )
+            if work_seconds > 0
+            else 0
+        )
+        ideal = max(
+            len(running_rows),
+            min(ideal, config.stage_max_replicas[stage]),
+        )
+        demands[stage] = StageDemand(
+            stage=stage,
+            rows=tuple(dict(row) for row in rows),
+            status_counts=dict(status_counts),
+            run_counts=dict(run_counts),
+            expected_runtime_seconds=expected_runtime,
+            remaining_work_seconds=work_seconds,
+            running_count=len(running_rows),
+            forecast_blocked_count=forecast_blocked,
+            ideal_replicas=ideal,
+        )
+    return demands
+
+
+def allocate_project_quota(
+    *,
+    demands: dict[str, StageDemand],
+    project_max_replicas: int,
+) -> dict[str, int]:
+    allocation = {
+        stage: min(demand.running_count, demand.ideal_replicas)
+        for stage, demand in demands.items()
+    }
+    capacity = max(project_max_replicas - sum(allocation.values()), 0)
+    while capacity > 0:
+        candidates = [
+            stage
+            for stage, demand in demands.items()
+            if allocation[stage] < demand.ideal_replicas
+        ]
+        if not candidates:
+            break
+        stage = max(
+            candidates,
+            key=lambda candidate: (
+                demands[candidate].remaining_work_seconds / (allocation[candidate] + 1),
+                -tuple(demands).index(candidate),
+            ),
+        )
+        allocation[stage] += 1
+        capacity -= 1
+    return allocation
+
+
+def _remaining_running_seconds(
+    *,
+    row: dict[str, object],
+    expected_runtime_seconds: float,
+    now: datetime,
+) -> float:
+    started_at = _parse_datetime(row.get("started_at"))
+    if started_at is None:
+        return expected_runtime_seconds
+    elapsed = max((now - started_at).total_seconds(), 0.0)
+    return max(expected_runtime_seconds - elapsed, expected_runtime_seconds * 0.1)
+
+
+def _runtime_percentile(
+    values: list[float],
+    *,
+    percentile: float,
+    fallback: float,
+) -> float:
+    ordered = sorted(float(value) for value in values if float(value) > 0)
+    if not ordered:
+        return float(fallback)
+    index = max(math.ceil(percentile * len(ordered)) - 1, 0)
+    return ordered[min(index, len(ordered) - 1)]
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _optional_int(value: object) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _group_status(group: dict[str, object]) -> str:
+    current_state = group.get("current_state")
+    if not isinstance(current_state, dict):
+        return "unknown"
+    return str(current_state.get("status") or "").strip().lower() or "unknown"
+
+
+def _bool_env(name: str, *, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be a boolean value")
+
+
+def _int_env(name: str, default: int, *, minimum: int) -> int:
+    raw = os.getenv(name)
+    value = default if raw is None or not raw.strip() else int(raw)
+    if value < minimum:
+        raise RuntimeError(f"{name} must be >= {minimum}")
+    return value
+
+
+def _float_env(name: str, default: float, *, minimum: float) -> float:
+    raw = os.getenv(name)
+    value = default if raw is None or not raw.strip() else float(raw)
+    if value < minimum:
+        raise RuntimeError(f"{name} must be >= {minimum}")
+    return value
+
+
+def _bounded_float_env(
+    name: str,
+    default: float,
+    *,
+    minimum: float,
+    maximum: float,
+) -> float:
+    value = _float_env(name, default, minimum=minimum)
+    if value > maximum:
+        raise RuntimeError(f"{name} must be <= {maximum}")
+    return value
