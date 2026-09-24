@@ -3,6 +3,7 @@ from __future__ import annotations
 import gc
 import hashlib
 import json
+import os
 import threading
 import time
 from collections.abc import Mapping
@@ -172,6 +173,9 @@ class QwenImage21Backend:
                     output_type="pil",
                     generator=generator,
                 )
+                if is_cuda:
+                    torch.cuda.synchronize()
+                inference_seconds = time.monotonic() - started
                 images = result.images
                 if len(images) != 1:
                     raise RuntimeError("Qwen-Image-2.1 did not return exactly one image")
@@ -184,7 +188,8 @@ class QwenImage21Backend:
                 peak_reserved = torch.cuda.max_memory_reserved() if is_cuda else 0
                 print(
                     "QWEN_IMAGE_21_INFERENCE_METRIC "
-                    f"elapsed_seconds={elapsed:.3f} seed={parameters.seed} "
+                    f"elapsed_seconds={elapsed:.3f} inference_seconds={inference_seconds:.3f} "
+                    f"encode_seconds={elapsed - inference_seconds:.3f} seed={parameters.seed} "
                     f"width={parameters.width} height={parameters.height} "
                     f"steps={parameters.num_inference_steps} "
                     f"peak_allocated_bytes={peak_allocated} peak_reserved_bytes={peak_reserved}",
@@ -192,9 +197,8 @@ class QwenImage21Backend:
                 )
             finally:
                 del result
-                gc.collect()
-                if is_cuda:
-                    torch.cuda.empty_cache()
+                # Keep the CUDA caching allocator warm between requests.
+                # Releasing it after every image forces subsequent allocations.
 
     def _validate_bootstrap(self) -> None:
         expected = f"{QWEN_IMAGE_21_MODEL_ID}@{QWEN_IMAGE_21_MODEL_REVISION}"
@@ -229,20 +233,41 @@ class QwenImage21Backend:
             raise RuntimeError("CUDA is not available for the Qwen-Image-2.1 runtime")
 
         started = time.monotonic()
-        pipeline = QwenImage21Pipeline.from_pretrained(
-            str(self.snapshot_root),
-            dtype=torch.bfloat16,
-            local_files_only=True,
-        )
         if self._device != "cuda":
             raise RuntimeError("Qwen-Image-2.1 worker currently requires device='cuda'")
-        pipeline.enable_model_cpu_offload()
+        memory_mode = os.environ.get("QWEN_IMAGE_21_MEMORY_MODE", "int8_cuda")
+        if memory_mode == "int8_cuda":
+            from diffusers.quantizers import PipelineQuantizationConfig
+
+            quantization = PipelineQuantizationConfig(
+                quant_backend="bitsandbytes_8bit",
+                quant_kwargs={"load_in_8bit": True},
+                components_to_quantize=["transformer", "text_encoder"],
+            )
+            pipeline = QwenImage21Pipeline.from_pretrained(
+                str(self.snapshot_root),
+                dtype=torch.bfloat16,
+                quantization_config=quantization,
+                device_map="cuda",
+                local_files_only=True,
+            )
+            # Fail at startup rather than silently spilling model weights to CPU.
+            device_map = getattr(pipeline, "hf_device_map", None) or {}
+            if any(str(device) not in ("cuda", "cuda:0", "0") for device in device_map.values()):
+                raise RuntimeError(f"Qwen int8 pipeline is not fully on CUDA: {device_map}")
+        elif memory_mode == "bf16_offload":
+            pipeline = QwenImage21Pipeline.from_pretrained(
+                str(self.snapshot_root), dtype=torch.bfloat16, local_files_only=True,
+            )
+            pipeline.enable_model_cpu_offload()
+        else:
+            raise ValueError(f"Unsupported QWEN_IMAGE_21_MEMORY_MODE: {memory_mode}")
         elapsed = time.monotonic() - started
         allocated = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
         reserved = torch.cuda.memory_reserved() if torch.cuda.is_available() else 0
         print(
             "QWEN_IMAGE_21_RUNTIME_READY "
-            f"elapsed_seconds={elapsed:.3f} device={self._device} "
+            f"elapsed_seconds={elapsed:.3f} device={self._device} memory_mode={memory_mode} "
             f"allocated_bytes={allocated} reserved_bytes={reserved}",
             flush=True,
         )
