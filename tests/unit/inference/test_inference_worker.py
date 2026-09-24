@@ -58,6 +58,15 @@ class FailingRunner:
         raise RuntimeError("single-shot failure")
 
 
+class DrainingRepository(InMemoryJobRepository):
+    def is_instance_draining(self, instance_id: str) -> bool:
+        assert instance_id == "instance-draining"
+        return True
+
+    def next_pending_request(self, task_names: tuple[str, ...]) -> InferenceJobRequest | None:
+        raise AssertionError(f"draining worker must not poll jobs: {task_names}")
+
+
 class LeaseLosingRepository(InMemoryJobRepository):
     def renew_lease(
         self,
@@ -363,3 +372,20 @@ def test_worker_uploads_and_reconciles_declared_sidecars(tmp_path: Path) -> None
     assert metadata.metadata["job-id"] == job_id
     assert metadata.metadata["sidecar-name"] == "metadata"
     assert metadata.metadata["request-sha256"] == request.fingerprint()
+
+
+def test_draining_salad_instance_does_not_claim_new_jobs(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    runner = CountingCopyRunner()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=DrainingRepository(),
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-instance-draining",
+        salad_instance_id="instance-draining",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+
+    assert worker.next_pending_request() is None
