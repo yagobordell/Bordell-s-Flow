@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -33,15 +33,17 @@ from .model import (
 logger = logging.getLogger(__name__)
 
 LTX_A2V_TASK = "video.ltx25.audio_to_video"
-LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdpa-v2"
+LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdpa-v3"
 LTX_A2V_RECOMMENDED_MAX_SECONDS = 12.0
 LTX_A2V_MAX_RAW_FRAMES = 1024
 LTX_A2V_DEFAULT_PROMPT = (
     "A medium close-up talking head of the person in the reference image, speaking "
     "naturally toward the camera in synchronization with the provided speech audio. "
     "Preserve the person's facial identity, hairstyle, skin tone, clothing, background, "
-    "and framing throughout the continuous shot. Natural blinking and restrained facial, "
-    "mouth, jaw, and head movement. Static camera, stable lighting, no cuts, no scene "
+    "and framing throughout the continuous shot. Clearly articulate every spoken word "
+    "with natural, visible lip and jaw movements matching the supplied speech. "
+    "Natural blinking and restrained head movement. Static camera, stable lighting, no cuts, "
+    "no scene "
     "changes, no exaggerated gestures, no identity drift, and no facial deformation."
 )
 
@@ -573,6 +575,21 @@ class DirectLTX25AudioToVideoBackend:
                     _cuda_memory_snapshot(bindings.torch, self._device),
                 )
 
+                # The upstream pipeline freezes the supplied audio in both stages.
+                # Avoid extra modality/STG passes for speech-driven avatar motion;
+                # retain the dev checkpoint's text CFG (CFG=1 is a distilled preset).
+                video_guider = replace(
+                    self._pipeline_params.video_guider_params,
+                    modality_scale=1.0,
+                    stg_scale=0.0,
+                    stg_blocks=[],
+                )
+                logger.info(
+                    "LTX25_A2V_GUIDANCE cfg_scale=%.2f stg_scale=%.2f modality_scale=%.2f",
+                    video_guider.cfg_scale,
+                    video_guider.stg_scale,
+                    video_guider.modality_scale,
+                )
                 inference_started = time.monotonic()
                 original_activation_budget = _install_clean_tiling_budget(
                     bindings,
@@ -588,7 +605,7 @@ class DirectLTX25AudioToVideoBackend:
                         num_frames=None,
                         frame_rate=float(parameters.fps),
                         num_inference_steps=self._pipeline_params.num_inference_steps,
-                        video_guider_params=self._pipeline_params.video_guider_params,
+                        video_guider_params=video_guider,
                         images=[conditioning],
                         audio_path=str(pipeline_audio_path.resolve()),
                         audio_start_time=0.0,
@@ -664,6 +681,9 @@ class DirectLTX25AudioToVideoBackend:
         return {
             "generation_mode": "audio_to_video",
             "generation_profile": parameters.generation_profile,
+            "video_cfg_scale": video_guider.cfg_scale,
+            "video_stg_scale": video_guider.stg_scale,
+            "video_modality_scale": video_guider.modality_scale,
             "input_audio_codec": audio_probe.codec,
             "input_audio_sample_rate": audio_probe.sample_rate,
             "input_audio_channels": audio_probe.channels,
