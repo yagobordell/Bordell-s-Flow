@@ -26,6 +26,8 @@ class InferenceWorkerSettings(BaseSettings):
     worker_lease_seconds: int = Field(default=90, ge=30, le=3600)
     worker_heartbeat_seconds: int = Field(default=30, ge=5, le=1200)
     worker_max_db_connections: int = Field(default=4, ge=1, le=32)
+    worker_poll_jobs: bool = False
+    worker_job_poll_seconds: float = Field(default=2.0, gt=0, le=60)
     local_object_root: Path = Path("data/inference-local")
 
     postgres_dsn: SecretStr | None = Field(default=None, validation_alias="POSTGRES_DSN")
