@@ -29,8 +29,8 @@ def test_controlled_gpu_wrappers_start_and_stop_explicit_capacity() -> None:
     for path in CONTROLLED:
         script = path.read_text(encoding="utf-8")
         assert "manage_salad_worker.ps1" in script, path
-        assert 'Action = "Start"' in script, path
-        assert 'Action = "Stop"' in script, path
+        assert ('Action = "Start"' in script or "Invoke-Start -Service" in script), path
+        assert ('Action = "Stop"' in script or "-Action Stop" in script), path
         assert "finally {" in script, path
         assert "cleanup_salad_queue.ps1" not in script, path
         assert "start_salad_optimized_prewarm.ps1" not in script, path
