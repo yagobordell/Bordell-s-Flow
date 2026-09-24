@@ -77,15 +77,16 @@ class QwenImage21Parameters(BaseModel):
                 f"Qwen-Image-2.1 width and height must be divisible by "
                 f"{QWEN_IMAGE_21_DIMENSION_MULTIPLE}"
             )
-        expected_size = (
-            (1536, 864)
-            if self.generation_profile == QWEN_IMAGE_21_BENCHMARK_PROFILE
-            else (QWEN_IMAGE_21_PRODUCTION_WIDTH, QWEN_IMAGE_21_PRODUCTION_HEIGHT)
-        )
-        if (self.width, self.height) != expected_size:
+        if self.generation_profile == QWEN_IMAGE_21_BENCHMARK_PROFILE:
+            if (self.width, self.height) != (1536, 864):
+                raise ValueError("Qwen-Image-2.1 benchmark requires 1536x864")
+        elif (self.width, self.height) != (
+            QWEN_IMAGE_21_PRODUCTION_WIDTH,
+            QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+        ):
             raise ValueError(
-                f"Qwen-Image-2.1 profile {self.generation_profile!r} requires "
-                f"{expected_size[0]}x{expected_size[1]}"
+                "Qwen-Image-2.1 production generation is fixed at "
+                f"{QWEN_IMAGE_21_PRODUCTION_SIZE}"
             )
         if self.num_inference_steps != QWEN_IMAGE_21_DEFAULT_STEPS:
             raise ValueError(
