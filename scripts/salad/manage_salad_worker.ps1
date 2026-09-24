@@ -203,11 +203,28 @@ function Get-Group {
 }
 
 function Wait-ForGroupSettled {
-    param([Parameter(Mandatory)][hashtable]$Headers, [ValidateRange(1, 180)][int]$TimeoutMinutes)
+    param(
+        [Parameter(Mandatory)][hashtable]$Headers,
+        [ValidateRange(1, 180)][int]$TimeoutMinutes,
+        [switch]$AllowInitialNotFound
+    )
     $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
+    $VisibilityDeadline = (Get-Date).AddMinutes(5)
     do {
         Start-Sleep -Seconds 10
-        $Group = Get-Group -Headers $Headers
+        $Group = if ($AllowInitialNotFound) {
+            Try-Get-Group -Headers $Headers
+        }
+        else {
+            Get-Group -Headers $Headers
+        }
+        if ($null -eq $Group) {
+            if ((Get-Date) -ge $VisibilityDeadline) {
+                throw "Salad did not expose newly created '$GroupName' within 5 minutes."
+            }
+            Write-Host ("{0} service={1} waiting for created group visibility" -f (Get-Date -Format "HH:mm:ss"), $Service)
+            continue
+        }
         Write-Host ("{0} service={1} status={2} replicas={3} pending={4}" -f (Get-Date -Format "HH:mm:ss"), $Service, (Get-GroupStatus -Group $Group), [int]$Group.replicas, [bool]$Group.pending_change)
         if (-not [bool]$Group.pending_change) { return $Group }
     } while ((Get-Date) -lt $Deadline)
@@ -326,7 +343,7 @@ function New-ContainerGroup {
         name = $GroupName
         display_name = [string]$Definition.display_name
         autostart_policy = $AutostartPolicy
-        replicas = 0
+        replicas = $StartReplicas
         restart_policy = $RestartPolicy
         scheduled_scaling_enabled = $false
         container = New-ContainerConfiguration -ResolvedImage $ResolvedImage -WorkerEnvironment $WorkerEnvironment -GpuClassIds $GpuClassIds
@@ -469,7 +486,7 @@ switch ($Action) {
             Update-ContainerGroup -Headers $Headers -ResolvedImage $ResolvedImage -WorkerEnvironment $WorkerEnvironment -GpuClassIds $GpuClassIds
         }
 
-        $Prepared = Wait-ForGroupSettled -Headers $Headers -TimeoutMinutes $PrepareTimeoutMinutes
+        $Prepared = Wait-ForGroupSettled -Headers $Headers -TimeoutMinutes $PrepareTimeoutMinutes -AllowInitialNotFound
         if ((Get-GroupStatus -Group $Prepared) -ne "stopped") { throw "Prepared group must remain stopped." }
         if ([int]$Prepared.replicas -ne 0) {
             $Body = @{ replicas = 0 } | ConvertTo-Json
