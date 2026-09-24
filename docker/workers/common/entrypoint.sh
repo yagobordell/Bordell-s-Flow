@@ -8,11 +8,9 @@ ready_poll_seconds="${4:-5}"
 bootstrap_command="${5:-}"
 
 app_pid=""
-queue_pid=""
 
 terminate() {
   [[ -n "${app_pid}" ]] && kill -TERM "${app_pid}" 2>/dev/null || true
-  [[ -n "${queue_pid}" ]] && kill -TERM "${queue_pid}" 2>/dev/null || true
 }
 trap terminate TERM INT EXIT
 
@@ -50,24 +48,9 @@ if ! wait_for_endpoint /ready "${ready_timeout_seconds}" "${ready_poll_seconds}"
   exit 1
 fi
 
-if [[ "${SALAD_QUEUE_ENABLED:-false}" != "true" ]]; then
-  echo "${worker_name} worker ready; queue transport disabled"
-  set +e
-  wait "${app_pid}"
-  status=$?
-  set -e
-  exit "${status}"
-fi
-
-echo "${worker_name} worker ready; starting Salad queue transport"
-/usr/local/bin/salad-http-job-queue-worker &
-queue_pid=$!
-
+echo "${worker_name} worker ready; polling canonical Postgres jobs"
 set +e
-wait -n "${app_pid}" "${queue_pid}"
+wait "${app_pid}"
 status=$?
 set -e
-terminate
-wait "${app_pid}" 2>/dev/null || true
-wait "${queue_pid}" 2>/dev/null || true
 exit "${status}"
