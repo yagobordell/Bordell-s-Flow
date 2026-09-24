@@ -15,6 +15,8 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ai_video_factory.workers.qwen_image_21 import QWEN_IMAGE_21_PRODUCTION_SIZE
+
 StageStatus = Literal["current", "adoptable", "pending", "stale", "blocked"]
 RecordOrigin = Literal["executed", "adopted"]
 StageResource = Literal["cpu", "gpu"]
@@ -653,7 +655,7 @@ def build_production_stages(
             script=Path("scripts/pipeline/run_phase4_assets.py"),
             arguments=(
                 str(visual_references),
-                "--size", "1536x864",
+                "--size", QWEN_IMAGE_21_PRODUCTION_SIZE,
                 "--output-dir", str(reference_assets_dir),
                 "--metadata", str(reference_assets),
             ),
@@ -766,7 +768,7 @@ def build_production_stages(
             arguments=(
                 "--frames", str(storyboard_frames),
                 "--shots", str(shots),
-                "--size", "1536x864",
+                "--size", QWEN_IMAGE_21_PRODUCTION_SIZE,
                 "--quality", "high",
                 "--output-dir", str(storyboard_keyframes_dir),
                 "--output", str(storyboard_keyframes),

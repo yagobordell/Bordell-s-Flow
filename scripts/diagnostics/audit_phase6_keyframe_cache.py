@@ -14,9 +14,10 @@ from ai_video_factory.providers.salad_qwen_image import build_qwen_image_job_req
 from ai_video_factory.workers.qwen_image_21 import (
     QWEN_IMAGE_21_KEYFRAME_TASK,
     QWEN_IMAGE_21_MODEL_ID,
+    QWEN_IMAGE_21_PRODUCTION_SIZE,
 )
 
-DEFAULT_SIZE = "1536x864"
+DEFAULT_SIZE = QWEN_IMAGE_21_PRODUCTION_SIZE
 
 
 def parse_args() -> argparse.Namespace:
