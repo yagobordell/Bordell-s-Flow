@@ -414,7 +414,6 @@ $DownloadStartedInstanceId = ""
 $ReallocationPending = $false
 $ReallocatedMachineId = ""
 $AllocatingSince = $null
-$AllocatingInstanceId = ""
 $RunningNotReadySince = $null
 $RunningNotReadyMachineId = ""
 $RunningNotReadyReallocations = 0
@@ -481,36 +480,47 @@ do {
     )
     Write-Host $Message
 
-    if (
+    # Salad can report allocating on the group before an instance exists. The
+    # previous watchdog only covered an instance whose state was "allocating".
+    $WaitingForGpuAllocation = (
         $Service -in @("qwen_image_21", "ltx25") -and
-        $Instances.Count -eq 1 -and
-        $InstanceState -eq "allocating"
-    ) {
-        if (
-            $null -eq $AllocatingSince -or
-            $InstanceId -ne $AllocatingInstanceId
-        ) {
+        $StartedInstances.Count -eq 0 -and
+        $Instances.Count -le 1 -and
+        (
+            $Status -eq "allocating" -or
+            $InstanceState -eq "allocating" -or
+            ($Status -eq "running" -and $Instances.Count -eq 0)
+        )
+    )
+    if ($WaitingForGpuAllocation) {
+        if ($null -eq $AllocatingSince) {
             $AllocatingSince = Get-Date
-            $AllocatingInstanceId = $InstanceId
             Write-Host (
-                "{0} service={1} allocating watchdog started limit={2}m" -f
+                "{0} service={1} GPU allocation watchdog started limit={2}m " +
+                "group_status={3} instances={4} state={5}" -f
                 (Get-Date -Format "HH:mm:ss"),
                 $Service,
-                $AllocatingTimeoutMinutes
+                $AllocatingTimeoutMinutes,
+                $Status,
+                $Instances.Count,
+                $InstanceState
             ) -ForegroundColor Cyan
         }
 
         $AllocatingElapsed = (Get-Date) - $AllocatingSince
         if ($AllocatingElapsed.TotalMinutes -ge $AllocatingTimeoutMinutes) {
             throw (
-                "GPU worker instance remained in allocating for at least " +
-                "$AllocatingTimeoutMinutes minute(s); aborting protected bootstrap."
+                "$Service GPU allocation did not yield a started instance within " +
+                "$AllocatingTimeoutMinutes minute(s); group_status=$Status " +
+                "instances=$($Instances.Count) instance_state=$InstanceState " +
+                "description=$(Get-GroupDescription -Group $Group). " +
+                "Check the live Salad GPU availability for the manifest CPU/RAM/storage " +
+                "requirements before retrying; do not reallocate an unassigned GPU."
             )
         }
     }
     else {
         $AllocatingSince = $null
-        $AllocatingInstanceId = ""
     }
 
     if (
