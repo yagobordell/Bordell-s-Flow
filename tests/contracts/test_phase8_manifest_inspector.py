@@ -180,7 +180,7 @@ def test_phase8_inspector_and_controlled_wrapper_pin_landscape_contract() -> Non
     assert '"--height", 720' in wrapper
     assert '"--fps", 24' in wrapper
     assert "SALAD_LTX25_QUEUE_NAME" not in wrapper
-    assert "Postgres" in wrapper
+    assert "manage_salad_worker.ps1" in wrapper
 
 
 
