@@ -378,8 +378,7 @@ class PredictiveSaladAutoscaler:
             target = targets[stage]
             if target >= current[stage]:
                 self._downscale_candidates.pop(stage, None)
-                if target > current[stage]:
-                    self.store.clear_draining_instances(stage=stage)
+                self.store.clear_draining_instances(stage=stage)
                 continue
             stable_count = self._record_downscale_candidate(stage, target)
             if stable_count < self.config.downscale_stable_polls:
