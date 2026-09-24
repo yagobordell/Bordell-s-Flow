@@ -16,6 +16,7 @@ from .errors import (
     OutputConflictError,
     UnsupportedTaskError,
 )
+from .gpu_failures import cleanup_cuda_memory, is_retryable_gpu_failure
 from .ports import ClaimDecision, JobRepository, ObjectStorage, StoredObject
 from .storage import sha256_file
 from .tasks import TaskRunnerRegistry
@@ -94,6 +95,7 @@ class InferenceWorker:
         temp_dir: Path,
         lease_seconds: int = 90,
         heartbeat_seconds: int = 30,
+        gpu_retry_cooldown_seconds: float = 60.0,
     ) -> None:
         self.storage = storage
         self.repository = repository
@@ -102,6 +104,7 @@ class InferenceWorker:
         self.temp_dir = temp_dir
         self.lease_seconds = lease_seconds
         self.heartbeat_seconds = heartbeat_seconds
+        self.gpu_retry_cooldown_seconds = gpu_retry_cooldown_seconds
         self._execution_lock = threading.Lock()
 
     def prepare(self) -> None:
@@ -171,8 +174,11 @@ class InferenceWorker:
                 raise failure from exc
             raise
         except Exception as exc:
+            retryable_gpu_failure = is_retryable_gpu_failure(exc)
             failure = self._single_shot_failure(request, exc)
             self._mark_failed(request, request_sha256, failure)
+            if retryable_gpu_failure:
+                cleanup_cuda_memory()
             if failure is not exc:
                 raise failure from exc
             raise JobExecutionError(f"execution failed for job {request.job_id}") from exc
