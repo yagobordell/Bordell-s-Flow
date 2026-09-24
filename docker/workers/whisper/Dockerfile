@@ -15,7 +15,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     WHISPER_MODEL_REPOSITORY=openai/whisper-large-v3-turbo \
     WHISPER_MODEL_REVISION=main \
     WHISPER_DEVICE=cuda:0 \
-    WHISPER_DTYPE=float16 \
+    WHISPER_DTYPE=float16 
 
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
