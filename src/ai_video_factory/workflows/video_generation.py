@@ -38,7 +38,7 @@ from ai_video_factory.workers.ltx25.model import (
 from ai_video_factory.workflows._video_jobs import (
     archive_manifest,
     download_verified_mp4,
-    terminal_failure_detail as _terminal_failure_detail,
+    terminal_failure_detail,
 )
 
 logger = logging.getLogger(__name__)
@@ -389,7 +389,7 @@ def run_video_generation(
         state for state in manifest.jobs if state.transport_status in {"failed", "cancelled"}
     ]
     if failed:
-        details = "; ".join(_terminal_failure_detail(state) for state in failed)
+        details = "; ".join(terminal_failure_detail(state) for state in failed)
         raise VideoGenerationIncompleteError(
             f"Video generation has terminal transport failures: {details}. Rerun to resume."
         )
