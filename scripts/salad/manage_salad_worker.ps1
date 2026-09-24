@@ -805,7 +805,7 @@ function Ensure-ManifestScaleToZero {
 function Wait-ForStoppedZeroReplicas {
     param(
         [Parameter(Mandatory)][hashtable]$Headers,
-        [ValidateRange(10, 600)][int]$TimeoutSeconds = 180
+        [ValidateRange(45, 600)][int]$TimeoutSeconds = 180
     )
 
     # pending_change=False signals completion of a config upgrade, not
