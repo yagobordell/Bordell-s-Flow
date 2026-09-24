@@ -39,7 +39,9 @@ from ai_video_factory.workers.realesrgan import (
 from ai_video_factory.workflows._video_jobs import (
     archive_manifest,
     download_verified_mp4,
-    terminal_failure_detail,
+)
+from ai_video_factory.workflows._video_jobs import (
+    terminal_failure_detail as _terminal_failure_detail,
 )
 
 SOURCE_WIDTH = 1280
@@ -396,7 +398,7 @@ def run_video_upscale(
         state for state in manifest.jobs if state.transport_status in {"failed", "cancelled"}
     ]
     if failed:
-        detail = "; ".join(terminal_failure_detail(state) for state in failed)
+        detail = "; ".join(_terminal_failure_detail(state) for state in failed)
         raise VideoUpscaleIncompleteError(
             f"Real-ESRGAN upscale has terminal transport failures: {detail}. Rerun to resume."
         )
