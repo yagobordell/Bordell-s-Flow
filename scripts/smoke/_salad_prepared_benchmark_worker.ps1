@@ -35,6 +35,17 @@ function Assert-SaladPreparedBenchmarkWorker {
     ) {
         throw "Benchmark requires a prepared stopped group with replicas=0/pending=False."
     }
+    $RemoteAutoscaler = $Group.PSObject.Properties["queue_autoscaler"]
+    if (
+        $null -ne $RemoteAutoscaler -and
+        $null -ne $RemoteAutoscaler.Value -and
+        [int]$RemoteAutoscaler.Value.min_replicas -ne 0
+    ) {
+        throw (
+            "Benchmark requires Salad queue_autoscaler.min_replicas=0; " +
+            "restore the manifest before starting the GPU worker."
+        )
+    }
     if ([string]$Group.priority -ne [string]$Definition.priority) {
         throw "Salad group priority does not match the benchmark manifest."
     }
