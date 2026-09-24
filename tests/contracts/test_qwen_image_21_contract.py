@@ -207,4 +207,4 @@ def test_qwen_rejects_unusable_output_before_png_publication() -> None:
 
     assert "validate_qwen_output_image(" in generate
     assert generate.index("validate_qwen_output_image(") < generate.index("image.save(")
-    assert "NonRetryableTaskError" in worker
+    assert "predominantly transparent" in worker
