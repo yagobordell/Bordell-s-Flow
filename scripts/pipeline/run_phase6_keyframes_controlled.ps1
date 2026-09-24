@@ -25,13 +25,13 @@ $Arguments = @{
     CacheAuditArguments = @($Frames)
     RunnerScript = (Join-Path $PSScriptRoot "run_phase6_keyframes.py")
     RunnerArguments = @(
-    "--frames", $Frames,
-    "--shots", $Shots,
-    "--poll-seconds", $PollSeconds,
-    "--pending-timeout-seconds", $PendingTimeoutSeconds,
-    "--timeout-seconds", $RunningTimeoutSeconds,
-    "--output-dir", $OutputDir,
-    "--output", $Output
+        "--frames", $Frames,
+        "--shots", $Shots,
+        "--poll-seconds", $PollSeconds,
+        "--pending-timeout-seconds", $PendingTimeoutSeconds,
+        "--timeout-seconds", $RunningTimeoutSeconds,
+        "--output-dir", $OutputDir,
+        "--output", $Output
     )
     PrewarmTimeoutMinutes = $PrewarmTimeoutMinutes
     NonInteractive = [bool]$NonInteractive
