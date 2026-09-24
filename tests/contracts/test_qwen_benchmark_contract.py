@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import threading
 from pathlib import Path
 from urllib.error import HTTPError
 
@@ -18,6 +19,7 @@ from ai_video_factory.workers.qwen_image_21 import (
 )
 from ai_video_factory.workers.qwen_image_21.model import (
     QWEN_IMAGE_21_BENCHMARK_PROFILE,
+    QwenImage21Backend,
     QwenImage21ImageTaskRunner,
     QwenImage21Parameters,
     _validate_int8_cuda_device_map,
@@ -267,3 +269,92 @@ def test_qwen_power_shell_preflights_before_taking_worker_ownership() -> None:
     assert runner.index("--preflight-only") < runner.index("$OwnsWorker = $true")
     assert runner.index("$OwnsWorker = $true") < runner.index("-Action Prepare")
     assert "refusing to allocate a GPU" in runner
+
+
+def test_qwen_readiness_never_waits_for_held_inference_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = QwenImage21Backend(model_root=tmp_path)
+    backend._pipeline = object()
+    monkeypatch.setattr(backend, "_validate_bootstrap", lambda: None)
+    with pytest.raises(RuntimeError, match="has not been prepared"):
+        backend.ready()
+    backend._prepared = True
+    errors: list[Exception] = []
+
+    def check_ready() -> None:
+        try:
+            backend.ready()
+        except Exception as exc:
+            errors.append(exc)
+
+    with backend._lock:
+        probe = threading.Thread(target=check_ready, daemon=True)
+        probe.start()
+        probe.join(timeout=2)
+        assert not probe.is_alive(), "Qwen readiness blocked on the GPU inference lock"
+    assert not errors
+
+
+def test_qwen_post_job_readiness_recovers_on_original_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.smoke import submit_qwen_image_21_benchmark as benchmark
+
+    expected = ("original-instance", "original-machine")
+    observations = iter([
+        [{"id": expected[0], "machine_id": expected[1], "state": "running",
+          "started": True, "ready": False}],
+        [{"id": expected[0], "machine_id": expected[1], "state": "running",
+          "started": True, "ready": True}],
+    ])
+    monkeypatch.setattr(benchmark, "_list_instances", lambda **kwargs: next(observations))
+    monkeypatch.setattr(benchmark.time, "sleep", lambda _: None)
+    assert _ready_instance(
+        api_key="key", organization="org", project="project", group_name="qwen",
+        expected_identity=expected, timeout_seconds=60,
+    ) == expected
+
+
+def test_qwen_post_job_readiness_rejects_replacement_instance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.smoke import submit_qwen_image_21_benchmark as benchmark
+
+    monkeypatch.setattr(
+        benchmark, "_list_instances",
+        lambda **kwargs: [{"id": "replacement", "machine_id": "new-machine",
+                           "state": "running", "started": True, "ready": True}],
+    )
+    with pytest.raises(RuntimeError, match="instance or machine changed"):
+        _ready_instance(
+            api_key="key", organization="org", project="project", group_name="qwen",
+            expected_identity=("original-instance", "original-machine"),
+        )
+
+
+def test_qwen_post_job_readiness_timeout_reports_observed_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.smoke import submit_qwen_image_21_benchmark as benchmark
+
+    monkeypatch.setattr(
+        benchmark, "_list_instances",
+        lambda **kwargs: [{"id": "original-instance", "machine_id": "original-machine",
+                           "state": "running", "started": True, "ready": False}],
+    )
+    with pytest.raises(TimeoutError, match="last_observation=.*ready=False"):
+        _ready_instance(
+            api_key="key", organization="org", project="project", group_name="qwen",
+            expected_identity=("original-instance", "original-machine"),
+            timeout_seconds=0,
+        )
+
+
+def test_qwen_benchmark_validates_original_identity_before_and_after_every_job() -> None:
+    from inspect import getsource
+
+    from scripts.smoke import submit_qwen_image_21_benchmark as benchmark
+
+    source = getsource(benchmark.main)
+    assert source.count("expected_identity=(instance_id, machine_id)") == 2
