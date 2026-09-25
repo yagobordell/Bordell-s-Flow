@@ -163,8 +163,16 @@ class PostgresJobQueueClient(JobQueueClient):
             if status == "succeeded":
                 return self._snapshot(row)
             attempt_count = int(row["attempt_count"])
-            recoverable = status in {"retryable_failed", "failed"} or (
-                status == "pending" and attempt_count > 0
+            lease_expires_at = row["lease_expires_at"]
+            expired_running = (
+                status == "running"
+                and lease_expires_at is not None
+                and lease_expires_at <= datetime.now(UTC)
+            )
+            recoverable = (
+                status in {"retryable_failed", "failed"}
+                or (status == "pending" and attempt_count > 0)
+                or expired_running
             )
             if not recoverable:
                 snapshot = self._snapshot(row)
@@ -195,6 +203,11 @@ class PostgresJobQueueClient(JobQueueClient):
                   AND (
                       status IN ('retryable_failed', 'failed')
                       OR (status = 'pending' AND attempt_count > 0)
+                      OR (
+                          status = 'running'
+                          AND lease_expires_at IS NOT NULL
+                          AND lease_expires_at <= now()
+                      )
                   )
                 RETURNING job_id, request_sha256, status, attempt_count, lease_expires_at,
                           result, last_error
