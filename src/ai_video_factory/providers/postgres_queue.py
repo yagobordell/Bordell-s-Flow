@@ -101,9 +101,10 @@ class PostgresJobQueueClient(JobQueueClient):
                 )
                 row = {**row, "status": "pending", "lease_expires_at": None}
 
-            # Preserve retryable and terminal application state on idempotent resubmission.
-            # retryable_failed is already observable as PENDING and can be reclaimed by a worker;
-            # failed/cancelled must remain terminal until a deliberate new job_id is created.
+            # Preserve application state on idempotent resubmission. Workers may reclaim
+            # retryable_failed work; failed/cancelled are never reopened as inference attempts.
+            # A separate recovery-only operation may promote failed/retryable_failed to succeeded
+            # only after an already committed durable bundle has been independently verified.
 
             return self._snapshot(row)
 
