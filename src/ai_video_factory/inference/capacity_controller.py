@@ -140,6 +140,11 @@ class PostgresCapacityControllerOperationLock:
                 "SELECT pg_advisory_unlock(%s, %s)",
                 (_ADVISORY_LOCK_NAMESPACE, _ADVISORY_LOCK_KEY),
             )
+        except Exception:
+            # A lost PostgreSQL session releases session-scoped advisory locks
+            # automatically. Cleanup must therefore tolerate an already-broken
+            # connection without hiding the original authority-loss error.
+            pass
         finally:
             self._connection.close()
 
