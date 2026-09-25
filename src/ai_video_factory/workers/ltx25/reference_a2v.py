@@ -15,6 +15,7 @@ from ltx_pipelines.utils.args import ImageConditioningInput
 from ltx_pipelines.utils.constants import DISTILLED_SIGMAS, STAGE_2_DISTILLED_SIGMAS
 from ltx_pipelines.utils.denoisers import SimpleDenoiser
 from ltx_pipelines.utils.helpers import (
+    assert_resolution,
     audio_duration_seconds,
     combined_image_conditionings,
     ensure_tiling_config,
@@ -74,6 +75,7 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
             raise ValueError(
                 "reference A2V num_frames must satisfy the LTX 8k+1 temporal grid"
             )
+        assert_resolution(height=height, width=width, is_two_stage=True)
 
         images = self.image_conditioner.resolve_crf(images)
         stage_1_images = _with_strength(
