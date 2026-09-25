@@ -66,13 +66,20 @@ lip-sync baseline.
 
 `guided` is an **opt-in, non-production** comparison profile. It invokes the pinned
 upstream `A2VidPipelineTwoStage` with the full/dev transformer, 30-step Stage 1
-Euler sampling, the distilled LoRA only in Stage 2, and checkpoint-detected
-video guidance (CFG 3.0, STG 1.0, rescale 0.7, A2V modality 3.0,
-STG blocks `[28]` for the pinned checkpoint). Audio stays frozen in both stages.
+Euler sampling, the distilled LoRA at strength 0.8 only in Stage 2, and the
+video guidance values from the LTX talking-avatar blog (CFG 3.0, STG 1.0,
+rescale 0.7, A2V modality 3.0, STG blocks `[29]`). These values intentionally
+override the pinned LTX-2.5 checkpoint's STG block `[28]` only in `guided`.
+Audio stays frozen in both stages. The upstream `A2VidPipelineTwoStage` API
+exposes only the video guider and constructs its audio guider internally with
+default parameters, so the blog's audio CFG 7.0 is **not** applied or claimed.
 The existing `dev` profile deliberately keeps its old disabled-guidance contract;
 `reference` and `fast` are unchanged. For guided tests only, the worker reuses
-reference audio decoding, upward `8k+1` grid snapping and silence padding, and
-passes the explicit frame count to upstream to avoid truncating the last words.
+reference audio decoding, upward `8k+1` grid snapping and silence padding,
+then encodes the conditioning waveform as lossless FLAC before passing it to
+upstream; `monje.wav` remains a valid **input to Bordell**, not the file passed
+to the model. The worker passes an explicit frame count to avoid truncating the
+last words.
 The upstream guided stages retain image-conditioning strength 1.0; they do not
 claim to reproduce the distilled ComfyUI recipe or its resolution.
 
@@ -89,7 +96,7 @@ first download. Do not run an existing reference benchmark concurrently.
 
 Inspect the mouth against speech at bilabial consonants, vowel openings,
 pauses and phrase boundaries, and compare against the fixed `reference` baseline
-using the same avatar, WAV, prompt and seed but a fresh segment ID. A valid
+using the same avatar, input WAV, prompt and seed but a fresh segment ID. A valid
 MP4, preserved audio and green CI alone are not lipsync acceptance.
 
 ### Temporal contract
