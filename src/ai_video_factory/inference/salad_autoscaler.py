@@ -387,12 +387,16 @@ class PredictiveSaladAutoscaler:
         store: PostgresAutoscalerStore,
         clients: dict[str, SaladClient],
         bindings: dict[str, AutoscalerServiceBinding],
+        managed_group_names: set[str] | None = None,
         logger: Callable[[str], None] = print,
     ) -> None:
         self.config = config
         self.store = store
         self.clients = dict(clients)
         self.bindings = dict(bindings)
+        self.managed_group_names = (
+            frozenset(managed_group_names) if managed_group_names is not None else None
+        )
         self.logger = logger
         self._downscale_candidates: dict[str, tuple[int, int]] = {}
         self._nonconvergence_candidates: dict[str, tuple[int, int, str]] = {}
@@ -402,6 +406,7 @@ class PredictiveSaladAutoscaler:
     def reconcile(self) -> dict[str, AutoscaleResult]:
         if not self.config.enabled or not self.clients:
             return {}
+        self._assert_project_inventory_owned()
         rows_by_stage = {
             stage: self.store.list_stage_jobs(
                 binding=self.bindings[stage],
@@ -639,6 +644,23 @@ class PredictiveSaladAutoscaler:
                 f"{failed}"
             )
         return results
+
+    def _assert_project_inventory_owned(self) -> None:
+        if self.managed_group_names is None:
+            return
+        inventory_client = next(iter(self.clients.values()))
+        groups = inventory_client.list_project_container_groups()
+        remote_names = {
+            str(group.get("name") or "").strip()
+            for group in groups
+            if str(group.get("name") or "").strip()
+        }
+        unmanaged = sorted(remote_names - self.managed_group_names)
+        if unmanaged:
+            raise AutoscalerReconciliationError(
+                "Salad project contains unmanaged container groups outside "
+                f"deploy/salad/services.json: {', '.join(unmanaged)}"
+            )
 
     def _record_nonconvergence(self, stage: str, target: int, reason: str) -> int:
         previous_target, previous_count, _ = self._nonconvergence_candidates.get(
