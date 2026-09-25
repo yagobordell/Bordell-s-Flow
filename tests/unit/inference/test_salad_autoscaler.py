@@ -85,6 +85,7 @@ class FakeSaladClient:
         self.replica_updates: list[int] = []
         self.deletion_cost_updates: list[tuple[str, int]] = []
         self.start_calls = 0
+        self.stop_calls = 0
 
     def describe_container_group(self) -> dict[str, object]:
         return {
@@ -101,6 +102,10 @@ class FakeSaladClient:
         self.start_calls += 1
         self.status = "deploying"
         return True
+
+    def stop_container_group(self) -> None:
+        self.stop_calls += 1
+        self.status = "stopped"
 
     def list_container_group_instances(self) -> list[dict[str, object]]:
         return [dict(item) for item in self.instances]
@@ -192,9 +197,27 @@ def test_project_quota_is_shared_across_global_stage_demands() -> None:
     assert all(value <= demands[stage].ideal_replicas for stage, value in allocation.items())
 
 
-def test_stopped_group_scales_and_starts_when_postgres_has_demand() -> None:
+def test_stopped_group_starts_without_rewriting_matching_configured_replicas() -> None:
     stage = "ltx25"
-    client = FakeSaladClient(replicas=0, status="stopped")
+    client = FakeSaladClient(replicas=1, status="stopped")
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,)),
+        store=FakeStore(rows={stage: _pending_rows(2)}, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage)},
+        logger=lambda _message: None,
+    )
+
+    result = autoscaler.reconcile()[stage]
+
+    assert result.applied_replicas == 1
+    assert client.replica_updates == []
+    assert client.start_calls == 1
+
+
+def test_stopped_group_updates_configured_replicas_before_start() -> None:
+    stage = "ltx25"
+    client = FakeSaladClient(replicas=4, status="stopped")
     autoscaler = PredictiveSaladAutoscaler(
         config=_config((stage,)),
         store=FakeStore(rows={stage: _pending_rows(2)}, runtimes={stage: [60.0]}),
@@ -281,7 +304,7 @@ def test_downscale_is_deferred_when_running_worker_cannot_map_to_instance() -> N
     assert client.replica_updates == []
 
 
-def test_empty_global_queue_scales_replicas_to_zero() -> None:
+def test_empty_global_queue_stops_group_without_rewriting_configured_replicas() -> None:
     stage = "realesrgan"
     client = FakeSaladClient(
         replicas=1,
@@ -303,7 +326,10 @@ def test_empty_global_queue_scales_replicas_to_zero() -> None:
     assert first.reason == "drain_grace_pending"
     assert result.target_replicas == 0
     assert result.applied_replicas == 0
-    assert client.replica_updates == [0]
+    assert client.replica_updates == []
+    assert client.stop_calls == 1
+    assert client.replicas == 1
+    assert client.status == "stopped"
 
 
 def test_stage_specific_cold_start_changes_capacity_estimate() -> None:
