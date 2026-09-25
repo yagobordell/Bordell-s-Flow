@@ -100,7 +100,7 @@ class PostgresCapacityControllerOperationLock:
         finally:
             self._connection.close()
 
-    def __enter__(self) -> "PostgresCapacityControllerOperationLock":
+    def __enter__(self) -> PostgresCapacityControllerOperationLock:
         return self
 
     def __exit__(self, _exc_type, _exc, _traceback) -> None:
