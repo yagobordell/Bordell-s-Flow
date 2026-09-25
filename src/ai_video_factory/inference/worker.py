@@ -151,6 +151,7 @@ class InferenceWorker:
             owner=self.worker_id,
             lease_seconds=self.lease_seconds,
             transport_job_id=transport_job_id,
+            instance_id=self.salad_instance_id,
         )
         if claim.decision is ClaimDecision.REPLAY:
             if claim.result is None:
@@ -170,6 +171,7 @@ class InferenceWorker:
             JobConflictError,
             InputIntegrityError,
             NonRetryableTaskError,
+            OutputConflictError,
             UnsupportedTaskError,
         ) as exc:
             self._mark_failed(
@@ -210,6 +212,7 @@ class InferenceWorker:
         request_sha256: str,
         attempt_count: int,
     ) -> InferenceJobResponse:
+        authoritative_output: OutputArtifact | None = None
         existing = self.storage.stat(request.output.key)
         if existing is not None:
             output = self._reconcile_existing(request, request_sha256, existing)
@@ -226,6 +229,7 @@ class InferenceWorker:
                 )
                 if not missing_sidecar:
                     raise
+                authoritative_output = output
             else:
                 return InferenceJobResponse(
                     job_id=request.job_id,
@@ -259,6 +263,28 @@ class InferenceWorker:
                     raise ValueError("task output content type does not match the job contract")
 
                 digest = sha256_file(artifact.path)
+                if (
+                    authoritative_output is not None
+                    and digest != authoritative_output.sha256
+                ):
+                    raise OutputConflictError(
+                        "cannot repair missing sidecars because regenerated primary "
+                        f"differs from the authoritative output: {request.output.key}"
+                    )
+
+                # Publish sidecars before exposing a new primary. This prevents a
+                # successful primary write followed by a sidecar failure from leaving
+                # an apparently complete but internally incomplete artifact bundle.
+                heartbeat.renew_now()
+                self._upload_sidecars(
+                    request,
+                    request_sha256,
+                    artifact.sidecars,
+                    work_dir,
+                    primary_sha256=digest,
+                )
+                heartbeat.ensure_owned()
+
                 heartbeat.renew_now()
                 publication = self.storage.create_if_absent(
                     artifact.path,
@@ -283,16 +309,11 @@ class InferenceWorker:
                         request_sha256,
                         publication.stored,
                     )
-
-                heartbeat.renew_now()
-                self._upload_sidecars(
-                    request,
-                    request_sha256,
-                    artifact.sidecars,
-                    work_dir,
-                    primary_sha256=output.sha256,
-                )
-                heartbeat.ensure_owned()
+                    if output.sha256 != digest:
+                        raise OutputConflictError(
+                            "authoritative primary differs from the sidecar-linked "
+                            f"generation: {request.output.key}"
+                        )
 
         return InferenceJobResponse(
             job_id=request.job_id,
@@ -377,10 +398,7 @@ class InferenceWorker:
                 or metadata.get("request-sha256") != request_sha256
                 or metadata.get("sidecar-name") != name
                 or not metadata.get("artifact-sha256")
-                or (
-                    metadata.get("primary-artifact-sha256") is not None
-                    and metadata.get("primary-artifact-sha256") != primary_sha256
-                )
+                or metadata.get("primary-artifact-sha256") != primary_sha256
                 or stored.content_type != contract.content_type
                 or stored.size_bytes < 1
             ):
@@ -407,10 +425,7 @@ class InferenceWorker:
                 or metadata.get("request-sha256") != request_sha256
                 or metadata.get("sidecar-name") != name
                 or not metadata.get("artifact-sha256")
-                or (
-                    metadata.get("primary-artifact-sha256") is not None
-                    and metadata.get("primary-artifact-sha256") != primary_sha256
-                )
+                or metadata.get("primary-artifact-sha256") != primary_sha256
                 or stored.content_type != contract.content_type
                 or stored.size_bytes < 1
             ):
