@@ -39,3 +39,10 @@ def test_a2v_smoke_defaults_to_reference_and_fast_is_explicit(
         ["submit_ltx25_a2v_smoke.py", "--audio", "speech.wav", "--profile", "fast"],
     )
     assert parse_args().profile == "fast"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["submit_ltx25_a2v_smoke.py", "--audio", "speech.wav", "--profile", "guided"],
+    )
+    assert parse_args().profile == "guided"
