@@ -27,6 +27,17 @@ class QueueJobNotFoundError(RuntimeError):
 class QueueRecoveryNotApplicableError(RuntimeError):
     """A verified bundle cannot rewrite the queue's current protected state."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: QueueJobStatus | None = None,
+        raw_status: str | None = None,
+    ) -> None:
+        self.status = status
+        self.raw_status = raw_status
+        super().__init__(message)
+
 
 @dataclass(frozen=True, slots=True)
 class QueueJobSnapshot:
