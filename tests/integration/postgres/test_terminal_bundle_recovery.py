@@ -29,6 +29,28 @@ def _postgres_dsn() -> str:
     return dsn
 
 
+class CacheAppearsOnTimeoutStorage(LocalObjectStorage):
+    def __init__(self, root: Path, *, on_reveal) -> None:
+        super().__init__(root)
+        self._on_reveal = on_reveal
+        self._armed = False
+        self._stat_calls = 0
+
+    def arm(self) -> None:
+        self._armed = True
+        self._stat_calls = 0
+
+    def stat(self, key: str):
+        if not self._armed:
+            return super().stat(key)
+        self._stat_calls += 1
+        if self._stat_calls == 1:
+            return None
+        if self._stat_calls == 2:
+            self._on_reveal()
+        return super().stat(key)
+
+
 @pytest.mark.parametrize("terminal_status", ["pending", "retryable_failed", "failed"])
 def test_committed_bundle_recovers_non_active_postgres_without_new_attempt(
     tmp_path: Path,
@@ -353,6 +375,87 @@ def test_executor_cache_hit_respects_cancelled_postgres_state(tmp_path: Path) ->
                 (request.job_id,),
             ).fetchone()
         assert row == ("cancelled", 1)
+    finally:
+        queue.close()
+        with psycopg.connect(dsn, autocommit=True) as cleanup:
+            cleanup.execute("DELETE FROM gpu.jobs WHERE job_id = %s", (request.job_id,))
+
+
+def test_timeout_cache_replay_respects_cancellation_that_happens_while_waiting(
+    tmp_path: Path,
+) -> None:
+    dsn = _postgres_dsn()
+    job_id = "cancelled-during-timeout-reconcile"
+    request = InferenceJobRequest(
+        job_id=job_id,
+        task="test.cancelled_during_timeout",
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/output.bin",
+            content_type="application/octet-stream",
+        ),
+    )
+
+    def cancel_job() -> None:
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            connection.execute(
+                """
+                UPDATE gpu.jobs
+                SET status = 'cancelled',
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    updated_at = now()
+                WHERE job_id = %s
+                """,
+                (request.job_id,),
+            )
+
+    storage = CacheAppearsOnTimeoutStorage(
+        tmp_path / "cancel-during-timeout" / "objects",
+        on_reveal=cancel_job,
+    )
+    work_dir = tmp_path / "cancel-during-timeout" / "work"
+    work_dir.mkdir(parents=True)
+    primary = work_dir / "output.bin"
+    primary.write_bytes(b"completed-before-cancellation\n")
+    committed = stage_bundle(
+        storage,
+        request,
+        request.fingerprint(),
+        primary_path=primary,
+        primary_content_type=request.output.content_type,
+        sidecars={},
+        work_dir=work_dir,
+    )
+    publish_committed_bundle(
+        storage,
+        request,
+        request.fingerprint(),
+        committed,
+        work_dir,
+        local_sources={"primary": primary},
+    )
+
+    queue = PostgresJobQueueClient(dsn=dsn, max_connections=2)
+    try:
+        storage.arm()
+        executor = InferenceJobExecutor(
+            queue=queue,
+            storage=storage,
+            poll_seconds=0.01,
+            timeout_seconds=0.01,
+            pending_timeout_seconds=0.01,
+        )
+
+        with pytest.raises(InferenceTransportFailedError) as captured:
+            executor.execute(request, metadata={"phase": "cancel-during-timeout"})
+
+        assert captured.value.status is QueueJobStatus.CANCELLED
+        with psycopg.connect(dsn) as connection:
+            row = connection.execute(
+                "SELECT status FROM gpu.jobs WHERE job_id = %s",
+                (request.job_id,),
+            ).fetchone()
+        assert row == ("cancelled",)
     finally:
         queue.close()
         with psycopg.connect(dsn, autocommit=True) as cleanup:
