@@ -89,6 +89,49 @@ class PostgresCapacityControllerOperationLock:
             self._connection.close()
             raise
 
+    def assert_held(self) -> None:
+        if self._connection.closed:
+            raise CapacityControllerLeadershipError(
+                "manual Salad capacity operation lost its PostgreSQL session"
+            )
+        try:
+            row = self._connection.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_locks
+                    WHERE locktype = 'advisory'
+                      AND pid = pg_backend_pid()
+                      AND classid = %s::oid
+                      AND objid = %s::oid
+                      AND objsubid = 2
+                      AND granted
+                )
+                """,
+                (_ADVISORY_LOCK_NAMESPACE, _ADVISORY_LOCK_KEY),
+            ).fetchone()
+        except Exception as error:
+            raise CapacityControllerLeadershipError(
+                "manual Salad capacity operation lost its PostgreSQL advisory-lock session"
+            ) from error
+        if row is None or not bool(row[0]):
+            raise CapacityControllerLeadershipError(
+                "manual Salad capacity operation no longer owns the PostgreSQL advisory lock"
+            )
+
+    @property
+    def backend_pid(self) -> int:
+        if self._connection.closed:
+            raise CapacityControllerLeadershipError(
+                "manual Salad capacity operation PostgreSQL session is closed"
+            )
+        row = self._connection.execute("SELECT pg_backend_pid()").fetchone()
+        if row is None:
+            raise CapacityControllerLeadershipError(
+                "manual Salad capacity operation could not read its PostgreSQL backend pid"
+            )
+        return int(row[0])
+
     def close(self) -> None:
         if self._connection.closed:
             return
@@ -97,6 +140,11 @@ class PostgresCapacityControllerOperationLock:
                 "SELECT pg_advisory_unlock(%s, %s)",
                 (_ADVISORY_LOCK_NAMESPACE, _ADVISORY_LOCK_KEY),
             )
+        except Exception:
+            # A lost PostgreSQL session releases session-scoped advisory locks
+            # automatically. Cleanup must therefore tolerate an already-broken
+            # connection without hiding the original authority-loss error.
+            pass
         finally:
             self._connection.close()
 

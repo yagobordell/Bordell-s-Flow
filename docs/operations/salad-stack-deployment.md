@@ -66,9 +66,14 @@ matches the request.
 There is no Salad Job Queue autoscaling. In production, the singleton Postgres-elected Capacity
 Controller owns replica decisions. Explicit `Start`, `Stop` and `Prepare` acquire the same
 session-scoped PostgreSQL advisory lock used by controller leadership and hold it for the full
-mutation. A live controller therefore blocks manual capacity changes across hosts, and a manual
-mutation blocks controller startup until it completes. `-AllowControllerOverride` intentionally
-bypasses that coordination and is reserved for deliberate operator intervention.
+mutation. The helper continuously verifies that its PostgreSQL session still owns that lock, while
+the PowerShell manager performs a synchronous authority check before and after every Salad
+`POST`, `PATCH` or `DELETE` and throughout long convergence waits. If the helper exits, the
+database session is lost, or lock ownership disappears, the manual operation fails closed and emits
+no further Salad mutations. A live controller therefore blocks manual capacity changes across
+hosts, and a manual mutation blocks controller startup until it completes.
+`-AllowControllerOverride` intentionally bypasses that coordination and is reserved for deliberate
+operator intervention.
 
 ## Stop
 

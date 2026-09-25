@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -107,13 +108,100 @@ def test_manual_capacity_mutations_share_controller_advisory_lock() -> None:
     assert "-AllowControllerOverride" in script
     assert "RedirectStandardInput = $true" in script
     assert "LOCK_ACQUIRED" in script
+    assert "LOCK_OK" in script
+    assert "Assert-ManualCapacityMutationAuthority" in script
 
     helper = Path("scripts/salad/hold_capacity_controller_lock.py").read_text(
         encoding="utf-8"
     )
     assert "PostgresCapacityControllerOperationLock" in helper
     assert "resolve_capacity_controller_dsn" in helper
-    assert "sys.stdin.readline()" in helper
+    assert "lock.assert_held()" in helper
+    assert 'command == "check"' in helper
+    assert "LOCK_LOST" in helper
+
+
+def test_killed_capacity_lock_helper_blocks_subsequent_salad_write() -> None:
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell is unavailable")
+
+    probe = r"""
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+$Tokens = $null
+$Errors = $null
+$Ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    "scripts/salad/manage_salad_worker.ps1", [ref]$Tokens, [ref]$Errors
+)
+if ($Errors) { throw "Worker manager has PowerShell syntax errors." }
+foreach ($Name in @(
+    "Resolve-CapacityLockPython",
+    "Enter-ManualCapacityMutationLock",
+    "Assert-ManualCapacityMutationAuthority",
+    "Invoke-SaladRequest"
+)) {
+    $Function = $Ast.Find({
+        param($Node)
+        $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $Node.Name -eq $Name
+    }, $true)
+    if ($null -eq $Function) { throw "Missing function $Name." }
+    . ([scriptblock]::Create($Function.Extent.Text))
+}
+$RepoRoot = (Get-Location).Path
+$Action = "Stop"
+$AllowControllerOverride = $false
+$Service = "ltx25"
+$script:CapacityMutationLock = Enter-ManualCapacityMutationLock
+try {
+    $script:CapacityMutationLock.Kill()
+    $script:CapacityMutationLock.WaitForExit()
+    $script:WriteCount = 0
+    function Invoke-RestMethod {
+        param([Parameter(ValueFromRemainingArguments=$true)]$Rest)
+        $script:WriteCount += 1
+        return @{}
+    }
+    try {
+        Invoke-SaladRequest `
+            -Headers @{} `
+            -Uri "https://example.invalid/write" `
+            -Operation "test write" `
+            -Method "Post"
+        throw "Mutation unexpectedly proceeded after lock-helper loss."
+    }
+    catch {
+        if ($_.Exception.Message -notmatch "lost Capacity Controller ownership") {
+            throw
+        }
+    }
+    if ($script:WriteCount -ne 0) {
+        throw "Salad write executed after lock-helper loss."
+    }
+    Write-Output "PASS: helper loss blocks Salad writes"
+}
+finally {
+    if ($null -ne $script:CapacityMutationLock) {
+        $script:CapacityMutationLock.Dispose()
+    }
+}
+"""
+    environment = dict(os.environ)
+    environment["SALAD_CAPACITY_CONTROLLER_POSTGRES_DSN"] = environment[
+        "TEST_POSTGRES_DSN"
+    ]
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-NonInteractive", "-Command", probe],
+        cwd=Path.cwd(),
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + "\n" + result.stderr
+    assert "PASS: helper loss blocks Salad writes" in result.stdout
 
 
 def test_prepare_reads_priority_from_get_container_group_response() -> None:

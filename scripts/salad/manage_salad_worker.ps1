@@ -128,7 +128,13 @@ function Enter-ManualCapacityMutationLock {
         throw "Could not start Capacity Controller lock helper."
     }
 
-    $Signal = $Process.StandardOutput.ReadLine()
+    $SignalTask = $Process.StandardOutput.ReadLineAsync()
+    if (-not $SignalTask.Wait(10000)) {
+        try { $Process.Kill() } catch {}
+        $Process.WaitForExit()
+        throw "Capacity Controller lock helper did not confirm ownership within 10 seconds."
+    }
+    $Signal = $SignalTask.Result
     if ($Signal -ne "LOCK_ACQUIRED") {
         $ErrorText = $Process.StandardError.ReadToEnd().Trim()
         $Process.WaitForExit()
@@ -146,6 +152,80 @@ function Enter-ManualCapacityMutationLock {
     }
 
     return $Process
+}
+
+function Assert-ManualCapacityMutationAuthority {
+    if ($Action -notin @("Prepare", "Start", "Stop") -or $AllowControllerOverride) {
+        return
+    }
+    $Process = $script:CapacityMutationLock
+    if ($null -eq $Process) {
+        throw "Manual Salad action '$Action' has no Capacity Controller ownership lock."
+    }
+    try {
+        if ($Process.HasExited) {
+            $ErrorText = $Process.StandardError.ReadToEnd().Trim()
+            $Detail = if ([string]::IsNullOrWhiteSpace($ErrorText)) {
+                "capacity lock helper exited unexpectedly"
+            }
+            else {
+                $ErrorText
+            }
+            throw "Manual Salad action '$Action' lost Capacity Controller ownership: $Detail"
+        }
+        $Process.StandardInput.WriteLine("check")
+        $Process.StandardInput.Flush()
+        $SignalTask = $Process.StandardOutput.ReadLineAsync()
+        if (-not $SignalTask.Wait(5000)) {
+            throw "capacity lock helper did not confirm ownership within 5 seconds"
+        }
+        $Signal = $SignalTask.Result
+        if ($Signal -ne "LOCK_OK") {
+            $ErrorText = if ($Process.HasExited) {
+                $Process.StandardError.ReadToEnd().Trim()
+            }
+            else {
+                ""
+            }
+            $Detail = if (-not [string]::IsNullOrWhiteSpace($ErrorText)) {
+                $ErrorText
+            }
+            else {
+                "capacity lock helper returned '$Signal'"
+            }
+            throw "Manual Salad action '$Action' lost Capacity Controller ownership: $Detail"
+        }
+    }
+    catch {
+        if ($_.Exception.Message -match "lost Capacity Controller ownership") {
+            throw
+        }
+        throw (
+            "Manual Salad action '$Action' lost Capacity Controller ownership: " +
+            $_.Exception.Message
+        )
+    }
+}
+
+function Wait-ManualCapacityMutationInterval {
+    param([Parameter(Mandatory)][double]$Seconds)
+    if ($Seconds -le 0) {
+        Assert-ManualCapacityMutationAuthority
+        return
+    }
+    $Deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    do {
+        Assert-ManualCapacityMutationAuthority
+        $RemainingMilliseconds = [Math]::Max(
+            0,
+            [int]([DateTime]::UtcNow.Subtract($Deadline).TotalMilliseconds * -1)
+        )
+        if ($RemainingMilliseconds -le 0) {
+            break
+        }
+        Start-Sleep -Milliseconds ([Math]::Min(1000, $RemainingMilliseconds))
+    } while ([DateTime]::UtcNow -lt $Deadline)
+    Assert-ManualCapacityMutationAuthority
 }
 
 function Exit-ManualCapacityMutationLock {
@@ -236,18 +316,29 @@ function Invoke-SaladRequest {
         [string]$ContentType = "",
         [object]$Body = $null
     )
+    $Mutating = $Method -in @("Post", "Patch", "Delete")
     for ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt += 1) {
         try {
+            if ($Mutating) {
+                Assert-ManualCapacityMutationAuthority
+            }
             $Request = @{ Method = $Method; Uri = $Uri; Headers = $Headers; TimeoutSec = $TimeoutSec }
             if (-not [string]::IsNullOrWhiteSpace($ContentType)) { $Request["ContentType"] = $ContentType }
             if ($null -ne $Body) { $Request["Body"] = $Body }
-            return Invoke-RestMethod @Request
+            $Response = Invoke-RestMethod @Request
+            if ($Mutating) {
+                Assert-ManualCapacityMutationAuthority
+            }
+            return $Response
         }
         catch {
+            if ($Mutating) {
+                Assert-ManualCapacityMutationAuthority
+            }
             if (-not (Test-TransientSaladFailure -ErrorRecord $_) -or $Attempt -ge $MaxAttempts) { throw }
             $Delay = [Math]::Min(15, 2 * $Attempt)
             Write-Warning "$Service Salad '$Operation' transient failure ($Attempt/$MaxAttempts); retrying in $Delay seconds."
-            Start-Sleep -Seconds $Delay
+            Wait-ManualCapacityMutationInterval -Seconds $Delay
         }
     }
 }
@@ -301,7 +392,7 @@ function Wait-ForGroupSettled {
     $Deadline = (Get-Date).AddMinutes($TimeoutMinutes)
     $VisibilityDeadline = (Get-Date).AddMinutes(5)
     do {
-        Start-Sleep -Seconds 10
+        Wait-ManualCapacityMutationInterval -Seconds 10
         $Group = if ($AllowInitialNotFound) {
             Try-Get-Group -Headers $Headers
         }
@@ -325,7 +416,7 @@ function Wait-ForRunningCapacity {
     param([Parameter(Mandatory)][hashtable]$Headers, [Parameter(Mandatory)][int]$ExpectedReplicas)
     $Deadline = (Get-Date).AddMinutes(30)
     do {
-        Start-Sleep -Seconds 10
+        Wait-ManualCapacityMutationInterval -Seconds 10
         $Group = Get-Group -Headers $Headers
         if ((Get-GroupStatus -Group $Group) -eq "running" -and -not [bool]$Group.pending_change -and [int]$Group.replicas -eq $ExpectedReplicas) {
             return $Group
@@ -339,7 +430,7 @@ function Wait-ForStoppedGroup {
     $Deadline = (Get-Date).AddMinutes(3)
     $StableReads = 0
     do {
-        Start-Sleep -Seconds 5
+        Wait-ManualCapacityMutationInterval -Seconds 5
         $Group = Get-Group -Headers $Headers
         if ((Get-GroupStatus -Group $Group) -eq "stopped" -and -not [bool]$Group.pending_change) {
             $StableReads += 1
@@ -421,7 +512,7 @@ function Remove-StoppedContainerGroup {
     Invoke-SaladRequest -Headers $Headers -Method "Delete" -Uri "$ContainersBase/$GroupName" -Operation "delete legacy container group" -TimeoutSec 60 | Out-Null
     $Deadline = (Get-Date).AddMinutes(5)
     do {
-        Start-Sleep -Seconds 5
+        Wait-ManualCapacityMutationInterval -Seconds 5
         if ($null -eq (Try-Get-Group -Headers $Headers)) { return }
     } while ((Get-Date) -lt $Deadline)
     throw "'$GroupName' was not deleted within 5 minutes."
@@ -454,7 +545,7 @@ function New-ContainerGroup {
                 $Details = [string]$_.ErrorDetails.Message
             }
             if ((Get-HttpStatusCode -ErrorRecord $_) -ne 400 -or $Details -notmatch 'name_conflict' -or (Get-Date) -ge $Deadline) { throw }
-            Start-Sleep -Seconds 10
+            Wait-ManualCapacityMutationInterval -Seconds 10
         }
     } while ((Get-Date) -lt $Deadline)
 }
@@ -497,9 +588,10 @@ Assert-ServiceDefinition
 Set-Location $RepoRoot
 if ($Recreate -and $Action -ne "Prepare") { throw "-Recreate is only valid with Prepare." }
 
-$CapacityMutationLock = $null
+$script:CapacityMutationLock = $null
 try {
-    $CapacityMutationLock = Enter-ManualCapacityMutationLock
+    $script:CapacityMutationLock = Enter-ManualCapacityMutationLock
+    Assert-ManualCapacityMutationAuthority
 
     if ($Action -eq "Validate") {
         Write-Host ("VALID service={0} group={1} transport=postgres capacity={2}-{3}" -f $Service, $GroupName, $StartReplicas, $MaxReplicas) -ForegroundColor Green
@@ -568,6 +660,7 @@ try {
                 if ($LASTEXITCODE -ne 0) { throw "Docker is not running." }
                 & docker buildx build --platform linux/amd64 --file $Dockerfile --tag $Image --push .
                 if ($LASTEXITCODE -ne 0) { throw "Docker build or push failed." }
+                Assert-ManualCapacityMutationAuthority
             }
             $ResolvedImage = Resolve-PinnedImage -MutableImage $Image
         }
@@ -591,5 +684,5 @@ try {
 }
 }
 finally {
-    Exit-ManualCapacityMutationLock -Process $CapacityMutationLock
+    Exit-ManualCapacityMutationLock -Process $script:CapacityMutationLock
 }
