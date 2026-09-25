@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import queue
 import sys
 import threading
 
@@ -22,11 +23,12 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _wait_for_release(release_requested: threading.Event) -> None:
+def _read_commands(commands: queue.Queue[str]) -> None:
     try:
-        sys.stdin.readline()
+        for line in sys.stdin:
+            commands.put(line.strip().lower())
     finally:
-        release_requested.set()
+        commands.put("release")
 
 
 def main() -> int:
@@ -48,18 +50,25 @@ def main() -> int:
         print(f"{type(error).__name__}: {error}", file=sys.stderr, flush=True)
         return 2
 
-    release_requested = threading.Event()
-    release_thread = threading.Thread(
-        target=_wait_for_release,
-        args=(release_requested,),
-        daemon=True,
-    )
-    release_thread.start()
+    commands: queue.Queue[str] = queue.Queue()
+    reader = threading.Thread(target=_read_commands, args=(commands,), daemon=True)
+    reader.start()
 
     try:
         lock.assert_held()
         print("LOCK_ACQUIRED", flush=True)
-        while not release_requested.wait(timeout=args.poll_seconds):
+        while True:
+            try:
+                command = commands.get(timeout=args.poll_seconds)
+            except queue.Empty:
+                command = "heartbeat"
+
+            if command == "release":
+                return 0
+            if command not in {"check", "heartbeat", ""}:
+                print(f"LOCK_PROTOCOL_ERROR unsupported command: {command}", file=sys.stderr, flush=True)
+                return 5
+
             try:
                 lock.assert_held()
             except Exception as error:
@@ -69,7 +78,9 @@ def main() -> int:
                     flush=True,
                 )
                 return 4
-        return 0
+
+            if command == "check":
+                print("LOCK_OK", flush=True)
     finally:
         lock.close()
 
