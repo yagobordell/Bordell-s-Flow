@@ -75,6 +75,14 @@ class JobRepository(Protocol):
         instance_id: str | None = None,
     ) -> JobClaim: ...
 
+    def reconcile_recovered_success(
+        self,
+        request: InferenceJobRequest,
+        request_sha256: str,
+        *,
+        result: Mapping[str, Any],
+    ) -> JobClaim | None: ...
+
     def renew_lease(
         self,
         job_id: str,
