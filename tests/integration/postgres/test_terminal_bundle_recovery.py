@@ -12,7 +12,10 @@ from ai_video_factory.inference.bundle_publication import (
     stage_bundle,
 )
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectOutput
+from ai_video_factory.inference.repository import PostgresJobRepository
 from ai_video_factory.inference.storage import LocalObjectStorage, sha256_file
+from ai_video_factory.inference.tasks import TaskRunnerRegistry
+from ai_video_factory.inference.worker import InferenceWorker
 from ai_video_factory.providers.inference_jobs import (
     InferenceJobExecutor,
     InferenceTransportFailedError,
@@ -239,6 +242,108 @@ def test_expired_running_lease_recovers_committed_bundle_without_new_attempt(
         assert row[3] is None
         assert row[4] is None
     finally:
+        queue.close()
+        with psycopg.connect(dsn, autocommit=True) as cleanup:
+            cleanup.execute("DELETE FROM gpu.jobs WHERE job_id = %s", (request.job_id,))
+
+
+def test_worker_recovers_expired_job_bundle_before_consuming_new_attempt(
+    tmp_path: Path,
+) -> None:
+    dsn = _postgres_dsn()
+    job_id = "worker-preclaim-bundle-recovery"
+    request = InferenceJobRequest(
+        job_id=job_id,
+        task="test.worker_preclaim_recovery",
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/output.bin",
+            content_type="application/octet-stream",
+        ),
+        max_attempts=5,
+    )
+    storage = LocalObjectStorage(tmp_path / "worker-preclaim" / "objects")
+    work_dir = tmp_path / "worker-preclaim" / "work"
+    work_dir.mkdir(parents=True)
+    primary = work_dir / "output.bin"
+    primary.write_bytes(b"worker-must-not-regenerate\n")
+
+    stage_bundle(
+        storage,
+        request,
+        request.fingerprint(),
+        primary_path=primary,
+        primary_content_type=request.output.content_type,
+        sidecars={},
+        work_dir=work_dir,
+    )
+
+    queue = PostgresJobQueueClient(dsn=dsn, max_connections=2)
+    repository = PostgresJobRepository(dsn, max_connections=2)
+
+    class MustNotRun:
+        task_name = "test.worker_preclaim_recovery"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, request, inputs, work_dir):
+            del request, inputs, work_dir
+            self.calls += 1
+            raise AssertionError("recovered bundle must bypass model execution")
+
+    runner = MustNotRun()
+    try:
+        queue.submit(request, metadata={"test": "worker-preclaim-recovery"})
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            connection.execute(
+                """
+                UPDATE gpu.jobs
+                SET status = 'running',
+                    attempt_count = 3,
+                    lease_owner = 'dead-worker',
+                    lease_expires_at = now() - interval '1 second',
+                    result = NULL,
+                    last_error = NULL,
+                    updated_at = now()
+                WHERE job_id = %s
+                """,
+                (request.job_id,),
+            )
+
+        worker = InferenceWorker(
+            storage=storage,
+            repository=repository,
+            runners=TaskRunnerRegistry([runner]),
+            worker_id="recovery-worker",
+            temp_dir=tmp_path / "worker-preclaim" / "temp",
+            lease_seconds=60,
+            heartbeat_seconds=10,
+        )
+
+        response = worker.process(request)
+
+        assert response.replayed is True
+        assert response.attempt_count == 3
+        assert response.output.sha256 == sha256_file(primary)
+        assert runner.calls == 0
+
+        with psycopg.connect(dsn) as connection:
+            row = connection.execute(
+                """
+                SELECT status, attempt_count, result, lease_owner, lease_expires_at
+                FROM gpu.jobs
+                WHERE job_id = %s
+                """,
+                (request.job_id,),
+            ).fetchone()
+        assert row is not None
+        assert row[0] == "succeeded"
+        assert row[1] == 3
+        assert row[2] is not None
+        assert row[3] is None
+        assert row[4] is None
+    finally:
+        repository.close()
         queue.close()
         with psycopg.connect(dsn, autocommit=True) as cleanup:
             cleanup.execute("DELETE FROM gpu.jobs WHERE job_id = %s", (request.job_id,))
