@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import partial
+import math
 
 import torch
 
@@ -251,9 +252,12 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
             dtype=vae_dtype,
         )
 
+        # Conditioning was padded to cover the snapped grid before the
+        # Audio VAE. Ceil here as well so floating-point representation cannot
+        # drop the last original speech sample at mux time.
         video_samples = max(
             1,
-            int(video_duration * decoded_audio.sampling_rate),
+            math.ceil(video_duration * decoded_audio.sampling_rate),
         )
         output_audio = Audio(
             waveform=decoded_audio.waveform.squeeze(0)[..., :video_samples],
