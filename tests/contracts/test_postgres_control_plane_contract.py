@@ -48,7 +48,9 @@ def test_worker_manager_is_compute_only_and_migrates_legacy_groups() -> None:
     assert "Ensure-Queue" not in script
     assert "$QueuesBase" not in script
     assert "set explicit replica capacity" in script
-    assert "stable stopped/replicas=0" in script
+    assert "Wait-ForStoppedGroup" in script
+    assert "stable stopped/pending_change=false" in script
+    assert "set replicas to zero" not in script
 
 
 def test_worker_entrypoint_has_no_salad_queue_sidecar() -> None:
