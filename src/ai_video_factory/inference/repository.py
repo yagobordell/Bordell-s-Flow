@@ -107,6 +107,60 @@ class InMemoryJobRepository:
             row.last_error = None
             return JobClaim(ClaimDecision.START, row.attempt_count)
 
+    def reconcile_recovered_success(
+        self,
+        request: InferenceJobRequest,
+        request_sha256: str,
+        *,
+        result: Mapping[str, Any],
+    ) -> JobClaim | None:
+        now = datetime.now(UTC)
+        with self._lock:
+            row = self._jobs.get(request.job_id)
+            if row is None:
+                return None
+            if row.request_sha256 != request_sha256:
+                raise JobConflictError(
+                    f"job_id {request.job_id!r} is already bound to a different request"
+                )
+            if row.status == "succeeded":
+                return JobClaim(
+                    ClaimDecision.REPLAY,
+                    row.attempt_count,
+                    deepcopy(row.result),
+                )
+            if row.status == "cancelled":
+                raise NonRetryableTaskError(f"job {request.job_id} was cancelled")
+            if (
+                row.status == "running"
+                and row.lease_expires_at is not None
+                and row.lease_expires_at > now
+            ):
+                return JobClaim(ClaimDecision.BUSY, row.attempt_count)
+
+            recoverable = row.attempt_count > 0 and row.status in {
+                "pending",
+                "retryable_failed",
+                "failed",
+                "running",
+            }
+            if not recoverable:
+                return None
+
+            recovered = deepcopy(dict(result))
+            recovered["attempt_count"] = row.attempt_count
+            recovered["replayed"] = True
+            row.status = "succeeded"
+            row.result = recovered
+            row.last_error = None
+            row.lease_owner = None
+            row.lease_expires_at = None
+            return JobClaim(
+                ClaimDecision.REPLAY,
+                row.attempt_count,
+                deepcopy(recovered),
+            )
+
     def renew_lease(
         self,
         job_id: str,
@@ -350,6 +404,93 @@ class PostgresJobRepository:
         if exhausted_detail is not None:
             raise NonRetryableTaskError(exhausted_detail)
         raise RuntimeError(f"job claim ended without a decision: {request.job_id}")
+
+    def reconcile_recovered_success(
+        self,
+        request: InferenceJobRequest,
+        request_sha256: str,
+        *,
+        result: Mapping[str, Any],
+    ) -> JobClaim | None:
+        from psycopg.types.json import Jsonb
+
+        now = datetime.now(UTC)
+        with self._pool.connection() as connection, connection.transaction():
+            row = connection.execute(
+                """
+                SELECT request_sha256, status, attempt_count, lease_expires_at,
+                       result, last_error
+                FROM gpu.jobs
+                WHERE job_id = %s
+                FOR UPDATE
+                """,
+                (request.job_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            if row["request_sha256"] != request_sha256:
+                raise JobConflictError(
+                    f"job_id {request.job_id!r} is already bound to a different request"
+                )
+
+            status = str(row["status"])
+            attempt_count = int(row["attempt_count"])
+            if status == "succeeded":
+                return JobClaim(
+                    ClaimDecision.REPLAY,
+                    attempt_count,
+                    deepcopy(row["result"]),
+                )
+            if status == "cancelled":
+                raise NonRetryableTaskError(f"job {request.job_id} was cancelled")
+            if (
+                status == "running"
+                and row["lease_expires_at"] is not None
+                and row["lease_expires_at"] > now
+            ):
+                return JobClaim(ClaimDecision.BUSY, attempt_count)
+
+            recoverable = attempt_count > 0 and status in {
+                "pending",
+                "retryable_failed",
+                "failed",
+                "running",
+            }
+            if not recoverable:
+                return None
+
+            recovered = deepcopy(dict(result))
+            recovered["attempt_count"] = attempt_count
+            recovered["replayed"] = True
+            updated = connection.execute(
+                """
+                UPDATE gpu.jobs
+                SET status = 'succeeded',
+                    result = %s,
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    last_error = NULL,
+                    finished_at = now(),
+                    updated_at = now()
+                WHERE job_id = %s
+                  AND request_sha256 = %s
+                RETURNING result
+                """,
+                (
+                    Jsonb(recovered),
+                    request.job_id,
+                    request_sha256,
+                ),
+            ).fetchone()
+            if updated is None:  # pragma: no cover - locked row invariant
+                raise RuntimeError(
+                    f"job {request.job_id} changed during recovered result reconciliation"
+                )
+            return JobClaim(
+                ClaimDecision.REPLAY,
+                attempt_count,
+                deepcopy(updated["result"]),
+            )
 
     def renew_lease(
         self,

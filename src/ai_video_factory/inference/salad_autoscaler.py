@@ -596,6 +596,18 @@ class PredictiveSaladAutoscaler:
                         configured = max(int(groups[stage].get("replicas") or 0), 0)
                         if configured != desired:
                             self.clients[stage].set_container_group_replicas(desired)
+                            current[stage] = desired
+                            available -= increase
+                            results[stage] = AutoscaleResult(
+                                stage=stage,
+                                current_replicas=before,
+                                target_replicas=target,
+                                applied_replicas=before,
+                                changed=False,
+                                demand=demands[stage],
+                                reason="resize_before_start_pending_confirmation",
+                            )
+                            continue
                         self.clients[stage].start_container_group_if_needed(
                             warning_logger=lambda _message: None,
                         )

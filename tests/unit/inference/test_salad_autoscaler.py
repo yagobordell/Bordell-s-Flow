@@ -260,7 +260,7 @@ def test_stopped_group_starts_without_rewriting_matching_configured_replicas() -
     assert client.start_calls == 1
 
 
-def test_stopped_group_updates_configured_replicas_before_start() -> None:
+def test_stopped_group_settles_replica_patch_before_start() -> None:
     stage = "ltx25"
     client = FakeSaladClient(replicas=4, status="stopped")
     autoscaler = PredictiveSaladAutoscaler(
@@ -271,9 +271,16 @@ def test_stopped_group_updates_configured_replicas_before_start() -> None:
         logger=lambda _message: None,
     )
 
-    result = autoscaler.reconcile()[stage]
+    patched = autoscaler.reconcile()[stage]
 
-    assert result.applied_replicas == 1
+    assert patched.applied_replicas == 0
+    assert patched.reason == "resize_before_start_pending_confirmation"
+    assert client.replica_updates == [1]
+    assert client.start_calls == 0
+
+    started = autoscaler.reconcile()[stage]
+
+    assert started.applied_replicas == 1
     assert client.replica_updates == [1]
     assert client.start_calls == 1
 

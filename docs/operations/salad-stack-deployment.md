@@ -63,8 +63,9 @@ The command waits until the group is running, the change has settled and the obs
 matches the request.
 
 There is no Salad Job Queue autoscaling. In production, the singleton Postgres-elected Capacity
-Controller owns replica decisions. Explicit `Start` is reserved for isolated smoke tests and
-operator intervention when the global controller is intentionally not managing the service.
+Controller owns replica decisions. Explicit `Start`, `Stop` and `Prepare` are blocked while
+`SALAD_AUTOSCALER_ENABLED=true` unless the operator passes `-AllowControllerOverride`. The override
+is reserved for deliberate intervention after coordinating ownership of the singleton controller.
 
 ## Stop
 

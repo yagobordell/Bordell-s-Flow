@@ -1,7 +1,9 @@
 # Salad Capacity Controller
 
 Production uses one long-lived Capacity Controller for the entire Salad project. Video runs publish
-jobs to Postgres; they do not start, stop or resize shared container groups.
+jobs to Postgres; they do not start, stop or resize shared container groups. The manual Salad manager
+also refuses `Prepare`, `Start` and `Stop` while `SALAD_AUTOSCALER_ENABLED=true` unless an
+operator explicitly supplies `-AllowControllerOverride`.
 
 ## Database prerequisites
 
