@@ -80,6 +80,7 @@ class FakeSaladClient:
         pending_change: bool = False,
         stop_immediate: bool = True,
         replica_update_immediate: bool = True,
+        fail_list_instances: bool = False,
     ) -> None:
         self.replicas = replicas
         self.status = status
@@ -88,6 +89,7 @@ class FakeSaladClient:
         self.pending_change = pending_change
         self.stop_immediate = stop_immediate
         self.replica_update_immediate = replica_update_immediate
+        self.fail_list_instances = fail_list_instances
         self.replica_updates: list[int] = []
         self.deletion_cost_updates: list[tuple[str, int]] = []
         self.start_calls = 0
@@ -118,6 +120,8 @@ class FakeSaladClient:
             self.status = "stopped"
 
     def list_container_group_instances(self) -> list[dict[str, object]]:
+        if self.fail_list_instances:
+            raise RuntimeError("Salad instance listing failed")
         return [dict(item) for item in self.instances]
 
     def set_container_group_instance_deletion_cost(
@@ -514,6 +518,32 @@ def test_pending_change_uses_live_instance_count_for_restart_safe_quota_accounti
     assert result["ltx25"].applied_replicas == 2
     assert result["ltx25"].reason == "provider_change_pending"
     assert waiting.start_calls == 0
+
+
+def test_pending_change_instance_accounting_failure_fails_closed() -> None:
+    stage = "ltx25"
+    client = FakeSaladClient(
+        replicas=1,
+        pending_change=True,
+        fail_list_instances=True,
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,), project_max_replicas=1),
+        store=FakeStore(rows={stage: _pending_rows(2)}, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=1)},
+        logger=lambda _message: None,
+    )
+
+    with pytest.raises(
+        AutoscalerReconciliationError,
+        match="cannot safely account for a pending provider change",
+    ):
+        autoscaler.reconcile()
+
+    assert client.replica_updates == []
+    assert client.start_calls == 0
+    assert client.stop_calls == 0
 
 
 def test_stage_specific_cold_start_changes_capacity_estimate() -> None:
