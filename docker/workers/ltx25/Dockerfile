@@ -15,7 +15,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     INFERENCE_WORKER_TEMP_DIR=/tmp/ai-video-factory \
     LTX_MODEL_ROOT=/workspace/models/ltx-2.5 \
     LTX_MODEL_REPOSITORY=Lightricks/LTX-2.5 \
-    LTX_MODEL_REVISION=main \
+    LTX_MODEL_REVISION=6c7e5e573ac1667efc83407806fe9b0b93730e60 \
+    LTX_INCLUDE_A2V_DEV_ASSETS=false \
     LTX_DEVICE=cuda 
 
 RUN apt-get update \
@@ -37,6 +38,7 @@ RUN python3 -c \
      assert torchaudio.__version__.startswith('2.11.0'), torchaudio.__version__"
 
 ARG LTX_SOURCE_COMMIT=a95ab856bf29407b6b066ede0abe1846050db56c
+ENV LTX_SOURCE_COMMIT=${LTX_SOURCE_COMMIT}
 
 RUN git clone --filter=blob:none https://github.com/Lightricks/LTX-2.git /opt/ltx \
     && git -C /opt/ltx checkout "${LTX_SOURCE_COMMIT}"
@@ -76,6 +78,7 @@ RUN python3 -m pip install \
         'natten==0.21.6+torch2110cu128'
 
 COPY docker/workers/ltx25/download_models.sh /usr/local/bin/download-models
+COPY docker/workers/ltx25/model-manifest.json /usr/local/share/ltx25-model-manifest.json
 COPY docker/workers/common/entrypoint.sh /usr/local/bin/common-worker-entrypoint
 COPY docker/workers/common/network_preflight.sh /usr/local/bin/network-preflight
 COPY docker/workers/ltx25/entrypoint.sh /usr/local/bin/worker-entrypoint
@@ -97,7 +100,7 @@ RUN chmod 0755 \
         /opt/factory/data
 
 RUN python3 -c \
-    "import importlib.util, torch, ltx_pipelines.distilled, ltx_pipelines.a2vid_two_stage; \
+    "import importlib.util, torch, ltx_pipelines.distilled, ltx_pipelines.a2vid_two_stage, ai_video_factory.workers.ltx25.reference_a2v; \
      assert torch.__version__.startswith('2.11.0'), torch.__version__; \
      assert torch.version.cuda == '12.8', torch.version.cuda; \
      assert importlib.util.find_spec('natten') is not None; \
