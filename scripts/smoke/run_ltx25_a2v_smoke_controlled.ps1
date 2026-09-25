@@ -2,8 +2,11 @@
 param(
     [Parameter(Mandatory)][string]$Audio,
     [string]$AvatarImage = "",
-    [ValidateSet("fast", "reference", "dev")][string]$Profile = "fast",
+    [ValidateSet("fast", "reference", "dev")][string]$Profile = "reference",
     [string]$SegmentId = "smoke-001",
+    [string]$Prompt = "",
+    [long]$Seed = 4242,
+    [string]$OutputDir = "",
     [ValidateRange(0, 3600)][double]$MaxGenerationSeconds = 0,
     [string]$EnvFile = ".env",
     [switch]$NonInteractive
@@ -16,6 +19,11 @@ $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $WorkerManager = Join-Path $RepoRoot "scripts\salad\manage_salad_worker.ps1"
 $R2Preflight = Join-Path $RepoRoot "scripts\pipeline\check_r2_ready.py"
 $Smoke = Join-Path $PSScriptRoot "submit_ltx25_a2v_smoke.py"
+$Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+    $Python = (Get-Command python -ErrorAction Stop).Source
+}
+if ($Seed -lt 0) { throw "A2V seed must be non-negative." }
 
 if (-not (Test-Path -LiteralPath $Audio -PathType Leaf)) {
     throw "A2V smoke audio does not exist: $Audio"
@@ -24,7 +32,7 @@ if (-not [string]::IsNullOrWhiteSpace($AvatarImage) -and -not (Test-Path -Litera
     throw "A2V smoke avatar image does not exist: $AvatarImage"
 }
 
-& python $R2Preflight
+& $Python $R2Preflight
 if ($LASTEXITCODE -ne 0) {
     throw "R2 preflight failed; refusing LTX GPU allocation."
 }
@@ -32,8 +40,15 @@ if ($LASTEXITCODE -ne 0) {
 $Arguments = @(
     "--audio", $Audio,
     "--profile", $Profile,
-    "--segment-id", $SegmentId
+    "--segment-id", $SegmentId,
+    "--seed", $Seed
 )
+if (-not [string]::IsNullOrWhiteSpace($Prompt)) {
+    $Arguments += @("--prompt", $Prompt)
+}
+if (-not [string]::IsNullOrWhiteSpace($OutputDir)) {
+    $Arguments += @("--output-dir", $OutputDir)
+}
 if (-not [string]::IsNullOrWhiteSpace($AvatarImage)) {
     $Arguments += @("--avatar-image", $AvatarImage)
 }
@@ -56,7 +71,10 @@ try {
     & $WorkerManager @Start
     if (-not $?) { throw "LTX A2V compute-group start failed." }
 
-    & python $Smoke @Arguments
+    if ($Profile -ne "reference") {
+        Write-Warning "fast/dev is comparison-only: a valid MP4 is not lip-sync acceptance."
+    }
+    & $Python $Smoke @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "LTX A2V smoke failed with exit code $LASTEXITCODE."
     }

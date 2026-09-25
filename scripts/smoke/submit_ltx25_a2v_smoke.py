@@ -230,7 +230,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--profile",
         choices=("fast", "reference", "dev"),
-        default="fast",
+        default="reference",
+        help="Functional avatar A2V baseline; fast/dev remain explicit comparison modes.",
     )
     parser.add_argument("--max-generation-seconds", type=float, default=0.0)
     parser.add_argument("--width", type=int, default=1280)
