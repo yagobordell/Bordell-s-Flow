@@ -244,20 +244,20 @@ function Wait-ForRunningCapacity {
     throw "'$GroupName' did not reach running/replicas=$ExpectedReplicas."
 }
 
-function Wait-ForStoppedZeroReplicas {
+function Wait-ForStoppedGroup {
     param([Parameter(Mandatory)][hashtable]$Headers)
     $Deadline = (Get-Date).AddMinutes(3)
     $StableReads = 0
     do {
         Start-Sleep -Seconds 5
         $Group = Get-Group -Headers $Headers
-        if ((Get-GroupStatus -Group $Group) -eq "stopped" -and -not [bool]$Group.pending_change -and [int]$Group.replicas -eq 0) {
+        if ((Get-GroupStatus -Group $Group) -eq "stopped" -and -not [bool]$Group.pending_change) {
             $StableReads += 1
             if ($StableReads -ge 2) { return $Group }
         }
         else { $StableReads = 0 }
     } while ((Get-Date) -lt $Deadline)
-    throw "'$GroupName' did not converge to stable stopped/replicas=0."
+    throw "'$GroupName' did not converge to stable stopped/pending_change=false."
 }
 
 function Resolve-PinnedImage {
@@ -325,8 +325,8 @@ function Test-LegacyQueueAttachment {
 function Remove-StoppedContainerGroup {
     param([Parameter(Mandatory)][hashtable]$Headers)
     $Group = Get-Group -Headers $Headers
-    if ((Get-GroupStatus -Group $Group) -ne "stopped" -or [int]$Group.replicas -ne 0) {
-        throw "'$GroupName' must be stopped at replicas=0 before recreation."
+    if ((Get-GroupStatus -Group $Group) -ne "stopped" -or [bool]$Group.pending_change) {
+        throw "'$GroupName' must be stably stopped before recreation."
     }
     Invoke-SaladRequest -Headers $Headers -Method "Delete" -Uri "$ContainersBase/$GroupName" -Operation "delete legacy container group" -TimeoutSec 60 | Out-Null
     $Deadline = (Get-Date).AddMinutes(5)
@@ -372,7 +372,6 @@ function New-ContainerGroup {
 function Update-ContainerGroup {
     param([Parameter(Mandatory)][hashtable]$Headers, [Parameter(Mandatory)][string]$ResolvedImage, [Parameter(Mandatory)][hashtable]$WorkerEnvironment, [Parameter(Mandatory)][string[]]$GpuClassIds)
     $PatchBody = @{
-        replicas = 0
         container = New-ContainerConfiguration -ResolvedImage $ResolvedImage -WorkerEnvironment $WorkerEnvironment -GpuClassIds $GpuClassIds
         startup_probe = New-Probe -Probe $Definition.probes.startup
         readiness_probe = New-Probe -Probe $Definition.probes.readiness
@@ -388,7 +387,9 @@ function Assert-PreparedGroup {
     if ($null -eq $Priority -or [string]$Priority.Value -ne [string]$Definition.priority) {
         throw "Salad did not report the expected container group priority."
     }
-    if ([int]$Group.replicas -ne 0) { throw "Prepared group must remain at replicas=0." }
+    if ((Get-GroupStatus -Group $Group) -ne "stopped" -or [bool]$Group.pending_change) {
+        throw "Prepared group must remain stably stopped."
+    }
     if (Test-LegacyQueueAttachment -Group $Group) { throw "Legacy Salad queue attachment remains after Prepare." }
 }
 
@@ -425,12 +426,8 @@ switch ($Action) {
             Invoke-SaladRequest -Headers $Headers -Method "Post" -Uri "$ContainersBase/$GroupName/stop" -Operation "stop container group" -TimeoutSec 60 | Out-Null
             $Group = Wait-ForGroupSettled -Headers $Headers -TimeoutMinutes 30
         }
-        if ([int]$Group.replicas -ne 0) {
-            $Body = @{ replicas = 0 } | ConvertTo-Json
-            Invoke-SaladRequest -Headers $Headers -Method "Patch" -Uri "$ContainersBase/$GroupName" -Operation "set replicas to zero" -ContentType "application/merge-patch+json" -Body $Body -TimeoutSec 60 | Out-Null
-        }
-        Wait-ForStoppedZeroReplicas -Headers $Headers | Out-Null
-        Write-Host "$Service stopped with stable replicas=0." -ForegroundColor Green
+        $Stopped = Wait-ForStoppedGroup -Headers $Headers
+        Write-Host ("{0} stopped; configured replicas={1}." -f $Service, [int]$Stopped.replicas) -ForegroundColor Green
         exit 0
     }
     "Start" {
@@ -453,8 +450,8 @@ switch ($Action) {
     "Prepare" {
         $Existing = Try-Get-Group -Headers $Headers
         if ($null -ne $Existing) {
-            if ((Get-GroupStatus -Group $Existing) -ne "stopped" -or [int]$Existing.replicas -ne 0) {
-                throw "'$GroupName' must be stopped at replicas=0 before Prepare."
+            if ((Get-GroupStatus -Group $Existing) -ne "stopped" -or [bool]$Existing.pending_change) {
+                throw "'$GroupName' must be stably stopped before Prepare."
             }
             if ($Recreate -or (Test-LegacyQueueAttachment -Group $Existing)) {
                 if (Test-LegacyQueueAttachment -Group $Existing) {
@@ -492,13 +489,9 @@ switch ($Action) {
 
         $Prepared = Wait-ForGroupSettled -Headers $Headers -TimeoutMinutes $PrepareTimeoutMinutes -AllowInitialNotFound
         if ((Get-GroupStatus -Group $Prepared) -ne "stopped") { throw "Prepared group must remain stopped." }
-        if ([int]$Prepared.replicas -ne 0) {
-            $Body = @{ replicas = 0 } | ConvertTo-Json
-            Invoke-SaladRequest -Headers $Headers -Method "Patch" -Uri "$ContainersBase/$GroupName" -Operation "normalize prepared replicas" -ContentType "application/merge-patch+json" -Body $Body -TimeoutSec 60 | Out-Null
-            $Prepared = Wait-ForStoppedZeroReplicas -Headers $Headers
-        }
+        $Prepared = Wait-ForStoppedGroup -Headers $Headers
         Assert-PreparedGroup -Group $Prepared -ResolvedImage $ResolvedImage
-        Write-Host "$Service prepared without Salad queue/autoscaler; replicas=0." -ForegroundColor Green
+        Write-Host ("{0} prepared without Salad queue/autoscaler; stopped with configured replicas={1}." -f $Service, [int]$Prepared.replicas) -ForegroundColor Green
         exit 0
     }
 }
