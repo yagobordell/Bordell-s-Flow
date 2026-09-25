@@ -24,8 +24,8 @@ def _postgres_dsn() -> str:
     return dsn
 
 
-@pytest.mark.parametrize("terminal_status", ["retryable_failed", "failed"])
-def test_committed_bundle_recovers_terminal_postgres_without_new_attempt(
+@pytest.mark.parametrize("terminal_status", ["pending", "retryable_failed", "failed"])
+def test_committed_bundle_recovers_non_active_postgres_without_new_attempt(
     tmp_path: Path,
     terminal_status: str,
 ) -> None:
