@@ -51,7 +51,7 @@ def test_real_postgres_drain_commit_fences_concurrent_worker_claim() -> None:
                 transport_job_id=None,
                 instance_id=instance_id,
             )
-        except BaseException as error:
+        except Exception as error:
             outcome["error"] = error
 
     thread = threading.Thread(target=claim, daemon=True)
