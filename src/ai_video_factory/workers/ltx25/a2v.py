@@ -144,12 +144,48 @@ class LTXA2VModelFiles:
         missing = [
             str(path)
             for path in (self.dev_transformer, self.distilled_lora)
-            if not path.is_file()
+            if not path.is_file() or path.stat().st_size <= 0
         ]
         if missing:
             raise FileNotFoundError(
                 "Missing optional LTX-2.5 dev A2V model files: " + ", ".join(missing)
             )
+
+    def validate_dev_bootstrap(self) -> None:
+        """Wait for the downloader\'s atomic manifest before accepting guided jobs."""
+
+        self.validate_dev()
+        root = self.dev_transformer.parent.parent
+        installed_path = root / ".bordell-installed-model-manifest.json"
+        try:
+            installed = json.loads(installed_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise FileNotFoundError(
+                "LTX-2.5 dev bootstrap manifest has not been written"
+            ) from None
+
+        records = installed.get("files")
+        if (
+            installed.get("schema_version") != 1
+            or installed.get("repository")
+            != os.environ.get("LTX_MODEL_REPOSITORY", "Lightricks/LTX-2.5")
+            or installed.get("revision")
+            != os.environ.get("LTX_MODEL_REVISION", LTX25_MODEL_REVISION)
+            or not isinstance(records, dict)
+        ):
+            raise FileNotFoundError("LTX-2.5 dev bootstrap manifest is not ready")
+
+        for path in (self.dev_transformer, self.distilled_lora):
+            record = records.get(path.relative_to(root).as_posix())
+            if (
+                not isinstance(record, dict)
+                or record.get("size") != path.stat().st_size
+                or not isinstance(record.get("sha256"), str)
+                or len(record["sha256"]) != 64
+            ):
+                raise FileNotFoundError(
+                    f"LTX-2.5 dev asset has no verified bootstrap record: {path.name}"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -826,8 +862,8 @@ class DirectLTX25AudioToVideoBackend:
             self._release_pipeline_locked()
 
     def prepare(self) -> None:
-        # Readiness requires only the shared distilled assets. Dev comparison
-        # weights are optional and validated only when that profile is requested.
+        # The dev assets are optional unless this worker explicitly downloads them.
+        # Do not permit Postgres polling until their bootstrap has completed.
         with self._lock:
             bindings = self._get_bindings()
             try:
@@ -1177,6 +1213,13 @@ class DirectLTX25AudioToVideoBackend:
 
     def _validate_runtime(self, bindings: _A2VBindings) -> None:
         self._model_files.validate()
+        if os.environ.get("LTX_INCLUDE_A2V_DEV_ASSETS", "false").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            self._model_files.validate_dev_bootstrap()
         if self._device.startswith("cuda") and not bindings.torch.cuda.is_available():
             raise RuntimeError("CUDA is not available for the LTX-2.5 A2V runtime")
 
