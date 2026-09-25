@@ -450,7 +450,11 @@ class PredictiveSaladAutoscaler:
                     self._nonconvergence_candidates.pop(stage, None)
                 continue
             self._nonconvergence_candidates.pop(stage, None)
-            self.clients[stage].set_container_group_replicas(applied_target)
+            if applied_target == 0:
+                self.clients[stage].stop_container_group()
+                group_status[stage] = "stop_requested"
+            else:
+                self.clients[stage].set_container_group_replicas(applied_target)
             current[stage] = applied_target
 
         available = max(
@@ -467,13 +471,18 @@ class PredictiveSaladAutoscaler:
                     available,
                 )
                 if increase > 0:
-                    self.clients[stage].set_container_group_replicas(before + increase)
+                    desired = before + increase
                     if group_status[stage] == "stopped":
+                        configured = max(int(groups[stage].get("replicas") or 0), 0)
+                        if configured != desired:
+                            self.clients[stage].set_container_group_replicas(desired)
                         self.clients[stage].start_container_group_if_needed(
                             warning_logger=lambda _message: None,
                         )
                         group_status[stage] = "start_requested"
-                    current[stage] = before + increase
+                    else:
+                        self.clients[stage].set_container_group_replicas(desired)
+                    current[stage] = desired
                     available -= increase
 
         for stage in self.clients:
