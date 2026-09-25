@@ -395,19 +395,28 @@ class PredictiveSaladAutoscaler:
         group_pending_change = {
             stage: bool(groups[stage].get("pending_change")) for stage in self.clients
         }
-        current = {
-            stage: (
-                0
-                if group_status[stage] == "stopped"
-                else max(int(groups[stage].get("replicas") or 0), 0)
-            )
-            for stage in self.clients
-        }
+        current: dict[str, int] = {}
+        for stage in self.clients:
+            if group_status[stage] == "stopped":
+                current[stage] = 0
+                continue
+            configured = max(int(groups[stage].get("replicas") or 0), 0)
+            if not group_pending_change[stage]:
+                current[stage] = configured
+                continue
+            try:
+                live_instances = len(self.clients[stage].list_container_group_instances())
+            except Exception as exc:
+                raise AutoscalerReconciliationError(
+                    "Salad capacity reconciliation cannot safely account for a "
+                    f"pending provider change on {stage}: {exc}"
+                ) from exc
+            current[stage] = max(configured, live_instances)
         initial_current = dict(current)
         results: dict[str, AutoscaleResult] = {}
         hard_failures: dict[str, str] = {}
 
-        # Preserve Media Pipeline ordering: release quota before assigning new capacity.
+        # Preserve Media Pipeline ordering: only confirmed capacity releases can fund new capacity.
         for stage in self.clients:
             target = targets[stage]
             if target >= current[stage]:
@@ -478,7 +487,15 @@ class PredictiveSaladAutoscaler:
                 )
                 continue
             self.clients[stage].set_container_group_replicas(applied_target)
-            current[stage] = applied_target
+            results[stage] = AutoscaleResult(
+                stage=stage,
+                current_replicas=current[stage],
+                target_replicas=target,
+                applied_replicas=current[stage],
+                changed=False,
+                demand=demands[stage],
+                reason="resize_requested_pending_confirmation",
+            )
 
         available = max(
             self.config.project_max_replicas - sum(current.values()),
