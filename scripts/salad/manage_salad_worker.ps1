@@ -589,6 +589,7 @@ try {
         exit 0
     }
 }
+}
 finally {
     Exit-ManualCapacityMutationLock -Process $CapacityMutationLock
 }
