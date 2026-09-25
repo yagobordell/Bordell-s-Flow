@@ -16,6 +16,15 @@ ACTIVE_STATUSES = (
     "running",
 )
 
+_PROVIDER_STABLE_STATUSES = {"running", "stopped"}
+_PROVIDER_TRANSITION_STATUSES = {"pending", "deploying"}
+_PROVIDER_TERMINAL_STATUSES = {"failed", "succeeded"}
+_PROVIDER_KNOWN_STATUSES = (
+    _PROVIDER_STABLE_STATUSES
+    | _PROVIDER_TRANSITION_STATUSES
+    | _PROVIDER_TERMINAL_STATUSES
+)
+
 
 class AutoscalerReconciliationError(RuntimeError):
     """A reconcile pass could not safely converge Salad capacity."""
@@ -396,7 +405,7 @@ class PredictiveSaladAutoscaler:
         self.logger = logger
         self._downscale_candidates: dict[str, tuple[int, int]] = {}
         self._nonconvergence_candidates: dict[str, tuple[int, int, str]] = {}
-        self._provider_pending_first_seen: dict[str, datetime] = {}
+        self._provider_transition_first_seen: dict[str, datetime] = {}
         self._last_log_snapshot: dict[str, tuple[object, ...]] = {}
 
     def reconcile(self) -> dict[str, AutoscaleResult]:
@@ -436,38 +445,56 @@ class PredictiveSaladAutoscaler:
         group_pending_change = {
             stage: bool(groups[stage].get("pending_change")) for stage in self.clients
         }
+        group_transitioning: dict[str, bool] = {}
         observed_at = datetime.now(UTC)
         for stage in self.clients:
-            if not group_pending_change[stage]:
-                self._provider_pending_first_seen.pop(stage, None)
+            status = group_status[stage]
+            if status not in _PROVIDER_KNOWN_STATUSES:
+                raise AutoscalerReconciliationError(
+                    f"Salad provider state for {stage} is unknown: {status!r}"
+                )
+            if status in _PROVIDER_TERMINAL_STATUSES:
+                raise AutoscalerReconciliationError(
+                    f"Salad provider state for {stage} is terminal: {status!r}"
+                )
+
+            transitioning = (
+                group_pending_change[stage]
+                or status in _PROVIDER_TRANSITION_STATUSES
+            )
+            group_transitioning[stage] = transitioning
+            if not transitioning:
+                self._provider_transition_first_seen.pop(stage, None)
                 continue
+
             provider_updated_at = _parse_datetime(groups[stage].get("update_time"))
-            pending_since = provider_updated_at
-            if pending_since is None:
-                pending_since = self._provider_pending_first_seen.setdefault(
+            transition_since = provider_updated_at
+            if transition_since is None:
+                transition_since = self._provider_transition_first_seen.setdefault(
                     stage,
                     observed_at,
                 )
-            pending_age_seconds = max(
-                (observed_at - pending_since).total_seconds(),
+            transition_age_seconds = max(
+                (observed_at - transition_since).total_seconds(),
                 0.0,
             )
-            if pending_age_seconds > self.config.provider_pending_max_seconds:
+            if transition_age_seconds > self.config.provider_pending_max_seconds:
                 raise AutoscalerReconciliationError(
-                    f"Salad provider change for {stage} has remained pending for "
-                    f"{pending_age_seconds:.0f}s, exceeding "
+                    f"Salad provider transition for {stage} has remained active for "
+                    f"{transition_age_seconds:.0f}s, exceeding "
                     f"{self.config.provider_pending_max_seconds:.0f}s"
                 )
+
         current: dict[str, int] = {}
         for stage in self.clients:
             configured = max(int(groups[stage].get("replicas") or 0), 0)
-            if group_pending_change[stage]:
+            if group_transitioning[stage]:
                 try:
                     live_instances = len(self.clients[stage].list_container_group_instances())
                 except Exception as exc:
                     raise AutoscalerReconciliationError(
-                        "Salad capacity reconciliation cannot safely account for a "
-                        f"pending provider change on {stage}: {exc}"
+                        "Salad capacity reconciliation cannot safely account for an "
+                        f"active provider transition on {stage}: {exc}"
                     ) from exc
                 current[stage] = max(configured, live_instances)
                 continue
@@ -482,7 +509,7 @@ class PredictiveSaladAutoscaler:
         # Preserve Media Pipeline ordering: only confirmed capacity releases can fund new capacity.
         for stage in self.clients:
             target = targets[stage]
-            if group_pending_change[stage]:
+            if group_transitioning[stage]:
                 pending_drains = tuple(self.store.list_draining_instances(stage=stage))
                 if pending_drains:
                     self.store.hold_draining_instances(
