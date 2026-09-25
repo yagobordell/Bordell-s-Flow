@@ -359,6 +359,42 @@ def test_executor_does_not_cancel_transport_after_running_timeout() -> None:
     assert queue.cancellations == []
 
 
+def test_executor_timeout_cache_fails_closed_when_authority_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = {"now": 0.0}
+    monkeypatch.setattr(
+        "ai_video_factory.providers.inference_jobs.time.monotonic",
+        lambda: clock["now"],
+    )
+    monkeypatch.setattr(
+        "ai_video_factory.providers.inference_jobs.time.sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+    request = _request()
+    queue = AuthorityFailureQueue(
+        QueueJobSnapshot(
+            id="authority-timeout",
+            status=QueueJobStatus.RUNNING,
+        )
+    )
+    executor = InferenceJobExecutor(
+        queue=queue,  # type: ignore[arg-type]
+        storage=ArtifactAppearsAfterSubmitStorage(_stored_for_request(request)),
+        poll_seconds=0.01,
+        timeout_seconds=0.01,
+        pending_timeout_seconds=1,
+    )
+
+    with pytest.raises(
+        InferenceQueueAuthorityError,
+        match="authoritative queue state is unavailable",
+    ):
+        executor.execute(request, metadata={"phase": "6"})
+
+    assert queue.submits == 1
+
+
 def test_executor_reconciles_completed_r2_artifact_at_running_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
