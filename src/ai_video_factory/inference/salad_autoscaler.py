@@ -416,7 +416,7 @@ class PredictiveSaladAutoscaler:
         results: dict[str, AutoscaleResult] = {}
         hard_failures: dict[str, str] = {}
 
-        # Preserve Media Pipeline ordering: release quota before assigning new capacity.
+        # Preserve Media Pipeline ordering: only confirmed capacity releases can fund new capacity.
         for stage in self.clients:
             target = targets[stage]
             if target >= current[stage]:
