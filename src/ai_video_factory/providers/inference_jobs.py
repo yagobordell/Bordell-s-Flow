@@ -16,7 +16,13 @@ from ai_video_factory.inference.contracts import (
 from ai_video_factory.inference.ports import ObjectStorage, StoredObject
 from ai_video_factory.inference.storage import sha256_file
 
-from .job_queue import JobQueueClient, QueueJobStatus, TransientQueueError
+from .job_queue import (
+    JobQueueClient,
+    QueueJobSnapshot,
+    QueueJobStatus,
+    RecoveryCapableJobQueueClient,
+    TransientQueueError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +196,9 @@ class InferenceJobExecutor:
             return cached
 
         snapshot = self._queue.submit(request, metadata=metadata)
+        recovered = self._recover_terminal_bundle(request, snapshot)
+        if recovered is not None:
+            return recovered
         submitted_at = time.monotonic()
         last_status = snapshot.status
         last_progress_log = submitted_at
@@ -254,6 +263,9 @@ class InferenceJobExecutor:
             try:
                 snapshot = self._queue.get(snapshot.id)
                 last_poll_error = None
+                recovered = self._recover_terminal_bundle(request, snapshot)
+                if recovered is not None:
+                    return recovered
                 observed_at = time.monotonic()
                 if (
                     snapshot.status != last_status
@@ -303,6 +315,55 @@ class InferenceJobExecutor:
                 "Inference response fingerprint does not match the submitted request"
             )
         return _validate_successful_bundle(self._storage, request, response)
+
+    def _recover_terminal_bundle(
+        self,
+        request: InferenceJobRequest,
+        snapshot: QueueJobSnapshot,
+    ) -> InferenceJobResponse | None:
+        """Recover committed bytes and reconcile terminal Postgres state without inference."""
+
+        raw_status = str((snapshot.provider_payload or {}).get("status") or "")
+        if snapshot.status is not QueueJobStatus.FAILED and raw_status != "retryable_failed":
+            return None
+        if not isinstance(self._queue, RecoveryCapableJobQueueClient):
+            return None
+
+        with tempfile.TemporaryDirectory(
+            prefix=f"{request.job_id}-terminal-bundle-recovery-"
+        ) as temp:
+            recovered = recover_committed_bundle(self._storage, request, Path(temp))
+        if recovered is None:
+            return None
+
+        verified = cached_inference_response(self._storage, request)
+        if verified is None:  # pragma: no cover - recovery guarantees a complete bundle
+            raise IncompleteInferenceBundleError(
+                f"Recovered bundle remains incomplete for inference job {request.job_id}"
+            )
+
+        attempt_count = (snapshot.provider_payload or {}).get("attempt_count")
+        if isinstance(attempt_count, int) and attempt_count > 0:
+            verified = verified.model_copy(update={"attempt_count": attempt_count})
+        verified = verified.model_copy(update={"replayed": True})
+
+        reconciled = self._queue.reconcile_recovered_success(request, verified)
+        if reconciled.status is not QueueJobStatus.SUCCEEDED:
+            raise RuntimeError(
+                f"Recovered inference job {request.job_id} did not reconcile to succeeded"
+            )
+        response = InferenceJobResponse.model_validate(reconciled.output)
+        response = _validate_successful_bundle(self._storage, request, response)
+        logger.warning(
+            (
+                "Recovered committed inference bundle without another model attempt "
+                "application_job_id=%s transport_job_id=%s attempt_count=%s"
+            ),
+            request.job_id,
+            snapshot.id,
+            response.attempt_count,
+        )
+        return response.model_copy(update={"replayed": True})
 
     def _raise_timeout(
         self,
