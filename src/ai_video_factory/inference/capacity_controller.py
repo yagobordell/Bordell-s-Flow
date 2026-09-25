@@ -62,6 +62,51 @@ class CapacityControllerHealth:
     reason: str
 
 
+class PostgresCapacityControllerOperationLock:
+    """Session-scoped guard for manual capacity mutations.
+
+    It uses the exact same advisory lock as controller leadership, so a live
+    controller and an operator mutation can never own Salad capacity authority
+    concurrently.
+    """
+
+    def __init__(self, dsn: str) -> None:
+        import psycopg
+
+        resolved = validate_capacity_controller_dsn(dsn)
+        self._connection = psycopg.connect(resolved, autocommit=True)
+        try:
+            row = self._connection.execute(
+                "SELECT pg_try_advisory_lock(%s, %s)",
+                (_ADVISORY_LOCK_NAMESPACE, _ADVISORY_LOCK_KEY),
+            ).fetchone()
+            if row is None or not bool(row[0]):
+                raise CapacityControllerLeadershipError(
+                    "another Salad capacity controller or operator already owns "
+                    "the Postgres advisory lock"
+                )
+        except Exception:
+            self._connection.close()
+            raise
+
+    def close(self) -> None:
+        if self._connection.closed:
+            return
+        try:
+            self._connection.execute(
+                "SELECT pg_advisory_unlock(%s, %s)",
+                (_ADVISORY_LOCK_NAMESPACE, _ADVISORY_LOCK_KEY),
+            )
+        finally:
+            self._connection.close()
+
+    def __enter__(self) -> "PostgresCapacityControllerOperationLock":
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        self.close()
+
+
 class PostgresCapacityControllerLeadership:
     """Session-scoped Postgres leader election plus durable health reporting."""
 
