@@ -137,6 +137,113 @@ def test_committed_bundle_recovers_non_active_postgres_without_new_attempt(
             cleanup.execute("DELETE FROM gpu.jobs WHERE job_id = %s", (request.job_id,))
 
 
+def test_expired_running_lease_recovers_committed_bundle_without_new_attempt(
+    tmp_path: Path,
+) -> None:
+    dsn = _postgres_dsn()
+    job_id = "expired-running-bundle-recovery"
+    request = InferenceJobRequest(
+        job_id=job_id,
+        task="test.expired_running_bundle_recovery",
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/output.bin",
+            content_type="application/octet-stream",
+        ),
+        max_attempts=5,
+    )
+    storage = LocalObjectStorage(tmp_path / "expired-running" / "objects")
+    work_dir = tmp_path / "expired-running" / "work"
+    work_dir.mkdir(parents=True)
+    primary = work_dir / "output.bin"
+    primary.write_bytes(b"generated-before-lease-expired\n")
+
+    stage_bundle(
+        storage,
+        request,
+        request.fingerprint(),
+        primary_path=primary,
+        primary_content_type=request.output.content_type,
+        sidecars={},
+        work_dir=work_dir,
+    )
+
+    queue = PostgresJobQueueClient(dsn=dsn, max_connections=2)
+    try:
+        queue.submit(request, metadata={"test": "expired-running-recovery"})
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            connection.execute(
+                """
+                UPDATE gpu.jobs
+                SET status = 'running',
+                    attempt_count = 3,
+                    lease_owner = 'expired-worker',
+                    lease_expires_at = now() + interval '60 seconds',
+                    result = NULL,
+                    last_error = NULL,
+                    updated_at = now()
+                WHERE job_id = %s
+                """,
+                (request.job_id,),
+            )
+
+        class ExpireLeaseAfterSubmitQueue:
+            def submit(self, submitted_request, *, metadata):
+                snapshot = queue.submit(submitted_request, metadata=metadata)
+                with psycopg.connect(dsn, autocommit=True) as connection:
+                    connection.execute(
+                        """
+                        UPDATE gpu.jobs
+                        SET lease_expires_at = now() - interval '1 second',
+                            updated_at = now()
+                        WHERE job_id = %s
+                        """,
+                        (submitted_request.job_id,),
+                    )
+                return snapshot
+
+            def get(self, transport_job_id):
+                return queue.get(transport_job_id)
+
+            def cancel(self, transport_job_id):
+                return queue.cancel(transport_job_id)
+
+            def reconcile_recovered_success(self, submitted_request, response):
+                return queue.reconcile_recovered_success(submitted_request, response)
+
+        executor = InferenceJobExecutor(
+            queue=ExpireLeaseAfterSubmitQueue(),
+            storage=storage,
+            poll_seconds=0.01,
+            timeout_seconds=1,
+            pending_timeout_seconds=1,
+        )
+        response = executor.execute(request, metadata={"phase": "expired-running-recovery"})
+
+        assert response.replayed is True
+        assert response.attempt_count == 3
+        assert response.output.sha256 == sha256_file(primary)
+
+        with psycopg.connect(dsn) as connection:
+            row = connection.execute(
+                """
+                SELECT status, attempt_count, result, lease_owner, lease_expires_at
+                FROM gpu.jobs
+                WHERE job_id = %s
+                """,
+                (request.job_id,),
+            ).fetchone()
+        assert row is not None
+        assert row[0] == "succeeded"
+        assert row[1] == 3
+        assert row[2] is not None
+        assert row[3] is None
+        assert row[4] is None
+    finally:
+        queue.close()
+        with psycopg.connect(dsn, autocommit=True) as cleanup:
+            cleanup.execute("DELETE FROM gpu.jobs WHERE job_id = %s", (request.job_id,))
+
+
 def test_verified_final_cache_reconciles_stale_failed_postgres_state(
     tmp_path: Path,
 ) -> None:
