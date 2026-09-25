@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
-from ai_video_factory.inference.contracts import InferenceJobRequest
+from ai_video_factory.inference.contracts import InferenceJobRequest, InferenceJobResponse
 
 from .job_queue import (
     JobQueueClient,
@@ -123,6 +123,81 @@ class PostgresJobQueueClient(JobQueueClient):
                 f"Postgres inference job does not exist: {transport_job_id}"
             )
         return self._snapshot(row)
+
+    def reconcile_recovered_success(
+        self,
+        request: InferenceJobRequest,
+        response: InferenceJobResponse,
+    ) -> QueueJobSnapshot:
+        """Commit a verified staged bundle without consuming another inference attempt."""
+
+        from psycopg.types.json import Jsonb
+
+        request_sha256 = request.fingerprint()
+        if response.job_id != request.job_id or response.request_sha256 != request_sha256:
+            raise RuntimeError("recovered inference response does not match the submitted request")
+
+        with self._pool.connection() as connection, connection.transaction():
+            row = connection.execute(
+                """
+                SELECT job_id, request_sha256, status, attempt_count, lease_expires_at,
+                       result, last_error
+                FROM gpu.jobs
+                WHERE job_id = %s
+                FOR UPDATE
+                """,
+                (request.job_id,),
+            ).fetchone()
+            if row is None:
+                raise QueueJobNotFoundError(
+                    f"Postgres inference job does not exist: {request.job_id}"
+                )
+            if row["request_sha256"] != request_sha256:
+                raise RuntimeError(
+                    f"job_id {request.job_id!r} is already bound to a different request"
+                )
+
+            status = str(row["status"])
+            if status == "succeeded":
+                return self._snapshot(row)
+            if status not in {"retryable_failed", "failed"}:
+                raise RuntimeError(
+                    f"cannot reconcile recovered bundle while job {request.job_id} "
+                    f"is in state {status!r}"
+                )
+
+            recovered = response.model_copy(
+                update={
+                    "attempt_count": int(row["attempt_count"]),
+                    "replayed": True,
+                }
+            )
+            updated = connection.execute(
+                """
+                UPDATE gpu.jobs
+                SET status = 'succeeded',
+                    result = %s,
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    last_error = NULL,
+                    updated_at = now()
+                WHERE job_id = %s
+                  AND request_sha256 = %s
+                  AND status IN ('retryable_failed', 'failed')
+                RETURNING job_id, request_sha256, status, attempt_count, lease_expires_at,
+                          result, last_error
+                """,
+                (
+                    Jsonb(recovered.model_dump(mode="json")),
+                    request.job_id,
+                    request_sha256,
+                ),
+            ).fetchone()
+            if updated is None:  # pragma: no cover - row is locked above
+                raise RuntimeError(
+                    f"job {request.job_id} changed state during bundle recovery"
+                )
+            return self._snapshot(updated)
 
     def cancel(self, transport_job_id: str) -> None:
         with self._pool.connection() as connection, connection.transaction():
