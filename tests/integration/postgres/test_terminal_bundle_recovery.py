@@ -8,6 +8,7 @@ import pytest
 
 from ai_video_factory.inference.bundle_publication import (
     bundle_manifest_key,
+    publish_committed_bundle,
     stage_bundle,
 )
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectOutput
@@ -88,6 +89,95 @@ def test_committed_bundle_recovers_terminal_postgres_without_new_attempt(
         assert response.attempt_count == 5
         assert response.output.sha256 == sha256_file(primary)
         assert storage.stat(request.output.key) is not None
+
+        with psycopg.connect(dsn) as connection:
+            row = connection.execute(
+                """
+                SELECT status, attempt_count, result, last_error
+                FROM gpu.jobs
+                WHERE job_id = %s
+                """,
+                (request.job_id,),
+            ).fetchone()
+        assert row is not None
+        assert row[0] == "succeeded"
+        assert row[1] == 5
+        assert row[2] is not None
+        assert row[3] is None
+    finally:
+        queue.close()
+        with psycopg.connect(dsn, autocommit=True) as cleanup:
+            cleanup.execute("DELETE FROM gpu.jobs WHERE job_id = %s", (request.job_id,))
+
+
+def test_verified_final_cache_reconciles_stale_failed_postgres_state(
+    tmp_path: Path,
+) -> None:
+    dsn = _postgres_dsn()
+    job_id = "terminal-bundle-final-cache"
+    request = InferenceJobRequest(
+        job_id=job_id,
+        task="test.terminal_bundle_final_cache",
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/output.bin",
+            content_type="application/octet-stream",
+        ),
+        max_attempts=5,
+    )
+    storage = LocalObjectStorage(tmp_path / "final-cache" / "objects")
+    work_dir = tmp_path / "final-cache" / "work"
+    work_dir.mkdir(parents=True)
+    primary = work_dir / "output.bin"
+    primary.write_bytes(b"already-published-generated-bytes\n")
+
+    committed = stage_bundle(
+        storage,
+        request,
+        request.fingerprint(),
+        primary_path=primary,
+        primary_content_type=request.output.content_type,
+        sidecars={},
+        work_dir=work_dir,
+    )
+    publish_committed_bundle(
+        storage,
+        request,
+        request.fingerprint(),
+        committed,
+        work_dir,
+        local_sources={"primary": primary},
+    )
+
+    queue = PostgresJobQueueClient(dsn=dsn, max_connections=2)
+    try:
+        queue.submit(request, metadata={"test": "terminal-cache-recovery"})
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            connection.execute(
+                """
+                UPDATE gpu.jobs
+                SET status = 'failed',
+                    attempt_count = 5,
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    result = NULL,
+                    last_error = 'simulated Postgres reconciliation outage',
+                    updated_at = now()
+                WHERE job_id = %s
+                """,
+                (request.job_id,),
+            )
+
+        executor = InferenceJobExecutor(
+            queue=queue,
+            storage=storage,
+            poll_seconds=0.01,
+            timeout_seconds=1,
+        )
+        response = executor.execute(request, metadata={"phase": "terminal-cache-recovery"})
+
+        assert response.replayed is True
+        assert response.attempt_count == 5
+        assert response.output.sha256 == sha256_file(primary)
 
         with psycopg.connect(dsn) as connection:
             row = connection.execute(
