@@ -9,6 +9,8 @@ from ai_video_factory.inference.capacity_controller import (
     CapacityControllerLeadershipError,
     PostgresCapacityControllerLeadership,
     read_capacity_controller_health,
+    resolve_capacity_controller_dsn,
+    validate_capacity_controller_dsn,
 )
 
 
@@ -139,3 +141,42 @@ def test_stale_reconciliation_is_unhealthy(
 
     assert health.healthy is False
     assert "reconciliation is stale" in health.reason
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://postgres:secret@db.example.supabase.co:5432/postgres",
+        "postgresql://postgres.example:secret@aws-0-eu.pooler.supabase.com:5432/postgres",
+        "postgresql://postgres:secret@db.internal.example:6543/postgres",
+    ],
+)
+def test_capacity_controller_accepts_session_capable_dsns(dsn: str) -> None:
+    assert validate_capacity_controller_dsn(dsn) == dsn
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "postgresql://postgres.example:secret@aws-0-eu.pooler.supabase.com:6543/postgres",
+        "postgresql://postgres:secret@db.example.supabase.co:6543/postgres",
+    ],
+)
+def test_capacity_controller_rejects_supabase_transaction_pooling(dsn: str) -> None:
+    with pytest.raises(RuntimeError, match="port 6543"):
+        validate_capacity_controller_dsn(dsn)
+
+
+def test_dedicated_capacity_controller_dsn_overrides_worker_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "POSTGRES_DSN",
+        "postgresql://postgres.example:secret@aws-0-eu.pooler.supabase.com:6543/postgres",
+    )
+    dedicated = (
+        "postgresql://postgres.example:secret@aws-0-eu.pooler.supabase.com:5432/postgres"
+    )
+    monkeypatch.setenv("SALAD_CAPACITY_CONTROLLER_POSTGRES_DSN", dedicated)
+
+    assert resolve_capacity_controller_dsn() == dedicated
