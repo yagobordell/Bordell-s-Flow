@@ -18,8 +18,10 @@ from ai_video_factory.inference.storage import sha256_file
 
 from .job_queue import (
     JobQueueClient,
+    QueueJobNotFoundError,
     QueueJobSnapshot,
     QueueJobStatus,
+    QueueRecoveryNotApplicableError,
     RecoveryCapableJobQueueClient,
     TransientQueueError,
 )
@@ -327,6 +329,16 @@ class InferenceJobExecutor:
             return response
         try:
             reconciled = self._queue.reconcile_recovered_success(request, response)
+        except (QueueJobNotFoundError, QueueRecoveryNotApplicableError) as exc:
+            logger.info(
+                (
+                    "Verified R2 cache left queue state unchanged "
+                    "application_job_id=%s: %s"
+                ),
+                request.job_id,
+                exc,
+            )
+            return response
         except Exception as exc:
             logger.warning(
                 (
@@ -387,7 +399,19 @@ class InferenceJobExecutor:
             verified = verified.model_copy(update={"attempt_count": attempt_count})
         verified = verified.model_copy(update={"replayed": True})
 
-        reconciled = self._queue.reconcile_recovered_success(request, verified)
+        try:
+            reconciled = self._queue.reconcile_recovered_success(request, verified)
+        except QueueRecoveryNotApplicableError as exc:
+            logger.info(
+                (
+                    "Committed bundle recovery yielded to current queue state "
+                    "application_job_id=%s transport_job_id=%s: %s"
+                ),
+                request.job_id,
+                snapshot.id,
+                exc,
+            )
+            return None
         if reconciled.status is not QueueJobStatus.SUCCEEDED:
             raise RuntimeError(
                 f"Recovered inference job {request.job_id} did not reconcile to succeeded"
