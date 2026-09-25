@@ -60,6 +60,13 @@ isolated root with `--output-dir`.
 GPU stages inspect durable R2 state before starting Salad capacity. Inference jobs live in Postgres,
 and deterministic application identity plus R2 metadata allow interrupted work to resume safely.
 
+Workers commit each generated primary/sidecar set to a content-addressed internal R2 bundle before
+publishing the public job keys. The ready manifest is durable recovery state: if publication stops
+after one sidecar but before the primary, a retry completes the same committed bundle without
+rerunning a non-deterministic model. Client replay of a Postgres `succeeded` row always revalidates
+the complete R2 bundle; a missing artifact is recovered from that manifest when possible, otherwise
+the client reports an incomplete bundle instead of returning success.
+
 Inspect the plan without mutation:
 
 ```bash
