@@ -59,43 +59,12 @@ fi
 mkdir -p "${MODEL_ROOT}"
 
 manifest_is_valid=false
-if python3 - "${INSTALLED_MANIFEST}" "${MODEL_REPOSITORY}" "${MODEL_REVISION}" "${MODEL_ROOT}" "${MODEL_FILES[@]}" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-installed_path = Path(sys.argv[1])
-repository = sys.argv[2]
-revision = sys.argv[3]
-root = Path(sys.argv[4])
-expected_files = sys.argv[5:]
-
-if not installed_path.is_file():
-    raise SystemExit(1)
-try:
-    installed = json.loads(installed_path.read_text(encoding="utf-8"))
-except (OSError, ValueError):
-    raise SystemExit(1)
-
-if installed.get("repository") != repository or installed.get("revision") != revision:
-    raise SystemExit(1)
-
-records = installed.get("files")
-if not isinstance(records, dict) or sorted(records) != sorted(expected_files):
-    raise SystemExit(1)
-
-for relative in expected_files:
-    record = records.get(relative)
-    if not isinstance(record, dict):
-        raise SystemExit(1)
-    path = root / relative
-    if not path.is_file() or path.stat().st_size <= 0:
-        raise SystemExit(1)
-    if int(record.get("size", -1)) != path.stat().st_size:
-        raise SystemExit(1)
-
-raise SystemExit(0)
-PY
+if python -m ai_video_factory.workers.ltx25.model_manifest validate \
+  --installed-path "${INSTALLED_MANIFEST}" \
+  --repository "${MODEL_REPOSITORY}" \
+  --revision "${MODEL_REVISION}" \
+  --root "${MODEL_ROOT}" \
+  "${MODEL_FILES[@]}"
 then
   manifest_is_valid=true
 fi
@@ -148,45 +117,12 @@ else
     echo "MODEL_VERIFY_DONE ${model_file} bytes=$(stat -c %s "${destination}")"
   done
 
-  python3 - "${INSTALLED_MANIFEST}" "${MODEL_REPOSITORY}" "${MODEL_REVISION}" "${MODEL_ROOT}" "${MODEL_FILES[@]}" <<'PY'
-import hashlib
-import json
-import os
-import sys
-from pathlib import Path
-
-installed_path = Path(sys.argv[1])
-repository = sys.argv[2]
-revision = sys.argv[3]
-root = Path(sys.argv[4])
-files = sys.argv[5:]
-
-records = {}
-for relative in files:
-    path = root / relative
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(16 * 1024 * 1024), b""):
-            digest.update(chunk)
-    records[relative] = {
-        "size": path.stat().st_size,
-        "sha256": digest.hexdigest(),
-    }
-
-payload = {
-    "schema_version": 1,
-    "repository": repository,
-    "revision": revision,
-    "files": records,
-}
-tmp_path = installed_path.with_suffix(".tmp")
-tmp_path.write_text(
-    json.dumps(payload, indent=2, sort_keys=True) + "\n",
-    encoding="utf-8",
-)
-os.replace(tmp_path, installed_path)
-print(f"MODEL_MANIFEST_WRITTEN path={installed_path} files={len(records)}")
-PY
+  python -m ai_video_factory.workers.ltx25.model_manifest write \
+    --installed-path "${INSTALLED_MANIFEST}" \
+    --repository "${MODEL_REPOSITORY}" \
+    --revision "${MODEL_REVISION}" \
+    --root "${MODEL_ROOT}" \
+    "${MODEL_FILES[@]}"
 fi
 
 for model_file in "${MODEL_FILES[@]}"; do
