@@ -104,6 +104,29 @@ pauses and phrase boundaries, and compare against the fixed `reference` baseline
 using the same avatar, input WAV, prompt and seed but a fresh segment ID. A valid
 MP4, preserved audio and green CI alone are not lipsync acceptance.
 
+### Guided Gemma pinned-memory failure (September 26, 2026)
+
+The RTX 5090 `guided` smoke failed before denoising at 40 GiB **and** 60 GiB
+Salad container RAM. The pinned upstream `OffloadMode.CPU` path tried to
+allocate a large page-locked **host** buffer while building the Gemma text
+encoder (`StreamingModelBuilder._build_pinned_source`), then PyTorch raised
+`torch.AcceleratorError: CUDA error: out of memory`. Its immediately preceding
+VRAM snapshot reported about 32.4 GB free: do not diagnose this traceback as
+22B diffusion running out of GPU VRAM, or assume additional container RAM fixes
+pinned-memory registration. The failed jobs did not produce a guided video.
+
+The `guided` profile now uses upstream `OffloadMode.DISK` for the two-stage
+pipeline (including Gemma), bounding pinned CPU staging slots rather than
+pinning all transformer blocks. Existing `fast`, `reference`, and `dev` keep
+`OffloadMode.CPU`. This is an official upstream streaming mode, not an
+upstream monkey-patch; its repeated disk reads can increase generation time.
+The guided profile version and returned `offload_mode` metadata identify this
+change. Keep the 40 GiB default in the tracked Salad manifest; a local 60 GiB
+comparison is not evidence that 60 GiB is required. This is a code-level
+mitigation awaiting real RTX 5090 and visual lip-sync validation, not a claim
+that the guided benchmark passed. Publish a **new immutable image** and use a
+fresh segment ID; the old worker image still contains the CPU-pinned path.
+
 ### Temporal contract
 
 Reference A2V never snaps speech down to the previous `8k+1` frame. The worker first
