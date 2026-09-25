@@ -55,7 +55,7 @@ LTX_A2V_REFERENCE_GENERATION_PROFILE = (
 )
 LTX_A2V_DEV_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
 LTX_A2V_GUIDED_GENERATION_PROFILE = (
-    "ltx25-a2v-guided-dev-a95ab856-model6c7e5e5-fp8cpu-eagersdpa-v1"
+    "ltx25-a2v-guided-dev-a95ab856-model6c7e5e5-fp8disk-eagersdpa-v2"
 )
 LTX_A2V_RECOMMENDED_MAX_SECONDS = 12.0
 LTX_A2V_MAX_RAW_FRAMES = 1024
@@ -1156,7 +1156,7 @@ class DirectLTX25AudioToVideoBackend:
             "audio_frozen_stage_1": True,
             "audio_frozen_stage_2": True,
             "quantization": "fp8_cast",
-            "offload_mode": "cpu",
+            "offload_mode": "disk" if guided else "cpu",
             "ltx_model_revision": os.environ.get(
                 "LTX_MODEL_REVISION", LTX25_MODEL_REVISION
             ),
@@ -1277,6 +1277,20 @@ class DirectLTX25AudioToVideoBackend:
         pipeline_cls = (
             bindings.reference_a2v_pipeline if reference else bindings.a2v_pipeline
         )
+        # The pinned upstream CPU strategy keeps all Gemma blocks in page-locked
+        # host buffers. Real guided smokes failed in its pinned allocator at both
+        # 40 and 60 GiB; use upstream disk streaming only for guided instead.
+        # This bounds the staging buffers without changing the checkpoint,
+        # LoRA, guidance, audio, or frame schedule. Other profiles stay on CPU.
+        guided = generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
+        offload_mode = (
+            bindings.offload_mode.DISK if guided else bindings.offload_mode.CPU
+        )
+        logger.info(
+            "LTX25_A2V_OFFLOAD generation_profile=%s mode=%s",
+            generation_profile,
+            "disk" if guided else "cpu",
+        )
         self._pipeline = pipeline_cls(
             model_paths=model_paths,
             distilled_lora=distilled_lora,
@@ -1284,7 +1298,7 @@ class DirectLTX25AudioToVideoBackend:
             loras=(),
             device=bindings.torch.device(self._device),
             quantization=quantization,
-            offload_mode=bindings.offload_mode.CPU,
+            offload_mode=offload_mode,
         )
         self._pipeline_profile = generation_profile
         self._pipeline_params = bindings.detect_params(str(transformer))
