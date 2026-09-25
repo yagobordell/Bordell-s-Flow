@@ -79,6 +79,7 @@ class FakeSaladClient:
         fail_deletion_cost: bool = False,
         pending_change: bool = False,
         stop_immediate: bool = True,
+        replica_update_immediate: bool = True,
     ) -> None:
         self.replicas = replicas
         self.status = status
@@ -86,6 +87,7 @@ class FakeSaladClient:
         self.fail_deletion_cost = fail_deletion_cost
         self.pending_change = pending_change
         self.stop_immediate = stop_immediate
+        self.replica_update_immediate = replica_update_immediate
         self.replica_updates: list[int] = []
         self.deletion_cost_updates: list[tuple[str, int]] = []
         self.start_calls = 0
@@ -101,6 +103,8 @@ class FakeSaladClient:
     def set_container_group_replicas(self, replicas: int) -> dict[str, object]:
         self.replica_updates.append(replicas)
         self.replicas = replicas
+        if not self.replica_update_immediate:
+            self.pending_change = True
         return {"replicas": replicas}
 
     def start_container_group_if_needed(self, *, warning_logger=None) -> bool:
@@ -268,11 +272,14 @@ def test_downscale_protects_running_instance_with_deletion_cost() -> None:
     )
 
     first = autoscaler.reconcile()[stage]
-    result = autoscaler.reconcile()[stage]
+    requested = autoscaler.reconcile()[stage]
+    confirmed = autoscaler.reconcile()[stage]
 
     assert first.applied_replicas == 2
     assert first.reason == "drain_grace_pending"
-    assert result.applied_replicas == 1
+    assert requested.applied_replicas == 2
+    assert requested.reason == "resize_requested_pending_confirmation"
+    assert confirmed.applied_replicas == 1
     assert ("instance-active", 100_000) in client.deletion_cost_updates
     assert ("instance-idle", 0) in client.deletion_cost_updates
     assert client.replica_updates == [1]
@@ -412,6 +419,101 @@ def test_stop_request_does_not_release_project_quota_until_confirmed() -> None:
     assert confirmed["realesrgan"].applied_replicas == 0
     assert confirmed["ltx25"].applied_replicas == 1
     assert waiting.start_calls == 1
+
+
+def test_partial_downscale_keeps_project_quota_reserved_until_provider_confirms() -> None:
+    stages = ("ltx25", "realesrgan")
+    store = FakeStore(
+        rows={
+            "ltx25": _pending_rows(2),
+            "realesrgan": _pending_rows(2),
+        },
+        runtimes={
+            "ltx25": [60.0],
+            "realesrgan": [60.0],
+        },
+    )
+    shrinking = FakeSaladClient(
+        replicas=2,
+        instances=[
+            {"id": "instance-a", "deletion_cost": 0},
+            {"id": "instance-b", "deletion_cost": 0},
+        ],
+        replica_update_immediate=False,
+    )
+    waiting = FakeSaladClient(replicas=1, status="stopped")
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config(stages, project_max_replicas=2, stage_max_replicas=2),
+        store=store,
+        clients={
+            "ltx25": shrinking,
+            "realesrgan": waiting,
+        },
+        bindings={stage: _binding(stage, max_replicas=2) for stage in stages},
+        logger=lambda _message: None,
+    )
+
+    first = autoscaler.reconcile()
+    requested = autoscaler.reconcile()
+
+    assert first["ltx25"].reason == "drain_grace_pending"
+    assert requested["ltx25"].reason == "resize_requested_pending_confirmation"
+    assert requested["ltx25"].applied_replicas == 2
+    assert shrinking.replica_updates == [1]
+    assert shrinking.pending_change is True
+    assert waiting.start_calls == 0
+
+    pending = autoscaler.reconcile()
+
+    assert pending["ltx25"].reason == "provider_change_pending"
+    assert pending["ltx25"].applied_replicas == 2
+    assert waiting.start_calls == 0
+
+    shrinking.pending_change = False
+    shrinking.instances = [{"id": "instance-a", "deletion_cost": 0}]
+    confirmed = autoscaler.reconcile()
+
+    assert confirmed["ltx25"].applied_replicas == 1
+    assert confirmed["realesrgan"].applied_replicas == 1
+    assert waiting.start_calls == 1
+
+
+def test_pending_change_uses_live_instance_count_for_restart_safe_quota_accounting() -> None:
+    stages = ("ltx25", "realesrgan")
+    shrinking = FakeSaladClient(
+        replicas=1,
+        pending_change=True,
+        instances=[
+            {"id": "instance-a", "deletion_cost": 0},
+            {"id": "instance-b", "deletion_cost": 0},
+        ],
+    )
+    waiting = FakeSaladClient(replicas=1, status="stopped")
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config(stages, project_max_replicas=2, stage_max_replicas=2),
+        store=FakeStore(
+            rows={
+                "ltx25": _pending_rows(2),
+                "realesrgan": _pending_rows(2),
+            },
+            runtimes={
+                "ltx25": [60.0],
+                "realesrgan": [60.0],
+            },
+        ),
+        clients={
+            "ltx25": shrinking,
+            "realesrgan": waiting,
+        },
+        bindings={stage: _binding(stage, max_replicas=2) for stage in stages},
+        logger=lambda _message: None,
+    )
+
+    result = autoscaler.reconcile()
+
+    assert result["ltx25"].applied_replicas == 2
+    assert result["ltx25"].reason == "provider_change_pending"
+    assert waiting.start_calls == 0
 
 
 def test_stage_specific_cold_start_changes_capacity_estimate() -> None:
