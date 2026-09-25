@@ -10,8 +10,8 @@ from .job_queue import (
     JobQueueClient,
     QueueJobNotFoundError,
     QueueJobSnapshot,
-    QueueRecoveryNotApplicableError,
     QueueJobStatus,
+    QueueRecoveryNotApplicableError,
 )
 
 
