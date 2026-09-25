@@ -459,7 +459,7 @@ def main() -> None:
             float(metadata["video_stg_scale"]) != 1.0
             or float(metadata["video_modality_scale"]) != 3.0
             or float(metadata.get("video_rescale_scale", -1)) != 0.7
-            or metadata.get("video_stg_blocks") != [28]
+            or metadata.get("video_stg_blocks") != [29]
         ):
             raise RuntimeError("guided A2V worker did not preserve pinned upstream guidance")
     elif (
