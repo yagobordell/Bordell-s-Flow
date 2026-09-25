@@ -57,7 +57,11 @@ the leader falls back to the first pending observation for that process.
 ## Production ownership
 
 The Capacity Controller is the only production component allowed to decide project capacity.
-It calculates demand from all active `gpu.jobs`, protects running instances with deletion cost, and
+At the start of every reconciliation it lists the project's Container Groups and requires every
+remote group to be declared in `deploy/salad/services.json`. Unknown groups are treated as control-
+plane drift and fail reconciliation, preventing unaccounted GPU usage from bypassing the project
+budget. It calculates demand from all active `gpu.jobs`, protects running instances with deletion
+cost, and
 stops a group after aggregate demand reaches zero. A stopped group is treated as zero effective
 capacity even if Salad preserves a non-zero configured `replicas` value for the next start. Capacity
 reductions are never credited to the project budget merely because a PATCH or stop request was
