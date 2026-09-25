@@ -107,8 +107,12 @@ def stage_bundle(
         content_type=primary_content_type,
         primary_sha256=sha256_file(primary_path),
     )
+    declared_sidecars = request.sidecar_outputs or {}
+    if set(sidecars) != set(declared_sidecars):
+        raise ValueError("task sidecar artifacts do not match the request contract")
+
     staged_sidecars: dict[str, StagedBundleObject] = {}
-    for name, contract in (request.sidecar_outputs or {}).items():
+    for name, contract in declared_sidecars.items():
         try:
             path, content_type = sidecars[name]
         except KeyError as error:
@@ -127,9 +131,6 @@ def stage_bundle(
             content_type=content_type,
             primary_sha256=primary.sha256,
         )
-
-    if set(staged_sidecars) != set(request.sidecar_outputs or {}):
-        raise ValueError("task sidecar artifacts do not match the request contract")
 
     manifest = BundlePublicationManifest(
         job_id=request.job_id,
