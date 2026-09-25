@@ -284,7 +284,9 @@ def test_guided_a2v_uses_upstream_guidance_and_preserves_padded_speech(
     monkeypatch.setattr(a2v, "_prepare_reference_pipeline_audio", lambda *args, **kwargs: plan)
     flac_calls: list[tuple[Path, Path]] = []
 
-    def fake_guided_flac(source: Path, destination: Path, *, probe: a2v.AudioProbe) -> a2v.AudioProbe:
+    def fake_guided_flac(
+        source: Path, destination: Path, *, probe: a2v.AudioProbe
+    ) -> a2v.AudioProbe:
         flac_calls.append((source, destination))
         assert probe.sample_count == 97_000
         return a2v.AudioProbe("flac", 24_000, 2, 97 / 24, 97_000)
