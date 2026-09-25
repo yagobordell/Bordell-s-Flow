@@ -17,7 +17,6 @@ param(
 
     [string]$EnvFile = ".env",
 
-    [ValidatePattern("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")]
     [string]$RunId = "",
 
     [switch]$NonInteractive
@@ -175,11 +174,147 @@ function Exit-NamedMutex {
 }
 Import-EnvFile -Path $EnvFile
 $ResolvedInput = Resolve-InputPath -Path $ScriptFile
+if (-not [string]::IsNullOrWhiteSpace($RunId) -and $RunId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$Document = Get-Content -LiteralPath $ServicesPath -Raw | ConvertFrom-Json
+$Services = @($Document.stack.service_order | ForEach-Object { [string]$_ })
+$OutputDir = Join-Path $RepoRoot (Join-Path "data\output\runs" $RunId)
+$TempDir = Join-Path $RepoRoot (Join-Path "data\tmp\runs" $RunId)
+New-Item -ItemType Directory -Path $OutputDir, $TempDir -Force | Out-Null
+$env:OUTPUT_DIR = $OutputDir
+$env:TEMP_DIR = $TempDir
+$FinalVideo = Join-Path $OutputDir "phase9\final_video.mp4"
+$ProductionMetrics = Join-Path $OutputDir "production_metrics.json"
+$RunMetrics = Join-Path $OutputDir "video_factory_metrics.json"
+$Overall = [Diagnostics.Stopwatch]::StartNew()
+$Phase9Seconds = 0.0
+$PrimaryFailure = $null
+
+try {
+    Write-Host "=== VIDEO FACTORY PREFLIGHT: no GPU allocation ===" -ForegroundColor Cyan
+    Push-Location $RepoRoot
+    try {
+        Invoke-Python -Arguments @(
+            $Preflight,
+            $ResolvedInput,
+            "--report",
+            (Join-Path $OutputDir "preflight_report.json")
+        )
+        & $SaladStack -Action Status -Services $Services -EnvFile $EnvFile -NonInteractive
+        if (-not $?) {
+            throw "Salad control-plane preflight failed."
+        }
+        Ensure-RemotionDependencies
+
+        Write-Host "=== SALAD CAPACITY: require healthy global controller ===" -ForegroundColor Cyan
+        Assert-CapacityControllerHealthy
+        $env:SALAD_AUTOSCALER_ENABLED = "true"
+
+        Write-Host "=== VIDEO FACTORY DAG: cache/resume + bounded parallel execution ===" `
+            -ForegroundColor Cyan
+        $ProductionArguments = @(
+            $ProductionRunner,
+            $ResolvedInput,
+            "--end-to-end",
+            "--max-parallel-stages",
+            $MaxParallelStages,
+            "--max-parallel-gpu-stages",
+            $MaxParallelGpuStages,
+            "--narration-language",
+            $NarrationLanguage,
+            "--output-dir",
+            $OutputDir,
+            "--metrics",
+            $ProductionMetrics
+        )
+        foreach ($Stage in $ForceStage) {
+            $ProductionArguments += @("--force-stage", $Stage)
+        }
+        Invoke-Python -Arguments $ProductionArguments
+
+        Write-Host "=== PHASE 9: composition, Remotion render, stream-copy final mux ===" `
+            -ForegroundColor Cyan
+        $Phase9Mutex = Enter-NamedMutex -Name "BordellsFlow-Phase9-Renderer"
+        try {
+            $Phase9 = [Diagnostics.Stopwatch]::StartNew()
+            Invoke-Python -Arguments @($Phase9Plan)
+            Invoke-Python -Arguments @($Phase9Motion)
+            Invoke-Python -Arguments @($Phase9Final)
+            $Phase9.Stop()
+            $Phase9Seconds = $Phase9.Elapsed.TotalSeconds
+        }
+        finally {
+            Exit-NamedMutex -Mutex $Phase9Mutex
+        }
+
+        if (-not (Test-Path -LiteralPath $FinalVideo -PathType Leaf)) {
+            throw "FinalVideo was not created: $FinalVideo"
+        }
+    }
+    finally {
+        Pop-Location
+    }
+}
+catch {
+    $PrimaryFailure = $_
+}
+finally {
+    $Overall.Stop()
+}
+
+if ($null -ne $PrimaryFailure) {
+    throw $PrimaryFailure
+}
+
+$ProductionDocument = $null
+if (Test-Path -LiteralPath $ProductionMetrics -PathType Leaf) {
+    $ProductionDocument = Get-Content -LiteralPath $ProductionMetrics -Raw | ConvertFrom-Json
+}
+$ProductionSeconds = $null
+if ($null -ne $ProductionDocument) {
+    $ProductionSeconds = [double]$ProductionDocument.total_elapsed_seconds
+}
+$Metrics = [ordered]@{
+    schema_version = "1"
+    run_id = $RunId
+    output_dir = $OutputDir
+    total_wall_clock_seconds = $Overall.Elapsed.TotalSeconds
+    production_phases_2_8_seconds = $ProductionSeconds
+    phase9_seconds = $Phase9Seconds
+    final_video = $FinalVideo
+    manual_intervention = 0
+    capacity_control = "global Postgres-elected Salad controller"
+    cleanup = "pipeline does not stop shared GPU services; global controller owns scale-to-zero"
+}
+$Metrics | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $RunMetrics -Encoding UTF8
+
+Write-Host ""
+Write-Host "VIDEO FACTORY COMPLETE" -ForegroundColor Green
+Write-Host ""
+Write-Host ("Run ID: {0}" -f $RunId)
+Write-Host "Final video:"
+Write-Host $FinalVideo
+Write-Host ""
+Write-Host ("Total wall-clock: {0:N1} s" -f $Overall.Elapsed.TotalSeconds)
+if ($null -ne $ProductionDocument) {
+    $CacheHits = @(
+        $ProductionDocument.stages |
+            Where-Object { $_.outcome -eq "skipped" -or $_.outcome -eq "adopted" }
+    ).Count
+    Write-Host ("Cache/resume stage hits: {0}" -f $CacheHits)
+}
+Write-Host "Manual intervention: 0"
+Write-Host "Capacity cleanup: global controller owns shared scale-to-zero"
+Write-Host ("Metrics: {0}" -f $RunMetrics)
+) {
+    throw "RunId must be 1-64 characters using only letters, numbers, '.', '_' and '-'."
+}
 if ([string]::IsNullOrWhiteSpace($RunId)) {
     $Stem = [IO.Path]::GetFileNameWithoutExtension($ResolvedInput)
     $SafeStem = ($Stem -replace '[^A-Za-z0-9._-]', '-').Trim('-')
     if ([string]::IsNullOrWhiteSpace($SafeStem)) {
         $SafeStem = "video"
+    }
+    if ($SafeStem.Length -gt 24) {
+        $SafeStem = $SafeStem.Substring(0, 24)
     }
     $RunId = "{0}-{1}-{2}" -f $SafeStem, [DateTime]::UtcNow.ToString("yyyyMMddTHHmmssfffZ"), [Guid]::NewGuid().ToString("N").Substring(0, 8)
 }
