@@ -79,13 +79,18 @@ def build_salad_capacity_runtime(
         raise RuntimeError(
             "deploy/salad/services.json stack.service_order must be a non-empty list"
         )
+    normalized_service_order = [str(item).strip() for item in service_order]
+    if any(not item for item in normalized_service_order):
+        raise RuntimeError("stack.service_order cannot contain blank service names")
+    if len(normalized_service_order) != len(set(normalized_service_order)):
+        raise RuntimeError("stack.service_order must contain unique service names")
 
     bindings: dict[str, AutoscalerServiceBinding] = {}
     clients: dict[str, SaladClient] = {}
+    group_owners: dict[str, str] = {}
     api_base_url = os.getenv("SALAD_API_BASE_URL", DEFAULT_SALAD_API_BASE_URL).strip()
 
-    for raw_service_name in service_order:
-        service_name = str(raw_service_name).strip()
+    for service_name in normalized_service_order:
         if service_name not in _SERVICE_TASKS:
             raise RuntimeError(
                 f"Salad service {service_name!r} is missing from the predictive capacity catalog"
@@ -98,6 +103,13 @@ def build_salad_capacity_runtime(
         if max_replicas < 1:
             raise RuntimeError(f"Salad service {service_name} max_replicas must be >= 1")
         group_name = _required_text(raw_service, "group_name")
+        previous_owner = group_owners.get(group_name)
+        if previous_owner is not None:
+            raise RuntimeError(
+                "Salad group_name must be unique across services: "
+                f"{group_name!r} is assigned to {previous_owner!r} and {service_name!r}"
+            )
+        group_owners[group_name] = service_name
         binding = AutoscalerServiceBinding(
             workload=service_name,
             task_names=_SERVICE_TASKS[service_name],
@@ -130,10 +142,7 @@ def build_salad_capacity_runtime(
         store=store,
         clients=clients,
         bindings=bindings,
-        managed_group_names={
-            str(services[service_name]["group_name"]).strip()
-            for service_name in bindings
-        },
+        managed_group_names=set(group_owners),
         logger=logger,
     )
     return SaladCapacityRuntime(autoscaler=autoscaler, store=store)

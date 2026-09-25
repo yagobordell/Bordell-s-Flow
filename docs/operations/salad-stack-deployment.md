@@ -14,8 +14,9 @@ Schema version 3 uses:
 }
 ```
 
-Each model has its own Salad container group. Postgres is the canonical job/control plane and R2 is
-shared object storage. Salad provides compute only.
+Each model has its own unique Salad container group. The runtime rejects duplicate service-order
+entries or duplicate `group_name` assignments before opening the Postgres control plane. Postgres is
+the canonical job/control plane and R2 is shared object storage. Salad provides compute only.
 
 Do not duplicate mutable image tags, GPU classes, group names or capacity ceilings in scripts or
 documentation.
