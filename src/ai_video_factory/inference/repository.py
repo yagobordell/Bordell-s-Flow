@@ -251,7 +251,8 @@ class PostgresJobRepository:
                 ).fetchone()
                 if draining is not None and bool(draining["draining"]):
                     raise JobBusyError(
-                        f"Salad instance {instance_id} is draining and cannot claim new inference jobs"
+                        f"Salad instance {instance_id} is draining and cannot claim "
+                        "new inference jobs"
                     )
             connection.execute(
                 """
