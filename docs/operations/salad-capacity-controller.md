@@ -51,10 +51,13 @@ same target they also fail reconciliation and allow health monitoring to degrade
 The Capacity Controller is the only production component allowed to decide project capacity.
 It calculates demand from all active `gpu.jobs`, protects running instances with deletion cost, and
 stops a group after aggregate demand reaches zero. A stopped group is treated as zero effective
-capacity even if Salad preserves a non-zero configured `replicas` value for the next start. A stop
-request does not release project quota immediately: the controller keeps the group's previously
-observed active capacity reserved until a later reconciliation observes `status=stopped`. This
-prevents another service from consuming quota while Salad is still completing an asynchronous stop.
+capacity even if Salad preserves a non-zero configured `replicas` value for the next start. Capacity
+reductions are never credited to the project budget merely because a PATCH or stop request was
+accepted: the controller keeps the previously observed capacity reserved until a later reconciliation
+confirms the change. While Salad reports `pending_change=true`, effective capacity is conservatively
+computed as the maximum of the configured replica count and the number of still-listed instances.
+This also survives a controller restart during a partial downscale. If the live instance list cannot
+be read while a provider change is pending, reconciliation fails closed instead of releasing quota.
 Drain publication and worker claims share a transaction-scoped advisory lock per Salad instance,
 closing the race where a worker could claim new work after that instance had been selected for
 removal.
