@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from functools import partial
-import math
 
 import torch
-
 from ltx_core.components.diffusion_steps import EulerAncestralDiffusionStep
 from ltx_core.components.noisers import GaussianNoiser
 from ltx_core.model.audio_vae import encode_audio as vae_encode_audio
