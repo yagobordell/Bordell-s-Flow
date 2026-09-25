@@ -367,11 +367,26 @@ def probe_audio(path: Path) -> AudioProbe:
             "INVALID_AUDIO",
             "audio stream must report positive sample rate and channel count",
         )
+    sample_count: int | None = None
+    duration_ts = stream.get("duration_ts")
+    time_base = str(stream.get("time_base") or "")
+    if duration_ts is not None and "/" in time_base:
+        try:
+            numerator, denominator = (int(part) for part in time_base.split("/", 1))
+            if denominator > 0:
+                stream_seconds = int(duration_ts) * numerator / denominator
+                sample_count = max(1, round(stream_seconds * sample_rate))
+        except (TypeError, ValueError):
+            sample_count = None
+    if sample_count is None:
+        sample_count = max(1, round(duration * sample_rate))
+
     return AudioProbe(
         codec=str(stream.get("codec_name") or "unknown"),
         sample_rate=sample_rate,
         channels=channels,
         duration_seconds=duration,
+        sample_count=sample_count,
     )
 
 
@@ -462,6 +477,169 @@ def _prepare_pipeline_audio(
     return destination, prepared_probe
 
 
+def _decode_reference_audio_to_pcm(
+    source: Path,
+    destination: Path,
+    *,
+    probe: AudioProbe,
+) -> AudioProbe:
+    """Decode reference-profile speech to deterministic stereo PCM before padding."""
+
+    if probe.channels not in (1, 2):
+        raise _input_error(
+            "UNSUPPORTED_AUDIO_CHANNELS",
+            "LTX A2V reference accepts mono or stereo speech audio; "
+            f"received {probe.channels} channels",
+        )
+    executable = shutil.which("ffmpeg")
+    if executable is None:
+        raise RuntimeError("ffmpeg is required to prepare LTX A2V reference audio")
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [
+                executable,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(source),
+                "-map",
+                "0:a:0",
+                "-ac",
+                "2",
+                "-ar",
+                str(probe.sample_rate),
+                "-c:a",
+                "pcm_s16le",
+                str(destination),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip()
+        raise _input_error(
+            "AUDIO_NORMALIZATION_FAILED",
+            "failed to decode reference speech to stereo PCM"
+            + (f": {detail[-800:]}" if detail else ""),
+        ) from exc
+
+    decoded_probe = probe_audio(destination)
+    if decoded_probe.channels != 2 or decoded_probe.sample_count is None:
+        raise RuntimeError(
+            "reference A2V PCM normalization did not produce measurable stereo audio"
+        )
+    return decoded_probe
+
+
+def _prepare_reference_pipeline_audio(
+    source: Path,
+    decoded_destination: Path,
+    padded_destination: Path,
+    *,
+    probe: AudioProbe,
+    fps: int,
+) -> ReferenceAudioPlan:
+    """Decode, grid-snap upward and silence-pad speech before the Audio VAE."""
+
+    decoded_probe = _decode_reference_audio_to_pcm(
+        source,
+        decoded_destination,
+        probe=probe,
+    )
+    assert decoded_probe.sample_count is not None
+    decoded_duration = decoded_probe.sample_count / float(decoded_probe.sample_rate)
+    sample_tolerance = 1.0 / float(decoded_probe.sample_rate)
+    if decoded_duration - LTX_A2V_RECOMMENDED_MAX_SECONDS > sample_tolerance:
+        raise _input_error(
+            "UNSUPPORTED_DURATION",
+            "reference A2V speech exceeds the validated 12-second contract: "
+            f"{decoded_duration:.6f}s > {LTX_A2V_RECOMMENDED_MAX_SECONDS:.3f}s",
+        )
+
+    try:
+        num_frames = reference_num_frames_for_samples(
+            decoded_probe.sample_count,
+            sample_rate=decoded_probe.sample_rate,
+            fps=fps,
+            max_raw_frames=LTX_A2V_MAX_RAW_FRAMES,
+        )
+    except ValueError as exc:
+        raise _input_error("UNSUPPORTED_DURATION", str(exc)) from exc
+
+    grid_video_duration = num_frames / float(fps)
+    target_samples = math.ceil(grid_video_duration * decoded_probe.sample_rate)
+    padding_samples = target_samples - decoded_probe.sample_count
+    if padding_samples < 0:
+        raise RuntimeError("reference A2V temporal plan would truncate decoded speech")
+
+    conditioning_path = decoded_destination
+    conditioning_probe = decoded_probe
+    if padding_samples:
+        executable = shutil.which("ffmpeg")
+        if executable is None:
+            raise RuntimeError("ffmpeg is required to pad LTX A2V reference audio")
+        padded_destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            subprocess.run(
+                [
+                    executable,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-i",
+                    str(decoded_destination),
+                    "-af",
+                    f"apad=pad_len={padding_samples}",
+                    "-c:a",
+                    "pcm_s16le",
+                    str(padded_destination),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or "").strip()
+            raise _input_error(
+                "AUDIO_NORMALIZATION_FAILED",
+                "failed to silence-pad reference speech to the LTX temporal grid"
+                + (f": {detail[-800:]}" if detail else ""),
+            ) from exc
+        conditioning_path = padded_destination
+        conditioning_probe = probe_audio(conditioning_path)
+
+    if conditioning_probe.sample_count is None:
+        raise RuntimeError("reference A2V conditioning audio has no measurable sample count")
+    if conditioning_probe.sample_count < target_samples:
+        raise RuntimeError(
+            "reference A2V conditioning audio is shorter than its snapped video grid"
+        )
+
+    logger.info(
+        "LTX25_A2V_REFERENCE_AUDIO input_samples=%d conditioning_samples=%d "
+        "padding_samples=%d num_frames=%d grid_seconds=%.6f",
+        decoded_probe.sample_count,
+        conditioning_probe.sample_count,
+        padding_samples,
+        num_frames,
+        grid_video_duration,
+    )
+    return ReferenceAudioPlan(
+        path=conditioning_path,
+        decoded_probe=decoded_probe,
+        conditioning_probe=conditioning_probe,
+        num_frames=num_frames,
+        grid_video_duration_seconds=grid_video_duration,
+        padding_samples=padding_samples,
+    )
+
+
 def _prepare_avatar_image(
     source: Path,
     destination: Path,
@@ -475,7 +653,7 @@ def _prepare_avatar_image(
         raise _input_error("INVALID_IMAGE", f"invalid avatar image input: {source}")
     try:
         with Image.open(source) as opened:
-            image = opened.convert("RGB")
+            image = ImageOps.exif_transpose(opened).convert("RGB")
     except (OSError, ValueError) as exc:
         raise _input_error(
             "IMAGE_DECODE_FAILED", f"avatar image decode failed for {source}"
