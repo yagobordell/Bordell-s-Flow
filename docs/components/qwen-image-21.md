@@ -9,15 +9,17 @@ enabled. Each image is generated at **1280x736**, with 40 diffusion steps,
 
 The Salad service `qwen_image_21` uses group
 `ai-video-factory-qwen-image-21-worker-v2` on one RTX 5090 (32 GB).
-The manifest pins the published image tag
-`qwen-image-2.1-bf16-offload-1280x736-postgres-v7` and sets
+The manifest declares the versioned release tag
+`qwen-image-2.1-bf16-offload-1280x736-postgres-claims-v8` and sets
 `QWEN_IMAGE_21_MEMORY_MODE=bf16_offload`. Qwen's model revision is pinned by
 the worker. Postgres `gpu.jobs` is the sole application job transport; R2 stores
 the output artifacts. No Salad Job Queue or queue autoscaler is attached.
 
-BF16 with CPU offload is the currently validated Qwen mode. The previous
+BF16 with CPU offload was validated on the earlier v7 image. The v8 release
+incorporates newer shared inference and claim-handling code; it must pass a fresh,
+uncached Qwen smoke and visual review before its output is accepted. The previous
 bitsandbytes INT8 configuration returned a nearly transparent, visibly corrupted
-image on a controlled test. A BF16 test with the same prompt and seed produced a
+image on a controlled test. A v7 BF16 test with the same prompt and seed produced a
 visually valid image and passed PNG and SHA-256 verification. That single run
 establishes the recovery of this case, not a general quality or performance guarantee.
 Do not reuse the known defective INT8 artifact as a keyframe or benchmark sample.

@@ -97,7 +97,7 @@ def test_qwen_salad_manifest_contract() -> None:
     service = manifest["services"]["qwen_image_21"]
 
     assert service["priority"] == "high"
-    assert service["image"].endswith("qwen-image-2.1-bf16-offload-1280x736-postgres-v7")
+    assert service["image"].endswith("qwen-image-2.1-bf16-offload-1280x736-postgres-claims-v8")
     assert manifest["stack"]["shared_environment"]["INFERENCE_WORKER_POLL_JOBS"] == "true"
     assert service["environment"]["QWEN_IMAGE_21_MEMORY_MODE"] == "bf16_offload"
     assert service["resources"]["gpu_class_names"] == ["RTX 5090 (32 GB)"]
