@@ -91,8 +91,24 @@ def test_ltx25_model_download_uses_xet_with_resilient_timeouts() -> None:
         ":ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v9"
     )
     assert "ltx_pipelines.a2vid_two_stage" in dockerfile
-    assert "ltx-2.5-22b-dev-transformer-bf16.safetensors" in bootstrap
-    assert "ltx-2.5-22b-distilled-lora-450-bf16.safetensors" in bootstrap
+    model_manifest = json.loads(
+        Path("docker/workers/ltx25/model-manifest.json").read_text(encoding="utf-8")
+    )
+    assert model_manifest["revision"] == service["environment"]["LTX_MODEL_REVISION"]
+    assert (
+        "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors"
+        in model_manifest["shared_files"]
+    )
+    assert (
+        "diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors"
+        in model_manifest["dev_files"]
+    )
+    assert (
+        "loras/ltx-2.5-22b-distilled-lora-450-bf16.safetensors"
+        in model_manifest["dev_files"]
+    )
+    assert service["environment"]["LTX_INCLUDE_A2V_DEV_ASSETS"] == "false"
+    assert "LTX_INCLUDE_A2V_DEV_ASSETS" in bootstrap
 
 
 def test_ltx_i2v_ready_stays_true_while_a2v_mode_is_active(tmp_path: Path) -> None:
