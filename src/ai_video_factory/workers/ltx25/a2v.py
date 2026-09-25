@@ -54,6 +54,9 @@ LTX_A2V_REFERENCE_GENERATION_PROFILE = (
     "ltx25-a2v-reference-distilled-a95ab856-model6c7e5e5-fp8cpu-eagersdpa-v1"
 )
 LTX_A2V_DEV_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
+LTX_A2V_GUIDED_GENERATION_PROFILE = (
+    "ltx25-a2v-guided-dev-a95ab856-model6c7e5e5-fp8cpu-eagersdpa-v1"
+)
 LTX_A2V_RECOMMENDED_MAX_SECONDS = 12.0
 LTX_A2V_MAX_RAW_FRAMES = 1024
 LTX_A2V_DEFAULT_PROMPT = (
@@ -90,9 +93,10 @@ class LTXAudioToVideoParameters(BaseModel):
             LTX_A2V_GENERATION_PROFILE,
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_DEV_GENERATION_PROFILE,
+            LTX_A2V_GUIDED_GENERATION_PROFILE,
         ):
             raise ValueError(
-                "generation_profile must be a supported fast, reference, or dev A2V profile"
+                "generation_profile must be a supported fast, reference, dev, or guided A2V profile"
             )
         return value
 
@@ -804,8 +808,9 @@ class DirectLTX25AudioToVideoBackend:
         reference = (
             parameters.generation_profile == LTX_A2V_REFERENCE_GENERATION_PROFILE
         )
+        guided = parameters.generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
         reference_audio_plan: ReferenceAudioPlan | None = None
-        if reference:
+        if reference or guided:
             reference_audio_plan = _prepare_reference_pipeline_audio(
                 audio_path,
                 output_path.parent / "a2v_reference_decoded.wav",
@@ -825,7 +830,10 @@ class DirectLTX25AudioToVideoBackend:
         with self._lock:
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
-            if parameters.generation_profile == LTX_A2V_DEV_GENERATION_PROFILE:
+            if parameters.generation_profile in (
+                LTX_A2V_DEV_GENERATION_PROFILE,
+                LTX_A2V_GUIDED_GENERATION_PROFILE,
+            ):
                 self._model_files.validate_dev()
             pipeline_width, pipeline_height = _pipeline_dimensions(parameters)
             conditioning_path = _prepare_avatar_image(
@@ -871,11 +879,16 @@ class DirectLTX25AudioToVideoBackend:
                     if distilled
                     else self._pipeline_params.num_inference_steps
                 )
-                guider_updates = {
-                    "modality_scale": 1.0,
-                    "stg_scale": 0.0,
-                    "stg_blocks": [],
-                }
+                # Only the guided profile preserves the checkpoint-detected upstream guider.
+                # Legacy fast/dev deliberately keep their historical overrides.
+                if guided:
+                    guider_updates = {}
+                else:
+                    guider_updates = {
+                        "modality_scale": 1.0,
+                        "stg_scale": 0.0,
+                        "stg_blocks": [],
+                    }
                 if distilled:
                     guider_updates.update(cfg_scale=1.0, rescale_scale=0.0)
                 video_guider = replace(
@@ -917,7 +930,11 @@ class DirectLTX25AudioToVideoBackend:
                             seed=parameters.seed,
                             height=pipeline_height,
                             width=pipeline_width,
-                            num_frames=None,
+                            num_frames=(
+                                reference_audio_plan.num_frames
+                                if guided and reference_audio_plan is not None
+                                else None
+                            ),
                             frame_rate=float(parameters.fps),
                             num_inference_steps=stage_1_steps,
                             stage_1_sigmas=stage_1_sigmas,
@@ -1001,13 +1018,19 @@ class DirectLTX25AudioToVideoBackend:
             "video_cfg_scale": video_guider.cfg_scale,
             "video_stg_scale": video_guider.stg_scale,
             "video_modality_scale": video_guider.modality_scale,
+            "video_rescale_scale": video_guider.rescale_scale,
+            "video_stg_blocks": list(video_guider.stg_blocks),
             "stage_1_steps": stage_1_steps,
             "stage_2_steps": len(bindings.stage_2_sigmas) - 1,
             "transformer_variant": "distilled" if distilled else "dev",
             "generation_recipe": (
                 "distilled_reference"
                 if reference
-                else ("legacy_fast" if fast else "legacy_dev")
+                else (
+                    "upstream_guided_dev"
+                    if guided
+                    else ("legacy_fast" if fast else "legacy_dev")
+                )
             ),
             "stage_1_sampler": (
                 LTX_A2V_REFERENCE_RECIPE.stage_1_sampler if reference else "euler"
