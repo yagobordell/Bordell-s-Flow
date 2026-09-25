@@ -357,9 +357,9 @@
     },
     "qwen_image_21": {
       "display_name": "AI Video Factory Qwen-Image-2.1",
-      "group_name": "ai-video-factory-qwen-image-21-worker",
+      "group_name": "ai-video-factory-qwen-image-21-worker-v2",
       "dockerfile": "docker/workers/qwen-image-2.1/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:qwen-image-2.1-int8-1280x736-v5",
+      "image": "docker.io/yagobordell/ai-video-factory:qwen-image-2.1-bf16-offload-1280x736-postgres-v7",
       "priority": "high",
       "resources": {
         "cpu": 8,
@@ -376,7 +376,7 @@
         "QWEN_IMAGE_21_MODEL_REPOSITORY": "Qwen/Qwen-Image-2.1",
         "QWEN_IMAGE_21_MODEL_REVISION": "b3179ad355be050328e483a9dfdd9e60cd62adfa",
         "QWEN_IMAGE_21_DEVICE": "cuda",
-        "QWEN_IMAGE_21_MEMORY_MODE": "int8_cuda",
+        "QWEN_IMAGE_21_MEMORY_MODE": "bf16_offload",
         "QWEN_IMAGE_21_READY_TIMEOUT_SECONDS": "1800",
         "HF_HUB_DOWNLOAD_TIMEOUT": "60",
         "HF_HUB_ETAG_TIMEOUT": "15",

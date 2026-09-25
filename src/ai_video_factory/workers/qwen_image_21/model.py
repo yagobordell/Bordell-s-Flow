@@ -54,6 +54,30 @@ def _validate_int8_cuda_device_map(device_map: Any) -> None:
         raise RuntimeError(f"Qwen int8 pipeline is not fully on CUDA: {device_map!r}")
 
 
+
+def validate_qwen_output_image(image: Any, *, width: int, height: int) -> None:
+    """Reject broken text-to-image frames before a worker publishes them to R2.
+
+    Production references and keyframes are opaque. Qwen 2.1 can return RGBA,
+    but a nearly transparent frame is not usable as an LTX keyframe. Do not
+    flatten RGBA to RGB: that would hide a broken decode without fixing it.
+    """
+    if image.size != (width, height):
+        raise RuntimeError("Qwen-Image-2.1 returned unexpected image dimensions")
+    if image.mode not in {"RGB", "RGBA"}:
+        raise RuntimeError(f"Qwen-Image-2.1 returned unexpected image mode: {image.mode}")
+    if image.mode == "RGBA":
+        alpha_histogram = image.getchannel("A").histogram()
+        total_pixels = width * height
+        nearly_transparent = sum(alpha_histogram[:17])
+        mostly_opaque = sum(alpha_histogram[240:])
+        if nearly_transparent >= total_pixels * 0.90 or mostly_opaque < total_pixels * 0.50:
+            raise RuntimeError(
+                "Qwen-Image-2.1 decoded image is predominantly transparent; "
+                "refusing to publish an unusable production keyframe"
+            )
+
+
 class QwenImage21Parameters(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -207,8 +231,9 @@ class QwenImage21Backend:
                 if len(images) != 1:
                     raise RuntimeError("Qwen-Image-2.1 did not return exactly one image")
                 image = images[0]
-                if image.size != (parameters.width, parameters.height):
-                    raise RuntimeError("Qwen-Image-2.1 returned unexpected image dimensions")
+                validate_qwen_output_image(
+                    image, width=parameters.width, height=parameters.height
+                )
                 save_started = time.monotonic()
                 image.save(output_path, format="PNG")
                 png_save_seconds = time.monotonic() - save_started

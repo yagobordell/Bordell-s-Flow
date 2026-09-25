@@ -31,6 +31,7 @@ from ai_video_factory.workers.qwen_image_21 import (
     QWEN_IMAGE_21_PRODUCTION_SIZE,
     QWEN_IMAGE_21_PRODUCTION_WIDTH,
 )
+from ai_video_factory.workers.qwen_image_21.model import validate_qwen_output_image
 from ai_video_factory.workers.whisper import WHISPER_MODEL_ID
 
 _SERVICE_ORDER = ("breeze_tts2", "whisper", "qwen_image_21", "ltx25")
@@ -266,14 +267,11 @@ async def _smoke_qwen_image_21(args: argparse.Namespace) -> None:
         raise RuntimeError("Qwen-Image-2.1 smoke returned an empty PNG")
     with Image.open(destination) as opened:
         opened.load()
-        if opened.size != (
-            QWEN_IMAGE_21_PRODUCTION_WIDTH,
-            QWEN_IMAGE_21_PRODUCTION_HEIGHT,
-        ):
-            raise RuntimeError(
-                "Qwen-Image-2.1 smoke returned unexpected dimensions: "
-                f"{opened.width}x{opened.height}"
-            )
+        validate_qwen_output_image(
+            opened,
+            width=QWEN_IMAGE_21_PRODUCTION_WIDTH,
+            height=QWEN_IMAGE_21_PRODUCTION_HEIGHT,
+        )
         if opened.format != "PNG":
             raise RuntimeError(
                 f"Qwen-Image-2.1 smoke returned unexpected format: {opened.format}"

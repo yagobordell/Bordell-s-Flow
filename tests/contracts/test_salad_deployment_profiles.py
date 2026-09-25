@@ -106,3 +106,14 @@ def test_ideogram_deployment_pins_download_and_runtime_watchdogs_and_v4_image() 
     assert environment["IDEOGRAM_BOOTSTRAP_REALLOCATE_ON_STALL"] == "true"
     assert environment["HF_HUB_DOWNLOAD_TIMEOUT"] == "120"
     assert environment["HF_HUB_ETAG_TIMEOUT"] == "30"
+
+
+def test_qwen_recovery_uses_new_group_without_legacy_queue_or_autostart() -> None:
+    document = _document()
+    service = document["services"]["qwen_image_21"]
+
+    assert service["group_name"] == "ai-video-factory-qwen-image-21-worker-v2"
+    assert document["stack"]["autostart_policy"] is False
+    assert document["stack"]["job_transport"] == "postgres"
+    assert "queue_name" not in service
+    assert "autoscaler" not in service
