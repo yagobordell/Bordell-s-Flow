@@ -10,6 +10,7 @@ param(
     [ValidateRange(0, 64)][int]$Replicas = 0,
     [switch]$SkipBuild,
     [switch]$Recreate,
+    [switch]$AllowControllerOverride,
     [switch]$NonInteractive
 )
 
@@ -77,6 +78,44 @@ $OrganizationApiBase = "https://api.salad.com/api/public/organizations/$Organiza
 $GpuClassesBase = "$OrganizationApiBase/gpu-classes"
 $ContainersBase = "$OrganizationApiBase/projects/$Project/containers"
 $SecretNames = @("POSTGRES_DSN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "HF_TOKEN", "SALAD_API_KEY")
+
+function Get-EnvironmentBoolean {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [bool]$Default = $false
+    )
+    $Raw = [Environment]::GetEnvironmentVariable(
+        $Name,
+        [EnvironmentVariableTarget]::Process
+    )
+    if ([string]::IsNullOrWhiteSpace($Raw)) {
+        return $Default
+    }
+    switch ($Raw.Trim().ToLowerInvariant()) {
+        { $_ -in @("1", "true", "yes", "on") } { return $true }
+        { $_ -in @("0", "false", "no", "off") } { return $false }
+        default { throw "$Name must be a boolean value." }
+    }
+}
+
+function Assert-ManualCapacityMutationAllowed {
+    if ($Action -notin @("Prepare", "Start", "Stop")) {
+        return
+    }
+    if ($AllowControllerOverride) {
+        Write-Warning (
+            "Manual Salad capacity override requested while operator owns controller coordination."
+        )
+        return
+    }
+    if (Get-EnvironmentBoolean -Name "SALAD_AUTOSCALER_ENABLED") {
+        throw (
+            "Manual Salad action '$Action' is blocked while SALAD_AUTOSCALER_ENABLED=true. " +
+            "Stop/disable the singleton Capacity Controller first, or pass " +
+            "-AllowControllerOverride for an intentional operator intervention."
+        )
+    }
+}
 
 function Get-RequiredEnvironmentNames {
     $Names = @()
@@ -404,6 +443,7 @@ function Show-Status {
 }
 
 Assert-ServiceDefinition
+Assert-ManualCapacityMutationAllowed
 Set-Location $RepoRoot
 if ($Recreate -and $Action -ne "Prepare") { throw "-Recreate is only valid with Prepare." }
 
