@@ -76,6 +76,10 @@ and cancelled jobs are never rewritten by this recovery-only path. A later cache
 Postgres reconciliation if the R2 objects were published successfully but the database update itself
 was temporarily unavailable.
 
+Postgres cancellation is authoritative over object storage. A complete cached bundle for a job whose
+canonical row is `cancelled` is not returned as success. Likewise, an actively `running` or protected
+`pending` row is not bypassed by an R2 cache hit; the executor continues to observe the queue state.
+
 ### Internal bundle retention
 
 The recovery objects live under `__ai_video_factory/bundles/`. The application intentionally does
