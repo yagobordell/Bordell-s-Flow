@@ -3,9 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
-from ai_video_factory.inference.contracts import InferenceJobRequest
+from ai_video_factory.inference.contracts import InferenceJobRequest, InferenceJobResponse
 
 
 class QueueJobStatus(StrEnum):
@@ -22,6 +22,10 @@ class TransientQueueError(RuntimeError):
 
 class QueueJobNotFoundError(RuntimeError):
     """A previously persisted transport job no longer exists in the queue provider."""
+
+
+class QueueRecoveryNotApplicableError(RuntimeError):
+    """A verified bundle cannot rewrite the queue's current protected state."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,3 +49,14 @@ class JobQueueClient(Protocol):
     def get(self, transport_job_id: str) -> QueueJobSnapshot: ...
 
     def cancel(self, transport_job_id: str) -> None: ...
+
+
+@runtime_checkable
+class RecoveryCapableJobQueueClient(Protocol):
+    """Queue backends that can reconcile a verified durable bundle as success."""
+
+    def reconcile_recovered_success(
+        self,
+        request: InferenceJobRequest,
+        response: InferenceJobResponse,
+    ) -> QueueJobSnapshot: ...
