@@ -61,7 +61,8 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y postgresql-client
           fi
-          psql "$TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1             -c 'CREATE ROLE anon; CREATE ROLE authenticated;'
+          psql "$TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 \
+            -c 'CREATE ROLE anon; CREATE ROLE authenticated;'
           for migration in infra/sql/*.sql; do
             psql "$TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f "$migration"
           done
