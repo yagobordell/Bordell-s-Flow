@@ -7,7 +7,10 @@ import sys
 from pathlib import Path
 
 from ai_video_factory.config import settings
-from ai_video_factory.inference.capacity_controller import read_capacity_controller_health
+from ai_video_factory.inference.capacity_controller import (
+    read_capacity_controller_health,
+    resolve_capacity_controller_dsn,
+)
 from ai_video_factory.workflows.production_runner import (
     PRODUCTION_STAGE_NAMES,
     ProductionRunner,
@@ -39,11 +42,7 @@ def _capacity_health_check():
     if not _autoscaler_enabled():
         return None
 
-    postgres_dsn = os.getenv("POSTGRES_DSN", "").strip()
-    if not postgres_dsn:
-        raise RuntimeError(
-            "POSTGRES_DSN is required while the global Salad capacity controller is enabled"
-        )
+    postgres_dsn = resolve_capacity_controller_dsn()
     max_heartbeat_age = _positive_float_env(
         "SALAD_CAPACITY_CONTROLLER_MAX_HEARTBEAT_AGE_SECONDS",
         120.0,
