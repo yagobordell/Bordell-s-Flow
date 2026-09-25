@@ -157,6 +157,10 @@ class InferenceWorker:
             )
 
         request_sha256 = request.fingerprint()
+        recovered = self._recover_before_claim(request, request_sha256)
+        if recovered is not None:
+            return recovered
+
         claim = self.repository.claim(
             request,
             request_sha256,
@@ -216,6 +220,56 @@ class InferenceWorker:
             result=response.model_dump(mode="json"),
         )
         return response
+
+    def _recover_before_claim(
+        self,
+        request: InferenceJobRequest,
+        request_sha256: str,
+    ) -> InferenceJobResponse | None:
+        """Finish a committed bundle without consuming another inference attempt."""
+
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix=f"{request.job_id}-preclaim-recovery-",
+            dir=self.temp_dir,
+        ) as temporary:
+            recovered = recover_committed_bundle(
+                self.storage,
+                request,
+                Path(temporary),
+            )
+        if recovered is None:
+            return None
+
+        primary, _ = recovered
+        output = self._reconcile_existing(request, request_sha256, primary)
+        self._reconcile_existing_sidecars(
+            request,
+            request_sha256,
+            primary_sha256=output.sha256,
+        )
+        candidate = InferenceJobResponse(
+            job_id=request.job_id,
+            request_sha256=request_sha256,
+            output=output,
+            attempt_count=1,
+            replayed=True,
+        )
+        claim = self.repository.reconcile_recovered_success(
+            request,
+            request_sha256,
+            result=candidate.model_dump(mode="json"),
+        )
+        if claim is None:
+            return None
+        if claim.decision is ClaimDecision.BUSY:
+            raise JobBusyError(f"job is currently leased by another worker: {request.job_id}")
+        if claim.result is None:
+            raise JobConflictError(
+                f"recovered job has no stored result: {request.job_id}"
+            )
+        response = InferenceJobResponse.model_validate(claim.result)
+        return self._reconcile_replayed_response(request, response)
 
     def _reconcile_replayed_response(
         self,
