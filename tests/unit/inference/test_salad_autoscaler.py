@@ -77,11 +77,13 @@ class FakeSaladClient:
         status: str = "running",
         instances: list[dict[str, object]] | None = None,
         fail_deletion_cost: bool = False,
+        pending_change: bool = False,
     ) -> None:
         self.replicas = replicas
         self.status = status
         self.instances = instances or []
         self.fail_deletion_cost = fail_deletion_cost
+        self.pending_change = pending_change
         self.replica_updates: list[int] = []
         self.deletion_cost_updates: list[tuple[str, int]] = []
         self.start_calls = 0
@@ -90,6 +92,7 @@ class FakeSaladClient:
     def describe_container_group(self) -> dict[str, object]:
         return {
             "replicas": self.replicas,
+            "pending_change": self.pending_change,
             "current_state": {"status": self.status},
         }
 
@@ -302,6 +305,31 @@ def test_downscale_is_deferred_when_running_worker_cannot_map_to_instance() -> N
     assert result.applied_replicas == 2
     assert result.reason == "active_instance_mapping_incomplete"
     assert client.replica_updates == []
+
+
+def test_pending_salad_change_defers_additional_zero_demand_writes() -> None:
+    stage = "realesrgan"
+    client = FakeSaladClient(
+        replicas=1,
+        status="pending",
+        pending_change=True,
+        instances=[],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,)),
+        store=FakeStore(rows={stage: []}, runtimes={stage: [53.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage)},
+        logger=lambda _message: None,
+    )
+
+    result = autoscaler.reconcile()[stage]
+
+    assert result.target_replicas == 0
+    assert result.applied_replicas == 1
+    assert result.reason == "provider_change_pending"
+    assert client.replica_updates == []
+    assert client.stop_calls == 0
 
 
 def test_empty_global_queue_stops_group_without_rewriting_configured_replicas() -> None:
