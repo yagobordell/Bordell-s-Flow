@@ -107,6 +107,7 @@ class FakeSaladClient:
         stop_immediate: bool = True,
         replica_update_immediate: bool = True,
         fail_list_instances: bool = False,
+        update_time: str | None = None,
     ) -> None:
         self.replicas = replicas
         self.status = status
@@ -116,6 +117,7 @@ class FakeSaladClient:
         self.stop_immediate = stop_immediate
         self.replica_update_immediate = replica_update_immediate
         self.fail_list_instances = fail_list_instances
+        self.update_time = update_time
         self.replica_updates: list[int] = []
         self.deletion_cost_updates: list[tuple[str, int]] = []
         self.start_calls = 0
@@ -125,6 +127,7 @@ class FakeSaladClient:
         return {
             "replicas": self.replicas,
             "pending_change": self.pending_change,
+            "update_time": self.update_time,
             "current_state": {"status": self.status},
         }
 
@@ -178,6 +181,7 @@ def _config(
     stage_max_replicas: int = 4,
     downscale_stable_polls: int = 1,
     nonconvergence_failure_polls: int = 4,
+    provider_pending_max_seconds: float = 7200.0,
     stage_cold_start_seconds: dict[str, float] | None = None,
 ) -> PredictiveAutoscalerConfig:
     return PredictiveAutoscalerConfig(
@@ -199,6 +203,7 @@ def _config(
         stage_cold_start_seconds=stage_cold_start_seconds,
         drain_grace_seconds=0.0,
         drain_ttl_seconds=120.0,
+        provider_pending_max_seconds=provider_pending_max_seconds,
     )
 
 
@@ -678,6 +683,63 @@ def test_pending_change_uses_live_instance_count_for_restart_safe_quota_accounti
     assert result["ltx25"].applied_replicas == 2
     assert result["ltx25"].reason == "provider_change_pending"
     assert waiting.start_calls == 0
+
+
+def test_stale_provider_pending_change_degrades_reconciliation() -> None:
+    stage = "ltx25"
+    client = FakeSaladClient(
+        replicas=1,
+        pending_change=True,
+        instances=[{"id": "instance-a", "deletion_cost": 0}],
+        update_time="2000-01-01T00:00:00+00:00",
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config(
+            (stage,),
+            project_max_replicas=1,
+            provider_pending_max_seconds=60.0,
+        ),
+        store=FakeStore(rows={stage: _pending_rows(2)}, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=1)},
+        logger=lambda _message: None,
+    )
+
+    with pytest.raises(
+        AutoscalerReconciliationError,
+        match="has remained pending",
+    ):
+        autoscaler.reconcile()
+
+    assert client.replica_updates == []
+    assert client.start_calls == 0
+    assert client.stop_calls == 0
+
+
+def test_pending_watchdog_fallback_starts_fresh_when_update_time_is_missing() -> None:
+    stage = "ltx25"
+    client = FakeSaladClient(
+        replicas=1,
+        pending_change=True,
+        instances=[{"id": "instance-a", "deletion_cost": 0}],
+        update_time=None,
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config(
+            (stage,),
+            project_max_replicas=1,
+            provider_pending_max_seconds=60.0,
+        ),
+        store=FakeStore(rows={stage: _pending_rows(2)}, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=1)},
+        logger=lambda _message: None,
+    )
+
+    result = autoscaler.reconcile()[stage]
+
+    assert result.reason == "provider_change_pending"
+    assert client.replica_updates == []
 
 
 def test_pending_change_instance_accounting_failure_fails_closed() -> None:
