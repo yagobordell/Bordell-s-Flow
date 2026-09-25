@@ -164,7 +164,11 @@ try {
         return @{}
     }
     try {
-        Invoke-SaladRequest -Headers @{} -Uri "https://example.invalid/write" -Operation "test write" -Method "Post"
+        Invoke-SaladRequest `
+            -Headers @{} `
+            -Uri "https://example.invalid/write" `
+            -Operation "test write" `
+            -Method "Post"
         throw "Mutation unexpectedly proceeded after lock-helper loss."
     }
     catch {
