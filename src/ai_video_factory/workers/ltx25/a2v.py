@@ -4,6 +4,7 @@ import gc
 import json
 import logging
 import math
+import os
 import shutil
 import subprocess
 import time
@@ -39,11 +40,19 @@ from .model import (
     _force_diffvae_eager_sdpa,
     _pipeline_dimensions,
 )
+from .reference_recipe import (
+    LTX25_MODEL_REVISION,
+    LTX_A2V_REFERENCE_RECIPE,
+    reference_num_frames_for_samples,
+)
 
 logger = logging.getLogger(__name__)
 
 LTX_A2V_TASK = "video.ltx25.audio_to_video"
 LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v5"
+LTX_A2V_REFERENCE_GENERATION_PROFILE = (
+    "ltx25-a2v-reference-distilled-a95ab856-model6c7e5e5-fp8cpu-eagersdpa-v1"
+)
 LTX_A2V_DEV_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
 LTX_A2V_RECOMMENDED_MAX_SECONDS = 12.0
 LTX_A2V_MAX_RAW_FRAMES = 1024
@@ -77,8 +86,14 @@ class LTXAudioToVideoParameters(BaseModel):
     @field_validator("generation_profile")
     @classmethod
     def validate_generation_profile(cls, value: str) -> str:
-        if value not in (LTX_A2V_GENERATION_PROFILE, LTX_A2V_DEV_GENERATION_PROFILE):
-            raise ValueError("generation_profile must be a supported fast or dev A2V profile")
+        if value not in (
+            LTX_A2V_GENERATION_PROFILE,
+            LTX_A2V_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_DEV_GENERATION_PROFILE,
+        ):
+            raise ValueError(
+                "generation_profile must be a supported fast, reference, or dev A2V profile"
+            )
         return value
 
     @field_validator("prompt")
@@ -115,11 +130,21 @@ class LTXA2VModelFiles:
         )
 
     def validate(self) -> None:
-        paths = (*self.shared.paths(), self.dev_transformer, self.distilled_lora)
-        missing = [str(path) for path in paths if not path.is_file()]
+        """Validate assets shared by I2V, fast A2V and the reference A2V profile."""
+
+        self.shared.validate()
+
+    def validate_dev(self) -> None:
+        """Validate optional dev-only comparison assets."""
+
+        missing = [
+            str(path)
+            for path in (self.dev_transformer, self.distilled_lora)
+            if not path.is_file()
+        ]
         if missing:
             raise FileNotFoundError(
-                "Missing LTX-2.5 A2V model files: " + ", ".join(missing)
+                "Missing optional LTX-2.5 dev A2V model files: " + ", ".join(missing)
             )
 
 
@@ -129,12 +154,28 @@ class AudioProbe:
     sample_rate: int
     channels: int
     duration_seconds: float
+    sample_count: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceAudioPlan:
+    path: Path
+    decoded_probe: AudioProbe
+    conditioning_probe: AudioProbe
+    num_frames: int
+    grid_video_duration_seconds: float
+    padding_samples: int
+
+    @property
+    def padding_seconds(self) -> float:
+        return self.padding_samples / float(self.conditioning_probe.sample_rate)
 
 
 @dataclass(frozen=True, slots=True)
 class _A2VBindings:
     torch: Any
     a2v_pipeline: Any
+    reference_a2v_pipeline: Any
     model_paths: Any
     quantization_kind: Any
     offload_mode: Any
@@ -164,6 +205,8 @@ def _load_a2v_bindings() -> _A2VBindings:
         from ltx_core.model.video_vae.transformer import apply as diffvae_apply
         from ltx_pipelines.a2vid_two_stage import A2VidPipelineTwoStage
         from ltx_pipelines.utils import helpers as tiling_helpers
+
+        from .reference_a2v import DistilledReferenceA2VPipeline
         from ltx_pipelines.utils.args import ImageConditioningInput
         from ltx_pipelines.utils.constants import (
             DEFAULT_NEGATIVE_PROMPT,
@@ -183,6 +226,7 @@ def _load_a2v_bindings() -> _A2VBindings:
     return _A2VBindings(
         torch=torch,
         a2v_pipeline=A2VidPipelineTwoStage,
+        reference_a2v_pipeline=DistilledReferenceA2VPipeline,
         model_paths=ModelPaths,
         quantization_kind=QuantizationKind,
         offload_mode=OffloadMode,
