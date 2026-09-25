@@ -85,3 +85,71 @@ def test_real_postgres_drain_commit_fences_concurrent_worker_claim() -> None:
         assert row is None
     finally:
         repository.close()
+
+
+def test_real_postgres_provider_hold_blocks_claim_after_ttl_expiry() -> None:
+    dsn = _postgres_dsn()
+    instance_id = "instance-provider-held-after-ttl"
+    request = InferenceJobRequest(
+        job_id="postgres-provider-held-job",
+        task="test.postgres_provider_hold",
+        output=ObjectOutput(
+            key="jobs/postgres-provider-held-job/output.bin",
+            content_type="application/octet-stream",
+        ),
+    )
+
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        connection.execute("DELETE FROM gpu.capacity_drains")
+        connection.execute("DELETE FROM gpu.jobs")
+        connection.execute(
+            """
+            INSERT INTO gpu.capacity_drains (
+                service,
+                instance_id,
+                requested_at,
+                expires_at,
+                hold_until_confirmed
+            ) VALUES (
+                'ltx25',
+                %s,
+                now() - interval '5 minutes',
+                now() - interval '1 minute',
+                true
+            )
+            """,
+            (instance_id,),
+        )
+
+    repository = PostgresJobRepository(dsn, max_connections=2)
+    try:
+        with pytest.raises(JobBusyError, match="draining"):
+            repository.claim(
+                request,
+                request.fingerprint(),
+                owner=f"worker-{instance_id}",
+                lease_seconds=60,
+                transport_job_id=None,
+                instance_id=instance_id,
+            )
+
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            connection.execute(
+                "DELETE FROM gpu.capacity_drains WHERE instance_id = %s",
+                (instance_id,),
+            )
+
+        claim = repository.claim(
+            request,
+            request.fingerprint(),
+            owner=f"worker-{instance_id}",
+            lease_seconds=60,
+            transport_job_id=None,
+            instance_id=instance_id,
+        )
+        assert claim.decision.value == "start"
+    finally:
+        repository.close()
+        with psycopg.connect(dsn, autocommit=True) as cleanup:
+            cleanup.execute("DELETE FROM gpu.capacity_drains")
+            cleanup.execute("DELETE FROM gpu.jobs WHERE job_id = %s", (request.job_id,))
