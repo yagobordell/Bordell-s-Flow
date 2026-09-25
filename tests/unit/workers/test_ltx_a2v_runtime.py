@@ -8,10 +8,76 @@ from _ltx_a2v_support import _seed_model_files, make_a2v_bindings
 from PIL import Image
 
 import ai_video_factory.workers.ltx25.a2v as a2v
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
+from ai_video_factory.workers.ltx25.model_manifest import write_installed_model_manifest
 from ai_video_factory.workers.ltx25 import (
     DirectLTX25AudioToVideoBackend,
     LTXAudioToVideoParameters,
 )
+
+
+def test_guided_bootstrap_waits_for_atomic_dev_manifest_before_polling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "models"
+    _seed_model_files(root)
+    files = a2v.LTXA2VModelFiles.from_root(root)
+    monkeypatch.setenv("LTX_INCLUDE_A2V_DEV_ASSETS", "true")
+    monkeypatch.setenv("LTX_MODEL_REPOSITORY", "Lightricks/LTX-2.5")
+    monkeypatch.setenv("LTX_MODEL_REVISION", a2v.LTX25_MODEL_REVISION)
+    bindings = make_a2v_bindings({})
+    monkeypatch.setattr(a2v, "_load_a2v_bindings", lambda: bindings)
+    backend = DirectLTX25AudioToVideoBackend(model_root=root)
+
+    with pytest.raises(ModelBootstrapPendingError, match="manifest"):
+        backend.prepare()
+    with pytest.raises(RuntimeError, match="not been prepared"):
+        backend.ready()
+
+    manifest = root / ".bordell-installed-model-manifest.json"
+    shared_and_dev = [
+        path.relative_to(root).as_posix()
+        for path in (*files.shared.paths(), files.dev_transformer, files.distilled_lora)
+    ]
+    write_installed_model_manifest(
+        manifest,
+        repository="Lightricks/LTX-2.5",
+        revision=a2v.LTX25_MODEL_REVISION,
+        root=root,
+        files=shared_and_dev[:-1],
+    )
+    with pytest.raises(ModelBootstrapPendingError, match="verified bootstrap record"):
+        backend.prepare()
+
+    write_installed_model_manifest(
+        manifest,
+        repository="Lightricks/LTX-2.5",
+        revision=a2v.LTX25_MODEL_REVISION,
+        root=root,
+        files=shared_and_dev,
+    )
+    backend.prepare()
+    backend.ready()
+
+    # Readiness must not silently accept missing/corrupt optional assets.
+    files.distilled_lora.write_bytes(b"changed-size")
+    with pytest.raises(FileNotFoundError, match="verified bootstrap record"):
+        backend.ready()
+
+
+def test_distilled_a2v_bootstrap_keeps_dev_weights_optional(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "models"
+    _seed_model_files(root)
+    files = a2v.LTXA2VModelFiles.from_root(root)
+    files.dev_transformer.unlink()
+    files.distilled_lora.unlink()
+    monkeypatch.setenv("LTX_INCLUDE_A2V_DEV_ASSETS", "false")
+    monkeypatch.setattr(a2v, "_load_a2v_bindings", lambda: make_a2v_bindings({}))
+    backend = DirectLTX25AudioToVideoBackend(model_root=root)
+    backend.prepare()
+    backend.ready()
 
 
 def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
