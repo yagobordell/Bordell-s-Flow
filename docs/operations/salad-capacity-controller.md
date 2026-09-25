@@ -48,11 +48,14 @@ failures rather than successful no-op passes. Safe downscale deferrals caused by
 worker-to-instance mapping or insufficient observed idle instances are allowed to be transient, but
 after `SALAD_AUTOSCALER_NONCONVERGENCE_FAILURE_POLLS` consecutive blocked reconciliations for the
 same target they also fail reconciliation and allow health monitoring to degrade. Salad provider
-changes are also bounded: while `pending_change=true`, the controller uses the group's provider
-`update_time` as a restart-safe age signal. If that pending state exceeds
+transitions are also bounded: `pending_change=true` and the provider statuses `pending` or
+`deploying` are treated as in-flight states, using the group's provider `update_time` as a
+restart-safe age signal. If that transition exceeds
 `SALAD_AUTOSCALER_PROVIDER_PENDING_MAX_SECONDS` (default two hours), reconciliation fails so
 controller health degrades instead of remaining green indefinitely. If `update_time` is unavailable,
-the leader falls back to the first pending observation for that process.
+the leader falls back to the first transition observation for that process. Terminal provider states
+`failed` and `succeeded` are never counted as healthy worker capacity; they fail reconciliation
+immediately, and unknown provider states fail closed.
 
 ## Production ownership
 
@@ -62,12 +65,12 @@ stops a group after aggregate demand reaches zero. A stopped group is treated as
 capacity even if Salad preserves a non-zero configured `replicas` value for the next start. Capacity
 reductions are never credited to the project budget merely because a PATCH or stop request was
 accepted: the controller keeps the previously observed capacity reserved until a later reconciliation
-confirms the change. While Salad reports `pending_change=true`, effective capacity is conservatively
-computed as the maximum of the configured replica count and the number of still-listed instances.
-The controller is read-only for that group during the pending provider operation: it sends no
-additional resize, start or stop request until Salad settles. This also survives a controller restart
-during a partial downscale. If the live instance list cannot be read while a provider change is
-pending, reconciliation fails closed instead of releasing quota.
+confirms the change. While Salad reports `pending_change=true` or the group is `pending` /
+`deploying`, effective capacity is conservatively computed as the maximum of the configured replica
+count and the number of still-listed instances. The controller is read-only for that group during
+the provider transition: it sends no additional resize, start or stop request until Salad settles.
+This also survives a controller restart during a partial downscale. If the live instance list cannot
+be read while a provider transition is active, reconciliation fails closed instead of releasing quota.
 Drain publication and worker claims share a transaction-scoped advisory lock per Salad instance,
 closing the race where a worker could claim new work after that instance had been selected for
 removal. Before the controller submits a resize or stop, those selected drains are promoted to a
