@@ -79,41 +79,92 @@ $GpuClassesBase = "$OrganizationApiBase/gpu-classes"
 $ContainersBase = "$OrganizationApiBase/projects/$Project/containers"
 $SecretNames = @("POSTGRES_DSN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "HF_TOKEN", "SALAD_API_KEY")
 
-function Get-EnvironmentBoolean {
-    param(
-        [Parameter(Mandatory)][string]$Name,
-        [bool]$Default = $false
-    )
-    $Raw = [Environment]::GetEnvironmentVariable(
-        $Name,
-        [EnvironmentVariableTarget]::Process
-    )
-    if ([string]::IsNullOrWhiteSpace($Raw)) {
-        return $Default
+function Resolve-CapacityLockPython {
+    $VenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+    if (Test-Path -LiteralPath $VenvPython -PathType Leaf) {
+        return $VenvPython
     }
-    switch ($Raw.Trim().ToLowerInvariant()) {
-        { $_ -in @("1", "true", "yes", "on") } { return $true }
-        { $_ -in @("0", "false", "no", "off") } { return $false }
-        default { throw "$Name must be a boolean value." }
+    $Python = Get-Command python -ErrorAction SilentlyContinue
+    if ($null -eq $Python) {
+        throw (
+            "Cannot verify Salad Capacity Controller ownership because Python is unavailable. " +
+            "Create the project virtual environment or pass -AllowControllerOverride for an " +
+            "intentional operator intervention."
+        )
     }
+    return [string]$Python.Source
 }
 
-function Assert-ManualCapacityMutationAllowed {
+function Enter-ManualCapacityMutationLock {
     if ($Action -notin @("Prepare", "Start", "Stop")) {
-        return
+        return $null
     }
     if ($AllowControllerOverride) {
         Write-Warning (
-            "Manual Salad capacity override requested while operator owns controller coordination."
+            "Manual Salad capacity override requested without controller advisory-lock ownership."
         )
+        return $null
+    }
+
+    $Python = Resolve-CapacityLockPython
+    $LockScript = Join-Path $RepoRoot "scripts\salad\hold_capacity_controller_lock.py"
+    if (-not (Test-Path -LiteralPath $LockScript -PathType Leaf)) {
+        throw "Capacity Controller lock helper is missing: $LockScript"
+    }
+
+    $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $StartInfo.FileName = $Python
+    $StartInfo.Arguments = '"' + $LockScript + '"'
+    $StartInfo.WorkingDirectory = $RepoRoot
+    $StartInfo.UseShellExecute = $false
+    $StartInfo.RedirectStandardInput = $true
+    $StartInfo.RedirectStandardOutput = $true
+    $StartInfo.RedirectStandardError = $true
+    $StartInfo.CreateNoWindow = $true
+
+    $Process = New-Object System.Diagnostics.Process
+    $Process.StartInfo = $StartInfo
+    if (-not $Process.Start()) {
+        throw "Could not start Capacity Controller lock helper."
+    }
+
+    $Signal = $Process.StandardOutput.ReadLine()
+    if ($Signal -ne "LOCK_ACQUIRED") {
+        $ErrorText = $Process.StandardError.ReadToEnd().Trim()
+        $Process.WaitForExit()
+        $Detail = if ([string]::IsNullOrWhiteSpace($ErrorText)) {
+            "lock helper returned '$Signal'"
+        }
+        else {
+            $ErrorText
+        }
+        throw (
+            "Manual Salad action '$Action' is blocked because controller ownership " +
+            "could not be acquired: $Detail. Stop the singleton Capacity Controller first, " +
+            "or pass -AllowControllerOverride for an intentional operator intervention."
+        )
+    }
+
+    return $Process
+}
+
+function Exit-ManualCapacityMutationLock {
+    param([object]$Process)
+    if ($null -eq $Process) {
         return
     }
-    if (Get-EnvironmentBoolean -Name "SALAD_AUTOSCALER_ENABLED") {
-        throw (
-            "Manual Salad action '$Action' is blocked while SALAD_AUTOSCALER_ENABLED=true. " +
-            "Stop/disable the singleton Capacity Controller first, or pass " +
-            "-AllowControllerOverride for an intentional operator intervention."
-        )
+    try {
+        if (-not $Process.HasExited) {
+            $Process.StandardInput.WriteLine("release")
+            $Process.StandardInput.Close()
+            if (-not $Process.WaitForExit(5000)) {
+                $Process.Kill()
+                $Process.WaitForExit()
+            }
+        }
+    }
+    finally {
+        $Process.Dispose()
     }
 }
 
@@ -443,18 +494,21 @@ function Show-Status {
 }
 
 Assert-ServiceDefinition
-Assert-ManualCapacityMutationAllowed
 Set-Location $RepoRoot
 if ($Recreate -and $Action -ne "Prepare") { throw "-Recreate is only valid with Prepare." }
 
-if ($Action -eq "Validate") {
-    Write-Host ("VALID service={0} group={1} transport=postgres capacity={2}-{3}" -f $Service, $GroupName, $StartReplicas, $MaxReplicas) -ForegroundColor Green
-    exit 0
-}
+$CapacityMutationLock = $null
+try {
+    $CapacityMutationLock = Enter-ManualCapacityMutationLock
 
-$Headers = Get-Headers
+    if ($Action -eq "Validate") {
+        Write-Host ("VALID service={0} group={1} transport=postgres capacity={2}-{3}" -f $Service, $GroupName, $StartReplicas, $MaxReplicas) -ForegroundColor Green
+        exit 0
+    }
 
-switch ($Action) {
+    $Headers = Get-Headers
+
+    switch ($Action) {
     "Status" {
         Show-Status -Headers $Headers
         exit 0
@@ -534,4 +588,8 @@ switch ($Action) {
         Write-Host ("{0} prepared without Salad queue/autoscaler; stopped with configured replicas={1}." -f $Service, [int]$Prepared.replicas) -ForegroundColor Green
         exit 0
     }
+}
+}
+finally {
+    Exit-ManualCapacityMutationLock -Process $CapacityMutationLock
 }

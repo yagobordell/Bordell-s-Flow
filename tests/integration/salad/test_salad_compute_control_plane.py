@@ -96,65 +96,24 @@ def test_stop_converges_to_stable_stopped_without_rewriting_replicas() -> None:
     assert '"$ContainersBase/$GroupName/stop"' in stop
 
 
-def test_manual_capacity_mutations_require_explicit_controller_override() -> None:
+def test_manual_capacity_mutations_share_controller_advisory_lock() -> None:
     script = WORKER.read_text(encoding="utf-8")
 
     assert "[switch]$AllowControllerOverride" in script
-    assert "Assert-ManualCapacityMutationAllowed" in script
-    assert "SALAD_AUTOSCALER_ENABLED=true" in script
+    assert "Enter-ManualCapacityMutationLock" in script
+    assert "Exit-ManualCapacityMutationLock" in script
+    assert "hold_capacity_controller_lock.py" in script
+    assert "SALAD_AUTOSCALER_ENABLED=true" not in script
     assert "-AllowControllerOverride" in script
+    assert "RedirectStandardInput = $true" in script
+    assert "LOCK_ACQUIRED" in script
 
-    pwsh = shutil.which("pwsh")
-    if pwsh is None:
-        return
-
-    probe = r"""
-$ErrorActionPreference = "Stop"
-Set-StrictMode -Version Latest
-$Tokens = $null
-$Errors = $null
-$Ast = [System.Management.Automation.Language.Parser]::ParseFile(
-    "scripts/salad/manage_salad_worker.ps1", [ref]$Tokens, [ref]$Errors
-)
-if ($Errors) { throw "Worker manager has PowerShell syntax errors." }
-foreach ($Name in @("Get-EnvironmentBoolean", "Assert-ManualCapacityMutationAllowed")) {
-    $Function = $Ast.Find({
-        param($Node)
-        $Node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-            $Node.Name -eq $Name
-    }, $true)
-    if ($null -eq $Function) { throw "Missing function $Name." }
-    . ([scriptblock]::Create($Function.Extent.Text))
-}
-$Action = "Stop"
-$AllowControllerOverride = $false
-$env:SALAD_AUTOSCALER_ENABLED = "true"
-try {
-    Assert-ManualCapacityMutationAllowed
-    throw "Missing controller ownership rejection."
-}
-catch {
-    if ($_.Exception.Message -notmatch "blocked while SALAD_AUTOSCALER_ENABLED=true") {
-        throw
-    }
-}
-$AllowControllerOverride = $true
-Assert-ManualCapacityMutationAllowed
-$AllowControllerOverride = $false
-$env:SALAD_AUTOSCALER_ENABLED = "false"
-Assert-ManualCapacityMutationAllowed
-Write-Output "PASS: manual capacity ownership guard"
-"""
-    result = subprocess.run(
-        [pwsh, "-NoProfile", "-NonInteractive", "-Command", probe],
-        cwd=Path.cwd(),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
+    helper = Path("scripts/salad/hold_capacity_controller_lock.py").read_text(
+        encoding="utf-8"
     )
-    assert result.returncode == 0, result.stdout + "\n" + result.stderr
-    assert "PASS: manual capacity ownership guard" in result.stdout
+    assert "PostgresCapacityControllerOperationLock" in helper
+    assert "resolve_capacity_controller_dsn" in helper
+    assert "sys.stdin.readline()" in helper
 
 
 def test_prepare_reads_priority_from_get_container_group_response() -> None:
