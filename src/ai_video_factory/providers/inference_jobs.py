@@ -58,6 +58,10 @@ class IncompleteInferenceBundleError(RuntimeError):
     """Postgres reported success but the durable artifact bundle is incomplete."""
 
 
+class InferenceQueueAuthorityError(RuntimeError):
+    """The authoritative queue state could not be verified for a cached artifact."""
+
+
 class RemoteInferenceRejectedError(RuntimeError):
     """Terminal application-level rejection returned through a succeeded transport job."""
 
@@ -224,7 +228,7 @@ class InferenceJobExecutor:
             now = time.monotonic()
             if snapshot.status == QueueJobStatus.PENDING:
                 if now >= pending_deadline:
-                    reconciled = _reconcile_cached_response(self._storage, request)
+                    reconciled = self._reconcile_cached_response(request)
                     if reconciled is not None:
                         logger.warning(
                             "Inference transport exceeded pending timeout but its R2 artifact "
@@ -245,7 +249,7 @@ class InferenceJobExecutor:
                 if running_deadline is None:
                     running_deadline = now + self._timeout_seconds
                 if now >= running_deadline:
-                    reconciled = _reconcile_cached_response(self._storage, request)
+                    reconciled = self._reconcile_cached_response(request)
                     if reconciled is not None:
                         logger.warning(
                             "Inference transport exceeded running timeout but its R2 artifact "
@@ -358,15 +362,10 @@ class InferenceJobExecutor:
             )
             return None
         except Exception as exc:
-            logger.warning(
-                (
-                    "Verified R2 cache could not reconcile queue state "
-                    "application_job_id=%s: %s"
-                ),
-                request.job_id,
-                exc,
-            )
-            return response
+            raise InferenceQueueAuthorityError(
+                "Verified R2 cache cannot be accepted because authoritative "
+                f"queue state is unavailable for {request.job_id}"
+            ) from exc
         if reconciled.status is not QueueJobStatus.SUCCEEDED or reconciled.output is None:
             return None
         persisted = InferenceJobResponse.model_validate(reconciled.output)
@@ -375,6 +374,43 @@ class InferenceJobExecutor:
             request,
             persisted,
         ).model_copy(update={"replayed": True})
+
+    def _reconcile_cached_response(
+        self,
+        request: InferenceJobRequest,
+    ) -> InferenceJobResponse | None:
+        """Recover R2 state at a timeout, then re-check authoritative queue state."""
+
+        try:
+            cached = cached_inference_response(self._storage, request)
+            if cached is None:
+                with tempfile.TemporaryDirectory(
+                    prefix=f"{request.job_id}-bundle-recovery-"
+                ) as temp:
+                    recovered = recover_committed_bundle(
+                        self._storage,
+                        request,
+                        Path(temp),
+                    )
+                if recovered is None:
+                    return None
+                cached = cached_inference_response(self._storage, request)
+            if cached is None:
+                return None
+            return self._reconcile_cached_queue_state(request, cached)
+        except (
+            InferenceTransportFailedError,
+            InferenceQueueAuthorityError,
+        ):
+            raise
+        except RuntimeError as exc:
+            logger.warning(
+                "Inference timeout cache reconciliation rejected "
+                "application_job_id=%s: %s",
+                request.job_id,
+                exc,
+            )
+            return None
 
     def _recover_terminal_bundle(
         self,
@@ -518,30 +554,6 @@ def _terminal_rejection_detail(output: Any) -> str | None:
     if not isinstance(detail, str) or not detail.strip():
         return None
     return detail.strip()
-
-
-def _reconcile_cached_response(
-    storage: ObjectStorage,
-    request: InferenceJobRequest,
-) -> InferenceJobResponse | None:
-    """Recover a completed R2 artifact when transport state is stale at a deadline."""
-
-    try:
-        cached = cached_inference_response(storage, request)
-        if cached is not None:
-            return cached
-        with tempfile.TemporaryDirectory(prefix=f"{request.job_id}-bundle-recovery-") as temp:
-            recovered = recover_committed_bundle(storage, request, Path(temp))
-        if recovered is None:
-            return None
-        return cached_inference_response(storage, request)
-    except RuntimeError as exc:
-        logger.warning(
-            "Inference timeout cache reconciliation rejected application_job_id=%s: %s",
-            request.job_id,
-            exc,
-        )
-        return None
 
 
 def _validate_successful_bundle(
