@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from array import array
 import json
 import math
 import mimetypes
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,7 @@ from ai_video_factory.workers.ltx25 import (
     LTX_A2V_DEFAULT_PROMPT,
     LTX_A2V_DEV_GENERATION_PROFILE,
     LTX_A2V_GENERATION_PROFILE,
+    LTX_A2V_REFERENCE_GENERATION_PROFILE,
     LTX_A2V_TASK,
     ltx_a2v_application_job_id,
 )
@@ -92,6 +95,74 @@ def _validate_decodable_video(path: Path) -> None:
         )
 
 
+def _voice_span_seconds(path: Path, *, sample_rate: int = 16000) -> float:
+    """Measure first-to-last voiced energy without trusting container duration."""
+
+    executable = shutil.which("ffmpeg")
+    if executable is None:
+        raise RuntimeError("ffmpeg is required for A2V voice-tail validation")
+    completed = subprocess.run(
+        [
+            executable,
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-map",
+            "0:a:0",
+            "-ac",
+            "1",
+            "-ar",
+            str(sample_rate),
+            "-f",
+            "s16le",
+            "pipe:1",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    samples = array("h")
+    samples.frombytes(completed.stdout)
+    if sys.byteorder != "little":
+        samples.byteswap()
+    if not samples:
+        raise RuntimeError(f"A2V voice-tail validation decoded no audio: {path}")
+
+    window_samples = max(1, round(sample_rate * 0.02))
+    rms_values: list[float] = []
+    for start in range(0, len(samples), window_samples):
+        chunk = samples[start : start + window_samples]
+        if not chunk:
+            continue
+        mean_square = sum(float(value) * float(value) for value in chunk) / len(chunk)
+        rms_values.append(math.sqrt(mean_square))
+    if not rms_values:
+        raise RuntimeError(f"A2V voice-tail validation produced no RMS windows: {path}")
+
+    peak = max(rms_values)
+    threshold = max(300.0, peak * 0.08)
+    active = [index for index, value in enumerate(rms_values) if value >= threshold]
+    if not active:
+        raise RuntimeError(
+            "A2V smoke audio does not contain a measurable voiced/signal span; "
+            "use a real speech sample"
+        )
+    return (active[-1] - active[0] + 1) * (window_samples / float(sample_rate))
+
+
+def _validate_reference_voice_tail(input_audio: Path, output_video: Path) -> None:
+    input_span = _voice_span_seconds(input_audio)
+    output_span = _voice_span_seconds(output_video)
+    tolerance_seconds = 0.14
+    if output_span + tolerance_seconds < input_span:
+        raise RuntimeError(
+            "reference A2V output lost the end of the voiced input: "
+            f"input_voice_span={input_span:.3f}s "
+            f"output_voice_span={output_span:.3f}s "
+            f"tolerance={tolerance_seconds:.3f}s"
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Submit and verify one real LTX-2.5 image+speech A2V job through Postgres/R2."
@@ -100,7 +171,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--audio", type=Path, required=True)
     parser.add_argument("--prompt", default=LTX_A2V_DEFAULT_PROMPT)
     parser.add_argument("--segment-id", default="smoke-001")
-    parser.add_argument("--profile", choices=("fast", "dev"), default="fast")
+    parser.add_argument(
+        "--profile",
+        choices=("fast", "reference", "dev"),
+        default="fast",
+    )
     parser.add_argument("--max-generation-seconds", type=float, default=0.0)
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
@@ -119,11 +194,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    profile = (
-        LTX_A2V_GENERATION_PROFILE
-        if args.profile == "fast"
-        else LTX_A2V_DEV_GENERATION_PROFILE
-    )
+    profiles = {
+        "fast": LTX_A2V_GENERATION_PROFILE,
+        "reference": LTX_A2V_REFERENCE_GENERATION_PROFILE,
+        "dev": LTX_A2V_DEV_GENERATION_PROFILE,
+    }
+    profile = profiles[args.profile]
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     avatar = args.avatar_image
@@ -309,9 +385,10 @@ def main() -> None:
     if metadata["generation_profile"] != profile:
         raise RuntimeError("A2V worker used a mismatched generation profile")
 
-    expected_variant = "distilled" if args.profile == "fast" else "dev"
-    expected_steps = 8 if args.profile == "fast" else 30
-    expected_cfg = 1.0 if args.profile == "fast" else 3.0
+    distilled_profile = args.profile in {"fast", "reference"}
+    expected_variant = "distilled" if distilled_profile else "dev"
+    expected_steps = 8 if distilled_profile else 30
+    expected_cfg = 1.0 if distilled_profile else 3.0
     if metadata["transformer_variant"] != expected_variant:
         raise RuntimeError("A2V worker used the wrong transformer variant")
     if int(metadata["stage_1_steps"]) != expected_steps or int(metadata["stage_2_steps"]) != 3:
@@ -334,10 +411,70 @@ def main() -> None:
         raise RuntimeError("A2V metadata/output duration mismatch")
     if abs(effective_audio_duration - output_duration) > tolerance:
         raise RuntimeError("A2V conditioned audio/video duration mismatch")
-    if effective_audio_duration > input_duration + tolerance:
-        raise RuntimeError("A2V output audio unexpectedly exceeds input speech duration")
-    if input_duration - effective_audio_duration > (8.0 / args.fps) + tolerance:
-        raise RuntimeError("A2V output lost more than one temporal-grid interval")
+    if args.profile == "reference":
+        reference_required = {
+            "generation_recipe",
+            "stage_1_sampler",
+            "stage_2_sampler",
+            "stage_1_image_strength",
+            "stage_2_image_strength",
+            "audio_frozen_stage_1",
+            "audio_frozen_stage_2",
+            "decoded_speech_samples",
+            "conditioning_audio_samples",
+            "audio_padding_samples",
+            "audio_padding_seconds",
+            "grid_video_duration_seconds",
+            "ltx_model_revision",
+            "quantization",
+            "offload_mode",
+        }
+        reference_missing = reference_required - set(metadata)
+        if reference_missing:
+            raise RuntimeError(
+                "reference A2V metadata is missing fields: "
+                + ", ".join(sorted(reference_missing))
+            )
+        if metadata["generation_recipe"] != "distilled_reference":
+            raise RuntimeError("reference A2V worker used the wrong generation recipe")
+        if metadata["stage_1_sampler"] != "euler_ancestral":
+            raise RuntimeError("reference A2V Stage 1 is not Euler ancestral")
+        if metadata["stage_2_sampler"] != "euler":
+            raise RuntimeError("reference A2V Stage 2 is not Euler")
+        if float(metadata["stage_1_image_strength"]) != 0.7:
+            raise RuntimeError("reference A2V Stage 1 image strength is not 0.7")
+        if float(metadata["stage_2_image_strength"]) != 1.0:
+            raise RuntimeError("reference A2V Stage 2 image strength is not 1.0")
+        if not bool(metadata["audio_frozen_stage_1"]) or not bool(
+            metadata["audio_frozen_stage_2"]
+        ):
+            raise RuntimeError("reference A2V did not freeze audio in both stages")
+
+        decoded_samples = int(metadata["decoded_speech_samples"])
+        conditioning_samples = int(metadata["conditioning_audio_samples"])
+        padding_samples = int(metadata["audio_padding_samples"])
+        if decoded_samples <= 0:
+            raise RuntimeError("reference A2V did not report decoded speech samples")
+        if conditioning_samples < decoded_samples:
+            raise RuntimeError("reference A2V conditioning truncated decoded speech samples")
+        if padding_samples != conditioning_samples - decoded_samples:
+            raise RuntimeError("reference A2V padding metadata is inconsistent")
+        if padding_samples < 0:
+            raise RuntimeError("reference A2V reported negative audio padding")
+
+        grid_duration = float(metadata["grid_video_duration_seconds"])
+        if grid_duration + tolerance < input_duration:
+            raise RuntimeError("reference A2V grid does not cover the full input speech")
+        if effective_audio_duration + tolerance < input_duration:
+            raise RuntimeError("reference A2V output audio is shorter than the input speech")
+        if abs(effective_audio_duration - grid_duration) > tolerance:
+            raise RuntimeError("reference A2V output audio does not cover its snapped grid")
+        _validate_reference_voice_tail(audio, video_path)
+    else:
+        if effective_audio_duration > input_duration + tolerance:
+            raise RuntimeError("A2V output audio unexpectedly exceeds input speech duration")
+        if input_duration - effective_audio_duration > (8.0 / args.fps) + tolerance:
+            raise RuntimeError("A2V output lost more than one temporal-grid interval")
 
     if args.max_generation_seconds > 0:
         actual_seconds = float(metadata["total_elapsed_seconds"])
