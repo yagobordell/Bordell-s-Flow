@@ -79,6 +79,10 @@ was temporarily unavailable.
 Postgres cancellation is authoritative over object storage. A complete cached bundle for a job whose
 canonical row is `cancelled` is not returned as success. Likewise, an actively `running` or protected
 `pending` row is not bypassed by an R2 cache hit; the executor continues to observe the queue state.
+This rule also applies when a pending/running timeout expires: any recovered R2 bundle is passed
+through the same queue-state reconciliation before it can be returned. For Postgres-backed queues,
+an unexpected failure while checking authoritative queue state is fail-closed and surfaces as an
+authority error instead of treating R2 as successful by default.
 
 ### Internal bundle retention
 

@@ -78,12 +78,14 @@ class FakeSaladClient:
         instances: list[dict[str, object]] | None = None,
         fail_deletion_cost: bool = False,
         pending_change: bool = False,
+        stop_immediate: bool = True,
     ) -> None:
         self.replicas = replicas
         self.status = status
         self.instances = instances or []
         self.fail_deletion_cost = fail_deletion_cost
         self.pending_change = pending_change
+        self.stop_immediate = stop_immediate
         self.replica_updates: list[int] = []
         self.deletion_cost_updates: list[tuple[str, int]] = []
         self.start_calls = 0
@@ -108,7 +110,8 @@ class FakeSaladClient:
 
     def stop_container_group(self) -> None:
         self.stop_calls += 1
-        self.status = "stopped"
+        if self.stop_immediate:
+            self.status = "stopped"
 
     def list_container_group_instances(self) -> list[dict[str, object]]:
         return [dict(item) for item in self.instances]
@@ -332,7 +335,7 @@ def test_pending_salad_change_defers_additional_zero_demand_writes() -> None:
     assert client.stop_calls == 0
 
 
-def test_empty_global_queue_stops_group_without_rewriting_configured_replicas() -> None:
+def test_empty_global_queue_releases_capacity_only_after_stopped_is_observed() -> None:
     stage = "realesrgan"
     client = FakeSaladClient(
         replicas=1,
@@ -347,17 +350,68 @@ def test_empty_global_queue_stops_group_without_rewriting_configured_replicas() 
     )
 
     first = autoscaler.reconcile()[stage]
-    result = autoscaler.reconcile()[stage]
+    stop_requested = autoscaler.reconcile()[stage]
+    stopped = autoscaler.reconcile()[stage]
 
     assert first.target_replicas == 0
     assert first.applied_replicas == 1
     assert first.reason == "drain_grace_pending"
-    assert result.target_replicas == 0
-    assert result.applied_replicas == 0
+    assert stop_requested.target_replicas == 0
+    assert stop_requested.applied_replicas == 1
+    assert stop_requested.reason == "stop_requested_pending_confirmation"
+    assert stopped.applied_replicas == 0
     assert client.replica_updates == []
     assert client.stop_calls == 1
     assert client.replicas == 1
     assert client.status == "stopped"
+
+
+def test_stop_request_does_not_release_project_quota_until_confirmed() -> None:
+    stages = ("realesrgan", "ltx25")
+    store = FakeStore(
+        rows={
+            "realesrgan": [],
+            "ltx25": _pending_rows(2),
+        },
+        runtimes={
+            "realesrgan": [53.0],
+            "ltx25": [60.0],
+        },
+    )
+    stopping = FakeSaladClient(
+        replicas=1,
+        status="running",
+        instances=[{"id": "idle-instance", "deletion_cost": 0}],
+        stop_immediate=False,
+    )
+    waiting = FakeSaladClient(replicas=1, status="stopped")
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config(stages, project_max_replicas=1, stage_max_replicas=1),
+        store=store,
+        clients={
+            "realesrgan": stopping,
+            "ltx25": waiting,
+        },
+        bindings={stage: _binding(stage, max_replicas=1) for stage in stages},
+        logger=lambda _message: None,
+    )
+
+    first = autoscaler.reconcile()
+    second = autoscaler.reconcile()
+
+    assert first["realesrgan"].reason == "drain_grace_pending"
+    assert second["realesrgan"].reason == "stop_requested_pending_confirmation"
+    assert second["realesrgan"].applied_replicas == 1
+    assert stopping.stop_calls == 1
+    assert waiting.start_calls == 0
+    assert waiting.replica_updates == []
+
+    stopping.status = "stopped"
+    confirmed = autoscaler.reconcile()
+
+    assert confirmed["realesrgan"].applied_replicas == 0
+    assert confirmed["ltx25"].applied_replicas == 1
+    assert waiting.start_calls == 1
 
 
 def test_stage_specific_cold_start_changes_capacity_estimate() -> None:

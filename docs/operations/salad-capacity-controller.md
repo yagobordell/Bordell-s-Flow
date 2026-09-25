@@ -51,9 +51,13 @@ same target they also fail reconciliation and allow health monitoring to degrade
 The Capacity Controller is the only production component allowed to decide project capacity.
 It calculates demand from all active `gpu.jobs`, protects running instances with deletion cost, and
 stops a group after aggregate demand reaches zero. A stopped group is treated as zero effective
-capacity even if Salad preserves a non-zero configured `replicas` value for the next start. Drain
-publication and worker claims share a transaction-scoped advisory lock per Salad instance, closing
-the race where a worker could claim new work after that instance had been selected for removal.
+capacity even if Salad preserves a non-zero configured `replicas` value for the next start. A stop
+request does not release project quota immediately: the controller keeps the group's previously
+observed active capacity reserved until a later reconciliation observes `status=stopped`. This
+prevents another service from consuming quota while Salad is still completing an asynchronous stop.
+Drain publication and worker claims share a transaction-scoped advisory lock per Salad instance,
+closing the race where a worker could claim new work after that instance had been selected for
+removal.
 
 `run_video_factory.ps1` requires a healthy controller before the DAG starts. The Python production
 runner checks controller health every 15 seconds while stages are active and cancels running stage

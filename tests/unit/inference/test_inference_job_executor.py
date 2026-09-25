@@ -16,6 +16,7 @@ from ai_video_factory.providers.inference_jobs import (
     IncompleteInferenceBundleError,
     InferenceJobExecutor,
     InferenceJobTimeoutError,
+    InferenceQueueAuthorityError,
     RemoteInferenceRejectedError,
 )
 from ai_video_factory.providers.job_queue import (
@@ -71,6 +72,12 @@ class FakeQueue:
 
     def cancel(self, transport_job_id: str) -> None:
         self.cancellations.append(transport_job_id)
+
+
+class AuthorityFailureQueue(FakeQueue):
+    def reconcile_recovered_success(self, request, response):
+        del request, response
+        raise RuntimeError("Postgres unavailable")
 
 
 class TransientThenSuccessQueue:
@@ -233,6 +240,31 @@ def test_executor_reuses_verified_object_storage_artifact_without_queue_submissi
     assert queue.cancellations == []
 
 
+def test_executor_fails_closed_when_cache_authority_is_unavailable() -> None:
+    request = _request()
+    stored = _stored_for_request(request)
+    queue = AuthorityFailureQueue(
+        QueueJobSnapshot(
+            id="authority-unavailable",
+            status=QueueJobStatus.PENDING,
+        )
+    )
+    executor = InferenceJobExecutor(
+        queue=queue,  # type: ignore[arg-type]
+        storage=FakeStorage(stored),
+        poll_seconds=0.01,
+        timeout_seconds=1,
+    )
+
+    with pytest.raises(
+        InferenceQueueAuthorityError,
+        match="authoritative queue state is unavailable",
+    ):
+        executor.execute(request, metadata={"phase": "4"})
+
+    assert queue.submits == 0
+
+
 def test_executor_keeps_polling_after_transient_queue_read_failures() -> None:
     request = _request()
     queue = TransientThenSuccessQueue(failures=2)
@@ -325,6 +357,42 @@ def test_executor_does_not_cancel_transport_after_running_timeout() -> None:
     assert captured.value.transport_job_id == "transport-running"
     assert queue.submits == 1
     assert queue.cancellations == []
+
+
+def test_executor_timeout_cache_fails_closed_when_authority_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = {"now": 0.0}
+    monkeypatch.setattr(
+        "ai_video_factory.providers.inference_jobs.time.monotonic",
+        lambda: clock["now"],
+    )
+    monkeypatch.setattr(
+        "ai_video_factory.providers.inference_jobs.time.sleep",
+        lambda seconds: clock.__setitem__("now", clock["now"] + seconds),
+    )
+    request = _request()
+    queue = AuthorityFailureQueue(
+        QueueJobSnapshot(
+            id="authority-timeout",
+            status=QueueJobStatus.RUNNING,
+        )
+    )
+    executor = InferenceJobExecutor(
+        queue=queue,  # type: ignore[arg-type]
+        storage=ArtifactAppearsAfterSubmitStorage(_stored_for_request(request)),
+        poll_seconds=0.01,
+        timeout_seconds=0.01,
+        pending_timeout_seconds=1,
+    )
+
+    with pytest.raises(
+        InferenceQueueAuthorityError,
+        match="authoritative queue state is unavailable",
+    ):
+        executor.execute(request, metadata={"phase": "6"})
+
+    assert queue.submits == 1
 
 
 def test_executor_reconciles_completed_r2_artifact_at_running_timeout(
