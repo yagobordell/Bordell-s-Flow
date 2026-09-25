@@ -167,9 +167,12 @@ class PostgresJobQueueClient(JobQueueClient):
                 status == "pending" and attempt_count > 0
             )
             if not recoverable:
+                snapshot = self._snapshot(row)
                 raise QueueRecoveryNotApplicableError(
                     f"cannot reconcile recovered bundle while job {request.job_id} "
-                    f"is in state {status!r}"
+                    f"is in state {status!r}",
+                    status=snapshot.status,
+                    raw_status=status,
                 )
 
             recovered = response.model_copy(

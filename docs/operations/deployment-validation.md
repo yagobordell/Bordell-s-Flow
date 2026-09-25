@@ -52,7 +52,7 @@ A worker change is accepted when:
 - repository CI is green;
 - the singleton controller remains healthy throughout the run;
 - no second controller can acquire leadership;
-- after aggregate Postgres demand disappears, the service converges back to `replicas=0`.
+- after aggregate Postgres demand disappears, the service converges to stable `stopped` with no pending change.
 
 Cloud logs and generated smoke artifacts are evidence for that run. Git history is the historical
 record; active docs should describe only the current architecture.

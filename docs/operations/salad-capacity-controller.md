@@ -48,11 +48,12 @@ same target they also fail reconciliation and allow health monitoring to degrade
 
 ## Production ownership
 
-The Capacity Controller is the only production component allowed to decide project replica counts.
+The Capacity Controller is the only production component allowed to decide project capacity.
 It calculates demand from all active `gpu.jobs`, protects running instances with deletion cost, and
-converges groups to zero only after aggregate demand disappears. Drain publication and worker claims
-share a transaction-scoped advisory lock per Salad instance, closing the race where a worker could
-claim new work after that instance had been selected for removal.
+stops a group after aggregate demand reaches zero. A stopped group is treated as zero effective
+capacity even if Salad preserves a non-zero configured `replicas` value for the next start. Drain
+publication and worker claims share a transaction-scoped advisory lock per Salad instance, closing
+the race where a worker could claim new work after that instance had been selected for removal.
 
 `run_video_factory.ps1` requires a healthy controller before the DAG starts. The Python production
 runner checks controller health every 15 seconds while stages are active and cancels running stage

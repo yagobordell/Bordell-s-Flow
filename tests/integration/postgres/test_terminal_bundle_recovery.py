@@ -15,8 +15,10 @@ from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectOutp
 from ai_video_factory.inference.storage import LocalObjectStorage, sha256_file
 from ai_video_factory.providers.inference_jobs import (
     InferenceJobExecutor,
+    InferenceTransportFailedError,
     cached_inference_response,
 )
+from ai_video_factory.providers.job_queue import QueueJobStatus
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 
 
@@ -277,6 +279,80 @@ def test_recovery_only_path_never_overwrites_active_or_cancelled_state(
                 (request.job_id,),
             ).fetchone()
         assert row == (protected_status, 1)
+    finally:
+        queue.close()
+        with psycopg.connect(dsn, autocommit=True) as cleanup:
+            cleanup.execute("DELETE FROM gpu.jobs WHERE job_id = %s", (request.job_id,))
+
+
+def test_executor_cache_hit_respects_cancelled_postgres_state(tmp_path: Path) -> None:
+    dsn = _postgres_dsn()
+    job_id = "cancelled-cache-authority"
+    request = InferenceJobRequest(
+        job_id=job_id,
+        task="test.cancelled_cache_authority",
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/output.bin",
+            content_type="application/octet-stream",
+        ),
+    )
+    storage = LocalObjectStorage(tmp_path / "cancelled-cache" / "objects")
+    work_dir = tmp_path / "cancelled-cache" / "work"
+    work_dir.mkdir(parents=True)
+    primary = work_dir / "output.bin"
+    primary.write_bytes(b"complete-but-cancelled\n")
+
+    committed = stage_bundle(
+        storage,
+        request,
+        request.fingerprint(),
+        primary_path=primary,
+        primary_content_type=request.output.content_type,
+        sidecars={},
+        work_dir=work_dir,
+    )
+    publish_committed_bundle(
+        storage,
+        request,
+        request.fingerprint(),
+        committed,
+        work_dir,
+        local_sources={"primary": primary},
+    )
+
+    queue = PostgresJobQueueClient(dsn=dsn, max_connections=2)
+    try:
+        queue.submit(request, metadata={"test": "cancelled-cache-authority"})
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            connection.execute(
+                """
+                UPDATE gpu.jobs
+                SET status = 'cancelled',
+                    attempt_count = 1,
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    updated_at = now()
+                WHERE job_id = %s
+                """,
+                (request.job_id,),
+            )
+
+        executor = InferenceJobExecutor(
+            queue=queue,
+            storage=storage,
+            poll_seconds=0.01,
+            timeout_seconds=1,
+        )
+        with pytest.raises(InferenceTransportFailedError) as captured:
+            executor.execute(request, metadata={"phase": "cancelled-cache"})
+
+        assert captured.value.status is QueueJobStatus.CANCELLED
+        with psycopg.connect(dsn) as connection:
+            row = connection.execute(
+                "SELECT status, attempt_count FROM gpu.jobs WHERE job_id = %s",
+                (request.job_id,),
+            ).fetchone()
+        assert row == ("cancelled", 1)
     finally:
         queue.close()
         with psycopg.connect(dsn, autocommit=True) as cleanup:

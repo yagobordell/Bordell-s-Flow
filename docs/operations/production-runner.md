@@ -76,6 +76,10 @@ and cancelled jobs are never rewritten by this recovery-only path. A later cache
 Postgres reconciliation if the R2 objects were published successfully but the database update itself
 was temporarily unavailable.
 
+Postgres cancellation is authoritative over object storage. A complete cached bundle for a job whose
+canonical row is `cancelled` is not returned as success. Likewise, an actively `running` or protected
+`pending` row is not bypassed by an R2 cache hit; the executor continues to observe the queue state.
+
 ### Internal bundle retention
 
 The recovery objects live under `__ai_video_factory/bundles/`. The application intentionally does
@@ -117,6 +121,7 @@ Pass `-RunId <id>` to make the run identity stable for an intentional resume. Wh
 wrapper creates a unique ID so separate full-video executions cannot overwrite each other's local
 manifests, metrics, phase artifacts or temporary files.
 
-Replica cleanup belongs exclusively to the global Capacity Controller. When all Postgres demand is
-gone, the controller converges the affected groups to zero. This prevents one video finishing from
-stopping GPUs that are still serving another concurrent video.
+Capacity cleanup belongs exclusively to the global Capacity Controller. When all Postgres demand is
+gone, the controller stops the affected groups and treats `stopped` as zero effective capacity,
+regardless of the configured replica count Salad retains for a future start. This prevents one video
+finishing from stopping GPUs that are still serving another concurrent video.

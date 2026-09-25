@@ -392,6 +392,9 @@ class PredictiveSaladAutoscaler:
             stage: self.clients[stage].describe_container_group() for stage in self.clients
         }
         group_status = {stage: _group_status(groups[stage]) for stage in self.clients}
+        group_pending_change = {
+            stage: bool(groups[stage].get("pending_change")) for stage in self.clients
+        }
         current = {
             stage: (
                 0
@@ -411,6 +414,17 @@ class PredictiveSaladAutoscaler:
                 self._downscale_candidates.pop(stage, None)
                 self._nonconvergence_candidates.pop(stage, None)
                 self.store.clear_draining_instances(stage=stage)
+                continue
+            if group_pending_change[stage]:
+                results[stage] = AutoscaleResult(
+                    stage=stage,
+                    current_replicas=current[stage],
+                    target_replicas=target,
+                    applied_replicas=current[stage],
+                    changed=False,
+                    demand=demands[stage],
+                    reason="provider_change_pending",
+                )
                 continue
             stable_count = self._record_downscale_candidate(stage, target)
             if stable_count < self.config.downscale_stable_polls:
@@ -450,7 +464,11 @@ class PredictiveSaladAutoscaler:
                     self._nonconvergence_candidates.pop(stage, None)
                 continue
             self._nonconvergence_candidates.pop(stage, None)
-            self.clients[stage].set_container_group_replicas(applied_target)
+            if applied_target == 0:
+                self.clients[stage].stop_container_group()
+                group_status[stage] = "stop_requested"
+            else:
+                self.clients[stage].set_container_group_replicas(applied_target)
             current[stage] = applied_target
 
         available = max(
@@ -467,13 +485,18 @@ class PredictiveSaladAutoscaler:
                     available,
                 )
                 if increase > 0:
-                    self.clients[stage].set_container_group_replicas(before + increase)
+                    desired = before + increase
                     if group_status[stage] == "stopped":
+                        configured = max(int(groups[stage].get("replicas") or 0), 0)
+                        if configured != desired:
+                            self.clients[stage].set_container_group_replicas(desired)
                         self.clients[stage].start_container_group_if_needed(
                             warning_logger=lambda _message: None,
                         )
                         group_status[stage] = "start_requested"
-                    current[stage] = before + increase
+                    else:
+                        self.clients[stage].set_container_group_replicas(desired)
+                    current[stage] = desired
                     available -= increase
 
         for stage in self.clients:

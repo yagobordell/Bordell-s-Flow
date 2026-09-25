@@ -195,7 +195,9 @@ class InferenceJobExecutor:
     ) -> InferenceJobResponse:
         cached = cached_inference_response(self._storage, request)
         if cached is not None:
-            return self._reconcile_cached_queue_state(request, cached)
+            reconciled_cache = self._reconcile_cached_queue_state(request, cached)
+            if reconciled_cache is not None:
+                return reconciled_cache
 
         snapshot = self._queue.submit(request, metadata=metadata)
         recovered = self._recover_terminal_bundle(request, snapshot)
@@ -322,23 +324,39 @@ class InferenceJobExecutor:
         self,
         request: InferenceJobRequest,
         response: InferenceJobResponse,
-    ) -> InferenceJobResponse:
-        """Best-effort repair of stale terminal Postgres state behind a valid R2 cache."""
+    ) -> InferenceJobResponse | None:
+        """Respect authoritative queue state before accepting a verified R2 cache hit."""
 
         if not isinstance(self._queue, RecoveryCapableJobQueueClient):
             return response
         try:
             reconciled = self._queue.reconcile_recovered_success(request, response)
-        except (QueueJobNotFoundError, QueueRecoveryNotApplicableError) as exc:
+        except QueueJobNotFoundError as exc:
             logger.info(
                 (
-                    "Verified R2 cache left queue state unchanged "
+                    "Verified R2 cache has no queue row to reconcile "
                     "application_job_id=%s: %s"
                 ),
                 request.job_id,
                 exc,
             )
             return response
+        except QueueRecoveryNotApplicableError as exc:
+            if exc.status is QueueJobStatus.CANCELLED:
+                raise InferenceTransportFailedError(
+                    f"Inference job {request.job_id} is cancelled in the authoritative queue",
+                    status=QueueJobStatus.CANCELLED,
+                ) from exc
+            logger.info(
+                (
+                    "Verified R2 cache yielded to authoritative queue state "
+                    "application_job_id=%s status=%s: %s"
+                ),
+                request.job_id,
+                exc.raw_status or (exc.status.value if exc.status else "unknown"),
+                exc,
+            )
+            return None
         except Exception as exc:
             logger.warning(
                 (
@@ -350,7 +368,7 @@ class InferenceJobExecutor:
             )
             return response
         if reconciled.status is not QueueJobStatus.SUCCEEDED or reconciled.output is None:
-            return response
+            return None
         persisted = InferenceJobResponse.model_validate(reconciled.output)
         return _validate_successful_bundle(
             self._storage,
