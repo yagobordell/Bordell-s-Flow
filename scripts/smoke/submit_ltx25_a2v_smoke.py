@@ -95,8 +95,13 @@ def _validate_decodable_video(path: Path) -> None:
         )
 
 
-def _voice_span_seconds(path: Path, *, sample_rate: int = 16000) -> float:
-    """Measure first-to-last voiced energy without trusting container duration."""
+def _voice_rms_profile(
+    path: Path,
+    *,
+    sample_rate: int = 16000,
+    window_seconds: float = 0.02,
+) -> tuple[list[float], float]:
+    """Decode mono PCM and return an RMS envelope on an absolute time grid."""
 
     executable = shutil.which("ffmpeg")
     if executable is None:
@@ -128,7 +133,7 @@ def _voice_span_seconds(path: Path, *, sample_rate: int = 16000) -> float:
     if not samples:
         raise RuntimeError(f"A2V voice-tail validation decoded no audio: {path}")
 
-    window_samples = max(1, round(sample_rate * 0.02))
+    window_samples = max(1, round(sample_rate * window_seconds))
     rms_values: list[float] = []
     for start in range(0, len(samples), window_samples):
         chunk = samples[start : start + window_samples]
@@ -138,29 +143,80 @@ def _voice_span_seconds(path: Path, *, sample_rate: int = 16000) -> float:
         rms_values.append(math.sqrt(mean_square))
     if not rms_values:
         raise RuntimeError(f"A2V voice-tail validation produced no RMS windows: {path}")
+    return rms_values, window_samples / float(sample_rate)
 
-    peak = max(rms_values)
+
+def _active_windows(rms_values: list[float]) -> list[int]:
+    peak = max(rms_values, default=0.0)
     threshold = max(300.0, peak * 0.08)
-    active = [index for index, value in enumerate(rms_values) if value >= threshold]
-    if not active:
+    return [index for index, value in enumerate(rms_values) if value >= threshold]
+
+
+def _validate_voice_tail_profiles(
+    input_rms: list[float],
+    output_rms: list[float],
+    *,
+    window_seconds: float,
+) -> None:
+    """Require the final voiced windows to survive AAC muxing at the same times."""
+
+    input_active = _active_windows(input_rms)
+    output_active = _active_windows(output_rms)
+    if not input_active or not output_active:
         raise RuntimeError(
-            "A2V smoke audio does not contain a measurable voiced/signal span; "
-            "use a real speech sample"
+            "A2V smoke audio does not contain measurable voiced activity"
         )
-    return (active[-1] - active[0] + 1) * (window_samples / float(sample_rate))
+
+    position_tolerance_seconds = 0.06
+    position_tolerance_windows = math.ceil(
+        position_tolerance_seconds / window_seconds
+    )
+    input_last = input_active[-1]
+    output_last = output_active[-1]
+    if output_last + position_tolerance_windows < input_last:
+        raise RuntimeError(
+            "reference A2V output lost the final voiced position: "
+            f"input_last={input_last * window_seconds:.3f}s "
+            f"output_last={output_last * window_seconds:.3f}s "
+            f"tolerance={position_tolerance_seconds:.3f}s"
+        )
+
+    input_peak = max(input_rms)
+    output_peak = max(output_rms)
+    tail_candidates = [
+        index
+        for index in input_active
+        if index >= input_last - math.ceil(0.30 / window_seconds)
+    ][-5:]
+    matched = 0
+    for index in tail_candidates:
+        if index >= len(output_rms):
+            continue
+        input_normalized = input_rms[index] / input_peak
+        output_normalized = output_rms[index] / output_peak
+        # The output is AAC, so compare presence rather than sample equality.
+        if input_normalized >= 0.08 and output_normalized >= 0.03:
+            matched += 1
+
+    required_matches = max(1, math.ceil(len(tail_candidates) * 0.8))
+    if matched < required_matches:
+        raise RuntimeError(
+            "reference A2V output lost energy from the final voiced tail: "
+            f"matched_windows={matched}/{len(tail_candidates)} "
+            f"required={required_matches}"
+        )
 
 
 def _validate_reference_voice_tail(input_audio: Path, output_video: Path) -> None:
-    input_span = _voice_span_seconds(input_audio)
-    output_span = _voice_span_seconds(output_video)
-    tolerance_seconds = 0.14
-    if output_span + tolerance_seconds < input_span:
-        raise RuntimeError(
-            "reference A2V output lost the end of the voiced input: "
-            f"input_voice_span={input_span:.3f}s "
-            f"output_voice_span={output_span:.3f}s "
-            f"tolerance={tolerance_seconds:.3f}s"
-        )
+    input_rms, input_window = _voice_rms_profile(input_audio)
+    output_rms, output_window = _voice_rms_profile(output_video)
+    if abs(input_window - output_window) > 1e-9:
+        raise RuntimeError("A2V voice-tail profiles use mismatched time grids")
+    _validate_voice_tail_profiles(
+        input_rms,
+        output_rms,
+        window_seconds=input_window,
+    )
 
 
 def parse_args() -> argparse.Namespace:
