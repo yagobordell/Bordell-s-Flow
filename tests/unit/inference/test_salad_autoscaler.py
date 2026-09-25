@@ -714,7 +714,7 @@ def test_stale_provider_pending_change_degrades_reconciliation() -> None:
 
     with pytest.raises(
         AutoscalerReconciliationError,
-        match="has remained pending",
+        match="has remained active",
     ):
         autoscaler.reconcile()
 
@@ -766,7 +766,117 @@ def test_pending_change_instance_accounting_failure_fails_closed() -> None:
 
     with pytest.raises(
         AutoscalerReconciliationError,
-        match="cannot safely account for a pending provider change",
+        match="cannot safely account for an active provider transition",
+    ):
+        autoscaler.reconcile()
+
+    assert client.replica_updates == []
+    assert client.start_calls == 0
+    assert client.stop_calls == 0
+
+
+@pytest.mark.parametrize("status", ["failed", "succeeded"])
+def test_terminal_provider_state_degrades_reconciliation(status: str) -> None:
+    stage = "ltx25"
+    client = FakeSaladClient(
+        replicas=1,
+        status=status,
+        instances=[],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,), project_max_replicas=1),
+        store=FakeStore(rows={stage: _pending_rows(2)}, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=1)},
+        logger=lambda _message: None,
+    )
+
+    with pytest.raises(
+        AutoscalerReconciliationError,
+        match="provider state.*terminal",
+    ):
+        autoscaler.reconcile()
+
+    assert client.replica_updates == []
+    assert client.start_calls == 0
+    assert client.stop_calls == 0
+
+
+def test_deploying_group_is_read_only_without_pending_change_flag() -> None:
+    stage = "ltx25"
+    client = FakeSaladClient(
+        replicas=1,
+        status="deploying",
+        pending_change=False,
+        instances=[{"id": "instance-a", "deletion_cost": 0}],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,), project_max_replicas=2, stage_max_replicas=2),
+        store=FakeStore(rows={stage: _pending_rows(30)}, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=2)},
+        logger=lambda _message: None,
+    )
+
+    result = autoscaler.reconcile()[stage]
+
+    assert result.reason == "provider_change_pending"
+    assert result.applied_replicas == 1
+    assert client.replica_updates == []
+    assert client.start_calls == 0
+    assert client.stop_calls == 0
+
+
+def test_stale_deploying_group_degrades_without_pending_change_flag() -> None:
+    stage = "ltx25"
+    client = FakeSaladClient(
+        replicas=1,
+        status="deploying",
+        pending_change=False,
+        instances=[{"id": "instance-a", "deletion_cost": 0}],
+        update_time="2000-01-01T00:00:00+00:00",
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config(
+            (stage,),
+            project_max_replicas=1,
+            provider_pending_max_seconds=60.0,
+        ),
+        store=FakeStore(rows={stage: _pending_rows(2)}, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=1)},
+        logger=lambda _message: None,
+    )
+
+    with pytest.raises(
+        AutoscalerReconciliationError,
+        match="provider transition.*remained active",
+    ):
+        autoscaler.reconcile()
+
+    assert client.replica_updates == []
+    assert client.start_calls == 0
+    assert client.stop_calls == 0
+
+
+def test_unknown_provider_state_fails_closed() -> None:
+    stage = "ltx25"
+    client = FakeSaladClient(
+        replicas=1,
+        status="mystery",
+        instances=[],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,), project_max_replicas=1),
+        store=FakeStore(rows={stage: _pending_rows(2)}, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=1)},
+        logger=lambda _message: None,
+    )
+
+    with pytest.raises(
+        AutoscalerReconciliationError,
+        match="provider state.*unknown",
     ):
         autoscaler.reconcile()
 
