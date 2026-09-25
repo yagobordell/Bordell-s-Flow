@@ -41,7 +41,7 @@
       "display_name": "AI Video Factory LTX 2.5",
       "group_name": "ai-video-factory-ltx25-worker-v3",
       "dockerfile": "docker/workers/ltx25/Dockerfile",
-      "image": "docker.io/yagobordell/ai-video-factory:ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v9",
+      "image": "docker.io/yagobordell/ai-video-factory:ltx25-a2v-torch211-cu128-eagersdpa-xet-reference-claims-v10",
       "priority": "high",
       "resources": {
         "cpu": 8,
