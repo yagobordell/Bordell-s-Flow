@@ -26,6 +26,11 @@ def test_prepare_recreates_only_stably_stopped_legacy_groups() -> None:
 
     assert "Test-LegacyQueueAttachment" in script
     assert "must be stably stopped before Prepare" in script
+    remove = script.split("function Remove-StoppedContainerGroup {", maxsplit=1)[1].split(
+        "function New-ContainerGroup {", maxsplit=1
+    )[0]
+    assert "replicas -ne 0" not in remove
+    assert "pending_change" in remove
     assert "Remove-StoppedContainerGroup -Headers $Headers" in script
     assert "delete legacy container group" in script
     assert "Prepared group must remain stopped." in script
@@ -37,6 +42,9 @@ def test_prepare_preserves_configured_replicas_while_group_stays_stopped() -> No
     create = script.split("function New-ContainerGroup {", maxsplit=1)[1].split(
         "function Update-ContainerGroup {", maxsplit=1
     )[0]
+    update = script.split("function Update-ContainerGroup {", maxsplit=1)[1].split(
+        "function Assert-PreparedGroup {", maxsplit=1
+    )[0]
     wait = script.split("function Wait-ForGroupSettled {", maxsplit=1)[1].split(
         "function Wait-ForRunningCapacity {", maxsplit=1
     )[0]
@@ -44,6 +52,7 @@ def test_prepare_preserves_configured_replicas_while_group_stays_stopped() -> No
 
     assert "replicas = $StartReplicas" in create
     assert "autostart_policy = $AutostartPolicy" in create
+    assert "replicas =" not in update
     assert "normalize prepared replicas" not in prepare
     assert "@{ replicas = 0 }" not in prepare
     assert "Try-Get-Group -Headers $Headers" in wait
