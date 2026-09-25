@@ -27,3 +27,14 @@ def test_ltx_a2v_controlled_wrapper_owns_explicit_capacity() -> None:
     assert "-Action Stop -Service ltx25" in script
     assert "finally {" in script
     assert "start_salad_protected_smoke.ps1" not in script
+
+
+def test_controlled_a2v_reference_smoke_forwards_reproducible_inputs() -> None:
+    script = Path("scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert '[string]$Profile = "reference"' in script
+    assert '"--seed", $Seed' in script
+    assert '@("--prompt", $Prompt)' in script
+    assert '@("--output-dir", $OutputDir)' in script
+    assert '& $Python $Smoke @Arguments' in script
