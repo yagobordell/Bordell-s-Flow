@@ -128,7 +128,13 @@ function Enter-ManualCapacityMutationLock {
         throw "Could not start Capacity Controller lock helper."
     }
 
-    $Signal = $Process.StandardOutput.ReadLine()
+    $SignalTask = $Process.StandardOutput.ReadLineAsync()
+    if (-not $SignalTask.Wait(10000)) {
+        try { $Process.Kill() } catch {}
+        $Process.WaitForExit()
+        throw "Capacity Controller lock helper did not confirm ownership within 10 seconds."
+    }
+    $Signal = $SignalTask.Result
     if ($Signal -ne "LOCK_ACQUIRED") {
         $ErrorText = $Process.StandardError.ReadToEnd().Trim()
         $Process.WaitForExit()
@@ -169,7 +175,11 @@ function Assert-ManualCapacityMutationAuthority {
         }
         $Process.StandardInput.WriteLine("check")
         $Process.StandardInput.Flush()
-        $Signal = $Process.StandardOutput.ReadLine()
+        $SignalTask = $Process.StandardOutput.ReadLineAsync()
+        if (-not $SignalTask.Wait(5000)) {
+            throw "capacity lock helper did not confirm ownership within 5 seconds"
+        }
+        $Signal = $SignalTask.Result
         if ($Signal -ne "LOCK_OK") {
             $ErrorText = if ($Process.HasExited) {
                 $Process.StandardError.ReadToEnd().Trim()
@@ -213,7 +223,7 @@ function Wait-ManualCapacityMutationInterval {
         if ($RemainingMilliseconds -le 0) {
             break
         }
-        Start-Sleep -Milliseconds ([Math]::Min(250, $RemainingMilliseconds))
+        Start-Sleep -Milliseconds ([Math]::Min(1000, $RemainingMilliseconds))
     } while ([DateTime]::UtcNow -lt $Deadline)
     Assert-ManualCapacityMutationAuthority
 }
