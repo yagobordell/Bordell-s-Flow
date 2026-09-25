@@ -467,8 +467,17 @@ class PredictiveSaladAutoscaler:
             if applied_target == 0:
                 self.clients[stage].stop_container_group()
                 group_status[stage] = "stop_requested"
-            else:
-                self.clients[stage].set_container_group_replicas(applied_target)
+                results[stage] = AutoscaleResult(
+                    stage=stage,
+                    current_replicas=current[stage],
+                    target_replicas=target,
+                    applied_replicas=current[stage],
+                    changed=False,
+                    demand=demands[stage],
+                    reason="stop_requested_pending_confirmation",
+                )
+                continue
+            self.clients[stage].set_container_group_replicas(applied_target)
             current[stage] = applied_target
 
         available = max(
