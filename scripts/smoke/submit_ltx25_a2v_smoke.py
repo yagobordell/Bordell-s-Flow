@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import argparse
-from array import array
 import json
 import math
 import mimetypes
 import shutil
 import subprocess
 import sys
+from array import array
 from pathlib import Path
 from typing import Any
 
