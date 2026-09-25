@@ -16,6 +16,11 @@ Migration 004 creates `gpu.capacity_controller_state`. The controller also holds
 PostgreSQL advisory lock. A second controller process exits instead of competing for replica control.
 If the leader process or database session dies, PostgreSQL releases the advisory lock automatically.
 
+Set `SALAD_CAPACITY_CONTROLLER_POSTGRES_DSN` to a Direct or Session-mode Postgres URI when worker
+traffic uses a transaction pooler. If it is omitted, the controller falls back to `POSTGRES_DSN`.
+Known Supabase transaction-pooler URIs on port 6543 are rejected at startup because they cannot
+preserve the session advisory lock.
+
 ## Run the leader
 
 Load the production environment, set `SALAD_AUTOSCALER_ENABLED=true`, and run:
@@ -35,13 +40,17 @@ python scripts/salad/run_salad_capacity_controller.py --check-health
 
 Health requires a fresh heartbeat and a recent successful reconciliation. A transient Salad API
 failure may report `degraded` while remaining within the configured reconciliation grace; repeated
-failures eventually make health fail.
+failures eventually make health fail. Failures while applying drain protection are reconciliation
+failures rather than successful no-op passes, so persistent inability to converge cannot remain
+silently healthy.
 
 ## Production ownership
 
 The Capacity Controller is the only production component allowed to decide project replica counts.
 It calculates demand from all active `gpu.jobs`, protects running instances with deletion cost, and
-converges groups to zero only after aggregate demand disappears.
+converges groups to zero only after aggregate demand disappears. Drain publication and worker claims
+share a transaction-scoped advisory lock per Salad instance, closing the race where a worker could
+claim new work after that instance had been selected for removal.
 
 `run_video_factory.ps1` requires a healthy controller before the DAG starts. The Python production
 runner checks controller health every 15 seconds while stages are active and cancels running stage
