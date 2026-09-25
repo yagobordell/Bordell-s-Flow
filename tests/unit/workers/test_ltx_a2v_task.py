@@ -274,14 +274,20 @@ def test_a2v_job_id_fingerprints_image_audio_and_segment() -> None:
     assert first.startswith("ltx-a2v-003-")
 
 
-def test_a2v_model_files_require_dev_transformer_and_distilled_lora(tmp_path: Path) -> None:
+def test_a2v_model_files_keep_dev_assets_optional(tmp_path: Path) -> None:
     _seed_model_files(tmp_path)
     files = LTXA2VModelFiles.from_root(tmp_path)
     files.validate()
+    files.validate_dev()
 
     files.dev_transformer.unlink()
-    with pytest.raises(FileNotFoundError, match="dev-transformer"):
-        files.validate()
+    files.distilled_lora.unlink()
+
+    # Shared distilled readiness must continue to serve I2V, legacy fast A2V
+    # and the isolated reference profile.
+    files.validate()
+    with pytest.raises(FileNotFoundError, match="optional.*dev"):
+        files.validate_dev()
 
 
 def test_a2v_avatar_preserves_qwen_image_edges(tmp_path: Path) -> None:
