@@ -8,7 +8,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .contracts import InferenceJobRequest
-from .errors import JobConflictError, LeaseLostError, NonRetryableTaskError
+from .coordination import acquire_instance_drain_lock
+from .errors import JobBusyError, JobConflictError, LeaseLostError, NonRetryableTaskError
 from .ports import ClaimDecision, JobClaim
 
 _NON_RETRYABLE_PREFIX = "NonRetryableTaskError:"
@@ -48,8 +49,13 @@ class InMemoryJobRepository:
         owner: str,
         lease_seconds: int,
         transport_job_id: str | None,
+        instance_id: str | None = None,
     ) -> JobClaim:
         del transport_job_id
+        if instance_id is not None and self.is_instance_draining(instance_id):
+            raise JobBusyError(
+                f"Salad instance {instance_id} is draining and cannot claim new inference jobs"
+            )
         now = datetime.now(UTC)
         with self._lock:
             row = self._jobs.setdefault(
@@ -223,12 +229,30 @@ class PostgresJobRepository:
         owner: str,
         lease_seconds: int,
         transport_job_id: str | None,
+        instance_id: str | None = None,
     ) -> JobClaim:
         from psycopg.types.json import Jsonb
 
         manifest = request.model_dump(mode="json", exclude_none=True)
         exhausted_detail: str | None = None
         with self._pool.connection() as connection, connection.transaction():
+            if instance_id is not None:
+                acquire_instance_drain_lock(connection, instance_id)
+                draining = connection.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM gpu.capacity_drains
+                        WHERE instance_id = %s
+                          AND expires_at > now()
+                    ) AS draining
+                    """,
+                    (instance_id,),
+                ).fetchone()
+                if draining is not None and bool(draining["draining"]):
+                    raise JobBusyError(
+                        f"Salad instance {instance_id} is draining and cannot claim new inference jobs"
+                    )
             connection.execute(
                 """
                 INSERT INTO gpu.jobs (
