@@ -415,11 +415,26 @@ def _validate_final_object(
     staged: StagedBundleObject,
     expected_metadata: Mapping[str, str],
 ) -> None:
+    required_metadata = {
+        key: value
+        for key, value in expected_metadata.items()
+        if not key.startswith("bundle-")
+    }
+    optional_bundle_metadata = {
+        key: value
+        for key, value in expected_metadata.items()
+        if key.startswith("bundle-")
+    }
+    bundle_metadata_conflict = any(
+        stored.metadata.get(key) not in {None, value}
+        for key, value in optional_bundle_metadata.items()
+    )
     if (
         stored.key != staged.final_key
         or stored.content_type != staged.content_type
         or stored.size_bytes != staged.size_bytes
-        or any(stored.metadata.get(key) != value for key, value in expected_metadata.items())
+        or any(stored.metadata.get(key) != value for key, value in required_metadata.items())
+        or bundle_metadata_conflict
     ):
         raise OutputConflictError(
             f"final bundle object conflicts with committed publication: {staged.final_key}"
