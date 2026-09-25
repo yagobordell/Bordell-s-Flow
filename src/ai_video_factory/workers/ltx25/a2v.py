@@ -206,7 +206,6 @@ def _load_a2v_bindings() -> _A2VBindings:
         from ltx_pipelines.a2vid_two_stage import A2VidPipelineTwoStage
         from ltx_pipelines.utils import helpers as tiling_helpers
 
-        from .reference_a2v import DistilledReferenceA2VPipeline
         from ltx_pipelines.utils.args import ImageConditioningInput
         from ltx_pipelines.utils.constants import (
             DEFAULT_NEGATIVE_PROMPT,
@@ -218,6 +217,8 @@ def _load_a2v_bindings() -> _A2VBindings:
         from ltx_pipelines.utils.model_paths import ModelPaths
         from ltx_pipelines.utils.quantization_factory import QuantizationKind
         from ltx_pipelines.utils.types import OffloadMode
+
+        from .reference_a2v import DistilledReferenceA2VPipeline
     except ImportError as exc:
         raise RuntimeError(
             "LTX-2.5 A2V runtime dependencies are not installed in this environment"
@@ -551,7 +552,8 @@ def _prepare_reference_pipeline_audio(
         decoded_destination,
         probe=probe,
     )
-    assert decoded_probe.sample_count is not None
+    if decoded_probe.sample_count is None:
+        raise RuntimeError("reference A2V decoded PCM has no measurable sample count")
     decoded_duration = decoded_probe.sample_count / float(decoded_probe.sample_rate)
     sample_tolerance = 1.0 / float(decoded_probe.sample_rate)
     if decoded_duration - LTX_A2V_RECOMMENDED_MAX_SECONDS > sample_tolerance:
@@ -893,7 +895,10 @@ class DirectLTX25AudioToVideoBackend:
                 )
                 try:
                     if reference:
-                        assert reference_audio_plan is not None
+                        if reference_audio_plan is None:
+                            raise RuntimeError(
+                                "reference A2V audio plan was not prepared"
+                            )
                         result = pipeline(
                             prompt=parameters.prompt,
                             seed=parameters.seed,
