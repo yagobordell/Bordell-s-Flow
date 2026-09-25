@@ -62,6 +62,36 @@ is recorded in result metadata as a numerical/runtime deviation from a BF16 refe
 BF16 comparison is a later GPU experiment, not a prerequisite for the first functional
 lip-sync baseline.
 
+### Experimental guided talking-avatar profile
+
+`guided` is an **opt-in, non-production** comparison profile. It invokes the pinned
+upstream `A2VidPipelineTwoStage` with the full/dev transformer, 30-step Stage 1
+Euler sampling, the distilled LoRA only in Stage 2, and checkpoint-detected
+video guidance (CFG 3.0, STG 1.0, rescale 0.7, A2V modality 3.0,
+STG blocks `[28]` for the pinned checkpoint). Audio stays frozen in both stages.
+The existing `dev` profile deliberately keeps its old disabled-guidance contract;
+`reference` and `fast` are unchanged. For guided tests only, the worker reuses
+reference audio decoding, upward `8k+1` grid snapping and silence padding, and
+passes the explicit frame count to upstream to avoid truncating the last words.
+The upstream guided stages retain image-conditioning strength 1.0; they do not
+claim to reproduce the distilled ComfyUI recipe or its resolution.
+
+**No guided GPU or visual validation is implied by this code.** The currently
+pinned Salad image v10 and manifest use `LTX_INCLUDE_A2V_DEV_ASSETS=false`; a
+guided smoke must not allocate GPU until a newly versioned image containing
+this code is built, published, checked by digest and pinned to the stopped
+group, and the manifest explicitly enables the optional dev checkpoint and
+Stage 2 LoRA. Reconcile the existing group via the protected Capacity Controller
+lifecycle; do not replace the group, reuse a Docker tag, or change production A2V
+routing. The PowerShell wrapper fails before allocation while the manifest
+disables dev assets. Verify model-cache provenance and free storage before the
+first download. Do not run an existing reference benchmark concurrently.
+
+Inspect the mouth against speech at bilabial consonants, vowel openings,
+pauses and phrase boundaries, and compare against the fixed `reference` baseline
+using the same avatar, WAV, prompt and seed but a fresh segment ID. A valid
+MP4, preserved audio and green CI alone are not lipsync acceptance.
+
 ### Temporal contract
 
 Reference A2V never snaps speech down to the previous `8k+1` frame. The worker first
