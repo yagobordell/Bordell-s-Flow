@@ -70,9 +70,11 @@ the client reports an incomplete bundle instead of returning success.
 A committed bundle is also recovery authority after inference retries are exhausted. If Postgres is
 `retryable_failed` or `failed` but the ready manifest validates, the client completes the final R2
 publication and reconciles that same job to `succeeded` without incrementing `attempt_count` or
-dispatching another model invocation. Active, pending and cancelled jobs are never rewritten by
-this recovery-only path. A later cache hit retries the Postgres reconciliation if the R2 objects were
-published successfully but the database update itself was temporarily unavailable.
+dispatching another model invocation. A non-active `pending` row with a prior attempt can be
+reconciled the same way after a crashed/expired worker; fresh pending rows, actively running jobs
+and cancelled jobs are never rewritten by this recovery-only path. A later cache hit retries the
+Postgres reconciliation if the R2 objects were published successfully but the database update itself
+was temporarily unavailable.
 
 ### Internal bundle retention
 
