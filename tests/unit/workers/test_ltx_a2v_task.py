@@ -16,6 +16,7 @@ from ai_video_factory.inference.gpu_failures import DEFAULT_GPU_MAX_ATTEMPTS
 from ai_video_factory.workers.ltx25 import (
     LTX_A2V_DEV_GENERATION_PROFILE,
     LTX_A2V_GENERATION_PROFILE,
+    LTX_A2V_GUIDED_GENERATION_PROFILE,
     LTX_A2V_TASK,
     LTXA2VModelFiles,
     LTXAudioToVideoParameters,
@@ -124,6 +125,9 @@ def test_a2v_parameters_are_audio_driven_and_keep_720p24_defaults() -> None:
     assert LTXAudioToVideoParameters(
         generation_profile=LTX_A2V_DEV_GENERATION_PROFILE
     ).generation_profile == LTX_A2V_DEV_GENERATION_PROFILE
+    assert LTXAudioToVideoParameters(
+        generation_profile=LTX_A2V_GUIDED_GENERATION_PROFILE
+    ).generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
     with pytest.raises(ValidationError, match="generation_profile"):
         LTXAudioToVideoParameters(generation_profile="ltx25-a2v-unknown")
     assert parameters.width == 1280
