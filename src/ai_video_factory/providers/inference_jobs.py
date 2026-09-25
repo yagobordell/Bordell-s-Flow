@@ -353,8 +353,19 @@ class InferenceJobExecutor:
     ) -> InferenceJobResponse | None:
         """Recover committed bytes and reconcile terminal Postgres state without inference."""
 
-        raw_status = str((snapshot.provider_payload or {}).get("status") or "")
-        if snapshot.status is not QueueJobStatus.FAILED and raw_status != "retryable_failed":
+        payload = snapshot.provider_payload or {}
+        raw_status = str(payload.get("status") or "")
+        attempt_count = payload.get("attempt_count")
+        recoverable_pending = (
+            raw_status == "pending"
+            and isinstance(attempt_count, int)
+            and attempt_count > 0
+        )
+        if (
+            snapshot.status is not QueueJobStatus.FAILED
+            and raw_status != "retryable_failed"
+            and not recoverable_pending
+        ):
             return None
         if not isinstance(self._queue, RecoveryCapableJobQueueClient):
             return None
@@ -372,7 +383,6 @@ class InferenceJobExecutor:
                 f"Recovered bundle remains incomplete for inference job {request.job_id}"
             )
 
-        attempt_count = (snapshot.provider_payload or {}).get("attempt_count")
         if isinstance(attempt_count, int) and attempt_count > 0:
             verified = verified.model_copy(update={"attempt_count": attempt_count})
         verified = verified.model_copy(update={"replayed": True})
