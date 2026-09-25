@@ -4,6 +4,9 @@ from pathlib import Path
 MANIFEST = Path("deploy/salad/services.json")
 WORKER_MANAGER = Path("scripts/salad/manage_salad_worker.ps1")
 ENTRYPOINT = Path("docker/workers/common/entrypoint.sh")
+REPOSITORY = Path("src/ai_video_factory/inference/repository.py")
+AUTOSCALER = Path("src/ai_video_factory/inference/salad_autoscaler.py")
+COORDINATION = Path("src/ai_video_factory/inference/coordination.py")
 
 
 def _manifest() -> dict:
@@ -56,3 +59,14 @@ def test_worker_entrypoint_has_no_salad_queue_sidecar() -> None:
     assert "polling canonical Postgres jobs" in script
     assert "wait_for_endpoint /health" in script
     assert "wait_for_endpoint /ready" in script
+
+
+def test_drain_publication_and_claim_share_instance_lock() -> None:
+    repository = REPOSITORY.read_text(encoding="utf-8")
+    autoscaler = AUTOSCALER.read_text(encoding="utf-8")
+    coordination = COORDINATION.read_text(encoding="utf-8")
+
+    assert "pg_advisory_xact_lock" in coordination
+    assert "acquire_instance_drain_lock(connection, instance_id)" in repository
+    assert "acquire_instance_drain_lock(connection, instance_id)" in autoscaler
+    assert "FROM gpu.capacity_drains" in repository
