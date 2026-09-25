@@ -79,25 +79,6 @@ $GpuClassesBase = "$OrganizationApiBase/gpu-classes"
 $ContainersBase = "$OrganizationApiBase/projects/$Project/containers"
 $SecretNames = @("POSTGRES_DSN", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "HF_TOKEN", "SALAD_API_KEY")
 
-function Get-EnvironmentBoolean {
-    param(
-        [Parameter(Mandatory)][string]$Name,
-        [bool]$Default = $false
-    )
-    $Raw = [Environment]::GetEnvironmentVariable(
-        $Name,
-        [EnvironmentVariableTarget]::Process
-    )
-    if ([string]::IsNullOrWhiteSpace($Raw)) {
-        return $Default
-    }
-    switch ($Raw.Trim().ToLowerInvariant()) {
-        { $_ -in @("1", "true", "yes", "on") } { return $true }
-        { $_ -in @("0", "false", "no", "off") } { return $false }
-        default { throw "$Name must be a boolean value." }
-    }
-}
-
 function Resolve-CapacityLockPython {
     $VenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
     if (Test-Path -LiteralPath $VenvPython -PathType Leaf) {
