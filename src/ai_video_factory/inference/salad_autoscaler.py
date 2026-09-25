@@ -431,21 +431,21 @@ class PredictiveSaladAutoscaler:
         }
         current: dict[str, int] = {}
         for stage in self.clients:
+            configured = max(int(groups[stage].get("replicas") or 0), 0)
+            if group_pending_change[stage]:
+                try:
+                    live_instances = len(self.clients[stage].list_container_group_instances())
+                except Exception as exc:
+                    raise AutoscalerReconciliationError(
+                        "Salad capacity reconciliation cannot safely account for a "
+                        f"pending provider change on {stage}: {exc}"
+                    ) from exc
+                current[stage] = max(configured, live_instances)
+                continue
             if group_status[stage] == "stopped":
                 current[stage] = 0
                 continue
-            configured = max(int(groups[stage].get("replicas") or 0), 0)
-            if not group_pending_change[stage]:
-                current[stage] = configured
-                continue
-            try:
-                live_instances = len(self.clients[stage].list_container_group_instances())
-            except Exception as exc:
-                raise AutoscalerReconciliationError(
-                    "Salad capacity reconciliation cannot safely account for a "
-                    f"pending provider change on {stage}: {exc}"
-                ) from exc
-            current[stage] = max(configured, live_instances)
+            current[stage] = configured
         initial_current = dict(current)
         results: dict[str, AutoscaleResult] = {}
         hard_failures: dict[str, str] = {}
@@ -551,6 +551,8 @@ class PredictiveSaladAutoscaler:
             0,
         )
         for stage in self.clients:
+            if group_pending_change[stage]:
+                continue
             target = targets[stage]
             before = current[stage]
             if target > before and available > 0:
