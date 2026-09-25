@@ -31,11 +31,16 @@ class CompletingQueue:
         )
         source = self.tmp_path / "worker-output.json"
         source.write_text(transcript.model_dump_json(indent=2), encoding="utf-8")
+        digest = sha256_file(source)
         stored = self.storage.upload(
             source,
             request.output.key,
             content_type="application/json",
-            metadata={"sha256": sha256_file(source)},
+            metadata={
+                "job-id": request.job_id,
+                "request-sha256": request.fingerprint(),
+                "artifact-sha256": digest,
+            },
         )
         response = InferenceJobResponse(
             job_id=request.job_id,
@@ -44,7 +49,7 @@ class CompletingQueue:
                 key=stored.key,
                 content_type=stored.content_type,
                 size_bytes=stored.size_bytes,
-                sha256=sha256_file(source),
+                sha256=digest,
                 etag=stored.etag,
             ),
             attempt_count=1,

@@ -49,6 +49,7 @@ class PredictiveAutoscalerConfig:
     stage_cold_start_seconds: dict[str, float] | None = None
     drain_grace_seconds: float = 5.0
     drain_ttl_seconds: float = 120.0
+    nonconvergence_failure_polls: int = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +74,32 @@ class AutoscaleResult:
     changed: bool
     demand: StageDemand
     reason: str
+
+
+def publish_instance_drains(
+    connection: object,
+    *,
+    stage: str,
+    instance_ids: tuple[str, ...],
+    ttl_seconds: float,
+) -> None:
+    """Publish drain intents while holding the same per-instance lock used by claims."""
+
+    for instance_id in instance_ids:
+        acquire_instance_drain_lock(connection, instance_id)
+        connection.execute(
+            """
+            INSERT INTO gpu.capacity_drains (
+                service,
+                instance_id,
+                requested_at,
+                expires_at
+            ) VALUES (%s, %s, now(), now() + (%s * interval '1 second'))
+            ON CONFLICT (service, instance_id) DO UPDATE
+            SET expires_at = EXCLUDED.expires_at
+            """,
+            (stage, instance_id, ttl_seconds),
+        )
 
 
 class PostgresAutoscalerStore:
@@ -167,21 +194,12 @@ class PostgresAutoscalerStore:
         if not instance_ids:
             return
         with self._pool.connection() as connection, connection.transaction():
-            for instance_id in instance_ids:
-                acquire_instance_drain_lock(connection, instance_id)
-                connection.execute(
-                    """
-                    INSERT INTO gpu.capacity_drains (
-                        service,
-                        instance_id,
-                        requested_at,
-                        expires_at
-                    ) VALUES (%s, %s, now(), now() + (%s * interval '1 second'))
-                    ON CONFLICT (service, instance_id) DO UPDATE
-                    SET expires_at = EXCLUDED.expires_at
-                    """,
-                    (stage, instance_id, ttl_seconds),
-                )
+            publish_instance_drains(
+                connection,
+                stage=stage,
+                instance_ids=instance_ids,
+                ttl_seconds=ttl_seconds,
+            )
 
     def clear_draining_instances(
         self,
@@ -278,6 +296,11 @@ def load_predictive_autoscaler_config(
             2,
             minimum=1,
         ),
+        nonconvergence_failure_polls=_int_env(
+            "SALAD_AUTOSCALER_NONCONVERGENCE_FAILURE_POLLS",
+            4,
+            minimum=2,
+        ),
         max_upscale_per_poll=_int_env(
             "SALAD_AUTOSCALER_MAX_UPSCALE_PER_POLL",
             10,
@@ -332,6 +355,7 @@ class PredictiveSaladAutoscaler:
         self.bindings = dict(bindings)
         self.logger = logger
         self._downscale_candidates: dict[str, tuple[int, int]] = {}
+        self._nonconvergence_candidates: dict[str, tuple[int, int, str]] = {}
         self._last_log_snapshot: dict[str, tuple[object, ...]] = {}
 
     def reconcile(self) -> dict[str, AutoscaleResult]:
@@ -378,13 +402,14 @@ class PredictiveSaladAutoscaler:
         }
         initial_current = dict(current)
         results: dict[str, AutoscaleResult] = {}
-        hard_failures: list[str] = []
+        hard_failures: dict[str, str] = {}
 
         # Preserve Media Pipeline ordering: release quota before assigning new capacity.
         for stage in self.clients:
             target = targets[stage]
             if target >= current[stage]:
                 self._downscale_candidates.pop(stage, None)
+                self._nonconvergence_candidates.pop(stage, None)
                 self.store.clear_draining_instances(stage=stage)
                 continue
             stable_count = self._record_downscale_candidate(stage, target)
@@ -410,8 +435,21 @@ class PredictiveSaladAutoscaler:
                     reason=reason,
                 )
                 if reason == "drain_protection_failed":
-                    hard_failures.append(stage)
+                    hard_failures[stage] = reason
+                    self._nonconvergence_candidates.pop(stage, None)
+                elif reason in {
+                    "active_instance_mapping_incomplete",
+                    "insufficient_idle_instances",
+                }:
+                    count = self._record_nonconvergence(stage, target, reason)
+                    if count >= self.config.nonconvergence_failure_polls:
+                        hard_failures[stage] = (
+                            f"{reason} persisted for {count} reconciliation polls"
+                        )
+                else:
+                    self._nonconvergence_candidates.pop(stage, None)
                 continue
+            self._nonconvergence_candidates.pop(stage, None)
             self.clients[stage].set_container_group_replicas(applied_target)
             current[stage] = applied_target
 
@@ -452,12 +490,23 @@ class PredictiveSaladAutoscaler:
             results[stage] = result
             self._log_result(result)
         if hard_failures:
-            failed = ", ".join(sorted(hard_failures))
+            failed = "; ".join(
+                f"{stage}: {reason}" for stage, reason in sorted(hard_failures.items())
+            )
             raise AutoscalerReconciliationError(
-                "Salad capacity reconciliation could not establish safe drain "
-                f"protection for: {failed}"
+                "Salad capacity reconciliation could not safely converge: "
+                f"{failed}"
             )
         return results
+
+    def _record_nonconvergence(self, stage: str, target: int, reason: str) -> int:
+        previous_target, previous_count, _ = self._nonconvergence_candidates.get(
+            stage,
+            (-1, 0, ""),
+        )
+        count = previous_count + 1 if previous_target == target else 1
+        self._nonconvergence_candidates[stage] = (target, count, reason)
+        return count
 
     def _record_downscale_candidate(self, stage: str, target: int) -> int:
         previous_target, previous_count = self._downscale_candidates.get(stage, (-1, 0))

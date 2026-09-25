@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from ai_video_factory.inference.bundle_publication import recover_committed_bundle
 from ai_video_factory.inference.contracts import (
     InferenceJobRequest,
     InferenceJobResponse,
@@ -42,6 +44,10 @@ class InferenceTransportFailedError(RuntimeError):
     def __init__(self, message: str, *, status: QueueJobStatus) -> None:
         self.status = status
         super().__init__(message)
+
+
+class IncompleteInferenceBundleError(RuntimeError):
+    """Postgres reported success but the durable artifact bundle is incomplete."""
 
 
 class RemoteInferenceRejectedError(RuntimeError):
@@ -296,7 +302,7 @@ class InferenceJobExecutor:
             raise RuntimeError(
                 "Inference response fingerprint does not match the submitted request"
             )
-        return response
+        return _validate_successful_bundle(self._storage, request, response)
 
     def _raise_timeout(
         self,
@@ -378,6 +384,13 @@ def _reconcile_cached_response(
     """Recover a completed R2 artifact when transport state is stale at a deadline."""
 
     try:
+        cached = cached_inference_response(storage, request)
+        if cached is not None:
+            return cached
+        with tempfile.TemporaryDirectory(prefix=f"{request.job_id}-bundle-recovery-") as temp:
+            recovered = recover_committed_bundle(storage, request, Path(temp))
+        if recovered is None:
+            return None
         return cached_inference_response(storage, request)
     except RuntimeError as exc:
         logger.warning(
@@ -386,6 +399,40 @@ def _reconcile_cached_response(
             exc,
         )
         return None
+
+
+def _validate_successful_bundle(
+    storage: ObjectStorage,
+    request: InferenceJobRequest,
+    response: InferenceJobResponse,
+) -> InferenceJobResponse:
+    """Require every Postgres success replay to be backed by a complete R2 bundle."""
+
+    cached = cached_inference_response(storage, request)
+    if cached is None:
+        with tempfile.TemporaryDirectory(prefix=f"{request.job_id}-bundle-recovery-") as temp:
+            recovered = recover_committed_bundle(storage, request, Path(temp))
+        if recovered is not None:
+            cached = cached_inference_response(storage, request)
+
+    if cached is None:
+        raise IncompleteInferenceBundleError(
+            f"Inference job {request.job_id} is succeeded in Postgres but its "
+            "artifact bundle is incomplete"
+        )
+
+    expected = response.output
+    verified = cached.output
+    if (
+        verified.key != expected.key
+        or verified.content_type != expected.content_type
+        or verified.size_bytes != expected.size_bytes
+        or verified.sha256 != expected.sha256
+    ):
+        raise RuntimeError(
+            f"Verified inference bundle does not match persisted result for {request.job_id}"
+        )
+    return response.model_copy(update={"output": verified})
 
 
 def _artifact_from_stored(stored: StoredObject, sha256: str) -> OutputArtifact:

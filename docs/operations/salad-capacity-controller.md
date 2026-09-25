@@ -41,8 +41,10 @@ python scripts/salad/run_salad_capacity_controller.py --check-health
 Health requires a fresh heartbeat and a recent successful reconciliation. A transient Salad API
 failure may report `degraded` while remaining within the configured reconciliation grace; repeated
 failures eventually make health fail. Failures while applying drain protection are reconciliation
-failures rather than successful no-op passes, so persistent inability to converge cannot remain
-silently healthy.
+failures rather than successful no-op passes. Safe downscale deferrals caused by incomplete
+worker-to-instance mapping or insufficient observed idle instances are allowed to be transient, but
+after `SALAD_AUTOSCALER_NONCONVERGENCE_FAILURE_POLLS` consecutive blocked reconciliations for the
+same target they also fail reconciliation and allow health monitoring to degrade.
 
 ## Production ownership
 

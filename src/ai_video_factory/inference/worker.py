@@ -5,6 +5,12 @@ import tempfile
 import threading
 from pathlib import Path
 
+from .bundle_publication import (
+    load_committed_bundle,
+    publish_committed_bundle,
+    recover_committed_bundle,
+    stage_bundle,
+)
 from .contracts import InferenceJobRequest, InferenceJobResponse, OutputArtifact
 from .errors import (
     InputIntegrityError,
@@ -17,7 +23,13 @@ from .errors import (
     UnsupportedTaskError,
 )
 from .gpu_failures import cleanup_cuda_memory, is_retryable_gpu_failure
-from .ports import ClaimDecision, JobRepository, ObjectStorage, StoredObject
+from .ports import (
+    ClaimDecision,
+    JobRepository,
+    LocalSidecarArtifact,
+    ObjectStorage,
+    StoredObject,
+)
 from .storage import sha256_file
 from .tasks import TaskRunnerRegistry
 
@@ -156,9 +168,8 @@ class InferenceWorker:
         if claim.decision is ClaimDecision.REPLAY:
             if claim.result is None:
                 raise JobConflictError(f"completed job has no stored result: {request.job_id}")
-            return InferenceJobResponse.model_validate(claim.result).model_copy(
-                update={"replayed": True}
-            )
+            response = InferenceJobResponse.model_validate(claim.result)
+            return self._reconcile_replayed_response(request, response)
         if claim.decision is ClaimDecision.BUSY:
             raise JobBusyError(f"job is currently leased by another worker: {request.job_id}")
 
@@ -206,14 +217,16 @@ class InferenceWorker:
         )
         return response
 
-    def _execute_claimed(
+    def _reconcile_replayed_response(
         self,
         request: InferenceJobRequest,
-        request_sha256: str,
-        attempt_count: int,
+        response: InferenceJobResponse,
     ) -> InferenceJobResponse:
-        authoritative_output: OutputArtifact | None = None
+        request_sha256 = request.fingerprint()
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
         existing = self.storage.stat(request.output.key)
+        output: OutputArtifact | None = None
+
         if existing is not None:
             output = self._reconcile_existing(request, request_sha256, existing)
             try:
@@ -223,22 +236,48 @@ class InferenceWorker:
                     primary_sha256=output.sha256,
                 )
             except OutputConflictError:
-                missing_sidecar = any(
-                    self.storage.stat(contract.key) is None
-                    for contract in (request.sidecar_outputs or {}).values()
-                )
-                if not missing_sidecar:
-                    raise
-                authoritative_output = output
-            else:
-                return InferenceJobResponse(
-                    job_id=request.job_id,
-                    request_sha256=request_sha256,
-                    output=output,
-                    attempt_count=attempt_count,
-                    replayed=True,
-                )
+                output = None
 
+        if output is None:
+            with tempfile.TemporaryDirectory(
+                prefix=f"{request.job_id}-replay-",
+                dir=self.temp_dir,
+            ) as temporary:
+                recovered = recover_committed_bundle(
+                    self.storage,
+                    request,
+                    Path(temporary),
+                )
+            if recovered is None:
+                raise OutputConflictError(
+                    f"completed job artifact bundle is incomplete: {request.job_id}"
+                )
+            primary, _ = recovered
+            output = self._reconcile_existing(request, request_sha256, primary)
+            self._reconcile_existing_sidecars(
+                request,
+                request_sha256,
+                primary_sha256=output.sha256,
+            )
+
+        expected = response.output
+        if (
+            output.key != expected.key
+            or output.content_type != expected.content_type
+            or output.size_bytes != expected.size_bytes
+            or output.sha256 != expected.sha256
+        ):
+            raise JobConflictError(
+                f"completed job result does not match durable artifact bundle: {request.job_id}"
+            )
+        return response.model_copy(update={"output": output, "replayed": True})
+
+    def _execute_claimed(
+        self,
+        request: InferenceJobRequest,
+        request_sha256: str,
+        attempt_count: int,
+    ) -> InferenceJobResponse:
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         with _LeaseHeartbeat(
             self.repository,
@@ -253,6 +292,102 @@ class InferenceWorker:
                 dir=self.temp_dir,
             ) as temporary:
                 work_dir = Path(temporary)
+                existing = self.storage.stat(request.output.key)
+                authoritative_output: OutputArtifact | None = None
+
+                if existing is not None:
+                    output = self._reconcile_existing(request, request_sha256, existing)
+                    try:
+                        self._reconcile_existing_sidecars(
+                            request,
+                            request_sha256,
+                            primary_sha256=output.sha256,
+                        )
+                    except OutputConflictError:
+                        committed = load_committed_bundle(
+                            self.storage,
+                            request,
+                            request_sha256,
+                            work_dir,
+                        )
+                        if committed is not None:
+                            heartbeat.renew_now()
+                            primary, _ = publish_committed_bundle(
+                                self.storage,
+                                request,
+                                request_sha256,
+                                committed,
+                                work_dir,
+                            )
+                            heartbeat.ensure_owned()
+                            output = self._reconcile_existing(
+                                request,
+                                request_sha256,
+                                primary,
+                            )
+                            self._reconcile_existing_sidecars(
+                                request,
+                                request_sha256,
+                                primary_sha256=output.sha256,
+                            )
+                            return InferenceJobResponse(
+                                job_id=request.job_id,
+                                request_sha256=request_sha256,
+                                output=output,
+                                attempt_count=attempt_count,
+                                replayed=True,
+                            )
+
+                        missing_sidecar = any(
+                            self.storage.stat(contract.key) is None
+                            for contract in (request.sidecar_outputs or {}).values()
+                        )
+                        if not missing_sidecar:
+                            raise
+                        authoritative_output = output
+                    else:
+                        return InferenceJobResponse(
+                            job_id=request.job_id,
+                            request_sha256=request_sha256,
+                            output=output,
+                            attempt_count=attempt_count,
+                            replayed=True,
+                        )
+                else:
+                    committed = load_committed_bundle(
+                        self.storage,
+                        request,
+                        request_sha256,
+                        work_dir,
+                    )
+                    if committed is not None:
+                        heartbeat.renew_now()
+                        primary, _ = publish_committed_bundle(
+                            self.storage,
+                            request,
+                            request_sha256,
+                            committed,
+                            work_dir,
+                        )
+                        heartbeat.ensure_owned()
+                        output = self._reconcile_existing(
+                            request,
+                            request_sha256,
+                            primary,
+                        )
+                        self._reconcile_existing_sidecars(
+                            request,
+                            request_sha256,
+                            primary_sha256=output.sha256,
+                        )
+                        return InferenceJobResponse(
+                            job_id=request.job_id,
+                            request_sha256=request_sha256,
+                            output=output,
+                            attempt_count=attempt_count,
+                            replayed=True,
+                        )
+
                 inputs = self._download_inputs(request, work_dir / "inputs")
                 heartbeat.ensure_owned()
 
@@ -262,65 +397,64 @@ class InferenceWorker:
                 if artifact.content_type != request.output.content_type:
                     raise ValueError("task output content type does not match the job contract")
 
+                sidecar_sources = self._validate_local_sidecars(
+                    request,
+                    artifact.sidecars,
+                    work_dir,
+                )
                 digest = sha256_file(artifact.path)
-                if (
-                    authoritative_output is not None
-                    and digest != authoritative_output.sha256
-                ):
+                if authoritative_output is not None and digest != authoritative_output.sha256:
                     raise OutputConflictError(
-                        "cannot repair missing sidecars because regenerated primary "
+                        "cannot repair missing legacy sidecars because regenerated primary "
                         f"differs from the authoritative output: {request.output.key}"
                     )
 
-                # Publish sidecars before exposing a new primary. This prevents a
-                # successful primary write followed by a sidecar failure from leaving
-                # an apparently complete but internally incomplete artifact bundle.
                 heartbeat.renew_now()
-                self._upload_sidecars(
+                committed = stage_bundle(
+                    self.storage,
                     request,
                     request_sha256,
-                    artifact.sidecars,
-                    work_dir,
-                    primary_sha256=digest,
+                    primary_path=artifact.path,
+                    primary_content_type=artifact.content_type,
+                    sidecars={
+                        name: (sidecar.path, sidecar.content_type)
+                        for name, sidecar in sidecar_sources.items()
+                    },
+                    work_dir=work_dir,
                 )
                 heartbeat.ensure_owned()
 
                 heartbeat.renew_now()
-                publication = self.storage.create_if_absent(
-                    artifact.path,
-                    request.output.key,
-                    content_type=artifact.content_type,
-                    metadata={
-                        "job-id": request.job_id,
-                        "request-sha256": request_sha256,
-                        "artifact-sha256": digest,
-                    },
+                local_sources: dict[str, Path] = {}
+                if sha256_file(artifact.path) == committed.primary.sha256:
+                    local_sources["primary"] = artifact.path
+                for name, sidecar in sidecar_sources.items():
+                    staged_sidecar = committed.sidecars[name]
+                    if sha256_file(sidecar.path) == staged_sidecar.sha256:
+                        local_sources[f"sidecar:{name}"] = sidecar.path
+                primary, created = publish_committed_bundle(
+                    self.storage,
+                    request,
+                    request_sha256,
+                    committed,
+                    work_dir,
+                    local_sources=local_sources,
                 )
                 heartbeat.ensure_owned()
-                if publication.created:
-                    output = self._artifact_from_stored(
-                        request,
-                        digest,
-                        publication.stored,
-                    )
-                else:
-                    output = self._reconcile_existing(
-                        request,
-                        request_sha256,
-                        publication.stored,
-                    )
-                    if output.sha256 != digest:
-                        raise OutputConflictError(
-                            "authoritative primary differs from the sidecar-linked "
-                            f"generation: {request.output.key}"
-                        )
+
+                output = self._reconcile_existing(request, request_sha256, primary)
+                self._reconcile_existing_sidecars(
+                    request,
+                    request_sha256,
+                    primary_sha256=output.sha256,
+                )
 
         return InferenceJobResponse(
             job_id=request.job_id,
             request_sha256=request_sha256,
             output=output,
             attempt_count=attempt_count,
-            replayed=not publication.created,
+            replayed=not created,
         )
 
     def _download_inputs(
@@ -356,55 +490,24 @@ class InferenceWorker:
         if path.is_symlink() or not path.is_file() or path.stat().st_size < 1:
             raise ValueError("task runner produced an empty, missing or unsafe artifact")
 
-    def _upload_sidecars(
+    def _validate_local_sidecars(
         self,
         request: InferenceJobRequest,
-        request_sha256: str,
-        sidecars: tuple[object, ...],
+        sidecars: tuple[LocalSidecarArtifact, ...],
         work_dir: Path,
-        *,
-        primary_sha256: str,
-    ) -> None:
+    ) -> dict[str, LocalSidecarArtifact]:
         declared = request.sidecar_outputs or {}
         returned = {item.name: item for item in sidecars}
         if set(returned) != set(declared):
             raise ValueError("task sidecar artifacts do not match the request contract")
         for name, contract in declared.items():
             artifact = returned[name]
-            path = artifact.path
-            content_type = artifact.content_type
-            self._validate_local_artifact(path, work_dir)
-            if content_type != contract.content_type:
+            self._validate_local_artifact(artifact.path, work_dir)
+            if artifact.content_type != contract.content_type:
                 raise ValueError(
                     f"sidecar {name!r} content type does not match the request contract"
                 )
-            digest = sha256_file(path)
-            publication = self.storage.create_if_absent(
-                path,
-                contract.key,
-                content_type=content_type,
-                metadata={
-                    "job-id": request.job_id,
-                    "request-sha256": request_sha256,
-                    "artifact-sha256": digest,
-                    "sidecar-name": name,
-                    "primary-artifact-sha256": primary_sha256,
-                },
-            )
-            stored = publication.stored
-            metadata = stored.metadata
-            if (
-                metadata.get("job-id") != request.job_id
-                or metadata.get("request-sha256") != request_sha256
-                or metadata.get("sidecar-name") != name
-                or not metadata.get("artifact-sha256")
-                or metadata.get("primary-artifact-sha256") != primary_sha256
-                or stored.content_type != contract.content_type
-                or stored.size_bytes < 1
-            ):
-                raise OutputConflictError(
-                    f"sidecar output exists for a different publication: {contract.key}"
-                )
+        return returned
 
     def _reconcile_existing_sidecars(
         self,

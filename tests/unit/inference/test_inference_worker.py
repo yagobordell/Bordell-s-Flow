@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from ai_video_factory.inference.bundle_publication import bundle_manifest_key
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
 from ai_video_factory.inference.errors import (
     InputIntegrityError,
@@ -345,6 +346,31 @@ class SidecarRunner:
         )
 
 
+class FailFinalPrimaryOnceStorage(LocalObjectStorage):
+    def __init__(self, root: Path, *, final_primary_key: str) -> None:
+        super().__init__(root)
+        self.final_primary_key = final_primary_key
+        self.failed_primary_publication = False
+
+    def create_if_absent(
+        self,
+        source: Path,
+        key: str,
+        *,
+        content_type: str,
+        metadata: Mapping[str, str],
+    ):
+        if key == self.final_primary_key and not self.failed_primary_publication:
+            self.failed_primary_publication = True
+            raise RuntimeError("simulated primary publication interruption")
+        return super().create_if_absent(
+            source,
+            key,
+            content_type=content_type,
+            metadata=metadata,
+        )
+
+
 class DivergentSidecarRunner(SidecarRunner):
     def run(
         self,
@@ -576,3 +602,135 @@ def test_missing_sidecar_repair_rejects_divergent_regeneration(tmp_path: Path) -
 
     assert runner.calls == 1
     assert storage.stat(request.sidecar_outputs["metadata"].key) is None
+
+
+def test_worker_recovers_committed_bundle_after_primary_publication_interruption(
+    tmp_path: Path,
+) -> None:
+    job_id = "job-sidecar-interrupted-primary"
+    request = InferenceJobRequest(
+        job_id=job_id,
+        task="test.sidecar",
+        inputs=[],
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/output.txt",
+            content_type="text/plain",
+        ),
+        sidecar_outputs={
+            "metadata": ObjectOutput(
+                key=f"jobs/{job_id}/metadata.json",
+                content_type="application/json",
+            )
+        },
+    )
+    storage = FailFinalPrimaryOnceStorage(
+        tmp_path / "objects",
+        final_primary_key=request.output.key,
+    )
+    repository = InMemoryJobRepository()
+
+    class NoInputSidecarRunner(SidecarRunner):
+        def run(
+            self,
+            request: InferenceJobRequest,
+            inputs: Mapping[str, Path],
+            work_dir: Path,
+        ) -> LocalArtifact:
+            del inputs
+            self.calls += 1
+            output = work_dir / "result.txt"
+            metadata = work_dir / "metadata.json"
+            output.write_bytes(b"first-attempt-primary\n")
+            metadata.write_text('{"attempt":1}\n', encoding="utf-8")
+            return LocalArtifact(
+                output,
+                request.output.content_type,
+                sidecars=(
+                    LocalSidecarArtifact(
+                        name="metadata",
+                        path=metadata,
+                        content_type="application/json",
+                    ),
+                ),
+            )
+
+    runner = NoInputSidecarRunner()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-bundle-recovery",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+
+    with pytest.raises(JobExecutionError, match="execution failed"):
+        worker.process(request)
+
+    assert runner.calls == 1
+    assert storage.stat(request.output.key) is None
+    assert storage.stat(request.sidecar_outputs["metadata"].key) is not None
+    assert storage.stat(bundle_manifest_key(request, request.fingerprint())) is not None
+
+    response = worker.process(request)
+
+    assert response.replayed is True
+    assert runner.calls == 1
+    assert storage.stat(request.output.key) is not None
+    sidecar = storage.stat(request.sidecar_outputs["metadata"].key)
+    assert sidecar is not None
+    assert sidecar.metadata["primary-artifact-sha256"] == response.output.sha256
+
+
+def test_worker_replay_repairs_deleted_sidecar_from_committed_bundle(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects-replay-repair")
+    repository = InMemoryJobRepository()
+    runner = SidecarRunner()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-sidecar-replay-repair",
+        temp_dir=tmp_path / "temp-replay-repair",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    digest = seed(
+        storage,
+        tmp_path / "source-replay-repair.txt",
+        "inputs/source-replay-repair.txt",
+        b"hello\n",
+    )
+    job_id = "job-sidecar-replay-repair"
+    request = InferenceJobRequest(
+        job_id=job_id,
+        task="test.sidecar",
+        inputs=[
+            ObjectInput(
+                name="source",
+                key="inputs/source-replay-repair.txt",
+                sha256=digest,
+            )
+        ],
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/output.txt",
+            content_type="text/plain",
+        ),
+        sidecar_outputs={
+            "metadata": ObjectOutput(
+                key=f"jobs/{job_id}/metadata.json",
+                content_type="application/json",
+            )
+        },
+    )
+
+    first = worker.process(request)
+    storage._path(request.sidecar_outputs["metadata"].key).unlink()
+
+    replay = worker.process(request)
+
+    assert first.replayed is False
+    assert replay.replayed is True
+    assert runner.calls == 1
+    assert storage.stat(request.sidecar_outputs["metadata"].key) is not None
