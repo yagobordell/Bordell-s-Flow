@@ -109,6 +109,7 @@ $Assert = $Ast.Find({
 if ($null -eq $Assert) { throw "Assert-PreparedGroup is missing." }
 . ([scriptblock]::Create($Assert.Extent.Text))
 $Definition = [pscustomobject]@{ priority = "high" }
+function Get-GroupStatus { param($Group) return [string]$Group.current_state.status }
 function Test-LegacyQueueAttachment { param($Group) return $false }
 $Group = [pscustomobject]@{
     container = [pscustomobject]@{ image = "pinned-image" }
