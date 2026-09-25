@@ -607,7 +607,7 @@ class PredictiveSaladAutoscaler:
             0,
         )
         for stage in self.clients:
-            if group_pending_change[stage]:
+            if group_transitioning[stage]:
                 continue
             target = targets[stage]
             before = current[stage]
