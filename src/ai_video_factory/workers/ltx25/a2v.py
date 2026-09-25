@@ -645,6 +645,59 @@ def _prepare_reference_pipeline_audio(
     )
 
 
+def _encode_guided_conditioning_flac(
+    source: Path,
+    destination: Path,
+    *,
+    probe: AudioProbe,
+) -> AudioProbe:
+    """Feed guided A2VidPipelineTwoStage lossless FLAC, not PCM-encoded WAV."""
+
+    executable = shutil.which("ffmpeg")
+    if executable is None:
+        raise RuntimeError("ffmpeg is required to encode guided A2V audio as FLAC")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [
+                executable,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(source),
+                "-map",
+                "0:a:0",
+                "-c:a",
+                "flac",
+                str(destination),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip()
+        raise _input_error(
+            "AUDIO_NORMALIZATION_FAILED",
+            "failed to encode guided speech as lossless FLAC"
+            + (f": {detail[-800:]}" if detail else ""),
+        ) from exc
+
+    encoded_probe = probe_audio(destination)
+    if (
+        encoded_probe.codec != "flac"
+        or encoded_probe.channels != probe.channels
+        or encoded_probe.sample_rate != probe.sample_rate
+        or encoded_probe.sample_count != probe.sample_count
+    ):
+        raise RuntimeError(
+            "guided A2V FLAC encoding changed codec, channels, sample rate or sample count"
+        )
+    return encoded_probe
+
+
 def _prepare_avatar_image(
     source: Path,
     destination: Path,
@@ -818,6 +871,18 @@ class DirectLTX25AudioToVideoBackend:
                 probe=audio_probe,
                 fps=parameters.fps,
             )
+            if guided:
+                flac_path = output_path.parent / "a2v_guided_conditioning.flac"
+                flac_probe = _encode_guided_conditioning_flac(
+                    reference_audio_plan.path,
+                    flac_path,
+                    probe=reference_audio_plan.conditioning_probe,
+                )
+                reference_audio_plan = replace(
+                    reference_audio_plan,
+                    path=flac_path,
+                    conditioning_probe=flac_probe,
+                )
             pipeline_audio_path = reference_audio_plan.path
             pipeline_audio_probe = reference_audio_plan.conditioning_probe
         else:
@@ -879,10 +944,16 @@ class DirectLTX25AudioToVideoBackend:
                     if distilled
                     else self._pipeline_params.num_inference_steps
                 )
-                # Only the guided profile preserves the checkpoint-detected upstream guider.
-                # Legacy fast/dev deliberately keep their historical overrides.
+                # The blog's talking-avatar video guidance is opt-in for guided only.
+                # Legacy fast/reference/dev deliberately keep their existing values.
                 if guided:
-                    guider_updates = {}
+                    guider_updates = {
+                        "cfg_scale": 3.0,
+                        "stg_scale": 1.0,
+                        "rescale_scale": 0.7,
+                        "modality_scale": 3.0,
+                        "stg_blocks": [29],
+                    }
                 else:
                     guider_updates = {
                         "modality_scale": 1.0,
@@ -1154,7 +1225,7 @@ class DirectLTX25AudioToVideoBackend:
             else [
                 bindings.lora_tuple(
                     str(self._model_files.distilled_lora),
-                    1.0,
+                    0.8 if generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE else 1.0,
                     bindings.lora_sd_ops,
                 )
             ]
