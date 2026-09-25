@@ -421,6 +421,43 @@ def test_a2v_mono_audio_is_upmixed_to_stereo_without_duration_change(
     assert calls[0][calls[0].index("-ar") + 1] == "24000"
 
 
+def test_guided_audio_is_encoded_as_lossless_flac_without_losing_samples(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "padded.wav"
+    source.write_bytes(b"pcm")
+    destination = tmp_path / "a2v_guided_conditioning.flac"
+    pcm_probe = a2v.AudioProbe("pcm_s16le", 24_000, 2, 97 / 24, 97_000)
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(a2v.shutil, "which", lambda _: "ffmpeg")
+
+    def fake_run(command: list[str], **kwargs: Any) -> SimpleNamespace:
+        assert kwargs["check"] is True
+        commands.append(command)
+        destination.write_bytes(b"flac")
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(a2v.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        a2v,
+        "probe_audio",
+        lambda path: a2v.AudioProbe("flac", 24_000, 2, 97 / 24, 97_000)
+        if path == destination
+        else pcm_probe,
+    )
+
+    encoded = a2v._encode_guided_conditioning_flac(
+        source, destination, probe=pcm_probe
+    )
+    assert encoded.codec == "flac"
+    assert encoded.sample_count == pcm_probe.sample_count
+    assert len(commands) == 1
+    assert commands[0][commands[0].index("-c:a") + 1] == "flac"
+    assert commands[0][-1] == str(destination)
+
+
 def test_a2v_stereo_audio_passes_through_without_ffmpeg(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
