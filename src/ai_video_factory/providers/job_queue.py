@@ -24,6 +24,10 @@ class QueueJobNotFoundError(RuntimeError):
     """A previously persisted transport job no longer exists in the queue provider."""
 
 
+class QueueRecoveryNotApplicableError(RuntimeError):
+    """A verified bundle cannot rewrite the queue's current protected state."""
+
+
 @dataclass(frozen=True, slots=True)
 class QueueJobSnapshot:
     id: str
