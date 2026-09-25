@@ -88,9 +88,14 @@ pinned Salad image v10 and manifest use `LTX_INCLUDE_A2V_DEV_ASSETS=false`; a
 guided smoke must not allocate GPU until a newly versioned image containing
 this code is built, published, checked by digest and pinned to the stopped
 group, and the manifest explicitly enables the optional dev checkpoint and
-Stage 2 LoRA. Reconcile the existing group via the protected Capacity Controller
-lifecycle; do not replace the group, reuse a Docker tag, or change production A2V
-routing. The PowerShell wrapper fails before allocation while the manifest
+Stage 2 LoRA. When dev assets are enabled, A2V preparation must wait for
+both optional files and the completed, atomic installed-model manifest before
+Postgres job polling begins: the shared distilled files becoming available is
+not sufficient. The guided smoke allows a three-hour **pending** window for cold
+bootstrap (the existing 30-minute default remains for other profiles); an
+explicit `--pending-timeout-seconds` overrides it. Reconcile the existing group
+via the protected Capacity Controller lifecycle; do not replace the group, reuse
+a Docker tag, or change production A2V routing. The PowerShell wrapper fails before allocation while the manifest
 disables dev assets. Verify model-cache provenance and free storage before the
 first download. Do not run an existing reference benchmark concurrently.
 
