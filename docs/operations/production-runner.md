@@ -117,6 +117,7 @@ Pass `-RunId <id>` to make the run identity stable for an intentional resume. Wh
 wrapper creates a unique ID so separate full-video executions cannot overwrite each other's local
 manifests, metrics, phase artifacts or temporary files.
 
-Replica cleanup belongs exclusively to the global Capacity Controller. When all Postgres demand is
-gone, the controller converges the affected groups to zero. This prevents one video finishing from
-stopping GPUs that are still serving another concurrent video.
+Capacity cleanup belongs exclusively to the global Capacity Controller. When all Postgres demand is
+gone, the controller stops the affected groups and treats `stopped` as zero effective capacity,
+regardless of the configured replica count Salad retains for a future start. This prevents one video
+finishing from stopping GPUs that are still serving another concurrent video.
