@@ -628,7 +628,6 @@ def test_worker_recovers_committed_bundle_after_primary_publication_interruption
         final_primary_key=request.output.key,
     )
     repository = InMemoryJobRepository()
-    runner = SidecarRunner()
 
     class NoInputSidecarRunner(SidecarRunner):
         def run(
@@ -682,3 +681,56 @@ def test_worker_recovers_committed_bundle_after_primary_publication_interruption
     sidecar = storage.stat(request.sidecar_outputs["metadata"].key)
     assert sidecar is not None
     assert sidecar.metadata["primary-artifact-sha256"] == response.output.sha256
+
+
+def test_worker_replay_repairs_deleted_sidecar_from_committed_bundle(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects-replay-repair")
+    repository = InMemoryJobRepository()
+    runner = SidecarRunner()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-sidecar-replay-repair",
+        temp_dir=tmp_path / "temp-replay-repair",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    digest = seed(
+        storage,
+        tmp_path / "source-replay-repair.txt",
+        "inputs/source-replay-repair.txt",
+        b"hello\n",
+    )
+    job_id = "job-sidecar-replay-repair"
+    request = InferenceJobRequest(
+        job_id=job_id,
+        task="test.sidecar",
+        inputs=[
+            ObjectInput(
+                name="source",
+                key="inputs/source-replay-repair.txt",
+                sha256=digest,
+            )
+        ],
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/output.txt",
+            content_type="text/plain",
+        ),
+        sidecar_outputs={
+            "metadata": ObjectOutput(
+                key=f"jobs/{job_id}/metadata.json",
+                content_type="application/json",
+            )
+        },
+    )
+
+    first = worker.process(request)
+    storage._path(request.sidecar_outputs["metadata"].key).unlink()
+
+    replay = worker.process(request)
+
+    assert first.replayed is False
+    assert replay.replayed is True
+    assert runner.calls == 1
+    assert storage.stat(request.sidecar_outputs["metadata"].key) is not None
