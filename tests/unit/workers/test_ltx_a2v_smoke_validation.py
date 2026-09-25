@@ -1,3 +1,4 @@
+import subprocess
 import sys
 from pathlib import Path
 
@@ -71,9 +72,34 @@ def test_controlled_a2v_smoke_checks_local_python_before_gpu_allocation() -> Non
         encoding="utf-8"
     )
     assert "LTX_A2V_GUIDED_GENERATION_PROFILE" in script
-    assert script.index("& $Python -c $ImportCheck") < script.index(
+    assert "check_ltx25_python_source.py" in script
+    assert "python -c" not in script
+    assert script.index("& $Python $SourceCheck $ExpectedLtxModule") < script.index(
         "& $Python $R2Preflight"
     )
-    assert script.index("& $Python -c $ImportCheck") < script.index(
+    assert script.index("& $Python $SourceCheck $ExpectedLtxModule") < script.index(
         "& $WorkerManager @Start"
     )
+
+
+def test_ltx_smoke_python_source_check_accepts_matching_worktree(tmp_path: Path) -> None:
+    import ai_video_factory.workers.ltx25 as ltx25
+
+    script = Path("scripts/smoke/check_ltx25_python_source.py")
+    expected = Path(ltx25.__file__).resolve()
+    accepted = subprocess.run(
+        [sys.executable, str(script), str(expected)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert accepted.returncode == 0, accepted.stderr
+
+    rejected = subprocess.run(
+        [sys.executable, str(script), str(tmp_path / "other" / "__init__.py")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode == 1
+    assert "Wrong LTX Python source" in rejected.stderr
