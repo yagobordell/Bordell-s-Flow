@@ -193,6 +193,7 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
     assert state["builds"] == 2
     assert "dev-transformer" in state["pipeline_inits"][1]["model_paths"]["transformer_path"]
     assert len(state["pipeline_inits"][1]["distilled_lora"]) == 1
+    assert state["pipeline_inits"][1]["offload_mode"] == "cpu"
     assert state["calls"][2]["num_inference_steps"] == 30
     assert state["calls"][2]["stage_1_sigmas"] is None
     assert state["calls"][2]["video_guider_params"].cfg_scale == 3.0
@@ -374,6 +375,7 @@ def test_guided_a2v_uses_upstream_guidance_and_preserves_padded_speech(
     assert "dev-transformer" in state["model_paths"]["transformer_path"]
     assert len(state["pipeline_init"]["distilled_lora"]) == 1
     assert state["pipeline_init"]["distilled_lora"][0][1] == 0.8
+    assert state["pipeline_init"]["offload_mode"] == "disk"
     assert flac_calls == [(conditioning, flac_conditioning)]
     call = state["calls"][0]
     assert call["num_frames"] == 97
@@ -390,6 +392,8 @@ def test_guided_a2v_uses_upstream_guidance_and_preserves_padded_speech(
     assert state["original_guider"].stg_blocks == [28]
     assert state["original_guider"].modality_scale == 3.0
     assert metadata["generation_recipe"] == "upstream_guided_dev"
+    assert metadata["offload_mode"] == "disk"
+    assert metadata["generation_profile"].endswith("-fp8disk-eagersdpa-v2")
     assert metadata["transformer_variant"] == "dev"
     assert metadata["stage_1_sampler"] == "euler"
     assert metadata["stage_1_image_strength"] == 1.0
