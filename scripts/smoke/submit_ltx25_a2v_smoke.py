@@ -240,7 +240,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed", type=int, default=4242)
     parser.add_argument("--timeout-seconds", type=float, default=10800.0)
-    parser.add_argument("--pending-timeout-seconds", type=float, default=1800.0)
+    parser.add_argument("--pending-timeout-seconds", type=float, default=None)
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument(
         "--output-dir",
@@ -347,7 +347,11 @@ def main() -> None:
         storage=storage,
         poll_seconds=args.poll_seconds,
         timeout_seconds=args.timeout_seconds,
-        pending_timeout_seconds=args.pending_timeout_seconds,
+        pending_timeout_seconds=(
+            args.pending_timeout_seconds
+            if args.pending_timeout_seconds is not None
+            else (10800.0 if args.profile == "guided" else 1800.0)
+        ),
     )
     executor.ensure_input(
         avatar,
