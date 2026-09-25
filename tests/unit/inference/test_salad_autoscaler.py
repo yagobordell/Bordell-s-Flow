@@ -108,6 +108,7 @@ class FakeSaladClient:
         replica_update_immediate: bool = True,
         fail_list_instances: bool = False,
         update_time: str | None = None,
+        project_groups: list[dict[str, object]] | None = None,
     ) -> None:
         self.replicas = replicas
         self.status = status
@@ -118,10 +119,14 @@ class FakeSaladClient:
         self.replica_update_immediate = replica_update_immediate
         self.fail_list_instances = fail_list_instances
         self.update_time = update_time
+        self.project_groups = project_groups or []
         self.replica_updates: list[int] = []
         self.deletion_cost_updates: list[tuple[str, int]] = []
         self.start_calls = 0
         self.stop_calls = 0
+
+    def list_project_container_groups(self) -> list[dict[str, object]]:
+        return [dict(item) for item in self.project_groups]
 
     def describe_container_group(self) -> dict[str, object]:
         return {
@@ -218,6 +223,35 @@ def _pending_rows(count: int) -> list[dict[str, object]]:
         }
         for index in range(count)
     ]
+
+
+def test_unmanaged_project_group_fails_reconciliation_before_capacity_writes() -> None:
+    stage = "ltx25"
+    client = FakeSaladClient(
+        replicas=1,
+        project_groups=[
+            {"name": "ai-video-factory-ltx25-worker-v2"},
+            {"name": "rogue-unmanaged-gpu-group"},
+        ],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,), project_max_replicas=1),
+        store=FakeStore(rows={stage: _pending_rows(2)}, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=1)},
+        managed_group_names={"ai-video-factory-ltx25-worker-v2"},
+        logger=lambda _message: None,
+    )
+
+    with pytest.raises(
+        AutoscalerReconciliationError,
+        match="rogue-unmanaged-gpu-group",
+    ):
+        autoscaler.reconcile()
+
+    assert client.replica_updates == []
+    assert client.start_calls == 0
+    assert client.stop_calls == 0
 
 
 def test_project_quota_is_shared_across_global_stage_demands() -> None:

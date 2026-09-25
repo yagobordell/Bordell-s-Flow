@@ -130,6 +130,10 @@ def build_salad_capacity_runtime(
         store=store,
         clients=clients,
         bindings=bindings,
+        managed_group_names={
+            str(services[service_name]["group_name"]).strip()
+            for service_name in bindings
+        },
         logger=logger,
     )
     return SaladCapacityRuntime(autoscaler=autoscaler, store=store)

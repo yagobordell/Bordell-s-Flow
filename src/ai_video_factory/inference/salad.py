@@ -71,6 +71,14 @@ class SaladClient:
         self._validate_config()
         self._post(self._build_container_url() + "/stop")
 
+    def list_project_container_groups(self) -> list[dict[str, object]]:
+        self._validate_project_config()
+        payload = self._get(self._build_project_containers_url())
+        items = payload.get("items", [])
+        if not isinstance(items, list):
+            raise RuntimeError("Salad returned an invalid container group list")
+        return [dict(item) for item in items if isinstance(item, dict)]
+
     def describe_container_group(self) -> dict[str, object]:
         self._validate_config()
         return self._get(self._build_container_url())
@@ -106,6 +114,22 @@ class SaladClient:
             raise RuntimeError("Salad returned an invalid instance list")
         return [dict(item) for item in items if isinstance(item, dict)]
 
+    def _validate_project_config(self) -> None:
+        missing = [
+            name
+            for name, value in (
+                ("SALAD_API_KEY", self.config.api_key),
+                ("SALAD_ORGANIZATION_NAME", self.config.organization_name),
+                ("SALAD_PROJECT_NAME", self.config.project_name),
+            )
+            if not str(value or "").strip()
+        ]
+        if missing:
+            raise RuntimeError(
+                "Salad environment variables are missing for project inventory: "
+                + ", ".join(missing)
+            )
+
     def _validate_config(self) -> None:
         missing = [
             name
@@ -122,6 +146,13 @@ class SaladClient:
                 "Salad environment variables are missing for predictive scaling: "
                 + ", ".join(missing)
             )
+
+    def _build_project_containers_url(self) -> str:
+        base_url = self.config.api_base_url.rstrip("/")
+        return (
+            f"{base_url}/organizations/{self.config.organization_name}"
+            f"/projects/{self.config.project_name}/containers"
+        )
 
     def _build_container_url(self) -> str:
         base_url = self.config.api_base_url.rstrip("/")
