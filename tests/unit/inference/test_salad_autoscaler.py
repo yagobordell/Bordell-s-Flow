@@ -372,6 +372,58 @@ def test_pending_salad_change_defers_additional_zero_demand_writes() -> None:
     assert client.stop_calls == 0
 
 
+def test_pending_provider_change_never_emits_reverse_upscale_write() -> None:
+    stage = "ltx25"
+    client = FakeSaladClient(
+        replicas=2,
+        pending_change=True,
+        instances=[
+            {"id": "instance-a", "deletion_cost": 100_000},
+            {"id": "instance-b", "deletion_cost": 0},
+        ],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,), project_max_replicas=3, stage_max_replicas=3),
+        store=FakeStore(rows={stage: _pending_rows(30)}, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=3)},
+        logger=lambda _message: None,
+    )
+
+    result = autoscaler.reconcile()[stage]
+
+    assert result.target_replicas == 3
+    assert result.applied_replicas == 2
+    assert result.reason == "provider_change_pending"
+    assert client.replica_updates == []
+    assert client.start_calls == 0
+
+
+def test_stopped_pending_group_is_not_restarted_until_provider_settles() -> None:
+    stage = "ltx25"
+    client = FakeSaladClient(
+        replicas=1,
+        status="stopped",
+        pending_change=True,
+        instances=[],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,), project_max_replicas=1, stage_max_replicas=1),
+        store=FakeStore(rows={stage: _pending_rows(2)}, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=1)},
+        logger=lambda _message: None,
+    )
+
+    result = autoscaler.reconcile()[stage]
+
+    assert result.target_replicas == 1
+    assert result.applied_replicas == 1
+    assert result.reason == "provider_change_pending"
+    assert client.replica_updates == []
+    assert client.start_calls == 0
+
+
 def test_empty_global_queue_releases_capacity_only_after_stopped_is_observed() -> None:
     stage = "realesrgan"
     client = FakeSaladClient(

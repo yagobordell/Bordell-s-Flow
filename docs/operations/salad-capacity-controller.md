@@ -57,8 +57,10 @@ reductions are never credited to the project budget merely because a PATCH or st
 accepted: the controller keeps the previously observed capacity reserved until a later reconciliation
 confirms the change. While Salad reports `pending_change=true`, effective capacity is conservatively
 computed as the maximum of the configured replica count and the number of still-listed instances.
-This also survives a controller restart during a partial downscale. If the live instance list cannot
-be read while a provider change is pending, reconciliation fails closed instead of releasing quota.
+The controller is read-only for that group during the pending provider operation: it sends no
+additional resize, start or stop request until Salad settles. This also survives a controller restart
+during a partial downscale. If the live instance list cannot be read while a provider change is
+pending, reconciliation fails closed instead of releasing quota.
 Drain publication and worker claims share a transaction-scoped advisory lock per Salad instance,
 closing the race where a worker could claim new work after that instance had been selected for
 removal. Before the controller submits a resize or stop, those selected drains are promoted to a
