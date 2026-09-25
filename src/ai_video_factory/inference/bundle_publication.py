@@ -404,7 +404,9 @@ def _validate_staged_object(
         or stored.size_bytes != expected_size
         or any(stored.metadata.get(key) != value for key, value in expected_metadata.items())
     ):
-        raise OutputConflictError(f"staged bundle object conflicts with committed data: {expected_key}")
+        raise OutputConflictError(
+            f"staged bundle object conflicts with committed data: {expected_key}"
+        )
 
 
 def _validate_final_object(
