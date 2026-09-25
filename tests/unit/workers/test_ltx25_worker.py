@@ -46,7 +46,7 @@ def test_ltx25_salad_manifest_has_dedicated_group_and_capacity() -> None:
     assert service["dockerfile"] == "docker/workers/ltx25/Dockerfile"
     assert "ltx25" in service["image"]
     assert service["resources"]["gpu_class_names"] == ["RTX 5090 (32 GB)"]
-    assert service["resources"]["memory"] == 61440
+    assert service["resources"]["memory"] == 40960
     assert service["resources"]["storage_amount"] == 171798691840
     assert "gpu_classes" not in service["resources"]
     assert service["capacity"] == {"start_replicas": 1, "max_replicas": 4}
