@@ -438,3 +438,77 @@ def test_a2v_stereo_audio_passes_through_without_ffmpeg(
 
     assert prepared_path == source
     assert prepared_probe is stereo_probe
+
+
+def test_reference_recipe_snaps_up_without_adding_an_extra_valid_grid_frame() -> None:
+    from ai_video_factory.workers.ltx25.reference_recipe import (
+        LTX_A2V_REFERENCE_RECIPE,
+        reference_num_frames_for_samples,
+    )
+
+    # 89 frames at 24 fps and 24 kHz is already exactly on the 8k+1 grid.
+    assert reference_num_frames_for_samples(
+        89_000,
+        sample_rate=24_000,
+        fps=24,
+    ) == 89
+
+    # Four complete seconds require 96 presentation frames, so the first valid
+    # LTX grid that covers the entire waveform is 97 rather than upstream's 89.
+    assert reference_num_frames_for_samples(
+        96_000,
+        sample_rate=24_000,
+        fps=24,
+    ) == 97
+
+    assert LTX_A2V_REFERENCE_RECIPE.stage_1_image_strength == 0.7
+    assert LTX_A2V_REFERENCE_RECIPE.stage_2_image_strength == 1.0
+    assert LTX_A2V_REFERENCE_RECIPE.stage_1_sampler == "euler_ancestral"
+    assert LTX_A2V_REFERENCE_RECIPE.stage_2_sampler == "euler"
+    assert LTX_A2V_REFERENCE_RECIPE.ancestral_eta == 1.0
+    assert LTX_A2V_REFERENCE_RECIPE.ancestral_s_noise == 1.0
+    assert LTX_A2V_REFERENCE_RECIPE.ancestral_noise_seed_offset == 10_000
+    assert LTX_A2V_REFERENCE_RECIPE.audio_frozen_stage_1 is True
+    assert LTX_A2V_REFERENCE_RECIPE.audio_frozen_stage_2 is True
+
+
+def test_reference_a2v_shared_assets_do_not_require_dev_weights(tmp_path: Path) -> None:
+    model_files = LTXA2VModelFiles.from_root(tmp_path / "models")
+    for path in model_files.shared.paths():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"shared")
+
+    model_files.validate()
+
+    with pytest.raises(FileNotFoundError, match="optional.*dev"):
+        model_files.validate_dev()
+
+
+def test_avatar_preparation_applies_exif_orientation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "avatar.jpg"
+    Image.new("RGB", (1280, 720), (30, 40, 50)).save(source)
+    destination = tmp_path / "prepared.png"
+
+    called = False
+    original = ImageOps.exif_transpose
+
+    def record_exif_transpose(image: Image.Image) -> Image.Image:
+        nonlocal called
+        called = True
+        return original(image)
+
+    monkeypatch.setattr(a2v.ImageOps, "exif_transpose", record_exif_transpose)
+    a2v._prepare_avatar_image(
+        source,
+        destination,
+        requested_width=1280,
+        requested_height=720,
+        pipeline_width=1280,
+        pipeline_height=768,
+    )
+
+    assert called is True
+    assert Image.open(destination).size == (1280, 768)
