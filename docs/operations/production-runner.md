@@ -14,7 +14,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 
 The runner performs preflight, verifies that the global Capacity Controller is healthy, runs the
 resumable production DAG, and continuously re-checks controller health while stages are active.
-Phase 9 remains local composition. The individual video run never stops project-wide GPU capacity.
+Each wrapper invocation receives an isolated run ID and its own output/temp roots. Phase 9 remains
+local composition; its shared Remotion staging directory is protected by a cross-process mutex.
+The individual video run never stops project-wide GPU capacity.
 
 ## Active DAG
 
@@ -50,8 +52,10 @@ shots      reference prompts   alignment [Whisper]
 
 ## Cache and resume
 
-`data/output/production_manifest.json` stores deterministic stage fingerprints. Valid artifacts are
-reused; changed inputs invalidate only affected stages and their dependants.
+`data/output/runs/<run-id>/production_manifest.json` stores deterministic stage fingerprints for
+one wrapper invocation. Valid artifacts are reused within that run; changed inputs invalidate only
+affected stages and their dependants. Direct `run_production.py` callers can choose their own
+isolated root with `--output-dir`.
 
 GPU stages inspect durable R2 state before starting Salad capacity. Inference jobs live in Postgres,
 and deterministic application identity plus R2 metadata allow interrupted work to resume safely.
@@ -77,11 +81,15 @@ state.
 
 ## Outputs
 
-Primary output:
+Primary wrapper output:
 
 ```text
-data/output/phase9/final_video.mp4
+data/output/runs/<run-id>/phase9/final_video.mp4
 ```
+
+Pass `-RunId <id>` to make the run identity stable for an intentional resume. When omitted, the
+wrapper creates a unique ID so separate full-video executions cannot overwrite each other's local
+manifests, metrics, phase artifacts or temporary files.
 
 Replica cleanup belongs exclusively to the global Capacity Controller. When all Postgres demand is
 gone, the controller converges the affected groups to zero. This prevents one video finishing from
