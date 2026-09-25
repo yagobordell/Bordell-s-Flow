@@ -39,8 +39,8 @@ if (-not [string]::IsNullOrWhiteSpace($AvatarImage) -and -not (Test-Path -Litera
 }
 
 $ExpectedLtxModule = Join-Path $RepoRoot "src\ai_video_factory\workers\ltx25\__init__.py"
-$ImportCheck = 'import pathlib, sys; import ai_video_factory.workers.ltx25 as m; from ai_video_factory.workers.ltx25 import LTX_A2V_GUIDED_GENERATION_PROFILE; got=pathlib.Path(m.__file__).resolve(); want=pathlib.Path(sys.argv[1]).resolve(); sys.exit(0 if got==want else f"Wrong LTX Python source: {got}; expected {want}")'
-& $Python -c $ImportCheck $ExpectedLtxModule
+$SourceCheck = Join-Path $PSScriptRoot "check_ltx25_python_source.py"
+& $Python $SourceCheck $ExpectedLtxModule
 if ($LASTEXITCODE -ne 0) {
     throw "A2V smoke Python imports an outdated or different worktree. Run uv sync --locked --extra dev --python 3.12 in $RepoRoot before allocating a GPU."
 }
