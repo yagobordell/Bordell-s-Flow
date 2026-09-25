@@ -21,18 +21,18 @@ def test_stack_manager_delegates_only_compute_lifecycle() -> None:
     assert "& $WorkerManager @Arguments" in script
 
 
-def test_prepare_recreates_only_stopped_zero_replica_legacy_groups() -> None:
+def test_prepare_recreates_only_stably_stopped_legacy_groups() -> None:
     script = WORKER.read_text(encoding="utf-8")
 
     assert "Test-LegacyQueueAttachment" in script
-    assert "must be stopped at replicas=0 before Prepare" in script
+    assert "must be stably stopped before Prepare" in script
     assert "Remove-StoppedContainerGroup -Headers $Headers" in script
     assert "delete legacy container group" in script
     assert "Prepared group must remain stopped." in script
 
 
 
-def test_prepare_creates_stopped_group_with_valid_replicas_and_waits_for_visibility() -> None:
+def test_prepare_preserves_configured_replicas_while_group_stays_stopped() -> None:
     script = WORKER.read_text(encoding="utf-8")
     create = script.split("function New-ContainerGroup {", maxsplit=1)[1].split(
         "function Update-ContainerGroup {", maxsplit=1
@@ -44,7 +44,8 @@ def test_prepare_creates_stopped_group_with_valid_replicas_and_waits_for_visibil
 
     assert "replicas = $StartReplicas" in create
     assert "autostart_policy = $AutostartPolicy" in create
-    assert "replicas = 0" in prepare
+    assert "normalize prepared replicas" not in prepare
+    assert "@{ replicas = 0 }" not in prepare
     assert "Try-Get-Group -Headers $Headers" in wait
     assert "$VisibilityDeadline" in wait
     assert "-AllowInitialNotFound" in prepare
@@ -75,14 +76,15 @@ def test_start_sets_explicit_replicas_before_starting_group() -> None:
     assert "Wait-ForRunningCapacity" in start
 
 
-def test_stop_converges_to_stable_zero_without_autoscaler_repair() -> None:
+def test_stop_converges_to_stable_stopped_without_rewriting_replicas() -> None:
     script = WORKER.read_text(encoding="utf-8")
     stop = script.split('"Stop" {', maxsplit=1)[1].split('"Start" {', maxsplit=1)[0]
 
-    assert "set replicas to zero" in stop
-    assert "Wait-ForStoppedZeroReplicas" in stop
+    assert "set replicas to zero" not in stop
+    assert "Wait-ForStoppedGroup" in stop
     assert "Ensure-ManifestScaleToZero" not in stop
     assert "queue_autoscaler" not in stop
+    assert '"$ContainersBase/$GroupName/stop"' in stop
 
 
 def test_prepare_reads_priority_from_get_container_group_response() -> None:
@@ -111,7 +113,9 @@ function Test-LegacyQueueAttachment { param($Group) return $false }
 $Group = [pscustomobject]@{
     container = [pscustomobject]@{ image = "pinned-image" }
     priority = "high"
-    replicas = 0
+    replicas = 1
+    pending_change = $false
+    current_state = [pscustomobject]@{ status = "stopped" }
 }
 Assert-PreparedGroup -Group $Group -ResolvedImage "pinned-image"
 $Group.priority = "low"
@@ -129,6 +133,24 @@ try {
 }
 catch {
     if ($_.Exception.Message -notmatch "expected container group priority") { throw }
+}
+$Group | Add-Member -NotePropertyName priority -NotePropertyValue "high"
+$Group.current_state.status = "running"
+try {
+    Assert-PreparedGroup -Group $Group -ResolvedImage "pinned-image"
+    throw "Missing running-state rejection."
+}
+catch {
+    if ($_.Exception.Message -notmatch "stably stopped") { throw }
+}
+$Group.current_state.status = "stopped"
+$Group.pending_change = $true
+try {
+    Assert-PreparedGroup -Group $Group -ResolvedImage "pinned-image"
+    throw "Missing pending-change rejection."
+}
+catch {
+    if ($_.Exception.Message -notmatch "stably stopped") { throw }
 }
 Write-Output "PASS: Salad container group priority contract"
 """
