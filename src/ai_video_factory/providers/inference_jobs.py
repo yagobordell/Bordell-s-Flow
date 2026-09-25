@@ -101,10 +101,7 @@ def cached_inference_response(
             or sidecar.metadata.get("request-sha256") != request_sha256
             or sidecar.metadata.get("sidecar-name") != name
             or sidecar_sha256 is None
-            or (
-                primary_sha256 is not None
-                and primary_sha256 != artifact_sha256
-            )
+            or primary_sha256 != artifact_sha256
         ):
             raise RuntimeError(
                 f"Cached inference sidecar metadata does not match request {request.job_id}: "
