@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -63,3 +64,16 @@ def test_a2v_smoke_defaults_to_reference_and_fast_is_explicit(
         ],
     )
     assert parse_args().pending_timeout_seconds == 7200.0
+
+
+def test_controlled_a2v_smoke_checks_local_python_before_gpu_allocation() -> None:
+    script = Path("scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "LTX_A2V_GUIDED_GENERATION_PROFILE" in script
+    assert script.index("& $Python -c $ImportCheck") < script.index(
+        "& $Python $R2Preflight"
+    )
+    assert script.index("& $Python -c $ImportCheck") < script.index(
+        "& $WorkerManager @Start"
+    )
