@@ -92,6 +92,7 @@ def test_cached_response_accepts_complete_artifact_bundle(tmp_path: Path) -> Non
             "request-sha256": request_sha,
             "artifact-sha256": sha256_file(sidecar),
             "sidecar-name": "metadata",
+            "primary-artifact-sha256": sha256_file(output),
         },
     )
 
@@ -130,6 +131,43 @@ def test_cached_response_rejects_foreign_sidecar_metadata(tmp_path: Path) -> Non
         metadata={
             "job-id": request.job_id,
             "request-sha256": "0" * 64,
+            "artifact-sha256": sha256_file(sidecar),
+            "sidecar-name": "metadata",
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="sidecar metadata"):
+        cached_inference_response(storage, request)
+
+
+def test_cached_response_rejects_sidecar_without_primary_binding(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    request = _request()
+    output = tmp_path / "output-unbound.mp4"
+    sidecar = tmp_path / "metadata-unbound.json"
+    output.write_bytes(b"video")
+    sidecar.write_text('{"ok":true}\n', encoding="utf-8")
+    request_sha = request.fingerprint()
+
+    _upload(
+        storage,
+        output,
+        key=request.output.key,
+        content_type=request.output.content_type,
+        metadata={
+            "job-id": request.job_id,
+            "request-sha256": request_sha,
+            "artifact-sha256": sha256_file(output),
+        },
+    )
+    _upload(
+        storage,
+        sidecar,
+        key=request.sidecar_outputs["metadata"].key,
+        content_type="application/json",
+        metadata={
+            "job-id": request.job_id,
+            "request-sha256": request_sha,
             "artifact-sha256": sha256_file(sidecar),
             "sidecar-name": "metadata",
         },
