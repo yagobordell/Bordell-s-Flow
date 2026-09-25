@@ -193,7 +193,7 @@ class InferenceJobExecutor:
     ) -> InferenceJobResponse:
         cached = cached_inference_response(self._storage, request)
         if cached is not None:
-            return cached
+            return self._reconcile_cached_queue_state(request, cached)
 
         snapshot = self._queue.submit(request, metadata=metadata)
         recovered = self._recover_terminal_bundle(request, snapshot)
@@ -315,6 +315,36 @@ class InferenceJobExecutor:
                 "Inference response fingerprint does not match the submitted request"
             )
         return _validate_successful_bundle(self._storage, request, response)
+
+    def _reconcile_cached_queue_state(
+        self,
+        request: InferenceJobRequest,
+        response: InferenceJobResponse,
+    ) -> InferenceJobResponse:
+        """Best-effort repair of stale terminal Postgres state behind a valid R2 cache."""
+
+        if not isinstance(self._queue, RecoveryCapableJobQueueClient):
+            return response
+        try:
+            reconciled = self._queue.reconcile_recovered_success(request, response)
+        except Exception as exc:
+            logger.warning(
+                (
+                    "Verified R2 cache could not reconcile queue state "
+                    "application_job_id=%s: %s"
+                ),
+                request.job_id,
+                exc,
+            )
+            return response
+        if reconciled.status is not QueueJobStatus.SUCCEEDED or reconciled.output is None:
+            return response
+        persisted = InferenceJobResponse.model_validate(reconciled.output)
+        return _validate_successful_bundle(
+            self._storage,
+            request,
+            persisted,
+        ).model_copy(update={"replayed": True})
 
     def _recover_terminal_bundle(
         self,
