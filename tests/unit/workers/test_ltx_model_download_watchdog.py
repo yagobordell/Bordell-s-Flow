@@ -22,13 +22,17 @@ def test_ltx_model_download_reuses_shared_watchdog() -> None:
     assert "/usr/local/bin/network-preflight" in script
 
 
-def test_ltx_model_download_preserves_per_file_fast_path() -> None:
+def test_ltx_model_download_fast_path_requires_pinned_provenance() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
 
-    assert 'if [[ -s "${destination}" ]]' in script
-    assert "MODEL_PRESENT" in script
-    assert "MODEL_DOWNLOAD_START" in script
-    assert "MODEL_DOWNLOAD_DONE" in script
+    assert ".bordell-installed-model-manifest.json" in script
+    assert "MODEL_MANIFEST_VALID" in script
+    assert "manifest_is_valid" in script
+    assert 'installed.get("revision") != revision' in script
+    assert 'installed.get("repository") != repository' in script
+    assert '"sha256": digest.hexdigest()' in script
+    assert "MODEL_VERIFY_START" in script
+    assert "MODEL_VERIFY_DONE" in script
     assert "MODEL_READY" in script
 
 
