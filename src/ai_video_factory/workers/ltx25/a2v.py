@@ -4,6 +4,7 @@ import gc
 import json
 import logging
 import math
+import os
 import shutil
 import subprocess
 import time
@@ -39,11 +40,19 @@ from .model import (
     _force_diffvae_eager_sdpa,
     _pipeline_dimensions,
 )
+from .reference_recipe import (
+    LTX25_MODEL_REVISION,
+    LTX_A2V_REFERENCE_RECIPE,
+    reference_num_frames_for_samples,
+)
 
 logger = logging.getLogger(__name__)
 
 LTX_A2V_TASK = "video.ltx25.audio_to_video"
 LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v5"
+LTX_A2V_REFERENCE_GENERATION_PROFILE = (
+    "ltx25-a2v-reference-distilled-a95ab856-model6c7e5e5-fp8cpu-eagersdpa-v1"
+)
 LTX_A2V_DEV_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
 LTX_A2V_RECOMMENDED_MAX_SECONDS = 12.0
 LTX_A2V_MAX_RAW_FRAMES = 1024
@@ -77,8 +86,14 @@ class LTXAudioToVideoParameters(BaseModel):
     @field_validator("generation_profile")
     @classmethod
     def validate_generation_profile(cls, value: str) -> str:
-        if value not in (LTX_A2V_GENERATION_PROFILE, LTX_A2V_DEV_GENERATION_PROFILE):
-            raise ValueError("generation_profile must be a supported fast or dev A2V profile")
+        if value not in (
+            LTX_A2V_GENERATION_PROFILE,
+            LTX_A2V_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_DEV_GENERATION_PROFILE,
+        ):
+            raise ValueError(
+                "generation_profile must be a supported fast, reference, or dev A2V profile"
+            )
         return value
 
     @field_validator("prompt")
@@ -115,11 +130,21 @@ class LTXA2VModelFiles:
         )
 
     def validate(self) -> None:
-        paths = (*self.shared.paths(), self.dev_transformer, self.distilled_lora)
-        missing = [str(path) for path in paths if not path.is_file()]
+        """Validate assets shared by I2V, fast A2V and the reference A2V profile."""
+
+        self.shared.validate()
+
+    def validate_dev(self) -> None:
+        """Validate optional dev-only comparison assets."""
+
+        missing = [
+            str(path)
+            for path in (self.dev_transformer, self.distilled_lora)
+            if not path.is_file()
+        ]
         if missing:
             raise FileNotFoundError(
-                "Missing LTX-2.5 A2V model files: " + ", ".join(missing)
+                "Missing optional LTX-2.5 dev A2V model files: " + ", ".join(missing)
             )
 
 
@@ -129,12 +154,28 @@ class AudioProbe:
     sample_rate: int
     channels: int
     duration_seconds: float
+    sample_count: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceAudioPlan:
+    path: Path
+    decoded_probe: AudioProbe
+    conditioning_probe: AudioProbe
+    num_frames: int
+    grid_video_duration_seconds: float
+    padding_samples: int
+
+    @property
+    def padding_seconds(self) -> float:
+        return self.padding_samples / float(self.conditioning_probe.sample_rate)
 
 
 @dataclass(frozen=True, slots=True)
 class _A2VBindings:
     torch: Any
     a2v_pipeline: Any
+    reference_a2v_pipeline: Any
     model_paths: Any
     quantization_kind: Any
     offload_mode: Any
@@ -175,6 +216,8 @@ def _load_a2v_bindings() -> _A2VBindings:
         from ltx_pipelines.utils.model_paths import ModelPaths
         from ltx_pipelines.utils.quantization_factory import QuantizationKind
         from ltx_pipelines.utils.types import OffloadMode
+
+        from .reference_a2v import DistilledReferenceA2VPipeline
     except ImportError as exc:
         raise RuntimeError(
             "LTX-2.5 A2V runtime dependencies are not installed in this environment"
@@ -183,6 +226,7 @@ def _load_a2v_bindings() -> _A2VBindings:
     return _A2VBindings(
         torch=torch,
         a2v_pipeline=A2VidPipelineTwoStage,
+        reference_a2v_pipeline=DistilledReferenceA2VPipeline,
         model_paths=ModelPaths,
         quantization_kind=QuantizationKind,
         offload_mode=OffloadMode,
@@ -323,11 +367,26 @@ def probe_audio(path: Path) -> AudioProbe:
             "INVALID_AUDIO",
             "audio stream must report positive sample rate and channel count",
         )
+    sample_count: int | None = None
+    duration_ts = stream.get("duration_ts")
+    time_base = str(stream.get("time_base") or "")
+    if duration_ts is not None and "/" in time_base:
+        try:
+            numerator, denominator = (int(part) for part in time_base.split("/", 1))
+            if denominator > 0:
+                stream_seconds = int(duration_ts) * numerator / denominator
+                sample_count = max(1, round(stream_seconds * sample_rate))
+        except (TypeError, ValueError):
+            sample_count = None
+    if sample_count is None:
+        sample_count = max(1, round(duration * sample_rate))
+
     return AudioProbe(
         codec=str(stream.get("codec_name") or "unknown"),
         sample_rate=sample_rate,
         channels=channels,
         duration_seconds=duration,
+        sample_count=sample_count,
     )
 
 
@@ -418,6 +477,170 @@ def _prepare_pipeline_audio(
     return destination, prepared_probe
 
 
+def _decode_reference_audio_to_pcm(
+    source: Path,
+    destination: Path,
+    *,
+    probe: AudioProbe,
+) -> AudioProbe:
+    """Decode reference-profile speech to deterministic stereo PCM before padding."""
+
+    if probe.channels not in (1, 2):
+        raise _input_error(
+            "UNSUPPORTED_AUDIO_CHANNELS",
+            "LTX A2V reference accepts mono or stereo speech audio; "
+            f"received {probe.channels} channels",
+        )
+    executable = shutil.which("ffmpeg")
+    if executable is None:
+        raise RuntimeError("ffmpeg is required to prepare LTX A2V reference audio")
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [
+                executable,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(source),
+                "-map",
+                "0:a:0",
+                "-ac",
+                "2",
+                "-ar",
+                str(probe.sample_rate),
+                "-c:a",
+                "pcm_s16le",
+                str(destination),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip()
+        raise _input_error(
+            "AUDIO_NORMALIZATION_FAILED",
+            "failed to decode reference speech to stereo PCM"
+            + (f": {detail[-800:]}" if detail else ""),
+        ) from exc
+
+    decoded_probe = probe_audio(destination)
+    if decoded_probe.channels != 2 or decoded_probe.sample_count is None:
+        raise RuntimeError(
+            "reference A2V PCM normalization did not produce measurable stereo audio"
+        )
+    return decoded_probe
+
+
+def _prepare_reference_pipeline_audio(
+    source: Path,
+    decoded_destination: Path,
+    padded_destination: Path,
+    *,
+    probe: AudioProbe,
+    fps: int,
+) -> ReferenceAudioPlan:
+    """Decode, grid-snap upward and silence-pad speech before the Audio VAE."""
+
+    decoded_probe = _decode_reference_audio_to_pcm(
+        source,
+        decoded_destination,
+        probe=probe,
+    )
+    if decoded_probe.sample_count is None:
+        raise RuntimeError("reference A2V decoded PCM has no measurable sample count")
+    decoded_duration = decoded_probe.sample_count / float(decoded_probe.sample_rate)
+    sample_tolerance = 1.0 / float(decoded_probe.sample_rate)
+    if decoded_duration - LTX_A2V_RECOMMENDED_MAX_SECONDS > sample_tolerance:
+        raise _input_error(
+            "UNSUPPORTED_DURATION",
+            "reference A2V speech exceeds the validated 12-second contract: "
+            f"{decoded_duration:.6f}s > {LTX_A2V_RECOMMENDED_MAX_SECONDS:.3f}s",
+        )
+
+    try:
+        num_frames = reference_num_frames_for_samples(
+            decoded_probe.sample_count,
+            sample_rate=decoded_probe.sample_rate,
+            fps=fps,
+            max_raw_frames=LTX_A2V_MAX_RAW_FRAMES,
+        )
+    except ValueError as exc:
+        raise _input_error("UNSUPPORTED_DURATION", str(exc)) from exc
+
+    grid_video_duration = num_frames / float(fps)
+    target_samples = math.ceil(grid_video_duration * decoded_probe.sample_rate)
+    padding_samples = target_samples - decoded_probe.sample_count
+    if padding_samples < 0:
+        raise RuntimeError("reference A2V temporal plan would truncate decoded speech")
+
+    conditioning_path = decoded_destination
+    conditioning_probe = decoded_probe
+    if padding_samples:
+        executable = shutil.which("ffmpeg")
+        if executable is None:
+            raise RuntimeError("ffmpeg is required to pad LTX A2V reference audio")
+        padded_destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            subprocess.run(
+                [
+                    executable,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-y",
+                    "-i",
+                    str(decoded_destination),
+                    "-af",
+                    f"apad=pad_len={padding_samples}",
+                    "-c:a",
+                    "pcm_s16le",
+                    str(padded_destination),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or "").strip()
+            raise _input_error(
+                "AUDIO_NORMALIZATION_FAILED",
+                "failed to silence-pad reference speech to the LTX temporal grid"
+                + (f": {detail[-800:]}" if detail else ""),
+            ) from exc
+        conditioning_path = padded_destination
+        conditioning_probe = probe_audio(conditioning_path)
+
+    if conditioning_probe.sample_count is None:
+        raise RuntimeError("reference A2V conditioning audio has no measurable sample count")
+    if conditioning_probe.sample_count < target_samples:
+        raise RuntimeError(
+            "reference A2V conditioning audio is shorter than its snapped video grid"
+        )
+
+    logger.info(
+        "LTX25_A2V_REFERENCE_AUDIO input_samples=%d conditioning_samples=%d "
+        "padding_samples=%d num_frames=%d grid_seconds=%.6f",
+        decoded_probe.sample_count,
+        conditioning_probe.sample_count,
+        padding_samples,
+        num_frames,
+        grid_video_duration,
+    )
+    return ReferenceAudioPlan(
+        path=conditioning_path,
+        decoded_probe=decoded_probe,
+        conditioning_probe=conditioning_probe,
+        num_frames=num_frames,
+        grid_video_duration_seconds=grid_video_duration,
+        padding_samples=padding_samples,
+    )
+
+
 def _prepare_avatar_image(
     source: Path,
     destination: Path,
@@ -431,7 +654,7 @@ def _prepare_avatar_image(
         raise _input_error("INVALID_IMAGE", f"invalid avatar image input: {source}")
     try:
         with Image.open(source) as opened:
-            image = opened.convert("RGB")
+            image = ImageOps.exif_transpose(opened).convert("RGB")
     except (OSError, ValueError) as exc:
         raise _input_error(
             "IMAGE_DECODE_FAILED", f"avatar image decode failed for {source}"
@@ -546,8 +769,8 @@ class DirectLTX25AudioToVideoBackend:
             self._release_pipeline_locked()
 
     def prepare(self) -> None:
-        # Validate every A2V asset during readiness, but do not keep a second 22B pipeline
-        # resident beside the already-warmed I2V pipeline.
+        # Readiness requires only the shared distilled assets. Dev comparison
+        # weights are optional and validated only when that profile is requested.
         with self._lock:
             bindings = self._get_bindings()
             try:
@@ -555,7 +778,7 @@ class DirectLTX25AudioToVideoBackend:
             except FileNotFoundError as exc:
                 raise ModelBootstrapPendingError(str(exc)) from exc
             self._pipeline_params = bindings.detect_params(
-                str(self._model_files.dev_transformer)
+                str(self._model_files.shared.transformer)
             )
             self._prepared = True
 
@@ -578,15 +801,32 @@ class DirectLTX25AudioToVideoBackend:
         generation_started = time.monotonic()
         audio_probe = probe_audio(audio_path)
         _validate_audio_duration(audio_probe, fps=parameters.fps)
-        pipeline_audio_path, pipeline_audio_probe = _prepare_pipeline_audio(
-            audio_path,
-            output_path.parent / "a2v_conditioning_stereo.wav",
-            probe=audio_probe,
+        reference = (
+            parameters.generation_profile == LTX_A2V_REFERENCE_GENERATION_PROFILE
         )
+        reference_audio_plan: ReferenceAudioPlan | None = None
+        if reference:
+            reference_audio_plan = _prepare_reference_pipeline_audio(
+                audio_path,
+                output_path.parent / "a2v_reference_decoded.wav",
+                output_path.parent / "a2v_reference_conditioning.wav",
+                probe=audio_probe,
+                fps=parameters.fps,
+            )
+            pipeline_audio_path = reference_audio_plan.path
+            pipeline_audio_probe = reference_audio_plan.conditioning_probe
+        else:
+            pipeline_audio_path, pipeline_audio_probe = _prepare_pipeline_audio(
+                audio_path,
+                output_path.parent / "a2v_conditioning_stereo.wav",
+                probe=audio_probe,
+            )
 
         with self._lock:
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
+            if parameters.generation_profile == LTX_A2V_DEV_GENERATION_PROFILE:
+                self._model_files.validate_dev()
             pipeline_width, pipeline_height = _pipeline_dimensions(parameters)
             conditioning_path = _prepare_avatar_image(
                 image_path,
@@ -619,14 +859,16 @@ class DirectLTX25AudioToVideoBackend:
                     _cuda_memory_snapshot(bindings.torch, self._device),
                 )
 
-                # The upstream pipeline freezes the original audio in both stages.
-                # The distilled checkpoint uses its trained 8-step schedule and CFG=1;
-                # the original dev checkpoint retains native text CFG as an alternative.
+                # The reference profile is isolated from the legacy fast/dev
+                # paths. It uses the distilled checkpoint with the official
+                # 8-step schedule while preserving the legacy profiles for
+                # comparison only.
                 fast = parameters.generation_profile == LTX_A2V_GENERATION_PROFILE
-                stage_1_sigmas = bindings.distilled_sigmas if fast else None
+                distilled = fast or reference
+                stage_1_sigmas = bindings.distilled_sigmas if distilled else None
                 stage_1_steps = (
                     len(bindings.distilled_sigmas) - 1
-                    if fast
+                    if distilled
                     else self._pipeline_params.num_inference_steps
                 )
                 guider_updates = {
@@ -634,7 +876,7 @@ class DirectLTX25AudioToVideoBackend:
                     "stg_scale": 0.0,
                     "stg_blocks": [],
                 }
-                if fast:
+                if distilled:
                     guider_updates.update(cfg_scale=1.0, rescale_scale=0.0)
                 video_guider = replace(
                     self._pipeline_params.video_guider_params, **guider_updates
@@ -651,23 +893,41 @@ class DirectLTX25AudioToVideoBackend:
                     self._device,
                 )
                 try:
-                    result = pipeline(
-                        prompt=parameters.prompt,
-                        negative_prompt=bindings.default_negative_prompt,
-                        seed=parameters.seed,
-                        height=pipeline_height,
-                        width=pipeline_width,
-                        num_frames=None,
-                        frame_rate=float(parameters.fps),
-                        num_inference_steps=stage_1_steps,
-                        stage_1_sigmas=stage_1_sigmas,
-                        stage_2_sigmas=bindings.stage_2_sigmas,
-                        video_guider_params=video_guider,
-                        images=[conditioning],
-                        audio_path=str(pipeline_audio_path.resolve()),
-                        audio_start_time=0.0,
-                        audio_max_duration=None,
-                    )
+                    if reference:
+                        if reference_audio_plan is None:
+                            raise RuntimeError(
+                                "reference A2V audio plan was not prepared"
+                            )
+                        result = pipeline(
+                            prompt=parameters.prompt,
+                            seed=parameters.seed,
+                            height=pipeline_height,
+                            width=pipeline_width,
+                            num_frames=reference_audio_plan.num_frames,
+                            frame_rate=float(parameters.fps),
+                            stage_1_sigmas=bindings.distilled_sigmas,
+                            stage_2_sigmas=bindings.stage_2_sigmas,
+                            images=[conditioning],
+                            audio_path=str(pipeline_audio_path.resolve()),
+                        )
+                    else:
+                        result = pipeline(
+                            prompt=parameters.prompt,
+                            negative_prompt=bindings.default_negative_prompt,
+                            seed=parameters.seed,
+                            height=pipeline_height,
+                            width=pipeline_width,
+                            num_frames=None,
+                            frame_rate=float(parameters.fps),
+                            num_inference_steps=stage_1_steps,
+                            stage_1_sigmas=stage_1_sigmas,
+                            stage_2_sigmas=bindings.stage_2_sigmas,
+                            video_guider_params=video_guider,
+                            images=[conditioning],
+                            audio_path=str(pipeline_audio_path.resolve()),
+                            audio_start_time=0.0,
+                            audio_max_duration=None,
+                        )
                 except ValueError as exc:
                     _log_cuda_memory(
                         "pipeline_value_error",
@@ -743,13 +1003,60 @@ class DirectLTX25AudioToVideoBackend:
             "video_modality_scale": video_guider.modality_scale,
             "stage_1_steps": stage_1_steps,
             "stage_2_steps": len(bindings.stage_2_sigmas) - 1,
-            "transformer_variant": "distilled" if fast else "dev",
+            "transformer_variant": "distilled" if distilled else "dev",
+            "generation_recipe": (
+                "distilled_reference"
+                if reference
+                else ("legacy_fast" if fast else "legacy_dev")
+            ),
+            "stage_1_sampler": (
+                LTX_A2V_REFERENCE_RECIPE.stage_1_sampler if reference else "euler"
+            ),
+            "stage_2_sampler": LTX_A2V_REFERENCE_RECIPE.stage_2_sampler,
+            "stage_1_image_strength": (
+                LTX_A2V_REFERENCE_RECIPE.stage_1_image_strength
+                if reference
+                else 1.0
+            ),
+            "stage_2_image_strength": (
+                LTX_A2V_REFERENCE_RECIPE.stage_2_image_strength
+                if reference
+                else 1.0
+            ),
+            "audio_frozen_stage_1": True,
+            "audio_frozen_stage_2": True,
+            "quantization": "fp8_cast",
+            "offload_mode": "cpu",
+            "ltx_model_revision": os.environ.get(
+                "LTX_MODEL_REVISION", LTX25_MODEL_REVISION
+            ),
             "input_audio_codec": audio_probe.codec,
             "input_audio_sample_rate": audio_probe.sample_rate,
             "input_audio_channels": audio_probe.channels,
             "conditioning_audio_channels": pipeline_audio_probe.channels,
             "audio_upmixed_to_stereo": audio_probe.channels == 1,
             "input_audio_duration_seconds": audio_probe.duration_seconds,
+            "decoded_speech_samples": (
+                reference_audio_plan.decoded_probe.sample_count
+                if reference_audio_plan is not None
+                else audio_probe.sample_count
+            ),
+            "conditioning_audio_samples": pipeline_audio_probe.sample_count,
+            "audio_padding_samples": (
+                reference_audio_plan.padding_samples
+                if reference_audio_plan is not None
+                else 0
+            ),
+            "audio_padding_seconds": (
+                reference_audio_plan.padding_seconds
+                if reference_audio_plan is not None
+                else 0.0
+            ),
+            "grid_video_duration_seconds": (
+                reference_audio_plan.grid_video_duration_seconds
+                if reference_audio_plan is not None
+                else int(result.num_frames) / float(parameters.fps)
+            ),
             "effective_audio_duration_seconds": effective_audio_duration,
             "output_video_duration_seconds": output_video_duration,
             "duration_delta_seconds": output_video_duration - audio_probe.duration_seconds,
@@ -800,9 +1107,13 @@ class DirectLTX25AudioToVideoBackend:
 
         self._mode_controller.activate("audio_to_video")
         fast = generation_profile == LTX_A2V_GENERATION_PROFILE
+        reference = generation_profile == LTX_A2V_REFERENCE_GENERATION_PROFILE
+        distilled = fast or reference
+        if not distilled:
+            self._model_files.validate_dev()
         transformer = (
             self._model_files.shared.transformer
-            if fast
+            if distilled
             else self._model_files.dev_transformer
         )
         model_paths = bindings.model_paths.from_split(
@@ -816,7 +1127,7 @@ class DirectLTX25AudioToVideoBackend:
         )
         distilled_lora = (
             []
-            if fast
+            if distilled
             else [
                 bindings.lora_tuple(
                     str(self._model_files.distilled_lora),
@@ -826,7 +1137,10 @@ class DirectLTX25AudioToVideoBackend:
             ]
         )
         _force_diffvae_eager_sdpa(bindings.diffvae_apply)
-        self._pipeline = bindings.a2v_pipeline(
+        pipeline_cls = (
+            bindings.reference_a2v_pipeline if reference else bindings.a2v_pipeline
+        )
+        self._pipeline = pipeline_cls(
             model_paths=model_paths,
             distilled_lora=distilled_lora,
             spatial_upsampler_path=str(self._model_files.shared.spatial_upsampler),
@@ -836,10 +1150,7 @@ class DirectLTX25AudioToVideoBackend:
             offload_mode=bindings.offload_mode.CPU,
         )
         self._pipeline_profile = generation_profile
-        if self._pipeline_params is None:
-            self._pipeline_params = bindings.detect_params(
-                str(self._model_files.dev_transformer)
-            )
+        self._pipeline_params = bindings.detect_params(str(transformer))
         return self._pipeline, True
 
 

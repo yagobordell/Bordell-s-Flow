@@ -45,23 +45,38 @@ The worker-specific deployment contract is documented in [LTX 2.5 worker](ltx25-
 
 ## Speech-driven avatar settings
 
-The default **fast** profile uses the official distilled transformer directly in both
-stages (no distilled LoRA), the upstream 8-step `DISTILLED_SIGMAS` schedule, a 3-step
-refine pass, and CFG 1 with STG and isolated-modality guidance disabled. It retains the
-supplied speech as frozen conditioning in both stages and muxes the original audio.
-The explicit **dev** profile keeps the dev transformer, native 30-step schedule and
-stage-2 distilled LoRA with dev CFG, while also disabling STG and modality guidance.
+The existing **fast** and **dev** profiles remain available for comparison. They are not
+treated as a functional rollback for avatar lip-sync.
 
-Both profiles use FP8_CAST, CPU block streaming and the stable eager-SDPA video VAE on the
-RTX 5090. The latter remains necessary because the NATTEN path previously crashed on
-this deployment; faster decoding or reduced CPU offload require separate GPU safety
-validation. `model_load_seconds` measures pipeline construction, not all transformer
-loading: upstream stages create/stream transformer weights inside `inference_seconds`.
+Development adds an isolated **reference** profile whose purpose is to reproduce the
+LTX-2.5 distilled two-stage recipe closely enough to establish a quality baseline. It
+uses the shared distilled transformer, the upstream 8-step `DISTILLED_SIGMAS` schedule
+and 3-step refine schedule, Stage 1 image strength 0.7 with the LTX-2.5 Euler ancestral
+sampler (`eta=1`, `s_noise=1`, sampler-noise seed offset `+10000`), then Stage 2 image
+strength 1.0 with plain Euler. Audio conditioning is frozen with zero noise in both
+stages.
 
-Profile is part of the job identity to prevent R2 replay across modes. The new LTX Salad
-image tag must be built and published before running a real smoke. The 1–2 minute target
-for a five-second clip is an **acceptance target**, not a guaranteed runtime: compare the
-actual `inference_seconds`, encode/mux and total against the prior 230.55-second run.
+The reference profile intentionally keeps the RTX 5090 safety/memory regime already
+validated by this worker: `FP8_CAST`, CPU offload and eager-SDPA DiffVAE decoding. This
+is recorded in result metadata as a numerical/runtime deviation from a BF16 reference;
+BF16 comparison is a later GPU experiment, not a prerequisite for the first functional
+lip-sync baseline.
+
+### Temporal contract
+
+Reference A2V never snaps speech down to the previous `8k+1` frame. The worker first
+decodes speech to deterministic stereo PCM, measures the decoded sample count, selects
+the first valid `8k+1` video grid that covers all speech samples, and pads only the
+conditioning waveform with the silence needed to cover that grid. The Audio VAE output
+must contain enough latent positions for the selected video duration; latent tensors are
+not padded synthetically.
+
+The reference profile currently accepts at most 12 seconds of effective decoded speech.
+A longer narration must be segmented by orchestration rather than cut arbitrarily inside
+the worker.
+
+Profile is part of job identity, so reference outputs cannot replay legacy fast/dev R2
+artifacts.
 
 ## Validation
 
@@ -71,16 +86,18 @@ Targeted real validation uses:
 scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1
 ```
 
-The controlled PowerShell smoke defaults to `-Profile fast` and accepts `-Profile dev`
-for a dev baseline using the same avatar and speech. The underlying Python smoke verifies
-the selected checkpoint family, both stage step counts, CFG and frozen-audio contract.
+The controlled PowerShell smoke defaults to `-Profile fast` for backwards-compatible
+operator behavior and also accepts `-Profile reference` and `-Profile dev`. Reference
+validation verifies the selected checkpoint family, both stage schedules, sampler
+semantics, per-stage image strengths, frozen audio, upward temporal-grid padding and the
+decoded voiced span at the end of the generated MP4.
 For a five-second audio clip, pass `-MaxGenerationSeconds 120` to fail validation if
 `total_elapsed_seconds` exceeds the two-minute acceptance target. This measures the worker's generation, not Postgres pending time or cold model downloads.
 
-The smoke verifies that the deployed worker uses the updated guider, but a passing MP4/audio
-contract does not establish lip-sync quality: inspect the avatar's mouth movement against the
-provided speech before accepting the visual result. The smoke does not replace production
-orchestration.
+The smoke verifies technical and speech-preservation contracts, but a passing result does
+not establish lip-sync quality. The reference profile is not considered operational until
+a real RTX 5090 run demonstrates repeatable mouth synchronization and identity preservation
+under visual review. The smoke does not replace production orchestration.
 Transport IDs, timings and artifact hashes from individual validation runs belong in Git history.
 
 

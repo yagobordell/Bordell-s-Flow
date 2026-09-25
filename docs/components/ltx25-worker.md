@@ -28,9 +28,17 @@ Accepted clips are subsequently upscaled by Real-ESRGAN to 2560x1440.
 The image lives under `docker/workers/ltx25` and packages the pinned LTX runtime plus the shared
 inference worker.
 
-Required model checkpoints are downloaded under the configured model root. LTX now reuses
-`ai_video_factory.workers.download_watchdog` rather than maintaining a separate Bash watchdog.
-Existing non-empty checkpoint files take the fast path and are not downloaded again.
+Required model checkpoints are downloaded under the configured model root. LTX reuses
+`ai_video_factory.workers.download_watchdog` and pins both the LTX source commit and the
+Hugging Face model revision. `docker/workers/ltx25/model-manifest.json` defines the exact
+shared file set and optional dev-only assets. Bootstrap writes a provenance manifest with
+file sizes and SHA256 values after validating/downloading from the pinned revision; a cache
+without matching provenance is revalidated instead of being accepted merely because files
+are non-empty.
+
+The default worker bootstrap downloads only the shared distilled assets required by normal
+I2V, legacy fast A2V and the reference A2V profile. The dev transformer and distilled LoRA
+are optional comparison assets enabled explicitly with `LTX_INCLUDE_A2V_DEV_ASSETS=true`.
 
 ## Deployment
 

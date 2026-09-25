@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "repository": "Lightricks/LTX-2.5",
+  "revision": "6c7e5e573ac1667efc83407806fe9b0b93730e60",
+  "shared_files": [
+    "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+    "text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+    "vae/ltx-2.5-video-vae-bf16.safetensors",
+    "vae/ltx-2.5-audio-vae-bf16.safetensors",
+    "latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
+  ],
+  "dev_files": [
+    "diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors",
+    "loras/ltx-2.5-22b-distilled-lora-450-bf16.safetensors"
+  ]
+}
