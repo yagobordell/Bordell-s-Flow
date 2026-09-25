@@ -16,6 +16,7 @@ from ai_video_factory.providers.inference_jobs import (
     IncompleteInferenceBundleError,
     InferenceJobExecutor,
     InferenceJobTimeoutError,
+    InferenceQueueAuthorityError,
     RemoteInferenceRejectedError,
 )
 from ai_video_factory.providers.job_queue import (
@@ -71,6 +72,12 @@ class FakeQueue:
 
     def cancel(self, transport_job_id: str) -> None:
         self.cancellations.append(transport_job_id)
+
+
+class AuthorityFailureQueue(FakeQueue):
+    def reconcile_recovered_success(self, request, response):
+        del request, response
+        raise RuntimeError("Postgres unavailable")
 
 
 class TransientThenSuccessQueue:
@@ -231,6 +238,31 @@ def test_executor_reuses_verified_object_storage_artifact_without_queue_submissi
     assert response.replayed is True
     assert queue.submits == 0
     assert queue.cancellations == []
+
+
+def test_executor_fails_closed_when_cache_authority_is_unavailable() -> None:
+    request = _request()
+    stored = _stored_for_request(request)
+    queue = AuthorityFailureQueue(
+        QueueJobSnapshot(
+            id="authority-unavailable",
+            status=QueueJobStatus.PENDING,
+        )
+    )
+    executor = InferenceJobExecutor(
+        queue=queue,  # type: ignore[arg-type]
+        storage=FakeStorage(stored),
+        poll_seconds=0.01,
+        timeout_seconds=1,
+    )
+
+    with pytest.raises(
+        InferenceQueueAuthorityError,
+        match="authoritative queue state is unavailable",
+    ):
+        executor.execute(request, metadata={"phase": "4"})
+
+    assert queue.submits == 0
 
 
 def test_executor_keeps_polling_after_transient_queue_read_failures() -> None:
