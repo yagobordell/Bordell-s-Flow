@@ -17,6 +17,9 @@ param(
 
     [string]$EnvFile = ".env",
 
+    [ValidatePattern("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")]
+    [string]$RunId = "",
+
     [switch]$NonInteractive
 )
 
@@ -127,11 +130,56 @@ function Assert-CapacityControllerHealthy {
         throw "Global Salad capacity controller is not healthy."
     }
 }
+
+function Enter-NamedMutex {
+    param([Parameter(Mandatory)][string]$Name)
+
+    $Mutex = [Threading.Mutex]::new($false, $Name)
+    try {
+        try {
+            $null = $Mutex.WaitOne()
+        }
+        catch [Threading.AbandonedMutexException] {
+            # Ownership is transferred to this process when the previous owner died.
+        }
+        return $Mutex
+    }
+    catch {
+        $Mutex.Dispose()
+        throw
+    }
+}
+
+function Exit-NamedMutex {
+    param([Threading.Mutex]$Mutex)
+
+    if ($null -eq $Mutex) {
+        return
+    }
+    try {
+        $Mutex.ReleaseMutex()
+    }
+    finally {
+        $Mutex.Dispose()
+    }
+}
 Import-EnvFile -Path $EnvFile
 $ResolvedInput = Resolve-InputPath -Path $ScriptFile
+if ([string]::IsNullOrWhiteSpace($RunId)) {
+    $Stem = [IO.Path]::GetFileNameWithoutExtension($ResolvedInput)
+    $SafeStem = ($Stem -replace '[^A-Za-z0-9._-]', '-').Trim('-')
+    if ([string]::IsNullOrWhiteSpace($SafeStem)) {
+        $SafeStem = "video"
+    }
+    $RunId = "{0}-{1}-{2}" -f $SafeStem, [DateTime]::UtcNow.ToString("yyyyMMddTHHmmssfffZ"), [Guid]::NewGuid().ToString("N").Substring(0, 8)
+}
 $Document = Get-Content -LiteralPath $ServicesPath -Raw | ConvertFrom-Json
 $Services = @($Document.stack.service_order | ForEach-Object { [string]$_ })
-$OutputDir = Join-Path $RepoRoot "data\output"
+$OutputDir = Join-Path $RepoRoot (Join-Path "data\output\runs" $RunId)
+$TempDir = Join-Path $RepoRoot (Join-Path "data\tmp\runs" $RunId)
+New-Item -ItemType Directory -Path $OutputDir, $TempDir -Force | Out-Null
+$env:OUTPUT_DIR = $OutputDir
+$env:TEMP_DIR = $TempDir
 $FinalVideo = Join-Path $OutputDir "phase9\final_video.mp4"
 $ProductionMetrics = Join-Path $OutputDir "production_metrics.json"
 $RunMetrics = Join-Path $OutputDir "video_factory_metrics.json"
@@ -171,6 +219,8 @@ try {
             $MaxParallelGpuStages,
             "--narration-language",
             $NarrationLanguage,
+            "--output-dir",
+            $OutputDir,
             "--metrics",
             $ProductionMetrics
         )
@@ -181,12 +231,18 @@ try {
 
         Write-Host "=== PHASE 9: composition, Remotion render, stream-copy final mux ===" `
             -ForegroundColor Cyan
-        $Phase9 = [Diagnostics.Stopwatch]::StartNew()
-        Invoke-Python -Arguments @($Phase9Plan)
-        Invoke-Python -Arguments @($Phase9Motion)
-        Invoke-Python -Arguments @($Phase9Final)
-        $Phase9.Stop()
-        $Phase9Seconds = $Phase9.Elapsed.TotalSeconds
+        $Phase9Mutex = Enter-NamedMutex -Name "BordellsFlow-Phase9-Renderer"
+        try {
+            $Phase9 = [Diagnostics.Stopwatch]::StartNew()
+            Invoke-Python -Arguments @($Phase9Plan)
+            Invoke-Python -Arguments @($Phase9Motion)
+            Invoke-Python -Arguments @($Phase9Final)
+            $Phase9.Stop()
+            $Phase9Seconds = $Phase9.Elapsed.TotalSeconds
+        }
+        finally {
+            Exit-NamedMutex -Mutex $Phase9Mutex
+        }
 
         if (-not (Test-Path -LiteralPath $FinalVideo -PathType Leaf)) {
             throw "FinalVideo was not created: $FinalVideo"
@@ -217,6 +273,8 @@ if ($null -ne $ProductionDocument) {
 }
 $Metrics = [ordered]@{
     schema_version = "1"
+    run_id = $RunId
+    output_dir = $OutputDir
     total_wall_clock_seconds = $Overall.Elapsed.TotalSeconds
     production_phases_2_8_seconds = $ProductionSeconds
     phase9_seconds = $Phase9Seconds
@@ -230,6 +288,7 @@ $Metrics | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $RunMetrics -Encod
 Write-Host ""
 Write-Host "VIDEO FACTORY COMPLETE" -ForegroundColor Green
 Write-Host ""
+Write-Host ("Run ID: {0}" -f $RunId)
 Write-Host "Final video:"
 Write-Host $FinalVideo
 Write-Host ""
