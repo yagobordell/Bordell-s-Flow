@@ -67,6 +67,17 @@ class DrainingRepository(InMemoryJobRepository):
         raise AssertionError(f"draining worker must not poll jobs: {task_names}")
 
 
+class DrainAppearsBeforeClaimRepository(InMemoryJobRepository):
+    def __init__(self) -> None:
+        super().__init__()
+        self.drain_checks = 0
+
+    def is_instance_draining(self, instance_id: str) -> bool:
+        assert instance_id == "instance-race"
+        self.drain_checks += 1
+        return self.drain_checks >= 2
+
+
 class LeaseLosingRepository(InMemoryJobRepository):
     def renew_lease(
         self,
@@ -334,6 +345,18 @@ class SidecarRunner:
         )
 
 
+class DivergentSidecarRunner(SidecarRunner):
+    def run(
+        self,
+        request: InferenceJobRequest,
+        inputs: Mapping[str, Path],
+        work_dir: Path,
+    ) -> LocalArtifact:
+        artifact = super().run(request, inputs, work_dir)
+        artifact.path.write_bytes(b"different\n")
+        return artifact
+
+
 def test_worker_uploads_and_reconciles_declared_sidecars(tmp_path: Path) -> None:
     storage = LocalObjectStorage(tmp_path / "objects")
     repository = InMemoryJobRepository()
@@ -477,3 +500,79 @@ def test_draining_salad_instance_rechecks_before_direct_claim(tmp_path: Path) ->
         worker.process(request)
 
     assert runner.calls == 0
+
+
+def test_claim_rechecks_drain_after_worker_precheck(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    repository = DrainAppearsBeforeClaimRepository()
+    runner = CountingCopyRunner()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-instance-race",
+        salad_instance_id="instance-race",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    digest = seed(storage, tmp_path / "source-race.txt", "inputs/source.txt", b"hello\n")
+    request = build_request("job-drain-atomic-race", digest)
+
+    with pytest.raises(JobBusyError, match="draining"):
+        worker.process(request)
+
+    assert repository.drain_checks == 2
+    assert runner.calls == 0
+
+
+def test_missing_sidecar_repair_rejects_divergent_regeneration(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    repository = InMemoryJobRepository()
+    runner = DivergentSidecarRunner()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-sidecar-divergent",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    digest = seed(storage, tmp_path / "source-divergent.txt", "inputs/source.txt", b"hello\n")
+    job_id = "job-sidecar-divergent"
+    request = InferenceJobRequest(
+        job_id=job_id,
+        task="test.sidecar",
+        inputs=[ObjectInput(name="source", key="inputs/source.txt", sha256=digest)],
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/output.txt",
+            content_type="text/plain",
+        ),
+        sidecar_outputs={
+            "metadata": ObjectOutput(
+                key=f"jobs/{job_id}/metadata.json",
+                content_type="application/json",
+            )
+        },
+    )
+
+    authoritative = tmp_path / "authoritative-divergent.txt"
+    authoritative.write_bytes(b"hello\n")
+    authoritative_sha = sha256_file(authoritative)
+    storage.create_if_absent(
+        authoritative,
+        request.output.key,
+        content_type="text/plain",
+        metadata={
+            "job-id": request.job_id,
+            "request-sha256": request.fingerprint(),
+            "artifact-sha256": authoritative_sha,
+        },
+    )
+
+    with pytest.raises(OutputConflictError, match="regenerated primary"):
+        worker.process(request)
+
+    assert runner.calls == 1
+    assert storage.stat(request.sidecar_outputs["metadata"].key) is None

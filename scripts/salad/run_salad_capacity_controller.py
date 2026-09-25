@@ -12,6 +12,7 @@ from ai_video_factory.inference.capacity_controller import (
     CapacityControllerLeadershipError,
     PostgresCapacityControllerLeadership,
     read_capacity_controller_health,
+    resolve_capacity_controller_dsn,
 )
 from ai_video_factory.inference.salad_capacity import build_salad_capacity_runtime
 
@@ -99,7 +100,10 @@ def main() -> None:
     if args.max_heartbeat_age_seconds <= 0 or args.max_reconcile_age_seconds <= 0:
         raise SystemExit("capacity controller health thresholds must be positive")
 
-    postgres_dsn = _required_env("POSTGRES_DSN")
+    try:
+        postgres_dsn = resolve_capacity_controller_dsn()
+    except RuntimeError as error:
+        raise SystemExit(str(error)) from error
     _validate_autoscaling_schema(postgres_dsn)
 
     if args.check_health:

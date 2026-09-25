@@ -136,3 +136,17 @@ def test_phase9_plan_removes_stale_artifact_before_rebuild() -> None:
     assert text.index("args.output.unlink(missing_ok=True)") < text.index(
         "plan = build_composition_plan("
     )
+
+
+def test_one_command_runner_isolates_each_run_and_serializes_shared_renderer() -> None:
+    text = _read("scripts/pipeline/run_video_factory.ps1")
+
+    assert "[string]$RunId" in text
+    assert 'data\\output\\runs' in text
+    assert 'data\\tmp\\runs' in text
+    assert "$env:OUTPUT_DIR = $OutputDir" in text
+    assert "$env:TEMP_DIR = $TempDir" in text
+    assert '"--output-dir"' in text
+    assert "BordellsFlow-Phase9-Renderer" in text
+    assert "Enter-NamedMutex" in text
+    assert "Exit-NamedMutex" in text

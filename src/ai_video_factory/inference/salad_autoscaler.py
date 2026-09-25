@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from .coordination import acquire_instance_drain_lock
 from .salad import SaladClient
 
 ACTIVE_STATUSES = (
@@ -14,6 +15,10 @@ ACTIVE_STATUSES = (
     "retryable_failed",
     "running",
 )
+
+
+class AutoscalerReconciliationError(RuntimeError):
+    """A reconcile pass could not safely converge Salad capacity."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +168,7 @@ class PostgresAutoscalerStore:
             return
         with self._pool.connection() as connection, connection.transaction():
             for instance_id in instance_ids:
+                acquire_instance_drain_lock(connection, instance_id)
                 connection.execute(
                     """
                     INSERT INTO gpu.capacity_drains (
@@ -372,6 +378,7 @@ class PredictiveSaladAutoscaler:
         }
         initial_current = dict(current)
         results: dict[str, AutoscaleResult] = {}
+        hard_failures: list[str] = []
 
         # Preserve Media Pipeline ordering: release quota before assigning new capacity.
         for stage in self.clients:
@@ -402,6 +409,8 @@ class PredictiveSaladAutoscaler:
                     demand=demands[stage],
                     reason=reason,
                 )
+                if reason == "drain_protection_failed":
+                    hard_failures.append(stage)
                 continue
             self.clients[stage].set_container_group_replicas(applied_target)
             current[stage] = applied_target
@@ -442,6 +451,12 @@ class PredictiveSaladAutoscaler:
             )
             results[stage] = result
             self._log_result(result)
+        if hard_failures:
+            failed = ", ".join(sorted(hard_failures))
+            raise AutoscalerReconciliationError(
+                "Salad capacity reconciliation could not establish safe drain "
+                f"protection for: {failed}"
+            )
         return results
 
     def _record_downscale_candidate(self, stage: str, target: int) -> int:

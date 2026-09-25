@@ -14,6 +14,43 @@ class CapacityControllerLeadershipError(RuntimeError):
     """Another healthy process already owns Salad replica authority."""
 
 
+def validate_capacity_controller_dsn(dsn: str) -> str:
+    """Reject known transaction-pooler DSNs that cannot hold session locks."""
+
+    resolved = str(dsn or "").strip()
+    if not resolved:
+        raise RuntimeError("capacity controller Postgres DSN is required")
+
+    from psycopg.conninfo import conninfo_to_dict
+
+    try:
+        info = conninfo_to_dict(resolved)
+    except Exception as error:
+        raise RuntimeError("capacity controller Postgres DSN is invalid") from error
+
+    host = str(info.get("host") or "").strip().lower()
+    port = str(info.get("port") or "").strip()
+    if port == "6543" and (
+        host.endswith(".supabase.co") or host.endswith(".supabase.com")
+    ):
+        raise RuntimeError(
+            "Salad capacity controller requires a Supabase Direct or Session-mode "
+            "Postgres connection; port 6543 is transaction pooling and cannot preserve "
+            "the session advisory lock"
+        )
+    return resolved
+
+
+def resolve_capacity_controller_dsn() -> str:
+    """Resolve the dedicated controller DSN, falling back to the worker DSN."""
+
+    return validate_capacity_controller_dsn(
+        os.getenv("SALAD_CAPACITY_CONTROLLER_POSTGRES_DSN")
+        or os.getenv("POSTGRES_DSN")
+        or ""
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CapacityControllerHealth:
     healthy: bool
@@ -38,6 +75,7 @@ class PostgresCapacityControllerLeadership:
         import psycopg
         from psycopg.rows import dict_row
 
+        dsn = validate_capacity_controller_dsn(dsn)
         self.controller_name = controller_name
         self.controller_id = controller_id or (
             f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:12]}"

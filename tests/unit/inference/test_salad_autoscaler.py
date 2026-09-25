@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from ai_video_factory.inference.salad_autoscaler import (
+    AutoscalerReconciliationError,
     AutoscalerServiceBinding,
     PredictiveAutoscalerConfig,
     PredictiveSaladAutoscaler,
@@ -73,10 +76,12 @@ class FakeSaladClient:
         replicas: int,
         status: str = "running",
         instances: list[dict[str, object]] | None = None,
+        fail_deletion_cost: bool = False,
     ) -> None:
         self.replicas = replicas
         self.status = status
         self.instances = instances or []
+        self.fail_deletion_cost = fail_deletion_cost
         self.replica_updates: list[int] = []
         self.deletion_cost_updates: list[tuple[str, int]] = []
         self.start_calls = 0
@@ -105,6 +110,8 @@ class FakeSaladClient:
         instance_id: str,
         deletion_cost: int,
     ) -> dict[str, object]:
+        if self.fail_deletion_cost:
+            raise RuntimeError("Salad deletion_cost update failed")
         self.deletion_cost_updates.append((instance_id, deletion_cost))
         return {"id": instance_id, "deletion_cost": deletion_cost}
 
@@ -352,4 +359,28 @@ def test_rebounded_demand_cancels_pending_instance_drains() -> None:
 
     assert second.target_replicas == 2
     assert store.drains.get(stage) in (None, {})
+    assert client.replica_updates == []
+
+
+def test_drain_protection_failure_marks_reconcile_as_failed() -> None:
+    stage = "realesrgan"
+    client = FakeSaladClient(
+        replicas=1,
+        instances=[{"id": "idle-instance", "deletion_cost": 100_000}],
+        fail_deletion_cost=True,
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,)),
+        store=FakeStore(rows={stage: []}, runtimes={stage: [53.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage)},
+        logger=lambda _message: None,
+    )
+
+    with pytest.raises(
+        AutoscalerReconciliationError,
+        match="could not establish safe drain protection",
+    ):
+        autoscaler.reconcile()
+
     assert client.replica_updates == []

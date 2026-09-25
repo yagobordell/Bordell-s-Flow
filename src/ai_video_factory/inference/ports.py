@@ -72,6 +72,7 @@ class JobRepository(Protocol):
         owner: str,
         lease_seconds: int,
         transport_job_id: str | None,
+        instance_id: str | None = None,
     ) -> JobClaim: ...
 
     def renew_lease(
