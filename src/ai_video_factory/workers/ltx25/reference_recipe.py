@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-
 LTX25_MODEL_REVISION = "6c7e5e573ac1667efc83407806fe9b0b93730e60"
 
 
