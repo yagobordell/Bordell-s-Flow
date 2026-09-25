@@ -10,6 +10,7 @@ from .job_queue import (
     JobQueueClient,
     QueueJobNotFoundError,
     QueueJobSnapshot,
+    QueueRecoveryNotApplicableError,
     QueueJobStatus,
 )
 
@@ -166,7 +167,7 @@ class PostgresJobQueueClient(JobQueueClient):
                 status == "pending" and attempt_count > 0
             )
             if not recoverable:
-                raise RuntimeError(
+                raise QueueRecoveryNotApplicableError(
                     f"cannot reconcile recovered bundle while job {request.job_id} "
                     f"is in state {status!r}"
                 )
