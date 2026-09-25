@@ -114,7 +114,10 @@ remain active.
 The current controlled smoke uses explicit Salad capacity and the Postgres job transport. It does not
 depend on provider-queue dispatch, queue autoscaling or transport IDs.
 
-The worker image carrying the readiness fix is
-`ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v9`. A passing MP4/audio contract still does not prove
+The readiness fix first shipped in
+`ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v9`. The active worker image is defined by
+`deploy/salad/services.json`; after changing worker or claim code, build a new versioned image
+and verify its immutable digest before updating the stopped Salad group. A passing MP4/audio
+contract still does not prove
 lip-sync quality; visually inspect mouth movement against the supplied speech before accepting an A2V
 profile.
