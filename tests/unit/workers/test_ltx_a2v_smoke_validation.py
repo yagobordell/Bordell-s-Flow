@@ -1,6 +1,8 @@
+import sys
+
 import pytest
 
-from scripts.smoke.submit_ltx25_a2v_smoke import _validate_voice_tail_profiles
+from scripts.smoke.submit_ltx25_a2v_smoke import _validate_voice_tail_profiles, parse_args
 
 
 def test_reference_voice_tail_allows_aac_variation_but_rejects_known_truncation() -> None:
@@ -23,3 +25,17 @@ def test_reference_voice_tail_allows_aac_variation_but_rejects_known_truncation(
             truncated,
             window_seconds=0.02,
         )
+
+
+def test_a2v_smoke_defaults_to_reference_and_fast_is_explicit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["submit_ltx25_a2v_smoke.py", "--audio", "speech.wav"])
+    assert parse_args().profile == "reference"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["submit_ltx25_a2v_smoke.py", "--audio", "speech.wav", "--profile", "fast"],
+    )
+    assert parse_args().profile == "fast"
