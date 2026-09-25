@@ -7,7 +7,9 @@ production should use `scripts/pipeline/run_video_factory.ps1`.
 
 Required credentials come from `.env` and the selected service definition in
 `deploy/salad/services.json`. Common requirements are Salad API access, Postgres, R2 and Hugging Face
-credentials where the model requires them. Docker is needed only when building or publishing images.
+credentials where the model requires them. The Capacity Controller must use a Direct or Session-mode
+Postgres connection; configure `SALAD_CAPACITY_CONTROLLER_POSTGRES_DSN` when ordinary worker traffic
+uses transaction pooling. Docker is needed only when building or publishing images.
 
 ## Commands
 
