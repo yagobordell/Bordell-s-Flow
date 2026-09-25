@@ -30,7 +30,9 @@ def validate_capacity_controller_dsn(dsn: str) -> str:
 
     host = str(info.get("host") or "").strip().lower()
     port = str(info.get("port") or "").strip()
-    if port == "6543" and host.endswith(".supabase.co"):
+    if port == "6543" and (
+        host.endswith(".supabase.co") or host.endswith(".supabase.com")
+    ):
         raise RuntimeError(
             "Salad capacity controller requires a Supabase Direct or Session-mode "
             "Postgres connection; port 6543 is transaction pooling and cannot preserve "
