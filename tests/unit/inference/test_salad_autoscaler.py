@@ -132,6 +132,7 @@ def _config(
     project_max_replicas: int = 30,
     stage_max_replicas: int = 4,
     downscale_stable_polls: int = 1,
+    nonconvergence_failure_polls: int = 4,
     stage_cold_start_seconds: dict[str, float] | None = None,
 ) -> PredictiveAutoscalerConfig:
     return PredictiveAutoscalerConfig(
@@ -143,6 +144,7 @@ def _config(
         runtime_percentile=0.75,
         runtime_history_limit=200,
         downscale_stable_polls=downscale_stable_polls,
+        nonconvergence_failure_polls=nonconvergence_failure_polls,
         max_upscale_per_poll=10,
         max_downscale_per_poll=10,
         active_deletion_cost=100_000,
@@ -379,8 +381,113 @@ def test_drain_protection_failure_marks_reconcile_as_failed() -> None:
 
     with pytest.raises(
         AutoscalerReconciliationError,
-        match="could not establish safe drain protection",
+        match="could not safely converge",
     ):
         autoscaler.reconcile()
 
     assert client.replica_updates == []
+
+
+@pytest.mark.parametrize(
+    ("instances", "expected_reason"),
+    [
+        (
+            [{"id": "different-instance", "deletion_cost": 0}],
+            "active_instance_mapping_incomplete",
+        ),
+        (
+            [{"id": "instance-active", "deletion_cost": 100_000}],
+            "insufficient_idle_instances",
+        ),
+    ],
+)
+def test_persistent_safe_downscale_deferral_degrades_reconciliation(
+    instances: list[dict[str, object]],
+    expected_reason: str,
+) -> None:
+    stage = "ltx25"
+    rows = {
+        stage: [
+            {
+                "job_id": "job-running",
+                "run_id": "run-a",
+                "status": "running",
+                "worker_id": "worker-instance-active",
+                "started_at": None,
+            }
+        ]
+    }
+    client = FakeSaladClient(replicas=2, instances=instances)
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config(
+            (stage,),
+            nonconvergence_failure_polls=3,
+        ),
+        store=FakeStore(rows=rows, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage)},
+        logger=lambda _message: None,
+    )
+
+    first = autoscaler.reconcile()[stage]
+    second = autoscaler.reconcile()[stage]
+
+    assert first.reason == expected_reason
+    assert second.reason == expected_reason
+    with pytest.raises(
+        AutoscalerReconciliationError,
+        match=expected_reason,
+    ):
+        autoscaler.reconcile()
+    assert client.replica_updates == []
+
+
+def test_nonconvergence_counter_resets_when_capacity_target_recovers() -> None:
+    stage = "ltx25"
+    store = FakeStore(
+        rows={
+            stage: [
+                {
+                    "job_id": "job-running",
+                    "run_id": "run-a",
+                    "status": "running",
+                    "worker_id": "worker-instance-active",
+                    "started_at": None,
+                }
+            ]
+        },
+        runtimes={stage: [60.0]},
+    )
+    client = FakeSaladClient(
+        replicas=2,
+        instances=[{"id": "different-instance", "deletion_cost": 0}],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config(
+            (stage,),
+            nonconvergence_failure_polls=2,
+        ),
+        store=store,
+        clients={stage: client},
+        bindings={stage: _binding(stage)},
+        logger=lambda _message: None,
+    )
+
+    first = autoscaler.reconcile()[stage]
+    assert first.reason == "active_instance_mapping_incomplete"
+
+    store.rows[stage] = _pending_rows(20)
+    recovered = autoscaler.reconcile()[stage]
+    assert recovered.target_replicas >= recovered.current_replicas
+
+    store.rows[stage] = [
+        {
+            "job_id": "job-running-again",
+            "run_id": "run-b",
+            "status": "running",
+            "worker_id": "worker-instance-active",
+            "started_at": None,
+        }
+    ]
+    deferred = autoscaler.reconcile()[stage]
+    assert deferred.reason == "active_instance_mapping_incomplete"
