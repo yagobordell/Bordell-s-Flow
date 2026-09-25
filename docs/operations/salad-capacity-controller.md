@@ -45,7 +45,12 @@ failures eventually make health fail. Failures while applying drain protection a
 failures rather than successful no-op passes. Safe downscale deferrals caused by incomplete
 worker-to-instance mapping or insufficient observed idle instances are allowed to be transient, but
 after `SALAD_AUTOSCALER_NONCONVERGENCE_FAILURE_POLLS` consecutive blocked reconciliations for the
-same target they also fail reconciliation and allow health monitoring to degrade.
+same target they also fail reconciliation and allow health monitoring to degrade. Salad provider
+changes are also bounded: while `pending_change=true`, the controller uses the group's provider
+`update_time` as a restart-safe age signal. If that pending state exceeds
+`SALAD_AUTOSCALER_PROVIDER_PENDING_MAX_SECONDS` (default two hours), reconciliation fails so
+controller health degrades instead of remaining green indefinitely. If `update_time` is unavailable,
+the leader falls back to the first pending observation for that process.
 
 ## Production ownership
 

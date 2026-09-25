@@ -423,7 +423,8 @@ class InferenceJobExecutor:
         raw_status = str(payload.get("status") or "")
         attempt_count = payload.get("attempt_count")
         recoverable_pending = (
-            raw_status == "pending"
+            snapshot.status is QueueJobStatus.PENDING
+            and raw_status in {"pending", "running"}
             and isinstance(attempt_count, int)
             and attempt_count > 0
         )

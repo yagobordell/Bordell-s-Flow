@@ -50,6 +50,7 @@ class PredictiveAutoscalerConfig:
     drain_grace_seconds: float = 5.0
     drain_ttl_seconds: float = 120.0
     nonconvergence_failure_polls: int = 4
+    provider_pending_max_seconds: float = 7200.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,6 +369,11 @@ def load_predictive_autoscaler_config(
             120.0,
             minimum=5.0,
         ),
+        provider_pending_max_seconds=_float_env(
+            "SALAD_AUTOSCALER_PROVIDER_PENDING_MAX_SECONDS",
+            7200.0,
+            minimum=60.0,
+        ),
     )
 
 
@@ -390,6 +396,7 @@ class PredictiveSaladAutoscaler:
         self.logger = logger
         self._downscale_candidates: dict[str, tuple[int, int]] = {}
         self._nonconvergence_candidates: dict[str, tuple[int, int, str]] = {}
+        self._provider_pending_first_seen: dict[str, datetime] = {}
         self._last_log_snapshot: dict[str, tuple[object, ...]] = {}
 
     def reconcile(self) -> dict[str, AutoscaleResult]:
@@ -429,6 +436,28 @@ class PredictiveSaladAutoscaler:
         group_pending_change = {
             stage: bool(groups[stage].get("pending_change")) for stage in self.clients
         }
+        observed_at = datetime.now(UTC)
+        for stage in self.clients:
+            if not group_pending_change[stage]:
+                self._provider_pending_first_seen.pop(stage, None)
+                continue
+            provider_updated_at = _parse_datetime(groups[stage].get("update_time"))
+            pending_since = provider_updated_at
+            if pending_since is None:
+                pending_since = self._provider_pending_first_seen.setdefault(
+                    stage,
+                    observed_at,
+                )
+            pending_age_seconds = max(
+                (observed_at - pending_since).total_seconds(),
+                0.0,
+            )
+            if pending_age_seconds > self.config.provider_pending_max_seconds:
+                raise AutoscalerReconciliationError(
+                    f"Salad provider change for {stage} has remained pending for "
+                    f"{pending_age_seconds:.0f}s, exceeding "
+                    f"{self.config.provider_pending_max_seconds:.0f}s"
+                )
         current: dict[str, int] = {}
         for stage in self.clients:
             configured = max(int(groups[stage].get("replicas") or 0), 0)
