@@ -66,7 +66,11 @@ def main() -> int:
             if command == "release":
                 return 0
             if command not in {"check", "heartbeat", ""}:
-                print(f"LOCK_PROTOCOL_ERROR unsupported command: {command}", file=sys.stderr, flush=True)
+                print(
+                    f"LOCK_PROTOCOL_ERROR unsupported command: {command}",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 return 5
 
             try:
