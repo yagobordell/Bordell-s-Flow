@@ -768,8 +768,8 @@ class DirectLTX25AudioToVideoBackend:
             self._release_pipeline_locked()
 
     def prepare(self) -> None:
-        # Validate every A2V asset during readiness, but do not keep a second 22B pipeline
-        # resident beside the already-warmed I2V pipeline.
+        # Readiness requires only the shared distilled assets. Dev comparison
+        # weights are optional and validated only when that profile is requested.
         with self._lock:
             bindings = self._get_bindings()
             try:
@@ -777,7 +777,7 @@ class DirectLTX25AudioToVideoBackend:
             except FileNotFoundError as exc:
                 raise ModelBootstrapPendingError(str(exc)) from exc
             self._pipeline_params = bindings.detect_params(
-                str(self._model_files.dev_transformer)
+                str(self._model_files.shared.transformer)
             )
             self._prepared = True
 
@@ -800,15 +800,32 @@ class DirectLTX25AudioToVideoBackend:
         generation_started = time.monotonic()
         audio_probe = probe_audio(audio_path)
         _validate_audio_duration(audio_probe, fps=parameters.fps)
-        pipeline_audio_path, pipeline_audio_probe = _prepare_pipeline_audio(
-            audio_path,
-            output_path.parent / "a2v_conditioning_stereo.wav",
-            probe=audio_probe,
+        reference = (
+            parameters.generation_profile == LTX_A2V_REFERENCE_GENERATION_PROFILE
         )
+        reference_audio_plan: ReferenceAudioPlan | None = None
+        if reference:
+            reference_audio_plan = _prepare_reference_pipeline_audio(
+                audio_path,
+                output_path.parent / "a2v_reference_decoded.wav",
+                output_path.parent / "a2v_reference_conditioning.wav",
+                probe=audio_probe,
+                fps=parameters.fps,
+            )
+            pipeline_audio_path = reference_audio_plan.path
+            pipeline_audio_probe = reference_audio_plan.conditioning_probe
+        else:
+            pipeline_audio_path, pipeline_audio_probe = _prepare_pipeline_audio(
+                audio_path,
+                output_path.parent / "a2v_conditioning_stereo.wav",
+                probe=audio_probe,
+            )
 
         with self._lock:
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
+            if parameters.generation_profile == LTX_A2V_DEV_GENERATION_PROFILE:
+                self._model_files.validate_dev()
             pipeline_width, pipeline_height = _pipeline_dimensions(parameters)
             conditioning_path = _prepare_avatar_image(
                 image_path,
@@ -841,14 +858,16 @@ class DirectLTX25AudioToVideoBackend:
                     _cuda_memory_snapshot(bindings.torch, self._device),
                 )
 
-                # The upstream pipeline freezes the original audio in both stages.
-                # The distilled checkpoint uses its trained 8-step schedule and CFG=1;
-                # the original dev checkpoint retains native text CFG as an alternative.
+                # The reference profile is isolated from the legacy fast/dev
+                # paths. It uses the distilled checkpoint with the official
+                # 8-step schedule while preserving the legacy profiles for
+                # comparison only.
                 fast = parameters.generation_profile == LTX_A2V_GENERATION_PROFILE
-                stage_1_sigmas = bindings.distilled_sigmas if fast else None
+                distilled = fast or reference
+                stage_1_sigmas = bindings.distilled_sigmas if distilled else None
                 stage_1_steps = (
                     len(bindings.distilled_sigmas) - 1
-                    if fast
+                    if distilled
                     else self._pipeline_params.num_inference_steps
                 )
                 guider_updates = {
@@ -856,7 +875,7 @@ class DirectLTX25AudioToVideoBackend:
                     "stg_scale": 0.0,
                     "stg_blocks": [],
                 }
-                if fast:
+                if distilled:
                     guider_updates.update(cfg_scale=1.0, rescale_scale=0.0)
                 video_guider = replace(
                     self._pipeline_params.video_guider_params, **guider_updates
@@ -873,23 +892,38 @@ class DirectLTX25AudioToVideoBackend:
                     self._device,
                 )
                 try:
-                    result = pipeline(
-                        prompt=parameters.prompt,
-                        negative_prompt=bindings.default_negative_prompt,
-                        seed=parameters.seed,
-                        height=pipeline_height,
-                        width=pipeline_width,
-                        num_frames=None,
-                        frame_rate=float(parameters.fps),
-                        num_inference_steps=stage_1_steps,
-                        stage_1_sigmas=stage_1_sigmas,
-                        stage_2_sigmas=bindings.stage_2_sigmas,
-                        video_guider_params=video_guider,
-                        images=[conditioning],
-                        audio_path=str(pipeline_audio_path.resolve()),
-                        audio_start_time=0.0,
-                        audio_max_duration=None,
-                    )
+                    if reference:
+                        assert reference_audio_plan is not None
+                        result = pipeline(
+                            prompt=parameters.prompt,
+                            seed=parameters.seed,
+                            height=pipeline_height,
+                            width=pipeline_width,
+                            num_frames=reference_audio_plan.num_frames,
+                            frame_rate=float(parameters.fps),
+                            stage_1_sigmas=bindings.distilled_sigmas,
+                            stage_2_sigmas=bindings.stage_2_sigmas,
+                            images=[conditioning],
+                            audio_path=str(pipeline_audio_path.resolve()),
+                        )
+                    else:
+                        result = pipeline(
+                            prompt=parameters.prompt,
+                            negative_prompt=bindings.default_negative_prompt,
+                            seed=parameters.seed,
+                            height=pipeline_height,
+                            width=pipeline_width,
+                            num_frames=None,
+                            frame_rate=float(parameters.fps),
+                            num_inference_steps=stage_1_steps,
+                            stage_1_sigmas=stage_1_sigmas,
+                            stage_2_sigmas=bindings.stage_2_sigmas,
+                            video_guider_params=video_guider,
+                            images=[conditioning],
+                            audio_path=str(pipeline_audio_path.resolve()),
+                            audio_start_time=0.0,
+                            audio_max_duration=None,
+                        )
                 except ValueError as exc:
                     _log_cuda_memory(
                         "pipeline_value_error",
@@ -965,13 +999,60 @@ class DirectLTX25AudioToVideoBackend:
             "video_modality_scale": video_guider.modality_scale,
             "stage_1_steps": stage_1_steps,
             "stage_2_steps": len(bindings.stage_2_sigmas) - 1,
-            "transformer_variant": "distilled" if fast else "dev",
+            "transformer_variant": "distilled" if distilled else "dev",
+            "generation_recipe": (
+                "distilled_reference"
+                if reference
+                else ("legacy_fast" if fast else "legacy_dev")
+            ),
+            "stage_1_sampler": (
+                LTX_A2V_REFERENCE_RECIPE.stage_1_sampler if reference else "euler"
+            ),
+            "stage_2_sampler": LTX_A2V_REFERENCE_RECIPE.stage_2_sampler,
+            "stage_1_image_strength": (
+                LTX_A2V_REFERENCE_RECIPE.stage_1_image_strength
+                if reference
+                else 1.0
+            ),
+            "stage_2_image_strength": (
+                LTX_A2V_REFERENCE_RECIPE.stage_2_image_strength
+                if reference
+                else 1.0
+            ),
+            "audio_frozen_stage_1": True,
+            "audio_frozen_stage_2": True,
+            "quantization": "fp8_cast",
+            "offload_mode": "cpu",
+            "ltx_model_revision": os.environ.get(
+                "LTX_MODEL_REVISION", LTX25_MODEL_REVISION
+            ),
             "input_audio_codec": audio_probe.codec,
             "input_audio_sample_rate": audio_probe.sample_rate,
             "input_audio_channels": audio_probe.channels,
             "conditioning_audio_channels": pipeline_audio_probe.channels,
             "audio_upmixed_to_stereo": audio_probe.channels == 1,
             "input_audio_duration_seconds": audio_probe.duration_seconds,
+            "decoded_speech_samples": (
+                reference_audio_plan.decoded_probe.sample_count
+                if reference_audio_plan is not None
+                else audio_probe.sample_count
+            ),
+            "conditioning_audio_samples": pipeline_audio_probe.sample_count,
+            "audio_padding_samples": (
+                reference_audio_plan.padding_samples
+                if reference_audio_plan is not None
+                else 0
+            ),
+            "audio_padding_seconds": (
+                reference_audio_plan.padding_seconds
+                if reference_audio_plan is not None
+                else 0.0
+            ),
+            "grid_video_duration_seconds": (
+                reference_audio_plan.grid_video_duration_seconds
+                if reference_audio_plan is not None
+                else int(result.num_frames) / float(parameters.fps)
+            ),
             "effective_audio_duration_seconds": effective_audio_duration,
             "output_video_duration_seconds": output_video_duration,
             "duration_delta_seconds": output_video_duration - audio_probe.duration_seconds,
