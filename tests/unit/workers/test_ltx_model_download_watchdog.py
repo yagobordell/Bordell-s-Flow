@@ -1,5 +1,10 @@
 from pathlib import Path
 
+from ai_video_factory.workers.ltx25.model_manifest import (
+    validate_installed_model_manifest,
+    write_installed_model_manifest,
+)
+
 BOOTSTRAP = Path("docker/workers/ltx25/download_models.sh")
 
 
@@ -28,12 +33,47 @@ def test_ltx_model_download_fast_path_requires_pinned_provenance() -> None:
     assert ".bordell-installed-model-manifest.json" in script
     assert "MODEL_MANIFEST_VALID" in script
     assert "manifest_is_valid" in script
-    assert 'installed.get("revision") != revision' in script
-    assert 'installed.get("repository") != repository' in script
-    assert '"sha256": digest.hexdigest()' in script
+    assert "ltx25.model_manifest validate" in script
+    assert "ltx25.model_manifest write" in script
     assert "MODEL_VERIFY_START" in script
     assert "MODEL_VERIFY_DONE" in script
     assert "MODEL_READY" in script
+
+
+def test_ltx_model_manifest_rejects_same_size_content_corruption(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "models"
+    model = root / "weights" / "model.safetensors"
+    model.parent.mkdir(parents=True)
+    model.write_bytes(b"abcd")
+    installed = root / ".bordell-installed-model-manifest.json"
+    relative = "weights/model.safetensors"
+
+    write_installed_model_manifest(
+        installed,
+        repository="Lightricks/LTX-2.5",
+        revision="pinned-revision",
+        root=root,
+        files=[relative],
+    )
+    assert validate_installed_model_manifest(
+        installed,
+        repository="Lightricks/LTX-2.5",
+        revision="pinned-revision",
+        root=root,
+        expected_files=[relative],
+    )
+
+    model.write_bytes(b"abce")
+    assert model.stat().st_size == 4
+    assert not validate_installed_model_manifest(
+        installed,
+        repository="Lightricks/LTX-2.5",
+        revision="pinned-revision",
+        root=root,
+        expected_files=[relative],
+    )
 
 
 def test_ltx_salad_manifest_prefers_fast_high_priority_5090_nodes() -> None:
