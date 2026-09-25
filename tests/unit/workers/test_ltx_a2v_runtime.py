@@ -9,11 +9,11 @@ from PIL import Image
 
 import ai_video_factory.workers.ltx25.a2v as a2v
 from ai_video_factory.inference.errors import ModelBootstrapPendingError
-from ai_video_factory.workers.ltx25.model_manifest import write_installed_model_manifest
 from ai_video_factory.workers.ltx25 import (
     DirectLTX25AudioToVideoBackend,
     LTXAudioToVideoParameters,
 )
+from ai_video_factory.workers.ltx25.model_manifest import write_installed_model_manifest
 
 
 def test_guided_bootstrap_waits_for_atomic_dev_manifest_before_polling(
