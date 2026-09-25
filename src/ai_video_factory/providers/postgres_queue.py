@@ -160,7 +160,11 @@ class PostgresJobQueueClient(JobQueueClient):
             status = str(row["status"])
             if status == "succeeded":
                 return self._snapshot(row)
-            if status not in {"retryable_failed", "failed"}:
+            attempt_count = int(row["attempt_count"])
+            recoverable = status in {"retryable_failed", "failed"} or (
+                status == "pending" and attempt_count > 0
+            )
+            if not recoverable:
                 raise RuntimeError(
                     f"cannot reconcile recovered bundle while job {request.job_id} "
                     f"is in state {status!r}"
@@ -168,7 +172,7 @@ class PostgresJobQueueClient(JobQueueClient):
 
             recovered = response.model_copy(
                 update={
-                    "attempt_count": int(row["attempt_count"]),
+                    "attempt_count": attempt_count,
                     "replayed": True,
                 }
             )
@@ -183,7 +187,10 @@ class PostgresJobQueueClient(JobQueueClient):
                     updated_at = now()
                 WHERE job_id = %s
                   AND request_sha256 = %s
-                  AND status IN ('retryable_failed', 'failed')
+                  AND (
+                      status IN ('retryable_failed', 'failed')
+                      OR (status = 'pending' AND attempt_count > 0)
+                  )
                 RETURNING job_id, request_sha256, status, attempt_count, lease_expires_at,
                           result, last_error
                 """,
