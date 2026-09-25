@@ -34,7 +34,8 @@ def test_worker_manager_keeps_expensive_actions_explicit() -> None:
     assert "capacity.start_replicas" in text
     assert "capacity.max_replicas" in text
     assert "set explicit replica capacity" in text
-    assert "Wait-ForStoppedZeroReplicas" in text
+    assert "Wait-ForStoppedGroup" in text
+    assert "Wait-ForStoppedZeroReplicas" not in text
     assert "queue_autoscaler =" not in text
     assert "queue_connection =" not in text
 
