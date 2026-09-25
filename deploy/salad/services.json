@@ -45,7 +45,7 @@
       "priority": "high",
       "resources": {
         "cpu": 8,
-        "memory": 61440,
+        "memory": 40960,
         "shm_size": 8192,
         "storage_amount": 171798691840,
         "gpu_class_names": [
