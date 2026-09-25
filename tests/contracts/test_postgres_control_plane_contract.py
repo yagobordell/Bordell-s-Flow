@@ -7,6 +7,7 @@ ENTRYPOINT = Path("docker/workers/common/entrypoint.sh")
 REPOSITORY = Path("src/ai_video_factory/inference/repository.py")
 AUTOSCALER = Path("src/ai_video_factory/inference/salad_autoscaler.py")
 COORDINATION = Path("src/ai_video_factory/inference/coordination.py")
+DRAIN_HOLD_MIGRATION = Path("infra/sql/005_capacity_drain_provider_hold.sql")
 
 
 def _manifest() -> dict:
@@ -72,3 +73,14 @@ def test_drain_publication_and_claim_share_instance_lock() -> None:
     assert "acquire_instance_drain_lock(connection, instance_id)" in repository
     assert "acquire_instance_drain_lock(connection, instance_id)" in autoscaler
     assert "FROM gpu.capacity_drains" in repository
+
+
+def test_provider_pending_drains_remain_claim_blocking_after_ttl() -> None:
+    repository = REPOSITORY.read_text(encoding="utf-8")
+    autoscaler = AUTOSCALER.read_text(encoding="utf-8")
+    migration = DRAIN_HOLD_MIGRATION.read_text(encoding="utf-8")
+
+    assert "hold_until_confirmed boolean NOT NULL DEFAULT false" in migration
+    assert "expires_at > now() OR hold_until_confirmed" in repository
+    assert "hold_draining_instances" in autoscaler
+    assert "provider_change_pending" in autoscaler
