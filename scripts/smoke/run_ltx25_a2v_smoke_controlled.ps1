@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)][string]$Audio,
     [string]$AvatarImage = "",
-    [ValidateSet("fast", "dev")][string]$Profile = "fast",
+    [ValidateSet("fast", "reference", "dev")][string]$Profile = "fast",
     [string]$SegmentId = "smoke-001",
     [ValidateRange(0, 3600)][double]$MaxGenerationSeconds = 0,
     [string]$EnvFile = ".env",
