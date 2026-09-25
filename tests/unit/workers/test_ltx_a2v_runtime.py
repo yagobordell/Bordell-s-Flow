@@ -257,6 +257,7 @@ def test_guided_a2v_uses_upstream_guidance_and_preserves_padded_speech(
     audio.write_bytes(b"fake-audio")
     conditioning = tmp_path / "guided-conditioning.wav"
     conditioning.write_bytes(b"padded")
+    flac_conditioning = tmp_path / "a2v_guided_conditioning.flac"
     state: dict[str, Any] = {
         "builds": 0,
         "calls": [],
@@ -281,6 +282,14 @@ def test_guided_a2v_uses_upstream_guidance_and_preserves_padded_speech(
         padding_samples=1_000,
     )
     monkeypatch.setattr(a2v, "_prepare_reference_pipeline_audio", lambda *args, **kwargs: plan)
+    flac_calls: list[tuple[Path, Path]] = []
+
+    def fake_guided_flac(source: Path, destination: Path, *, probe: a2v.AudioProbe) -> a2v.AudioProbe:
+        flac_calls.append((source, destination))
+        assert probe.sample_count == 97_000
+        return a2v.AudioProbe("flac", 24_000, 2, 97 / 24, 97_000)
+
+    monkeypatch.setattr(a2v, "_encode_guided_conditioning_flac", fake_guided_flac)
     monkeypatch.setattr(a2v, "_output_duration", lambda _: 97 / 24)
     backend = DirectLTX25AudioToVideoBackend(model_root=model_root)
     backend.prepare()
@@ -296,19 +305,21 @@ def test_guided_a2v_uses_upstream_guidance_and_preserves_padded_speech(
     assert state["builds"] == 1
     assert "dev-transformer" in state["model_paths"]["transformer_path"]
     assert len(state["pipeline_init"]["distilled_lora"]) == 1
+    assert state["pipeline_init"]["distilled_lora"][0][1] == 0.8
+    assert flac_calls == [(conditioning, flac_conditioning)]
     call = state["calls"][0]
     assert call["num_frames"] == 97
     assert call["num_inference_steps"] == 30
     assert call["stage_1_sigmas"] is None
     assert call["stage_2_sigmas"] == bindings.stage_2_sigmas
-    assert call["audio_path"] == str(conditioning.resolve())
+    assert call["audio_path"] == str(flac_conditioning.resolve())
     guider = call["video_guider_params"]
     assert guider.cfg_scale == 3.0
     assert guider.stg_scale == 1.0
     assert guider.rescale_scale == 0.7
     assert guider.modality_scale == 3.0
-    assert guider.stg_blocks == [28]
-    assert guider == state["original_guider"]
+    assert guider.stg_blocks == [29]
+    assert state["original_guider"].stg_blocks == [28]
     assert state["original_guider"].modality_scale == 3.0
     assert metadata["generation_recipe"] == "upstream_guided_dev"
     assert metadata["transformer_variant"] == "dev"
@@ -318,7 +329,7 @@ def test_guided_a2v_uses_upstream_guidance_and_preserves_padded_speech(
     assert metadata["audio_frozen_stage_1"] is True
     assert metadata["audio_frozen_stage_2"] is True
     assert metadata["video_rescale_scale"] == 0.7
-    assert metadata["video_stg_blocks"] == [28]
+    assert metadata["video_stg_blocks"] == [29]
     assert metadata["decoded_speech_samples"] == 96_000
     assert metadata["conditioning_audio_samples"] == 97_000
     assert metadata["audio_padding_samples"] == 1_000
