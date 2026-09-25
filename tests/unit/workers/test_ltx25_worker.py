@@ -88,7 +88,7 @@ def test_ltx25_model_download_uses_xet_with_resilient_timeouts() -> None:
     assert "xet_disabled=" in bootstrap
 
     assert service["image"].endswith(
-        ":ltx25-a2v-torch211-cu128-eagersdpa-xet-fast-v9"
+        ":ltx25-a2v-torch211-cu128-eagersdpa-xet-reference-claims-v10"
     )
     assert "ltx_pipelines.a2vid_two_stage" in dockerfile
     model_manifest = json.loads(
