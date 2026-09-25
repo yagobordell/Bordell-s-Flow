@@ -10,6 +10,7 @@ Apply these migrations before starting the controller:
 ```text
 infra/sql/003_gpu_job_runtime_autoscaling.sql
 infra/sql/004_salad_capacity_controller_coordination.sql
+infra/sql/005_capacity_drain_provider_hold.sql
 ```
 
 Migration 004 creates `gpu.capacity_controller_state`. The controller also holds a session-scoped
@@ -60,7 +61,11 @@ This also survives a controller restart during a partial downscale. If the live 
 be read while a provider change is pending, reconciliation fails closed instead of releasing quota.
 Drain publication and worker claims share a transaction-scoped advisory lock per Salad instance,
 closing the race where a worker could claim new work after that instance had been selected for
-removal.
+removal. Before the controller submits a resize or stop, those selected drains are promoted to a
+persistent provider hold. While Salad reports `pending_change=true`, the hold remains claim-blocking
+even after the ordinary drain TTL expires and even if demand rebounds. The hold is cleared only
+after a later reconciliation observes that the provider change is no longer pending and the current
+capacity can be treated as authoritative.
 
 `run_video_factory.ps1` requires a healthy controller before the DAG starts. The Python production
 runner checks controller health every 15 seconds while stages are active and cancels running stage

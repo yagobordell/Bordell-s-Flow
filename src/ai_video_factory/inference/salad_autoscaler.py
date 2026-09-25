@@ -82,6 +82,7 @@ def publish_instance_drains(
     stage: str,
     instance_ids: tuple[str, ...],
     ttl_seconds: float,
+    hold_until_confirmed: bool = False,
 ) -> None:
     """Publish drain intents while holding the same per-instance lock used by claims."""
 
@@ -93,12 +94,20 @@ def publish_instance_drains(
                 service,
                 instance_id,
                 requested_at,
-                expires_at
-            ) VALUES (%s, %s, now(), now() + (%s * interval '1 second'))
+                expires_at,
+                hold_until_confirmed
+            ) VALUES (
+                %s,
+                %s,
+                now(),
+                now() + (%s * interval '1 second'),
+                %s
+            )
             ON CONFLICT (service, instance_id) DO UPDATE
-            SET expires_at = EXCLUDED.expires_at
+            SET expires_at = EXCLUDED.expires_at,
+                hold_until_confirmed = EXCLUDED.hold_until_confirmed
             """,
-            (stage, instance_id, ttl_seconds),
+            (stage, instance_id, ttl_seconds, hold_until_confirmed),
         )
 
 
@@ -175,7 +184,7 @@ class PostgresAutoscalerStore:
                 SELECT instance_id, requested_at
                 FROM gpu.capacity_drains
                 WHERE service = %s
-                  AND expires_at > now()
+                  AND (expires_at > now() OR hold_until_confirmed)
                 """,
                 (stage,),
             ).fetchall()
@@ -201,6 +210,31 @@ class PostgresAutoscalerStore:
                 ttl_seconds=ttl_seconds,
             )
 
+    def hold_draining_instances(
+        self,
+        *,
+        stage: str,
+        instance_ids: tuple[str, ...],
+    ) -> None:
+        if not instance_ids:
+            return
+        with self._pool.connection() as connection, connection.transaction():
+            for instance_id in instance_ids:
+                acquire_instance_drain_lock(connection, instance_id)
+                updated = connection.execute(
+                    """
+                    UPDATE gpu.capacity_drains
+                    SET hold_until_confirmed = true
+                    WHERE service = %s
+                      AND instance_id = %s
+                    """,
+                    (stage, instance_id),
+                )
+                if updated.rowcount != 1:
+                    raise RuntimeError(
+                        f"missing drain row while promoting provider hold: {stage}/{instance_id}"
+                    )
+
     def clear_draining_instances(
         self,
         *,
@@ -214,7 +248,7 @@ class PostgresAutoscalerStore:
                     DELETE FROM gpu.capacity_drains
                     WHERE service = %s
                       AND (
-                          expires_at <= now()
+                          (expires_at <= now() AND NOT hold_until_confirmed)
                           OR NOT (instance_id = ANY(%s))
                       )
                     """,
@@ -419,12 +453,13 @@ class PredictiveSaladAutoscaler:
         # Preserve Media Pipeline ordering: only confirmed capacity releases can fund new capacity.
         for stage in self.clients:
             target = targets[stage]
-            if target >= current[stage]:
-                self._downscale_candidates.pop(stage, None)
-                self._nonconvergence_candidates.pop(stage, None)
-                self.store.clear_draining_instances(stage=stage)
-                continue
             if group_pending_change[stage]:
+                pending_drains = tuple(self.store.list_draining_instances(stage=stage))
+                if pending_drains:
+                    self.store.hold_draining_instances(
+                        stage=stage,
+                        instance_ids=pending_drains,
+                    )
                 results[stage] = AutoscaleResult(
                     stage=stage,
                     current_replicas=current[stage],
@@ -434,6 +469,11 @@ class PredictiveSaladAutoscaler:
                     demand=demands[stage],
                     reason="provider_change_pending",
                 )
+                continue
+            if target >= current[stage]:
+                self._downscale_candidates.pop(stage, None)
+                self._nonconvergence_candidates.pop(stage, None)
+                self.store.clear_draining_instances(stage=stage)
                 continue
             stable_count = self._record_downscale_candidate(stage, target)
             if stable_count < self.config.downscale_stable_polls:
@@ -473,6 +513,15 @@ class PredictiveSaladAutoscaler:
                     self._nonconvergence_candidates.pop(stage, None)
                 continue
             self._nonconvergence_candidates.pop(stage, None)
+            provider_drains = tuple(self.store.list_draining_instances(stage=stage))
+            if not provider_drains:
+                raise AutoscalerReconciliationError(
+                    f"Salad downscale for {stage} has no drain rows to hold"
+                )
+            self.store.hold_draining_instances(
+                stage=stage,
+                instance_ids=provider_drains,
+            )
             if applied_target == 0:
                 self.clients[stage].stop_container_group()
                 group_status[stage] = "stop_requested"

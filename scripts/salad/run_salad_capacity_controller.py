@@ -59,15 +59,21 @@ def _validate_autoscaling_schema(postgres_dsn: str) -> None:
                 )
                 cursor.execute(
                     """
-                    SELECT service, instance_id, requested_at, expires_at
+                    SELECT
+                        service,
+                        instance_id,
+                        requested_at,
+                        expires_at,
+                        hold_until_confirmed
                     FROM gpu.capacity_drains
                     LIMIT 0
                     """
                 )
     except psycopg.Error as error:
         raise SystemExit(
-            "Predictive Salad autoscaling requires infra/sql/003_gpu_job_runtime_autoscaling.sql "
-            "and infra/sql/004_salad_capacity_controller_coordination.sql before production."
+            "Predictive Salad autoscaling requires infra/sql/003_gpu_job_runtime_autoscaling.sql, "
+            "infra/sql/004_salad_capacity_controller_coordination.sql and "
+            "infra/sql/005_capacity_drain_provider_hold.sql before production."
         ) from error
 
 

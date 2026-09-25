@@ -244,7 +244,7 @@ class PostgresJobRepository:
                         SELECT 1
                         FROM gpu.capacity_drains
                         WHERE instance_id = %s
-                          AND expires_at > now()
+                          AND (expires_at > now() OR hold_until_confirmed)
                     ) AS draining
                     """,
                     (instance_id,),

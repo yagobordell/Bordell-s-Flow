@@ -24,6 +24,7 @@ class FakeStore:
         self.rows = rows
         self.runtimes = runtimes
         self.drains: dict[str, dict[str, datetime]] = {}
+        self.held_drains: dict[str, set[str]] = {}
 
     def list_stage_jobs(self, *, binding, statuses):
         return [
@@ -48,8 +49,31 @@ class FakeStore:
         del ttl_seconds
         current = self.drains.setdefault(stage, {})
         observed_at = datetime.now(UTC)
+        held = self.held_drains.setdefault(stage, set())
         for instance_id in instance_ids:
             current.setdefault(instance_id, observed_at)
+            held.discard(instance_id)
+
+    def hold_draining_instances(
+        self,
+        *,
+        stage: str,
+        instance_ids: tuple[str, ...],
+    ) -> None:
+        current = self.drains.get(stage, {})
+        missing = [instance_id for instance_id in instance_ids if instance_id not in current]
+        if missing:
+            raise RuntimeError(f"missing fake drain rows: {missing}")
+        self.held_drains.setdefault(stage, set()).update(instance_ids)
+
+    def expire_unheld_drains(self, *, stage: str) -> None:
+        held = self.held_drains.get(stage, set())
+        current = self.drains.get(stage, {})
+        self.drains[stage] = {
+            instance_id: requested_at
+            for instance_id, requested_at in current.items()
+            if instance_id in held
+        }
 
     def clear_draining_instances(
         self,
@@ -59,6 +83,7 @@ class FakeStore:
     ) -> None:
         if not keep_instance_ids:
             self.drains.pop(stage, None)
+            self.held_drains.pop(stage, None)
             return
         keep = set(keep_instance_ids)
         current = self.drains.setdefault(stage, {})
@@ -67,6 +92,7 @@ class FakeStore:
             for instance_id, requested_at in current.items()
             if instance_id in keep
         }
+        self.held_drains[stage] = self.held_drains.get(stage, set()) & keep
 
 
 class FakeSaladClient:
@@ -480,6 +506,88 @@ def test_partial_downscale_keeps_project_quota_reserved_until_provider_confirms(
     assert confirmed["ltx25"].applied_replicas == 1
     assert confirmed["realesrgan"].applied_replicas == 1
     assert waiting.start_calls == 1
+
+
+def test_pending_resize_keeps_drains_held_through_ttl_and_demand_rebound() -> None:
+    stage = "ltx25"
+    store = FakeStore(
+        rows={stage: _pending_rows(2)},
+        runtimes={stage: [60.0]},
+    )
+    client = FakeSaladClient(
+        replicas=2,
+        instances=[
+            {"id": "instance-a", "deletion_cost": 0},
+            {"id": "instance-b", "deletion_cost": 0},
+        ],
+        replica_update_immediate=False,
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,), project_max_replicas=2, stage_max_replicas=2),
+        store=store,
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=2)},
+        logger=lambda _message: None,
+    )
+
+    first = autoscaler.reconcile()[stage]
+    requested = autoscaler.reconcile()[stage]
+
+    assert first.reason == "drain_grace_pending"
+    assert requested.reason == "resize_requested_pending_confirmation"
+    assert store.drains[stage]
+    assert store.held_drains[stage] == set(store.drains[stage])
+
+    store.expire_unheld_drains(stage=stage)
+    assert store.drains[stage]
+
+    store.rows[stage] = _pending_rows(20)
+    pending = autoscaler.reconcile()[stage]
+
+    assert pending.reason == "provider_change_pending"
+    assert store.drains[stage]
+    assert store.held_drains[stage] == set(store.drains[stage])
+
+    client.pending_change = False
+    client.instances = [{"id": "instance-a", "deletion_cost": 0}]
+    confirmed = autoscaler.reconcile()[stage]
+
+    assert confirmed.target_replicas >= confirmed.current_replicas
+    assert store.drains.get(stage) in (None, {})
+    assert store.held_drains.get(stage) in (None, set())
+
+
+def test_provider_pending_promotes_existing_drain_after_controller_restart() -> None:
+    stage = "ltx25"
+    store = FakeStore(
+        rows={stage: _pending_rows(20)},
+        runtimes={stage: [60.0]},
+    )
+    store.drains[stage] = {
+        "instance-b": datetime(2026, 9, 25, tzinfo=UTC),
+    }
+    client = FakeSaladClient(
+        replicas=1,
+        pending_change=True,
+        instances=[
+            {"id": "instance-a", "deletion_cost": 100_000},
+            {"id": "instance-b", "deletion_cost": 0},
+        ],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,), project_max_replicas=2, stage_max_replicas=2),
+        store=store,
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=2)},
+        logger=lambda _message: None,
+    )
+
+    result = autoscaler.reconcile()[stage]
+
+    assert result.reason == "provider_change_pending"
+    assert store.held_drains[stage] == {"instance-b"}
+    store.expire_unheld_drains(stage=stage)
+    assert set(store.drains[stage]) == {"instance-b"}
 
 
 def test_pending_change_uses_live_instance_count_for_restart_safe_quota_accounting() -> None:
