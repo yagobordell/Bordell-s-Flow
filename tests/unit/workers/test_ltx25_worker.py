@@ -41,7 +41,7 @@ def test_ltx25_salad_manifest_has_dedicated_group_and_capacity() -> None:
     document = json.loads(manifest_path.read_text(encoding="utf-8"))
     service = document["services"]["ltx25"]
 
-    assert service["group_name"] == "ai-video-factory-ltx25-worker-v2"
+    assert service["group_name"] == "ai-video-factory-ltx25-worker-v3"
     assert "queue_name" not in service
     assert service["dockerfile"] == "docker/workers/ltx25/Dockerfile"
     assert "ltx25" in service["image"]
