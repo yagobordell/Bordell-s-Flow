@@ -8,6 +8,7 @@ from pathlib import Path
 from .bundle_publication import (
     load_committed_bundle,
     publish_committed_bundle,
+    recover_committed_bundle,
     stage_bundle,
 )
 from .contracts import InferenceJobRequest, InferenceJobResponse, OutputArtifact
@@ -22,7 +23,13 @@ from .errors import (
     UnsupportedTaskError,
 )
 from .gpu_failures import cleanup_cuda_memory, is_retryable_gpu_failure
-from .ports import ClaimDecision, JobRepository, ObjectStorage, StoredObject
+from .ports import (
+    ClaimDecision,
+    JobRepository,
+    LocalSidecarArtifact,
+    ObjectStorage,
+    StoredObject,
+)
 from .storage import sha256_file
 from .tasks import TaskRunnerRegistry
 
@@ -161,9 +168,8 @@ class InferenceWorker:
         if claim.decision is ClaimDecision.REPLAY:
             if claim.result is None:
                 raise JobConflictError(f"completed job has no stored result: {request.job_id}")
-            return InferenceJobResponse.model_validate(claim.result).model_copy(
-                update={"replayed": True}
-            )
+            response = InferenceJobResponse.model_validate(claim.result)
+            return self._reconcile_replayed_response(request, response)
         if claim.decision is ClaimDecision.BUSY:
             raise JobBusyError(f"job is currently leased by another worker: {request.job_id}")
 
@@ -210,6 +216,61 @@ class InferenceWorker:
             result=response.model_dump(mode="json"),
         )
         return response
+
+    def _reconcile_replayed_response(
+        self,
+        request: InferenceJobRequest,
+        response: InferenceJobResponse,
+    ) -> InferenceJobResponse:
+        request_sha256 = request.fingerprint()
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        existing = self.storage.stat(request.output.key)
+        output: OutputArtifact | None = None
+
+        if existing is not None:
+            output = self._reconcile_existing(request, request_sha256, existing)
+            try:
+                self._reconcile_existing_sidecars(
+                    request,
+                    request_sha256,
+                    primary_sha256=output.sha256,
+                )
+            except OutputConflictError:
+                output = None
+
+        if output is None:
+            with tempfile.TemporaryDirectory(
+                prefix=f"{request.job_id}-replay-",
+                dir=self.temp_dir,
+            ) as temporary:
+                recovered = recover_committed_bundle(
+                    self.storage,
+                    request,
+                    Path(temporary),
+                )
+            if recovered is None:
+                raise OutputConflictError(
+                    f"completed job artifact bundle is incomplete: {request.job_id}"
+                )
+            primary, _ = recovered
+            output = self._reconcile_existing(request, request_sha256, primary)
+            self._reconcile_existing_sidecars(
+                request,
+                request_sha256,
+                primary_sha256=output.sha256,
+            )
+
+        expected = response.output
+        if (
+            output.key != expected.key
+            or output.content_type != expected.content_type
+            or output.size_bytes != expected.size_bytes
+            or output.sha256 != expected.sha256
+        ):
+            raise JobConflictError(
+                f"completed job result does not match durable artifact bundle: {request.job_id}"
+            )
+        return response.model_copy(update={"output": output, "replayed": True})
 
     def _execute_claimed(
         self,
@@ -364,13 +425,13 @@ class InferenceWorker:
                 heartbeat.ensure_owned()
 
                 heartbeat.renew_now()
-                local_sources = {"primary": artifact.path}
-                local_sources.update(
-                    {
-                        f"sidecar:{name}": sidecar.path
-                        for name, sidecar in sidecar_sources.items()
-                    }
-                )
+                local_sources: dict[str, Path] = {}
+                if sha256_file(artifact.path) == committed.primary.sha256:
+                    local_sources["primary"] = artifact.path
+                for name, sidecar in sidecar_sources.items():
+                    staged_sidecar = committed.sidecars[name]
+                    if sha256_file(sidecar.path) == staged_sidecar.sha256:
+                        local_sources[f"sidecar:{name}"] = sidecar.path
                 primary, created = publish_committed_bundle(
                     self.storage,
                     request,
@@ -432,9 +493,9 @@ class InferenceWorker:
     def _validate_local_sidecars(
         self,
         request: InferenceJobRequest,
-        sidecars: tuple[object, ...],
+        sidecars: tuple[LocalSidecarArtifact, ...],
         work_dir: Path,
-    ) -> dict[str, object]:
+    ) -> dict[str, LocalSidecarArtifact]:
         declared = request.sidecar_outputs or {}
         returned = {item.name: item for item in sidecars}
         if set(returned) != set(declared):
