@@ -1103,9 +1103,13 @@ class DirectLTX25AudioToVideoBackend:
 
         self._mode_controller.activate("audio_to_video")
         fast = generation_profile == LTX_A2V_GENERATION_PROFILE
+        reference = generation_profile == LTX_A2V_REFERENCE_GENERATION_PROFILE
+        distilled = fast or reference
+        if not distilled:
+            self._model_files.validate_dev()
         transformer = (
             self._model_files.shared.transformer
-            if fast
+            if distilled
             else self._model_files.dev_transformer
         )
         model_paths = bindings.model_paths.from_split(
@@ -1119,7 +1123,7 @@ class DirectLTX25AudioToVideoBackend:
         )
         distilled_lora = (
             []
-            if fast
+            if distilled
             else [
                 bindings.lora_tuple(
                     str(self._model_files.distilled_lora),
@@ -1129,7 +1133,10 @@ class DirectLTX25AudioToVideoBackend:
             ]
         )
         _force_diffvae_eager_sdpa(bindings.diffvae_apply)
-        self._pipeline = bindings.a2v_pipeline(
+        pipeline_cls = (
+            bindings.reference_a2v_pipeline if reference else bindings.a2v_pipeline
+        )
+        self._pipeline = pipeline_cls(
             model_paths=model_paths,
             distilled_lora=distilled_lora,
             spatial_upsampler_path=str(self._model_files.shared.spatial_upsampler),
@@ -1139,10 +1146,7 @@ class DirectLTX25AudioToVideoBackend:
             offload_mode=bindings.offload_mode.CPU,
         )
         self._pipeline_profile = generation_profile
-        if self._pipeline_params is None:
-            self._pipeline_params = bindings.detect_params(
-                str(self._model_files.dev_transformer)
-            )
+        self._pipeline_params = bindings.detect_params(str(transformer))
         return self._pipeline, True
 
 
