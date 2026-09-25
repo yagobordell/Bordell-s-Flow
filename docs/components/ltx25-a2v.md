@@ -86,13 +86,20 @@ Targeted real validation uses:
 scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1
 ```
 
-The controlled PowerShell smoke defaults to `-Profile fast` for backwards-compatible
-operator behavior and also accepts `-Profile reference` and `-Profile dev`. Reference
+The controlled PowerShell smoke and direct submit CLI default to `reference` for
+functional avatar validation. `fast` and `dev` remain available only when explicitly
+selected for comparative benchmarks; their passing MP4/audio checks do not qualify lip-sync. Reference
 validation verifies the selected checkpoint family, both stage schedules, sampler
 semantics, per-stage image strengths, frozen audio, upward temporal-grid padding and the
 decoded voiced span at the end of the generated MP4.
 For a five-second audio clip, pass `-MaxGenerationSeconds 120` to fail validation if
 `total_elapsed_seconds` exceeds the two-minute acceptance target. This measures the worker's generation, not Postgres pending time or cold model downloads.
+
+The smoke accepts an explicit prompt, seed and output directory for matched comparisons
+(e.g. the same avatar image and speech WAV). Run a single `reference` job and inspect its
+mouth movement before scheduling a multi-run performance benchmark. Do not run the
+controlled smoke concurrently with another LTX benchmark: both own explicit Salad capacity
+and their cleanup stops the same group.
 
 The smoke verifies technical and speech-preservation contracts, but a passing result does
 not establish lip-sync quality. The reference profile is not considered operational until
