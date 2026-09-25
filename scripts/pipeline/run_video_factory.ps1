@@ -101,26 +101,36 @@ function Ensure-RemotionDependencies {
         return
     }
 
-    $Npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
-    if ($null -eq $Npm) {
-        $Npm = Get-Command npm -ErrorAction SilentlyContinue
-    }
-    if ($null -eq $Npm) {
-        throw "npm is required to install the isolated Remotion renderer."
-    }
-
-    Write-Host "=== Renderer dependencies: npm ci (one-time/local cacheable) ===" `
-        -ForegroundColor Cyan
-    Push-Location (Join-Path $RepoRoot "remotion")
+    $InstallMutex = Enter-NamedMutex -Name "BordellsFlow-Remotion-Install"
     try {
-        $NpmExecutable = [string]$Npm.Source
-        & $NpmExecutable ci
-        if ($LASTEXITCODE -ne 0) {
-            throw "npm ci failed with exit code $LASTEXITCODE."
+        if (Test-Path -LiteralPath $Binary -PathType Leaf) {
+            return
+        }
+
+        $Npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+        if ($null -eq $Npm) {
+            $Npm = Get-Command npm -ErrorAction SilentlyContinue
+        }
+        if ($null -eq $Npm) {
+            throw "npm is required to install the isolated Remotion renderer."
+        }
+
+        Write-Host "=== Renderer dependencies: npm ci (one-time/local cacheable) ===" `
+            -ForegroundColor Cyan
+        Push-Location (Join-Path $RepoRoot "remotion")
+        try {
+            $NpmExecutable = [string]$Npm.Source
+            & $NpmExecutable ci
+            if ($LASTEXITCODE -ne 0) {
+                throw "npm ci failed with exit code $LASTEXITCODE."
+            }
+        }
+        finally {
+            Pop-Location
         }
     }
     finally {
-        Pop-Location
+        Exit-NamedMutex -Mutex $InstallMutex
     }
 }
 
