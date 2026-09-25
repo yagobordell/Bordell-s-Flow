@@ -52,13 +52,15 @@ def make_a2v_bindings(state: dict[str, Any]) -> a2v._A2VBindings:
             assert state["inference_depth"] > 0
             state["calls"].append(kwargs)
             state["tiling_budget"] = FakeTilingHelpers.activation_budget_bytes()
+            num_frames = int(kwargs.get("num_frames") or 89)
+            audio_samples = int(num_frames * 24000 / 24)
             return SimpleNamespace(
                 video=iter([FakeChunk()]),
                 audio=SimpleNamespace(
-                    waveform=SimpleNamespace(shape=(1, 89000)),
+                    waveform=SimpleNamespace(shape=(1, audio_samples)),
                     sampling_rate=24000,
                 ),
-                num_frames=89,
+                num_frames=num_frames,
                 tiling_config="tiling",
             )
 
@@ -170,6 +172,7 @@ def make_a2v_bindings(state: dict[str, Any]) -> a2v._A2VBindings:
     bindings = a2v._A2VBindings(
         torch=FakeTorch,
         a2v_pipeline=FakePipeline,
+        reference_a2v_pipeline=FakePipeline,
         model_paths=FakeModelPaths,
         quantization_kind=FakeQuantizationKind,
         offload_mode=FakeOffloadMode,
