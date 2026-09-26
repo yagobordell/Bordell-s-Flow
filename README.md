@@ -74,7 +74,7 @@ anterior (`data/input/`) para no romper automatizaciones existentes.
 
 Fish Audio utiliza el documento de instrucciones
 `src/ai_video_factory/bots/prompts/fish_audio.md`, copiado del BotFish
-adjunto. Empieza **a la vez que B1.1**, recibe el mismo guion sin modificar
+adjunto. Empieza **al finalizar B1.1**, en paralelo con B1.2, recibe el mismo guion sin modificar
 y solo inserta etiquetas entre corchetes. Su salida se envía como `text`
 al endpoint TTS de OpenSpeaker con la voz
 `fishaudio_80e34d5e0b2b4577a486f3a77e357261`. La generación guarda
