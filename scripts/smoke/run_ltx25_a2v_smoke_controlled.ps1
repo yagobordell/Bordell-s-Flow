@@ -17,6 +17,21 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Timers cover the complete controlled command, not just worker inference.
+$LifecycleClock = [System.Diagnostics.Stopwatch]::StartNew()
+$LifecycleMetrics = [ordered]@{
+    schema_version = 1
+    segment_id = $SegmentId
+    profile = $Profile
+    preflight_seconds = $null
+    capacity_start_seconds = $null
+    readiness_seconds = $null
+    smoke_seconds = $null
+    cleanup_seconds = $null
+    end_to_end_seconds = $null
+    outcome = "failed"
+}
+
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $WorkerManager = Join-Path $RepoRoot "scripts\salad\manage_salad_worker.ps1"
 $R2Preflight = Join-Path $RepoRoot "scripts\pipeline\check_r2_ready.py"
@@ -90,10 +105,17 @@ if ($NonInteractive) {
     $Start["NonInteractive"] = $true
 }
 
+$LifecycleMetrics.preflight_seconds = $LifecycleClock.Elapsed.TotalSeconds
+$PhaseClock = [System.Diagnostics.Stopwatch]::StartNew()
+$PhaseName = "capacity_start_seconds"
+
 try {
     Write-Host "=== LTX A2V explicit capacity: one RTX 5090 replica ===" -ForegroundColor Cyan
     & $WorkerManager @Start
     if (-not $?) { throw "LTX A2V compute-group start failed." }
+    $LifecycleMetrics.capacity_start_seconds = $PhaseClock.Elapsed.TotalSeconds
+    $PhaseClock.Restart()
+    $PhaseName = "readiness_seconds"
 
     # The fast-start signal means the container started, not that the model is ready.
     # Refuse Postgres submission until the same current-version instance passes /ready twice.
@@ -109,6 +131,9 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "LTX worker did not become ready; no A2V job was submitted."
     }
+    $LifecycleMetrics.readiness_seconds = $PhaseClock.Elapsed.TotalSeconds
+    $PhaseClock.Restart()
+    $PhaseName = "smoke_seconds"
 
     if ($Profile -in @("fast", "dev")) {
         Write-Warning "fast/dev is comparison-only: a valid MP4 is not lip-sync acceptance."
@@ -120,7 +145,30 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "LTX A2V smoke failed with exit code $LASTEXITCODE."
     }
+    $LifecycleMetrics.smoke_seconds = $PhaseClock.Elapsed.TotalSeconds
+    $PhaseName = ""
+    $LifecycleMetrics.outcome = "generated"
 }
 finally {
-    & $WorkerManager -Action Stop -Service ltx25 -EnvFile $EnvFile -NonInteractive
+    # Preserve the partial phase measurement when Start, /ready or the job fails.
+    if ($PhaseName -and $null -eq $LifecycleMetrics[$PhaseName]) {
+        $LifecycleMetrics[$PhaseName] = $PhaseClock.Elapsed.TotalSeconds
+    }
+    $CleanupClock = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        & $WorkerManager -Action Stop -Service ltx25 -EnvFile $EnvFile -NonInteractive
+        if (-not $?) { throw "LTX A2V cleanup failed; verify stopped/replicas=0/pending=False." }
+        if ($LifecycleMetrics.outcome -eq "generated") {
+            $LifecycleMetrics.outcome = "succeeded"
+        }
+    }
+    catch {
+        $LifecycleMetrics.outcome = "cleanup_failed"
+        throw
+    }
+    finally {
+        $LifecycleMetrics.cleanup_seconds = $CleanupClock.Elapsed.TotalSeconds
+        $LifecycleMetrics.end_to_end_seconds = $LifecycleClock.Elapsed.TotalSeconds
+        Write-Host ("LTX25_A2V_LIFECYCLE_METRICS " + ($LifecycleMetrics | ConvertTo-Json -Compress -Depth 4))
+    }
 }
