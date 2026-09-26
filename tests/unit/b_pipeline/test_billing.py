@@ -121,3 +121,16 @@ def test_returned_versioned_luna_model_uses_verified_luna_rates() -> None:
     ledger.record("B1.1", None, response(model="gpt-6-luna-2026-09-01"))
 
     assert ledger.records[0]["estimated_cost_usd"] == "0.00013450"
+
+
+def test_unreported_cache_write_usage_does_not_claim_complete_pricing() -> None:
+    ledger = ApiCostLedger()
+    reply = response()
+    del reply.usage.input_tokens_details.cache_write_tokens
+    ledger.record("B1.1", None, reply)
+
+    report = ledger.report(blocks=0, run_status="completed")
+
+    assert report["estimated_total_usd"] is None
+    assert report["requests"][0]["estimated_cost_usd"] is None
+    assert report["requests"][0]["cache_write_tokens"] is None
