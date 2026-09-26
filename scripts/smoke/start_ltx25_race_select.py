@@ -225,6 +225,15 @@ def race_to_one(
             item for item in instances
             if item.get("state") in _ACTIVE_STATES and item.get("version") == version
         ]
+        if group.get("replicas") == 1 and group.get("pending_change") is False:
+            # Fail closed if scale-in removed the protected winner.
+            # A replacement worker does not inherit race winner identity.
+            if not any(item.get("id") == candidate for item in active):
+                survivor_ids = sorted(str(item.get("id")) for item in active)
+                raise RuntimeError(
+                    "LTX race lost the protected winner during scale-in; "
+                    f"winner={candidate} active={survivor_ids}; no job submitted"
+                )
         if (
             group.get("replicas") == 1
             and group.get("pending_change") is False
