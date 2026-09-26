@@ -74,6 +74,32 @@ class OpenAIProvider:
 
         return parsed
 
+    async def generate_structured_with_response[StructuredOutputT: BaseModel](
+        self,
+        *,
+        model: str,
+        instructions: str,
+        input_text: str,
+        output_type: type[StructuredOutputT],
+    ) -> tuple[StructuredOutputT, Any]:
+        """Return validated structured output and its original, usage-bearing API response.
+
+        Opt-in for metered pipelines. Ordinary and stateful provider behavior stays
+        unchanged; in particular, no estimated token counts replace API usage.
+        """
+        response = await self._parse_with_flex_fallback(
+            model=model,
+            instructions=instructions,
+            input=input_text,
+            text_format=output_type,
+        )
+        parsed = response.output_parsed
+        if parsed is None:
+            raise RuntimeError("OpenAI returned no parsed structured output")
+        if not isinstance(parsed, output_type):
+            raise RuntimeError("OpenAI returned an unexpected structured output type")
+        return parsed, response
+
     async def generate_structured_stateful[StructuredOutputT: BaseModel](
         self,
         *,
