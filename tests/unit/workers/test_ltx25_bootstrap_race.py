@@ -143,7 +143,7 @@ def test_lost_winner_during_scale_in_fails_closed() -> None:
     module = _module()
     clock = FakeClock()
     client = FakeRaceClient(wrong_winner=True)
-    with pytest.raises(TimeoutError, match="ONLY"):
+    with pytest.raises(RuntimeError, match="lost the protected winner"):
         module.race_to_one(
             client,
             group_name=GROUP,
