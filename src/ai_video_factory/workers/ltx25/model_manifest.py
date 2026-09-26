@@ -5,6 +5,8 @@ import hashlib
 import hmac
 import json
 import os
+import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,131 @@ def sha256_path(path: Path) -> str:
         for chunk in iter(lambda: handle.read(_CHUNK_SIZE), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def installed_model_manifest_ready(
+    installed_path: Path,
+    *,
+    repository: str,
+    revision: str,
+    root: Path,
+    expected_files: Sequence[str],
+) -> bool:
+    """Check the downloader's atomic, SHA-verified receipt without rehashing on /ready.
+
+    This is a cheap readiness check, NOT a replacement for the full SHA-256
+    validation performed by the downloader before publishing its receipt.
+    A separate per-start completion marker is required by the worker so an
+    old receipt cannot make a freshly restarted container ready prematurely.
+    """
+    if not installed_path.is_file() or not expected_files:
+        return False
+    try:
+        installed: dict[str, Any] = json.loads(
+            installed_path.read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return False
+
+    if (
+        installed.get("schema_version") != 1
+        or installed.get("repository") != repository
+        or installed.get("revision") != revision
+    ):
+        return False
+    records = installed.get("files")
+    if not isinstance(records, dict) or sorted(records) != sorted(expected_files):
+        return False
+
+    for relative in expected_files:
+        parts = Path(relative).parts
+        if not parts or Path(relative).is_absolute() or ".." in parts:
+            return False
+        record = records.get(relative)
+        if not isinstance(record, dict):
+            return False
+        size = record.get("size")
+        digest = record.get("sha256")
+        if (
+            isinstance(size, bool)
+            or not isinstance(size, int)
+            or size <= 0
+            or not isinstance(digest, str)
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+        ):
+            return False
+        path = root / relative
+        try:
+            if not path.is_file() or path.stat().st_size != size:
+                return False
+        except OSError:
+            return False
+    return True
+
+
+def model_bootstrap_is_ready(
+    *,
+    root: Path,
+    repository: str,
+    revision: str,
+    expected_files: Sequence[str],
+    completion_marker: Path,
+) -> bool:
+    """Require this container start's completion signal and exact verified receipt."""
+    try:
+        if completion_marker.read_text(encoding="utf-8").strip() != revision:
+            return False
+    except OSError:
+        return False
+    return installed_model_manifest_ready(
+        root / ".bordell-installed-model-manifest.json",
+        repository=repository,
+        revision=revision,
+        root=root,
+        expected_files=expected_files,
+    )
+
+
+def require_ltx_model_bootstrap(
+    *,
+    root: Path,
+    expected_files: Sequence[str],
+) -> None:
+    """Fail closed for production LTX only after the current start's receipt exists.
+
+    Development backends keep their isolated lightweight model fixtures; the
+    dedicated LTX container enables this gate explicitly in its Dockerfile.
+    """
+    if os.environ.get("LTX_REQUIRE_VERIFIED_MODEL_MANIFEST", "false").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return
+
+    from .reference_recipe import LTX25_MODEL_REVISION
+
+    revision = os.environ.get("LTX_MODEL_REVISION", LTX25_MODEL_REVISION).strip()
+    repository = os.environ.get("LTX_MODEL_REPOSITORY", "Lightricks/LTX-2.5").strip()
+    marker = Path(
+        os.environ.get(
+            "LTX_MODEL_BOOTSTRAP_COMPLETE_FILE",
+            "/tmp/ai-video-factory/ltx25-model-bootstrap.complete",
+        )
+    )
+    if not model_bootstrap_is_ready(
+        root=root,
+        repository=repository,
+        revision=revision,
+        expected_files=expected_files,
+        completion_marker=marker,
+    ):
+        raise FileNotFoundError(
+            "LTX-2.5 model bootstrap is not complete: waiting for the current "
+            "download process to publish its verified model manifest and "
+            "per-start completion marker"
+        )
 
 
 def validate_installed_model_manifest(
