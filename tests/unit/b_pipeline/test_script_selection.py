@@ -125,6 +125,13 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     )
     received: list[str] = []
     streamed_stages: list[str] = []
+    printed_events: list[str] = []
+
+    def observe_metric(name: str, seconds: float, cost: object) -> None:
+        printed_events.append(name)
+        original_metric(name, seconds, cost)
+
+    original_metric = runner._print_metric
 
     async def fake_run(
         script: str,
@@ -144,6 +151,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         assert max_parallel_calls == 3
         received.append(script)
         call_start = len(streamed_stages)
+        print_start = len(printed_events)
         on_input("B1.1", None, {"plain_script_for_recording": script})
         on_output("B1.1", None, {"pipeline_stage": "B1.1"})
         on_input("B1.2", 1, {"current_block_id": 1, "blocks": [{"text": script}]})
@@ -178,6 +186,14 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             streamed_stages.append(stage)
             completed_this_run = streamed_stages[call_start:]
             assert completed_this_run == ["B1.1", "B1.2", "B2"][:len(completed_this_run)]
+            assert printed_events[print_start:] == completed_this_run
+            report_path = tmp_path / "output" / ("roma" if "Uno." in script else "japon")
+            partial = json.loads((report_path / "run_report.json").read_text(encoding="utf-8"))
+            assert partial["run"]["status"] == "running"
+            assert partial["api_costs"]["stages"][stage]["estimated_cost_usd"] == (
+                "0.00002000"
+            )
+            assert partial["timings"]["stages"][stage]["elapsed_seconds"] == 0.25
         return SimpleNamespace(
             b11=SimpleNamespace(model_dump=lambda: {"pipeline_stage": "B1.1"}),
             b12=[SimpleNamespace(block_id=1)],
@@ -200,6 +216,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     monkeypatch.setattr(runner.settings, "output_dir", tmp_path / "output")
     monkeypatch.setattr(runner, "OpenAIProvider", lambda **kwargs: SimpleNamespace(**kwargs))
     monkeypatch.setattr(runner, "run_b_pipeline", fake_run)
+    monkeypatch.setattr(runner, "_print_metric", observe_metric)
 
     asyncio.run(runner.main())
     previous_roma = tmp_path / "output" / "roma"
@@ -260,6 +277,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             lines[offset + 3],
         ) is not None
     assert streamed_stages == ["B1.1", "B1.2", "B2"] * 3
+    assert printed_events == ["B1.1", "B1.2", "B2", "Run"] * 3
     assert "This token-based estimate is not an OpenAI invoice" not in terminal
 
 
