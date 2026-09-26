@@ -253,6 +253,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.profile == "reference-compiled":
+        raise SystemExit(
+            "reference-compiled failed real visual and cold-latency validation on "
+            "2026-09-26. Use --profile reference; no paid job will be submitted."
+        )
     profiles = {
         "fast": LTX_A2V_GENERATION_PROFILE,
         "reference": LTX_A2V_REFERENCE_GENERATION_PROFILE,
