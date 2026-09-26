@@ -285,6 +285,16 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     monkeypatch.setattr(runner, "run_b_pipeline", fake_run)
     monkeypatch.setattr(runner, "_print_metric", observe_metric)
 
+    async def fake_images(destination, plan):
+        assert (destination / "B2" / "merged_output.json").is_file()
+        assert plan["avatar"]["file"] == "avatar.png"
+        return {
+            "model_id": "gpt-image-2.5-flare",
+            "items": [{"credit_cost": 882}],
+        }
+
+    monkeypatch.setattr(runner, "_generate_images", fake_images)
+
     asyncio.run(runner.main())
     previous_roma = tmp_path / "output" / "roma"
     (previous_roma / "stale_previous_run.json").write_text("obsolete", encoding="utf-8")
@@ -318,6 +328,12 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             (destination / "run_report.json").read_text(encoding="utf-8")
         )
         assert consolidated["run"]["status"] == "completed"
+        assert consolidated["run"]["image_generation"] == {
+            "status": "completed",
+            "count": 1,
+            "model_id": "gpt-image-2.5-flare",
+            "credits": 882,
+        }
         assert consolidated["run"]["script_file"] == destination.name + ".txt"
         expected_file = monk if destination == first else teacher
         avatar = consolidated["run"]["avatar"]

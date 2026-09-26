@@ -445,6 +445,9 @@ def has_pending_image_tasks(output: Path) -> bool:
         if state_path.is_symlink():
             return True
         state = json.loads(state_path.read_text(encoding="utf-8"))
-        if state.get("status") not in {"completed", "rejected", "pricing"}:
+        status = state.get("status")
+        if status == "completed" and not state_path.with_suffix(".png").is_file():
+            return True
+        if status not in {"completed", "rejected", "pricing"}:
             return True
     return False
