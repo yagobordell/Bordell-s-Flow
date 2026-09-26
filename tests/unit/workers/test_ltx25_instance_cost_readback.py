@@ -25,11 +25,12 @@ def test_get_container_group_instance_reads_exact_id(
     client = _client()
     observed: list[str] = []
 
-    def fake_get(url: str) -> dict[str, Any]:
-        observed.append(url)
-        return {"id": "winner", "version": 27, "deletion_cost": 100000}
+    def fake_request(request: Any) -> tuple[int, str]:
+        observed.append(request.full_url)
+        assert request.get_method() == "GET"
+        return 202, '{"id":"winner","version":27,"deletion_cost":100000}'
 
-    monkeypatch.setattr(client, "_get", fake_get)
+    monkeypatch.setattr(client, "_request", fake_request)
     result = client.get_container_group_instance("winner")
     assert result["deletion_cost"] == 100000
     assert observed == [
@@ -42,7 +43,7 @@ def test_get_container_group_instance_rejects_wrong_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _client()
-    monkeypatch.setattr(client, "_get", lambda _: {"id": "someone-else"})
+    monkeypatch.setattr(client, "_request", lambda _: (200, '{"id":"someone-else"}'))
     with pytest.raises(RuntimeError, match="different instance"):
         client.get_container_group_instance("winner")
     with pytest.raises(ValueError, match="instance_id is required"):
