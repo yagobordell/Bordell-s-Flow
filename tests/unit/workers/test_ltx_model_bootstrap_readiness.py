@@ -136,7 +136,9 @@ def test_i2v_preparation_waits_for_same_verified_bootstrap(
     marker = tmp_path / "boot.complete"
     _enable_gate(monkeypatch, marker)
     backend = DirectLTX25Backend(model_root=root)
-    bindings = SimpleNamespace(torch=SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True)))
+    bindings = SimpleNamespace(
+        torch=SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
+    )
     monkeypatch.setattr(backend, "_get_bindings", lambda: bindings)
     monkeypatch.setattr(backend, "_get_or_build_pipeline", lambda _: object())
 
