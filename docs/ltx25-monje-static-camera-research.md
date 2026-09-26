@@ -57,7 +57,13 @@ Status: experimental investigation only. No paid generation or visual acceptance
    [official LoRA guide](https://docs.ltx.io/open-source-model/usage-guides/lo-ra)
    says to verify base-model and workflow compatibility. Do NOT silently install
    this 19B LoRA on the 22B A2V pipeline or claim it ensures zero zoom.
-10. Video stabilization is not a model-side camera lock. Correcting a generated zoom
+10. [LTX-2.5 22B Cinemagraph LoRA](https://huggingface.co/Lightricks/LTX-2.5-22b-LoRA-Cinemagraph)
+    matches the 2.5 base family but explicitly declares moving people and
+    complex body motions **out of scope**; it is trained on locked shots with
+    static humans and only isolated environmental/reflection movement.
+    It is therefore unsuitable as an unverified lip-sync/head-motion fix,
+    even though its model card contains locked-camera example prompts.
+11. Video stabilization is not a model-side camera lock. Correcting a generated zoom
     can discard visual context, enlarge the output and obscure true face motion.
     Avoid auto-zoom stabilizers or crops that hide the failure. Compare full frames.
 
