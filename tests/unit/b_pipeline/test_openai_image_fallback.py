@@ -192,7 +192,9 @@ def test_known_ai33_timeout_uses_same_model_prompt_and_persists_fallback(
     assert len(ai33_client.calls) == 1
     assert ai33_client.calls[0][0] == "GET"
     assert len(openai_client.calls) == 1
-    assert openai_client.calls[0]["prompt"] == "  Producto en una mesa  "
+    assert openai_client.calls[0]["prompt"] == (
+        "iphone 6 photo done by an elderly:    Producto en una mesa  "
+    )
     assert openai_client.calls[0]["model"] == "gpt-image-2.5-sunburst"
     assert openai_client.calls[0]["size"] == "1280x720"
     assert openai_client.calls[0]["quality"] == "low"
@@ -211,7 +213,7 @@ def test_known_ai33_timeout_uses_same_model_prompt_and_persists_fallback(
     assert state["submitted_at_unix"] < time.time() - 1800
     assert state["fallback_request"]["size"] == "1280x720"
     assert state["fallback_request"]["prompt_sha256"] == hashlib.sha256(
-        _job()["description"].encode("utf-8")
+        ai33.effective_image_prompt(_job()["description"]).encode("utf-8")
     ).hexdigest()
 
     second = ai33.generate_b2_images(
