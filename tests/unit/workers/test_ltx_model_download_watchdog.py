@@ -27,6 +27,21 @@ def test_ltx_model_download_reuses_shared_watchdog() -> None:
     assert "/usr/local/bin/network-preflight" in script
 
 
+def test_ltx_pinned_bundle_download_is_bounded_and_preserves_manifest() -> None:
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+    assert 'MAX_DOWNLOAD_WORKERS="${LTX_MODEL_DOWNLOAD_MAX_WORKERS:-1}"' in script
+    assert '[[ ! "${MAX_DOWNLOAD_WORKERS}" =~ ^[12]$ ]]' in script
+    assert 'hf download "${MODEL_REPOSITORY}" "${MODEL_FILES[@]}"' in script
+    assert '--max-workers 2' in script
+    assert '--revision "${MODEL_REVISION}"' in script
+    assert '--progress-root "${MODEL_ROOT}"' in script
+    assert '--reallocate-on-slow' in script
+    assert script.index('--max-workers 2') < script.index('ltx25.model_manifest write')
+    assert script.index('MODEL_VERIFY_DONE ${model_file}') < script.index(
+        'ltx25.model_manifest write'
+    )
+
+
 def test_ltx_model_download_fast_path_requires_pinned_provenance() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
 
@@ -94,3 +109,4 @@ def test_ltx_salad_manifest_prefers_fast_high_priority_5090_nodes() -> None:
     assert service["environment"]["HF_HUB_ETAG_TIMEOUT"] == "15"
     assert service["environment"]["HF_XET_CLIENT_ENABLE_ADAPTIVE_CONCURRENCY"] == "true"
     assert "HF_XET_HIGH_PERFORMANCE" not in service["environment"]
+    assert service["environment"]["LTX_MODEL_DOWNLOAD_MAX_WORKERS"] == "2"
