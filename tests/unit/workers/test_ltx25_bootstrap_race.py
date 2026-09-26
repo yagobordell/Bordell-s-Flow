@@ -211,3 +211,13 @@ def test_wrapper_race_is_opt_in_and_stops_before_restoring_replicas() -> None:
     assert source.index("& $Python $ReadyWait @ReadyArgs") < source.index(
         "& $Python $Smoke @Arguments"
     )
+
+
+def test_digest_validator_handles_letter_s_and_rejects_whitespace() -> None:
+    module = _module()
+    assert module._IMAGE_RE.fullmatch(
+        "docker.io/example/services@sha256:" + "a" * 64
+    )
+    assert module._IMAGE_RE.fullmatch(
+        "docker.io/example/my worker@sha256:" + "a" * 64
+    ) is None
