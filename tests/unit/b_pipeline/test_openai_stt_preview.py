@@ -168,6 +168,14 @@ def test_completed_tts_block_stt_is_cached_without_second_post(tmp_path: Path) -
     assert calls.calls == 1
     assert first["stt"]["word_count"] == 1
     (run / "blocks" / "block_1" / "stt.json").unlink()
+    with pytest.raises(FishAudioWorkflowError, match="never repeat"):
+        asyncio.run(_transcribe_block(
+            item, output=tmp_path, run_dir=run, stt_client=client
+        ))
+    request = run / "blocks" / "block_1" / "stt_request.json"
+    state = json.loads(request.read_text(encoding="utf-8"))
+    state["status"] = "request_started_unknown"
+    request.write_text(json.dumps(state), encoding="utf-8")
     with pytest.raises(FishAudioWorkflowError, match="reconcile"):
         asyncio.run(_transcribe_block(
             item, output=tmp_path, run_dir=run, stt_client=client
