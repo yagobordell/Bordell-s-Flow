@@ -38,7 +38,7 @@ if ($Profile -eq "reference-compiled") {
     throw (
         "reference-compiled failed the 2026-09-26 real visual and cold-latency " +
         "validation. Use -Profile reference for the unchanged eager baseline; " +
-        "refusing GPU allocation for the rejected experiment."
+        "Refusing GPU allocation for the rejected experiment."
     )
 }
 if ($Profile -eq "guided") {
@@ -131,9 +131,6 @@ try {
     }
     if ($Profile -eq "guided") {
         Write-Warning "guided is experimental: technical MP4/audio checks do not establish visual lip-sync."
-    }
-    if ($Profile -eq "reference-compiled") {
-        Write-Warning "reference-compiled is an unvalidated A/B experiment. Cold compilation may be slower; review lip-sync and frames before promotion."
     }
     & $Python $Smoke @Arguments
     if ($LASTEXITCODE -ne 0) {
