@@ -15,11 +15,11 @@ from PIL import Image
 
 from ai_video_factory.bots import run_b_pipeline
 from ai_video_factory.bots.billing import ApiCostLedger
+from ai_video_factory.bots.contracts import B11Output, B12Output
 from ai_video_factory.bots.fish_audio_workflow import (
     generate_fish_audio,
     unfinished_audio_runs,
 )
-from ai_video_factory.bots.contracts import B11Output, B12Output
 from ai_video_factory.bots.workflow import materialize_blocks, validate_beats
 from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
