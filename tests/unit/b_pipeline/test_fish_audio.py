@@ -9,6 +9,8 @@ from urllib.error import URLError
 
 import pytest
 
+from ai_video_factory.bots import fish_audio_workflow as fish_workflow
+from ai_video_factory.bots.contracts import B11Output, B12Input, MaterializedBlock, NarrativeCore
 from ai_video_factory.bots.fish_audio import (
     FishAudioScript,
     FishAudioScriptError,
@@ -16,14 +18,12 @@ from ai_video_factory.bots.fish_audio import (
     run_fish_director,
     validate_fish_script,
 )
-from ai_video_factory.bots.contracts import B11Output, B12Input, MaterializedBlock, NarrativeCore
 from ai_video_factory.bots.fish_audio_workflow import (
     FishAudioWorkflowError,
     generate_fish_audio,
     unfinished_audio_runs,
 )
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient, audio_url_of
-from ai_video_factory.bots import fish_audio_workflow as fish_workflow
 from scripts.pipeline import run_b_pipeline as runner
 
 VOICE = "fishaudio_f8dfe9c83081432386f143e2fe9767ef"
@@ -54,7 +54,8 @@ def stub_audio_join(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_join(_inputs, destination):
         destination.write_bytes(b"RIFF" + b"\x00" * 40)
         return {
-            "file": destination.name, "sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
+            "file": destination.name,
+            "sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
             "format": "wav", "bytes": destination.stat().st_size, "duration_seconds": 1.0,
         }
     monkeypatch.setattr(fish_workflow, "join_audio_blocks", fake_join)
