@@ -28,7 +28,7 @@ def _group() -> dict[str, Any]:
 
 def _instance(*, instance_id: str = "gpu-one", ready: bool = False) -> dict[str, object]:
     return {
-        "instance_id": instance_id,
+        "id": instance_id,
         "version": 9,
         "state": "running",
         "started": True,
@@ -118,6 +118,22 @@ def test_readiness_flap_or_instance_replacement_resets_stable_count() -> None:
     timer = _Clock()
     assert _wait(client, clock=timer) == "replacement"
     assert timer.elapsed == 4
+
+
+def test_ready_instance_can_be_accepted_during_group_deployment() -> None:
+    group = _group()
+    group["current_state"]["status"] = "deploying"
+    client = _Salad([(group, [_instance(ready=True)])])
+    assert _wait(client) == "gpu-one"
+
+
+def test_readiness_rejects_undocumented_instance_id_field() -> None:
+    instance = _instance(ready=True)
+    instance["instance_id"] = instance.pop("id")
+    with pytest.raises(RuntimeError, match="without an instance ID"):
+        _readiness_observation(
+            _group(), [instance], group_name=GROUP_NAME, image_repository=IMAGE_REPO
+        )
 
 
 def test_readiness_timeout_does_not_silently_accept_unready_instance() -> None:
