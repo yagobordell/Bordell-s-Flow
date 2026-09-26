@@ -16,7 +16,6 @@ from ai_video_factory.workers.ltx25 import (
 from ai_video_factory.workers.ltx25.model_manifest import write_installed_model_manifest
 
 
-
 def test_compiled_reference_reuses_only_its_own_pipeline_and_keeps_recipe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -72,6 +71,7 @@ def test_compiled_reference_reuses_only_its_own_pipeline_and_keeps_recipe(
     assert eager_init["quantization"] == compiled_init["quantization"]
     assert eager_init["distilled_lora"] == compiled_init["distilled_lora"] == []
     assert eager_init["offload_mode"] == compiled_init["offload_mode"] == "cpu"
+
 
 def test_guided_bootstrap_waits_for_atomic_dev_manifest_before_polling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
