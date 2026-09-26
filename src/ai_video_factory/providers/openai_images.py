@@ -61,8 +61,12 @@ class OpenAIImageClient:
         quality: str = "low",
         output_format: str = "png",
     ) -> dict[str, Any]:
-        if model not in {"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"}:
-            raise ValueError("Fallback must use the same verified GPT Image model")
+        if model not in {
+            "gpt-image-2",
+            "gpt-image-2.5-flare",
+            "gpt-image-2.5-sunburst",
+        }:
+            raise ValueError("Fallback must use the same selected GPT Image model")
         if size != _FALLBACK_SIZE or quality != "low" or output_format != "png":
             raise ValueError("Official fallback requires 1280x720, low, PNG")
         payload: dict[str, object] = {

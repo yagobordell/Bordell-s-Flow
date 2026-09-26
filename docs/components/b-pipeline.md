@@ -311,8 +311,10 @@ OPENAI_IMAGE_BATCH_POLL_INTERVAL_SECONDS=8
 OPENAI_IMAGE_MAX_PARALLEL=4
 ```
 
-Se conservan Flare/Sunburst, PNG, 16:9, calidad low y 1280×720 tanto
-para el batch como para la generación directa. Cuatro beats pueden
+Se admiten `gpt-image-2`, Flare y Sunburst. Los tres modelos usan PNG,
+16:9, calidad low y 1280×720 tanto para el batch como para la generación
+directa. El valor actual de `OPENAI_IMAGE_MODEL=gpt-image-2` se conserva
+sin necesidad de modificar el `.env`. Cuatro beats pueden
 ejecutarse simultáneamente (límite configurable de 1 a 16), pero
 **cada batch sigue conteniendo exactamente una imagen**. El manifiesto
 `images/manifest.json` lo escribe el coordinador en orden B2,

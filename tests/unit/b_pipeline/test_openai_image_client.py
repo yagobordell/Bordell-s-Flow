@@ -17,8 +17,12 @@ def _png(width: int = 1280, height: int = 720, fmt: str = "PNG") -> bytes:
     return buffer.getvalue()
 
 
+@pytest.mark.parametrize(
+    "model",
+    ["gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"],
+)
 def test_direct_client_uses_the_same_model_prompt_size_quality_and_single_image(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model: str,
 ) -> None:
     client = official.OpenAIImageClient("fake-key")
     payloads = []
@@ -35,10 +39,10 @@ def test_direct_client_uses_the_same_model_prompt_size_quality_and_single_image(
     destination = tmp_path / "result.png"
     result = client.generate_png(
         prompt="iphone 6 photo done by an elderly:  Test",
-        model="gpt-image-2.5-flare", destination=destination,
+        model=model, destination=destination,
     )
     assert payloads == [{
-        "model": "gpt-image-2.5-flare",
+        "model": model,
         "prompt": "iphone 6 photo done by an elderly:  Test",
         "size": "1280x720",
         "quality": "low",

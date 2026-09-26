@@ -55,7 +55,11 @@ class ImageBatchOptions:
     max_parallel_images: int = 4
 
     def __post_init__(self) -> None:
-        if self.model_id not in {"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"}:
+        if self.model_id not in {
+            "gpt-image-2",
+            "gpt-image-2.5-flare",
+            "gpt-image-2.5-sunburst",
+        }:
             raise ValueError("Unsupported official GPT Image model")
         if self.size != "1280x720" or self.quality != "low":
             raise ValueError("B2 images must use 1280x720 and low quality")

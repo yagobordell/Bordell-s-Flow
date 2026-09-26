@@ -403,3 +403,36 @@ def test_images_only_uses_saved_b2_and_official_openai_key(
         "block_id": 1, "beat_id": "1B", "file": "images/block_1/1B.png",
         "sha256": "fake-sha", "provider": "openai_batch",
     }]
+
+
+@pytest.mark.parametrize("batch_failure", [None, "failed"])
+def test_gpt_image_2_is_supported_in_individual_batch_and_direct_fallback(
+    tmp_path: Path, batch_failure: str | None,
+) -> None:
+    """A pre-existing OPENAI_IMAGE_MODEL=gpt-image-2 must not require an env edit."""
+    opts = _opts(model_id="gpt-image-2")
+    batch = FakeBatch(
+        failures={"1B": batch_failure} if batch_failure is not None else {}
+    )
+    direct = FakeDirect()
+    result = images.generate_b2_images(
+        tmp_path, _plan("1B"), api_key=None,
+        options=opts, batch_client=batch, direct_client=direct,
+    )
+    assert result["status"] == "completed"
+    assert len(batch.uploads) == len(batch.created) == 1
+    assert batch.uploads[0][1]["body"] == opts.request("Original 1B  ")
+    assert batch.uploads[0][1]["body"]["model"] == "gpt-image-2"
+    assert batch.uploads[0][1]["body"]["n"] == 1
+    if batch_failure is None:
+        assert result["items"][0]["provider"] == "openai_batch"
+        assert direct.calls == []
+    else:
+        assert result["items"][0]["provider"] == "openai_direct_fallback"
+        assert result["items"][0]["fallback_reason"] == "batch_failed"
+        assert len(direct.calls) == 1
+        assert direct.calls[0]["model"] == "gpt-image-2"
+        assert direct.calls[0]["prompt"] == images.effective_image_prompt(
+            "Original 1B  "
+        )
+    assert result["items"][0]["model_id"] == "gpt-image-2"
