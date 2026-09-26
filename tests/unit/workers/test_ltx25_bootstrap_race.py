@@ -42,6 +42,7 @@ class FakeRaceClient:
         self.wrong_winner = wrong_winner
         self.deletion_costs: dict[str, int] = {}
         self.cost_readback_enabled = True
+        self.list_cost_readback_enabled = True
         self.events: list[str] = []
         self.version = 13
 
@@ -61,14 +62,27 @@ class FakeRaceClient:
             return []
         if self.replicas == 1:
             instance_id = LOSER if self.wrong_winner else WINNER
-            return [self._instance(instance_id, ready=True)]
+            return [
+                self._instance(
+                    instance_id, ready=True, include_cost=self.list_cost_readback_enabled
+                )
+            ]
         return [
-            self._instance(WINNER, ready=self.ready),
-            self._instance(LOSER, ready=False, state="downloading"),
+            self._instance(
+                WINNER, ready=self.ready, include_cost=self.list_cost_readback_enabled
+            ),
+            self._instance(
+                LOSER, ready=False, state="downloading",
+                include_cost=self.list_cost_readback_enabled,
+            ),
         ]
 
+    def get_container_group_instance(self, instance_id: str) -> dict[str, Any]:
+        return self._instance(instance_id, ready=instance_id == WINNER and self.ready)
+
     def _instance(
-        self, instance_id: str, *, ready: bool, state: str = "running"
+        self, instance_id: str, *, ready: bool, state: str = "running",
+        include_cost: bool = True,
     ) -> dict[str, Any]:
         return {
             "id": instance_id,
@@ -79,7 +93,7 @@ class FakeRaceClient:
             "pulling_progress": 55 if state == "downloading" else None,
             "deletion_cost": (
                 self.deletion_costs.get(instance_id, 0)
-                if self.cost_readback_enabled
+                if self.cost_readback_enabled and include_cost
                 else 0
             ),
         }
@@ -217,6 +231,29 @@ def test_deletion_cost_must_be_observed_before_any_scale_in() -> None:
     assert client.replicas == 2
     assert f"deletion_cost={WINNER}:100000" in client.events
     assert "replicas=1" not in client.events
+
+
+def test_exact_instance_readback_handles_stale_group_list() -> None:
+    module = _module()
+    clock = FakeClock()
+    client = FakeRaceClient()
+    client.list_cost_readback_enabled = False
+    observations: list[str] = []
+    result = module.race_to_one(
+        client,
+        group_name=GROUP,
+        expected_image=IMAGE,
+        timeout_seconds=120,
+        poll_seconds=15,
+        clock=clock.clock,
+        sleep=clock.sleep,
+        report=observations.append,
+    )
+    assert result["winner_id"] == WINNER
+    assert result["replicas_before_job"] == 1
+    assert any("deletion_cost_readback" in item and "detail=100000" in item
+               and "list=0" in item for item in observations)
+    assert "replicas=1" in client.events
 
 
 def test_wrong_image_rejected_before_capacity_mutation() -> None:
