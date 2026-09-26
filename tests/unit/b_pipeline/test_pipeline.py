@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import pytest
 
 from ai_video_factory.bots.billing import ApiCostLedger
-from ai_video_factory.config import settings
 from ai_video_factory.bots.contracts import (
     B2Input,
     B2Output,
@@ -24,6 +23,7 @@ from ai_video_factory.bots.workflow import (
     validate_beats,
     validate_visuals,
 )
+from ai_video_factory.config import settings
 
 SCRIPT = "  Uno.\n\nDos.  "
 
