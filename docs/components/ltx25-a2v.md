@@ -62,6 +62,51 @@ is recorded in result metadata as a numerical/runtime deviation from a BF16 refe
 BF16 comparison is a later GPU experiment, not a prerequisite for the first functional
 lip-sync baseline.
 
+### Experimental compiled reference profile (latency A/B)
+
+The opt-in `reference-compiled` profile uses the **same** distilled checkpoint,
+8+3 sigma schedules, image strengths, Euler ancestral/standard samplers, frozen
+padded speech, FP8_CAST weights, CPU offload and eager-SDPA DiffVAE as
+`reference`. The only pipeline change is upstream
+`CompilationConfig()`, which enables per-transformer-block `torch.compile`
+with the pinned upstream default Inductor backend. This is a distinct generation
+profile and resident-pipeline cache key; it does not silently modify `reference`,
+`guided`, production routing or the Salad image manifest. Result metadata
+reports `transformer_compilation=blocks` (versus `eager`).
+
+Official pinned LTX optimization reference:
+https://github.com/Lightricks/LTX-2/blob/a95ab856bf29407b6b066ede0abe1846050db56c/packages/ltx-pipelines/docs/optimization.md
+The official `CompilationConfig` API is defined at the same pinned revision.
+Compilation is opt-in upstream: an initial run may take **longer** due to graph
+compilation. No speedup or bitwise-equivalent video is assumed, and compiled
+outputs remain experimental until real GPU visual acceptance. Published community
+RTX 5090 LTX benchmarks also use different model variants, shapes and video-only
+workflows; do not transfer their timings to this A2V profile.
+
+**No new image has been built or deployed by this branch.** The currently tracked
+Salad image v10 cannot run `reference-compiled`. Before any paid smoke, build a
+new immutable image from the reviewed branch SHA, verify its digest and source
+revision, update the stopped existing LTX group under Capacity Controller lock,
+then use a new, uncached segment ID. Do not run a smoke against the old image or
+start another LTX benchmark concurrently.
+
+For the A/B benchmark, use the same monje WAV/avatar, prompt, seed 4242,
+1280×720 at 24 fps and 5-second voiced input. Measure separately: cold worker
+bootstrap/model load, first compiled inference, and **at least three** subsequent
+jobs on the same RTX 5090 worker, with identical settings and distinct segment
+IDs. Compare the warm median and end-to-end elapsed time against the historical
+`reference` 157.360 s inference / 175.876 s total and a fresh eager reference
+run on the same pinned image. Require matching speech-sample counts, technical
+MP4 checks and manual frame/phoneme/identity review, especially at the final
+frames. Do not merge or promote the compiled variant on timings alone.
+
+Other official candidates are **not enabled**: `fp8-scaled-mm` changes numerical
+arithmetic and requires an independent visual A/B; `combined_compile` DiffVAE
+has higher VRAM use and needs a measured decode bottleneck and a memory-safe
+GPU smoke first. The full `guided` profile currently needs DISK offload because
+upstream CPU-pinned Gemma construction failed even with 60 GiB container RAM.
+Simply switching its offload mode back to CPU is not an optimization.
+
 ### Experimental guided talking-avatar profile
 
 `guided` is an **opt-in, non-production** comparison profile. It invokes the pinned
