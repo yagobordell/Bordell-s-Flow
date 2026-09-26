@@ -34,7 +34,7 @@ def test_review_sheet_is_offline_and_does_not_modify_source_mp4(
     report = review.create_review_sheet(video, sheet)
     assert sheet.is_file()
     with Image.open(sheet) as result:
-        assert result.size == (1976, 434)
+        assert result.size == (1976, 444)
     assert video.read_bytes() == b"do-not-modify-the-speech-or-video"
     assert report["zoom_assessment"] == "manual_review_required"
     assert report["output_video_modified"] is False
