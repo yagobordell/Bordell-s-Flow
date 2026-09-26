@@ -226,6 +226,8 @@ AI33_IMAGE_RESOLUTION=1K
 AI33_IMAGE_QUALITY=low
 AI33_POLL_TIMEOUT_SECONDS=1800
 AI33_POLL_INTERVAL_SECONDS=8
+# El fallback oficial utiliza OPENAI_API_KEY definido más arriba.
+OPENAI_IMAGE_FALLBACK_ENABLED=true
 ```
 
 El modelo predeterminado Flare es el que se ha verificado generando
@@ -240,10 +242,27 @@ Se crea `images/manifest.json`, más el PNG
 `images/block_<id>/<beat_id>.json`. El estado se persiste **antes** del
 POST de generación y conserva el `task_id` inmediatamente después de
 recibirlo. Un error de polling `429/502/503/504` se reintenta con
-backoff; el tiempo máximo por tarea es 30 minutos por defecto. Si la
-respuesta del POST se pierde, se detiene con estado
-`submitting_unknown`: no se repite una solicitud potencialmente
-cobrada sin comprobar antes la tarea en AI33.
+backoff; el tiempo máximo por tarea es 30 minutos por defecto, medidos
+desde el envío original y conservados entre reanudaciones. Al vencer ese
+plazo, se realiza una última consulta de estado. Si no hay respuesta
+`done` y existe un `task_id` confirmado, el fallback
+`OPENAI_IMAGE_FALLBACK_ENABLED=true` llama a
+`POST https://api.openai.com/v1/images/generations` con el **mismo
+modelo** Flare/Sunburst, la `description` original de B2, `low`,
+`png` y `size=1280x720`. Son las dimensiones 16:9 más pequeñas que
+cumplen el mínimo de píxeles, múltiplos de 16 y relación de aspecto
+documentados para la API oficial:
+https://developers.openai.com/api/docs/guides/image-generation
+
+Si la respuesta del POST de AI33 se pierde, se detiene con estado
+`submitting_unknown`: **no se activa el fallback ni se repite una
+solicitud potencialmente cobrada**. Si se pierde la respuesta del POST
+oficial, se guarda `openai_submitting_unknown` y también se bloquea
+cualquier repetición automática. La configuración por defecto no
+reintenta dos veces una solicitud de generación. La tarea original de
+AI33 puede completarse después de que el fallback haya terminado y
+generar un cargo adicional en ese proveedor: no se afirma que el
+timeout cancele ni reembolse el trabajo de AI33.
 
 Para recuperar una ejecución después de un timeout o error de descarga,
 sin volver a llamar a OpenAI ni seleccionar otro avatar:
@@ -260,10 +279,17 @@ se detiene en vez de reutilizar una imagen cuyo prompt ya no coincide.
 
 Los metadatos por beat y el manifiesto incluyen modelo, ID de tarea,
 archivo local, SHA-256, dimensiones y `credit_cost` real que comunica
-AI33; `provider_credit_cost` se conserva por separado. No se infiere
-que el coste del proveedor sea el importe facturado al usuario. Las
-métricas OpenAI de `run_report.json` siguen expresadas en USD y no se
-mezclan con los créditos AI33.
+AI33; `provider_credit_cost` se conserva por separado. En fallback, el
+artefacto queda marcado `provider: openai_official_fallback` con el
+`task_id` original de AI33, `fallback_reason: ai33_timeout`,
+`size: 1280x720` y, si la API lo incluye, `openai_usage`. Los
+contadores `ai33_count` y `openai_fallback_count` aparecen en el
+manifiesto y en el informe de ejecución. Los costes oficiales en USD
+no se inventan: se conserva el uso devuelto por OpenAI y el gasto real
+se consulta en su plataforma. Los créditos de un AI33 que haya
+superado el plazo pueden seguir pendientes incluso si el fallback
+terminó. Los créditos AI33 no se mezclan con las métricas USD de
+OpenAI de B1.1/B1.2/B2.
 
 Para iterar solo los bots sin crear imágenes, usa `--skip-images`.
 Después ejecuta `--images-only` para generar lo pendiente a partir

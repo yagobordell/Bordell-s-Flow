@@ -90,8 +90,13 @@ calidad low por defecto. Configura `AI33_API_KEY` en `.env` y utiliza
 Los beats `avatar` con descripción nula no generan PNG. Las imágenes y sus
 costes en créditos se guardan en `images/` dentro del output del guion. Si
 se interrumpe una tarea, `--images-only` recupera los `task_id` guardados
-sin volver a generar ni repetir los bots. `--skip-images` permite ejecutar
-solo B1.1/B1.2/B2 cuando estés iterando sus prompts.
+sin volver a generar ni repetir los bots. Si una tarea AI33 conocida supera
+30 minutos desde su envío, se activa el fallback de la API oficial de OpenAI
+con el **mismo modelo y prompt**, calidad low, PNG y tamaño mínimo 16:9
+(`1280x720`). Requiere `OPENAI_API_KEY` y se controla con
+`OPENAI_IMAGE_FALLBACK_ENABLED=true`. El ID de AI33 permanece registrado:
+su tarea podría completarse más tarde y ocasionar también un cargo allí.
+`--skip-images` permite ejecutar solo B1.1/B1.2/B2 mientras iteras los prompts.
 
 **Límite actual:** esto genera un plan visual e imágenes fijas, **no** un vídeo final.
 Los wrappers GPU independientes y los servicios de Salad siguen en el
