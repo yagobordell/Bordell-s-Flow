@@ -106,3 +106,26 @@ def test_ltx_smoke_python_source_check_accepts_matching_worktree(tmp_path: Path)
     )
     assert rejected.returncode == 1
     assert "Wrong LTX Python source" in rejected.stderr
+
+
+def test_controlled_smoke_waits_for_verified_bootstrap_and_reports_phases() -> None:
+    script = Path("scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "reference-compiled" not in script
+    assert "ExpectedPinnedImage" in script
+    assert "AllowBootstrappingInstance = $true" in script
+    assert script.index("& $Python $ReadyWait @ReadyArgs") < script.index(
+        "& $Python $Smoke @Arguments"
+    )
+    for phase in ("capacity_start", "worker_ready", "job", "cleanup"):
+        assert f"LTX_SMOKE_TIMING phase={phase}" in script
+
+
+def test_no_compiled_quality_profile_in_baseline_worker_or_submitter() -> None:
+    assert "reference-compiled" not in Path(
+        "src/ai_video_factory/workers/ltx25/a2v.py"
+    ).read_text(encoding="utf-8")
+    assert "reference-compiled" not in Path(
+        "scripts/smoke/submit_ltx25_a2v_smoke.py"
+    ).read_text(encoding="utf-8")
