@@ -223,7 +223,7 @@ def _poll(
             retries += 1
             time.sleep(min(options.poll_interval_seconds * 2 ** min(retries, 3), 30))
             continue
-        except (URLError, TimeoutError) as exc:
+        except (URLError, TimeoutError):
             retries += 1
             time.sleep(min(options.poll_interval_seconds * 2 ** min(retries, 3), 30))
             continue
