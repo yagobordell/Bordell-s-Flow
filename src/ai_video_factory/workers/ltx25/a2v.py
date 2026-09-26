@@ -59,7 +59,16 @@ LTX_A2V_GUIDED_GENERATION_PROFILE = (
 )
 LTX_A2V_RECOMMENDED_MAX_SECONDS = 12.0
 LTX_A2V_MAX_RAW_FRAMES = 1024
-LTX_A2V_DEFAULT_PROMPT = "An elderly monk speaking calmly to the camera."
+LTX_A2V_DEFAULT_PROMPT = (
+    "A medium close-up talking head of the person in the reference image, speaking "
+    "naturally toward the camera in synchronization with the provided speech audio. "
+    "Preserve the person's facial identity, hairstyle, skin tone, clothing, background, "
+    "and framing throughout the continuous shot. Clearly articulate every spoken word "
+    "with natural, visible lip and jaw movements matching the supplied speech. "
+    "Natural blinking and restrained head movement. Static camera, stable lighting, no cuts, "
+    "no scene "
+    "changes, no exaggerated gestures, no identity drift, and no facial deformation."
+)
 
 # Experimental only: skip the FIRST intermediate Stage-2 sigma while preserving
 # the official first/last sigma, Stage-1 schedule, audio and image conditioning.
