@@ -7,6 +7,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from time import perf_counter
 
 from ai_video_factory.bots import run_b_pipeline
 from ai_video_factory.bots.billing import ApiCostLedger
@@ -45,7 +46,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=None,
-        help="Output root; each script gets a child folder (default: data/output/b_pipeline).",
+        help="Output root; each script gets a child folder (default: data/output).",
     )
     parser.add_argument("--max-parallel-calls", type=int, default=8)
     args = parser.parse_args()
@@ -192,24 +193,87 @@ class BotArtifacts:
         _write(self._folder(stage, block_id) / "output.json", payload)
 
 
+class TimingLedger:
+    """Monotonic wall-clock timing; parallel calls are not added into stage wall time."""
+
+    def __init__(self) -> None:
+        self._stages: dict[str, float] = {}
+        self._calls: list[dict[str, object]] = []
+
+    def record_stage(self, stage: str, elapsed_seconds: float) -> None:
+        if stage not in _STAGES:
+            raise ValueError(f"Unknown stage: {stage}")
+        self._stages[stage] = elapsed_seconds
+
+    def record_call(self, stage: str, block_id: int | None, elapsed_seconds: float) -> None:
+        if stage not in _STAGES:
+            raise ValueError(f"Unknown stage: {stage}")
+        self._calls.append(
+            {
+                "stage": stage,
+                "block_id": block_id,
+                "elapsed_seconds": round(elapsed_seconds, 3),
+            }
+        )
+
+    def report(self, *, run_seconds: float, status: str) -> dict[str, object]:
+        calls = sorted(
+            self._calls,
+            key=lambda item: (_STAGES.index(str(item["stage"])), item["block_id"] or 0),
+        )
+        return {
+            "unit": "seconds",
+            "status": status,
+            "run_elapsed_seconds": round(run_seconds, 3),
+            "stages": {
+                stage: {
+                    "elapsed_seconds": (
+                        round(self._stages[stage], 3) if stage in self._stages else None
+                    ),
+                    "call_count": len([item for item in calls if item["stage"] == stage]),
+                    "sum_call_seconds": round(
+                        sum(
+                            float(item["elapsed_seconds"])
+                            for item in calls
+                            if item["stage"] == stage
+                        ),
+                        3,
+                    ),
+                }
+                for stage in _STAGES
+            },
+            "calls": calls,
+        }
+
+
+def _print_timings(report: dict[str, object]) -> None:
+    stages = report["stages"]
+    if not isinstance(stages, dict):
+        raise RuntimeError("Invalid timing report")
+    print("Tiempos reales (segundos):")
+    for stage in _STAGES:
+        value = stages[stage]["elapsed_seconds"]
+        print(f"  {stage} total: {value:.3f} s" if value is not None else f"  {stage}: no ejecutado")
+    print(f"  Run total: {report['run_elapsed_seconds']:.3f} s")
+
+
 def _print_costs(report: dict[str, object]) -> None:
     stages = report["stages"]
     if not isinstance(stages, dict):
         raise RuntimeError("Invalid API cost report")
-    print("OpenAI API costs (USD, estimated from response usage):")
+    print("Costes API OpenAI (USD, estimados a partir del uso):")
     for stage in _STAGES:
         entry = stages[stage]
         cost = entry["estimated_cost_usd"]
-        print(f"  {stage}: USD {cost}" if cost is not None else f"  {stage}: unavailable")
+        print(f"  {stage} total: ${cost}" if cost is not None else f"  {stage}: no disponible")
     total = report["estimated_total_usd"]
     if total is None:
         print(
-            "  Total: unavailable (incomplete or unpriced API usage); "
-            f"priced subtotal: USD {report['priced_subtotal_usd']}"
+            "  Run total: no disponible (uso o tarifa incompletos); "
+            f"subtotal conocido: ${report['priced_subtotal_usd']}"
         )
     else:
-        print(f"  Total: USD {total}")
-    print("  This token-based estimate is not an OpenAI invoice.")
+        print(f"  Run total: ${total}")
 
 
 async def main() -> None:
@@ -244,7 +308,8 @@ async def main() -> None:
     if not script.strip():
         raise SystemExit(f"Script is empty: {script_file}")
 
-    output_root = args.output if args.output is not None else settings.output_dir / "b_pipeline"
+    run_started = perf_counter()
+    output_root = args.output if args.output is not None else settings.output_dir
     output = _prepare_output(output_root, script_file)
     _write(
         output / ".b_pipeline_run.json",
@@ -258,6 +323,7 @@ async def main() -> None:
     print(f"Selected script: {script_file}")
     artifacts = BotArtifacts(output)
     ledger = ApiCostLedger()
+    timings = TimingLedger()
     provider = OpenAIProvider(
         api_key=settings.openai_api_key,
         reasoning_effort=settings.openai_b_reasoning_effort,
@@ -272,17 +338,27 @@ async def main() -> None:
             on_input=artifacts.input,
             on_output=artifacts.output,
             on_api_response=ledger.record,
+            on_call_duration=timings.record_call,
+            on_stage_duration=timings.record_stage,
         )
+        _write(output / "B1.2" / "merged_output.json", result.merged_b12_output())
+        _write(output / "B2" / "merged_output.json", result.merged_b2_output())
         _write(output / "visual_plan.json", result.visual_plan())
     except Exception:
         report = ledger.report(blocks=None, run_status="failed")
         _write(output / "api_costs.json", report)
+        timing_report = timings.report(run_seconds=perf_counter() - run_started, status="failed")
+        _write(output / "timings.json", timing_report)
         _print_costs(report)
+        _print_timings(timing_report)
         raise
 
     report = ledger.report(blocks=len(result.b12), run_status="completed")
     _write(output / "api_costs.json", report)
+    timing_report = timings.report(run_seconds=perf_counter() - run_started, status="completed")
+    _write(output / "timings.json", timing_report)
     _print_costs(report)
+    _print_timings(timing_report)
     print(f"B1.1/B1.2/B2 validated; canonical artifacts: {output.resolve()}")
 
 
