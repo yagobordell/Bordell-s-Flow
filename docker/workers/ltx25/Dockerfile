@@ -111,6 +111,10 @@ RUN python3 -c \
      print('ltx_i2v_pipeline=OK'); \
      print('ltx_a2v_pipeline=OK')"
 
+# Fail the image build if pinned HF CLI cannot perform bounded multi-file downloads.
+RUN bash -n /usr/local/bin/download-models \
+    && hf download --help | grep -Fq -- '--max-workers'
+
 USER worker
 EXPOSE 8080
 
