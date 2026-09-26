@@ -1,4 +1,4 @@
-"""Independent Fish director + OpenSpeaker TTS run, safe to run beside B1.1."""
+"""Independent per-block Fish director and AI33 Pro speech with durable paid tasks."""
 
 from __future__ import annotations
 
@@ -17,13 +17,21 @@ from ai_video_factory.providers.ai33_speech import (
 )
 from ai_video_factory.providers.base import StructuredTextProvider
 
-from .fish_audio import FishAudioScriptError, fish_prompt_bytes, run_fish_director
+from .audio_join import join_audio_blocks
+from .contracts import B11Output, B12Input
+from .fish_audio import (
+    FishAudioScriptError,
+    fish_prompt_bytes,
+    run_fish_director,
+    validate_fish_script,
+)
+from .workflow import materialize_blocks
 
 _DEFAULT_VOICE_ID = "fishaudio_f8dfe9c83081432386f143e2fe9767ef"
 
 
 class FishAudioWorkflowError(RuntimeError):
-    """Speech state requires recovery or has a changed source script."""
+    """Speech state requires recovery or its saved source no longer matches."""
 
 
 def _atomic_json(path: Path, data: dict[str, Any]) -> None:
@@ -50,7 +58,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def unfinished_audio_runs(output: Path) -> list[Path]:
-    """Prevent deleting or duplicating paid TTS tasks with unknown outcomes."""
+    """Never replace an output while a block could still have a paid task."""
     folder = output / "audio" / "runs"
     if folder.is_symlink():
         raise FishAudioWorkflowError("Linked Fish Audio runs directory")
@@ -62,102 +70,107 @@ def unfinished_audio_runs(output: Path) -> list[Path]:
     return pending
 
 
-def _audio_result(
-    output: Path, directory: Path, state: dict[str, Any]
-) -> dict[str, Any]:
+def _inputs(script: str, b11: B11Output) -> list[B12Input]:
+    if b11.error is not None or b11.blocks is None or b11.narrative_core is None:
+        raise FishAudioWorkflowError("Fish Audio requires a validated B1.1 checkpoint")
+    blocks = materialize_blocks(script, b11.blocks)
+    if "".join(block.text for block in blocks) != script:
+        raise FishAudioWorkflowError("The ordered audio blocks do not reconstruct the source")
+    return [
+        B12Input(
+            narrative_core=b11.narrative_core,
+            current_block_id=block.block_id,
+            blocks=(block,),
+        )
+        for block in blocks
+    ]
+
+
+def _block_audio(output: Path, directory: Path, state: dict[str, Any]) -> dict[str, Any]:
     metadata = state.get("audio")
     if not isinstance(metadata, dict):
-        raise FishAudioWorkflowError("Completed Fish Audio run has no audio metadata")
-    audio_file = directory / metadata["file"]
+        raise FishAudioWorkflowError("Completed Fish block has no audio metadata")
+    name = metadata.get("file")
+    if not isinstance(name, str) or not name or Path(name).name != name:
+        raise FishAudioWorkflowError("Invalid Fish block audio filename")
+    audio_file = directory / name
     if audio_file.is_symlink() or not audio_file.is_file():
-        raise FishAudioWorkflowError("Completed Fish Audio file is missing or linked")
+        raise FishAudioWorkflowError("Completed Fish block audio is missing or linked")
     sha = hashlib.sha256(audio_file.read_bytes()).hexdigest()
     if sha != metadata.get("sha256"):
-        raise FishAudioWorkflowError("Completed Fish Audio bytes do not match their SHA-256")
+        raise FishAudioWorkflowError("Completed Fish block bytes do not match SHA-256")
     return {
-        "status": "completed",
-        "provider": "ai33",
-        "voice_source": "fishaudio",
-        "voice_id": state["voice_id"],
+        "block_id": state["block_id"],
         "task_id": state["task_id"],
-        "run_id": state["run_id"],
         "file": audio_file.relative_to(output).as_posix(),
         "sha256": sha,
         "format": metadata["format"],
         "bytes": metadata["bytes"],
         "credit_cost": state.get("credit_cost"),
-        "director_model": state["director_model"],
+        "director_usage": state.get("director_usage"),
     }
 
 
-async def generate_fish_audio(
-    script: str,
-    output: Path,
+async def _generate_block(
+    payload: B12Input,
     *,
-    director_model: str,
+    output: Path,
+    run_dir: Path,
     provider: StructuredTextProvider | None,
-    ai33_api_key: str | None,
-    voice_id: str = _DEFAULT_VOICE_ID,
-    speed: float = 1.0,
-    poll_timeout_seconds: int = 3600,
-    poll_interval_seconds: float = 8.0,
-    resume: bool = False,
-    speech_client: AI33SpeechClient | None = None,
+    speech_client: AI33SpeechClient,
+    director_model: str,
+    voice_id: str,
+    speed: float,
+    poll_timeout_seconds: int,
+    poll_interval_seconds: float,
 ) -> dict[str, Any]:
-    """Run a new Fish director or resume a known TTS task without a second POST."""
-    if not isinstance(script, str) or not script.strip():
-        raise FishAudioWorkflowError("The source script must not be empty")
-    if not voice_id.startswith("fishaudio_"):
-        raise FishAudioWorkflowError("Fish voice ID is not a Fish Audio source ID")
-    source_sha = hashlib.sha256(script.encode("utf-8")).hexdigest()
-    pending = unfinished_audio_runs(output)
-
-    if resume:
-        if len(pending) != 1:
-            raise FishAudioWorkflowError(
-                "--resume-audio requires exactly one incomplete audio run"
-            )
-        state_path = pending[0]
-        directory = state_path.parent
+    block = payload.blocks[0]
+    directory = run_dir / "blocks" / f"block_{block.block_id}"
+    state_path = directory / "task.json"
+    input_data = payload.model_dump()
+    source_sha = hashlib.sha256(block.text.encode("utf-8")).hexdigest()
+    if state_path.exists():
         state = _read_json(state_path)
-        if state.get("source_sha256") != source_sha:
-            raise FishAudioWorkflowError("Audio source differs from the saved run script")
-        if state.get("voice_id") != voice_id:
-            raise FishAudioWorkflowError("Voice differs from the saved TTS task")
-        if not (directory / "output.json").is_file():
-            raise FishAudioWorkflowError(
-                "Fish director did not finish; use --regenerate-audio only "
-                "after reconciling any uncertain submissions"
-            )
+        if (
+            state.get("block_id") != block.block_id
+            or state.get("source_sha256") != source_sha
+            or _read_json(directory / "input.json") != input_data
+        ):
+            raise FishAudioWorkflowError(f"Saved Fish input differs for block {block.block_id}")
     else:
-        if pending:
-            raise FishAudioWorkflowError(
-                "A previous TTS task is incomplete. Use --resume-audio or "
-                "reconcile its submission before requesting paid regeneration."
-            )
-        directory = output / "audio" / "runs" / uuid4().hex
         directory.mkdir(parents=True, exist_ok=False)
-        state_path = directory / "task.json"
         state = {
-            "run_id": directory.name,
+            "block_id": block.block_id,
             "source_sha256": source_sha,
             "director_model": director_model,
-            "director_prompt_sha256": hashlib.sha256(fish_prompt_bytes()).hexdigest(),
             "voice_id": voice_id,
             "speed": speed,
             "status": "director_running",
         }
-        _atomic_json(directory / "input.json", {"plain_script_for_recording": script})
+        _atomic_json(directory / "input.json", input_data)
         _atomic_json(state_path, state)
+
+    if (directory / "output.json").exists():
+        directed = _read_json(directory / "output.json")
+        directed_text = directed.get("plain_script_for_recording")
+        if not isinstance(directed_text, str):
+            raise FishAudioWorkflowError(f"Malformed saved Fish output for block {block.block_id}")
+        validate_fish_script(block.text, directed_text)
+    else:
+        if state.get("task_id") or state.get("status") == "tts_submitting_unknown":
+            raise FishAudioWorkflowError("Paid Fish task has no durable director output")
         if provider is None:
-            raise FishAudioWorkflowError("OPENAI_API_KEY is required for the Fish director")
+            raise FishAudioWorkflowError(
+                f"Block {block.block_id} has no completed director; "
+                "resume requires a validated saved output"
+            )
+        state["status"] = "director_running"
+        _atomic_json(state_path, state)
         try:
             directed, response = await run_fish_director(
-                script, provider=provider, model=director_model
+                payload, provider=provider, model=director_model
             )
         except FishAudioScriptError:
-            # A rejected director output cannot have submitted any TTS request.
-            # An explicit regeneration may safely request a corrected director.
             state["status"] = "director_invalid"
             _atomic_json(state_path, state)
             raise
@@ -165,33 +178,20 @@ async def generate_fish_audio(
             state["status"] = "director_unknown"
             _atomic_json(state_path, state)
             raise
+        directed_text = directed.plain_script_for_recording
         _atomic_json(directory / "output.json", directed.model_dump())
         usage = getattr(response, "usage", None)
-        if usage is not None:
-            state["director_usage"] = (
-                usage.model_dump(mode="json")
-                if callable(getattr(usage, "model_dump", None))
-                else None
-            )
+        if usage is not None and callable(getattr(usage, "model_dump", None)):
+            state["director_usage"] = usage.model_dump(mode="json")
         state["status"] = "director_completed"
         _atomic_json(state_path, state)
 
-    if speech_client is None:
-        if not ai33_api_key:
-            raise FishAudioWorkflowError(
-                "AI33_API_KEY is required to submit or resume Fish Audio TTS"
-            )
-        speech_client = AI33SpeechClient(ai33_api_key)
-
-    if state.get("status") in {"tts_submitting_unknown", "director_unknown"}:
+    if state.get("status") == "completed":
+        return _block_audio(output, directory, state)
+    if state.get("status") == "tts_submitting_unknown":
         raise FishAudioWorkflowError(
-            "A paid submission has an unknown outcome; do not resend automatically. "
-            f"Inspect {state_path}"
+            f"Block {block.block_id} has an unknown paid submission; inspect {state_path}"
         )
-    directed_text = _read_json(directory / "output.json")["plain_script_for_recording"]
-    if not isinstance(directed_text, str):
-        raise FishAudioWorkflowError("Saved Fish director output is malformed")
-
     if not state.get("task_id"):
         state["status"] = "tts_submitting_unknown"
         _atomic_json(state_path, state)
@@ -204,16 +204,15 @@ async def generate_fish_audio(
             )
         except Exception as exc:
             raise FishAudioWorkflowError(
-                f"OpenSpeaker TTS submission outcome unknown. Inspect {state_path}; "
-                "never automatically repeat the paid POST."
+                f"OpenSpeaker TTS submission outcome unknown for block {block.block_id}; "
+                f"inspect {state_path}, never automatically repeat the paid POST."
             ) from exc
         state["create_response"] = created
         task_id = task_id_of(created)
         if not task_id:
             _atomic_json(state_path, state)
             raise FishAudioWorkflowError(
-                "OpenSpeaker TTS returned no task_id; reconcile its task history "
-                "before attempting another generation"
+                f"Block {block.block_id} received no task_id; reconcile the paid task first"
             )
         state["task_id"] = task_id
         state["status"] = "submitted"
@@ -236,14 +235,175 @@ async def generate_fish_audio(
     url = audio_url_of(result)
     if not url:
         raise AI33SpeechError(
-            f"TTS task {state['task_id']} finished without a recognized audio URL. "
-            f"Inspect {state_path}; the paid task must not be recreated."
+            f"TTS block {block.block_id} task {state['task_id']} has no recognized audio URL; "
+            f"inspect {state_path} without recreating the paid task"
         )
     audio = await asyncio.to_thread(speech_client.download_audio, url, directory)
     state["audio"] = audio
     state["credit_cost"] = result.get("credit_cost")
     state["status"] = "completed"
     _atomic_json(state_path, state)
-    artifact = _audio_result(output, directory, state)
+    return _block_audio(output, directory, state)
+
+
+async def generate_fish_audio(
+    script: str,
+    output: Path,
+    *,
+    b11: B11Output,
+    director_model: str,
+    provider: StructuredTextProvider | None,
+    ai33_api_key: str | None,
+    voice_id: str = _DEFAULT_VOICE_ID,
+    speed: float = 1.0,
+    max_parallel_calls: int = 8,
+    poll_timeout_seconds: int = 3600,
+    poll_interval_seconds: float = 8.0,
+    resume: bool = False,
+    speech_client: AI33SpeechClient | None = None,
+) -> dict[str, Any]:
+    """Run each block independently, then publish a single ordered WAV narration."""
+    if not isinstance(script, str) or not script.strip():
+        raise FishAudioWorkflowError("The source script must not be empty")
+    if not voice_id.startswith("fishaudio_"):
+        raise FishAudioWorkflowError("Fish voice ID is not a Fish Audio source ID")
+    if max_parallel_calls < 1:
+        raise FishAudioWorkflowError("max_parallel_calls must be positive")
+    inputs = _inputs(script, b11)
+    source_sha = hashlib.sha256(script.encode("utf-8")).hexdigest()
+    inputs_sha = hashlib.sha256(
+        json.dumps(
+            [item.model_dump() for item in inputs],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    pending = unfinished_audio_runs(output)
+
+    if resume:
+        if len(pending) != 1:
+            raise FishAudioWorkflowError(
+                "--resume-audio requires exactly one incomplete audio run"
+            )
+        state_path = pending[0]
+        run_dir = state_path.parent
+        state = _read_json(state_path)
+        if (
+            state.get("source_sha256") != source_sha
+            or state.get("inputs_sha256") != inputs_sha
+            or state.get("voice_id") != voice_id
+            or state.get("director_model") != director_model
+            or state.get("director_prompt_sha256") != hashlib.sha256(fish_prompt_bytes()).hexdigest()
+            or state.get("speed") != speed
+        ):
+            raise FishAudioWorkflowError("Saved Fish audio input, prompt or voice differs")
+        # Never start new paid work when another block has an ambiguous POST.
+        for path in sorted((run_dir / "blocks").glob("block_*/task.json")):
+            block_state = _read_json(path)
+            if block_state.get("status") == "tts_submitting_unknown":
+                raise FishAudioWorkflowError(
+                    f"Unknown paid submission at {path}; reconcile before resuming"
+                )
+    else:
+        if pending:
+            raise FishAudioWorkflowError(
+                "A previous Fish TTS task is incomplete. Use --resume-audio or "
+                "reconcile its paid submissions before regeneration."
+            )
+        run_dir = output / "audio" / "runs" / uuid4().hex
+        run_dir.mkdir(parents=True, exist_ok=False)
+        state_path = run_dir / "task.json"
+        state = {
+            "run_id": run_dir.name,
+            "source_sha256": source_sha,
+            "inputs_sha256": inputs_sha,
+            "director_model": director_model,
+            "director_prompt_sha256": hashlib.sha256(fish_prompt_bytes()).hexdigest(),
+            "voice_id": voice_id,
+            "speed": speed,
+            "block_ids": [item.current_block_id for item in inputs],
+            "status": "running",
+        }
+        _atomic_json(state_path, state)
+
+    if speech_client is None:
+        if not ai33_api_key:
+            raise FishAudioWorkflowError("AI33_API_KEY is required for Fish voice synthesis")
+        speech_client = AI33SpeechClient(ai33_api_key)
+    if provider is None and not resume:
+        raise FishAudioWorkflowError("OPENAI_API_KEY is required for the Fish director")
+
+    semaphore = asyncio.Semaphore(max_parallel_calls)
+
+    async def one(payload: B12Input) -> dict[str, Any]:
+        async with semaphore:
+            return await _generate_block(
+                payload,
+                output=output,
+                run_dir=run_dir,
+                provider=provider,
+                speech_client=speech_client,
+                director_model=director_model,
+                voice_id=voice_id,
+                speed=speed,
+                poll_timeout_seconds=poll_timeout_seconds,
+                poll_interval_seconds=poll_interval_seconds,
+            )
+
+    # return_exceptions waits for ALL paid submissions and polls. An error in
+    # one block must never cancel other blocks while their POST outcome is open.
+    outcomes = await asyncio.gather(*(one(payload) for payload in inputs), return_exceptions=True)
+    failures = [item for item in outcomes if isinstance(item, BaseException)]
+    if failures:
+        paid_states = [
+            _read_json(path)
+            for path in sorted((run_dir / "blocks").glob("block_*/task.json"))
+        ]
+        state["status"] = (
+            "incomplete"
+            if any(item.get("task_id") or item.get("status") == "tts_submitting_unknown"
+                   for item in paid_states)
+            else "director_invalid"
+        )
+        _atomic_json(state_path, state)
+        raise FishAudioWorkflowError(
+            f"{len(failures)} Fish block(s) incomplete; inspect {state_path}"
+        ) from failures[0]
+
+    blocks = [item for item in outcomes if isinstance(item, dict)]
+    if [item["block_id"] for item in blocks] != [item.current_block_id for item in inputs]:
+        raise FishAudioWorkflowError("Fish block completion order differs from source order")
+    try:
+        merged = await asyncio.to_thread(
+            join_audio_blocks,
+            [output / item["file"] for item in blocks],
+            run_dir / "narration.wav",
+        )
+    except Exception:
+        state["status"] = "join_pending"
+        _atomic_json(state_path, state)
+        raise
+
+    credits = [item["credit_cost"] for item in blocks]
+    artifact: dict[str, Any] = {
+        "status": "completed",
+        "provider": "ai33",
+        "voice_source": "fishaudio",
+        "voice_id": voice_id,
+        "run_id": state["run_id"],
+        "file": (run_dir / merged["file"]).relative_to(output).as_posix(),
+        "sha256": merged["sha256"],
+        "format": merged["format"],
+        "bytes": merged["bytes"],
+        "duration_seconds": merged["duration_seconds"],
+        "pause_between_blocks_seconds": 0.5,
+        "block_count": len(blocks),
+        "blocks": blocks,
+        "credit_cost": sum(credits) if all(value is not None for value in credits) else None,
+        "director_model": director_model,
+    }
+    state["status"] = "completed"
+    state["audio"] = artifact
+    _atomic_json(state_path, state)
     _atomic_json(output / "audio" / "latest.json", artifact)
     return artifact
