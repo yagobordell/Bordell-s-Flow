@@ -90,6 +90,7 @@ $Start = @{
     Service = "ltx25"
     Replicas = 1
     EnvFile = $EnvFile
+    AllowBootstrappingInstance = $true
 }
 if ($NonInteractive) {
     $Start["NonInteractive"] = $true
