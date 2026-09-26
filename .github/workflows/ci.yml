@@ -67,6 +67,13 @@ jobs:
             psql "$TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f "$migration"
           done
 
+      - name: FFmpeg for exact Fish Audio gap test
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y ffmpeg
+          fi
+
       - name: Ruff
         run: uv run --no-sync ruff check .
 
