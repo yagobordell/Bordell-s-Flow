@@ -156,6 +156,9 @@ def test_i2v_preparation_waits_for_same_verified_bootstrap(
 def test_ltx_container_enables_gate_and_shell_publishes_it_last() -> None:
     dockerfile = Path("docker/workers/ltx25/Dockerfile").read_text(encoding="utf-8")
     shell = Path("docker/workers/ltx25/download_models.sh").read_text(encoding="utf-8")
+    entrypoint = Path("docker/workers/ltx25/entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
     assert "LTX_REQUIRE_VERIFIED_MODEL_MANIFEST=true" in dockerfile
     assert "LTX_MODEL_BOOTSTRAP_COMPLETE_FILE=" in dockerfile
     assert 'rm -f -- "${BOOTSTRAP_COMPLETE_FILE}"' in shell
@@ -166,3 +169,7 @@ def test_ltx_container_enables_gate_and_shell_publishes_it_last() -> None:
         'mv -f -- "${completion_temp}" "${BOOTSTRAP_COMPLETE_FILE}"'
     )
     assert "LTX_BOOTSTRAP_COMPLETE revision=" in shell
+    assert 'rm -f -- "${BOOTSTRAP_COMPLETE_FILE}"' in entrypoint
+    assert entrypoint.index('rm -f -- "${BOOTSTRAP_COMPLETE_FILE}"') < entrypoint.index(
+        'exec /usr/local/bin/common-worker-entrypoint'
+    )
