@@ -64,7 +64,7 @@ def _readiness_observation(
     status = state.get("status") if isinstance(state, dict) else None
     if status == "stopped":
         raise RuntimeError("LTX group stopped before its worker became ready")
-    if status != "running" or group.get("pending_change") is not False:
+    if status not in {"running", "deploying", "pending"} or group.get("pending_change") is not False:
         return None, f"group_status={status} pending={group.get('pending_change')}"
 
     if group.get("replicas") != 1:
@@ -81,13 +81,14 @@ def _readiness_observation(
         )
 
     instance = current_instances[0]
-    instance_id = instance.get("instance_id")
+    # SaladCloud returns the instance identifier as "id", not "instance_id".
+    instance_id = instance.get("id")
     if not isinstance(instance_id, str) or not instance_id:
         raise RuntimeError("Salad returned a running LTX instance without an instance ID")
     started = instance.get("started")
     ready = instance.get("ready")
     observation = (
-        f"instance={instance_id} version={version} state=running "
+        f"group_status={status} instance={instance_id} version={version} state=running "
         f"started={started} ready={ready}"
     )
     if started is True and ready is True:
