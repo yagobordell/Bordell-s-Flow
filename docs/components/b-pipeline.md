@@ -249,7 +249,7 @@ checkpoint validado `B1.1/output.json` y nunca repiten B1.1, B1.2, B2
 ni imágenes. La reanudación compara el hash del guion, las entradas
 por bloque, el prompt, la voz y la velocidad. Para ensamblar se necesita
 `ffmpeg` en el `PATH`. `--no-audio` omite íntegramente la etapa de voz.
-Las imágenes de AI33 siguen empezando al finalizar B2, sin esperar
+Las imágenes de OpenAI Batch siguen empezando al finalizar B2, sin esperar
 a la pista de voz final. En cuanto están completos las imágenes,
 la voz y el STT, se monta automáticamente `preview/static_preview.mp4`.
 Este vídeo es un simulacro estático, sin animación ni sincronización labial.
@@ -289,110 +289,68 @@ a fotogramas de 1/30 s. No se ejecutan animación, lip-sync ni llamadas
 GPU para crear el simulacro. Para la API de STT:
 https://developers.openai.com/api/docs/guides/speech-to-text
 
-## AI33 Pro: imágenes a partir de las descripciones de B2
+## GPT Image oficial: un batch independiente por imagen de B2
 
-Al terminar los tres bots y guardar el output completo de B2 y
-`visual_plan.json`, el runner genera **una imagen por beat con
-`description` no vacía**. Envía la descripción original de B2 sin
-transformaciones en el JSON del bot: el prompt efectivo enviado a AI33
-es `iphone 6 photo done by an elderly:  ` seguido de la descripción
-original, con sus espacios intactos. Los beats `avatar` con
-`description: null` se omiten; los `avatar_media`, `media_image` y
-`media_video` con descripción generan un PNG estático. Esta etapa no
-genera vídeo ni lipsync y no modifica los JSON del bot.
-
-El proveedor es AI33 Pro / OpenSpeaker. Su API usa el encabezado
-`xi-api-key` y los endpoints `POST /v1i/task/price`,
-`POST /v1i/task/generate-image` y `GET /v1/task/{task_id}`.
-La configuración en `.env` es:
+Al finalizar B2, por cada beat con `description` no vacía se prepara un
+archivo `images/block_<id>/<beat_id>.batch.jsonl` con **una sola línea**
+y una única solicitud `POST /v1/images/generations`, `n=1`. El runner
+sube un archivo por beat y crea **un batch por archivo**; para N imágenes
+se crean N archivos y N batches, nunca un batch agrupado. El prompt
+conserva exactamente el prefijo `iphone 6 photo done by an elderly:  `
+más la descripción original de B2, sin modificar su JSON. Los beats
+`avatar` con `description: null` no generan nada. Esto genera PNG
+estáticos, no lip-sync ni vídeo animado.
 
 ```dotenv
-AI33_API_KEY=
-AI33_IMAGE_MODEL=gpt-image-2.5-flare
-AI33_IMAGE_ASPECT_RATIO=16:9
-AI33_IMAGE_RESOLUTION=1K
-AI33_IMAGE_QUALITY=low
-AI33_POLL_TIMEOUT_SECONDS=1800
-AI33_POLL_INTERVAL_SECONDS=8
-# El fallback oficial utiliza OPENAI_API_KEY definido más arriba.
-OPENAI_IMAGE_FALLBACK_ENABLED=true
+# La misma clave OPENAI_API_KEY usada por B1.1/B1.2/B2 y STT.
+OPENAI_IMAGE_MODEL=gpt-image-2.5-flare
+OPENAI_IMAGE_SIZE=1280x720
+OPENAI_IMAGE_QUALITY=low
+OPENAI_IMAGE_BATCH_TIMEOUT_SECONDS=1800
+OPENAI_IMAGE_BATCH_POLL_INTERVAL_SECONDS=8
+OPENAI_IMAGE_MAX_PARALLEL=4
 ```
 
-El modelo predeterminado Flare es el que se ha verificado generando
-`1280×720` en formato PNG. Para utilizar Sunburst, cambia solo
-`AI33_IMAGE_MODEL=gpt-image-2.5-sunburst`. Ambos modelos admiten
-`16:9`, `1K` y `low` según el catálogo de la cuenta, aunque la
-integración no ha ejecutado una generación real de Sunburst. No hay
-necesidad de cambiar ninguna imagen o conexión de Salad.
+Se conservan Flare/Sunburst, PNG, 16:9, calidad low y 1280×720 tanto
+para el batch como para la generación directa. Cuatro beats pueden
+ejecutarse simultáneamente (límite configurable de 1 a 16), pero
+**cada batch sigue conteniendo exactamente una imagen**. El manifiesto
+`images/manifest.json` lo escribe el coordinador en orden B2,
+con los PNG y estados individuales `images/block_<id>/<beat_id>.json`.
 
-Las imágenes se generan en paralelo con un máximo de **cuatro solicitudes
-por ejecución**; cada beat conserva su propio estado, y el manifiesto
-compartido se actualiza desde el hilo coordinador en el orden de B2.
-Si falla un beat, los demás continúan y sus PNG completados se
-conservan para `--images-only`. El límite puede ajustarse desde el
-parámetro Python `max_parallel_images` (1–16, predeterminado 4).
+La Batch API oficial exige `completion_window: "24h"`: el plazo de
+**30 minutos es local por beat** y se conserva entre reanudaciones.
+Si al llegar al plazo el batch no ha entregado su PNG, el runner
+registra `batch_timed_out`, solicita una cancelación no bloqueante y
+lanza una generación estándar de **ese mismo beat**. Un batch con fallo
+terminal o respuesta inválida también usa generación directa individual.
+La cancelación no garantiza que el batch no se cobre: puede acabar
+durante el proceso de cancelación; el manifiesto advierte de ese riesgo.
+Si la clave falta al intentar fallback, el estado permanece recuperable.
 
-Se crea `images/manifest.json`, más el PNG
-`images/block_<id>/<beat_id>.png` y su fichero de estado
-`images/block_<id>/<beat_id>.json`. El estado se persiste **antes** del
-POST de generación y conserva el `task_id` inmediatamente después de
-recibirlo. Un error de polling `429/502/503/504` se reintenta con
-backoff; el tiempo máximo por tarea es 30 minutos por defecto, medidos
-desde el envío original y conservados entre reanudaciones. Al vencer ese
-plazo, se realiza una última consulta de estado. Si no hay respuesta
-`done` y existe un `task_id` confirmado, el fallback
-`OPENAI_IMAGE_FALLBACK_ENABLED=true` llama a
-`POST https://api.openai.com/v1/images/generations` con el **mismo
-modelo** Flare/Sunburst, el mismo prompt con prefijo, `low`,
-`png` y `size=1280x720`. Son las dimensiones 16:9 más pequeñas que
-cumplen el mínimo de píxeles, múltiplos de 16 y relación de aspecto
-documentados para la API oficial:
-https://developers.openai.com/api/docs/guides/image-generation
-
-Si AI33 devuelve un fallo confirmado de precio, rechaza explícitamente
-el envío, falla durante el polling o devuelve una imagen inválida o
-indescargable, **solo ese beat** activa el mismo fallback oficial
-inmediatamente, sin agotar los 30 minutos. Se registra el estado
-`ai33_failed` y el motivo; un `task_id` confirmado se conserva. Si
-no está configurada la clave oficial, `--images-only` reanuda el
-fallback desde ese estado sin repetir el POST a AI33.
-
-Si la respuesta del POST de AI33 se pierde, se detiene con estado
-`submitting_unknown`: **no se activa el fallback ni se repite una
-solicitud potencialmente cobrada**. Si se pierde la respuesta del POST
-oficial, se guarda `openai_submitting_unknown` y también se bloquea
-cualquier repetición automática. La configuración por defecto no
-reintenta dos veces una solicitud de generación. La tarea original de
-AI33 puede completarse después de que el fallback haya terminado y
-generar un cargo adicional en ese proveedor: no se afirma que el
-timeout cancele ni reembolse el trabajo de AI33.
-
-Para recuperar una ejecución después de un timeout o error de descarga,
-sin volver a llamar a OpenAI ni seleccionar otro avatar:
+Cada estado conserva `input_file_id`, `batch_id`, timestamp original,
+fingerprint del prompt efectivo, estado de cancelación y, cuando existe,
+`openai_usage`. Se escribe `batch_creating_unknown` **antes** de crear
+el batch y `direct_submitting_unknown` antes del POST de generación
+estándar: si la respuesta de pago se pierde, `--images-only` **no**
+duplica el POST ni inicia un segundo batch a ciegas. Una nueva subida
+de un archivo tras una subida incierta no lanza generación de imágenes,
+pues solo la creación posterior del batch inicia el trabajo.
 
 ```powershell
-uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --images-only
+.\run.ps1 test2 --images-only
 ```
 
-Se verifica el SHA-256 del guion y la existencia de los artefactos B2
-antes de recuperar cualquier tarea. Una ejecución completa nueva evita
-borrar el output si existen tareas AI33 pendientes. Si se reejecuta B2
-y cambia una descripción con una tarea previa del mismo beat, el runner
-se detiene en vez de reutilizar una imagen cuyo prompt ya no coincide.
+El runner verifica el SHA-256 del guion y los artefactos B2 antes de
+reanudar. Los PNG y batches completados no se regeneran. Los estados
+heredados de AI33 se protegen: no se borran ni convierten implícitamente
+en nuevas solicitudes oficiales, para evitar duplicación de pagos.
+Reconcílialos primero y utiliza una raíz de salida separada para una
+nueva generación. AI33 se mantiene **solo** en la etapa de voz Fish.
 
-Los metadatos por beat y el manifiesto incluyen modelo, ID de tarea,
-archivo local, SHA-256, dimensiones y `credit_cost` real que comunica
-AI33; `provider_credit_cost` se conserva por separado. En fallback, el
-artefacto queda marcado `provider: openai_official_fallback` con el
-`task_id` original de AI33 (si existe), `fallback_reason: ai33_timeout`\no `ai33_failure` y, para este último, `ai33_failure_stage`,
-`size: 1280x720` y, si la API lo incluye, `openai_usage`. Los
-contadores `ai33_count` y `openai_fallback_count` aparecen en el
-manifiesto y en el informe de ejecución. Los costes oficiales en USD
-no se inventan: se conserva el uso devuelto por OpenAI y el gasto real
-se consulta en su plataforma. Los créditos de un AI33 que haya
-superado el plazo pueden seguir pendientes incluso si el fallback
-terminó. Los créditos AI33 no se mezclan con las métricas USD de
-OpenAI de B1.1/B1.2/B2.
+Documentación oficial:
+https://developers.openai.com/api/docs/guides/batch
+https://developers.openai.com/api/docs/guides/image-generation
 
 Para el uso habitual en PowerShell, desde la raíz del repositorio:
 ```powershell
@@ -412,7 +370,7 @@ uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script h
 ```
 
 El runner termina después de escribir B2 y `visual_plan.json`, sin llamar
-a AI33 ni a la API oficial de OpenAI para imágenes. Cuando quieras
+a la API oficial de OpenAI para imágenes. Cuando quieras
 generarlas, ejecuta `--images-only` a partir del B2 guardado. Los clientes GPU existentes siguen siendo herramientas
 independientes: esta etapa no activa Salad ni conecta todavía un vídeo
 final al plan B2.

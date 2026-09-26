@@ -326,7 +326,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         assert plan["avatar"]["file"] == "avatar.png"
         return {
             "model_id": "gpt-image-2.5-flare",
-            "items": [{"credit_cost": 882}],
+            "items": [{"provider": "openai_batch"}],
         }
 
     monkeypatch.setattr(runner, "_generate_images", fake_images)
@@ -368,10 +368,9 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             "status": "completed",
             "count": 1,
             "model_id": "gpt-image-2.5-flare",
-            "credits": 882,
-            "ai33_count": 1,
-            "openai_fallback_count": 0,
-            "ai33_timeout_charge_may_be_pending": False,
+            "openai_batch_count": 1,
+            "openai_direct_fallback_count": 0,
+            "batch_may_complete_later": False,
         }
         assert consolidated["run"]["script_file"] == destination.name + ".txt"
         expected_file = monk if destination == first else teacher

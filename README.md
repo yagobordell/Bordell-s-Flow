@@ -109,7 +109,7 @@ uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script h
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png --from B2
 # Finish after B2, without generating images or invoking AI33/OpenAI image APIs:
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png --no-image
-# Continue existing paid AI33 image tasks without repeating any OpenAI bot:
+# Resume independent official OpenAI image batches without repeating any planning bot:
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --images-only
 ```
 
@@ -129,21 +129,27 @@ reutiliza los artefactos previos del mismo guion. La consola
 imprime una línea de tiempo y coste inmediatamente después de terminar cada bot.
 
 Al terminar B2, el runner genera automáticamente **una imagen PNG por beat con
-`description` no vacía** mediante AI33 Pro/OpenSpeaker: Flare, 16:9, 1K y
-calidad low por defecto. Configura `AI33_API_KEY` en `.env` y utiliza
-`AI33_IMAGE_MODEL=gpt-image-2.5-sunburst` si deseas cambiar a Sunburst.
-Los beats `avatar` con descripción nula no generan PNG. Las imágenes y sus
-costes en créditos se guardan en `images/` dentro del output del guion. Si
-se interrumpe una tarea, `--images-only` recupera los `task_id` guardados
-sin volver a generar ni repetir los bots. Si una tarea AI33 conocida supera
-30 minutos desde su envío, se activa el fallback de la API oficial de OpenAI
-con el **mismo modelo y prompt**, calidad low, PNG y tamaño mínimo 16:9
-(`1280x720`). Requiere `OPENAI_API_KEY` y se controla con
-`OPENAI_IMAGE_FALLBACK_ENABLED=true`. El ID de AI33 permanece registrado:
-su tarea podría completarse más tarde y ocasionar también un cargo allí.
-`--no-image` (alias de `--skip-images`) permite ejecutar solo B1.1/B1.2/B2
-mientras iteras los prompts: se conservan los outputs de B2 y
-`visual_plan.json`, sin generar imágenes ni llamar a AI33/OpenAI Images.
+`description` no vacía** mediante la API oficial de OpenAI, sin AI33
+para imágenes. Cada beat tiene **su propio batch**, con un archivo JSONL de
+**una única solicitud** a `/v1/images/generations` (`n=1`); nunca se agrupan
+dos imágenes en el mismo batch. Se conserva el prompt original de B2 con
+el prefijo `iphone 6 photo done by an elderly:  `, Flare por defecto, `low`,
+PNG y `1280x720`. Configura `OPENAI_API_KEY` en `.env`; AI33 sigue
+utilizándose únicamente para la voz. Los beats `avatar` sin descripción
+no crean batches. Un máximo de cuatro imágenes se procesan a la vez.
+
+El límite **local** de cada batch es de 30 minutos desde su envío
+(`OPENAI_IMAGE_BATCH_TIMEOUT_SECONDS=1800`), aunque la ventana oficial
+de Batch API es `24h`. Si el batch no ha entregado la imagen a tiempo,
+el runner intenta cancelarlo y genera **solo ese beat** mediante
+`POST /v1/images/generations` estándar. La cancelación puede tardar,
+por lo que un batch tardío podría facturarse además de la generación
+directa. Los IDs, tiempos y estados se conservan por beat para
+`--images-only`; una petición de pago con resultado desconocido no se
+repite automáticamente. Si hay estados anteriores de AI33 pendientes,
+deben reconciliarse y usarse en otro output: no se los borra ni se
+crean batches paralelos a ciegas. `--no-image` (alias `--skip-images`)
+permite guardar B2 sin hacer ninguna llamada a la API de imágenes.
 
 **Límite actual:** esto genera un plan visual e imágenes fijas, **no** un vídeo final.
 Los wrappers GPU independientes y los servicios de Salad siguen en el

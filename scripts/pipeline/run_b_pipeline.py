@@ -24,8 +24,8 @@ from ai_video_factory.bots.workflow import materialize_blocks, validate_beats
 from ai_video_factory.compositor.static_preview import generate_static_preview
 from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
-from ai_video_factory.providers.ai33_images import (
-    AI33ImageOptions,
+from ai_video_factory.providers.openai_batch_images import (
+    ImageBatchOptions,
     generate_b2_images,
     has_pending_image_tasks,
 )
@@ -95,12 +95,12 @@ def parse_args() -> argparse.Namespace:
         "--no-image",
         dest="skip_images",
         action="store_true",
-        help="Save B2 outputs without AI33 or official OpenAI image generation.",
+        help="Save B2 outputs without official OpenAI image generation.",
     )
     parser.add_argument(
         "--images-only",
         action="store_true",
-        help="Generate or resume images from an existing B2 visual_plan.json, without OpenAI.",
+        help="Generate or resume official OpenAI image batches from an existing B2 visual plan, without repeating the planning bots.",
     )
     parser.add_argument(
         "--no-audio",
@@ -480,14 +480,14 @@ def _clear_outputs_from(output: Path, start_from: str) -> None:
 
 
 
-def _ai33_options() -> AI33ImageOptions:
-    return AI33ImageOptions(
-        model_id=settings.ai33_image_model,
-        aspect_ratio=settings.ai33_image_aspect_ratio,
-        resolution=settings.ai33_image_resolution,
-        quality=settings.ai33_image_quality,
-        poll_timeout_seconds=settings.ai33_poll_timeout_seconds,
-        poll_interval_seconds=settings.ai33_poll_interval_seconds,
+def _image_batch_options() -> ImageBatchOptions:
+    return ImageBatchOptions(
+        model_id=settings.openai_image_model,
+        size=settings.openai_image_size,
+        quality=settings.openai_image_quality,
+        timeout_seconds=settings.openai_image_batch_timeout_seconds,
+        poll_interval_seconds=settings.openai_image_batch_poll_interval_seconds,
+        max_parallel_images=settings.openai_image_max_parallel,
     )
 
 
@@ -496,10 +496,8 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
         generate_b2_images,
         output,
         plan,
-        api_key=settings.ai33_api_key,
-        options=_ai33_options(),
-        fallback_enabled=settings.openai_image_fallback_enabled,
-        openai_api_key=settings.openai_api_key,
+        api_key=settings.openai_api_key,
+        options=_image_batch_options(),
     )
     plan["image_assets"] = [
         {
@@ -521,17 +519,14 @@ def _image_summary(manifest: dict[str, object]) -> dict[str, object]:
         "status": "completed",
         "count": len(items),
         "model_id": manifest["model_id"],
-        # Only confirmed AI33 charges are included; a timed-out task may
-        # complete later and still be billed by AI33 independently.
-        "credits": sum(item.get("credit_cost") or 0 for item in items),
-        "ai33_count": sum(
-            item.get("provider", "ai33") == "ai33" for item in items
+        "openai_batch_count": sum(
+            item.get("provider") == "openai_batch" for item in items
         ),
-        "openai_fallback_count": sum(
-            item.get("provider") == "openai_official_fallback" for item in items
+        "openai_direct_fallback_count": sum(
+            item.get("provider") == "openai_direct_fallback" for item in items
         ),
-        "ai33_timeout_charge_may_be_pending": any(
-            item.get("provider") == "openai_official_fallback" for item in items
+        "batch_may_complete_later": any(
+            item.get("batch_may_complete_later") for item in items
         ),
     }
 
@@ -595,7 +590,7 @@ async def _run_images_only(script_file: Path, output_root: Path) -> None:
         or not plan_path.is_file()
         or not (output / "B2" / "merged_output.json").is_file()
     ):
-        raise SystemExit("Cannot resume AI33 images without a complete saved B2 visual plan")
+        raise SystemExit("Cannot resume OpenAI image batches without a complete saved B2 visual plan")
     report = json.loads(report_path.read_text(encoding="utf-8"))
     source_sha = hashlib.sha256(script_file.read_bytes()).hexdigest()
     if report.get("run", {}).get("script_sha256") != source_sha:
@@ -624,7 +619,7 @@ async def _run_images_only(script_file: Path, output_root: Path) -> None:
     _write(report_path, report)
     print(
         f"  Images complete: {len(manifest['items'])} PNG "
-        f"({manifest.get('openai_fallback_count', 0)} OpenAI fallback)",
+        f"({manifest.get('openai_direct_fallback_count', 0)} direct fallbacks)",
         flush=True,
     )
 
@@ -938,8 +933,9 @@ async def main() -> None:
         previous_output = output_root / script_file.stem
         if previous_output.exists() and has_pending_image_tasks(previous_output):
             raise SystemExit(
-                "Existing AI33 tasks may still be running. Use --images-only to "
-                "recover them before starting a new B pipeline run."
+                "Existing paid image tasks may still be running (OpenAI Batch or legacy "
+                "AI33). Use --images-only to resume an OpenAI batch, or reconcile "
+                "legacy tasks, before replacing this output."
             )
         if previous_output.exists() and unfinished_audio_runs(previous_output):
             raise SystemExit(
