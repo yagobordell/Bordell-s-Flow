@@ -23,11 +23,11 @@ def join_audio_blocks(inputs: list[Path], destination: Path) -> dict[str, object
     """
     if not inputs:
         raise AudioJoinError("Cannot join an empty list of audio blocks")
-    if shutil.which("ffmpeg") is None:
-        raise AudioJoinError("ffmpeg is required on PATH to join Fish Audio blocks")
     for source in inputs:
         if source.is_symlink() or not source.is_file() or source.stat().st_size == 0:
             raise AudioJoinError(f"Missing or linked Fish Audio block: {source}")
+    if shutil.which("ffmpeg") is None:
+        raise AudioJoinError("ffmpeg is required on PATH to join Fish Audio blocks")
 
     if destination.parent.is_symlink() or destination.is_symlink():
         raise AudioJoinError("Refusing linked narration output directory or file")
