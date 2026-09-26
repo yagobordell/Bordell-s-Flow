@@ -8,8 +8,11 @@ explicitly versioned downstream migration before any production cutover.
 import asyncio
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.resources import files
+
+from pydantic import BaseModel
 
 from ai_video_factory.providers.base import StructuredTextProvider
 
@@ -170,28 +173,68 @@ class BPipelineResult:
         }
 
 
+async def _call_stage[OutputT: BaseModel](
+    stage: str,
+    block_id: int | None,
+    payload: dict[str, object],
+    *,
+    provider: StructuredTextProvider,
+    model: str,
+    prompt: str,
+    output_type: type[OutputT],
+    on_input: Callable[[str, int | None, dict[str, object]], None] | None,
+    on_api_response: Callable[[str, int | None, object], None] | None,
+) -> OutputT:
+    """Record exactly the submitted input and meter the returned API response."""
+    if on_input is not None:
+        on_input(stage, block_id, payload)
+    kwargs = {
+        "model": model,
+        "instructions": _instructions(prompt),
+        "input_text": _payload(payload),
+        "output_type": output_type,
+    }
+    metered = getattr(provider, "generate_structured_with_response", None)
+    if callable(metered):
+        output, response = await metered(**kwargs)
+        if on_api_response is not None:
+            on_api_response(stage, block_id, response)
+        return output
+    return await provider.generate_structured(**kwargs)
+
+
 async def run_b_pipeline(
     script: str,
     *,
     provider: StructuredTextProvider,
     model: str = "gpt-6-luna",
     max_parallel_calls: int = 8,
+    on_input: Callable[[str, int | None, dict[str, object]], None] | None = None,
+    on_output: Callable[[str, int | None, dict[str, object]], None] | None = None,
+    on_api_response: Callable[[str, int | None, object], None] | None = None,
 ) -> BPipelineResult:
     """Run each new bot with the exact audited prompts and deterministic join order."""
     if not script or not script.strip():
         raise BPipelineValidationError("Authoritative script must not be empty")
     if max_parallel_calls < 1:
         raise ValueError("max_parallel_calls must be at least 1")
-    b11 = await provider.generate_structured(
+    b11 = await _call_stage(
+        "B1.1",
+        None,
+        {"plain_script_for_recording": script},
+        provider=provider,
         model=model,
-        instructions=_instructions("b1_1.md"),
-        input_text=_payload({"plain_script_for_recording": script}),
+        prompt="b1_1.md",
         output_type=B11Output,
+        on_input=on_input,
+        on_api_response=on_api_response,
     )
     _require_success("B1.1", b11.error)
     if b11.narrative_core is None or b11.blocks is None:
         raise BPipelineValidationError("B1.1 did not provide required successful fields")
     materialized = materialize_blocks(script, b11.blocks)
+    if on_output is not None:
+        on_output("B1.1", None, b11.model_dump())
     semaphore = asyncio.Semaphore(max_parallel_calls)
 
     # Two independent parallel waves: no B2 starts until every B1.2 succeeds.
@@ -202,13 +245,20 @@ async def run_b_pipeline(
             blocks=(block,),
         )
         async with semaphore:
-            output = await provider.generate_structured(
+            output = await _call_stage(
+                "B1.2",
+                block.block_id,
+                b12_input.model_dump(),
+                provider=provider,
                 model=model,
-                instructions=_instructions("b1_2.md"),
-                input_text=_payload(b12_input.model_dump()),
+                prompt="b1_2.md",
                 output_type=B12Output,
+                on_input=on_input,
+                on_api_response=on_api_response,
             )
         validate_beats(output, block)
+        if on_output is not None:
+            on_output("B1.2", block.block_id, output.model_dump())
         return output
 
     b12_results = await asyncio.gather(*(b12_one(block) for block in materialized))
@@ -232,13 +282,20 @@ async def run_b_pipeline(
             ),
         )
         async with semaphore:
-            output = await provider.generate_structured(
+            output = await _call_stage(
+                "B2",
+                block.block_id,
+                b2_input.model_dump(),
+                provider=provider,
                 model=model,
-                instructions=_instructions("b2.md"),
-                input_text=_payload(b2_input.model_dump()),
+                prompt="b2.md",
                 output_type=B2Output,
+                on_input=on_input,
+                on_api_response=on_api_response,
             )
         validate_visuals(output, b2_input)
+        if on_output is not None:
+            on_output("B2", block.block_id, output.model_dump())
         return output
 
     b2_results = await asyncio.gather(
