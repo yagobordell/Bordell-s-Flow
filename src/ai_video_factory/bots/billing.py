@@ -56,8 +56,8 @@ class ApiCostLedger:
         output_details = _field(usage, "output_tokens_details")
         input_tokens = _tokens(_field(usage, "input_tokens"))
         output_tokens = _tokens(_field(usage, "output_tokens"))
-        cached_tokens = _tokens(_field(details, "cached_tokens", 0))
-        cache_write_tokens = _tokens(_field(details, "cache_write_tokens", 0))
+        cached_tokens = _tokens(_field(details, "cached_tokens"))
+        cache_write_tokens = _tokens(_field(details, "cache_write_tokens"))
         reasoning_tokens = _tokens(_field(output_details, "reasoning_tokens", 0))
 
         record: dict[str, object] = {
@@ -107,8 +107,6 @@ class ApiCostLedger:
                 record["pricing_note"] = (
                     "Service tier absent from response; Standard assumed from runner request"
                 )
-            if _field(details, "cache_write_tokens") is None:
-                record["cache_write_tokens_assumed_zero"] = True
 
         self._records.append(record)
 
