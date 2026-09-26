@@ -314,8 +314,8 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
 
     monkeypatch.setattr(runner, "parse_args", lambda: args)
     monkeypatch.setattr(runner.settings, "openai_api_key", "fake-key")
-    monkeypatch.setattr(runner.settings, "openai_b_model", "gpt-6-luna")
-    monkeypatch.setattr(runner.settings, "openai_b_reasoning_effort", "medium")
+    monkeypatch.setattr(runner.settings, "openai_model", "gpt-6-luna")
+    monkeypatch.setattr(runner.settings, "openai_reasoning_effort", "medium")
     monkeypatch.setattr(runner.settings, "output_dir", tmp_path / "output")
     monkeypatch.setattr(runner, "OpenAIProvider", lambda **kwargs: SimpleNamespace(**kwargs))
     monkeypatch.setattr(runner, "run_b_pipeline", fake_run)
@@ -364,6 +364,8 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             (destination / "run_report.json").read_text(encoding="utf-8")
         )
         assert consolidated["run"]["status"] == "completed"
+        assert consolidated["run"]["model"] == "gpt-6-luna"
+        assert consolidated["run"]["reasoning_effort"] == "medium"
         assert consolidated["run"]["image_generation"] == {
             "status": "completed",
             "count": 1,
@@ -509,3 +511,13 @@ def test_stage_wall_clock_is_not_sum_of_parallel_call_durations() -> None:
     assert result["stages"]["B2"]["elapsed_seconds"] is None
     assert result["calls"][1]["block_id"] == 1
     assert result["calls"][2]["block_id"] == 2
+
+
+def test_single_text_model_and_medium_reasoning_configuration() -> None:
+    from ai_video_factory.config import Settings
+
+    fields = Settings.model_fields
+    assert fields["openai_model"].default == "gpt-6-luna"
+    assert fields["openai_reasoning_effort"].default == "medium"
+    assert "openai_b_model" not in fields
+    assert "openai_b_reasoning_effort" not in fields

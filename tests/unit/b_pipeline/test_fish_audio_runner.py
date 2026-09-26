@@ -276,3 +276,36 @@ def test_images_start_after_b2_without_waiting_for_fish_narration(
         "images_started",
         "audio_completed",
     ]
+
+
+def test_fish_director_uses_shared_text_model_without_external_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.bots.contracts import B11Output
+
+    captured: dict[str, object] = {}
+    provider = object()
+    stt_client = object()
+
+    async def fake_generate_fish_audio(
+        source: str, output: Path, **kwargs: object,
+    ) -> dict[str, object]:
+        captured.update(kwargs)
+        assert source == "Uno. Dos."
+        assert output == tmp_path
+        return {"status": "completed"}
+
+    monkeypatch.setattr(runner, "generate_fish_audio", fake_generate_fish_audio)
+    monkeypatch.setattr(runner, "OpenAISttClient", lambda *, api_key: stt_client)
+    monkeypatch.setattr(runner.settings, "openai_model", "gpt-6-luna")
+    monkeypatch.setattr(runner.settings, "openai_reasoning_effort", "medium")
+    monkeypatch.setattr(runner.settings, "openai_api_key", "fake-key")
+    b11 = B11Output.model_validate(_b11_payload())
+    outcome = asyncio.run(
+        runner._generate_audio("Uno. Dos.", tmp_path, provider=provider, b11=b11)
+    )
+
+    assert outcome == {"status": "completed"}
+    assert captured["director_model"] == runner.settings.openai_model
+    assert captured["provider"] is provider
+    assert captured["stt_client"] is stt_client

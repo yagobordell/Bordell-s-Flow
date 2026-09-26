@@ -178,9 +178,11 @@ When API usage or pricing is missing, the corresponding cost is marked
 unavailable instead of silently reporting zero.
 
 
-All three bots use `OPENAI_B_MODEL=gpt-6-luna` and
-`OPENAI_B_REASONING_EFFORT=medium` (both are independently configurable). The CLI
-explicitly sets the OpenAI provider to Standard/default service tier. It uses
+B1.1, B1.2, B2 and the Fish director use the **same** text model
+`OPENAI_MODEL=gpt-6-luna` and `OPENAI_REASONING_EFFORT=medium`.
+There are no separate `OPENAI_B_MODEL` or `OPENAI_B_REASONING_EFFORT`
+settings. The CLI explicitly sets the OpenAI provider to Standard/default
+service tier. It uses
 Responses API Structured Outputs; therefore the instruction documents' requested
 Markdown code fence is replaced by the schema transport, with all semantic and
 field-level rules unchanged.

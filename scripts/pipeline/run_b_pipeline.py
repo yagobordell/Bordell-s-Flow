@@ -644,7 +644,7 @@ async def _generate_audio(
         output,
         b11=b11,
         max_parallel_calls=max_parallel_calls,
-        director_model=settings.openai_b_model,
+        director_model=settings.openai_model,
         provider=provider,
         ai33_api_key=settings.ai33_api_key,
         voice_id=settings.ai33_fish_voice_id,
@@ -700,7 +700,7 @@ async def _run_audio_only(
         if resume
         else OpenAIProvider(
             api_key=settings.openai_api_key,
-            reasoning_effort=settings.openai_b_reasoning_effort,
+            reasoning_effort=settings.openai_reasoning_effort,
             service_tier="default",
         )
     )
@@ -987,8 +987,8 @@ async def main() -> None:
         "script_file": script_file.name,
         "avatar": avatar_metadata,
         "script_sha256": script_sha256,
-        "model": settings.openai_b_model,
-        "reasoning_effort": settings.openai_b_reasoning_effort,
+        "model": settings.openai_model,
+        "reasoning_effort": settings.openai_reasoning_effort,
     }
     if args.from_stage != "B1.1":
         run_metadata["resumed_from"] = args.from_stage
@@ -1083,7 +1083,7 @@ async def main() -> None:
     try:
         provider = OpenAIProvider(
             api_key=settings.openai_api_key,
-            reasoning_effort=settings.openai_b_reasoning_effort,
+            reasoning_effort=settings.openai_reasoning_effort,
             service_tier="default",
         )
         if audio_enabled:
@@ -1095,7 +1095,7 @@ async def main() -> None:
         result = await run_b_pipeline(
             script,
             provider=provider,
-            model=settings.openai_b_model,
+            model=settings.openai_model,
             max_parallel_calls=args.max_parallel_calls,
             start_from=args.from_stage,
             previous_b11=previous_b11,

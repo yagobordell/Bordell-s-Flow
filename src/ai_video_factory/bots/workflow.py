@@ -17,6 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from ai_video_factory.config import settings
 from ai_video_factory.providers.base import StructuredTextProvider
 
 from .contracts import (
@@ -325,7 +326,7 @@ async def run_b_pipeline(
     script: str,
     *,
     provider: StructuredTextProvider,
-    model: str = "gpt-6-luna",
+    model: str | None = None,
     max_parallel_calls: int = 8,
     start_from: Literal["B1.1", "B1.2", "B2"] = "B1.1",
     previous_b11: B11Output | None = None,
@@ -344,6 +345,8 @@ async def run_b_pipeline(
     ) = None,
 ) -> BPipelineResult:
     """Run each bot with its current prompt file and deterministic join order."""
+    if model is None:
+        model = settings.openai_model
     if not script or not script.strip():
         raise BPipelineValidationError("Authoritative script must not be empty")
     if max_parallel_calls < 1:

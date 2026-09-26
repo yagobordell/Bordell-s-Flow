@@ -15,9 +15,7 @@ class Settings(BaseSettings):
 
     openai_api_key: str | None = None
     openai_model: str = "gpt-6-luna"
-    openai_reasoning_effort: str = "high"
-    openai_b_model: str = "gpt-6-luna"
-    openai_b_reasoning_effort: str = "medium"
+    openai_reasoning_effort: str = "medium"
 
     # AI33 is retained for Fish/voice only; B2 images use the official OpenAI API.
     ai33_api_key: str | None = None

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from ai_video_factory.bots.billing import ApiCostLedger
+from ai_video_factory.config import settings
 from ai_video_factory.bots.contracts import (
     B2Input,
     B2Output,
@@ -117,9 +118,12 @@ class FakeProvider:
         )
 
 
-def test_pipeline_parallel_calls_exact_source_and_medium_model_routing() -> None:
+def test_pipeline_parallel_calls_exact_source_and_medium_model_routing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "openai_model", "gpt-6-luna")
     fake = FakeProvider()
-    result = asyncio.run(run_b_pipeline(SCRIPT, provider=fake, model="gpt-6-luna"))
+    result = asyncio.run(run_b_pipeline(SCRIPT, provider=fake))
     assert fake.b12_started == {1, 2}
     assert fake.b2_started == {1, 2}
     assert [r.block_id for r in result.b12] == [1, 2]

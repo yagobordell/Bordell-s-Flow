@@ -128,6 +128,10 @@ solo etapas posteriores, usa `--from B1.2` o `--from B2`; el runner valida y
 reutiliza los artefactos previos del mismo guion. La consola
 imprime una línea de tiempo y coste inmediatamente después de terminar cada bot.
 
+B1.1, B1.2, B2 y el director de voz Fish usan el mismo modelo de
+texto `OPENAI_MODEL=gpt-6-luna` y `OPENAI_REASONING_EFFORT=medium`.
+No existe una configuración independiente `OPENAI_B_MODEL`.
+
 Al terminar B2, el runner genera automáticamente **una imagen PNG por beat con
 `description` no vacía** mediante la API oficial de OpenAI, sin AI33
 para imágenes. Cada beat tiene **su propio batch**, con un archivo JSONL de
