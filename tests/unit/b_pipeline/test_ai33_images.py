@@ -189,6 +189,15 @@ def test_timeout_keeps_task_id_and_images_stage_can_resume(
     options = ai33.AI33ImageOptions(
         poll_timeout_seconds=1, poll_interval_seconds=0.01
     )
+    original_request = fake.request_json
+    busy = [True]
+
+    def request_until_resume(method, path, payload=None):
+        if busy[0] and method == "GET":
+            return {"id": "task-1", "status": "doing", "progress": 10}
+        return original_request(method, path, payload)
+
+    fake.request_json = request_until_resume
     ticks = iter([0.0, 0.0, 2.0])
     with monkeypatch.context() as patch:
         patch.setattr(ai33.time, "monotonic", lambda: next(ticks))
@@ -203,6 +212,7 @@ def test_timeout_keeps_task_id_and_images_stage_can_resume(
     assert state["task_id"] == "task-1"
     assert state["status"] == "submitted"
     assert ai33.has_pending_image_tasks(tmp_path)
+    busy[0] = False
     with monkeypatch.context() as patch:
         patch.setattr(ai33.time, "sleep", lambda _seconds: None)
         result = ai33.generate_b2_images(
@@ -303,8 +313,12 @@ def test_images_only_uses_existing_b2_without_openai_or_avatar(
     )
     observed = []
 
-    def fake_stage(destination, plan, *, api_key, options):
-        observed.append((destination, plan, api_key, options))
+    def fake_stage(
+        destination, plan, *, api_key, options, fallback_enabled, openai_api_key
+    ):
+        observed.append(
+            (destination, plan, api_key, options, fallback_enabled, openai_api_key)
+        )
         return {
             **options.public(),
             "items": [{
@@ -318,10 +332,14 @@ def test_images_only_uses_existing_b2_without_openai_or_avatar(
 
     monkeypatch.setattr(runner, "generate_b2_images", fake_stage)
     monkeypatch.setattr(runner.settings, "ai33_api_key", "test-key")
+    monkeypatch.setattr(runner.settings, "openai_api_key", "test-openai-key")
+    monkeypatch.setattr(runner.settings, "openai_image_fallback_enabled", True)
     asyncio.run(runner._run_images_only(script, tmp_path / "output"))
     assert len(observed) == 1
     assert observed[0][2] == "test-key"
     assert observed[0][3].model_id == "gpt-image-2.5-flare"
+    assert observed[0][4] is True
+    assert observed[0][5] == "test-openai-key"
     report = json.loads((output / "run_report.json").read_text(encoding="utf-8"))
     assert report["run"]["status"] == "completed"
     assert report["run"]["image_generation"] == {
@@ -329,11 +347,15 @@ def test_images_only_uses_existing_b2_without_openai_or_avatar(
         "count": 1,
         "model_id": "gpt-image-2.5-flare",
         "credits": 882,
+        "ai33_count": 1,
+        "openai_fallback_count": 0,
+        "ai33_timeout_charge_may_be_pending": False,
     }
     plan = json.loads((output / "visual_plan.json").read_text(encoding="utf-8"))
     assert plan["image_assets"] == [
         {
             "block_id": 1, "beat_id": "1B",
             "file": "images/block_1/1B.png", "sha256": "test-sha",
+            "provider": "ai33",
         }
     ]
