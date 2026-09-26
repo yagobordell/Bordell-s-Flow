@@ -176,9 +176,8 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             )
             on_stage_complete(stage, 1, merged)
             streamed_stages.append(stage)
-            assert streamed_stages[call_start:] == list(("B1.1", "B1.2", "B2")[:len(
-                streamed_stages[call_start:]
-            )])
+            completed_this_run = streamed_stages[call_start:]
+            assert completed_this_run == ["B1.1", "B1.2", "B2"][:len(completed_this_run)]
         return SimpleNamespace(
             b11=SimpleNamespace(model_dump=lambda: {"pipeline_stage": "B1.1"}),
             b12=[SimpleNamespace(block_id=1)],
@@ -229,11 +228,6 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         )
         assert [block["block_id"] for block in b12_merged["blocks"]] == [1]
         assert [block["block_id"] for block in b2_merged["blocks"]] == [1]
-        timing = json.loads((destination / "timings.json").read_text(encoding="utf-8"))
-        assert timing["status"] == "completed"
-        assert timing["run_elapsed_seconds"] >= 0
-        assert timing["stages"]["B1.2"]["elapsed_seconds"] == 0.25
-        assert timing["stages"]["B2"]["call_count"] == 1
         consolidated = json.loads(
             (destination / "run_report.json").read_text(encoding="utf-8")
         )
@@ -241,7 +235,11 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         assert consolidated["run"]["script_file"] == destination.name + ".txt"
         assert consolidated["api_costs"]["pricing_status"] == "complete"
         assert consolidated["api_costs"]["estimated_total_usd"] == "0.00006000"
-        assert consolidated["timings"]["run_elapsed_seconds"] >= 0
+        timing = consolidated["timings"]
+        assert timing["status"] == "completed"
+        assert timing["run_elapsed_seconds"] >= 0
+        assert timing["stages"]["B1.2"]["elapsed_seconds"] == 0.25
+        assert timing["stages"]["B2"]["call_count"] == 1
         for old_name in ("api_costs.json", "timings.json", ".b_pipeline_run.json"):
             assert not (destination / old_name).exists()
     assert json.loads((first / "B1.1" / "input.json").read_text(encoding="utf-8")) == {
@@ -258,7 +256,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             "  B2 total: 0.250 s $0.00002000",
         ]
         assert re.fullmatch(
-            r"  Run total: \\d+\\.\\d{3} s \\$0\\.00006000",
+            r"  Run total: \d+\.\d{3} s \$0\.00006000",
             lines[offset + 3],
         ) is not None
     assert streamed_stages == ["B1.1", "B1.2", "B2"] * 3
