@@ -5,11 +5,10 @@ import hashlib
 import hmac
 import json
 import os
-from pathlib import Path
-from collections.abc import Sequence
-from typing import Any
-
 import re
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 
 _CHUNK_SIZE = 16 * 1024 * 1024
 
