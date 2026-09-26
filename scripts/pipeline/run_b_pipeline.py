@@ -24,12 +24,12 @@ from ai_video_factory.bots.workflow import materialize_blocks, validate_beats
 from ai_video_factory.compositor.static_preview import generate_static_preview
 from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
-from ai_video_factory.providers.openai_stt import OpenAISttClient
 from ai_video_factory.providers.ai33_images import (
     AI33ImageOptions,
     generate_b2_images,
     has_pending_image_tasks,
 )
+from ai_video_factory.providers.openai_stt import OpenAISttClient
 
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
