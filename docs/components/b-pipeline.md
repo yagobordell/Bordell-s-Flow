@@ -291,8 +291,15 @@ superado el plazo pueden seguir pendientes incluso si el fallback
 terminó. Los créditos AI33 no se mezclan con las métricas USD de
 OpenAI de B1.1/B1.2/B2.
 
-Para iterar solo los bots sin crear imágenes, usa `--skip-images`.
-Después ejecuta `--images-only` para generar lo pendiente a partir
-del B2 guardado. Los clientes GPU existentes siguen siendo herramientas
+Para iterar solo los bots sin crear imágenes, usa `--no-image`
+(alias compatible de `--skip-images`):
+
+```powershell
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png --no-image
+```
+
+El runner termina después de escribir B2 y `visual_plan.json`, sin llamar
+a AI33 ni a la API oficial de OpenAI para imágenes. Cuando quieras
+generarlas, ejecuta `--images-only` a partir del B2 guardado. Los clientes GPU existentes siguen siendo herramientas
 independientes: esta etapa no activa Salad ni conecta todavía un vídeo
 final al plan B2.

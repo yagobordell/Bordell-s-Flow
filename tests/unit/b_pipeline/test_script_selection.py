@@ -28,6 +28,32 @@ def _make_avatar(
     return path
 
 
+@pytest.mark.parametrize("flag", ["--no-image", "--skip-images"])
+def test_no_image_and_skip_images_are_equivalent_cli_flags(
+    flag: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_b_pipeline.py", "--script", "roma.txt", "--avatar", "monje.png", flag],
+    )
+    args = runner.parse_args()
+    assert args.skip_images is True
+    assert args.images_only is False
+    assert args.script == "roma.txt"
+    assert args.avatar == "monje.png"
+
+
+def test_no_image_cannot_be_combined_with_images_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_b_pipeline.py", "--images-only", "--no-image"],
+    )
+    with pytest.raises(SystemExit):
+        runner.parse_args()
+
+
 def test_default_scripts_location_is_input_root() -> None:
     assert runner.DEFAULT_SCRIPTS_DIR == Path("data/input")
 
@@ -390,6 +416,23 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     assert streamed_stages == ["B1.1", "B1.2", "B2"] * 3
     assert printed_events == ["B1.1", "B1.2", "B2", "Run"] * 3
     assert "This token-based estimate is not an OpenAI invoice" not in terminal
+
+    # The new alias must stop after B2, preserving all planning artifacts.
+    async def image_stage_must_not_run(_destination, _plan):
+        pytest.fail("--no-image must not invoke AI33 or the official OpenAI fallback")
+
+    monkeypatch.setattr(runner, "_generate_images", image_stage_must_not_run)
+    args.skip_images = True
+    asyncio.run(runner.main())
+    skipped_output = tmp_path / "output" / "roma"
+    assert (skipped_output / "B2" / "merged_output.json").is_file()
+    assert (skipped_output / "visual_plan.json").is_file()
+    assert not (skipped_output / "images").exists()
+    skipped_report = json.loads(
+        (skipped_output / "run_report.json").read_text(encoding="utf-8")
+    )
+    assert skipped_report["run"]["status"] == "completed"
+    assert "image_generation" not in skipped_report["run"]
 
 
 def test_existing_direct_path_still_supported(tmp_path: Path) -> None:

@@ -86,8 +86,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--skip-images",
+        "--no-image",
+        dest="skip_images",
         action="store_true",
-        help="Save B2 outputs without running the AI33 image stage.",
+        help="Save B2 outputs without AI33 or official OpenAI image generation.",
     )
     parser.add_argument(
         "--images-only",
@@ -96,7 +98,7 @@ def parse_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
     if args.images_only and (args.skip_images or args.from_stage != "B1.1"):
-        parser.error("--images-only cannot be combined with --skip-images or --from.")
+        parser.error("--images-only cannot be combined with --no-image, --skip-images or --from.")
     if args.images_only and args.avatar is not None:
         parser.error("--images-only uses the saved avatar; omit --avatar.")
     if args.script_file is not None and args.script is not None:

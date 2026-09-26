@@ -64,6 +64,8 @@ uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --list-ava
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png --from B1.2
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png --from B2
+# Finish after B2, without generating images or invoking AI33/OpenAI image APIs:
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png --no-image
 # Continue existing paid AI33 image tasks without repeating any OpenAI bot:
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --images-only
 ```
@@ -96,7 +98,9 @@ con el **mismo modelo y prompt**, calidad low, PNG y tamaño mínimo 16:9
 (`1280x720`). Requiere `OPENAI_API_KEY` y se controla con
 `OPENAI_IMAGE_FALLBACK_ENABLED=true`. El ID de AI33 permanece registrado:
 su tarea podría completarse más tarde y ocasionar también un cargo allí.
-`--skip-images` permite ejecutar solo B1.1/B1.2/B2 mientras iteras los prompts.
+`--no-image` (alias de `--skip-images`) permite ejecutar solo B1.1/B1.2/B2
+mientras iteras los prompts: se conservan los outputs de B2 y
+`visual_plan.json`, sin generar imágenes ni llamar a AI33/OpenAI Images.
 
 **Límite actual:** esto genera un plan visual e imágenes fijas, **no** un vídeo final.
 Los wrappers GPU independientes y los servicios de Salad siguen en el
