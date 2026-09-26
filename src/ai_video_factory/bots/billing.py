@@ -114,7 +114,7 @@ class ApiCostLedger:
         self,
         *,
         blocks: int | None,
-        run_status: Literal["completed", "failed"],
+        run_status: Literal["running", "completed", "failed"],
     ) -> dict[str, object]:
         ordered = sorted(
             self._records,
