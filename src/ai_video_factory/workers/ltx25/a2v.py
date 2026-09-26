@@ -53,6 +53,9 @@ LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-distilled-a95ab856-fp8cpu-gridpad-eagers
 LTX_A2V_REFERENCE_GENERATION_PROFILE = (
     "ltx25-a2v-reference-distilled-a95ab856-model6c7e5e5-fp8cpu-eagersdpa-v1"
 )
+LTX_A2V_REFERENCE_COMPILED_GENERATION_PROFILE = (
+    "ltx25-a2v-reference-compiled-distilled-a95ab856-model6c7e5e5-fp8cpu-eagersdpa-v1"
+)
 LTX_A2V_DEV_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
 LTX_A2V_GUIDED_GENERATION_PROFILE = (
     "ltx25-a2v-guided-dev-a95ab856-model6c7e5e5-fp8disk-eagersdpa-v2"
@@ -92,11 +95,12 @@ class LTXAudioToVideoParameters(BaseModel):
         if value not in (
             LTX_A2V_GENERATION_PROFILE,
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_REFERENCE_COMPILED_GENERATION_PROFILE,
             LTX_A2V_DEV_GENERATION_PROFILE,
             LTX_A2V_GUIDED_GENERATION_PROFILE,
         ):
             raise ValueError(
-                "generation_profile must be a supported fast, reference, dev, or guided A2V profile"
+                "generation_profile must be a supported fast, reference, reference-compiled, dev, or guided A2V profile"
             )
         return value
 
@@ -219,6 +223,7 @@ class _A2VBindings:
     model_paths: Any
     quantization_kind: Any
     offload_mode: Any
+    compilation_config: Any
     image_conditioning_input: Any
     encode_video: Any
     get_video_chunks_number: Any
@@ -241,6 +246,7 @@ def _load_a2v_bindings() -> _A2VBindings:
             LTXV_LORA_COMFY_RENAMING_MAP,
             LoraPathStrengthAndSDOps,
         )
+        from ltx_core.model.transformer.compiling import CompilationConfig
         from ltx_core.model.video_vae import get_video_chunks_number
         from ltx_core.model.video_vae.transformer import apply as diffvae_apply
         from ltx_pipelines.a2vid_two_stage import A2VidPipelineTwoStage
@@ -270,6 +276,7 @@ def _load_a2v_bindings() -> _A2VBindings:
         model_paths=ModelPaths,
         quantization_kind=QuantizationKind,
         offload_mode=OffloadMode,
+        compilation_config=CompilationConfig,
         image_conditioning_input=ImageConditioningInput,
         encode_video=encode_video,
         get_video_chunks_number=get_video_chunks_number,
@@ -894,8 +901,12 @@ class DirectLTX25AudioToVideoBackend:
         generation_started = time.monotonic()
         audio_probe = probe_audio(audio_path)
         _validate_audio_duration(audio_probe, fps=parameters.fps)
-        reference = (
-            parameters.generation_profile == LTX_A2V_REFERENCE_GENERATION_PROFILE
+        reference = parameters.generation_profile in (
+            LTX_A2V_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_REFERENCE_COMPILED_GENERATION_PROFILE,
+        )
+        compiled = (
+            parameters.generation_profile == LTX_A2V_REFERENCE_COMPILED_GENERATION_PROFILE
         )
         guided = parameters.generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
         reference_audio_plan: ReferenceAudioPlan | None = None
@@ -1156,6 +1167,7 @@ class DirectLTX25AudioToVideoBackend:
             "audio_frozen_stage_1": True,
             "audio_frozen_stage_2": True,
             "quantization": "fp8_cast",
+            "transformer_compilation": "blocks" if compiled else "eager",
             "offload_mode": "disk" if guided else "cpu",
             "ltx_model_revision": os.environ.get(
                 "LTX_MODEL_REVISION", LTX25_MODEL_REVISION
@@ -1244,7 +1256,11 @@ class DirectLTX25AudioToVideoBackend:
 
         self._mode_controller.activate("audio_to_video")
         fast = generation_profile == LTX_A2V_GENERATION_PROFILE
-        reference = generation_profile == LTX_A2V_REFERENCE_GENERATION_PROFILE
+        reference = generation_profile in (
+            LTX_A2V_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_REFERENCE_COMPILED_GENERATION_PROFILE,
+        )
+        compiled = generation_profile == LTX_A2V_REFERENCE_COMPILED_GENERATION_PROFILE
         distilled = fast or reference
         if not distilled:
             self._model_files.validate_dev()
@@ -1299,6 +1315,7 @@ class DirectLTX25AudioToVideoBackend:
             device=bindings.torch.device(self._device),
             quantization=quantization,
             offload_mode=offload_mode,
+            **({"compilation_config": bindings.compilation_config()} if compiled else {}),
         )
         self._pipeline_profile = generation_profile
         self._pipeline_params = bindings.detect_params(str(transformer))
