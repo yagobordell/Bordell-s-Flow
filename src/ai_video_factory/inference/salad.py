@@ -112,9 +112,15 @@ class SaladClient:
         resolved_instance_id = str(instance_id or "").strip()
         if not resolved_instance_id:
             raise ValueError("instance_id is required")
-        instance = self._get(
-            self._build_container_url() + f"/instances/{resolved_instance_id}"
-        )
+        url = self._build_container_url() + f"/instances/{resolved_instance_id}"
+        request = Request(url, method="GET", headers=self._headers())
+        status_code, detail = self._request(request)
+        # Salad's instance endpoint currently documents HTTP 202 with an
+        # instance JSON body; older SDKs describe HTTP 200. Accept only these
+        # explicit success responses, never a transient/error response.
+        if status_code not in {200, 202}:
+            self._raise_request_error(status_code=status_code, url=url, detail=detail)
+        instance = _decode_object(detail, url=url)
         if instance.get("id") != resolved_instance_id:
             raise RuntimeError("Salad returned a different instance for its ID")
         return instance
