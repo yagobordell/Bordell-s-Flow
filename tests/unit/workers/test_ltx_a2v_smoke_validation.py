@@ -71,7 +71,10 @@ def test_controlled_a2v_smoke_checks_local_python_before_gpu_allocation() -> Non
     script = Path("scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1").read_text(
         encoding="utf-8"
     )
-    assert "LTX_A2V_GUIDED_GENERATION_PROFILE" in script
+    source_check = Path("scripts/smoke/check_ltx25_python_source.py").read_text(
+        encoding="utf-8"
+    )
+    assert "LTX_A2V_GUIDED_GENERATION_PROFILE" in source_check
     assert "check_ltx25_python_source.py" in script
     assert "python -c" not in script
     assert script.index("& $Python $SourceCheck $ExpectedLtxModule") < script.index(
