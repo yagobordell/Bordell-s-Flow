@@ -18,6 +18,15 @@ class Settings(BaseSettings):
     openai_reasoning_effort: str = "high"
     openai_b_model: str = "gpt-6-luna"
     openai_b_reasoning_effort: str = "medium"
+
+    # AI33 Pro images are generated locally after B2; Salad services are unchanged.
+    ai33_api_key: str | None = None
+    ai33_image_model: str = "gpt-image-2.5-flare"
+    ai33_image_aspect_ratio: str = "16:9"
+    ai33_image_resolution: str = "1K"
+    ai33_image_quality: str = "low"
+    ai33_poll_timeout_seconds: int = 1800
+    ai33_poll_interval_seconds: float = 8.0
     openai_service_tier: str = "flex"
     openai_fallback_service_tier: str = "default"
     qwen_image_21_model: str = "Qwen/Qwen-Image-2.1"

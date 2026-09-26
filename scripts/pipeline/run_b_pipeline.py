@@ -19,6 +19,11 @@ from ai_video_factory.bots.contracts import B11Output, B12Output
 from ai_video_factory.bots.workflow import materialize_blocks, validate_beats
 from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
+from ai_video_factory.providers.ai33_images import (
+    AI33ImageOptions,
+    generate_b2_images,
+    has_pending_image_tasks,
+)
 
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
@@ -79,7 +84,21 @@ def parse_args() -> argparse.Namespace:
         default="B1.1",
         help="Start at this stage using validated earlier outputs in data/output/<script>.",
     )
+    parser.add_argument(
+        "--skip-images",
+        action="store_true",
+        help="Save B2 outputs without running the AI33 image stage.",
+    )
+    parser.add_argument(
+        "--images-only",
+        action="store_true",
+        help="Generate or resume images from an existing B2 visual_plan.json, without OpenAI.",
+    )
     args = parser.parse_args()
+    if args.images_only and (args.skip_images or args.from_stage != "B1.1"):
+        parser.error("--images-only cannot be combined with --skip-images or --from.")
+    if args.images_only and args.avatar is not None:
+        parser.error("--images-only uses the saved avatar; omit --avatar.")
     if args.script_file is not None and args.script is not None:
         parser.error("Specify either a direct script path or --script, not both.")
     if args.list_scripts and args.list_avatars:
@@ -89,8 +108,10 @@ def parse_args() -> argparse.Namespace:
         or args.script is not None
         or args.avatar is not None
         or args.from_stage != "B1.1"
+        or args.images_only
+        or args.skip_images
     ):
-        parser.error("Listing cannot be combined with script or avatar selection.")
+        parser.error("Listing cannot be combined with generation options.")
     return args
 
 
@@ -417,6 +438,83 @@ def _clear_outputs_from(output: Path, start_from: str) -> None:
         visual_plan.unlink()
 
 
+
+def _ai33_options() -> AI33ImageOptions:
+    return AI33ImageOptions(
+        model_id=settings.ai33_image_model,
+        aspect_ratio=settings.ai33_image_aspect_ratio,
+        resolution=settings.ai33_image_resolution,
+        quality=settings.ai33_image_quality,
+        poll_timeout_seconds=settings.ai33_poll_timeout_seconds,
+        poll_interval_seconds=settings.ai33_poll_interval_seconds,
+    )
+
+
+async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, object]:
+    manifest = await asyncio.to_thread(
+        generate_b2_images,
+        output,
+        plan,
+        api_key=settings.ai33_api_key,
+        options=_ai33_options(),
+    )
+    plan["image_assets"] = [
+        {
+            "block_id": item["block_id"],
+            "beat_id": item["beat_id"],
+            "file": item["file"],
+            "sha256": item["sha256"],
+        }
+        for item in manifest["items"]
+    ]
+    _write(output / "visual_plan.json", plan)
+    return manifest
+
+
+async def _run_images_only(script_file: Path, output_root: Path) -> None:
+    """Resume image tasks using B2 artifacts without repeating any planning calls."""
+    root = output_root.resolve()
+    source = script_file.resolve()
+    cwd = Path.cwd().resolve()
+    if root == cwd or root in cwd.parents or source.is_relative_to(root):
+        raise SystemExit("--output must be a dedicated output root outside the input directory")
+    output = output_root / script_file.stem
+    report_path = output / "run_report.json"
+    plan_path = output / "visual_plan.json"
+    if (
+        output.is_symlink()
+        or output.is_junction()
+        or report_path.is_symlink()
+        or plan_path.is_symlink()
+        or not report_path.is_file()
+        or not plan_path.is_file()
+        or not (output / "B2" / "merged_output.json").is_file()
+    ):
+        raise SystemExit("Cannot resume AI33 images without a complete saved B2 visual plan")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    source_sha = hashlib.sha256(script_file.read_bytes()).hexdigest()
+    if report.get("run", {}).get("script_sha256") != source_sha:
+        raise SystemExit("The selected script differs from the saved B2 image source")
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    try:
+        manifest = await _generate_images(output, plan)
+    except Exception:
+        report["run"]["image_generation"] = {"status": "incomplete"}
+        _write(report_path, report)
+        raise
+    report["run"]["image_generation"] = {
+        "status": "completed",
+        "count": len(manifest["items"]),
+        "model_id": manifest["model_id"],
+        "credits": sum(item.get("credit_cost") or 0 for item in manifest["items"]),
+    }
+    report["run"]["status"] = "completed"
+    report["timings"]["status"] = "completed"
+    report["api_costs"]["run_status"] = "completed"
+    _write(report_path, report)
+    print(f"  AI33 images complete: {len(manifest['items'])} PNG", flush=True)
+
+
 class BotArtifacts:
     """Persist the exact request payload and validated response of every bot call."""
 
@@ -566,6 +664,11 @@ async def main() -> None:
         script_name=args.script,
         script_file=args.script_file,
     )
+    if getattr(args, "images_only", False):
+        output_root = args.output if args.output is not None else settings.output_dir
+        await _run_images_only(script_file, output_root)
+        return
+
     avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
     avatar_bytes, avatar_width, avatar_height = load_avatar_png(avatar_file)
     if not settings.openai_api_key:
@@ -592,6 +695,12 @@ async def main() -> None:
     previous_b11: B11Output | None = None
     previous_b12: tuple[B12Output, ...] | None = None
     if args.from_stage == "B1.1":
+        previous_output = output_root / script_file.stem
+        if previous_output.exists() and has_pending_image_tasks(previous_output):
+            raise SystemExit(
+                "Existing AI33 tasks may still be running. Use --images-only to "
+                "recover them before starting a new B pipeline run."
+            )
         output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
     else:
         output = _prepare_resume_output(output_root, script_file, avatar_file=avatar_file)
@@ -703,7 +812,21 @@ async def main() -> None:
         # This application-owned binding is intentionally absent from audited B2 payloads.
         visual_plan["avatar"] = avatar_metadata
         _write(output / "visual_plan.json", visual_plan)
+        if not getattr(args, "skip_images", False):
+            run_metadata["image_generation"] = {"status": "running"}
+            save_report("running", len(result.b12))
+            image_manifest = await _generate_images(output, visual_plan)
+            run_metadata["image_generation"] = {
+                "status": "completed",
+                "count": len(image_manifest["items"]),
+                "model_id": image_manifest["model_id"],
+                "credits": sum(
+                    item.get("credit_cost") or 0 for item in image_manifest["items"]
+                ),
+            }
     except Exception:
+        if run_metadata.get("image_generation") == {"status": "running"}:
+            run_metadata["image_generation"] = {"status": "incomplete"}
         _, timing_report = save_report("failed", None)
         _print_metric("Run", timing_report["run_elapsed_seconds"], None)
         raise
