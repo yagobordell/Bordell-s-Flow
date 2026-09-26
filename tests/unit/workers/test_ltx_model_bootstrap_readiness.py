@@ -112,7 +112,8 @@ def test_a2v_preparation_and_live_readiness_share_verified_bootstrap_gate(
     _enable_gate(monkeypatch, marker)
     monkeypatch.setenv("LTX_INCLUDE_A2V_DEV_ASSETS", "false")
     backend = DirectLTX25AudioToVideoBackend(model_root=root)
-    monkeypatch.setattr(backend, "_get_bindings", lambda: make_a2v_bindings({}))
+    bindings = make_a2v_bindings({})
+    backend._bindings = bindings
 
     with pytest.raises(ModelBootstrapPendingError, match="bootstrap"):
         backend.prepare()
@@ -139,7 +140,7 @@ def test_i2v_preparation_waits_for_same_verified_bootstrap(
     bindings = SimpleNamespace(
         torch=SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
     )
-    monkeypatch.setattr(backend, "_get_bindings", lambda: bindings)
+    backend._bindings = bindings
     monkeypatch.setattr(backend, "_get_or_build_pipeline", lambda _: object())
 
     with pytest.raises(ModelBootstrapPendingError, match="bootstrap"):
