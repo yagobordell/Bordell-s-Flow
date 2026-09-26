@@ -51,7 +51,7 @@ non-interactive, the runner exits with instructions rather than selecting an
 arbitrary script. A missing or invalid selection cannot start inference.
 
 Each script gets its own default output directory,
-`data/output/b_pipeline/<script-name>/`. A repeated run of the same script removes
+`data/output/<script-name>/` (directly under the output root, without a `b_pipeline` subfolder). A repeated run of the same script removes
 **that script's previous output directory before the first API call**, then creates
 a fresh run. Other script folders are not touched. The source `.txt` is never
 deleted or rewritten. `--output PATH` overrides the **output root**, not the
@@ -64,12 +64,13 @@ One finished script has the following structure (B1.2 and B2 repeat one subfolde
 per frozen block):
 
 ```text
-data/output/b_pipeline/historia_roma/
+data/output/historia_roma/
   .b_pipeline_run.json
   B1.1/
     input.json
     output.json
   B1.2/
+    merged_output.json
     block_1/
       input.json
       output.json
@@ -77,6 +78,7 @@ data/output/b_pipeline/historia_roma/
       input.json
       output.json
   B2/
+    merged_output.json
     block_1/
       input.json
       output.json
@@ -85,6 +87,7 @@ data/output/b_pipeline/historia_roma/
       output.json
   visual_plan.json
   api_costs.json
+  timings.json
 ```
 
 Each `input.json` is the exact decoded payload sent to that bot, including the
@@ -92,6 +95,11 @@ single materialized block for B1.2 and the upstream beats for B2. Each
 `output.json` contains the corresponding validated bot response. Inputs are
 written before each request and outputs after stage validation; a failed run
 can therefore leave diagnostic inputs and successfully completed outputs.
+The application-owned `B1.2/merged_output.json` and
+`B2/merged_output.json` combine the validated blocks in ascending `block_id`
+order without making a second model call or changing the original single-block
+input/output contracts. `visual_plan.json` remains the application-owned
+visual join.
 
 At the end, `api_costs.json` and the console report a USD estimate for B1.1,
 B1.2, B2 and the whole run. It uses actual `response.usage` counts, prices
@@ -102,8 +110,13 @@ $0.50; long-context requests above 272K input tokens use the documented
 multipliers. The source is https://developers.openai.com/api/docs/pricing .
 When API usage or verified pricing is missing, the total is `null`/unavailable
 rather than silently reporting zero; a partial priced subtotal remains visible.
-This is a token-based estimate, not the final invoice. Failed runs also save
-the available partial usage.
+Failed runs also save the available partial usage.
+`timings.json` and the console report elapsed seconds for B1.1, the full
+parallel B1.2 wave, the full parallel B2 wave and the complete run. The timing
+file also contains a duration for each block-level call and the sum of call
+durations. **Stage elapsed time is wall-clock time**, not the sum of its
+parallel calls. The run timer includes replacing the selected output and
+writing the final artifacts. Costs appear as a stage total and a run total.
 
 All three bots use `OPENAI_B_MODEL=gpt-6-luna` and
 `OPENAI_B_REASONING_EFFORT=medium` (both are independently configurable). The CLI
@@ -112,9 +125,11 @@ Responses API Structured Outputs; therefore the instruction documents' requested
 Markdown code fence is replaced by the schema transport, with all semantic and
 field-level rules unchanged.
 
-Outputs are grouped under the script's `B1.1/`, `B1.2/block_<id>/` and
-`B2/block_<id>/` directories, with an application-owned `visual_plan.json` join
-and a separate `api_costs.json` ledger. No legacy phase2 artifact is changed.
+Outputs are grouped directly under `data/output/<script-name>/`, within the
+`B1.1/`, `B1.2/block_<id>/` and `B2/block_<id>/` directories, with
+`B1.2/merged_output.json`, `B2/merged_output.json`, the application-owned
+`visual_plan.json`, `api_costs.json` and `timings.json`. No legacy phase2
+artifact is changed.
 
 The old bot implementations live only in `src/ai_video_factory/legacy_bots/` for
 compatibility with the existing phase3–9 production path. The active
