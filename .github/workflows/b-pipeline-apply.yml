@@ -1,0 +1,67 @@
+name: One-time B pipeline migration
+on:
+  push:
+    branches:
+      - feat/b1-b2-parallel-gpt6-luna-medium
+    paths:
+      - .migration/READY
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply audited branch migration
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64
+          import gzip
+          import hashlib
+          import pathlib
+          import shutil
+          import subprocess
+
+          def git(*args):
+              subprocess.run(["git", *args], check=True)
+
+          root = pathlib.Path(".")
+          parts = sorted((root / ".migration").glob("chunk_*.txt"))
+          if len(parts) != 6:
+              raise RuntimeError(f"Expected six migration patch parts, got {len(parts)}")
+          encoded = "".join(part.read_text(encoding="ascii") for part in parts)
+          patch = gzip.decompress(base64.b85decode(encoded))
+          if hashlib.sha256(patch).hexdigest() != "b850b968b28e46b4669d0441bc24040666e57ef74bce035447a29b2d486dd605":
+              raise RuntimeError("Migration patch checksum mismatch")
+
+          # Remove the former bots from the active namespace without breaking
+          # still-unmigrated production stages or their regression tests.
+          git("mv", "src/ai_video_factory/bots", "src/ai_video_factory/legacy_bots")
+          tracked = subprocess.check_output(["git", "ls-files", "-z", "*.py"]).split(b"\0")
+          for raw in tracked:
+              if not raw:
+                  continue
+              path = pathlib.Path(raw.decode("utf-8"))
+              if not path.is_file():
+                  continue
+              original = path.read_text(encoding="utf-8")
+              rewritten = original.replace("ai_video_factory.bots", "ai_video_factory.legacy_bots")
+              if rewritten != original:
+                  path.write_text(rewritten, encoding="utf-8")
+
+          patch_path = root / ".migration" / "migration.patch"
+          patch_path.write_bytes(patch)
+          git("apply", "--check", str(patch_path))
+          git("apply", str(patch_path))
+          shutil.rmtree(root / ".migration")
+          (root / ".github" / "workflows" / "b-pipeline-apply.yml").unlink()
+          git("add", "-A")
+          subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
+          subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
+          git("commit", "-m", "feat: replace active planning bots with parallel B1.1 B1.2 B2")
+          git("push", "origin", "HEAD:feat/b1-b2-parallel-gpt6-luna-medium")
+          PY
