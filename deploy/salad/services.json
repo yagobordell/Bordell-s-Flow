@@ -69,6 +69,7 @@
         "LTX_MODEL_DOWNLOAD_THROUGHPUT_GRACE_SECONDS": "300",
         "LTX_MODEL_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS": "180",
         "LTX_MODEL_DOWNLOAD_MAX_WORKERS": "2",
+        "LTX_REQUIRE_VERIFIED_SHARED_MANIFEST": "true",
         "SALAD_NETWORK_TEST_URL": "https://huggingface.co/Lightricks/LTX-2.5/resolve/6c7e5e573ac1667efc83407806fe9b0b93730e60/diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors",
         "HF_XET_CLIENT_ENABLE_ADAPTIVE_CONCURRENCY": "true",
         "HF_HUB_DOWNLOAD_TIMEOUT": "60",
