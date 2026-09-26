@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any
 
-from ai_video_factory.bots.continuity import ContinuityBot, ContinuityDecision
+from ai_video_factory.legacy_bots.continuity import ContinuityBot, ContinuityDecision
 from ai_video_factory.domain import ContinuityEntity, NarrativeBlock
 from ai_video_factory.providers.base import StatefulStructuredResult
 

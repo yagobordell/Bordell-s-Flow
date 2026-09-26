@@ -1,4 +1,4 @@
-from ai_video_factory.bots.shots import ShotPlannerBot
+from ai_video_factory.legacy_bots.shots import ShotPlannerBot
 from ai_video_factory.domain import Beat, BlockContinuity, ContinuityEntity, Scene, Shot
 
 

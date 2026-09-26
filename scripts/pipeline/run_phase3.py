@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ai_video_factory.bots import ContinuityBot
+from ai_video_factory.legacy_bots import ContinuityBot
 from ai_video_factory.config import settings
 from ai_video_factory.domain import NarrativeBlock
 from ai_video_factory.providers import OpenAIProvider

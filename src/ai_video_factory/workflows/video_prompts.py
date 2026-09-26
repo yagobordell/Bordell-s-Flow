@@ -1,7 +1,7 @@
 import asyncio
 import math
 
-from ai_video_factory.bots.video_prompts import VideoPromptBot
+from ai_video_factory.legacy_bots.video_prompts import VideoPromptBot
 from ai_video_factory.domain import Shot, ShotTiming, StoryboardFrame, VideoPrompt
 
 

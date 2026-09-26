@@ -1,6 +1,6 @@
 import asyncio
 
-from ai_video_factory.bots.visual_references import VisualReferenceBot
+from ai_video_factory.legacy_bots.visual_references import VisualReferenceBot
 from ai_video_factory.domain import (
     BlockContinuity,
     ContinuityEntity,

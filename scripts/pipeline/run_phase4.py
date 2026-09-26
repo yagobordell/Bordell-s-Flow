@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ai_video_factory.bots import VisualReferenceBot
+from ai_video_factory.legacy_bots import VisualReferenceBot
 from ai_video_factory.config import settings
 from ai_video_factory.domain import BlockContinuity, ContinuityEntity, NarrativeBlock
 from ai_video_factory.providers import OpenAIProvider

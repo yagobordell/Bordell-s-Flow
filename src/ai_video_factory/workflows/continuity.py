@@ -1,4 +1,4 @@
-from ai_video_factory.bots.continuity import ContinuityBot
+from ai_video_factory.legacy_bots.continuity import ContinuityBot
 from ai_video_factory.domain import BlockContinuity, ContinuityEntity, NarrativeBlock
 
 

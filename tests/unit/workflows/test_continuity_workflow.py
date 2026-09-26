@@ -1,6 +1,6 @@
 import asyncio
 
-from ai_video_factory.bots.continuity import ContinuityDecision, NewContinuityEntity
+from ai_video_factory.legacy_bots.continuity import ContinuityDecision, NewContinuityEntity
 from ai_video_factory.domain import ContinuityEntity, NarrativeBlock
 from ai_video_factory.providers.base import StatefulStructuredResult
 from ai_video_factory.workflows.continuity import plan_continuity

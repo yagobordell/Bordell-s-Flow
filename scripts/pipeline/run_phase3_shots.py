@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ai_video_factory.bots import ShotPlannerBot
+from ai_video_factory.legacy_bots import ShotPlannerBot
 from ai_video_factory.config import settings
 from ai_video_factory.domain import Beat, BlockContinuity, ContinuityEntity, Scene
 from ai_video_factory.providers import OpenAIProvider

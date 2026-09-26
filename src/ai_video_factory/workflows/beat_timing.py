@@ -1,4 +1,4 @@
-from ai_video_factory.bots.beat_timing import BeatTimingBot
+from ai_video_factory.legacy_bots.beat_timing import BeatTimingBot
 from ai_video_factory.domain import Beat, BeatTiming, NarrationAudio, NarrationWord, SourceScript
 
 

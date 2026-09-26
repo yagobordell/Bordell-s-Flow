@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from ai_video_factory.bots.storyboard_frames import (
+from ai_video_factory.legacy_bots.storyboard_frames import (
     STORYBOARD_FRAME_INSTRUCTIONS,
     StoryboardFrameBot,
     StoryboardPromptOutput,

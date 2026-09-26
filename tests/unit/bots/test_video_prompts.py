@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from ai_video_factory.bots.video_prompts import (
+from ai_video_factory.legacy_bots.video_prompts import (
     VIDEO_PROMPT_INSTRUCTIONS,
     VideoPromptBot,
     VideoPromptOutput,

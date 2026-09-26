@@ -3,7 +3,7 @@ from typing import Any
 
 import pytest
 
-from ai_video_factory.bots.beat_timing import BeatTimingBot, BeatWordBoundariesOutput
+from ai_video_factory.legacy_bots.beat_timing import BeatTimingBot, BeatWordBoundariesOutput
 from ai_video_factory.domain import Beat, NarrationAudio, NarrationWord, SourceScript
 from ai_video_factory.workflows.beat_timing import build_beat_timings
 

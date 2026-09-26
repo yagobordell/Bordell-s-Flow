@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     openai_model: str = "gpt-5.6-luna"
     openai_reasoning_effort: str = "high"
+    openai_b_model: str = "gpt-6-luna"
+    openai_b_reasoning_effort: str = "medium"
     openai_service_tier: str = "flex"
     openai_fallback_service_tier: str = "default"
     qwen_image_21_model: str = "Qwen/Qwen-Image-2.1"

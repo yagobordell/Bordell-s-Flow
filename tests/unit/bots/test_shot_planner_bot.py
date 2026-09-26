@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any
 
-from ai_video_factory.bots.shots import PlannedShot, ShotPlannerBot, ShotPlanOutput
+from ai_video_factory.legacy_bots.shots import PlannedShot, ShotPlannerBot, ShotPlanOutput
 from ai_video_factory.domain import Beat, ContinuityEntity, Scene
 from ai_video_factory.providers.base import StatefulStructuredResult
 

@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ai_video_factory.bots import StoryboardFrameBot
+from ai_video_factory.legacy_bots import StoryboardFrameBot
 from ai_video_factory.config import settings
 from ai_video_factory.domain import Shot, ShotTiming, VisualReference
 from ai_video_factory.providers import OpenAIProvider
