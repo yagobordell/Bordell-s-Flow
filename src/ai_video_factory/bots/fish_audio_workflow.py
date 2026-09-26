@@ -127,7 +127,7 @@ async def _generate_block(
     block = payload.blocks[0]
     directory = run_dir / "blocks" / f"block_{block.block_id}"
     state_path = directory / "task.json"
-    input_data = payload.model_dump()
+    input_data = json.loads(payload.model_dump_json())
     source_sha = hashlib.sha256(block.text.encode("utf-8")).hexdigest()
     if state_path.exists():
         state = _read_json(state_path)
