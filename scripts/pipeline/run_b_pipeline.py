@@ -288,25 +288,55 @@ async def main() -> None:
     run_started = perf_counter()
     output_root = args.output if args.output is not None else settings.output_dir
     output = _prepare_output(output_root, script_file)
-    _write(
-        output / ".b_pipeline_run.json",
-        {
-            "script_file": script_file.name,
-            "script_sha256": hashlib.sha256(source_bytes).hexdigest(),
-            "model": settings.openai_b_model,
-            "reasoning_effort": settings.openai_b_reasoning_effort,
-        },
-    )
-    print(f"Selected script: {script_file}")
+    run_metadata = {
+        "script_file": script_file.name,
+        "script_sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "model": settings.openai_b_model,
+        "reasoning_effort": settings.openai_b_reasoning_effort,
+    }
     artifacts = BotArtifacts(output)
     ledger = ApiCostLedger()
     timings = TimingLedger()
-    provider = OpenAIProvider(
-        api_key=settings.openai_api_key,
-        reasoning_effort=settings.openai_b_reasoning_effort,
-        service_tier="default",
-    )
+
+    def save_report(
+        status: Literal["running", "completed", "failed"],
+        blocks: int | None,
+    ) -> tuple[dict[str, object], dict[str, object]]:
+        costs = ledger.report(blocks=blocks, run_status=status)
+        timing_report = timings.report(
+            run_seconds=perf_counter() - run_started,
+            status=status,
+        )
+        _write(
+            output / "run_report.json",
+            {
+                "run": {**run_metadata, "status": status},
+                "api_costs": costs,
+                "timings": timing_report,
+            },
+        )
+        return costs, timing_report
+
+    def stage_complete(
+        stage: str,
+        blocks: int,
+        merged_output: dict[str, object] | None,
+    ) -> None:
+        if merged_output is not None:
+            _write(output / stage / "merged_output.json", merged_output)
+        costs, timing_report = save_report("running", blocks)
+        elapsed = timing_report["stages"][stage]["elapsed_seconds"]
+        if elapsed is None:
+            raise RuntimeError(f"Missing elapsed time for completed stage {stage}")
+        _print_metric(stage, elapsed, costs["stages"][stage]["estimated_cost_usd"])
+
+    save_report("running", None)
     try:
+        provider = OpenAIProvider(
+            api_key=settings.openai_api_key,
+            reasoning_effort=settings.openai_b_reasoning_effort,
+            service_tier="default",
+        )
         result = await run_b_pipeline(
             script,
             provider=provider,
@@ -317,26 +347,20 @@ async def main() -> None:
             on_api_response=ledger.record,
             on_call_duration=timings.record_call,
             on_stage_duration=timings.record_stage,
+            on_stage_complete=stage_complete,
         )
-        _write(output / "B1.2" / "merged_output.json", result.merged_b12_output())
-        _write(output / "B2" / "merged_output.json", result.merged_b2_output())
         _write(output / "visual_plan.json", result.visual_plan())
     except Exception:
-        report = ledger.report(blocks=None, run_status="failed")
-        _write(output / "api_costs.json", report)
-        timing_report = timings.report(run_seconds=perf_counter() - run_started, status="failed")
-        _write(output / "timings.json", timing_report)
-        _print_costs(report)
-        _print_timings(timing_report)
+        _, timing_report = save_report("failed", None)
+        _print_metric("Run", timing_report["run_elapsed_seconds"], None)
         raise
 
-    report = ledger.report(blocks=len(result.b12), run_status="completed")
-    _write(output / "api_costs.json", report)
-    timing_report = timings.report(run_seconds=perf_counter() - run_started, status="completed")
-    _write(output / "timings.json", timing_report)
-    _print_costs(report)
-    _print_timings(timing_report)
-    print(f"B1.1/B1.2/B2 validated; canonical artifacts: {output.resolve()}")
+    costs, timing_report = save_report("completed", len(result.b12))
+    _print_metric(
+        "Run",
+        timing_report["run_elapsed_seconds"],
+        costs["estimated_total_usd"],
+    )
 
 
 if __name__ == "__main__":
