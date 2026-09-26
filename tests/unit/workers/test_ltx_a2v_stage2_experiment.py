@@ -75,6 +75,8 @@ def test_submit_cli_defaults_unchanged_and_two_step_is_explicit(
     args = parse_args()
     assert args.profile == "reference"
     assert args.reference_stage2_steps == 3
+    assert args.prompt == "An elderly monk speaking calmly to the camera."
+    assert LTXAudioToVideoParameters().prompt == args.prompt
 
     monkeypatch.setattr(
         sys,
@@ -115,6 +117,9 @@ def test_retry_orchestrator_pins_new_digest_and_restores_original_safely() -> No
     assert "LTX_REQUIRE_VERIFIED_SHARED_MANIFEST" in script
     assert "LTX_MODEL_DOWNLOAD_MAX_WORKERS" in script
     assert "Get-FileHash" in script
+    assert '$Prompt = "An elderly monk speaking calmly to the camera."' in script
+    assert "A locked-off shot" not in script
+    assert "LastFrame" not in script
     assert 'if ($Published -ne $ExperimentalPinnedImage)' in script
     assert "-StartupReplicas 2" in script
     assert "-ReferenceStage2Steps 2" in script
