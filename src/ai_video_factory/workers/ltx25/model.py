@@ -289,6 +289,10 @@ class LTXModelFiles:
                 raise FileNotFoundError(
                     "LTX-2.5 verified shared-model manifest is pending"
                 ) from None
+            if not isinstance(installed, dict):
+                raise FileNotFoundError(
+                    "LTX-2.5 verified shared-model manifest is malformed"
+                )
             records = installed.get("files")
             if (
                 installed.get("schema_version") != 1
