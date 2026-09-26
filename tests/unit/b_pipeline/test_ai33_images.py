@@ -97,6 +97,9 @@ def test_b2_uses_exact_description_and_skips_null_avatar() -> None:
         ("1C", "Mapa del Mediterráneo"),
     ]
     assert plan["blocks"][0]["beats"][0]["description"] is None
+    assert ai33.AI33ImageOptions().request(jobs[0]["description"])["prompt"] == (
+        "iphone 6 photo done by an elderly:    Producto en una mesa  "
+    )
 
 
 def test_duplicate_or_unsafe_beat_id_rejected_before_api_calls() -> None:
@@ -149,6 +152,10 @@ def test_flare_generation_persists_both_images_and_reuses_completed_run(
         tmp_path, plan, api_key=None, options=options, client=fake
     )
     assert repeated["items"] == first["items"]
+    assert all(
+        call[2]["prompt"].startswith(ai33.IMAGE_PROMPT_PREFIX)
+        for call in fake.calls if call[1] in {"/v1i/task/price", "/v1i/task/generate-image"}
+    )
     assert len(fake.calls) == counts
     assert fake.created == 2
 
