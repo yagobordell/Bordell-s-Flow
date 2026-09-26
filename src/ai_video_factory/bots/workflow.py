@@ -11,6 +11,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.resources import files
+from time import perf_counter
 
 from pydantic import BaseModel
 
@@ -162,6 +163,35 @@ class BPipelineResult:
     b12: tuple[B12Output, ...]
     b2: tuple[B2Output, ...]
 
+
+    def merged_b12_output(self) -> dict[str, object]:
+        """Application-owned complete B1.2 join, ordered by frozen block ID."""
+        if self.b11.narrative_core is None:
+            raise BPipelineValidationError("B1.1 narrative core is missing")
+        return {
+            "schema_version": "b-pipeline-merged-v1",
+            "pipeline_stage": "B1.2",
+            "narrative_core": self.b11.narrative_core.model_dump(),
+            "blocks": [
+                {
+                    "block_id": item.block_id,
+                    "beats": [beat.model_dump() for beat in item.beats or []],
+                }
+                for item in self.b12
+            ],
+        }
+
+    def merged_b2_output(self) -> dict[str, object]:
+        """Application-owned complete B2 join without altering single-block contracts."""
+        if self.b11.narrative_core is None:
+            raise BPipelineValidationError("B1.1 narrative core is missing")
+        return {
+            "schema_version": "b-pipeline-merged-v1",
+            "pipeline_stage": "B2",
+            "narrative_core": self.b11.narrative_core.model_dump(),
+            "blocks": [item.blocks[0].model_dump() for item in self.b2 if item.blocks],
+        }
+
     def visual_plan(self) -> dict[str, object]:
         """Application-owned ordered join, not a bot-owned B2 output object."""
         if self.b11.narrative_core is None:
@@ -184,6 +214,7 @@ async def _call_stage[OutputT: BaseModel](
     output_type: type[OutputT],
     on_input: Callable[[str, int | None, dict[str, object]], None] | None,
     on_api_response: Callable[[str, int | None, object], None] | None,
+    on_call_duration: Callable[[str, int | None, float], None] | None,
 ) -> OutputT:
     """Record exactly the submitted input and meter the returned API response."""
     if on_input is not None:
@@ -194,13 +225,18 @@ async def _call_stage[OutputT: BaseModel](
         "input_text": _payload(payload),
         "output_type": output_type,
     }
-    metered = getattr(provider, "generate_structured_with_response", None)
-    if callable(metered):
-        output, response = await metered(**kwargs)
-        if on_api_response is not None:
-            on_api_response(stage, block_id, response)
-        return output
-    return await provider.generate_structured(**kwargs)
+    started = perf_counter()
+    try:
+        metered = getattr(provider, "generate_structured_with_response", None)
+        if callable(metered):
+            output, response = await metered(**kwargs)
+            if on_api_response is not None:
+                on_api_response(stage, block_id, response)
+            return output
+        return await provider.generate_structured(**kwargs)
+    finally:
+        if on_call_duration is not None:
+            on_call_duration(stage, block_id, perf_counter() - started)
 
 
 async def run_b_pipeline(
@@ -212,29 +248,37 @@ async def run_b_pipeline(
     on_input: Callable[[str, int | None, dict[str, object]], None] | None = None,
     on_output: Callable[[str, int | None, dict[str, object]], None] | None = None,
     on_api_response: Callable[[str, int | None, object], None] | None = None,
+    on_call_duration: Callable[[str, int | None, float], None] | None = None,
+    on_stage_duration: Callable[[str, float], None] | None = None,
 ) -> BPipelineResult:
     """Run each new bot with the exact audited prompts and deterministic join order."""
     if not script or not script.strip():
         raise BPipelineValidationError("Authoritative script must not be empty")
     if max_parallel_calls < 1:
         raise ValueError("max_parallel_calls must be at least 1")
-    b11 = await _call_stage(
-        "B1.1",
-        None,
-        {"plain_script_for_recording": script},
-        provider=provider,
-        model=model,
-        prompt="b1_1.md",
-        output_type=B11Output,
-        on_input=on_input,
-        on_api_response=on_api_response,
-    )
-    _require_success("B1.1", b11.error)
-    if b11.narrative_core is None or b11.blocks is None:
-        raise BPipelineValidationError("B1.1 did not provide required successful fields")
-    materialized = materialize_blocks(script, b11.blocks)
-    if on_output is not None:
-        on_output("B1.1", None, b11.model_dump())
+    b11_started = perf_counter()
+    try:
+        b11 = await _call_stage(
+            "B1.1",
+            None,
+            {"plain_script_for_recording": script},
+            provider=provider,
+            model=model,
+            prompt="b1_1.md",
+            output_type=B11Output,
+            on_input=on_input,
+            on_api_response=on_api_response,
+            on_call_duration=on_call_duration,
+        )
+        _require_success("B1.1", b11.error)
+        if b11.narrative_core is None or b11.blocks is None:
+            raise BPipelineValidationError("B1.1 did not provide required successful fields")
+        materialized = materialize_blocks(script, b11.blocks)
+        if on_output is not None:
+            on_output("B1.1", None, b11.model_dump())
+    finally:
+        if on_stage_duration is not None:
+            on_stage_duration("B1.1", perf_counter() - b11_started)
     semaphore = asyncio.Semaphore(max_parallel_calls)
 
     # Two independent parallel waves: no B2 starts until every B1.2 succeeds.
@@ -255,13 +299,19 @@ async def run_b_pipeline(
                 output_type=B12Output,
                 on_input=on_input,
                 on_api_response=on_api_response,
+                on_call_duration=on_call_duration,
             )
         validate_beats(output, block)
         if on_output is not None:
             on_output("B1.2", block.block_id, output.model_dump())
         return output
 
-    b12_results = await asyncio.gather(*(b12_one(block) for block in materialized))
+    b12_started = perf_counter()
+    try:
+        b12_results = await asyncio.gather(*(b12_one(block) for block in materialized))
+    finally:
+        if on_stage_duration is not None:
+            on_stage_duration("B1.2", perf_counter() - b12_started)
 
     async def b2_one(
         meta: BlockMeta, block: MaterializedBlock, b12: B12Output
@@ -292,18 +342,24 @@ async def run_b_pipeline(
                 output_type=B2Output,
                 on_input=on_input,
                 on_api_response=on_api_response,
+                on_call_duration=on_call_duration,
             )
         validate_visuals(output, b2_input)
         if on_output is not None:
             on_output("B2", block.block_id, output.model_dump())
         return output
 
-    b2_results = await asyncio.gather(
-        *(
-            b2_one(meta, block, b12)
-            for meta, block, b12 in zip(b11.blocks, materialized, b12_results, strict=True)
+    b2_started = perf_counter()
+    try:
+        b2_results = await asyncio.gather(
+            *(
+                b2_one(meta, block, b12)
+                for meta, block, b12 in zip(b11.blocks, materialized, b12_results, strict=True)
+            )
         )
-    )
+    finally:
+        if on_stage_duration is not None:
+            on_stage_duration("B2", perf_counter() - b2_started)
     return BPipelineResult(
         b11=b11,
         b12=tuple(b12_results),
