@@ -31,7 +31,7 @@ from ai_video_factory.inference.salad import (
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_IMAGE_RE = re.compile(r"^[^\\s@]+@sha256:[0-9a-fA-F]{64}$")
+_IMAGE_RE = re.compile(r"^[^\s@]+@sha256:[0-9a-fA-F]{64}$")
 _ACTIVE_STATES = frozenset({"allocating", "downloading", "creating", "running"})
 
 
