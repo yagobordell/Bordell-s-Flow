@@ -76,6 +76,7 @@ class FakeRaceClient:
             "started": state == "running",
             "ready": ready,
             "pulling_progress": 55 if state == "downloading" else None,
+            "deletion_cost": self.deletion_costs.get(instance_id, 0),
         }
 
     def set_container_group_replicas(self, replicas: int) -> dict[str, Any]:
