@@ -106,9 +106,13 @@ uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py
 ```
 
 Para elegirlo sin menú, usa `--script historia_roma.txt`; para consultar los
-disponibles, usa `--list-scripts`. Los resultados se guardan en
-`data/output/b_pipeline/<nombre-del-guion>/`. Este runner todavía no sustituye
-al flujo de producción de las fases posteriores; consulta
+disponibles, usa `--list-scripts`. Cada nueva ejecución borra exclusivamente la
+salida anterior de ese guion. Los resultados se guardan en
+`data/output/b_pipeline/<nombre-del-guion>/`, con carpetas `B1.1/`, `B1.2/` y
+`B2/` que conservan el `input.json` y `output.json` de cada llamada (por bloque
+en B1.2/B2). Al terminar, se muestra el coste estimado de la API en USD por bot
+y el total, también guardado en `api_costs.json`. Este runner todavía no
+sustituye al flujo de producción de las fases posteriores; consulta
 [la guía del pipeline B](docs/components/b-pipeline.md).
 
 ## Desarrollo
