@@ -366,6 +366,8 @@ async def generate_fish_audio(
             else "director_invalid"
         )
         _atomic_json(state_path, state)
+        if len(failures) == 1 and isinstance(failures[0], FishAudioScriptError):
+            raise failures[0]
         raise FishAudioWorkflowError(
             f"{len(failures)} Fish block(s) incomplete; inspect {state_path}"
         ) from failures[0]
