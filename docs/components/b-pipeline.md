@@ -16,14 +16,45 @@ checksums are embedded in `workflow.py` and verified before API calls.
   order. B1.2 workers finish as a parallel wave before any B2 worker begins; B2 workers
   then run as a parallel wave. Both waves have the same bounded concurrency limit.
 
-## Run
+## Script library and selection
 
-Set `OPENAI_API_KEY` in local `.env`, then run:
+Keep any number of authoritative UTF-8 plain-text scripts in `data/input/scripts/`,
+for example `historia_roma.txt` and `documental_japon.txt`. This directory is
+present in the repository, but its contents are ignored by Git so local scripts are
+not committed accidentally. Do not rename or copy a script to `script.txt`.
+From the repository root, after setting `OPENAI_API_KEY` in local `.env`:
+
+List the available scripts (no API key or inference is required for this command):
+
+```powershell
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --list-scripts
+```
+
+Start the pipeline without a script argument to choose from a numbered menu:
+
+```powershell
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py
+```
+
+For a non-interactive run, choose the file explicitly:
 
 ```powershell
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py `
-  data/input/script.txt --output data/output/b_pipeline --max-parallel-calls 8
+  --script documental_japon.txt --max-parallel-calls 8
 ```
+
+`--script documental_japon` (without the `.txt` suffix) also works. To use
+a different library directory, specify `--scripts-dir PATH`. A direct positional
+file path is still accepted for existing automation, but the library is the
+recommended input location. If no script is selected and the terminal is
+non-interactive, the runner exits with instructions rather than selecting an
+arbitrary script. A missing or invalid selection cannot start inference.
+
+Each script gets its own default output directory,
+`data/output/b_pipeline/<script-name>/`, so running another script does not
+overwrite its outputs. Use `--output PATH` to override the destination.
+The script is read as UTF-8 without stripping or normalizing any characters.
+B1.1 receives the selected complete text as `plain_script_for_recording`.
 
 All three bots use `OPENAI_B_MODEL=gpt-6-luna` and
 `OPENAI_B_REASONING_EFFORT=medium` (both are independently configurable). The CLI
