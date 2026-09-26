@@ -293,7 +293,8 @@ async def generate_fish_audio(
             or state.get("inputs_sha256") != inputs_sha
             or state.get("voice_id") != voice_id
             or state.get("director_model") != director_model
-            or state.get("director_prompt_sha256") != hashlib.sha256(fish_prompt_bytes()).hexdigest()
+            or state.get("director_prompt_sha256")
+            != hashlib.sha256(fish_prompt_bytes()).hexdigest()
             or state.get("speed") != speed
         ):
             raise FishAudioWorkflowError("Saved Fish audio input, prompt or voice differs")
@@ -366,7 +367,9 @@ async def generate_fish_audio(
             else "director_invalid"
         )
         _atomic_json(state_path, state)
-        if len(failures) == 1 and isinstance(failures[0], FishAudioScriptError):
+        if len(failures) == 1 and isinstance(
+            failures[0], (FishAudioScriptError, FishAudioWorkflowError)
+        ):
             raise failures[0]
         raise FishAudioWorkflowError(
             f"{len(failures)} Fish block(s) incomplete; inspect {state_path}"
