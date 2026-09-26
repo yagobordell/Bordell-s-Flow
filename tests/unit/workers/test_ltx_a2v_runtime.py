@@ -305,6 +305,7 @@ def test_reference_a2v_uses_upward_grid_and_does_not_require_dev_assets(
     )
     assert call["stage_2_sigmas"] == expected_sigmas
     assert "negative_prompt" not in call
+    assert call["enhance_prompt"] is False
     assert metadata["stage_2_steps"] == stage_2_steps
     assert metadata["stage_2_sigma_values"] == list(expected_sigmas)
     assert metadata["reference_stage_2_steps_experimental"] is (stage_2_steps == 2)
