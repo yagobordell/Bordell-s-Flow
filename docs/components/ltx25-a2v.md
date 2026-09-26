@@ -358,3 +358,81 @@ their own byte-throughput watchdog. Logs for the failed start are required
 to distinguish no capacity, image-pull stalls and repeated poor network
 nodes. None of these improvements establishes A2V lip-sync or compiled
 speed gains.
+
+## 2026-09-26: reject compiled quality regression; verified-bootstrap eager control
+
+The real `reference-compiled` monje smoke, seed 4242, 1280x720 at 24 fps
+and 121 frames, reported 403.733 seconds inference and 425.529 seconds
+total worker generation (`pipeline_reused=false`). The earlier eager
+`reference` monje result documented in PR #228 reported 157.360 seconds
+inference and 175.876 seconds total. Those timings are not a matched
+cold/warm A/B, but compilation provided no measured first-run improvement.
+The user-supplied new MP4 also shows substantially less mouth movement
+than the preceding visual reference; both uploaded MP4s have the same
+decoded audio. The preceding WhatsApp export lacks job sidecar metadata,
+so it is not proof that all prompt/profile/seed inputs were identical.
+
+**The controlled smoke and its direct Python submitter now reject
+`reference-compiled` before allocating a GPU or submitting a Postgres
+job.** Keep `reference` eager, the pinned 8+3 distilled schedule,
+ancestral stage 1, image strengths 0.7/1.0, audio-frozen stages,
+FP8_CAST/CPU offload, 121 frames and full voice padding unchanged for
+the next baseline visual check. Merely changing node selection or host
+timeouts does not modify denoising semantics. Do not change guidance,
+checkpoint, number of steps, quantization, prompt or seed **during the
+regression-control run**.
+
+### Why the old startup readiness was unsafe
+
+The worker could previously report `inference runtime prepared` when
+the downloaded weight *files* existed, before `download_models.sh`
+had completed the last file verification and written its atomic
+`.bordell-installed-model-manifest.json`. That can overlap SHA-256
+verification of large weights with the first inference and confound
+cold-start benchmarks.
+
+The new dedicated LTX Docker image sets
+`LTX_REQUIRE_VERIFIED_MODEL_MANIFEST=true`. Its entrypoint removes the
+per-start completion marker *before* launching uvicorn. The downloader
+then validates the pinned repository/revision and whole expected file
+set, including optional dev assets only when enabled; it publishes
+the atomic verified receipt and then the fresh completion marker as
+its last action. The production A2V and I2V prepare/readiness checks
+require both artifacts and validate revision, exact file list, hashes
+recorded in the receipt and current file sizes. They never rehash all
+weights on each `/ready`; the bootstrap process alone computes/checks
+full SHA-256. Neither task may claim Postgres work before completion.
+Developer unit-test fixtures keep their explicit non-production gate
+disabled. **This change is in worker/Docker source and requires a
+new immutable image; updating only local PowerShell is insufficient.**
+
+The smoke prints distinct `LTX_SMOKE_TIMING` lines for capacity start,
+worker readiness, Postgres job and cleanup. Sidecar generation metrics
+remain separate from the node allocation, image/model downloads and
+model receipt SHA-256 verification. Reusing the *same* verified image
+and the *same* short prompt/seed/input is mandatory when comparing
+the old and new videos. Never report the cold-start plus verification
+total as pure model inference, or a first-run compile result as warm
+inference. A fresh Salad instance may still redownload the weights;
+this fix deliberately does not claim persistent model cache across nodes.
+
+### Applicability of the LTX talking-avatar blog
+
+Source: https://ltx.io/blog/how-to-build-talking-ai-avatars-from-audio
+(published for **LTX-2.3**, not the pinned LTX-2.5 code/checkpoint).
+It recommends `modality_scale=3.0` as a lip-sync starting point,
+video `cfg_scale=3.0` (or 2.0-2.5 if the face is static),
+`stg_scale=1.0`, `rescale_scale=0.7`, `stg_blocks=[29]`,
+and separately recommends audio CFG 7.0. These are **experimental
+guidance changes**, not a free performance optimization. The existing
+opt-in `guided` dev profile already implements the blog's video
+guidance, but pinned upstream `A2VidPipelineTwoStage` constructs its
+audio guider internally and cannot truthfully claim audio CFG 7.0.
+A prior real guided test took 530 seconds inference and visibly
+deformed the last frames. Forcing those settings onto the 8-step
+**distilled** `reference` would also replace its `SimpleDenoiser`
+recipe and confound the compiled regression comparison. Do not
+silently apply blog guidance to the production/eager baseline. First
+establish that the baseline restores the prior facial motion. Only
+then test guidance in a separately named experimental profile and
+accept it on phonetic mouth motion, identity stability and latency.
