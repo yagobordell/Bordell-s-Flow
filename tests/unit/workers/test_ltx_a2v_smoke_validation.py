@@ -89,6 +89,11 @@ def test_controlled_a2v_smoke_checks_local_python_before_gpu_allocation() -> Non
     )
     assert "LTX_A2V_GUIDED_GENERATION_PROFILE" in source_check
     assert "check_ltx25_python_source.py" in script
+    assert "reference-compiled" in script
+    assert "Refusing GPU allocation" in script
+    assert script.index('if ($Profile -eq "reference-compiled") {') < script.index(
+        "& $WorkerManager @Start"
+    )
     assert "python -c" not in script
     assert script.index("& $Python $SourceCheck $ExpectedLtxModule") < script.index(
         "& $Python $R2Preflight"
