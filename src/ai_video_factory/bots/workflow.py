@@ -14,12 +14,12 @@ from importlib.resources import files
 from ai_video_factory.providers.base import StructuredTextProvider
 
 from .contracts import (
-    B11Output,
-    B12Input,
-    B12Output,
     B2Input,
     B2InputBlock,
     B2Output,
+    B11Output,
+    B12Input,
+    B12Output,
     Beat,
     BlockMeta,
     MaterializedBlock,

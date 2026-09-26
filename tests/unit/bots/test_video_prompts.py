@@ -3,12 +3,12 @@ from typing import Any
 
 import pytest
 
+from ai_video_factory.domain import Shot, ShotTiming, StoryboardFrame
 from ai_video_factory.legacy_bots.video_prompts import (
     VIDEO_PROMPT_INSTRUCTIONS,
     VideoPromptBot,
     VideoPromptOutput,
 )
-from ai_video_factory.domain import Shot, ShotTiming, StoryboardFrame
 from ai_video_factory.workflows.video_prompts import build_video_prompts
 
 

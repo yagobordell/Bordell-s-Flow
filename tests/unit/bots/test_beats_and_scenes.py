@@ -3,9 +3,9 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from ai_video_factory.domain import Beat, NarrativeBlock
 from ai_video_factory.legacy_bots.beats import BeatActionsOutput, BeatExtractorBot
 from ai_video_factory.legacy_bots.scenes import SceneGroupsOutput, ScenePlannerBot
-from ai_video_factory.domain import Beat, NarrativeBlock
 
 
 class FakeStructuredProvider:

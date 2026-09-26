@@ -2,15 +2,15 @@ import asyncio
 import json
 from typing import Any
 
-from ai_video_factory.legacy_bots.visual_references import (
-    VisualDesignOutput,
-    VisualReferenceBot,
-)
 from ai_video_factory.domain import (
     BlockContinuity,
     ContinuityEntity,
     NarrativeBlock,
     VisualReference,
+)
+from ai_video_factory.legacy_bots.visual_references import (
+    VisualDesignOutput,
+    VisualReferenceBot,
 )
 from ai_video_factory.workflows.visual_references import build_visual_references
 

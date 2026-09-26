@@ -1,7 +1,7 @@
 import asyncio
 
-from ai_video_factory.legacy_bots import BeatExtractorBot, NarrativeBlockBot, ScenePlannerBot
 from ai_video_factory.domain import Beat, NarrativeBlock, Scene, SourceScript
+from ai_video_factory.legacy_bots import BeatExtractorBot, NarrativeBlockBot, ScenePlannerBot
 
 
 async def plan_narrative(

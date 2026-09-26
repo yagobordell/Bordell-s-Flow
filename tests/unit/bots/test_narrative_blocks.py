@@ -3,8 +3,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from ai_video_factory.legacy_bots.narrative_blocks import NarrativeBlockBot, NarrativeBlocksOutput
 from ai_video_factory.domain import SourceScript
+from ai_video_factory.legacy_bots.narrative_blocks import NarrativeBlockBot, NarrativeBlocksOutput
 
 
 class FakeStructuredProvider:

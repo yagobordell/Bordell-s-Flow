@@ -4,17 +4,17 @@ import json
 import pytest
 
 from ai_video_factory.bots.contracts import (
-    B11Output,
-    B12Output,
     B2Input,
     B2Output,
+    B11Output,
+    B12Output,
     Beat,
     BlockMeta,
     MaterializedBlock,
 )
 from ai_video_factory.bots.workflow import (
-    BPipelineValidationError,
     PROMPT_CHECKSUMS,
+    BPipelineValidationError,
     _beat_suffix,
     _instructions,
     materialize_blocks,

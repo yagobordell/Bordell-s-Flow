@@ -3,9 +3,9 @@ import asyncio
 import json
 from pathlib import Path
 
-from ai_video_factory.legacy_bots import BeatExtractorBot, NarrativeBlockBot, ScenePlannerBot
 from ai_video_factory.config import settings
 from ai_video_factory.domain import SourceScript
+from ai_video_factory.legacy_bots import BeatExtractorBot, NarrativeBlockBot, ScenePlannerBot
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.workflows.narrative_planning import plan_narrative
 

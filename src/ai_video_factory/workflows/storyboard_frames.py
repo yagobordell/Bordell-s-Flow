@@ -1,8 +1,8 @@
 import asyncio
 import math
 
-from ai_video_factory.legacy_bots.storyboard_frames import StoryboardFrameBot
 from ai_video_factory.domain import Shot, ShotTiming, StoryboardFrame, VisualReference
+from ai_video_factory.legacy_bots.storyboard_frames import StoryboardFrameBot
 
 
 async def build_storyboard_frames(

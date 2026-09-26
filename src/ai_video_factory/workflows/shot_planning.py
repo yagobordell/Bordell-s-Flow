@@ -1,5 +1,5 @@
-from ai_video_factory.legacy_bots.shots import ShotPlannerBot
 from ai_video_factory.domain import Beat, BlockContinuity, ContinuityEntity, Scene, Shot
+from ai_video_factory.legacy_bots.shots import ShotPlannerBot
 
 
 async def plan_shots(

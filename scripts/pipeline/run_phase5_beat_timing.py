@@ -5,9 +5,9 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from ai_video_factory.legacy_bots import BeatTimingBot
 from ai_video_factory.config import settings
 from ai_video_factory.domain import Beat, NarrationAudio, NarrationWord, SourceScript
+from ai_video_factory.legacy_bots import BeatTimingBot
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.workflows.beat_timing import build_beat_timings
 
