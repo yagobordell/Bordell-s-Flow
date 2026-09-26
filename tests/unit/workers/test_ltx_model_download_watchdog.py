@@ -1,5 +1,10 @@
+import json
 from pathlib import Path
 
+import pytest
+
+from ai_video_factory.workers.ltx25.model import LTXModelFiles
+from ai_video_factory.workers.ltx25.reference_recipe import LTX25_MODEL_REVISION
 from ai_video_factory.workers.ltx25.model_manifest import (
     validate_installed_model_manifest,
     write_installed_model_manifest,
@@ -110,3 +115,38 @@ def test_ltx_salad_manifest_prefers_fast_high_priority_5090_nodes() -> None:
     assert service["environment"]["HF_XET_CLIENT_ENABLE_ADAPTIVE_CONCURRENCY"] == "true"
     assert "HF_XET_HIGH_PERFORMANCE" not in service["environment"]
     assert service["environment"]["LTX_MODEL_DOWNLOAD_MAX_WORKERS"] == "2"
+    assert service["environment"]["LTX_REQUIRE_VERIFIED_SHARED_MANIFEST"] == "true"
+
+
+def test_ltx_worker_ready_waits_for_atomic_verified_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "models"
+    files = LTXModelFiles.from_root(root)
+    for path in files.paths():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"pinned-model-bytes")
+    monkeypatch.setenv("LTX_REQUIRE_VERIFIED_SHARED_MANIFEST", "true")
+    monkeypatch.setenv("LTX_MODEL_REPOSITORY", "Lightricks/LTX-2.5")
+    monkeypatch.setenv("LTX_MODEL_REVISION", LTX25_MODEL_REVISION)
+    with pytest.raises(FileNotFoundError, match="manifest is pending"):
+        files.validate()
+
+    installed = root / ".bordell-installed-model-manifest.json"
+    write_installed_model_manifest(
+        installed,
+        repository="Lightricks/LTX-2.5",
+        revision=LTX25_MODEL_REVISION,
+        root=root,
+        files=[p.relative_to(root).as_posix() for p in files.paths()],
+    )
+    files.validate()
+
+    data = json.loads(installed.read_text(encoding="utf-8"))
+    data["revision"] = "wrong-revision"
+    installed.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(FileNotFoundError, match="manifest is not ready"):
+        files.validate()
+
+    monkeypatch.delenv("LTX_REQUIRE_VERIFIED_SHARED_MANIFEST")
+    files.validate()
