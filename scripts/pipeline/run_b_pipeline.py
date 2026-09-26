@@ -21,8 +21,10 @@ from ai_video_factory.bots.fish_audio_workflow import (
     unfinished_audio_runs,
 )
 from ai_video_factory.bots.workflow import materialize_blocks, validate_beats
+from ai_video_factory.compositor.static_preview import generate_static_preview
 from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
+from ai_video_factory.providers.openai_stt import OpenAISttClient
 from ai_video_factory.providers.ai33_images import (
     AI33ImageOptions,
     generate_b2_images,
@@ -534,6 +536,46 @@ def _image_summary(manifest: dict[str, object]) -> dict[str, object]:
     }
 
 
+async def _render_preview(
+    output: Path,
+    plan: dict[str, object],
+    audio: dict[str, object],
+    images: dict[str, object],
+) -> dict[str, object]:
+    """Join only verified saved assets; never start another paid generation."""
+    return await asyncio.to_thread(generate_static_preview, output, plan, audio, images)
+
+
+async def _preview_if_ready(
+    output: Path,
+    report: dict[str, object],
+    *,
+    plan: dict[str, object] | None = None,
+    images: dict[str, object] | None = None,
+) -> dict[str, object] | None:
+    run = report.get("run", {})
+    audio = run.get("audio_generation") if isinstance(run, dict) else None
+    if (
+        not isinstance(audio, dict)
+        or audio.get("status") != "completed"
+        or audio.get("stt_complete") is not True
+    ):
+        return None
+    if plan is None:
+        visual_path = output / "visual_plan.json"
+        if visual_path.is_symlink() or not visual_path.is_file():
+            return None
+        plan = json.loads(visual_path.read_text(encoding="utf-8"))
+    if images is None:
+        manifest_path = output / "images" / "manifest.json"
+        if manifest_path.is_symlink() or not manifest_path.is_file():
+            return None
+        images = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if images.get("status") != "completed":
+        return None
+    return await _render_preview(output, plan, audio, images)
+
+
 async def _run_images_only(script_file: Path, output_root: Path) -> None:
     """Resume image tasks using B2 artifacts without repeating any planning calls."""
     root = output_root.resolve()
@@ -566,6 +608,9 @@ async def _run_images_only(script_file: Path, output_root: Path) -> None:
         _write(report_path, report)
         raise
     report["run"]["image_generation"] = _image_summary(manifest)
+    preview = await _preview_if_ready(output, report, plan=plan, images=manifest)
+    if preview is not None:
+        report["run"]["video_preview"] = preview
     report["run"]["status"] = "completed"
     report["timings"]["status"] = "completed"
     report["api_costs"]["run_status"] = "completed"
@@ -600,6 +645,7 @@ async def _generate_audio(
         poll_timeout_seconds=settings.ai33_fish_poll_timeout_seconds,
         poll_interval_seconds=settings.ai33_fish_poll_interval_seconds,
         resume=resume,
+        stt_client=OpenAISttClient(api_key=settings.openai_api_key),
     )
 
 
@@ -660,6 +706,9 @@ async def _run_audio_only(
         _write(report_path, report)
         raise
     report["run"]["audio_generation"] = artifact
+    preview = await _preview_if_ready(output, report)
+    if preview is not None:
+        report["run"]["video_preview"] = preview
     _write(report_path, report)
     print(
         f"  Fish Audio ready: {artifact['file']} "
@@ -995,6 +1044,7 @@ async def main() -> None:
     save_report("running", None)
     audio_task: asyncio.Task[dict[str, object]] | None = None
     audio_joined = False
+    image_manifest: dict[str, object] | None = None
     audio_enabled = args.from_stage == "B1.1" and not getattr(args, "no_audio", False)
 
     def output_and_start_audio(
@@ -1060,6 +1110,14 @@ async def main() -> None:
             run_metadata["audio_generation"] = await audio_task
             audio_joined = True
             save_report("running", len(result.b12))
+        if image_manifest is not None:
+            report = {"run": run_metadata}
+            preview = await _preview_if_ready(
+                output, report, plan=visual_plan, images=image_manifest
+            )
+            if preview is not None:
+                run_metadata["video_preview"] = preview
+                print(f"  Static video ready: {preview['file']}", flush=True)
     except Exception:
         if audio_task is not None and not audio_joined:
             # Never abandon an in-flight paid TTS submission by cancelling
