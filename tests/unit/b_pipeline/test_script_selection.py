@@ -212,6 +212,7 @@ def test_repeating_same_script_resets_only_that_scripts_output(tmp_path: Path) -
     _make_script(library, "japon.txt")
     root = tmp_path / "output" / "b_pipeline"
     old = runner._prepare_output(root, roma)
+    runner._write(old / ".b_pipeline_run.json", {"script_file": "roma.txt"})
     (old / "stale.json").write_text("stale", encoding="utf-8")
     other = root / "japon"
     other.mkdir()
