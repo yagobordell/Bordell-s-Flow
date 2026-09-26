@@ -146,6 +146,11 @@ async def _transcribe_block(
                     f"OpenAI STT submission for block {item['block_id']} may be billed; "
                     f"reconcile {request_path} before retrying"
                 )
+            if previous.get("status") == "completed":
+                raise FishAudioWorkflowError(
+                    f"Saved STT transcript missing for block {item['block_id']}; "
+                    "never repeat a completed paid request"
+                )
             if (
                 previous.get("source_audio_sha256") != item["sha256"]
                 or previous.get("model") != model
