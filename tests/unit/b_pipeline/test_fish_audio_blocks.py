@@ -156,7 +156,7 @@ def test_director_tolerates_layout_and_punctuation(
 
 @pytest.mark.parametrize(
     "directed",
-    ["[warm]Casa.", "[warm]Ho la.", "[warm]Hola. Texto nuevo"],
+    ["[warm]Casa.", "[warm]Hoya.", "[warm]Hola. Texto nuevo"],
 )
 def test_director_rejects_lexical_changes(directed: str) -> None:
     with pytest.raises(FishAudioScriptError):
