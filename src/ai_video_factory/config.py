@@ -21,8 +21,8 @@ class Settings(BaseSettings):
 
     # AI33 Pro images are generated locally after B2; Salad services are unchanged.
     ai33_api_key: str | None = None
-    ai33_fish_voice_id: str = "fishaudio_f8dfe9c83081432386f143e2fe9767ef"
-    ai33_fish_speed: float = 1.0
+    ai33_fish_voice_id: str = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
+    ai33_fish_speed: float = 0.9
     ai33_fish_poll_timeout_seconds: int = 3600
     ai33_fish_poll_interval_seconds: float = 8.0
     ai33_image_model: str = "gpt-image-2.5-flare"

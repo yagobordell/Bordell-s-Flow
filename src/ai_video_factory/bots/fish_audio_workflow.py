@@ -27,7 +27,7 @@ from .fish_audio import (
 )
 from .workflow import materialize_blocks
 
-_DEFAULT_VOICE_ID = "fishaudio_f8dfe9c83081432386f143e2fe9767ef"
+_DEFAULT_VOICE_ID = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
 
 
 class FishAudioWorkflowError(RuntimeError):
@@ -255,7 +255,7 @@ async def generate_fish_audio(
     provider: StructuredTextProvider | None,
     ai33_api_key: str | None,
     voice_id: str = _DEFAULT_VOICE_ID,
-    speed: float = 1.0,
+    speed: float = 0.9,
     max_parallel_calls: int = 8,
     poll_timeout_seconds: int = 3600,
     poll_interval_seconds: float = 8.0,

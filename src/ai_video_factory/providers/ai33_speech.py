@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 _API_BASE = "https://api.openspeaker.ai"
 _RETRYABLE = {429, 502, 503, 504}
 _MAX_AUDIO_BYTES = 200 * 1024 * 1024
+_DOWNLOAD_USER_AGENT = "Mozilla/5.0"
 
 
 class AI33SpeechError(RuntimeError):
@@ -124,7 +125,7 @@ class AI33SpeechClient:
             raise AI33SpeechError(f"OpenSpeaker TTS rejected {method} {path}: {code}")
         return result
 
-    def create(self, *, text: str, voice_id: str, speed: float = 1.0) -> dict[str, Any]:
+    def create(self, *, text: str, voice_id: str, speed: float = 0.9) -> dict[str, Any]:
         if not text.strip() or not voice_id.startswith("fishaudio_"):
             raise ValueError("Fish TTS needs nonempty text and a Fish voice ID")
         if not 0.5 <= speed <= 1.5:
@@ -185,7 +186,15 @@ class AI33SpeechClient:
             or parsed.port not in (None, 443)
         ):
             raise AI33SpeechError("OpenSpeaker returned an unsafe audio download URL")
-        request = Request(url, headers={"Accept": "audio/*,*/*"}, method="GET")
+        request = Request(
+            url,
+            headers={
+                "Accept": "audio/*,*/*",
+                # cdn.ai33.pro rejects urllib's default Python user agent with 403.
+                "User-Agent": _DOWNLOAD_USER_AGENT,
+            },
+            method="GET",
+        )
         with urlopen(request, timeout=180) as response:
             data = response.read(_MAX_AUDIO_BYTES + 1)
         if len(data) > _MAX_AUDIO_BYTES:

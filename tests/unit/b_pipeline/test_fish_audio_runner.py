@@ -12,7 +12,7 @@ from PIL import Image
 
 from scripts.pipeline import run_b_pipeline as runner
 
-VOICE = "fishaudio_f8dfe9c83081432386f143e2fe9767ef"
+VOICE = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
 
 
 def _files(tmp_path: Path) -> tuple[Path, Path]:

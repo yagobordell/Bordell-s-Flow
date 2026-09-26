@@ -77,7 +77,7 @@ Fish Audio utiliza el documento de instrucciones
 adjunto. Empieza **a la vez que B1.1**, recibe el mismo guion sin modificar
 y solo inserta etiquetas entre corchetes. Su salida se envía como `text`
 al endpoint TTS de OpenSpeaker con la voz
-`fishaudio_f8dfe9c83081432386f143e2fe9767ef`. La generación guarda
+`fishaudio_80e34d5e0b2b4577a486f3a77e357261`. La generación guarda
 `audio/runs/<id>/input.json`, `output.json`, `task.json` y el archivo
 de audio, además de `audio/latest.json`. Configura `AI33_API_KEY` junto
 con `OPENAI_API_KEY` en `.env`; no se ejecutan tareas de Salad para esto.

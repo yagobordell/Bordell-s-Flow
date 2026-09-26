@@ -26,7 +26,7 @@ from ai_video_factory.bots.fish_audio_workflow import (
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient, audio_url_of
 from scripts.pipeline import run_b_pipeline as runner
 
-VOICE = "fishaudio_f8dfe9c83081432386f143e2fe9767ef"
+VOICE = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
 SCRIPT = "  Hola,\r\n[existing] ¿Qué tal?  \n"
 DIRECTED = "  [warm]Hola,\r\n[existing] [curious]¿Qué tal?  \n"
 B11 = B11Output.model_validate({
@@ -207,7 +207,7 @@ def test_speech_endpoints_payload_and_audio_url_extraction(
     assert calls == [(
         "POST",
         "/v3/text-to-speech",
-        {"text": DIRECTED, "voice_id": VOICE, "speed": 1.0},
+        {"text": DIRECTED, "voice_id": VOICE, "speed": 0.9},
     )]
     assert audio_url_of({
         "metadata": {"result_audio": {"audioUrl": "https://example.test/a.mp3"}}
@@ -332,14 +332,14 @@ def test_resume_known_task_polls_without_recalling_director_or_paid_post(
             "inputs_sha256": input_sha,
             "director_model": "gpt-6-luna",
             "director_prompt_sha256": hashlib.sha256(fish_prompt_bytes()).hexdigest(),
-            "voice_id": VOICE, "speed": 1.0, "status": "running",
+            "voice_id": VOICE, "speed": 0.9, "status": "running",
         }),
         encoding="utf-8",
     )
     (pending.parent / "blocks/block_1/task.json").write_text(
         json.dumps({
             "block_id": 1, "source_sha256": hashlib.sha256(SCRIPT.encode()).hexdigest(),
-            "director_model": "gpt-6-luna", "voice_id": VOICE, "speed": 1.0,
+                "director_model": "gpt-6-luna", "voice_id": VOICE, "speed": 0.9,
             "task_id": "existing", "status": "submitted",
         }), encoding="utf-8",
     )

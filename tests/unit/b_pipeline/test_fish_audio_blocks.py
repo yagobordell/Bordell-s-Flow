@@ -19,7 +19,7 @@ from ai_video_factory.bots.fish_audio import (
 )
 
 SCRIPT = "Uno. Dos."
-VOICE = "fishaudio_f8dfe9c83081432386f143e2fe9767ef"
+VOICE = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
 B11 = B11Output.model_validate({
     "pipeline_stage": "B1.1",
     "narrative_core": {"central_question": "¿Por qué?", "final_answer": "Dos."},
