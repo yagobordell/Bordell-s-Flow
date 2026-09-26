@@ -31,16 +31,19 @@ jobs:
 
           root = pathlib.Path(".")
           parts = sorted((root / ".migration").glob("chunk_*.txt"))
-          if len(parts) != 5:
-              raise RuntimeError(f"Expected five migration patch parts, got {len(parts)}")
+          if len(parts) != 1:
+              raise RuntimeError(f"Expected one migration patch part, got {len(parts)}")
           encoded = "".join(part.read_text(encoding="ascii") for part in parts)
           patch = bz2.decompress(base64.b85decode(encoded))
-          if hashlib.sha256(patch).hexdigest() != "b850b968b28e46b4669d0441bc24040666e57ef74bce035447a29b2d486dd605":
+          if hashlib.sha256(patch).hexdigest() != "e7b530dc7af3fe539dd750be618cd8b3bc5c9e03d89863086093c8cc84993528":
               raise RuntimeError("Migration patch checksum mismatch")
 
           # Remove the former bots from the active namespace without breaking
           # still-unmigrated production stages or their regression tests.
-          git("mv", "src/ai_video_factory/bots", "src/ai_video_factory/legacy_bots")
+          legacy = root / "src" / "ai_video_factory" / "legacy_bots"
+          legacy.mkdir(parents=True, exist_ok=True)
+          for path in sorted((root / "src" / "ai_video_factory" / "bots").glob("*.py")):
+              git("mv", str(path), str(legacy / path.name))
           tracked = subprocess.check_output(["git", "ls-files", "-z", "*.py"]).split(b"\0")
           for raw in tracked:
               if not raw:
