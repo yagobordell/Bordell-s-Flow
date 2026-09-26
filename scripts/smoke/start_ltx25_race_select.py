@@ -38,6 +38,7 @@ _ACTIVE_STATES = frozenset({"allocating", "downloading", "creating", "running"})
 class RaceClient(Protocol):
     def describe_container_group(self) -> dict[str, Any]: ...
     def list_container_group_instances(self) -> list[dict[str, Any]]: ...
+    def get_container_group_instance(self, instance_id: str) -> dict[str, Any]: ...
     def set_container_group_replicas(self, replicas: int) -> dict[str, Any]: ...
     def set_container_group_instance_deletion_cost(
         self, instance_id: str, deletion_cost: int
@@ -208,7 +209,13 @@ def race_to_one(
                 assert_authority()
                 client.set_container_group_instance_deletion_cost(str(item["id"]), 0)
     assert_authority()
-    client.set_container_group_instance_deletion_cost(candidate, 100000)
+    winner_patch = client.set_container_group_instance_deletion_cost(candidate, 100000)
+    if winner_patch.get("id") not in (None, candidate):
+        raise RuntimeError("Salad acknowledged deletion cost for a different winner")
+    report(
+        "LTX_RACE deletion_cost_patch "
+        f"winner={candidate} acknowledged={winner_patch.get('deletion_cost')!r}"
+    )
 
     # PATCH acknowledgement is not proof that the scheduler has observed the
     # costs. Read them back twice, while BOTH current-version workers exist,
@@ -235,14 +242,43 @@ def race_to_one(
         )
         others = [item for item in protected_instances if item.get("id") != candidate]
         if (
-            selected is not None
-            and selected.get("state") == "running"
-            and selected.get("started") is True
-            and selected.get("ready") is True
-            and selected.get("deletion_cost") == 100000
-            and len(others) == 1
-            and others[0].get("deletion_cost") == 0
+            selected is None
+            or selected.get("state") != "running"
+            or selected.get("started") is not True
+            or selected.get("ready") is not True
+            or len(others) != 1
         ):
+            raise RuntimeError(
+                "LTX race ready winner or other active instance disappeared "
+                "before deletion cost confirmation; no job submitted"
+            )
+
+        # Salad exposes an exact-instance GET in addition to the group list.
+        # Confirm the scheduler-visible cost on the exact IDs. The group list
+        # can lag: never infer success from a PATCH response or missing field.
+        winner_detail = client.get_container_group_instance(candidate)
+        loser_id = str(others[0]["id"])
+        loser_detail = client.get_container_group_instance(loser_id)
+        winner_cost = winner_detail.get("deletion_cost")
+        loser_cost = loser_detail.get("deletion_cost")
+        if (
+            winner_detail.get("id") != candidate
+            or winner_detail.get("version") != version
+            or loser_detail.get("id") != loser_id
+            or loser_detail.get("version") != version
+        ):
+            raise RuntimeError(
+                "LTX race exact-instance readback changed identity/version; "
+                "no job submitted"
+            )
+        report(
+            "LTX_RACE deletion_cost_readback "
+            f"winner={candidate} detail={winner_cost!r} "
+            f"list={selected.get('deletion_cost')!r} "
+            f"loser={loser_id} detail={loser_cost!r} "
+            f"list={others[0].get('deletion_cost')!r}"
+        )
+        if winner_cost == 100000 and loser_cost == 0:
             protection_confirmations += 1
             if protection_confirmations >= 2:
                 break
