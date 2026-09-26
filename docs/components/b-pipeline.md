@@ -15,6 +15,9 @@ Structured Outputs is appended at runtime.
 - B2 runs independently on each completed B1.2 block, preserves all upstream text,
   IDs and metadata, and assigns exactly one of `avatar`, `avatar_media`, `media_image`,
   `media_video` with the documented description/null rules.
+- If a B2 response fails output validation, that block is retried once with the
+  validation error and rejected response included; rejected responses are saved under
+  `B2/block_<id>/rejected_attempt_<n>.json` and retry calls are included in costs.
 - Per-block results are collected in ascending block ID, regardless of call completion
   order. B1.2 workers finish as a parallel wave before any B2 worker begins; B2 workers
   then run as a parallel wave. Both waves have the same bounded concurrency limit.

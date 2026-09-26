@@ -333,6 +333,9 @@ async def run_b_pipeline(
     on_input: Callable[[str, int | None, dict[str, object]], None] | None = None,
     on_output: Callable[[str, int | None, dict[str, object]], None] | None = None,
     on_rejected_output: Callable[[int, str, dict[str, object]], None] | None = None,
+    on_rejected_b2_output: (
+        Callable[[int, int, str, dict[str, object]], None] | None
+    ) = None,
     on_api_response: Callable[[str, int | None, object], None] | None = None,
     on_call_duration: Callable[[str, int | None, float], None] | None = None,
     on_stage_duration: Callable[[str, float], None] | None = None,
@@ -484,20 +487,55 @@ async def run_b_pipeline(
                 ),
             ),
         )
-        async with semaphore:
-            output = await _call_stage(
-                "B2",
-                block.block_id,
-                b2_input.model_dump(),
-                provider=provider,
-                model=model,
-                prompt="b2.md",
-                output_type=B2Output,
-                on_input=on_input,
-                on_api_response=on_api_response,
-                on_call_duration=on_call_duration,
+        async def call_b2(instructions_suffix: str = "") -> B2Output:
+            async with semaphore:
+                return await _call_stage(
+                    "B2",
+                    block.block_id,
+                    b2_input.model_dump(),
+                    provider=provider,
+                    model=model,
+                    prompt="b2.md",
+                    instructions_suffix=instructions_suffix,
+                    output_type=B2Output,
+                    on_input=on_input,
+                    on_api_response=on_api_response,
+                    on_call_duration=on_call_duration,
+                )
+
+        output = await call_b2()
+        try:
+            validate_visuals(output, b2_input)
+        except BPipelineValidationError as first_error:
+            if on_rejected_b2_output is not None:
+                on_rejected_b2_output(
+                    block.block_id, 1, str(first_error), output.model_dump()
+                )
+            retry_suffix = (
+                "\n\nB2 automatic correction attempt. Your previous structured response "
+                f"failed output validation: {first_error}\n"
+                "Return a corrected complete B2 object for the same input block. Preserve "
+                "the narrative core and every upstream block and beat field exactly; "
+                "correct only the invalid B2 visual assignments or descriptions. In "
+                "particular, the first beat of an intro block must use visual_type "
+                "avatar, and the last beat of a close block must use visual_type avatar. "
+                "Follow the supplied output schema.\n"
+                "Previous B2 response:\n"
+                f"{_payload(output.model_dump())}"
             )
-        validate_visuals(output, b2_input)
+            retry_output = await call_b2(retry_suffix)
+            try:
+                validate_visuals(retry_output, b2_input)
+            except BPipelineValidationError as retry_error:
+                if on_rejected_b2_output is not None:
+                    on_rejected_b2_output(
+                        block.block_id, 2, str(retry_error), retry_output.model_dump()
+                    )
+                raise BPipelineValidationError(
+                    f"B2 block {block.block_id} failed validation after one retry: "
+                    f"{retry_error}"
+                ) from retry_error
+            output = retry_output
         if on_output is not None:
             on_output("B2", block.block_id, output.model_dump())
         return output

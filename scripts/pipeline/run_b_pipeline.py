@@ -571,6 +571,14 @@ class BotArtifacts:
             {"attempt": attempt, "validation_error": error, "response": payload},
         )
 
+    def rejected_b2(
+        self, block_id: int, attempt: int, error: str, payload: dict[str, object]
+    ) -> None:
+        _write(
+            self._folder("B2", block_id) / f"rejected_attempt_{attempt}.json",
+            {"attempt": attempt, "validation_error": error, "response": payload},
+        )
+
 
 class TimingLedger:
     """Monotonic wall-clock timing; parallel calls are not added into stage wall time."""
@@ -717,6 +725,7 @@ async def main() -> None:
     timings = TimingLedger()
     resume_elapsed_offset = 0.0
     resume_expected_calls: dict[str, int | None] | None = None
+    planned_blocks: int | None = None
     previous_b11: B11Output | None = None
     previous_b12: tuple[B12Output, ...] | None = None
     if args.from_stage == "B1.1":
@@ -777,11 +786,31 @@ async def main() -> None:
         status: Literal["running", "completed", "failed"],
         blocks: int | None,
     ) -> tuple[dict[str, object], dict[str, object]]:
+        report_blocks = blocks if blocks is not None else planned_blocks
+        if resume_expected_calls is None:
+            expected_calls: dict[str, int | None] = {
+                "B1.1": max(1, timings.call_count("B1.1")),
+                "B1.2": report_blocks,
+                "B2": (
+                    max(report_blocks, timings.call_count("B2"))
+                    if report_blocks is not None
+                    else None
+                ),
+            }
+        else:
+            expected_calls = dict(resume_expected_calls)
+            if report_blocks is not None:
+                expected_calls["B1.2"] = max(
+                    expected_calls["B1.2"] or 0, timings.call_count("B1.2")
+                )
+                expected_calls["B2"] = max(
+                    expected_calls["B2"] or 0, report_blocks, timings.call_count("B2")
+                )
         costs = ledger.report(
-            blocks=blocks,
+            blocks=report_blocks,
             run_status=status,
             expected_b11_calls=max(1, timings.call_count("B1.1")),
-            expected_calls=resume_expected_calls,
+            expected_calls=expected_calls,
         )
         timing_report = timings.report(
             run_seconds=resume_elapsed_offset + perf_counter() - run_started,
@@ -802,6 +831,8 @@ async def main() -> None:
         blocks: int,
         merged_output: dict[str, object] | None,
     ) -> None:
+        nonlocal planned_blocks
+        planned_blocks = blocks
         if merged_output is not None:
             _write(output / stage / "merged_output.json", merged_output)
         costs, timing_report = save_report("running", blocks)
@@ -828,6 +859,7 @@ async def main() -> None:
             on_input=artifacts.input,
             on_output=artifacts.output,
             on_rejected_output=artifacts.rejected_b11,
+            on_rejected_b2_output=artifacts.rejected_b2,
             on_api_response=ledger.record,
             on_call_duration=timings.record_call,
             on_stage_duration=timings.record_stage,
