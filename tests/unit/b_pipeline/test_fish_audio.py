@@ -148,7 +148,7 @@ def test_director_uses_same_json_input_as_b12() -> None:
         run_fish_director(INPUT, provider=fake, model="gpt-6-luna")
     )
     assert fake.calls[0]["model"] == "gpt-6-luna"
-    assert json.loads(fake.calls[0]["input_text"]) == INPUT.model_dump()
+    assert json.loads(fake.calls[0]["input_text"]) == json.loads(INPUT.model_dump_json())
     assert fake.calls[0]["output_type"] is FishAudioScript
     assert output.plain_script_for_recording == DIRECTED
     assert response is not None
@@ -237,7 +237,8 @@ def test_audio_generation_and_explicit_regeneration_do_not_repeat_bots(
     assert first["credit_cost"] == 321
     assert len(director.calls) == len(speech.creates) == 1
     assert speech.creates[0]["text"] == DIRECTED
-    assert (tmp_path / first["file"]).read_bytes().startswith(b"ID3")
+    assert (tmp_path / first["file"]).read_bytes().startswith(b"RIFF")
+    assert (tmp_path / first["blocks"][0]["file"]).read_bytes().startswith(b"ID3")
     state = json.loads(
         (tmp_path / "audio/runs" / first["run_id"] / "task.json").read_text(
             encoding="utf-8"
@@ -250,7 +251,7 @@ def test_audio_generation_and_explicit_regeneration_do_not_repeat_bots(
         (tmp_path / "audio/runs" / first["run_id"] / "blocks/block_1/input.json").read_text(
             encoding="utf-8"
         )
-    ) == INPUT.model_dump()
+    ) == json.loads(INPUT.model_dump_json())
     assert json.loads(
         (tmp_path / "audio/runs" / first["run_id"] / "blocks/block_1/output.json").read_text(
             encoding="utf-8"
