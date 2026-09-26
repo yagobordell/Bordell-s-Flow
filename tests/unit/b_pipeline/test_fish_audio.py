@@ -117,7 +117,8 @@ def test_fish_director_prompt_is_exact_user_contract() -> None:
     assert "current_block_id" in prompt
     assert "narrative_core" in prompt
     assert "emotional_exit" in prompt
-    assert "original line-ending sequence" in prompt or "line endings" in prompt
+    assert "- line breaks;" in prompt
+    assert "Do not add or remove whitespace" in prompt
     assert "Return only the final JSON object." in prompt
 
 
