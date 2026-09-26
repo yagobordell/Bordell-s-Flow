@@ -129,6 +129,21 @@ def test_pipeline_parallel_calls_exact_source_and_medium_model_routing() -> None
     assert [call[0] for call in fake.calls] == ["gpt-6-luna"] * 5
     assert len(result.visual_plan()["blocks"]) == 2
     assert all("API transport:" in call[1] for call in fake.calls)
+    merged_beats = result.merged_b12_output()
+    merged_visuals = result.merged_b2_output()
+    assert merged_beats["pipeline_stage"] == "B1.2"
+    assert [block["block_id"] for block in merged_beats["blocks"]] == [1, 2]
+    assert [block["beats"][0]["beat_id"] for block in merged_beats["blocks"]] == [
+        "1A",
+        "2A",
+    ]
+    assert merged_visuals["pipeline_stage"] == "B2"
+    assert [block["block_id"] for block in merged_visuals["blocks"]] == [1, 2]
+    assert [block["beats"][0]["visual_type"] for block in merged_visuals["blocks"]] == [
+        "avatar",
+        "avatar",
+    ]
+    assert merged_beats["narrative_core"] == merged_visuals["narrative_core"]
 
 
 def test_exact_audited_prompt_hashes_present() -> None:
@@ -292,6 +307,8 @@ def test_metered_parallel_pipeline_records_every_exact_input_output() -> None:
     ledger = ApiCostLedger()
     inputs = {}
     outputs = {}
+    stage_times = {}
+    call_times = {}
     result = asyncio.run(
         run_b_pipeline(
             SCRIPT,
@@ -303,6 +320,10 @@ def test_metered_parallel_pipeline_records_every_exact_input_output() -> None:
                 {(stage, block_id): payload}
             ),
             on_api_response=ledger.record,
+            on_stage_duration=lambda stage, seconds: stage_times.update({stage: seconds}),
+            on_call_duration=lambda stage, block_id, seconds: call_times.update(
+                {(stage, block_id): seconds}
+            ),
         )
     )
 
@@ -322,6 +343,10 @@ def test_metered_parallel_pipeline_records_every_exact_input_output() -> None:
     assert outputs["B2", 2] == result.b2[1].model_dump()
     assert inputs["B2", 1]["blocks"][0]["beats"][0]["beat_id"] == "1A"
     assert len(ledger.records) == 5
+    assert set(stage_times) == {"B1.1", "B1.2", "B2"}
+    assert set(call_times) == expected
+    assert all(seconds >= 0 for seconds in stage_times.values())
+    assert all(seconds >= 0 for seconds in call_times.values())
     costs = ledger.report(blocks=2, run_status="completed")
     assert costs["estimated_total_usd"] == "0.00010000"
     assert costs["stages"]["B1.1"]["recorded_calls"] == 1
