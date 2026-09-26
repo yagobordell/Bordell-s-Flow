@@ -109,6 +109,7 @@ def test_list_scripts_does_not_require_api_key_or_start_inference(
 def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     folder = tmp_path / "scripts"
     _make_script(folder, "roma.txt", b"  Uno.\r\n\r\nDos.  ")
@@ -132,6 +133,8 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         on_input,
         on_output,
         on_api_response,
+        on_call_duration,
+        on_stage_duration,
     ):
         assert provider.reasoning_effort == "medium"
         assert model == "gpt-6-luna"
@@ -161,11 +164,21 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
                     ),
                 ),
             )
+            on_call_duration(stage, block_id, 0.125)
+            on_stage_duration(stage, 0.250)
         return SimpleNamespace(
             b11=SimpleNamespace(model_dump=lambda: {"pipeline_stage": "B1.1"}),
             b12=[SimpleNamespace(block_id=1)],
             b2=[],
             visual_plan=lambda: {"blocks": []},
+            merged_b12_output=lambda: {
+                "pipeline_stage": "B1.2",
+                "blocks": [{"block_id": 1, "beats": []}],
+            },
+            merged_b2_output=lambda: {
+                "pipeline_stage": "B2",
+                "blocks": [{"block_id": 1, "beats": []}],
+            },
         )
 
     monkeypatch.setattr(runner, "parse_args", lambda: args)
@@ -177,7 +190,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     monkeypatch.setattr(runner, "run_b_pipeline", fake_run)
 
     asyncio.run(runner.main())
-    previous_roma = tmp_path / "output" / "b_pipeline" / "roma"
+    previous_roma = tmp_path / "output" / "roma"
     (previous_roma / "stale_previous_run.json").write_text("obsolete", encoding="utf-8")
     args.script = "japon.txt"
     asyncio.run(runner.main())
@@ -186,7 +199,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
 
     assert received == ["  Uno.\r\n\r\nDos.  ", "Tres.\nCuatro.", "  Uno.\r\n\r\nDos.  "]
     first = tmp_path / "output" / "b_pipeline" / "roma"
-    second = tmp_path / "output" / "b_pipeline" / "japon"
+    second = tmp_path / "output" / "japon"
     assert not (first / "stale_previous_run.json").exists()
     for destination in (first, second):
         assert (destination / "B1.1" / "input.json").is_file()
@@ -195,6 +208,19 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         assert (destination / "B1.2" / "block_1" / "output.json").is_file()
         assert (destination / "B2" / "block_1" / "input.json").is_file()
         assert (destination / "B2" / "block_1" / "output.json").is_file()
+        b12_merged = json.loads(
+            (destination / "B1.2" / "merged_output.json").read_text(encoding="utf-8")
+        )
+        b2_merged = json.loads(
+            (destination / "B2" / "merged_output.json").read_text(encoding="utf-8")
+        )
+        assert [block["block_id"] for block in b12_merged["blocks"]] == [1]
+        assert [block["block_id"] for block in b2_merged["blocks"]] == [1]
+        timing = json.loads((destination / "timings.json").read_text(encoding="utf-8"))
+        assert timing["status"] == "completed"
+        assert timing["run_elapsed_seconds"] >= 0
+        assert timing["stages"]["B1.2"]["elapsed_seconds"] == 0.25
+        assert timing["stages"]["B2"]["call_count"] == 1
         costs = json.loads((destination / "api_costs.json").read_text(encoding="utf-8"))
         assert costs["pricing_status"] == "complete"
         assert costs["estimated_total_usd"] == "0.00006000"
@@ -202,6 +228,13 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         "plain_script_for_recording": "  Uno.\r\n\r\nDos.  "
     }
     assert (folder / "roma.txt").read_bytes() == b"  Uno.\r\n\r\nDos.  "
+    terminal = capsys.readouterr().out
+    assert "B1.1 total: $0.00002000" in terminal
+    assert "B1.2 total: $0.00002000" in terminal
+    assert "B2 total: $0.00002000" in terminal
+    assert "Run total: $0.00006000" in terminal
+    assert "Run total:" in terminal
+    assert "This token-based estimate is not an OpenAI invoice" not in terminal
 
 
 def test_existing_direct_path_still_supported(tmp_path: Path) -> None:
@@ -215,7 +248,7 @@ def test_repeating_same_script_resets_only_that_scripts_output(tmp_path: Path) -
     library = tmp_path / "scripts"
     roma = _make_script(library, "roma.txt")
     _make_script(library, "japon.txt")
-    root = tmp_path / "output" / "b_pipeline"
+    root = tmp_path / "output"
     old = runner._prepare_output(root, roma)
     runner._write(old / ".b_pipeline_run.json", {"script_file": "roma.txt"})
     (old / "stale.json").write_text("stale", encoding="utf-8")
@@ -258,3 +291,21 @@ def test_reset_recognizes_previous_standalone_runner_output(tmp_path: Path) -> N
 
     assert replacement == old
     assert list(replacement.iterdir()) == []
+
+
+def test_stage_wall_clock_is_not_sum_of_parallel_call_durations() -> None:
+    ledger = runner.TimingLedger()
+    ledger.record_call("B1.2", 2, 12.0)
+    ledger.record_call("B1.2", 1, 10.0)
+    ledger.record_stage("B1.2", 12.5)
+    ledger.record_stage("B1.1", 3.2)
+    ledger.record_call("B1.1", None, 3.0)
+
+    result = ledger.report(run_seconds=20.6, status="completed")
+
+    assert result["run_elapsed_seconds"] == 20.6
+    assert result["stages"]["B1.2"]["elapsed_seconds"] == 12.5
+    assert result["stages"]["B1.2"]["sum_call_seconds"] == 22.0
+    assert result["stages"]["B2"]["elapsed_seconds"] is None
+    assert result["calls"][1]["block_id"] == 1
+    assert result["calls"][2]["block_id"] == 2
