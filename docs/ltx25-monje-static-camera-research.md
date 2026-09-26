@@ -96,3 +96,36 @@ Do not rebuild/publish or deploy a new image until the final head has green CI. 
 without user-reviewed visual evidence. Before a paid test, verify Salad is stopped, settled
 and on the original immutable digest, and restore it on exit.
 
+
+## 2026-09-27: real allocation gap and safe one-worker fallback
+
+The latest paid run requested two replicas but the Salad API reported `instances=[]`
+for roughly 1,900 seconds, then allocated exactly one running instance. That
+worker passed its network preflight, downloaded the five pinned BF16 model assets
+in bounded parallel mode, wrote the verified manifest and passed /ready twice.
+The initial selector required a second ACTIVE instance for the deletion-cost
+readback even when no second instance had been allocated. It therefore failed
+before scale-in and did not submit a Postgres job. The wrapper restored the old
+pinned image and stopped group with one configured replica.
+
+Fix: a configured two-replica race can finish with exactly ONE verified ready
+current-version instance if no other active instance exists: set its deletion
+cost to 100000; read back exact instance ID, version and cost twice; check the
+group still has the original version and configured replicas=2; and re-check
+the exact current-version instance-ID set immediately before requesting
+configured replicas=1. If a competitor appears while protecting the winner,
+explicitly set its deletion cost to 0 and reconfirm the pair. If the topology
+changes after readback or the winner does not survive scale-in, abort without
+submitting a job and let the wrapper stop all compute. This is an adaptive
+fallback for *unallocated* capacity, not proof of camera/lip-sync quality.
+
+The latest uploaded worker CSV includes just one instance ID; absence of another
+instance in this CSV alone cannot prove platform-wide nonallocation. The
+full race-selector API trace corroborates there was only one active instance
+at the relevant selection and cost-confirmation time.
+
+Salad's [pricing documentation](https://salad.com/pricing/) states that
+allocation and image download are not billed; running instances are billed
+per second. Do not equate the >45-minute wall clock with two billed GPU-hours,
+and use actual instance timelines/invoices rather than estimating cost from
+configured replica count.
