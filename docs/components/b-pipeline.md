@@ -206,60 +206,61 @@ brief is *semantically* faithful or physically feasible still needs representati
 manual or model-based evaluation; schemas alone cannot prove that.
 
 
-## BotFish + TTS de AI33 Pro (independiente del pipeline visual)
+## BotFish por bloques + TTS de AI33 Pro
 
-El documento `src/ai_video_factory/bots/prompts/fish_audio.md` conserva el
-BotFish aportado por el usuario. El BotFish arranca de forma asíncrona al
-inicio de un run completo, en paralelo con B1.1. Ambos reciben
-`{"plain_script_for_recording": <guion original>}`, con el mismo texto,
-caracteres, saltos de línea y orden. El director solo puede insertar tags
-`[square brackets]`: se valida que el script original se recupere
-exactamente al eliminar **solo** las etiquetas nuevas. Una respuesta
-que reescriba el guion nunca se enviará al TTS.
+El documento `src/ai_video_factory/bots/prompts/fish_audio.md` define el director
+de voz por bloques. B1.1 sigue recibiendo el guion UTF-8 completo y
+materializa sus bloques exactos antes de iniciar BotFish. En cuanto termina
+B1.1, BotFish se ejecuta **en paralelo con B1.2**, una llamada independiente
+por bloque, usando exactamente el mismo contrato de entrada que B1.2:
+`narrative_core`, `current_block_id` y `blocks` con el único bloque
+materializado (`block_id`, `type`, `emotional_entry`, `emotional_exit`, `text`).
+El director usa la metadata como contexto, pero solo devuelve
+`plain_script_for_recording` del bloque seleccionado.
 
-Cuando el director produce su salida validada, se envía a
-`POST https://api.openspeaker.ai/v3/text-to-speech` con los campos
-`text`, `voice_id` y `speed`. La voz predeterminada es
-`fishaudio_f8dfe9c83081432386f143e2fe9767ef`. OpenSpeaker recibe
-la solicitud de generación, devuelve un task ID, y el runner consulta
-`GET /v1/task/{task_id}` hasta obtener un enlace de audio. **No se ha
-configurado un webhook remoto de retorno `receive_url`**: falta una
-URL pública propia y su contrato de verificación. La API de OpenSpeaker
-se conecta aquí directamente por POST/polling. La etiqueta Fish Audio
-identifica el origen de voz; el servicio advierte que no garantiza
-utilizar el motor de síntesis upstream Fish S2. Es necesario escuchar
-un audio real para verificar que las etiquetas se interpretan como se
-espera.
+Cada respuesta se verifica **antes** de llamar al TTS. La regla del prompt
+sigue siendo insertar exclusivamente etiquetas Fish, sin reescribir ni
+normalizar el texto. El validador de seguridad tolera diferencias de
+espacios y puntuación Unicode como el validador de B1.2; ninguna
+sustitución, pérdida, adición o reordenación de letras, cifras u otros
+caracteres léxicos llega a AI33. También se rechazan etiquetas partidas
+dentro de palabras y etiquetas finales sin texto hablado.
 
-El envío TTS se registra de forma durable antes de su POST. Si la
-respuesta se pierde, el estado `tts_submitting_unknown` bloquea el
-reenvío automático. Las consultas 429/502/503/504 se reintentan sin
-repetir el POST. Los artefactos se guardan en
-`data/output/<guion>/audio/runs/<run-id>/` y `audio/latest.json`
-apunta únicamente a una generación concluida. No se borra un TTS
-pendiente durante un rerun y `--regenerate-audio` crea otro run,
-conservando los audios anteriores.
+Cada bloque validado crea su **propia** tarea pagada de voz usando la
+misma voz Fish y `POST https://api.openspeaker.ai/v3/text-to-speech`.
+Las llamadas están limitadas por `--max-parallel-calls` y se
+almacenan de forma durable por bloque: input, respuesta dirigida,
+estado de POST/polling, task ID y audio descargado. Los bloques
+terminados no se vuelven a cobrar al reanudar. Un POST con resultado
+incierto bloquea su reenvío automático; las demás tareas ya
+iniciadas se esperan sin cancelarlas al producirse un error.
+
+Una vez descargados **todos** los audios, FFmpeg decodifica los formatos
+de origen a PCM WAV mono de 48 kHz y los concatena por `block_id`
+ascendente con **exactamente 500 ms de silencio entre bloques** (nunca
+después del último). No se concatenan bytes MP3 ni se depende de los
+retrasos variables de los codificadores de audio. La pista final,
+`audio/runs/<run-id>/narration.wav`, se publica en `audio/latest.json`
+solo al completar y verificar el ensamblado. Se conservan los hashes
+y créditos de cada bloque y el hash de la pista final.
+
+Los modos `--regenerate-audio` y `--resume-audio` reutilizan el
+checkpoint validado `B1.1/output.json` y nunca repiten B1.1, B1.2, B2
+ni imágenes. La reanudación compara el hash del guion, las entradas
+por bloque, el prompt, la voz y la velocidad. Para ensamblar se necesita
+`ffmpeg` en el `PATH`. `--no-audio` omite íntegramente la etapa de voz.
+Las imágenes de AI33 siguen empezando al finalizar B2, sin esperar
+a la pista de voz final. Esta integración no ejecuta Salad ni genera
+automáticamente el vídeo final.
 
 ```powershell
-# Bots B sin audio, imágenes opcionales:
+# Ejecutar planificación e imágenes sin voz:
 .\run.ps1 test2 Jorge --no-audio
-# Bots B sin audio ni imágenes:
-.\run.ps1 test2 Jorge --no-audio --no-image
-# SOLO BotFish + TTS, con el mismo guion que la última ejecución B:
+# Regenerar solo el audio, por bloques, desde B1.1 validado:
 .\run.ps1 test2 --regenerate-audio
-# Recuperar un task ID conocido sin repetir director ni POST de TTS:
+# Reanudar tareas conocidas sin duplicar POST de pago:
 .\run.ps1 test2 --resume-audio
 ```
-
-Los comandos de audio solo exigen el nombre del guion, nunca avatar.
-`--regenerate-audio` comprueba el SHA-256 del script frente a
-`run_report.json` y NO inicia B1.1/B1.2/B2, imágenes, Salad ni nuevas
-tareas de vídeo. `--no-audio` evita director y TTS aunque sí puede
-generar imágenes, salvo que también indiques `--no-image`. Una
-reanudación incompleta se atiende antes de solicitar otra generación
-de pago. Los gastos de OpenSpeaker se registran en créditos por tarea;
-no se convierten sin información de facturación a USD.
-
 ## AI33 Pro: imágenes a partir de las descripciones de B2
 
 Al terminar los tres bots y guardar el output completo de B2 y
