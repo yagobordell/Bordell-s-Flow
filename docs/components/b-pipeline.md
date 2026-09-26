@@ -325,6 +325,13 @@ El modelo predeterminado Flare es el que se ha verificado generando
 integración no ha ejecutado una generación real de Sunburst. No hay
 necesidad de cambiar ninguna imagen o conexión de Salad.
 
+Las imágenes se generan en paralelo con un máximo de **cuatro solicitudes
+por ejecución**; cada beat conserva su propio estado, y el manifiesto
+compartido se actualiza desde el hilo coordinador en el orden de B2.
+Si falla un beat, los demás continúan y sus PNG completados se
+conservan para `--images-only`. El límite puede ajustarse desde el
+parámetro Python `max_parallel_images` (1–16, predeterminado 4).
+
 Se crea `images/manifest.json`, más el PNG
 `images/block_<id>/<beat_id>.png` y su fichero de estado
 `images/block_<id>/<beat_id>.json`. El estado se persiste **antes** del
@@ -341,6 +348,14 @@ modelo** Flare/Sunburst, el mismo prompt con prefijo, `low`,
 cumplen el mínimo de píxeles, múltiplos de 16 y relación de aspecto
 documentados para la API oficial:
 https://developers.openai.com/api/docs/guides/image-generation
+
+Si AI33 devuelve un fallo confirmado de precio, rechaza explícitamente
+el envío, falla durante el polling o devuelve una imagen inválida o
+indescargable, **solo ese beat** activa el mismo fallback oficial
+inmediatamente, sin agotar los 30 minutos. Se registra el estado
+`ai33_failed` y el motivo; un `task_id` confirmado se conserva. Si
+no está configurada la clave oficial, `--images-only` reanuda el
+fallback desde ese estado sin repetir el POST a AI33.
 
 Si la respuesta del POST de AI33 se pierde, se detiene con estado
 `submitting_unknown`: **no se activa el fallback ni se repite una
@@ -369,7 +384,7 @@ Los metadatos por beat y el manifiesto incluyen modelo, ID de tarea,
 archivo local, SHA-256, dimensiones y `credit_cost` real que comunica
 AI33; `provider_credit_cost` se conserva por separado. En fallback, el
 artefacto queda marcado `provider: openai_official_fallback` con el
-`task_id` original de AI33, `fallback_reason: ai33_timeout`,
+`task_id` original de AI33 (si existe), `fallback_reason: ai33_timeout`\no `ai33_failure` y, para este último, `ai33_failure_stage`,
 `size: 1280x720` y, si la API lo incluye, `openai_usage`. Los
 contadores `ai33_count` y `openai_fallback_count` aparecen en el
 manifiesto y en el informe de ejecución. Los costes oficiales en USD
