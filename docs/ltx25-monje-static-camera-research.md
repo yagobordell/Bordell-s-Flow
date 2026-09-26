@@ -49,7 +49,7 @@ Status: experimental investigation only. No paid generation or visual acceptance
 
 ## Changes implemented now
 
-- One exact short default prompt and one identical literal in the protected paid-test wrapper.
+- One exact short prompt in the protected monk benchmark wrapper; generic A2V defaults stay unchanged.
 - Explicit `enhance_prompt=False` on the reference pipeline (no silent prompt expansion).
 - The original audio-frozen schedule, image strengths, Qwen padding and Stage-2 experiment
   remain unchanged so prompt-related behavior can be compared to historical jobs.
