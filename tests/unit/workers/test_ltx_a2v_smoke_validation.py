@@ -80,6 +80,40 @@ def test_a2v_smoke_defaults_to_reference_and_fast_is_explicit(
     assert parse_args().pending_timeout_seconds == 7200.0
 
 
+
+def test_rejected_compiled_reference_cannot_submit_a_real_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.smoke.submit_ltx25_a2v_smoke import main
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "submit_ltx25_a2v_smoke.py",
+            "--audio",
+            "speech.wav",
+            "--profile",
+            "reference-compiled",
+        ],
+    )
+    with pytest.raises(SystemExit, match="no paid job will be submitted"):
+        main()
+
+
+def test_controlled_smoke_reports_host_timing_without_changing_reference_recipe() -> None:
+    script = Path("scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "LTX_SMOKE_TIMING phase=capacity_start" in script
+    assert "LTX_SMOKE_TIMING phase=worker_ready" in script
+    assert "LTX_SMOKE_TIMING phase=job" in script
+    assert "LTX_SMOKE_TIMING phase=cleanup" in script
+    assert "2026-09-26 real visual and cold-latency" in script
+    assert script.index('if ($Profile -eq "reference-compiled") {') < script.index(
+        "& $WorkerManager @Start"
+    )
+
 def test_controlled_a2v_smoke_checks_local_python_before_gpu_allocation() -> None:
     script = Path("scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1").read_text(
         encoding="utf-8"
