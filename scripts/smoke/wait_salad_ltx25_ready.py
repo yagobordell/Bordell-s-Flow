@@ -64,7 +64,10 @@ def _readiness_observation(
     status = state.get("status") if isinstance(state, dict) else None
     if status == "stopped":
         raise RuntimeError("LTX group stopped before its worker became ready")
-    if status not in {"running", "deploying", "pending"} or group.get("pending_change") is not False:
+    if (
+        status not in {"running", "deploying", "pending"}
+        or group.get("pending_change") is not False
+    ):
         return None, f"group_status={status} pending={group.get('pending_change')}"
 
     if group.get("replicas") != 1:
