@@ -42,7 +42,10 @@ def task_id_of(response: dict[str, Any]) -> str | None:
 def audio_url_of(response: dict[str, Any]) -> str | None:
     """Accept documented/common audio result fields, not unrelated image/preview URLs."""
     audio_fields = ("audio_url", "audioUrl", "audio_file_url", "audioFileUrl")
-    containers = ("metadata", "data", "result", "output", "audio", "audio_result")
+    containers = (
+        "metadata", "data", "result", "output", "audio",
+        "audio_result", "result_audio",
+    )
     queue: list[tuple[object, bool]] = [(response, False)]
     visited = 0
     while queue and visited < 28:
@@ -116,6 +119,8 @@ class AI33SpeechClient:
             raise AI33SpeechError("OpenSpeaker TTS returned a non-object JSON result")
         if result.get("success") is False:
             code = result.get("code", "unknown")
+            if code == "server_busy" and method == "GET":
+                return result
             raise AI33SpeechError(f"OpenSpeaker TTS rejected {method} {path}: {code}")
         return result
 
