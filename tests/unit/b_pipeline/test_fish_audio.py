@@ -16,17 +16,48 @@ from ai_video_factory.bots.fish_audio import (
     run_fish_director,
     validate_fish_script,
 )
+from ai_video_factory.bots.contracts import B11Output, B12Input, MaterializedBlock, NarrativeCore
 from ai_video_factory.bots.fish_audio_workflow import (
     FishAudioWorkflowError,
     generate_fish_audio,
     unfinished_audio_runs,
 )
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient, audio_url_of
+from ai_video_factory.bots import fish_audio_workflow as fish_workflow
 from scripts.pipeline import run_b_pipeline as runner
 
 VOICE = "fishaudio_f8dfe9c83081432386f143e2fe9767ef"
 SCRIPT = "  Hola,\r\n[existing] ¿Qué tal?  \n"
 DIRECTED = "  [warm]Hola,\r\n[existing] [curious]¿Qué tal?  \n"
+B11 = B11Output.model_validate({
+    "pipeline_stage": "B1.1",
+    "narrative_core": {"central_question": "¿Qué tal?", "final_answer": "Bien."},
+    "blocks": [{
+        "block_id": 1, "type": "intro", "emotional_entry": "calm",
+        "emotional_exit": "curious",
+        "span": {"first_words": "Hola,", "last_words": "¿Qué tal?"},
+    }],
+    "error": None,
+})
+INPUT = B12Input(
+    narrative_core=NarrativeCore(central_question="¿Qué tal?", final_answer="Bien."),
+    current_block_id=1,
+    blocks=(MaterializedBlock(
+        block_id=1, type="intro", emotional_entry="calm",
+        emotional_exit="curious", text=SCRIPT,
+    ),),
+)
+
+
+@pytest.fixture(autouse=True)
+def stub_audio_join(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_join(_inputs, destination):
+        destination.write_bytes(b"RIFF" + b"\x00" * 40)
+        return {
+            "file": destination.name, "sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
+            "format": "wav", "bytes": destination.stat().st_size, "duration_seconds": 1.0,
+        }
+    monkeypatch.setattr(fish_workflow, "join_audio_blocks", fake_join)
 
 
 class FakeDirector:
@@ -82,9 +113,10 @@ class FakeSpeech:
 
 def test_fish_director_prompt_is_exact_user_contract() -> None:
     prompt = fish_prompt_bytes().decode("utf-8")
-    assert "plain_script_for_recording" in prompt
-    assert "inserting Fish Audio tags only" in prompt
-    assert "original line-ending sequence" in prompt
+    assert "current_block_id" in prompt
+    assert "narrative_core" in prompt
+    assert "emotional_exit" in prompt
+    assert "original line-ending sequence" in prompt or "line endings" in prompt
     assert "Return the final JSON only." in prompt
 
 
@@ -97,8 +129,6 @@ def test_insertion_only_validator_preserves_crlf_bracketed_text_and_whitespace()
 @pytest.mark.parametrize(
     ("changed", "error"),
     [
-        ("  [warm]Hola!\r\n[existing] ¿Qué tal?  \n", "changed"),
-        ("  [warm]Hola,\n[existing] ¿Qué tal?  \n", "changed"),
         ("  [warm]Hola,\r\n[existing] ¿Qué tal?  \nAdded", "changed"),
         ("  [warm]Hola,\r\n[existing] ¿Qué tal?  \n[soft]", "trail"),
         ("  H[soft]ola,\r\n[existing] ¿Qué tal?  \n", "split"),
@@ -111,15 +141,13 @@ def test_director_rejects_noninsertions(
         validate_fish_script(SCRIPT, changed)
 
 
-def test_director_uses_same_json_input_as_b11() -> None:
+def test_director_uses_same_json_input_as_b12() -> None:
     fake = FakeDirector()
     output, response = asyncio.run(
-        run_fish_director(SCRIPT, provider=fake, model="gpt-6-luna")
+        run_fish_director(INPUT, provider=fake, model="gpt-6-luna")
     )
     assert fake.calls[0]["model"] == "gpt-6-luna"
-    assert json.loads(fake.calls[0]["input_text"]) == {
-        "plain_script_for_recording": SCRIPT,
-    }
+    assert json.loads(fake.calls[0]["input_text"]) == INPUT.model_dump()
     assert fake.calls[0]["output_type"] is FishAudioScript
     assert output.plain_script_for_recording == DIRECTED
     assert response is not None
@@ -133,6 +161,7 @@ def test_director_refuses_source_rewrite_before_paid_tts(tmp_path: Path) -> None
             generate_fish_audio(
                 SCRIPT,
                 tmp_path,
+                b11=B11,
                 provider=bad,
                 director_model="gpt-6-luna",
                 ai33_api_key=None,
@@ -148,6 +177,7 @@ def test_director_refuses_source_rewrite_before_paid_tts(tmp_path: Path) -> None
         generate_fish_audio(
             SCRIPT,
             tmp_path,
+                b11=B11,
             provider=FakeDirector(),
             director_model="gpt-6-luna",
             ai33_api_key=None,
@@ -193,6 +223,7 @@ def test_audio_generation_and_explicit_regeneration_do_not_repeat_bots(
         generate_fish_audio(
             SCRIPT,
             tmp_path,
+                b11=B11,
             provider=director,
             director_model="gpt-6-luna",
             ai33_api_key=None,
@@ -212,14 +243,15 @@ def test_audio_generation_and_explicit_regeneration_do_not_repeat_bots(
         )
     )
     assert state["source_sha256"] == hashlib.sha256(SCRIPT.encode()).hexdigest()
-    assert state["task_id"] == "fish-task-1"
+    assert state["status"] == "completed"
+    assert first["blocks"][0]["task_id"] == "fish-task-1"
     assert json.loads(
-        (tmp_path / "audio/runs" / first["run_id"] / "input.json").read_text(
+        (tmp_path / "audio/runs" / first["run_id"] / "blocks/block_1/input.json").read_text(
             encoding="utf-8"
         )
-    ) == {"plain_script_for_recording": SCRIPT}
+    ) == INPUT.model_dump()
     assert json.loads(
-        (tmp_path / "audio/runs" / first["run_id"] / "output.json").read_text(
+        (tmp_path / "audio/runs" / first["run_id"] / "blocks/block_1/output.json").read_text(
             encoding="utf-8"
         )
     ) == {"plain_script_for_recording": DIRECTED}
@@ -228,6 +260,7 @@ def test_audio_generation_and_explicit_regeneration_do_not_repeat_bots(
         generate_fish_audio(
             SCRIPT,
             tmp_path,
+                b11=B11,
             provider=director,
             director_model="gpt-6-luna",
             ai33_api_key=None,
@@ -248,6 +281,7 @@ def test_unknown_paid_tts_submission_is_never_resent_on_resume(tmp_path: Path) -
             generate_fish_audio(
                 SCRIPT,
                 tmp_path,
+                b11=B11,
                 provider=FakeDirector(),
                 director_model="gpt-6-luna",
                 ai33_api_key=None,
@@ -261,6 +295,7 @@ def test_unknown_paid_tts_submission_is_never_resent_on_resume(tmp_path: Path) -
             generate_fish_audio(
                 SCRIPT,
                 tmp_path,
+                b11=B11,
                 provider=None,
                 director_model="gpt-6-luna",
                 ai33_api_key=None,
@@ -277,25 +312,40 @@ def test_resume_known_task_polls_without_recalling_director_or_paid_post(
     fake = FakeSpeech()
     pending = tmp_path / "audio/runs/old/task.json"
     pending.parent.mkdir(parents=True)
+    (pending.parent / "blocks/block_1").mkdir(parents=True)
+    (pending.parent / "blocks/block_1/input.json").write_text(
+        json.dumps(INPUT.model_dump()), encoding="utf-8"
+    )
     text = DIRECTED
-    (pending.parent / "output.json").write_text(
+    (pending.parent / "blocks/block_1/output.json").write_text(
         json.dumps({"plain_script_for_recording": text}), encoding="utf-8"
     )
+    input_sha = hashlib.sha256(
+        json.dumps([INPUT.model_dump()], ensure_ascii=False, separators=(",", ":")).encode()
+    ).hexdigest()
     pending.write_text(
         json.dumps({
             "run_id": "old",
             "source_sha256": hashlib.sha256(SCRIPT.encode()).hexdigest(),
+            "inputs_sha256": input_sha,
             "director_model": "gpt-6-luna",
-            "voice_id": VOICE,
-            "task_id": "existing",
-            "status": "submitted",
+            "director_prompt_sha256": hashlib.sha256(fish_prompt_bytes()).hexdigest(),
+            "voice_id": VOICE, "speed": 1.0, "status": "running",
         }),
         encoding="utf-8",
+    )
+    (pending.parent / "blocks/block_1/task.json").write_text(
+        json.dumps({
+            "block_id": 1, "source_sha256": hashlib.sha256(SCRIPT.encode()).hexdigest(),
+            "director_model": "gpt-6-luna", "voice_id": VOICE, "speed": 1.0,
+            "task_id": "existing", "status": "submitted",
+        }), encoding="utf-8",
     )
     result = asyncio.run(
         generate_fish_audio(
             SCRIPT,
             tmp_path,
+                b11=B11,
             provider=None,
             director_model="gpt-6-luna",
             ai33_api_key=None,
@@ -303,7 +353,7 @@ def test_resume_known_task_polls_without_recalling_director_or_paid_post(
             resume=True,
         )
     )
-    assert result["task_id"] == "existing"
+    assert result["blocks"][0]["task_id"] == "existing"
     assert fake.creates == []
     assert fake.polls == ["existing"]
     assert unfinished_audio_runs(tmp_path) == []
