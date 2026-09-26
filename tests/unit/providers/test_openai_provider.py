@@ -197,3 +197,47 @@ def test_openai_provider_fails_when_output_is_missing() -> None:
                 output_type=StructuredResult,
             )
         )
+
+
+def test_opt_in_metered_provider_returns_original_usage_bearing_response() -> None:
+    expected = StructuredResult(title="Demo", hook="Hook", narration="Texto.")
+    usage = SimpleNamespace(
+        input_tokens=125,
+        input_tokens_details=SimpleNamespace(cached_tokens=25, cache_write_tokens=0),
+        output_tokens=38,
+        output_tokens_details=SimpleNamespace(reasoning_tokens=12),
+    )
+    response = SimpleNamespace(
+        output_parsed=expected,
+        id="resp_metered",
+        model="gpt-6-luna",
+        service_tier="default",
+        usage=usage,
+    )
+    calls: list[dict[str, Any]] = []
+
+    async def parse(**kwargs: Any) -> SimpleNamespace:
+        calls.append(kwargs)
+        return response
+
+    provider = OpenAIProvider(
+        client=SimpleNamespace(responses=SimpleNamespace(parse=parse)),  # type: ignore[arg-type]
+        reasoning_effort="medium",
+        service_tier="default",
+    )
+
+    parsed, raw_response = asyncio.run(
+        provider.generate_structured_with_response(
+            model="gpt-6-luna",
+            instructions="Segment blocks",
+            input_text='{"plain_script_for_recording":"Texto."}',
+            output_type=StructuredResult,
+        )
+    )
+
+    assert parsed is expected
+    assert raw_response is response
+    assert raw_response.usage is usage
+    assert raw_response.usage.output_tokens_details.reasoning_tokens == 12
+    assert calls[0]["reasoning"] == {"effort": "medium"}
+    assert calls[0]["service_tier"] == "default"
