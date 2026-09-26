@@ -61,7 +61,6 @@ jobs:
           git("apply", "--check", str(patch_path))
           git("apply", str(patch_path))
           shutil.rmtree(root / ".migration")
-          (root / ".github" / "workflows" / "b-pipeline-apply.yml").unlink()
           git("add", "-A")
           subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
           subprocess.run(["git", "config", "user.email", "41898282+github-actions[bot]@users.noreply.github.com"], check=True)
