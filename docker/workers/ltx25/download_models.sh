@@ -7,6 +7,7 @@ MODEL_REPOSITORY="${LTX_MODEL_REPOSITORY:-Lightricks/LTX-2.5}"
 MODEL_REVISION="${LTX_MODEL_REVISION:-6c7e5e573ac1667efc83407806fe9b0b93730e60}"
 INCLUDE_DEV_ASSETS="${LTX_INCLUDE_A2V_DEV_ASSETS:-false}"
 INSTALLED_MANIFEST="${MODEL_ROOT}/.bordell-installed-model-manifest.json"
+BOOTSTRAP_COMPLETE_FILE="${LTX_MODEL_BOOTSTRAP_COMPLETE_FILE:-/tmp/ai-video-factory/ltx25-model-bootstrap.complete}"
 
 POLL_SECONDS="${LTX_MODEL_DOWNLOAD_PROGRESS_INTERVAL_SECONDS:-30}"
 STALL_TIMEOUT_SECONDS="${LTX_MODEL_DOWNLOAD_STALL_TIMEOUT_SECONDS:-600}"
@@ -57,6 +58,9 @@ if [[ "${MODEL_REVISION}" != "${EXPECTED_REVISION}" ]]; then
 fi
 
 mkdir -p "${MODEL_ROOT}"
+# Never inherit readiness from a previous container/entrypoint attempt. Only
+# publish the per-start marker after the whole model set has been validated.
+rm -f -- "${BOOTSTRAP_COMPLETE_FILE}"
 
 manifest_is_valid=false
 if python -m ai_video_factory.workers.ltx25.model_manifest validate \
@@ -135,3 +139,9 @@ for model_file in "${MODEL_FILES[@]}"; do
   }
   echo "MODEL_READY ${model_file} bytes=$(stat -c %s "${destination}")"
 done
+
+mkdir -p "$(dirname "${BOOTSTRAP_COMPLETE_FILE}")"
+completion_temp="${BOOTSTRAP_COMPLETE_FILE}.tmp.$"
+printf '%s\\n' "${MODEL_REVISION}" > "${completion_temp}"
+mv -f -- "${completion_temp}" "${BOOTSTRAP_COMPLETE_FILE}"
+echo "LTX_BOOTSTRAP_COMPLETE revision=${MODEL_REVISION} path=${BOOTSTRAP_COMPLETE_FILE}"
