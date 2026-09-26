@@ -111,10 +111,11 @@ salida anterior de ese guion. Los resultados se guardan en
 `data/output/<nombre-del-guion>/`, con carpetas `B1.1/`, `B1.2/` y
 `B2/` que conservan el `input.json` y `output.json` de cada llamada (por bloque
 en B1.2/B2). Tanto B1.2 como B2 incluyen además un `merged_output.json` con
-todos los bloques en su orden original. Al terminar, se muestran los costes
-estimados en USD y los tiempos de cada bot y del run: se guardan en
-`api_costs.json` y `timings.json`. Este runner todavía no sustituye al flujo
-de producción de las fases posteriores; consulta
+todos los bloques en su orden original. Cada bot imprime su tiempo y coste
+estimado en USD inmediatamente al terminar su etapa; el run imprime el total
+al finalizar. El archivo `run_report.json` reúne los datos del run, los
+costes y los tiempos, y se actualiza conforme terminan los bots. Este runner
+todavía no sustituye al flujo de producción de las fases posteriores; consulta
 [la guía del pipeline B](docs/components/b-pipeline.md).
 
 ## Desarrollo
