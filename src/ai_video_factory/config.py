@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     ai33_image_quality: str = "low"
     ai33_poll_timeout_seconds: int = 1800
     ai33_poll_interval_seconds: float = 8.0
+    # Use the already configured OPENAI_API_KEY only after a confirmed AI33 timeout.
+    openai_image_fallback_enabled: bool = True
     openai_service_tier: str = "flex"
     openai_fallback_service_tier: str = "default"
     qwen_image_21_model: str = "Qwen/Qwen-Image-2.1"

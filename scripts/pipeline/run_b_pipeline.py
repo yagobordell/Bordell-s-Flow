@@ -457,6 +457,8 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
         plan,
         api_key=settings.ai33_api_key,
         options=_ai33_options(),
+        fallback_enabled=settings.openai_image_fallback_enabled,
+        openai_api_key=settings.openai_api_key,
     )
     plan["image_assets"] = [
         {
@@ -464,11 +466,33 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
             "beat_id": item["beat_id"],
             "file": item["file"],
             "sha256": item["sha256"],
+            "provider": item.get("provider", "ai33"),
         }
         for item in manifest["items"]
     ]
     _write(output / "visual_plan.json", plan)
     return manifest
+
+
+def _image_summary(manifest: dict[str, object]) -> dict[str, object]:
+    items = manifest["items"]
+    return {
+        "status": "completed",
+        "count": len(items),
+        "model_id": manifest["model_id"],
+        # Only confirmed AI33 charges are included; a timed-out task may
+        # complete later and still be billed by AI33 independently.
+        "credits": sum(item.get("credit_cost") or 0 for item in items),
+        "ai33_count": sum(
+            item.get("provider", "ai33") == "ai33" for item in items
+        ),
+        "openai_fallback_count": sum(
+            item.get("provider") == "openai_official_fallback" for item in items
+        ),
+        "ai33_timeout_charge_may_be_pending": any(
+            item.get("provider") == "openai_official_fallback" for item in items
+        ),
+    }
 
 
 async def _run_images_only(script_file: Path, output_root: Path) -> None:
@@ -502,17 +526,16 @@ async def _run_images_only(script_file: Path, output_root: Path) -> None:
         report["run"]["image_generation"] = {"status": "incomplete"}
         _write(report_path, report)
         raise
-    report["run"]["image_generation"] = {
-        "status": "completed",
-        "count": len(manifest["items"]),
-        "model_id": manifest["model_id"],
-        "credits": sum(item.get("credit_cost") or 0 for item in manifest["items"]),
-    }
+    report["run"]["image_generation"] = _image_summary(manifest)
     report["run"]["status"] = "completed"
     report["timings"]["status"] = "completed"
     report["api_costs"]["run_status"] = "completed"
     _write(report_path, report)
-    print(f"  AI33 images complete: {len(manifest['items'])} PNG", flush=True)
+    print(
+        f"  Images complete: {len(manifest['items'])} PNG "
+        f"({manifest.get('openai_fallback_count', 0)} OpenAI fallback)",
+        flush=True,
+    )
 
 
 class BotArtifacts:
@@ -816,14 +839,7 @@ async def main() -> None:
             run_metadata["image_generation"] = {"status": "running"}
             save_report("running", len(result.b12))
             image_manifest = await _generate_images(output, visual_plan)
-            run_metadata["image_generation"] = {
-                "status": "completed",
-                "count": len(image_manifest["items"]),
-                "model_id": image_manifest["model_id"],
-                "credits": sum(
-                    item.get("credit_cost") or 0 for item in image_manifest["items"]
-                ),
-            }
+            run_metadata["image_generation"] = _image_summary(image_manifest)
     except Exception:
         if run_metadata.get("image_generation") == {"status": "running"}:
             run_metadata["image_generation"] = {"status": "incomplete"}
