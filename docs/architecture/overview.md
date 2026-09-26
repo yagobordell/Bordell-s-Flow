@@ -1,7 +1,9 @@
 # Architecture overview
 
 The active planning pipeline is B1.1 → B1.2 → B2. It produces a source-preserving
-visual plan with string beat IDs and avatar/image/video strategies. The previous
+visual plan with string beat IDs and avatar/image/video strategies. Each run
+selects a local PNG avatar, snapshots it and records the binding in the
+application-owned visual plan without modifying B2's bot contracts. The previous
 scene/shot-based planning bots and end-to-end production runner have been retired.
 GPU stage clients remain usable independently, but there is no supported
 end-to-end B2-to-final-video path until their contracts are migrated.

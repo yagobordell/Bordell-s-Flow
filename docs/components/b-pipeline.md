@@ -18,7 +18,7 @@ checksums are embedded in `workflow.py` and verified before API calls.
   order. B1.2 workers finish as a parallel wave before any B2 worker begins; B2 workers
   then run as a parallel wave. Both waves have the same bounded concurrency limit.
 
-## Script library and selection
+## Script library, avatar selection and snapshot
 
 Keep any number of authoritative UTF-8 plain-text scripts directly in
 `data/input/`, for example `historia_roma.txt` and `documental_japon.txt`.
@@ -28,15 +28,24 @@ or selecting scripts. To migrate previously ignored local files, move your
 `data/input/scripts/*.txt` files into `data/input/` without overwriting
 same-named files; the runner does not delete or move source scripts. Do not rename
 or copy a script to `script.txt`.
+Place one or more real PNG avatar images directly in `data/avatar/`, for
+example `monje.png` and `maestra.png`. The folder includes a versioned
+README, but **PNG images are not committed**. A missing avatar folder is
+created by the runner. On an ordinary run, the script is selected first
+and the avatar is selected second. The avatar is mandatory even if a
+particular B2 result does not use it in every beat.
+
 From the repository root, after setting `OPENAI_API_KEY` in local `.env`:
 
 List the available scripts (no API key or inference is required for this command):
 
 ```powershell
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --list-scripts
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --list-avatars
 ```
 
-Start the pipeline without a script argument to choose from a numbered menu:
+Start the pipeline without selection arguments to choose the script and then
+the avatar from two numbered menus:
 
 ```powershell
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py
@@ -46,15 +55,17 @@ For a non-interactive run, choose the file explicitly:
 
 ```powershell
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py `
-  --script documental_japon.txt --max-parallel-calls 8
+  --script documental_japon.txt --avatar monje.png --max-parallel-calls 8
 ```
 
-`--script documental_japon` (without the `.txt` suffix) also works. To use
-a different library directory, specify `--scripts-dir PATH`. A direct positional
-file path is still accepted for existing automation, but the library is the
-recommended input location. If no script is selected and the terminal is
-non-interactive, the runner exits with instructions rather than selecting an
-arbitrary script. A missing or invalid selection cannot start inference.
+`--script documental_japon` and `--avatar monje` work without their suffixes.
+Use `--scripts-dir PATH` or `--avatars-dir PATH` for a different library;
+a direct positional script path is still accepted. `--list-scripts` and
+`--list-avatars` require no API key or inference. In a non-interactive
+terminal, **both** script and avatar must be specified explicitly. Unknown,
+missing, symlinked or invalid PNG avatars cannot trigger API calls or delete
+the previous run output. The selected image is checked by Pillow before the
+output folder is replaced.
 
 Each script gets its own default output directory,
 `data/output/<script-name>/` (directly under the output root, without a `b_pipeline` subfolder). A repeated run of the same script removes
@@ -65,12 +76,16 @@ per-script folder: the runner still appends `<script-name>/`. The runner refuses
 to delete an unrelated directory, a symlink or a path containing the input script.
 The script is read as UTF-8 without stripping or normalizing any characters.
 B1.1 receives the selected complete text as `plain_script_for_recording`.
+The avatar is **not** added to B2's audited request or response schema:
+the application stores one run-level avatar binding that downstream stages
+will resolve for both `avatar` and `avatar_media` beats.
 
 One finished script has the following structure (B1.2 and B2 repeat one subfolder
 per frozen block):
 
 ```text
 data/output/historia_roma/
+  avatar.png
   run_report.json
   B1.1/
     input.json
@@ -103,7 +118,14 @@ The application-owned `B1.2/merged_output.json` and
 `B2/merged_output.json` combine the validated blocks in ascending `block_id`
 order without making a second model call or changing the original single-block
 input/output contracts. `visual_plan.json` remains the application-owned
-visual join.
+visual join. It adds a top-level `avatar` object containing `filename`,
+`source`, `file: "avatar.png"`, `sha256`, `width` and `height`.
+The same immutable binding appears at `run_report.json → run.avatar`.
+`avatar.png` is a byte-for-byte snapshot of the selected source, so later
+edits to `data/avatar/` cannot change the image used for this run. Original
+`B2/block_<id>/input.json` and `output.json` are unchanged; the top-level
+avatar binding applies to beats with `visual_type` `avatar` or `avatar_media`.
+Lip-sync/video generation is not implemented by this selection feature.
 
 The runner prints exactly one combined time/cost line as soon as each stage
 finishes: B1.1 immediately after its validated output, B1.2 after all parallel
@@ -114,7 +136,8 @@ the sum of simultaneous per-block calls. Every printed line is flushed
 immediately so redirected or piped runs can follow progress.
 
 `run_report.json` is the **only run-metrics file**. It contains `run`
-(source filename, SHA-256, selected model, reasoning effort, status),
+(source filename and SHA-256, selected avatar snapshot and SHA-256,
+selected model, reasoning effort, status),
 `api_costs` (token-usage-derived USD costs per bot, full run, and each
 request) and `timings` (wall-clock seconds per bot, full run, and each
 request). The file is written at the start, updated after each completed

@@ -2,8 +2,8 @@
 
 Operational executables are grouped by responsibility:
 
-- `pipeline/run_b_pipeline.py`: active B1.1 → B1.2 → B2 planning; no Salad
-  capacity is requested by this runner.
+- `pipeline/run_b_pipeline.py`: active B1.1 → B1.2 → B2 planning with
+  local script and PNG avatar selection; no Salad capacity is requested by this runner.
 - `pipeline/`: independently runnable GPU and composition stage clients,
   cache audits/preflights and controlled wrappers; no end-to-end video runner.
 - `salad/`: SaladCloud lifecycle, Postgres-backed capacity control and deployment.

@@ -53,20 +53,29 @@ debe actualizar `pyproject.toml` y `uv.lock` conjuntamente.
 
 ## Ejecución de B1.1 → B1.2 → B2
 
-Guarda los guiones UTF-8 directamente en `data/input/`, por ejemplo
-`data/input/historia_roma.txt`. Los archivos locales están ignorados por Git;
-el runner crea la carpeta al listar o seleccionar guiones si no existe.
+Guarda los guiones UTF-8 directamente en `data/input/` (por ejemplo,
+`historia_roma.txt`) y las imágenes PNG de avatar en `data/avatar/` (por ejemplo,
+`monje.png`). Las imágenes PNG y los guiones son locales y están ignorados por Git;
+en `data/avatar/README.md` están las instrucciones para esta biblioteca.
 
 ```powershell
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --list-scripts
-uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --list-avatars
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png
 ```
 
-Sin `--script`, el runner ofrece un menú en una terminal interactiva.
+En una terminal interactiva, sin argumentos, el runner ofrece primero el
+menú de guiones y después el de avatares. Si eliges el guion con `--script`,
+puedes elegir el avatar en el segundo menú; para automatizarlo especifica
+ambos argumentos. El runner comprueba que el avatar es un PNG válido antes
+de generar y copia sus bytes a `data/output/<nombre-del-guion>/avatar.png`.
+
 Cada guion escribe en `data/output/<nombre-del-guion>/`: input/output de
 B1.1, output por bloque y merge de B1.2/B2, `visual_plan.json` y
-`run_report.json` con costes, tiempos y metadatos. La consola imprime
-una línea de tiempo y coste inmediatamente después de terminar cada bot.
+`run_report.json` con costes, tiempos y metadatos. Ambos JSON incluyen el
+avatar elegido, su imagen local de la ejecución, dimensiones y SHA-256; el
+modelo B2 sigue recibiendo y devolviendo sus contratos originales. La consola
+imprime una línea de tiempo y coste inmediatamente después de terminar cada bot.
 
 **Límite actual:** esto genera un plan visual, **no** un vídeo final.
 Los wrappers GPU independientes y los servicios de Salad siguen en el
