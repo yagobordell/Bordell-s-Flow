@@ -250,6 +250,9 @@ async def run_b_pipeline(
     on_api_response: Callable[[str, int | None, object], None] | None = None,
     on_call_duration: Callable[[str, int | None, float], None] | None = None,
     on_stage_duration: Callable[[str, float], None] | None = None,
+    on_stage_complete: (
+        Callable[[str, int, dict[str, object] | None], None] | None
+    ) = None,
 ) -> BPipelineResult:
     """Run each new bot with the exact audited prompts and deterministic join order."""
     if not script or not script.strip():
@@ -279,6 +282,8 @@ async def run_b_pipeline(
     finally:
         if on_stage_duration is not None:
             on_stage_duration("B1.1", perf_counter() - b11_started)
+    if on_stage_complete is not None:
+        on_stage_complete("B1.1", len(materialized), None)
     semaphore = asyncio.Semaphore(max_parallel_calls)
 
     # Two independent parallel waves: no B2 starts until every B1.2 succeeds.
@@ -312,6 +317,9 @@ async def run_b_pipeline(
     finally:
         if on_stage_duration is not None:
             on_stage_duration("B1.2", perf_counter() - b12_started)
+    if on_stage_complete is not None:
+        partial = BPipelineResult(b11=b11, b12=tuple(b12_results), b2=())
+        on_stage_complete("B1.2", len(b12_results), partial.merged_b12_output())
 
     async def b2_one(
         meta: BlockMeta, block: MaterializedBlock, b12: B12Output
@@ -360,8 +368,11 @@ async def run_b_pipeline(
     finally:
         if on_stage_duration is not None:
             on_stage_duration("B2", perf_counter() - b2_started)
-    return BPipelineResult(
+    result = BPipelineResult(
         b11=b11,
         b12=tuple(b12_results),
         b2=tuple(b2_results),
     )
+    if on_stage_complete is not None:
+        on_stage_complete("B2", len(b2_results), result.merged_b2_output())
+    return result
