@@ -106,6 +106,19 @@ class SaladClient:
             payload={"deletion_cost": int(deletion_cost)},
         )
 
+    def get_container_group_instance(self, instance_id: str) -> dict[str, object]:
+        """Read one exact instance to confirm applied deletion cost before scale-in."""
+        self._validate_config()
+        resolved_instance_id = str(instance_id or "").strip()
+        if not resolved_instance_id:
+            raise ValueError("instance_id is required")
+        instance = self._get(
+            self._build_container_url() + f"/instances/{resolved_instance_id}"
+        )
+        if instance.get("id") != resolved_instance_id:
+            raise RuntimeError("Salad returned a different instance for its ID")
+        return instance
+
     def list_container_group_instances(self) -> list[dict[str, object]]:
         self._validate_config()
         payload = self._get(self._build_container_url() + "/instances")
