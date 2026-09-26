@@ -66,12 +66,15 @@ debe actualizar `pyproject.toml` y `uv.lock` conjuntamente.
 
 ## Ejecución
 
-Los ejemplos versionados viven en `examples/input/`; `data/input/` queda reservado para inputs locales de ejecución y no se versiona. Copia el guion que quieras usar a `data/input/script.txt` y ejecuta:
+Los ejemplos versionados viven en `examples/input/`. Guarda tantos guiones propios como
+necesites en `data/input/scripts/`, cada uno con su nombre, por ejemplo
+`historia_roma.txt` y `documental_japon.txt`. Sus contenidos no se versionan.
+El runner de producción actual acepta la ruta del guion que elijas:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
     .\scripts\pipeline\run_video_factory.ps1 `
-    -Input .\data\input\script.txt `
+    -Input .\data\input\scripts\historia_roma.txt `
     -NonInteractive
 ```
 
@@ -91,6 +94,22 @@ data/output/preflight_report.json
 data/output/production_metrics.json
 data/output/video_factory_metrics.json
 ```
+
+## Nuevo pipeline B1.1 → B1.2 → B2 (ejecución independiente)
+
+Los nuevos bots de planificación usan GPT-6 Luna con razonamiento medium. Para elegir
+interactivamente uno de los guiones de `data/input/scripts/` y ejecutar solo estos
+tres bots:
+
+```powershell
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py
+```
+
+Para elegirlo sin menú, usa `--script historia_roma.txt`; para consultar los
+disponibles, usa `--list-scripts`. Los resultados se guardan en
+`data/output/b_pipeline/<nombre-del-guion>/`. Este runner todavía no sustituye
+al flujo de producción de las fases posteriores; consulta
+[la guía del pipeline B](docs/components/b-pipeline.md).
 
 ## Desarrollo
 
