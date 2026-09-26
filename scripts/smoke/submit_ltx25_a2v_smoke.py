@@ -26,6 +26,7 @@ from ai_video_factory.workers.ltx25 import (
     LTX_A2V_GENERATION_PROFILE,
     LTX_A2V_GUIDED_GENERATION_PROFILE,
     LTX_A2V_REFERENCE_GENERATION_PROFILE,
+    LTX_A2V_REFERENCE_COMPILED_GENERATION_PROFILE,
     LTX_A2V_TASK,
     ltx_a2v_application_job_id,
 )
@@ -230,7 +231,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--segment-id", default="smoke-001")
     parser.add_argument(
         "--profile",
-        choices=("fast", "reference", "dev", "guided"),
+        choices=("fast", "reference", "reference-compiled", "dev", "guided"),
         default="reference",
         help="Functional avatar A2V baseline; fast/dev remain explicit comparison modes.",
     )
@@ -255,6 +256,7 @@ def main() -> None:
     profiles = {
         "fast": LTX_A2V_GENERATION_PROFILE,
         "reference": LTX_A2V_REFERENCE_GENERATION_PROFILE,
+        "reference-compiled": LTX_A2V_REFERENCE_COMPILED_GENERATION_PROFILE,
         "dev": LTX_A2V_DEV_GENERATION_PROFILE,
         "guided": LTX_A2V_GUIDED_GENERATION_PROFILE,
     }
@@ -448,7 +450,7 @@ def main() -> None:
     if metadata["generation_profile"] != profile:
         raise RuntimeError("A2V worker used a mismatched generation profile")
 
-    distilled_profile = args.profile in {"fast", "reference"}
+    distilled_profile = args.profile in {"fast", "reference", "reference-compiled"}
     expected_variant = "distilled" if distilled_profile else "dev"
     expected_steps = 8 if distilled_profile else 30
     expected_cfg = 1.0 if distilled_profile else 3.0
@@ -471,6 +473,9 @@ def main() -> None:
         or float(metadata["video_modality_scale"]) != 1.0
     ):
         raise RuntimeError("legacy A2V worker did not disable extra STG/modality guidance")
+    expected_compilation = "blocks" if args.profile == "reference-compiled" else "eager"
+    if metadata.get("transformer_compilation") != expected_compilation:
+        raise RuntimeError("A2V worker used an unexpected transformer compilation mode")
     if int(metadata["input_audio_channels"]) != input_channels:
         raise RuntimeError("A2V metadata input channel count does not match smoke input")
     if int(metadata["conditioning_audio_channels"]) != 2:
@@ -485,7 +490,7 @@ def main() -> None:
         raise RuntimeError("A2V metadata/output duration mismatch")
     if abs(effective_audio_duration - output_duration) > tolerance:
         raise RuntimeError("A2V conditioned audio/video duration mismatch")
-    if args.profile in {"reference", "guided"}:
+    if args.profile in {"reference", "reference-compiled", "guided"}:
         reference_required = {
             "generation_recipe",
             "stage_1_sampler",
@@ -510,16 +515,24 @@ def main() -> None:
                 + ", ".join(sorted(reference_missing))
             )
         expected_recipe = (
-            "distilled_reference" if args.profile == "reference" else "upstream_guided_dev"
+            "distilled_reference"
+            if args.profile in {"reference", "reference-compiled"}
+            else "upstream_guided_dev"
         )
-        expected_sampler = "euler_ancestral" if args.profile == "reference" else "euler"
+        expected_sampler = (
+            "euler_ancestral"
+            if args.profile in {"reference", "reference-compiled"}
+            else "euler"
+        )
         if metadata["generation_recipe"] != expected_recipe:
             raise RuntimeError("A2V worker used the wrong generation recipe")
         if metadata["stage_1_sampler"] != expected_sampler:
             raise RuntimeError("A2V worker used the wrong Stage 1 sampler")
         if metadata["stage_2_sampler"] != "euler":
             raise RuntimeError("reference A2V Stage 2 is not Euler")
-        expected_strength = 0.7 if args.profile == "reference" else 1.0
+        expected_strength = (
+            0.7 if args.profile in {"reference", "reference-compiled"} else 1.0
+        )
         if float(metadata["stage_1_image_strength"]) != expected_strength:
             raise RuntimeError("A2V worker used the wrong Stage 1 image strength")
         if float(metadata["stage_2_image_strength"]) != 1.0:
