@@ -1,8 +1,9 @@
 # B1.1 → B1.2 → B2 (replacement planning bots)
 
-This standalone, opt-in stage runs the three user-supplied audited instruction documents
-**byte-for-byte** from `src/ai_video_factory/bots/prompts/`. The expected SHA-256
-checksums are embedded in `workflow.py` and verified before API calls.
+This standalone, opt-in stage loads its instruction documents from
+`src/ai_video_factory/bots/prompts/` on every run. Prompt edits take effect immediately;
+the runner does not require checksum updates. A transport note for Responses API
+Structured Outputs is appended at runtime.
 
 - B1.1 runs once against the complete, unmodified script. The runtime resolves unique
   verbatim `first_words` / `last_words` anchors into contiguous block text and refuses any
@@ -66,6 +67,22 @@ terminal, **both** script and avatar must be specified explicitly. Unknown,
 missing, symlinked or invalid PNG avatars cannot trigger API calls or delete
 the previous run output. The selected image is checked by Pillow before the
 output folder is replaced.
+
+To rerun only a later stage, use `--from B1.2` or `--from B2`. The runner
+loads the prior output from `data/output/<script-name>/`, verifies that the
+script SHA-256 matches, validates the saved B1.1 output, and for `--from B2`
+also validates the complete B1.2 merge. It skips API calls for earlier stages
+and replaces outputs from the selected stage onward. The run report carries
+forward prior timing and API usage. A checkpoint from another script or a
+missing/incomplete upstream stage is rejected before outputs are changed.
+
+```powershell
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py `
+  --script documental_japon.txt --avatar monje.png --from B1.2
+
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py `
+  --script documental_japon.txt --avatar monje.png --from B2
+```
 
 Each script gets its own default output directory,
 `data/output/<script-name>/` (directly under the output root, without a `b_pipeline` subfolder). A repeated run of the same script removes

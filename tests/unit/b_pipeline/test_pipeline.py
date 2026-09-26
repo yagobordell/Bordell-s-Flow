@@ -15,7 +15,6 @@ from ai_video_factory.bots.contracts import (
     MaterializedBlock,
 )
 from ai_video_factory.bots.workflow import (
-    PROMPT_CHECKSUMS,
     BPipelineValidationError,
     _beat_suffix,
     _instructions,
@@ -146,8 +145,8 @@ def test_pipeline_parallel_calls_exact_source_and_medium_model_routing() -> None
     assert merged_beats["narrative_core"] == merged_visuals["narrative_core"]
 
 
-def test_exact_audited_prompt_hashes_present() -> None:
-    for filename in PROMPT_CHECKSUMS:
+def test_current_prompt_files_load_with_transport_instructions() -> None:
+    for filename in ("b1_1.md", "b1_2.md", "b2.md"):
         content = _instructions(filename)
         assert "API transport:" in content
         assert len(content) > 10_000
@@ -160,18 +159,36 @@ def test_block_materialization_preserves_leading_separator_and_trailing_spaces()
     assert [block.text for block in materialized] == ["  Uno.\n\n", "Dos.  "]
 
 
-def test_block_materialization_rejects_repeated_anchors() -> None:
-    block = BlockMeta.model_validate(
-        {
-            "block_id": 1,
-            "type": "development",
-            "emotional_entry": "a",
-            "emotional_exit": "b",
-            "span": {"first_words": "Uno", "last_words": "Uno"},
-        }
-    )
-    with pytest.raises(BPipelineValidationError, match="unique"):
-        materialize_blocks("Uno Uno", [block])
+def test_block_materialization_resolves_repeated_and_wrapped_anchors() -> None:
+    blocks = [
+        BlockMeta.model_validate(
+            {
+                "block_id": 1,
+                "type": "intro",
+                "emotional_entry": "a",
+                "emotional_exit": "b",
+                "span": {
+                    "first_words": "Inicio. Repetido.",
+                    "last_words": "Fin uno.",
+                },
+            }
+        ),
+        BlockMeta.model_validate(
+            {
+                "block_id": 2,
+                "type": "close",
+                "emotional_entry": "b",
+                "emotional_exit": "c",
+                "span": {"first_words": "Repetido.", "last_words": "Fin dos."},
+            }
+        ),
+    ]
+    raw = "Inicio.\r\nRepetido. Fin uno. Repetido. Fin dos."
+    materialized = materialize_blocks(raw, blocks)
+    assert [block.text for block in materialized] == [
+        "Inicio.\r\nRepetido. Fin uno. ",
+        "Repetido. Fin dos.",
+    ]
 
 
 def test_beat_ids_excel_sequence_and_length_rule() -> None:

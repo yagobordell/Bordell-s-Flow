@@ -6,13 +6,14 @@ runner can be enabled; no lossy integer-shot conversion is performed.
 """
 
 import asyncio
-import hashlib
 import json
+import re
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.resources import files
 from time import perf_counter
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -30,13 +31,7 @@ from .contracts import (
     MaterializedBlock,
 )
 
-PROMPT_CHECKSUMS = {
-    "b1_1.md": "53a8539167a67c0282242e23ccf4984f0a188c38982d713d701c2b1d4baa8eb1",
-    "b1_2.md": "02e58881e4654badb2299cb51f48dbea744364189b332a5942ce0c360b45c634",
-    "b2.md": "1029a042a4442506b5c038cb061184b40dcf3e1fedd5abc0dfe588ff372c1903",
-}
-# Transport-only adaptation to Responses API Structured Outputs; all audited
-# semantic and schema requirements in the original prompts remain unchanged.
+# Transport adaptation to Responses API Structured Outputs.
 _STRUCTURED_TRANSPORT = (
     "\n\nAPI transport: this call uses Responses API Structured Outputs. Return the "
     "specified JSON object directly via the supplied output schema, without an "
@@ -50,9 +45,6 @@ class BPipelineValidationError(ValueError):
 
 def _instructions(name: str) -> str:
     data = files("ai_video_factory.bots.prompts").joinpath(name).read_bytes()
-    actual = hashlib.sha256(data).hexdigest()
-    if actual != PROMPT_CHECKSUMS[name]:
-        raise BPipelineValidationError(f"Audited prompt checksum mismatch: {name}")
     return data.decode("utf-8") + _STRUCTURED_TRANSPORT
 
 
@@ -82,41 +74,119 @@ def _without_whitespace_and_punctuation(text: str) -> str:
     )
 
 
+def _occurrences(text: str, fragment: str) -> list[int]:
+    positions: list[int] = []
+    offset = 0
+    while True:
+        position = text.find(fragment, offset)
+        if position < 0:
+            return positions
+        positions.append(position)
+        offset = position + 1
+
+
+def _normalized_whitespace_with_offsets(text: str) -> tuple[str, list[int]]:
+    normalized: list[str] = []
+    source_offsets: list[int] = []
+    for match in re.finditer(r"\s+|\S+", text):
+        fragment = match.group()
+        if fragment.isspace():
+            normalized.append(" ")
+            source_offsets.append(match.start())
+        else:
+            normalized.append(fragment)
+            source_offsets.extend(range(match.start(), match.end()))
+    return "".join(normalized), source_offsets
+
+
+def _anchor_occurrences(
+    normalized_script: str, source_offsets: list[int], anchor: str
+) -> list[tuple[int, int]]:
+    normalized_anchor = " ".join(anchor.split())
+    return [
+        (
+            source_offsets[position],
+            source_offsets[position + len(normalized_anchor) - 1] + 1,
+        )
+        for position in _occurrences(normalized_script, normalized_anchor)
+    ]
+
+
 def materialize_blocks(script: str, blocks: list[BlockMeta]) -> list[MaterializedBlock]:
-    """Resolve globally unique verbatim anchors and tile the raw script exactly."""
+    """Resolve whitespace-tolerant anchors into one exact ordered source tiling."""
     if not isinstance(script, str) or not script.strip():
         raise BPipelineValidationError("A nonempty authoritative raw script is required")
     if not blocks or [block.block_id for block in blocks] != list(range(1, len(blocks) + 1)):
         raise BPipelineValidationError("B1.1 block IDs must be consecutive from 1")
 
-    starts: list[int] = []
+    normalized_script, source_offsets = _normalized_whitespace_with_offsets(script)
+    start_candidates: list[list[int]] = []
+    last_candidates: list[list[tuple[int, int]]] = []
     for block in blocks:
         first, last = block.span.first_words, block.span.last_words
         if first[0].isspace() or last[-1].isspace():
             raise BPipelineValidationError("B1.1 anchors must begin/end at substantive text")
-        if script.count(first) != 1 or script.count(last) != 1:
+        first_positions = [
+            start for start, _ in _anchor_occurrences(normalized_script, source_offsets, first)
+        ]
+        last_positions = _anchor_occurrences(normalized_script, source_offsets, last)
+        if not first_positions or not last_positions:
             raise BPipelineValidationError(
-                f"B1.1 block {block.block_id} anchor is not globally unique in raw script"
+                f"B1.1 block {block.block_id} anchor was not found verbatim in raw script"
             )
-        starts.append(script.index(first))
-    if starts != sorted(set(starts)) or script[: starts[0]].strip():
-        raise BPipelineValidationError("B1.1 anchors must start at first substantive text in order")
+        start_candidates.append(first_positions)
+        last_candidates.append(last_positions)
+
+    def has_valid_end(block_index: int, first_position: int, end: int) -> bool:
+        last = blocks[block_index].span.last_words
+        return any(
+            last_start >= first_position
+            and last_end <= end
+            and not script[last_end:end].strip()
+            for last_start, last_end in last_candidates[block_index]
+        )
+
+    solutions: list[tuple[int, ...]] = []
+    selected_starts: list[int] = []
+
+    def search_tilings(block_index: int) -> None:
+        if len(solutions) > 1:
+            return
+        if block_index == len(blocks):
+            if has_valid_end(len(blocks) - 1, selected_starts[-1], len(script)):
+                solutions.append(tuple(selected_starts))
+            return
+
+        for position in start_candidates[block_index]:
+            if selected_starts and position <= selected_starts[-1]:
+                continue
+            if not selected_starts:
+                if script[:position].strip():
+                    continue
+            elif not has_valid_end(block_index - 1, selected_starts[-1], position):
+                continue
+            selected_starts.append(position)
+            search_tilings(block_index + 1)
+            selected_starts.pop()
+            if len(solutions) > 1:
+                return
+
+    search_tilings(0)
+    if not solutions:
+        raise BPipelineValidationError(
+            "B1.1 anchors cannot tile the raw script in block order with exact boundaries"
+        )
+    if len(solutions) > 1:
+        raise BPipelineValidationError(
+            "B1.1 anchors allow multiple valid block tilings; boundaries are ambiguous"
+        )
+    starts = solutions[0]
 
     result: list[MaterializedBlock] = []
     for index, block in enumerate(blocks):
         start = 0 if index == 0 else starts[index]
         end = starts[index + 1] if index + 1 < len(starts) else len(script)
         first_position = starts[index]
-        last = block.span.last_words
-        last_position = script.index(last)
-        if (
-            not start <= first_position <= last_position < end
-            or script[start:first_position].strip()
-            or script[last_position + len(last) : end].strip()
-        ):
-            raise BPipelineValidationError(
-                f"B1.1 block {block.block_id} span does not cover its exact substantive range"
-            )
         result.append(
             MaterializedBlock(
                 block_id=block.block_id,
@@ -224,6 +294,7 @@ async def _call_stage[OutputT: BaseModel](
     provider: StructuredTextProvider,
     model: str,
     prompt: str,
+    instructions_suffix: str = "",
     output_type: type[OutputT],
     on_input: Callable[[str, int | None, dict[str, object]], None] | None,
     on_api_response: Callable[[str, int | None, object], None] | None,
@@ -234,7 +305,7 @@ async def _call_stage[OutputT: BaseModel](
         on_input(stage, block_id, payload)
     kwargs = {
         "model": model,
-        "instructions": _instructions(prompt),
+        "instructions": _instructions(prompt) + instructions_suffix,
         "input_text": _payload(payload),
         "output_type": output_type,
     }
@@ -258,8 +329,12 @@ async def run_b_pipeline(
     provider: StructuredTextProvider,
     model: str = "gpt-6-luna",
     max_parallel_calls: int = 8,
+    start_from: Literal["B1.1", "B1.2", "B2"] = "B1.1",
+    previous_b11: B11Output | None = None,
+    previous_b12: tuple[B12Output, ...] | None = None,
     on_input: Callable[[str, int | None, dict[str, object]], None] | None = None,
     on_output: Callable[[str, int | None, dict[str, object]], None] | None = None,
+    on_rejected_output: Callable[[int, str, dict[str, object]], None] | None = None,
     on_api_response: Callable[[str, int | None, object], None] | None = None,
     on_call_duration: Callable[[str, int | None, float], None] | None = None,
     on_stage_duration: Callable[[str, float], None] | None = None,
@@ -267,72 +342,131 @@ async def run_b_pipeline(
         Callable[[str, int, dict[str, object] | None], None] | None
     ) = None,
 ) -> BPipelineResult:
-    """Run each new bot with the exact audited prompts and deterministic join order."""
+    """Run each bot with its current prompt file and deterministic join order."""
     if not script or not script.strip():
         raise BPipelineValidationError("Authoritative script must not be empty")
     if max_parallel_calls < 1:
         raise ValueError("max_parallel_calls must be at least 1")
-    b11_started = perf_counter()
-    try:
-        b11 = await _call_stage(
+    if start_from not in {"B1.1", "B1.2", "B2"}:
+        raise ValueError(f"Unknown start stage: {start_from}")
+
+    async def call_b11(instructions_suffix: str = "") -> B11Output:
+        output = await _call_stage(
             "B1.1",
             None,
             {"plain_script_for_recording": script},
             provider=provider,
             model=model,
             prompt="b1_1.md",
+            instructions_suffix=instructions_suffix,
             output_type=B11Output,
             on_input=on_input,
             on_api_response=on_api_response,
             on_call_duration=on_call_duration,
         )
-        _require_success("B1.1", b11.error)
-        if b11.narrative_core is None or b11.blocks is None:
-            raise BPipelineValidationError("B1.1 did not provide required successful fields")
-        materialized = materialize_blocks(script, b11.blocks)
-        if on_output is not None:
-            on_output("B1.1", None, b11.model_dump())
-    finally:
-        if on_stage_duration is not None:
-            on_stage_duration("B1.1", perf_counter() - b11_started)
-    if on_stage_complete is not None:
-        on_stage_complete("B1.1", len(materialized), None)
-    semaphore = asyncio.Semaphore(max_parallel_calls)
-
-    # Two independent parallel waves: no B2 starts until every B1.2 succeeds.
-    async def b12_one(block: MaterializedBlock) -> B12Output:
-        b12_input = B12Input(
-            narrative_core=b11.narrative_core,
-            current_block_id=block.block_id,
-            blocks=(block,),
-        )
-        async with semaphore:
-            output = await _call_stage(
-                "B1.2",
-                block.block_id,
-                b12_input.model_dump(),
-                provider=provider,
-                model=model,
-                prompt="b1_2.md",
-                output_type=B12Output,
-                on_input=on_input,
-                on_api_response=on_api_response,
-                on_call_duration=on_call_duration,
+        _require_success("B1.1", output.error)
+        if output.narrative_core is None or output.blocks is None:
+            raise BPipelineValidationError(
+                "B1.1 did not provide required successful fields"
             )
-        validate_beats(output, block)
-        if on_output is not None:
-            on_output("B1.2", block.block_id, output.model_dump())
         return output
 
-    b12_started = perf_counter()
-    try:
-        b12_results = await asyncio.gather(*(b12_one(block) for block in materialized))
-    finally:
-        if on_stage_duration is not None:
-            on_stage_duration("B1.2", perf_counter() - b12_started)
-    if on_stage_complete is not None:
-        partial = BPipelineResult(b11=b11, b12=tuple(b12_results), b2=())
-        on_stage_complete("B1.2", len(b12_results), partial.merged_b12_output())
+    if start_from == "B1.1":
+        b11_started = perf_counter()
+        try:
+            b11 = await call_b11()
+            try:
+                materialized = materialize_blocks(script, b11.blocks)
+            except BPipelineValidationError as first_error:
+                if on_rejected_output is not None:
+                    on_rejected_output(1, str(first_error), b11.model_dump())
+                retry_suffix = (
+                    "\n\nB1.1 automatic correction attempt. The previous response failed "
+                    f"deterministic source-anchor validation: {first_error}\n"
+                    "Return a corrected complete B1.1 object. Preserve the previous block "
+                    "architecture and narrative metadata; correct the anchors so each is "
+                    "copied verbatim from the script and identifies the intended boundary "
+                    "uniquely. Make an anchor longer when a phrase occurs more than once. "
+                    "The ordered blocks must cover the complete script exactly once.\n"
+                    "Previous B1.1 response:\n"
+                    f"{_payload(b11.model_dump())}"
+                )
+                retry_b11: B11Output | None = None
+                try:
+                    retry_b11 = await call_b11(retry_suffix)
+                    materialized = materialize_blocks(script, retry_b11.blocks)
+                    b11 = retry_b11
+                except BPipelineValidationError as retry_error:
+                    if on_rejected_output is not None and retry_b11 is not None:
+                        on_rejected_output(2, str(retry_error), retry_b11.model_dump())
+                    raise BPipelineValidationError(
+                        "B1.1 source-anchor validation failed after one automatic retry: "
+                        f"{retry_error}"
+                    ) from retry_error
+            if on_output is not None:
+                on_output("B1.1", None, b11.model_dump())
+        finally:
+            if on_stage_duration is not None:
+                on_stage_duration("B1.1", perf_counter() - b11_started)
+        if on_stage_complete is not None:
+            on_stage_complete("B1.1", len(materialized), None)
+    else:
+        if previous_b11 is None:
+            raise ValueError(f"Starting from {start_from} requires a validated B1.1 checkpoint")
+        b11 = previous_b11
+        _require_success("B1.1 checkpoint", b11.error)
+        if b11.narrative_core is None or b11.blocks is None:
+            raise BPipelineValidationError("B1.1 checkpoint is missing required fields")
+        materialized = materialize_blocks(script, b11.blocks)
+
+    semaphore = asyncio.Semaphore(max_parallel_calls)
+    if start_from == "B2":
+        if previous_b12 is None:
+            raise ValueError("Starting from B2 requires validated B1.2 checkpoints")
+        b12_results = list(previous_b12)
+        if len(b12_results) != len(materialized):
+            raise BPipelineValidationError("B1.2 checkpoint block count does not match B1.1")
+        for expected_id, output, block in zip(
+            range(1, len(materialized) + 1), b12_results, materialized, strict=True
+        ):
+            if output.block_id != expected_id:
+                raise BPipelineValidationError("B1.2 checkpoint block IDs are not consecutive")
+            validate_beats(output, block)
+    else:
+        # Two independent parallel waves: no B2 starts until every B1.2 succeeds.
+        async def b12_one(block: MaterializedBlock) -> B12Output:
+            b12_input = B12Input(
+                narrative_core=b11.narrative_core,
+                current_block_id=block.block_id,
+                blocks=(block,),
+            )
+            async with semaphore:
+                output = await _call_stage(
+                    "B1.2",
+                    block.block_id,
+                    b12_input.model_dump(),
+                    provider=provider,
+                    model=model,
+                    prompt="b1_2.md",
+                    output_type=B12Output,
+                    on_input=on_input,
+                    on_api_response=on_api_response,
+                    on_call_duration=on_call_duration,
+                )
+            validate_beats(output, block)
+            if on_output is not None:
+                on_output("B1.2", block.block_id, output.model_dump())
+            return output
+
+        b12_started = perf_counter()
+        try:
+            b12_results = await asyncio.gather(*(b12_one(block) for block in materialized))
+        finally:
+            if on_stage_duration is not None:
+                on_stage_duration("B1.2", perf_counter() - b12_started)
+        if on_stage_complete is not None:
+            partial = BPipelineResult(b11=b11, b12=tuple(b12_results), b2=())
+            on_stage_complete("B1.2", len(b12_results), partial.merged_b12_output())
 
     async def b2_one(
         meta: BlockMeta, block: MaterializedBlock, b12: B12Output

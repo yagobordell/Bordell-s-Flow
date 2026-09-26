@@ -62,6 +62,8 @@ en `data/avatar/README.md` están las instrucciones para esta biblioteca.
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --list-scripts
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --list-avatars
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png --from B1.2
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png --from B2
 ```
 
 En una terminal interactiva, sin argumentos, el runner ofrece primero el
@@ -74,7 +76,9 @@ Cada guion escribe en `data/output/<nombre-del-guion>/`: input/output de
 B1.1, output por bloque y merge de B1.2/B2, `visual_plan.json` y
 `run_report.json` con costes, tiempos y metadatos. Ambos JSON incluyen el
 avatar elegido, su imagen local de la ejecución, dimensiones y SHA-256; el
-modelo B2 sigue recibiendo y devolviendo sus contratos originales. La consola
+modelo B2 sigue recibiendo y devolviendo sus contratos originales. Para repetir
+solo etapas posteriores, usa `--from B1.2` o `--from B2`; el runner valida y
+reutiliza los artefactos previos del mismo guion. La consola
 imprime una línea de tiempo y coste inmediatamente después de terminar cada bot.
 
 **Límite actual:** esto genera un plan visual, **no** un vídeo final.

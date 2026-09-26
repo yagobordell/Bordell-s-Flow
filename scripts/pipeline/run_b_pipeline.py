@@ -15,6 +15,8 @@ from PIL import Image
 
 from ai_video_factory.bots import run_b_pipeline
 from ai_video_factory.bots.billing import ApiCostLedger
+from ai_video_factory.bots.contracts import B11Output, B12Output
+from ai_video_factory.bots.workflow import materialize_blocks, validate_beats
 from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
 
@@ -70,13 +72,23 @@ def parse_args() -> argparse.Namespace:
         help="Output root; each script gets a child folder (default: data/output).",
     )
     parser.add_argument("--max-parallel-calls", type=int, default=8)
+    parser.add_argument(
+        "--from",
+        dest="from_stage",
+        choices=("B1.1", "B1.2", "B2"),
+        default="B1.1",
+        help="Start at this stage using validated earlier outputs in data/output/<script>.",
+    )
     args = parser.parse_args()
     if args.script_file is not None and args.script is not None:
         parser.error("Specify either a direct script path or --script, not both.")
     if args.list_scripts and args.list_avatars:
         parser.error("Choose either --list-scripts or --list-avatars.")
     if (args.list_scripts or args.list_avatars) and (
-        args.script_file is not None or args.script is not None or args.avatar is not None
+        args.script_file is not None
+        or args.script is not None
+        or args.avatar is not None
+        or args.from_stage != "B1.1"
     ):
         parser.error("Listing cannot be combined with script or avatar selection.")
     return args
@@ -285,6 +297,122 @@ def _prepare_output(
     return destination
 
 
+def _prepare_resume_output(
+    output_root: Path, script_file: Path, *, avatar_file: Path
+) -> Path:
+    root = output_root.resolve()
+    source = script_file.resolve()
+    avatar_source = avatar_file.resolve()
+    cwd = Path.cwd().resolve()
+    if (
+        root == cwd
+        or root in cwd.parents
+        or source.is_relative_to(root)
+        or avatar_source.is_relative_to(root)
+        or root.is_relative_to(avatar_source.parent)
+    ):
+        raise SystemExit("--output must be a dedicated output directory, not an input or repository path.")
+    destination = output_root / script_file.stem
+    if destination.is_symlink() or destination.is_junction():
+        raise SystemExit(f"Refusing to resume from a linked output directory: {destination}")
+    if not destination.is_dir():
+        raise SystemExit(f"No prior run directory exists for --from {script_file.stem}: {destination}")
+    report_path = destination / "run_report.json"
+    if not report_path.is_file() or report_path.is_symlink():
+        raise SystemExit(f"Cannot resume: missing valid run report at {report_path}")
+    return destination
+
+
+def _load_resume_checkpoint(
+    output: Path,
+    *,
+    start_from: str,
+    script: str,
+    script_sha256: str,
+) -> tuple[dict[str, object], B11Output, tuple[B12Output, ...] | None]:
+    try:
+        report = json.loads((output / "run_report.json").read_text(encoding="utf-8"))
+        if not isinstance(report, dict) or not isinstance(report.get("run"), dict):
+            raise ValueError("the saved run report is malformed")
+        run = report["run"]
+        if run.get("script_sha256") != script_sha256:
+            raise ValueError("the selected script differs from the saved run")
+        b11_dir = output / "B1.1"
+        b11_path = b11_dir / "output.json"
+        if b11_dir.is_symlink() or b11_path.is_symlink() or not b11_path.is_file():
+            raise ValueError("the saved B1.1 output is missing or linked")
+        b11_data = json.loads(b11_path.read_text(encoding="utf-8"))
+        b11 = B11Output.model_validate(b11_data)
+        if b11.error is not None or b11.blocks is None or b11.narrative_core is None:
+            raise ValueError("the saved B1.1 response is not a successful checkpoint")
+        materialized = materialize_blocks(script, b11.blocks)
+
+        b12_results: tuple[B12Output, ...] | None = None
+        if start_from == "B2":
+            b12_dir = output / "B1.2"
+            b12_path = b12_dir / "merged_output.json"
+            if b12_dir.is_symlink() or b12_path.is_symlink() or not b12_path.is_file():
+                raise ValueError("the saved B1.2 merge is missing or linked")
+            merged = json.loads(b12_path.read_text(encoding="utf-8"))
+            if not isinstance(merged, dict):
+                raise ValueError("the saved B1.2 merge is malformed")
+            if (
+                merged.get("pipeline_stage") != "B1.2"
+                or merged.get("narrative_core") != b11.narrative_core.model_dump()
+                or not isinstance(merged.get("blocks"), list)
+                or len(merged["blocks"]) != len(materialized)
+            ):
+                raise ValueError("the saved B1.2 merge does not match the B1.1 checkpoint")
+            parsed: list[B12Output] = []
+            for expected_id, item, block in zip(
+                range(1, len(materialized) + 1), merged["blocks"], materialized, strict=True
+            ):
+                response = B12Output.model_validate(
+                    {
+                        "pipeline_stage": "B1.2",
+                        "block_id": item["block_id"],
+                        "beats": item["beats"],
+                        "error": None,
+                    }
+                )
+                if response.block_id != expected_id:
+                    raise ValueError("the saved B1.2 block IDs are not consecutive")
+                validate_beats(response, block)
+                parsed.append(response)
+            b12_results = tuple(parsed)
+
+        costs = report["api_costs"]
+        timings = report["timings"]
+        if (
+            not isinstance(costs, dict)
+            or not isinstance(costs.get("requests"), list)
+            or not isinstance(timings, dict)
+        ):
+            raise ValueError("the saved run report lacks request or timing history")
+        return report, b11, b12_results
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(f"Cannot resume from {start_from}: {exc}") from exc
+
+
+def _clear_outputs_from(output: Path, start_from: str) -> None:
+    first_stage = _STAGES.index(start_from)
+    for stage in _STAGES[first_stage:]:
+        target = output / stage
+        if target.is_symlink() or target.is_junction():
+            raise SystemExit(f"Refusing to clear linked stage output: {target}")
+        if target.exists():
+            if not target.is_dir():
+                raise SystemExit(f"Stage output is not a directory: {target}")
+            shutil.rmtree(target)
+    visual_plan = output / "visual_plan.json"
+    if visual_plan.is_symlink():
+        raise SystemExit(f"Refusing to remove linked visual plan: {visual_plan}")
+    if visual_plan.exists():
+        if not visual_plan.is_file():
+            raise SystemExit(f"Visual plan path is not a file: {visual_plan}")
+        visual_plan.unlink()
+
+
 class BotArtifacts:
     """Persist the exact request payload and validated response of every bot call."""
 
@@ -308,6 +436,14 @@ class BotArtifacts:
     def output(self, stage: str, block_id: int | None, payload: dict[str, object]) -> None:
         _write(self._folder(stage, block_id) / "output.json", payload)
 
+    def rejected_b11(
+        self, attempt: int, error: str, payload: dict[str, object]
+    ) -> None:
+        _write(
+            self._folder("B1.1", None) / f"rejected_attempt_{attempt}.json",
+            {"attempt": attempt, "validation_error": error, "response": payload},
+        )
+
 
 class TimingLedger:
     """Monotonic wall-clock timing; parallel calls are not added into stage wall time."""
@@ -319,7 +455,7 @@ class TimingLedger:
     def record_stage(self, stage: str, elapsed_seconds: float) -> None:
         if stage not in _STAGES:
             raise ValueError(f"Unknown stage: {stage}")
-        self._stages[stage] = elapsed_seconds
+        self._stages[stage] = self._stages.get(stage, 0.0) + elapsed_seconds
 
     def record_call(self, stage: str, block_id: int | None, elapsed_seconds: float) -> None:
         if stage not in _STAGES:
@@ -331,6 +467,32 @@ class TimingLedger:
                 "elapsed_seconds": round(elapsed_seconds, 3),
             }
         )
+
+    def call_count(self, stage: str) -> int:
+        return sum(item["stage"] == stage for item in self._calls)
+
+    def restore(self, report: dict[str, object]) -> float:
+        """Restore stage timing from a prior report; return its total elapsed time."""
+        stages = report.get("stages")
+        calls = report.get("calls")
+        if not isinstance(stages, dict) or not isinstance(calls, list):
+            raise ValueError("Cannot restore malformed timing history")
+        for stage in _STAGES:
+            entry = stages.get(stage)
+            if isinstance(entry, dict) and isinstance(entry.get("elapsed_seconds"), (int, float)):
+                self._stages[stage] = float(entry["elapsed_seconds"])
+        for call in calls:
+            if (
+                not isinstance(call, dict)
+                or call.get("stage") not in _STAGES
+                or not isinstance(call.get("elapsed_seconds"), (int, float))
+            ):
+                raise ValueError("Cannot restore malformed timing call history")
+            self._calls.append(dict(call))
+        elapsed = report.get("run_elapsed_seconds")
+        if not isinstance(elapsed, (int, float)):
+            raise ValueError("Cannot restore missing total run time")
+        return float(elapsed)
 
     def report(self, *, run_seconds: float, status: str) -> dict[str, object]:
         calls = sorted(
@@ -418,7 +580,40 @@ async def main() -> None:
 
     run_started = perf_counter()
     output_root = args.output if args.output is not None else settings.output_dir
-    output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
+    script_sha256 = hashlib.sha256(source_bytes).hexdigest()
+    ledger = ApiCostLedger()
+    timings = TimingLedger()
+    resume_elapsed_offset = 0.0
+    resume_expected_calls: dict[str, int | None] | None = None
+    previous_b11: B11Output | None = None
+    previous_b12: tuple[B12Output, ...] | None = None
+    if args.from_stage == "B1.1":
+        output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
+    else:
+        output = _prepare_resume_output(output_root, script_file, avatar_file=avatar_file)
+        previous_report, previous_b11, previous_b12 = _load_resume_checkpoint(
+            output,
+            start_from=args.from_stage,
+            script=script,
+            script_sha256=script_sha256,
+        )
+        try:
+            previous_costs = previous_report["api_costs"]
+            previous_timing = previous_report["timings"]
+            ledger.restore_requests(previous_costs["requests"])
+            resume_elapsed_offset = timings.restore(previous_timing)
+            prior_counts = {stage: timings.call_count(stage) for stage in _STAGES}
+            rerun_from_index = _STAGES.index(args.from_stage)
+            block_count = len(previous_b11.blocks or [])
+            resume_expected_calls = {
+                stage: prior_counts[stage]
+                + (block_count if stage_index >= rerun_from_index else 0)
+                for stage_index, stage in enumerate(_STAGES)
+            }
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SystemExit(f"Cannot restore prior run accounting: {exc}") from exc
+        _clear_outputs_from(output, args.from_stage)
+
     # Snapshot the selected PNG: later library changes cannot silently alter this run.
     (output / "avatar.png").write_bytes(avatar_bytes)
     avatar_metadata = {
@@ -432,21 +627,26 @@ async def main() -> None:
     run_metadata = {
         "script_file": script_file.name,
         "avatar": avatar_metadata,
-        "script_sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "script_sha256": script_sha256,
         "model": settings.openai_b_model,
         "reasoning_effort": settings.openai_b_reasoning_effort,
     }
+    if args.from_stage != "B1.1":
+        run_metadata["resumed_from"] = args.from_stage
     artifacts = BotArtifacts(output)
-    ledger = ApiCostLedger()
-    timings = TimingLedger()
 
     def save_report(
         status: Literal["running", "completed", "failed"],
         blocks: int | None,
     ) -> tuple[dict[str, object], dict[str, object]]:
-        costs = ledger.report(blocks=blocks, run_status=status)
+        costs = ledger.report(
+            blocks=blocks,
+            run_status=status,
+            expected_b11_calls=max(1, timings.call_count("B1.1")),
+            expected_calls=resume_expected_calls,
+        )
         timing_report = timings.report(
-            run_seconds=perf_counter() - run_started,
+            run_seconds=resume_elapsed_offset + perf_counter() - run_started,
             status=status,
         )
         _write(
@@ -484,8 +684,12 @@ async def main() -> None:
             provider=provider,
             model=settings.openai_b_model,
             max_parallel_calls=args.max_parallel_calls,
+            start_from=args.from_stage,
+            previous_b11=previous_b11,
+            previous_b12=previous_b12,
             on_input=artifacts.input,
             on_output=artifacts.output,
+            on_rejected_output=artifacts.rejected_b11,
             on_api_response=ledger.record,
             on_call_duration=timings.record_call,
             on_stage_duration=timings.record_stage,

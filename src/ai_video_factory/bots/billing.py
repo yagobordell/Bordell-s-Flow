@@ -110,17 +110,30 @@ class ApiCostLedger:
 
         self._records.append(record)
 
+    def restore_requests(self, requests: list[object]) -> None:
+        """Carry priced request history forward when continuing a prior run."""
+        for request in requests:
+            if not isinstance(request, Mapping) or request.get("stage") not in _STAGES:
+                raise ValueError("Cannot restore malformed API request history")
+            self._records.append(dict(request))
+
     def report(
         self,
         *,
         blocks: int | None,
         run_status: Literal["running", "completed", "failed"],
+        expected_b11_calls: int = 1,
+        expected_calls: Mapping[str, int | None] | None = None,
     ) -> dict[str, object]:
         ordered = sorted(
             self._records,
             key=lambda item: (_STAGES.index(str(item["stage"])), item["block_id"] or 0),
         )
-        expected = {"B1.1": 1, "B1.2": blocks, "B2": blocks}
+        expected = (
+            {"B1.1": max(1, expected_b11_calls), "B1.2": blocks, "B2": blocks}
+            if expected_calls is None
+            else {stage: expected_calls.get(stage) for stage in _STAGES}
+        )
         stages: dict[str, dict[str, object]] = {}
         subtotal = Decimal(0)
         all_priced = True
