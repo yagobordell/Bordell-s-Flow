@@ -9,6 +9,7 @@ param(
     [ValidateRange(10, 180)][int]$PrepareTimeoutMinutes = 120,
     [ValidateRange(0, 64)][int]$Replicas = 0,
     [switch]$SkipBuild,
+    [switch]$AllowBootstrappingInstance,
     [switch]$Recreate,
     [switch]$AllowControllerOverride,
     [switch]$NonInteractive
@@ -413,16 +414,145 @@ function Wait-ForGroupSettled {
 }
 
 function Wait-ForRunningCapacity {
-    param([Parameter(Mandatory)][hashtable]$Headers, [Parameter(Mandatory)][int]$ExpectedReplicas)
+    param(
+        [Parameter(Mandatory)][hashtable]$Headers,
+        [Parameter(Mandatory)][int]$ExpectedReplicas,
+        [switch]$AllowBootstrappingInstance
+    )
     $Deadline = (Get-Date).AddMinutes(30)
+    $LastObservation = ""
+    $LastReportAt = [DateTime]::MinValue
+    $PullInstanceId = ""
+    $LastPullProgress = -1.0
+    $LastPullProgressAt = [DateTime]::UtcNow
+    $RequestedReallocations = @{}
+    $ReallocationCount = 0
+    $MaxPullReallocations = 2
+    $PullStallSeconds = 480
+
     do {
         Wait-ManualCapacityMutationInterval -Seconds 10
         $Group = Get-Group -Headers $Headers
-        if ((Get-GroupStatus -Group $Group) -eq "running" -and -not [bool]$Group.pending_change -and [int]$Group.replicas -eq $ExpectedReplicas) {
+        $Status = Get-GroupStatus -Group $Group
+        $ReplicasMatch = ([int]$Group.replicas -eq $ExpectedReplicas)
+        $Settled = (-not [bool]$Group.pending_change)
+
+        if (-not $AllowBootstrappingInstance -and $Status -eq "running" -and
+            $Settled -and $ReplicasMatch) {
             return $Group
         }
+
+        $InstanceSummary = "not-requested"
+        if ($AllowBootstrappingInstance) {
+            $Response = Invoke-SaladRequest -Headers $Headers -Uri "$ContainersBase/$GroupName/instances" -Operation "list LTX startup instances"
+            $Items = if ($null -ne $Response.PSObject.Properties["instances"]) {
+                @($Response.instances)
+            } elseif ($null -ne $Response.PSObject.Properties["items"]) {
+                @($Response.items)
+            } else {
+                throw "Salad instances response is missing the instances collection."
+            }
+            $Current = @(
+                $Items | Where-Object {
+                    $null -ne $_ -and [int]$_.version -eq [int]$Group.version -and
+                    [string]$_.state -in @("allocating", "downloading", "creating", "running")
+                }
+            )
+            if ($Current.Count -eq 1) {
+                $Instance = $Current[0]
+                $Id = [string]$Instance.id
+                $InstanceState = [string]$Instance.state
+                $Started = ($Instance.started -eq $true)
+                $Ready = ($Instance.ready -eq $true)
+                $Pull = $Instance.PSObject.Properties["pulling_progress"]
+                $Progress = if ($null -ne $Pull -and $null -ne $Pull.Value) {
+                    [double]$Pull.Value
+                } else { -1.0 }
+                $InstanceSummary = "id=$Id state=$InstanceState started=$Started ready=$Ready pulling_progress=$Progress"
+                if ($ReplicasMatch -and $Settled -and $Started -and
+                    $InstanceState -eq "running" -and
+                    $Status -in @("running", "deploying", "pending")) {
+                    Write-Host (
+                        "service=$Service LTX instance started id=$Id; " +
+                        "worker readiness will be checked before Postgres submission."
+                    ) -ForegroundColor Green
+                    return $Group
+                }
+
+                # Keep nodes that have started: their network preflight and
+                # byte-progress watchdog assess actual Hugging Face throughput.
+                # Only consider host-side reallocation while the Docker image
+                # itself is stalled, before the container can run its watchdog.
+                if ($Id -ne $PullInstanceId) {
+                    $PullInstanceId = $Id
+                    $LastPullProgress = $Progress
+                    $LastPullProgressAt = [DateTime]::UtcNow
+                } elseif ($InstanceState -ne "downloading" -or $Started -or $Progress -lt 0) {
+                    $LastPullProgress = $Progress
+                    $LastPullProgressAt = [DateTime]::UtcNow
+                } elseif ($Progress -gt $LastPullProgress + 0.01) {
+                    $LastPullProgress = $Progress
+                    $LastPullProgressAt = [DateTime]::UtcNow
+                } elseif ($ReplicasMatch -and $Settled -and
+                    ([DateTime]::UtcNow - $LastPullProgressAt).TotalSeconds -ge $PullStallSeconds -and
+                    $ReallocationCount -lt $MaxPullReallocations -and
+                    -not $RequestedReallocations.ContainsKey($Id)) {
+                    $ParsedId = [guid]::Empty
+                    if (-not [guid]::TryParse($Id, [ref]$ParsedId)) {
+                        throw "Salad returned an invalid LTX instance UUID; refusing reallocation."
+                    }
+                    # Verify the group and the same image pull again immediately
+                    # before the mutation, under the Capacity Controller lock.
+                    $ConfirmGroup = Get-Group -Headers $Headers
+                    $Confirm = Invoke-SaladRequest -Headers $Headers -Uri "$ContainersBase/$GroupName/instances" -Operation "confirm stalled LTX image pull"
+                    $ConfirmItems = if ($null -ne $Confirm.PSObject.Properties["instances"]) {
+                        @($Confirm.instances)
+                    } elseif ($null -ne $Confirm.PSObject.Properties["items"]) {
+                        @($Confirm.items)
+                    } else {
+                        throw "Salad confirmation response is missing instances."
+                    }
+                    $Matching = @($ConfirmItems | Where-Object { [string]$_.id -eq $Id })
+                    if ([int]$ConfirmGroup.version -eq [int]$Group.version -and
+                        [int]$ConfirmGroup.replicas -eq $ExpectedReplicas -and
+                        -not [bool]$ConfirmGroup.pending_change -and
+                        (Get-GroupStatus -Group $ConfirmGroup) -in @("running", "deploying", "pending") -and
+                        $Matching.Count -eq 1 -and
+                        [int]$Matching[0].version -eq [int]$Group.version -and
+                        [string]$Matching[0].state -eq "downloading" -and
+                        $Matching[0].started -ne $true -and
+                        $null -ne $Matching[0].pulling_progress -and
+                        [double]$Matching[0].pulling_progress -le $LastPullProgress + 0.01) {
+                        Write-Warning (
+                            "LTX Docker image pull stalled on $Id for $PullStallSeconds seconds " +
+                            "(progress=$Progress). Salad reallocation " +
+                            "$($ReallocationCount + 1)/$MaxPullReallocations."
+                        )
+                        Invoke-SaladRequest -Headers $Headers -Method "Post" -Uri "$ContainersBase/$GroupName/instances/$Id/reallocate" -Operation "reallocate stalled LTX image-pull instance" -TimeoutSec 60 | Out-Null
+                        $RequestedReallocations[$Id] = $true
+                        $ReallocationCount += 1
+                    } else {
+                        $LastPullProgressAt = [DateTime]::UtcNow
+                    }
+                }
+            } else {
+                $InstanceSummary = "current_version_instances=$($Current.Count)"
+                $PullInstanceId = ""
+            }
+        }
+        $Observation = "status=$Status replicas=$($Group.replicas) pending=$($Group.pending_change) $InstanceSummary"
+        if ($Observation -ne $LastObservation -or
+            ([DateTime]::UtcNow - $LastReportAt).TotalSeconds -ge 60) {
+            Write-Host ("{0} service={1} start_wait {2}" -f (Get-Date -Format "HH:mm:ss"), $Service, $Observation)
+            $LastObservation = $Observation
+            $LastReportAt = [DateTime]::UtcNow
+        }
     } while ((Get-Date) -lt $Deadline)
-    throw "'$GroupName' did not reach running/replicas=$ExpectedReplicas."
+    throw (
+        "'$GroupName' did not start a current-version worker or reach " +
+        "running/replicas=$ExpectedReplicas before the 30-minute capacity deadline; " +
+        "last_observation=$LastObservation image_pull_reallocations=$ReallocationCount."
+    )
 }
 
 function Wait-ForStoppedGroup {
@@ -587,6 +717,10 @@ function Show-Status {
 Assert-ServiceDefinition
 Set-Location $RepoRoot
 if ($Recreate -and $Action -ne "Prepare") { throw "-Recreate is only valid with Prepare." }
+if ($AllowBootstrappingInstance -and ($Action -ne "Start" -or $Service -ne "ltx25" -or
+    $DesiredReplicas -ne 1)) {
+    throw "-AllowBootstrappingInstance is only valid for LTX Start with one replica."
+}
 
 $script:CapacityMutationLock = $null
 try {
@@ -629,8 +763,12 @@ try {
         if ((Get-GroupStatus -Group $Group) -ne "running") {
             Invoke-SaladRequest -Headers $Headers -Method "Post" -Uri "$ContainersBase/$GroupName/start" -Operation "start container group" -TimeoutSec 60 | Out-Null
         }
-        Wait-ForRunningCapacity -Headers $Headers -ExpectedReplicas $DesiredReplicas | Out-Null
-        Write-Host "$Service running with explicit replicas=$DesiredReplicas; Postgres owns demand." -ForegroundColor Green
+        Wait-ForRunningCapacity -Headers $Headers -ExpectedReplicas $DesiredReplicas -AllowBootstrappingInstance:$AllowBootstrappingInstance | Out-Null
+        if ($AllowBootstrappingInstance) {
+            Write-Host "$Service LTX bootstrap instance started; awaiting /ready before submitting Postgres demand." -ForegroundColor Green
+        } else {
+            Write-Host "$Service running with explicit replicas=$DesiredReplicas; Postgres owns demand." -ForegroundColor Green
+        }
         exit 0
     }
     "Prepare" {
