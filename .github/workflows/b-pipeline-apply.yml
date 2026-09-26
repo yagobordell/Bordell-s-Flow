@@ -20,7 +20,7 @@ jobs:
         run: |
           python - <<'PY'
           import base64
-          import gzip
+          import bz2
           import hashlib
           import pathlib
           import shutil
@@ -31,10 +31,10 @@ jobs:
 
           root = pathlib.Path(".")
           parts = sorted((root / ".migration").glob("chunk_*.txt"))
-          if len(parts) != 6:
-              raise RuntimeError(f"Expected six migration patch parts, got {len(parts)}")
+          if len(parts) != 5:
+              raise RuntimeError(f"Expected five migration patch parts, got {len(parts)}")
           encoded = "".join(part.read_text(encoding="ascii") for part in parts)
-          patch = gzip.decompress(base64.b85decode(encoded))
+          patch = bz2.decompress(base64.b85decode(encoded))
           if hashlib.sha256(patch).hexdigest() != "b850b968b28e46b4669d0441bc24040666e57ef74bce035447a29b2d486dd605":
               raise RuntimeError("Migration patch checksum mismatch")
 
