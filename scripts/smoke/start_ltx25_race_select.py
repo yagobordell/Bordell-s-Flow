@@ -88,7 +88,9 @@ def race_to_one(
     group = client.describe_container_group()
     _verify_group(group, name=group_name, image=expected_image)
     if _status(group) != "stopped" or group.get("pending_change") is not False:
-        raise RuntimeError("LTX race requires a settled stopped group; refusing to touch live workers")
+        raise RuntimeError(
+            "LTX race requires a settled stopped group; refusing to touch live workers"
+        )
     if group.get("replicas") != 1:
         raise RuntimeError("LTX race requires the existing stopped group to have replicas=1")
     assert_authority()
@@ -159,15 +161,22 @@ def race_to_one(
             candidate, consecutive_ready = ready_id, 1
             if first_ready_seconds is None:
                 first_ready_seconds = clock() - started
+        states = [
+            (item.get("id"), item.get("state"), item.get("ready"), item.get("pulling_progress"))
+            for item in current
+        ]
         observation = (
             f"version={version} group={_status(group)} pending={group.get('pending_change')} "
-            f"instances={[(i.get('id'), i.get('state'), i.get('ready'), i.get('pulling_progress')) for i in current]} "
-            f"candidate={candidate} confirmations={consecutive_ready}/2"
+            f"instances={states} candidate={candidate} confirmations={consecutive_ready}/2"
         )
         if observation != last_state or clock() - last_report >= 60:
             report(f"LTX_RACE elapsed_seconds={clock()-started:.1f} {observation}")
             last_state, last_report = observation, clock()
-        if consecutive_ready >= 2 and candidate is not None and group.get("pending_change") is False:
+        if (
+            consecutive_ready >= 2
+            and candidate is not None
+            and group.get("pending_change") is False
+        ):
             break
         sleep(min(poll_seconds, max(0.0, deadline - clock())))
     else:
