@@ -80,6 +80,7 @@ def make_a2v_bindings(state: dict[str, Any]) -> a2v._A2VBindings:
 
     class FakeOffloadMode:
         CPU = "cpu"
+        DISK = "disk"
 
     class FakeDiffvaeApply:
         @staticmethod

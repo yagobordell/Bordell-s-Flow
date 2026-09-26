@@ -24,6 +24,7 @@ from ai_video_factory.workers.ltx25 import (
     LTX_A2V_DEFAULT_PROMPT,
     LTX_A2V_DEV_GENERATION_PROFILE,
     LTX_A2V_GENERATION_PROFILE,
+    LTX_A2V_GUIDED_GENERATION_PROFILE,
     LTX_A2V_REFERENCE_GENERATION_PROFILE,
     LTX_A2V_TASK,
     ltx_a2v_application_job_id,
@@ -229,7 +230,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--segment-id", default="smoke-001")
     parser.add_argument(
         "--profile",
-        choices=("fast", "reference", "dev"),
+        choices=("fast", "reference", "dev", "guided"),
         default="reference",
         help="Functional avatar A2V baseline; fast/dev remain explicit comparison modes.",
     )
@@ -239,7 +240,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed", type=int, default=4242)
     parser.add_argument("--timeout-seconds", type=float, default=10800.0)
-    parser.add_argument("--pending-timeout-seconds", type=float, default=1800.0)
+    parser.add_argument("--pending-timeout-seconds", type=float, default=None)
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument(
         "--output-dir",
@@ -255,6 +256,7 @@ def main() -> None:
         "fast": LTX_A2V_GENERATION_PROFILE,
         "reference": LTX_A2V_REFERENCE_GENERATION_PROFILE,
         "dev": LTX_A2V_DEV_GENERATION_PROFILE,
+        "guided": LTX_A2V_GUIDED_GENERATION_PROFILE,
     }
     profile = profiles[args.profile]
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -345,7 +347,11 @@ def main() -> None:
         storage=storage,
         poll_seconds=args.poll_seconds,
         timeout_seconds=args.timeout_seconds,
-        pending_timeout_seconds=args.pending_timeout_seconds,
+        pending_timeout_seconds=(
+            args.pending_timeout_seconds
+            if args.pending_timeout_seconds is not None
+            else (10800.0 if args.profile == "guided" else 1800.0)
+        ),
     )
     executor.ensure_input(
         avatar,
@@ -452,8 +458,19 @@ def main() -> None:
         raise RuntimeError("A2V worker used an unexpected diffusion schedule")
     if float(metadata["video_cfg_scale"]) != expected_cfg:
         raise RuntimeError("A2V worker used an unexpected CFG scale")
-    if float(metadata["video_stg_scale"]) != 0.0 or float(metadata["video_modality_scale"]) != 1.0:
-        raise RuntimeError("A2V worker did not disable extra STG/modality guidance")
+    if args.profile == "guided":
+        if (
+            float(metadata["video_stg_scale"]) != 1.0
+            or float(metadata["video_modality_scale"]) != 3.0
+            or float(metadata.get("video_rescale_scale", -1)) != 0.7
+            or metadata.get("video_stg_blocks") != [29]
+        ):
+            raise RuntimeError("guided A2V worker did not preserve pinned upstream guidance")
+    elif (
+        float(metadata["video_stg_scale"]) != 0.0
+        or float(metadata["video_modality_scale"]) != 1.0
+    ):
+        raise RuntimeError("legacy A2V worker did not disable extra STG/modality guidance")
     if int(metadata["input_audio_channels"]) != input_channels:
         raise RuntimeError("A2V metadata input channel count does not match smoke input")
     if int(metadata["conditioning_audio_channels"]) != 2:
@@ -468,7 +485,7 @@ def main() -> None:
         raise RuntimeError("A2V metadata/output duration mismatch")
     if abs(effective_audio_duration - output_duration) > tolerance:
         raise RuntimeError("A2V conditioned audio/video duration mismatch")
-    if args.profile == "reference":
+    if args.profile in {"reference", "guided"}:
         reference_required = {
             "generation_recipe",
             "stage_1_sampler",
@@ -492,14 +509,19 @@ def main() -> None:
                 "reference A2V metadata is missing fields: "
                 + ", ".join(sorted(reference_missing))
             )
-        if metadata["generation_recipe"] != "distilled_reference":
-            raise RuntimeError("reference A2V worker used the wrong generation recipe")
-        if metadata["stage_1_sampler"] != "euler_ancestral":
-            raise RuntimeError("reference A2V Stage 1 is not Euler ancestral")
+        expected_recipe = (
+            "distilled_reference" if args.profile == "reference" else "upstream_guided_dev"
+        )
+        expected_sampler = "euler_ancestral" if args.profile == "reference" else "euler"
+        if metadata["generation_recipe"] != expected_recipe:
+            raise RuntimeError("A2V worker used the wrong generation recipe")
+        if metadata["stage_1_sampler"] != expected_sampler:
+            raise RuntimeError("A2V worker used the wrong Stage 1 sampler")
         if metadata["stage_2_sampler"] != "euler":
             raise RuntimeError("reference A2V Stage 2 is not Euler")
-        if float(metadata["stage_1_image_strength"]) != 0.7:
-            raise RuntimeError("reference A2V Stage 1 image strength is not 0.7")
+        expected_strength = 0.7 if args.profile == "reference" else 1.0
+        if float(metadata["stage_1_image_strength"]) != expected_strength:
+            raise RuntimeError("A2V worker used the wrong Stage 1 image strength")
         if float(metadata["stage_2_image_strength"]) != 1.0:
             raise RuntimeError("reference A2V Stage 2 image strength is not 1.0")
         if not bool(metadata["audio_frozen_stage_1"]) or not bool(

@@ -54,6 +54,9 @@ LTX_A2V_REFERENCE_GENERATION_PROFILE = (
     "ltx25-a2v-reference-distilled-a95ab856-model6c7e5e5-fp8cpu-eagersdpa-v1"
 )
 LTX_A2V_DEV_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
+LTX_A2V_GUIDED_GENERATION_PROFILE = (
+    "ltx25-a2v-guided-dev-a95ab856-model6c7e5e5-fp8disk-eagersdpa-v2"
+)
 LTX_A2V_RECOMMENDED_MAX_SECONDS = 12.0
 LTX_A2V_MAX_RAW_FRAMES = 1024
 LTX_A2V_DEFAULT_PROMPT = (
@@ -90,9 +93,10 @@ class LTXAudioToVideoParameters(BaseModel):
             LTX_A2V_GENERATION_PROFILE,
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_DEV_GENERATION_PROFILE,
+            LTX_A2V_GUIDED_GENERATION_PROFILE,
         ):
             raise ValueError(
-                "generation_profile must be a supported fast, reference, or dev A2V profile"
+                "generation_profile must be a supported fast, reference, dev, or guided A2V profile"
             )
         return value
 
@@ -140,12 +144,48 @@ class LTXA2VModelFiles:
         missing = [
             str(path)
             for path in (self.dev_transformer, self.distilled_lora)
-            if not path.is_file()
+            if not path.is_file() or path.stat().st_size <= 0
         ]
         if missing:
             raise FileNotFoundError(
                 "Missing optional LTX-2.5 dev A2V model files: " + ", ".join(missing)
             )
+
+    def validate_dev_bootstrap(self) -> None:
+        """Wait for the downloader\'s atomic manifest before accepting guided jobs."""
+
+        self.validate_dev()
+        root = self.dev_transformer.parent.parent
+        installed_path = root / ".bordell-installed-model-manifest.json"
+        try:
+            installed = json.loads(installed_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise FileNotFoundError(
+                "LTX-2.5 dev bootstrap manifest has not been written"
+            ) from None
+
+        records = installed.get("files")
+        if (
+            installed.get("schema_version") != 1
+            or installed.get("repository")
+            != os.environ.get("LTX_MODEL_REPOSITORY", "Lightricks/LTX-2.5")
+            or installed.get("revision")
+            != os.environ.get("LTX_MODEL_REVISION", LTX25_MODEL_REVISION)
+            or not isinstance(records, dict)
+        ):
+            raise FileNotFoundError("LTX-2.5 dev bootstrap manifest is not ready")
+
+        for path in (self.dev_transformer, self.distilled_lora):
+            record = records.get(path.relative_to(root).as_posix())
+            if (
+                not isinstance(record, dict)
+                or record.get("size") != path.stat().st_size
+                or not isinstance(record.get("sha256"), str)
+                or len(record["sha256"]) != 64
+            ):
+                raise FileNotFoundError(
+                    f"LTX-2.5 dev asset has no verified bootstrap record: {path.name}"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -641,6 +681,59 @@ def _prepare_reference_pipeline_audio(
     )
 
 
+def _encode_guided_conditioning_flac(
+    source: Path,
+    destination: Path,
+    *,
+    probe: AudioProbe,
+) -> AudioProbe:
+    """Feed guided A2VidPipelineTwoStage lossless FLAC, not PCM-encoded WAV."""
+
+    executable = shutil.which("ffmpeg")
+    if executable is None:
+        raise RuntimeError("ffmpeg is required to encode guided A2V audio as FLAC")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [
+                executable,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(source),
+                "-map",
+                "0:a:0",
+                "-c:a",
+                "flac",
+                str(destination),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip()
+        raise _input_error(
+            "AUDIO_NORMALIZATION_FAILED",
+            "failed to encode guided speech as lossless FLAC"
+            + (f": {detail[-800:]}" if detail else ""),
+        ) from exc
+
+    encoded_probe = probe_audio(destination)
+    if (
+        encoded_probe.codec != "flac"
+        or encoded_probe.channels != probe.channels
+        or encoded_probe.sample_rate != probe.sample_rate
+        or encoded_probe.sample_count != probe.sample_count
+    ):
+        raise RuntimeError(
+            "guided A2V FLAC encoding changed codec, channels, sample rate or sample count"
+        )
+    return encoded_probe
+
+
 def _prepare_avatar_image(
     source: Path,
     destination: Path,
@@ -769,8 +862,8 @@ class DirectLTX25AudioToVideoBackend:
             self._release_pipeline_locked()
 
     def prepare(self) -> None:
-        # Readiness requires only the shared distilled assets. Dev comparison
-        # weights are optional and validated only when that profile is requested.
+        # The dev assets are optional unless this worker explicitly downloads them.
+        # Do not permit Postgres polling until their bootstrap has completed.
         with self._lock:
             bindings = self._get_bindings()
             try:
@@ -804,8 +897,9 @@ class DirectLTX25AudioToVideoBackend:
         reference = (
             parameters.generation_profile == LTX_A2V_REFERENCE_GENERATION_PROFILE
         )
+        guided = parameters.generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
         reference_audio_plan: ReferenceAudioPlan | None = None
-        if reference:
+        if reference or guided:
             reference_audio_plan = _prepare_reference_pipeline_audio(
                 audio_path,
                 output_path.parent / "a2v_reference_decoded.wav",
@@ -813,6 +907,18 @@ class DirectLTX25AudioToVideoBackend:
                 probe=audio_probe,
                 fps=parameters.fps,
             )
+            if guided:
+                flac_path = output_path.parent / "a2v_guided_conditioning.flac"
+                flac_probe = _encode_guided_conditioning_flac(
+                    reference_audio_plan.path,
+                    flac_path,
+                    probe=reference_audio_plan.conditioning_probe,
+                )
+                reference_audio_plan = replace(
+                    reference_audio_plan,
+                    path=flac_path,
+                    conditioning_probe=flac_probe,
+                )
             pipeline_audio_path = reference_audio_plan.path
             pipeline_audio_probe = reference_audio_plan.conditioning_probe
         else:
@@ -825,7 +931,10 @@ class DirectLTX25AudioToVideoBackend:
         with self._lock:
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
-            if parameters.generation_profile == LTX_A2V_DEV_GENERATION_PROFILE:
+            if parameters.generation_profile in (
+                LTX_A2V_DEV_GENERATION_PROFILE,
+                LTX_A2V_GUIDED_GENERATION_PROFILE,
+            ):
                 self._model_files.validate_dev()
             pipeline_width, pipeline_height = _pipeline_dimensions(parameters)
             conditioning_path = _prepare_avatar_image(
@@ -871,11 +980,22 @@ class DirectLTX25AudioToVideoBackend:
                     if distilled
                     else self._pipeline_params.num_inference_steps
                 )
-                guider_updates = {
-                    "modality_scale": 1.0,
-                    "stg_scale": 0.0,
-                    "stg_blocks": [],
-                }
+                # The blog's talking-avatar video guidance is opt-in for guided only.
+                # Legacy fast/reference/dev deliberately keep their existing values.
+                if guided:
+                    guider_updates = {
+                        "cfg_scale": 3.0,
+                        "stg_scale": 1.0,
+                        "rescale_scale": 0.7,
+                        "modality_scale": 3.0,
+                        "stg_blocks": [29],
+                    }
+                else:
+                    guider_updates = {
+                        "modality_scale": 1.0,
+                        "stg_scale": 0.0,
+                        "stg_blocks": [],
+                    }
                 if distilled:
                     guider_updates.update(cfg_scale=1.0, rescale_scale=0.0)
                 video_guider = replace(
@@ -917,7 +1037,11 @@ class DirectLTX25AudioToVideoBackend:
                             seed=parameters.seed,
                             height=pipeline_height,
                             width=pipeline_width,
-                            num_frames=None,
+                            num_frames=(
+                                reference_audio_plan.num_frames
+                                if guided and reference_audio_plan is not None
+                                else None
+                            ),
                             frame_rate=float(parameters.fps),
                             num_inference_steps=stage_1_steps,
                             stage_1_sigmas=stage_1_sigmas,
@@ -1001,13 +1125,19 @@ class DirectLTX25AudioToVideoBackend:
             "video_cfg_scale": video_guider.cfg_scale,
             "video_stg_scale": video_guider.stg_scale,
             "video_modality_scale": video_guider.modality_scale,
+            "video_rescale_scale": video_guider.rescale_scale,
+            "video_stg_blocks": list(video_guider.stg_blocks),
             "stage_1_steps": stage_1_steps,
             "stage_2_steps": len(bindings.stage_2_sigmas) - 1,
             "transformer_variant": "distilled" if distilled else "dev",
             "generation_recipe": (
                 "distilled_reference"
                 if reference
-                else ("legacy_fast" if fast else "legacy_dev")
+                else (
+                    "upstream_guided_dev"
+                    if guided
+                    else ("legacy_fast" if fast else "legacy_dev")
+                )
             ),
             "stage_1_sampler": (
                 LTX_A2V_REFERENCE_RECIPE.stage_1_sampler if reference else "euler"
@@ -1026,7 +1156,7 @@ class DirectLTX25AudioToVideoBackend:
             "audio_frozen_stage_1": True,
             "audio_frozen_stage_2": True,
             "quantization": "fp8_cast",
-            "offload_mode": "cpu",
+            "offload_mode": "disk" if guided else "cpu",
             "ltx_model_revision": os.environ.get(
                 "LTX_MODEL_REVISION", LTX25_MODEL_REVISION
             ),
@@ -1083,6 +1213,13 @@ class DirectLTX25AudioToVideoBackend:
 
     def _validate_runtime(self, bindings: _A2VBindings) -> None:
         self._model_files.validate()
+        if os.environ.get("LTX_INCLUDE_A2V_DEV_ASSETS", "false").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            self._model_files.validate_dev_bootstrap()
         if self._device.startswith("cuda") and not bindings.torch.cuda.is_available():
             raise RuntimeError("CUDA is not available for the LTX-2.5 A2V runtime")
 
@@ -1131,7 +1268,7 @@ class DirectLTX25AudioToVideoBackend:
             else [
                 bindings.lora_tuple(
                     str(self._model_files.distilled_lora),
-                    1.0,
+                    0.8 if generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE else 1.0,
                     bindings.lora_sd_ops,
                 )
             ]
@@ -1140,6 +1277,20 @@ class DirectLTX25AudioToVideoBackend:
         pipeline_cls = (
             bindings.reference_a2v_pipeline if reference else bindings.a2v_pipeline
         )
+        # The pinned upstream CPU strategy keeps all Gemma blocks in page-locked
+        # host buffers. Real guided smokes failed in its pinned allocator at both
+        # 40 and 60 GiB; use upstream disk streaming only for guided instead.
+        # This bounds the staging buffers without changing the checkpoint,
+        # LoRA, guidance, audio, or frame schedule. Other profiles stay on CPU.
+        guided = generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
+        offload_mode = (
+            bindings.offload_mode.DISK if guided else bindings.offload_mode.CPU
+        )
+        logger.info(
+            "LTX25_A2V_OFFLOAD generation_profile=%s mode=%s",
+            generation_profile,
+            "disk" if guided else "cpu",
+        )
         self._pipeline = pipeline_cls(
             model_paths=model_paths,
             distilled_lora=distilled_lora,
@@ -1147,7 +1298,7 @@ class DirectLTX25AudioToVideoBackend:
             loras=(),
             device=bindings.torch.device(self._device),
             quantization=quantization,
-            offload_mode=bindings.offload_mode.CPU,
+            offload_mode=offload_mode,
         )
         self._pipeline_profile = generation_profile
         self._pipeline_params = bindings.detect_params(str(transformer))

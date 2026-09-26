@@ -1,4 +1,6 @@
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -39,3 +41,68 @@ def test_a2v_smoke_defaults_to_reference_and_fast_is_explicit(
         ["submit_ltx25_a2v_smoke.py", "--audio", "speech.wav", "--profile", "fast"],
     )
     assert parse_args().profile == "fast"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["submit_ltx25_a2v_smoke.py", "--audio", "speech.wav", "--profile", "guided"],
+    )
+    guided_args = parse_args()
+    assert guided_args.profile == "guided"
+    assert guided_args.pending_timeout_seconds is None
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "submit_ltx25_a2v_smoke.py",
+            "--audio",
+            "speech.wav",
+            "--profile",
+            "guided",
+            "--pending-timeout-seconds",
+            "7200",
+        ],
+    )
+    assert parse_args().pending_timeout_seconds == 7200.0
+
+
+def test_controlled_a2v_smoke_checks_local_python_before_gpu_allocation() -> None:
+    script = Path("scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    source_check = Path("scripts/smoke/check_ltx25_python_source.py").read_text(
+        encoding="utf-8"
+    )
+    assert "LTX_A2V_GUIDED_GENERATION_PROFILE" in source_check
+    assert "check_ltx25_python_source.py" in script
+    assert "python -c" not in script
+    assert script.index("& $Python $SourceCheck $ExpectedLtxModule") < script.index(
+        "& $Python $R2Preflight"
+    )
+    assert script.index("& $Python $SourceCheck $ExpectedLtxModule") < script.index(
+        "& $WorkerManager @Start"
+    )
+
+
+def test_ltx_smoke_python_source_check_accepts_matching_worktree(tmp_path: Path) -> None:
+    import ai_video_factory.workers.ltx25 as ltx25
+
+    script = Path("scripts/smoke/check_ltx25_python_source.py")
+    expected = Path(ltx25.__file__).resolve()
+    accepted = subprocess.run(
+        [sys.executable, str(script), str(expected)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert accepted.returncode == 0, accepted.stderr
+
+    rejected = subprocess.run(
+        [sys.executable, str(script), str(tmp_path / "other" / "__init__.py")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode == 1
+    assert "Wrong LTX Python source" in rejected.stderr

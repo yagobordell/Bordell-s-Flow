@@ -62,6 +62,93 @@ is recorded in result metadata as a numerical/runtime deviation from a BF16 refe
 BF16 comparison is a later GPU experiment, not a prerequisite for the first functional
 lip-sync baseline.
 
+### Experimental guided talking-avatar profile
+
+`guided` is an **opt-in, non-production** comparison profile. It invokes the pinned
+upstream `A2VidPipelineTwoStage` with the full/dev transformer, 30-step Stage 1
+Euler sampling, the distilled LoRA at strength 0.8 only in Stage 2, and the
+video guidance values from the LTX talking-avatar blog (CFG 3.0, STG 1.0,
+rescale 0.7, A2V modality 3.0, STG blocks `[29]`). These values intentionally
+override the pinned LTX-2.5 checkpoint's STG block `[28]` only in `guided`.
+Audio stays frozen in both stages. The upstream `A2VidPipelineTwoStage` API
+exposes only the video guider and constructs its audio guider internally with
+default parameters, so the blog's audio CFG 7.0 is **not** applied or claimed.
+The existing `dev` profile deliberately keeps its old disabled-guidance contract;
+`reference` and `fast` are unchanged. For guided tests only, the worker reuses
+reference audio decoding, upward `8k+1` grid snapping and silence padding,
+then encodes the conditioning waveform as lossless FLAC before passing it to
+upstream; `monje.wav` remains a valid **input to Bordell**, not the file passed
+to the model. The worker passes an explicit frame count to avoid truncating the
+last words.
+The upstream guided stages retain image-conditioning strength 1.0; they do not
+claim to reproduce the distilled ComfyUI recipe or its resolution.
+
+**No guided GPU or visual validation is implied by this code.** The currently
+pinned Salad image v10 and manifest use `LTX_INCLUDE_A2V_DEV_ASSETS=false`; a
+guided smoke must not allocate GPU until a newly versioned image containing
+this code is built, published, checked by digest and pinned to the stopped
+group, and the manifest explicitly enables the optional dev checkpoint and
+Stage 2 LoRA. When dev assets are enabled, A2V preparation must wait for
+both optional files and the completed, atomic installed-model manifest before
+Postgres job polling begins: the shared distilled files becoming available is
+not sufficient. The guided smoke allows a three-hour **pending** window for cold
+bootstrap (the existing 30-minute default remains for other profiles); an
+explicit `--pending-timeout-seconds` overrides it. Reconcile the existing group
+via the protected Capacity Controller lifecycle; do not replace the group, reuse
+a Docker tag, or change production A2V routing. The PowerShell wrapper fails before allocation while the manifest
+disables dev assets. Verify model-cache provenance and free storage before the
+first download. Do not run an existing reference benchmark concurrently.
+
+Inspect the mouth against speech at bilabial consonants, vowel openings,
+pauses and phrase boundaries, and compare against the fixed `reference` baseline
+using the same avatar, input WAV, prompt and seed but a fresh segment ID. A valid
+MP4, preserved audio and green CI alone are not lipsync acceptance.
+
+### Guided Gemma pinned-memory failure (September 26, 2026)
+
+The RTX 5090 `guided` smoke failed before denoising at 40 GiB **and** 60 GiB
+Salad container RAM. The pinned upstream `OffloadMode.CPU` path tried to
+allocate a large page-locked **host** buffer while building the Gemma text
+encoder (`StreamingModelBuilder._build_pinned_source`), then PyTorch raised
+`torch.AcceleratorError: CUDA error: out of memory`. Its immediately preceding
+VRAM snapshot reported about 32.4 GB free: do not diagnose this traceback as
+22B diffusion running out of GPU VRAM, or assume additional container RAM fixes
+pinned-memory registration. The failed jobs did not produce a guided video.
+
+The `guided` profile now uses upstream `OffloadMode.DISK` for the two-stage
+pipeline (including Gemma), bounding pinned CPU staging slots rather than
+pinning all transformer blocks. Existing `fast`, `reference`, and `dev` keep
+`OffloadMode.CPU`. This is an official upstream streaming mode, not an
+upstream monkey-patch; its repeated disk reads can increase generation time.
+The guided profile version and returned `offload_mode` metadata identify this
+change. Keep the 40 GiB default in the tracked Salad manifest; a local 60 GiB
+comparison is not evidence that 60 GiB is required. This is a code-level
+mitigation awaiting real RTX 5090 and visual lip-sync validation, not a claim
+that the guided benchmark passed. Publish a **new immutable image** and use a
+fresh segment ID; the old worker image still contains the CPU-pinned path.
+
+### Real guided DISK smoke (September 26, 2026)
+
+The controlled RTX 5090 monk smoke with the pinned `fp8disk-eagersdpa-v2`
+profile **completed** through PostgreSQL/R2 and left the Salad group stopped.
+Job `ltx-a2v-monje-guided-disk-20260926-015706-4d32907058ca`
+used seed 4242 and the five-second mono 24 kHz WAV. The resulting MP4
+contained 121 frames at 1280x720 / 24 fps, with stereo AAC and
+5.042 s output duration. `offload_mode=disk`; inference took 530.005 s,
+total elapsed was 546.586 s, and peak CUDA allocation was 17,181,615,616
+bytes. The reported `pipeline_reused=true` means this is not a cold-model
+timing. Video SHA-256:
+`80ef9a18e504d0f79ad0b5c4f5a70444b4109648c19ecc98f75ecd74de71bfd4`.
+
+**Functional transport and memory-path success is not visual acceptance.**
+The last frames deform visibly near the end of the clip; frame-by-frame
+phonetic lip-sync and identity stability have not passed acceptance.
+The guided profile remains opt-in/experimental, outside production
+routing, and is not suitable for performance or quality guarantees.
+Do not drop the final voiced audio to hide the visual defect. A previous
+GPU attempt also lost its instance after Stage 1; the successful later
+smoke does not establish the cause of that interruption.
+
 ### Temporal contract
 
 Reference A2V never snaps speech down to the previous `8k+1` frame. The worker first

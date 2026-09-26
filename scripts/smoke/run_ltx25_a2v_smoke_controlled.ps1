@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)][string]$Audio,
     [string]$AvatarImage = "",
-    [ValidateSet("fast", "reference", "dev")][string]$Profile = "reference",
+    [ValidateSet("fast", "reference", "dev", "guided")][string]$Profile = "reference",
     [string]$SegmentId = "smoke-001",
     [string]$Prompt = "",
     [long]$Seed = 4242,
@@ -24,12 +24,25 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     $Python = (Get-Command python -ErrorAction Stop).Source
 }
 if ($Seed -lt 0) { throw "A2V seed must be non-negative." }
+if ($Profile -eq "guided") {
+    $Services = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\salad\services.json") -Raw | ConvertFrom-Json
+    if ($Services.services.ltx25.environment.LTX_INCLUDE_A2V_DEV_ASSETS -ne "true") {
+        throw "Guided A2V requires LTX_INCLUDE_A2V_DEV_ASSETS=true and a newly published/pinned worker image; refusing GPU allocation."
+    }
+}
 
 if (-not (Test-Path -LiteralPath $Audio -PathType Leaf)) {
     throw "A2V smoke audio does not exist: $Audio"
 }
 if (-not [string]::IsNullOrWhiteSpace($AvatarImage) -and -not (Test-Path -LiteralPath $AvatarImage -PathType Leaf)) {
     throw "A2V smoke avatar image does not exist: $AvatarImage"
+}
+
+$ExpectedLtxModule = Join-Path $RepoRoot "src\ai_video_factory\workers\ltx25\__init__.py"
+$SourceCheck = Join-Path $PSScriptRoot "check_ltx25_python_source.py"
+& $Python $SourceCheck $ExpectedLtxModule
+if ($LASTEXITCODE -ne 0) {
+    throw "A2V smoke Python imports an outdated or different worktree. Run uv sync --locked --extra dev --python 3.12 in $RepoRoot before allocating a GPU."
 }
 
 & $Python $R2Preflight
@@ -71,8 +84,11 @@ try {
     & $WorkerManager @Start
     if (-not $?) { throw "LTX A2V compute-group start failed." }
 
-    if ($Profile -ne "reference") {
+    if ($Profile -in @("fast", "dev")) {
         Write-Warning "fast/dev is comparison-only: a valid MP4 is not lip-sync acceptance."
+    }
+    if ($Profile -eq "guided") {
+        Write-Warning "guided is experimental: technical MP4/audio checks do not establish visual lip-sync."
     }
     & $Python $Smoke @Arguments
     if ($LASTEXITCODE -ne 0) {

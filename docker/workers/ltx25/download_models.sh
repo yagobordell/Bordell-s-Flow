@@ -70,6 +70,8 @@ then
 fi
 
 if [[ "${manifest_is_valid}" == "false" ]]; then
+  # An outdated manifest must not make the HTTP worker ready while assets download.
+  rm -f "${INSTALLED_MANIFEST}"
   /usr/local/bin/network-preflight
 fi
 

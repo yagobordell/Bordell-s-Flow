@@ -8,10 +8,76 @@ from _ltx_a2v_support import _seed_model_files, make_a2v_bindings
 from PIL import Image
 
 import ai_video_factory.workers.ltx25.a2v as a2v
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.workers.ltx25 import (
     DirectLTX25AudioToVideoBackend,
     LTXAudioToVideoParameters,
 )
+from ai_video_factory.workers.ltx25.model_manifest import write_installed_model_manifest
+
+
+def test_guided_bootstrap_waits_for_atomic_dev_manifest_before_polling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "models"
+    _seed_model_files(root)
+    files = a2v.LTXA2VModelFiles.from_root(root)
+    monkeypatch.setenv("LTX_INCLUDE_A2V_DEV_ASSETS", "true")
+    monkeypatch.setenv("LTX_MODEL_REPOSITORY", "Lightricks/LTX-2.5")
+    monkeypatch.setenv("LTX_MODEL_REVISION", a2v.LTX25_MODEL_REVISION)
+    bindings = make_a2v_bindings({})
+    monkeypatch.setattr(a2v, "_load_a2v_bindings", lambda: bindings)
+    backend = DirectLTX25AudioToVideoBackend(model_root=root)
+
+    with pytest.raises(ModelBootstrapPendingError, match="manifest"):
+        backend.prepare()
+    with pytest.raises(RuntimeError, match="not been prepared"):
+        backend.ready()
+
+    manifest = root / ".bordell-installed-model-manifest.json"
+    shared_and_dev = [
+        path.relative_to(root).as_posix()
+        for path in (*files.shared.paths(), files.dev_transformer, files.distilled_lora)
+    ]
+    write_installed_model_manifest(
+        manifest,
+        repository="Lightricks/LTX-2.5",
+        revision=a2v.LTX25_MODEL_REVISION,
+        root=root,
+        files=shared_and_dev[:-1],
+    )
+    with pytest.raises(ModelBootstrapPendingError, match="verified bootstrap record"):
+        backend.prepare()
+
+    write_installed_model_manifest(
+        manifest,
+        repository="Lightricks/LTX-2.5",
+        revision=a2v.LTX25_MODEL_REVISION,
+        root=root,
+        files=shared_and_dev,
+    )
+    backend.prepare()
+    backend.ready()
+
+    # Readiness must not silently accept missing/corrupt optional assets.
+    files.distilled_lora.write_bytes(b"changed-size")
+    with pytest.raises(FileNotFoundError, match="verified bootstrap record"):
+        backend.ready()
+
+
+def test_distilled_a2v_bootstrap_keeps_dev_weights_optional(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "models"
+    _seed_model_files(root)
+    files = a2v.LTXA2VModelFiles.from_root(root)
+    files.dev_transformer.unlink()
+    files.distilled_lora.unlink()
+    monkeypatch.setenv("LTX_INCLUDE_A2V_DEV_ASSETS", "false")
+    monkeypatch.setattr(a2v, "_load_a2v_bindings", lambda: make_a2v_bindings({}))
+    backend = DirectLTX25AudioToVideoBackend(model_root=root)
+    backend.prepare()
+    backend.ready()
 
 
 def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
@@ -127,6 +193,7 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
     assert state["builds"] == 2
     assert "dev-transformer" in state["pipeline_inits"][1]["model_paths"]["transformer_path"]
     assert len(state["pipeline_inits"][1]["distilled_lora"]) == 1
+    assert state["pipeline_inits"][1]["offload_mode"] == "cpu"
     assert state["calls"][2]["num_inference_steps"] == 30
     assert state["calls"][2]["stage_1_sigmas"] is None
     assert state["calls"][2]["video_guider_params"].cfg_scale == 3.0
@@ -243,3 +310,99 @@ def test_reference_a2v_uses_upward_grid_and_does_not_require_dev_assets(
     assert metadata["audio_padding_seconds"] == pytest.approx(1_000 / 24_000)
     assert metadata["num_frames"] == 97
     assert metadata["effective_audio_duration_seconds"] == pytest.approx(97 / 24)
+
+
+def test_guided_a2v_uses_upstream_guidance_and_preserves_padded_speech(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model_root = tmp_path / "models"
+    _seed_model_files(model_root)
+    image = tmp_path / "avatar.png"
+    Image.new("RGB", (1280, 736), (80, 100, 120)).save(image)
+    audio = tmp_path / "speech.wav"
+    audio.write_bytes(b"fake-audio")
+    conditioning = tmp_path / "guided-conditioning.wav"
+    conditioning.write_bytes(b"padded")
+    flac_conditioning = tmp_path / "a2v_guided_conditioning.flac"
+    state: dict[str, Any] = {
+        "builds": 0,
+        "calls": [],
+        "encodes": [],
+        "conditionings": [],
+        "inference_depth": 0,
+        "inference_entries": 0,
+    }
+    bindings = make_a2v_bindings(state)
+    monkeypatch.setattr(a2v, "_load_a2v_bindings", lambda: bindings)
+    monkeypatch.setattr(
+        a2v,
+        "probe_audio",
+        lambda _: a2v.AudioProbe("pcm_s16le", 24_000, 1, 4.0, sample_count=96_000),
+    )
+    plan = a2v.ReferenceAudioPlan(
+        path=conditioning,
+        decoded_probe=a2v.AudioProbe("pcm_s16le", 24_000, 2, 4.0, 96_000),
+        conditioning_probe=a2v.AudioProbe("pcm_s16le", 24_000, 2, 97 / 24, 97_000),
+        num_frames=97,
+        grid_video_duration_seconds=97 / 24,
+        padding_samples=1_000,
+    )
+    monkeypatch.setattr(a2v, "_prepare_reference_pipeline_audio", lambda *args, **kwargs: plan)
+    flac_calls: list[tuple[Path, Path]] = []
+
+    def fake_guided_flac(
+        source: Path, destination: Path, *, probe: a2v.AudioProbe
+    ) -> a2v.AudioProbe:
+        flac_calls.append((source, destination))
+        assert probe.sample_count == 97_000
+        return a2v.AudioProbe("flac", 24_000, 2, 97 / 24, 97_000)
+
+    monkeypatch.setattr(a2v, "_encode_guided_conditioning_flac", fake_guided_flac)
+    monkeypatch.setattr(a2v, "_output_duration", lambda _: 97 / 24)
+    backend = DirectLTX25AudioToVideoBackend(model_root=model_root)
+    backend.prepare()
+    metadata = backend.generate(
+        image_path=image,
+        audio_path=audio,
+        output_path=tmp_path / "output.mp4",
+        parameters=LTXAudioToVideoParameters(
+            generation_profile=a2v.LTX_A2V_GUIDED_GENERATION_PROFILE,
+            prompt="A stable talking head with lips synchronized to speech.",
+        ),
+    )
+    assert state["builds"] == 1
+    assert "dev-transformer" in state["model_paths"]["transformer_path"]
+    assert len(state["pipeline_init"]["distilled_lora"]) == 1
+    assert state["pipeline_init"]["distilled_lora"][0][1] == 0.8
+    assert state["pipeline_init"]["offload_mode"] == "disk"
+    assert flac_calls == [(conditioning, flac_conditioning)]
+    call = state["calls"][0]
+    assert call["num_frames"] == 97
+    assert call["num_inference_steps"] == 30
+    assert call["stage_1_sigmas"] is None
+    assert call["stage_2_sigmas"] == bindings.stage_2_sigmas
+    assert call["audio_path"] == str(flac_conditioning.resolve())
+    guider = call["video_guider_params"]
+    assert guider.cfg_scale == 3.0
+    assert guider.stg_scale == 1.0
+    assert guider.rescale_scale == 0.7
+    assert guider.modality_scale == 3.0
+    assert guider.stg_blocks == [29]
+    assert state["original_guider"].stg_blocks == [28]
+    assert state["original_guider"].modality_scale == 3.0
+    assert metadata["generation_recipe"] == "upstream_guided_dev"
+    assert metadata["offload_mode"] == "disk"
+    assert metadata["generation_profile"].endswith("-fp8disk-eagersdpa-v2")
+    assert metadata["transformer_variant"] == "dev"
+    assert metadata["stage_1_sampler"] == "euler"
+    assert metadata["stage_1_image_strength"] == 1.0
+    assert metadata["stage_2_image_strength"] == 1.0
+    assert metadata["audio_frozen_stage_1"] is True
+    assert metadata["audio_frozen_stage_2"] is True
+    assert metadata["video_rescale_scale"] == 0.7
+    assert metadata["video_stg_blocks"] == [29]
+    assert metadata["decoded_speech_samples"] == 96_000
+    assert metadata["conditioning_audio_samples"] == 97_000
+    assert metadata["audio_padding_samples"] == 1_000
+    assert metadata["num_frames"] == 97
