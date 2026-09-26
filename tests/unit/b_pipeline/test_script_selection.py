@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
@@ -123,6 +124,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         max_parallel_calls=3,
     )
     received: list[str] = []
+    streamed_stages: list[str] = []
 
     async def fake_run(
         script: str,
@@ -135,11 +137,13 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         on_api_response,
         on_call_duration,
         on_stage_duration,
+        on_stage_complete,
     ):
         assert provider.reasoning_effort == "medium"
         assert model == "gpt-6-luna"
         assert max_parallel_calls == 3
         received.append(script)
+        call_start = len(streamed_stages)
         on_input("B1.1", None, {"plain_script_for_recording": script})
         on_output("B1.1", None, {"pipeline_stage": "B1.1"})
         on_input("B1.2", 1, {"current_block_id": 1, "blocks": [{"text": script}]})
@@ -166,6 +170,15 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             )
             on_call_duration(stage, block_id, 0.125)
             on_stage_duration(stage, 0.250)
+            merged = (
+                None if stage == "B1.1"
+                else {"pipeline_stage": stage, "blocks": [{"block_id": 1, "beats": []}]}
+            )
+            on_stage_complete(stage, 1, merged)
+            streamed_stages.append(stage)
+            assert streamed_stages[call_start:] == list(("B1.1", "B1.2", "B2")[:len(
+                streamed_stages[call_start:]
+            )])
         return SimpleNamespace(
             b11=SimpleNamespace(model_dump=lambda: {"pipeline_stage": "B1.1"}),
             b12=[SimpleNamespace(block_id=1)],
@@ -221,19 +234,34 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         assert timing["run_elapsed_seconds"] >= 0
         assert timing["stages"]["B1.2"]["elapsed_seconds"] == 0.25
         assert timing["stages"]["B2"]["call_count"] == 1
-        costs = json.loads((destination / "api_costs.json").read_text(encoding="utf-8"))
-        assert costs["pricing_status"] == "complete"
-        assert costs["estimated_total_usd"] == "0.00006000"
+        consolidated = json.loads(
+            (destination / "run_report.json").read_text(encoding="utf-8")
+        )
+        assert consolidated["run"]["status"] == "completed"
+        assert consolidated["run"]["script_file"] == destination.name + ".txt"
+        assert consolidated["api_costs"]["pricing_status"] == "complete"
+        assert consolidated["api_costs"]["estimated_total_usd"] == "0.00006000"
+        assert consolidated["timings"]["run_elapsed_seconds"] >= 0
+        for old_name in ("api_costs.json", "timings.json", ".b_pipeline_run.json"):
+            assert not (destination / old_name).exists()
     assert json.loads((first / "B1.1" / "input.json").read_text(encoding="utf-8")) == {
         "plain_script_for_recording": "  Uno.\r\n\r\nDos.  "
     }
     assert (folder / "roma.txt").read_bytes() == b"  Uno.\r\n\r\nDos.  "
     terminal = capsys.readouterr().out
-    assert "B1.1 total: $0.00002000" in terminal
-    assert "B1.2 total: $0.00002000" in terminal
-    assert "B2 total: $0.00002000" in terminal
-    assert "Run total: $0.00006000" in terminal
-    assert "Run total:" in terminal
+    lines = terminal.splitlines()
+    assert len(lines) == 12
+    for offset in (0, 4, 8):
+        assert lines[offset:offset + 3] == [
+            "  B1.1 total: 0.250 s $0.00002000",
+            "  B1.2 total: 0.250 s $0.00002000",
+            "  B2 total: 0.250 s $0.00002000",
+        ]
+        assert re.fullmatch(
+            r"  Run total: \\d+\\.\\d{3} s \\$0\\.00006000",
+            lines[offset + 3],
+        ) is not None
+    assert streamed_stages == ["B1.1", "B1.2", "B2"] * 3
     assert "This token-based estimate is not an OpenAI invoice" not in terminal
 
 
@@ -250,7 +278,7 @@ def test_repeating_same_script_resets_only_that_scripts_output(tmp_path: Path) -
     _make_script(library, "japon.txt")
     root = tmp_path / "output"
     old = runner._prepare_output(root, roma)
-    runner._write(old / ".b_pipeline_run.json", {"script_file": "roma.txt"})
+    runner._write(old / "run_report.json", {"run": {"script_file": "roma.txt"}})
     (old / "stale.json").write_text("stale", encoding="utf-8")
     other = root / "japon"
     other.mkdir()
