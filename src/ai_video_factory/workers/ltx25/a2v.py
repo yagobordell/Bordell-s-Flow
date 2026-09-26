@@ -1235,7 +1235,9 @@ class DirectLTX25AudioToVideoBackend:
         root = self._model_files.shared.transformer.parent.parent
         model_paths = list(self._model_files.shared.paths())
         if include_dev:
-            model_paths.extend((self._model_files.dev_transformer, self._model_files.distilled_lora))
+            model_paths.extend(
+                (self._model_files.dev_transformer, self._model_files.distilled_lora)
+            )
         require_ltx_model_bootstrap(
             root=root,
             expected_files=[path.relative_to(root).as_posix() for path in model_paths],
