@@ -24,6 +24,12 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     $Python = (Get-Command python -ErrorAction Stop).Source
 }
 if ($Seed -lt 0) { throw "A2V seed must be non-negative." }
+if ($Profile -eq "reference-compiled") {
+    $Services = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\salad\services.json") -Raw | ConvertFrom-Json
+    if ($Services.services.ltx25.image -notmatch "-compiled-") {
+        throw "Compiled reference A2V requires a newly versioned compiled worker image in the tracked Salad manifest; current image cannot run this profile. Refusing GPU allocation."
+    }
+}
 if ($Profile -eq "guided") {
     $Services = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\salad\services.json") -Raw | ConvertFrom-Json
     if ($Services.services.ltx25.environment.LTX_INCLUDE_A2V_DEV_ASSETS -ne "true") {
