@@ -154,6 +154,12 @@ def test_director_tolerates_layout_and_punctuation(
     assert validate_fish_script(source, directed) == ("[warm]",)
 
 
+def test_composite_natural_language_tag_is_accepted() -> None:
+    assert validate_fish_script("Hola.", "[warm, measured]Hola.") == (
+        "[warm, measured]",
+    )
+
+
 @pytest.mark.parametrize(
     "directed",
     ["[warm]Casa.", "[warm]Hoya.", "[warm]Hola. Texto nuevo"],
