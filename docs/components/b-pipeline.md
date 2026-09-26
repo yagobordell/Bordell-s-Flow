@@ -65,7 +65,7 @@ per frozen block):
 
 ```text
 data/output/historia_roma/
-  .b_pipeline_run.json
+  run_report.json
   B1.1/
     input.json
     output.json
@@ -86,8 +86,6 @@ data/output/historia_roma/
       input.json
       output.json
   visual_plan.json
-  api_costs.json
-  timings.json
 ```
 
 Each `input.json` is the exact decoded payload sent to that bot, including the
@@ -101,22 +99,28 @@ order without making a second model call or changing the original single-block
 input/output contracts. `visual_plan.json` remains the application-owned
 visual join.
 
-At the end, `api_costs.json` and the console report a USD estimate for B1.1,
-B1.2, B2 and the whole run. It uses actual `response.usage` counts, prices
-ordinary, cached and cache-write input separately, and includes reasoning tokens
-in billed output. Standard GPT-6 Luna rates (USD per million text tokens,
-2026-09-26): input $0.10, cached input $0.01, cache writes $0.125, output
+The runner prints exactly one combined time/cost line as soon as each stage
+finishes: B1.1 immediately after its validated output, B1.2 after all parallel
+blocks and its merged output, then B2 after all parallel blocks and its merged
+output. Once the visual plan and final report are saved, it prints the run
+total. Durations are monotonic wall-clock seconds; stage duration is **not**
+the sum of simultaneous per-block calls. Every printed line is flushed
+immediately so redirected or piped runs can follow progress.
+
+`run_report.json` is the **only run-metrics file**. It contains `run`
+(source filename, SHA-256, selected model, reasoning effort, status),
+`api_costs` (token-usage-derived USD costs per bot, full run, and each
+request) and `timings` (wall-clock seconds per bot, full run, and each
+request). The file is written at the start, updated after each completed
+stage and finalized on success or failure; there are no separate
+`api_costs.json`, `timings.json` or `.b_pipeline_run.json` files.
+Standard GPT-6 Luna rates (USD per million text tokens, 2026-09-26):
+ordinary input $0.10, cached input $0.01, cache writes $0.125, output
 $0.50; long-context requests above 272K input tokens use the documented
-multipliers. The source is https://developers.openai.com/api/docs/pricing .
-When API usage or verified pricing is missing, the total is `null`/unavailable
-rather than silently reporting zero; a partial priced subtotal remains visible.
-Failed runs also save the available partial usage.
-`timings.json` and the console report elapsed seconds for B1.1, the full
-parallel B1.2 wave, the full parallel B2 wave and the complete run. The timing
-file also contains a duration for each block-level call and the sum of call
-durations. **Stage elapsed time is wall-clock time**, not the sum of its
-parallel calls. The run timer includes replacing the selected output and
-writing the final artifacts. Costs appear as a stage total and a run total.
+multipliers. Source: https://developers.openai.com/api/docs/pricing .
+When API usage or pricing is missing, the corresponding cost is marked
+unavailable instead of silently reporting zero.
+
 
 All three bots use `OPENAI_B_MODEL=gpt-6-luna` and
 `OPENAI_B_REASONING_EFFORT=medium` (both are independently configurable). The CLI
@@ -128,7 +132,7 @@ field-level rules unchanged.
 Outputs are grouped directly under `data/output/<script-name>/`, within the
 `B1.1/`, `B1.2/block_<id>/` and `B2/block_<id>/` directories, with
 `B1.2/merged_output.json`, `B2/merged_output.json`, the application-owned
-`visual_plan.json`, `api_costs.json` and `timings.json`. No legacy phase2
+`visual_plan.json` and the consolidated `run_report.json`. No legacy phase2
 artifact is changed.
 
 The old bot implementations live only in `src/ai_video_factory/legacy_bots/` for
