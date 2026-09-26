@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -38,10 +39,17 @@ METADATA_RECIPE_FIELDS = (
     "width",
     "height",
     "seed",
+    "input_audio_codec",
     "input_audio_sample_rate",
+    "input_audio_channels",
+    "conditioning_audio_channels",
+    "audio_upmixed_to_stereo",
+    "input_audio_duration_seconds",
+    "grid_video_duration_seconds",
     "decoded_speech_samples",
     "conditioning_audio_samples",
     "audio_padding_samples",
+    "audio_padding_seconds",
 )
 TIMING_FIELDS = (
     "model_load_seconds",
@@ -179,7 +187,12 @@ def compare_runs(
     ):
         for field in TIMING_FIELDS:
             value = metadata.get(field)
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+            ):
                 problems.append(f"{label}: missing or invalid {field}")
 
     _validate_provenance(
