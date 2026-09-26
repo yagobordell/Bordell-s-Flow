@@ -1,8 +1,10 @@
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
+from ai_video_factory.bots.billing import ApiCostLedger
 from ai_video_factory.bots.contracts import (
     B2Input,
     B2Output,
@@ -265,3 +267,63 @@ def test_b12_whitespace_must_belong_to_previous_beat() -> None:
     )
     with pytest.raises(BPipelineValidationError, match="separator whitespace"):
         validate_beats(bad, block)
+
+
+def test_metered_parallel_pipeline_records_every_exact_input_output() -> None:
+    class MeteredFake(FakeProvider):
+        async def generate_structured_with_response(self, **kwargs):
+            output = await self.generate_structured(**kwargs)
+            response = SimpleNamespace(
+                id=f"resp_{len(self.calls)}",
+                model="gpt-6-luna",
+                service_tier="default",
+                usage=SimpleNamespace(
+                    input_tokens=100,
+                    input_tokens_details=SimpleNamespace(
+                        cached_tokens=0, cache_write_tokens=0
+                    ),
+                    output_tokens=20,
+                    output_tokens_details=SimpleNamespace(reasoning_tokens=5),
+                ),
+            )
+            return output, response
+
+    fake = MeteredFake()
+    ledger = ApiCostLedger()
+    inputs = {}
+    outputs = {}
+    result = asyncio.run(
+        run_b_pipeline(
+            SCRIPT,
+            provider=fake,
+            on_input=lambda stage, block_id, payload: inputs.update(
+                {(stage, block_id): payload}
+            ),
+            on_output=lambda stage, block_id, payload: outputs.update(
+                {(stage, block_id): payload}
+            ),
+            on_api_response=ledger.record,
+        )
+    )
+
+    expected = {
+        ("B1.1", None),
+        ("B1.2", 1),
+        ("B1.2", 2),
+        ("B2", 1),
+        ("B2", 2),
+    }
+    assert set(inputs) == set(outputs) == expected
+    assert inputs["B1.1", None] == {"plain_script_for_recording": SCRIPT}
+    assert inputs["B1.2", 1]["blocks"][0]["text"] == "  Uno.\n\n"
+    assert inputs["B1.2", 2]["blocks"][0]["text"] == "Dos.  "
+    assert outputs["B1.1", None] == result.b11.model_dump()
+    assert outputs["B1.2", 1] == result.b12[0].model_dump()
+    assert outputs["B2", 2] == result.b2[1].model_dump()
+    assert inputs["B2", 1]["blocks"][0]["beats"][0]["beat_id"] == "1A"
+    assert len(ledger.records) == 5
+    costs = ledger.report(blocks=2, run_status="completed")
+    assert costs["estimated_total_usd"] == "0.00010000"
+    assert costs["stages"]["B1.1"]["recorded_calls"] == 1
+    assert costs["stages"]["B1.2"]["recorded_calls"] == 2
+    assert costs["stages"]["B2"]["recorded_calls"] == 2
