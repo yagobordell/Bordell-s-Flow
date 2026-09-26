@@ -16,6 +16,63 @@ from ai_video_factory.workers.ltx25 import (
 from ai_video_factory.workers.ltx25.model_manifest import write_installed_model_manifest
 
 
+
+def test_compiled_reference_reuses_only_its_own_pipeline_and_keeps_recipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the opt-in reference variant compiles; eager and guided stay untouched."""
+    model_root = tmp_path / "models"
+    _seed_model_files(model_root)
+    files = a2v.LTXA2VModelFiles.from_root(model_root)
+    files.dev_transformer.unlink()
+    files.distilled_lora.unlink()
+    state: dict[str, Any] = {
+        "builds": 0,
+        "calls": [],
+        "encodes": [],
+        "conditionings": [],
+        "inference_depth": 0,
+        "inference_entries": 0,
+    }
+    bindings = make_a2v_bindings(state)
+    monkeypatch.setattr(a2v, "_load_a2v_bindings", lambda: bindings)
+    backend = DirectLTX25AudioToVideoBackend(model_root=model_root)
+    backend.prepare()
+
+    compiled_profile = a2v.LTX_A2V_REFERENCE_COMPILED_GENERATION_PROFILE
+    assert LTXAudioToVideoParameters(generation_profile=compiled_profile).generation_profile == (
+        compiled_profile
+    )
+    with bindings.torch.inference_mode():
+        eager, eager_built = backend._get_or_build_pipeline(
+            bindings, generation_profile=a2v.LTX_A2V_REFERENCE_GENERATION_PROFILE
+        )
+        eager_again, eager_again_built = backend._get_or_build_pipeline(
+            bindings, generation_profile=a2v.LTX_A2V_REFERENCE_GENERATION_PROFILE
+        )
+        compiled, compiled_built = backend._get_or_build_pipeline(
+            bindings, generation_profile=compiled_profile
+        )
+        compiled_again, compiled_again_built = backend._get_or_build_pipeline(
+            bindings, generation_profile=compiled_profile
+        )
+    assert eager_built is True
+    assert eager_again_built is False
+    assert eager_again is eager
+    assert compiled_built is True
+    assert compiled_again_built is False
+    assert compiled_again is compiled
+    assert compiled is not eager
+    assert state["builds"] == 2
+    eager_init, compiled_init = state["pipeline_inits"]
+    assert "compilation_config" not in eager_init
+    assert compiled_init["compilation_config"].mode is None
+    assert compiled_init["compilation_config"].capture is False
+    assert eager_init["model_paths"] == compiled_init["model_paths"]
+    assert eager_init["quantization"] == compiled_init["quantization"]
+    assert eager_init["distilled_lora"] == compiled_init["distilled_lora"] == []
+    assert eager_init["offload_mode"] == compiled_init["offload_mode"] == "cpu"
+
 def test_guided_bootstrap_waits_for_atomic_dev_manifest_before_polling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
