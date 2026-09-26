@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)][string]$Audio,
     [string]$AvatarImage = "",
-    [ValidateSet("fast", "reference", "dev", "guided")][string]$Profile = "reference",
+    [ValidateSet("fast", "reference", "reference-compiled", "dev", "guided")][string]$Profile = "reference",
     [string]$SegmentId = "smoke-001",
     [string]$Prompt = "",
     [long]$Seed = 4242,
@@ -89,6 +89,9 @@ try {
     }
     if ($Profile -eq "guided") {
         Write-Warning "guided is experimental: technical MP4/audio checks do not establish visual lip-sync."
+    }
+    if ($Profile -eq "reference-compiled") {
+        Write-Warning "reference-compiled is an unvalidated A/B experiment. Cold compilation may be slower; review lip-sync and frames before promotion."
     }
     & $Python $Smoke @Arguments
     if ($LASTEXITCODE -ne 0) {
