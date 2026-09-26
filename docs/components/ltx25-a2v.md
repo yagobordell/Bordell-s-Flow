@@ -127,6 +127,28 @@ mitigation awaiting real RTX 5090 and visual lip-sync validation, not a claim
 that the guided benchmark passed. Publish a **new immutable image** and use a
 fresh segment ID; the old worker image still contains the CPU-pinned path.
 
+### Real guided DISK smoke (September 26, 2026)
+
+The controlled RTX 5090 monk smoke with the pinned `fp8disk-eagersdpa-v2`
+profile **completed** through PostgreSQL/R2 and left the Salad group stopped.
+Job `ltx-a2v-monje-guided-disk-20260926-015706-4d32907058ca`
+used seed 4242 and the five-second mono 24 kHz WAV. The resulting MP4
+contained 121 frames at 1280x720 / 24 fps, with stereo AAC and
+5.042 s output duration. `offload_mode=disk`; inference took 530.005 s,
+total elapsed was 546.586 s, and peak CUDA allocation was 17,181,615,616
+bytes. The reported `pipeline_reused=true` means this is not a cold-model
+timing. Video SHA-256:
+`80ef9a18e504d0f79ad0b5c4f5a70444b4109648c19ecc98f75ecd74de71bfd4`.
+
+**Functional transport and memory-path success is not visual acceptance.**
+The last frames deform visibly near the end of the clip; frame-by-frame
+phonetic lip-sync and identity stability have not passed acceptance.
+The guided profile remains opt-in/experimental, outside production
+routing, and is not suitable for performance or quality guarantees.
+Do not drop the final voiced audio to hide the visual defect. A previous
+GPU attempt also lost its instance after Stage 1; the successful later
+smoke does not establish the cause of that interruption.
+
 ### Temporal contract
 
 Reference A2V never snaps speech down to the previous `8k+1` frame. The worker first
