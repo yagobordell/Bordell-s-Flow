@@ -118,6 +118,9 @@ jobs:
           if ($NoScript -notmatch 'No \.txt scripts found') {
               throw "run.ps1 did not reach script selection without paid API calls"
           }
+          # The expected negative smoke left LASTEXITCODE=1; explicitly mark
+          # this workflow step successful after all assertions have passed.
+          exit 0
 
       - name: Bash syntax
         shell: bash
