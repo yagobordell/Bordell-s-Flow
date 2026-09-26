@@ -105,3 +105,29 @@ def test_controlled_wrapper_only_forwards_experimental_steps_on_opt_in() -> None
     assert 'request_parameters["reference_stage_2_steps"] = 2' in submit
     assert "experimental Stage-2 sigma subset differs from reviewed recipe" in submit
     assert 'metadata.get("reference_stage_2_steps_experimental") is not True' in submit
+
+
+def test_retry_orchestrator_pins_new_digest_and_restores_original_safely() -> None:
+    script = Path("scripts/smoke/run_ltx25_stage2_bootstrap_retry.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "[ValidateRange(120, 7200)][int]$RaceTimeoutSeconds = 5400" in script
+    assert "LTX_REQUIRE_VERIFIED_SHARED_MANIFEST" in script
+    assert "LTX_MODEL_DOWNLOAD_MAX_WORKERS" in script
+    assert "Get-FileHash" in script
+    assert 'if ($Published -ne $ExperimentalPinnedImage)' in script
+    assert "-StartupReplicas 2" in script
+    assert "-ReferenceStage2Steps 2" in script
+    assert "-RaceTimeoutSeconds $RaceTimeoutSeconds" in script
+    assert script.index('Prepare-LtxImage -Tag $ExperimentalTag') < script.index(
+        '& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Smoke'
+    )
+    assert script.index('"SALAD DETENIDO E IMAGEN ORIGINAL RESTAURADA"') > script.index(
+        'Prepare-LtxImage -Tag $OriginalTag'
+    )
+    assert script.index('-Action Stop -Service ltx25') < script.index(
+        '--reset-stopped'
+    )
+    assert script.index('--reset-stopped') < script.index(
+        'Prepare-LtxImage -Tag $OriginalTag'
+    )
