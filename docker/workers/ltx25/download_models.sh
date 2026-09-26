@@ -141,7 +141,7 @@ for model_file in "${MODEL_FILES[@]}"; do
 done
 
 mkdir -p "$(dirname "${BOOTSTRAP_COMPLETE_FILE}")"
-completion_temp="${BOOTSTRAP_COMPLETE_FILE}.tmp.$"
-printf '%s\\n' "${MODEL_REVISION}" > "${completion_temp}"
+completion_temp="${BOOTSTRAP_COMPLETE_FILE}.tmp.${BASHPID}"
+printf '%s\n' "${MODEL_REVISION}" > "${completion_temp}"
 mv -f -- "${completion_temp}" "${BOOTSTRAP_COMPLETE_FILE}"
 echo "LTX_BOOTSTRAP_COMPLETE revision=${MODEL_REVISION} path=${BOOTSTRAP_COMPLETE_FILE}"
