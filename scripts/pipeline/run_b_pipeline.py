@@ -2,15 +2,19 @@
 
 import argparse
 import asyncio
+import hashlib
 import json
+import shutil
 import sys
 from pathlib import Path
 
 from ai_video_factory.bots import run_b_pipeline
+from ai_video_factory.bots.billing import ApiCostLedger
 from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
 
 DEFAULT_SCRIPTS_DIR = Path("data/input/scripts")
+_STAGES = ("B1.1", "B1.2", "B2")
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,7 +45,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=None,
-        help="Output directory (default: data/output/b_pipeline/<selected-script-name>).",
+        help="Output root; each script gets a child folder (default: data/output/b_pipeline).",
     )
     parser.add_argument("--max-parallel-calls", type=int, default=8)
     args = parser.parse_args()
@@ -131,6 +135,83 @@ def _write(path: Path, payload: object) -> None:
     )
 
 
+def _prepare_output(output_root: Path, script_file: Path) -> Path:
+    """Replace only an identifiable B-pipeline output folder for this script."""
+    root = output_root.resolve()
+    source = script_file.resolve()
+    cwd = Path.cwd().resolve()
+    if root == cwd or root in cwd.parents or source.is_relative_to(root):
+        raise SystemExit(
+            "--output must be a dedicated output directory, not the repository, "
+            "a parent of it, or the selected script's input directory."
+        )
+    destination = output_root / script_file.stem
+    if destination.is_symlink():
+        raise SystemExit(f"Refusing to delete a symlinked output directory: {destination}")
+    if destination.exists():
+        if not destination.is_dir():
+            raise SystemExit(f"Output path is not a directory: {destination}")
+        recognized = (
+            destination / ".b_pipeline_run.json",
+            destination / "B1.1" / "input.json",
+            destination / "b1_1.json",  # Previous standalone runner layout.
+            destination / "visual_plan.json",
+        )
+        if any(destination.iterdir()) and not any(path.is_file() for path in recognized):
+            raise SystemExit(
+                f"Refusing to delete unrelated files in {destination}; "
+                "choose a dedicated --output root."
+            )
+        shutil.rmtree(destination)
+        print(f"Removed previous B-pipeline output: {destination}")
+    destination.mkdir(parents=True, exist_ok=False)
+    return destination
+
+
+class BotArtifacts:
+    """Persist the exact request payload and validated response of every bot call."""
+
+    def __init__(self, output: Path) -> None:
+        self._output = output
+
+    def _folder(self, stage: str, block_id: int | None) -> Path:
+        if stage not in _STAGES:
+            raise ValueError(f"Unknown B pipeline stage: {stage}")
+        if stage == "B1.1":
+            if block_id is not None:
+                raise ValueError("B1.1 must not have a block ID")
+            return self._output / stage
+        if block_id is None or block_id < 1:
+            raise ValueError(f"{stage} requires a positive block ID")
+        return self._output / stage / f"block_{block_id}"
+
+    def input(self, stage: str, block_id: int | None, payload: dict[str, object]) -> None:
+        _write(self._folder(stage, block_id) / "input.json", payload)
+
+    def output(self, stage: str, block_id: int | None, payload: dict[str, object]) -> None:
+        _write(self._folder(stage, block_id) / "output.json", payload)
+
+
+def _print_costs(report: dict[str, object]) -> None:
+    stages = report["stages"]
+    if not isinstance(stages, dict):
+        raise RuntimeError("Invalid API cost report")
+    print("OpenAI API costs (USD, estimated from response usage):")
+    for stage in _STAGES:
+        entry = stages[stage]
+        cost = entry["estimated_cost_usd"]
+        print(f"  {stage}: USD {cost}" if cost is not None else f"  {stage}: unavailable")
+    total = report["estimated_total_usd"]
+    if total is None:
+        print(
+            "  Total: unavailable (incomplete or unpriced API usage); "
+            f"priced subtotal: USD {report['priced_subtotal_usd']}"
+        )
+    else:
+        print(f"  Total: USD {total}")
+    print("  This token-based estimate is not an OpenAI invoice.")
+
+
 async def main() -> None:
     args = parse_args()
 
@@ -152,40 +233,56 @@ async def main() -> None:
     if not settings.openai_api_key:
         raise SystemExit("OPENAI_API_KEY is missing")
 
+    if args.max_parallel_calls < 1:
+        raise SystemExit("--max-parallel-calls must be positive")
     # Preserve every source character: no strip(), newline normalization or rewriting.
     try:
-        script = script_file.read_bytes().decode("utf-8")
+        source_bytes = script_file.read_bytes()
+        script = source_bytes.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise SystemExit(f"Script must be UTF-8: {script_file}") from exc
     if not script.strip():
         raise SystemExit(f"Script is empty: {script_file}")
 
-    output = (
-        args.output
-        if args.output is not None
-        else settings.output_dir / "b_pipeline" / script_file.stem
+    output_root = args.output if args.output is not None else settings.output_dir / "b_pipeline"
+    output = _prepare_output(output_root, script_file)
+    _write(
+        output / ".b_pipeline_run.json",
+        {
+            "script_file": script_file.name,
+            "script_sha256": hashlib.sha256(source_bytes).hexdigest(),
+            "model": settings.openai_b_model,
+            "reasoning_effort": settings.openai_b_reasoning_effort,
+        },
     )
     print(f"Selected script: {script_file}")
+    artifacts = BotArtifacts(output)
+    ledger = ApiCostLedger()
     provider = OpenAIProvider(
         api_key=settings.openai_api_key,
         reasoning_effort=settings.openai_b_reasoning_effort,
         service_tier="default",
     )
-    result = await run_b_pipeline(
-        script,
-        provider=provider,
-        model=settings.openai_b_model,
-        max_parallel_calls=args.max_parallel_calls,
-    )
+    try:
+        result = await run_b_pipeline(
+            script,
+            provider=provider,
+            model=settings.openai_b_model,
+            max_parallel_calls=args.max_parallel_calls,
+            on_input=artifacts.input,
+            on_output=artifacts.output,
+            on_api_response=ledger.record,
+        )
+        _write(output / "visual_plan.json", result.visual_plan())
+    except Exception:
+        report = ledger.report(blocks=None, run_status="failed")
+        _write(output / "api_costs.json", report)
+        _print_costs(report)
+        raise
 
-    _write(output / "b1_1.json", result.b11.model_dump())
-    for item in result.b12:
-        _write(output / "b1_2" / f"block_{item.block_id}.json", item.model_dump())
-    for item in result.b2:
-        if item.blocks is None:
-            raise RuntimeError("B2 returned no validated blocks")
-        _write(output / "b2" / f"block_{item.blocks[0].block_id}.json", item.model_dump())
-    _write(output / "visual_plan.json", result.visual_plan())
+    report = ledger.report(blocks=len(result.b12), run_status="completed")
+    _write(output / "api_costs.json", report)
+    _print_costs(report)
     print(f"B1.1/B1.2/B2 validated; canonical artifacts: {output.resolve()}")
 
 
