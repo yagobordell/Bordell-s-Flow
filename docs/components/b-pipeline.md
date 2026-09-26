@@ -8,7 +8,9 @@ checksums are embedded in `workflow.py` and verified before API calls.
   verbatim `first_words` / `last_words` anchors into contiguous block text and refuses any
   gap, duplicate, overlap, normalized text, or ambiguous anchor.
 - B1.2 runs independently for each single materialized block. It emits 1A, 1B, ... 1AA,
-  2A, ... IDs, preserves exact source characters, and enforces 40 source words per beat.
+  2A, ... IDs and enforces 40 words per beat. Validation ignores whitespace and punctuation
+  differences when checking that the ordered beat text matches the block; other character
+  changes remain errors.
 - B2 runs independently on each completed B1.2 block, preserves all upstream text,
   IDs and metadata, and assigns exactly one of `avatar`, `avatar_media`, `media_image`,
   `media_video` with the documented description/null rules.
@@ -147,7 +149,8 @@ migration with audio alignment, per-beat visuals, avatar handling, timing and
 composition tests is required before restoring end-to-end video production.
 No lossy adapter or silent fallback to the retired bots is used.
 
-The validations here establish structural fidelity, source reconstruction, 40-word
+The validations here establish structural fidelity, source-word order after ignoring
+whitespace and punctuation, 40-word
 limits, type/ID preservation, and mandatory intro/close avatars. Whether a media
 brief is *semantically* faithful or physically feasible still needs representative
 manual or model-based evaluation; schemas alone cannot prove that.

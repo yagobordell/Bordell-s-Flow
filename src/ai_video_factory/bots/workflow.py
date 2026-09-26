@@ -8,6 +8,7 @@ runner can be enabled; no lossy integer-shot conversion is performed.
 import asyncio
 import hashlib
 import json
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.resources import files
@@ -72,6 +73,15 @@ def _beat_suffix(number: int) -> str:
     return suffix
 
 
+def _without_whitespace_and_punctuation(text: str) -> str:
+    """Normalize layout and punctuation while preserving words and their order."""
+    return "".join(
+        character
+        for character in text
+        if not character.isspace() and not unicodedata.category(character).startswith("P")
+    )
+
+
 def materialize_blocks(script: str, blocks: list[BlockMeta]) -> list[MaterializedBlock]:
     """Resolve globally unique verbatim anchors and tile the raw script exactly."""
     if not isinstance(script, str) or not script.strip():
@@ -128,12 +138,15 @@ def validate_beats(result: B12Output, block: MaterializedBlock) -> list[Beat]:
     for number, beat in enumerate(result.beats, start=1):
         if beat.beat_id != f"{block.block_id}{_beat_suffix(number)}":
             raise BPipelineValidationError(f"Invalid B1.2 beat ID {beat.beat_id}")
-        if number > 1 and beat.text[0].isspace():
-            raise BPipelineValidationError("B1.2 separator whitespace belongs to preceding beat")
-        if not beat.text.strip() or len(beat.text.split()) > 40:
+        if not _without_whitespace_and_punctuation(beat.text) or len(beat.text.split()) > 40:
             raise BPipelineValidationError(f"Invalid B1.2 beat text or length: {beat.beat_id}")
-    if "".join(beat.text for beat in result.beats) != block.text:
-        raise BPipelineValidationError("B1.2 beats do not reconstruct the materialized block")
+    actual_text = "".join(beat.text for beat in result.beats)
+    if _without_whitespace_and_punctuation(actual_text) != _without_whitespace_and_punctuation(
+        block.text
+    ):
+        raise BPipelineValidationError(
+            "B1.2 beat text differs from the materialized block beyond whitespace or punctuation"
+        )
     return result.beats
 
 

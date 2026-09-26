@@ -269,19 +269,18 @@ def test_crlf_script_is_reconstructed_without_newline_normalization() -> None:
     assert exact[0].text.endswith("\r\n\r\n")
 
 
-def test_b12_whitespace_must_belong_to_previous_beat() -> None:
+def test_b12_ignores_whitespace_and_punctuation_differences() -> None:
     block = MaterializedBlock(
         block_id=3, type="development", emotional_entry="a", emotional_exit="b", text="Uno. Dos."
     )
     bad = B12Output(
         pipeline_stage="B1.2", block_id=3,
         beats=[
-            Beat(beat_id="3A", text="Uno.", beat_type="claim"),
-            Beat(beat_id="3B", text=" Dos.", beat_type="claim"),
+            Beat(beat_id="3A", text="Uno,", beat_type="claim"),
+            Beat(beat_id="3B", text="\nDos", beat_type="claim"),
         ], error=None,
     )
-    with pytest.raises(BPipelineValidationError, match="separator whitespace"):
-        validate_beats(bad, block)
+    assert validate_beats(bad, block) == bad.beats
 
 
 def test_metered_parallel_pipeline_records_every_exact_input_output() -> None:
