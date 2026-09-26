@@ -188,3 +188,66 @@ def test_audio_only_rejects_modified_source_before_new_paid_calls(
     )
     with pytest.raises(SystemExit, match="Script changed"):
         asyncio.run(runner._run_audio_only(script, tmp_path / "output", resume=False))
+
+
+def test_images_start_after_b2_without_waiting_for_fish_narration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script, avatar = _files(tmp_path)
+    audio_started = asyncio.Event()
+    audio_released = asyncio.Event()
+    order = []
+    args = Namespace(
+        script_file=None,
+        scripts_dir=script.parent,
+        script=script.name,
+        list_scripts=False,
+        avatars_dir=avatar.parent,
+        avatar=avatar.name,
+        list_avatars=False,
+        output=tmp_path / "output",
+        max_parallel_calls=1,
+        from_stage="B1.1",
+        skip_images=False,
+        no_audio=False,
+        images_only=False,
+        regenerate_audio=False,
+        resume_audio=False,
+    )
+
+    async def fake_audio(_source, _output, *, provider=None, resume=False):
+        order.append("audio_started")
+        audio_started.set()
+        await audio_released.wait()
+        order.append("audio_completed")
+        return {"status": "completed", "voice_id": VOICE, "file": "audio/ready.mp3"}
+
+    async def fake_b(_source, **_kwargs):
+        await asyncio.wait_for(audio_started.wait(), 2)
+        order.append("b2_completed")
+        return SimpleNamespace(
+            b12=[SimpleNamespace(block_id=1)],
+            visual_plan=lambda: {"blocks": []},
+        )
+
+    async def fake_images(destination, _plan):
+        assert (destination / "visual_plan.json").is_file()
+        assert audio_started.is_set() and not audio_released.is_set()
+        order.append("images_started")
+        audio_released.set()
+        return {"model_id": "gpt-image-2.5-flare", "items": []}
+
+    monkeypatch.setattr(runner, "parse_args", lambda: args)
+    monkeypatch.setattr(runner.settings, "openai_api_key", "test-openai-key")
+    monkeypatch.setattr(runner.settings, "ai33_api_key", "test-ai33-key")
+    monkeypatch.setattr(runner, "OpenAIProvider", lambda **_kw: object())
+    monkeypatch.setattr(runner, "run_b_pipeline", fake_b)
+    monkeypatch.setattr(runner, "_generate_audio", fake_audio)
+    monkeypatch.setattr(runner, "_generate_images", fake_images)
+    asyncio.run(runner.main())
+    assert order == [
+        "audio_started",
+        "b2_completed",
+        "images_started",
+        "audio_completed",
+    ]
