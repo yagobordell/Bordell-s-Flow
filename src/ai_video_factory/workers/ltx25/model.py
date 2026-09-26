@@ -20,6 +20,8 @@ from ai_video_factory.inference.contracts import InferenceJobRequest
 from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.ports import LocalArtifact
 
+from .model_manifest import require_ltx_model_bootstrap
+
 LTX_VIDEO_TASK = "video.ltx25.generate"
 LTX_GENERATION_PROFILE = "ltx25-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
 _CANONICAL_LANDSCAPE_SIZE = (1280, 720)
@@ -508,6 +510,11 @@ class DirectLTX25Backend:
 
     def _validate_runtime(self, bindings: _LTXBindings) -> None:
         self._model_files.validate()
+        root = self._model_files.transformer.parent.parent
+        require_ltx_model_bootstrap(
+            root=root,
+            expected_files=[path.relative_to(root).as_posix() for path in self._model_files.paths()],
+        )
         if self._device.startswith("cuda") and not bindings.torch.cuda.is_available():
             raise RuntimeError("CUDA is not available for the LTX-2.5 production runtime")
 
