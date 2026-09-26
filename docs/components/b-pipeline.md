@@ -206,6 +206,60 @@ brief is *semantically* faithful or physically feasible still needs representati
 manual or model-based evaluation; schemas alone cannot prove that.
 
 
+## BotFish + TTS de AI33 Pro (independiente del pipeline visual)
+
+El documento `src/ai_video_factory/bots/prompts/fish_audio.md` conserva el
+BotFish aportado por el usuario. El BotFish arranca de forma asíncrona al
+inicio de un run completo, en paralelo con B1.1. Ambos reciben
+`{"plain_script_for_recording": <guion original>}`, con el mismo texto,
+caracteres, saltos de línea y orden. El director solo puede insertar tags
+`[square brackets]`: se valida que el script original se recupere
+exactamente al eliminar **solo** las etiquetas nuevas. Una respuesta
+que reescriba el guion nunca se enviará al TTS.
+
+Cuando el director produce su salida validada, se envía a
+`POST https://api.openspeaker.ai/v3/text-to-speech` con los campos
+`text`, `voice_id` y `speed`. La voz predeterminada es
+`fishaudio_f8dfe9c83081432386f143e2fe9767ef`. OpenSpeaker recibe
+la solicitud de generación, devuelve un task ID, y el runner consulta
+`GET /v1/task/{task_id}` hasta obtener un enlace de audio. **No se ha
+configurado un webhook remoto de retorno `receive_url`**: falta una
+URL pública propia y su contrato de verificación. La API de OpenSpeaker
+se conecta aquí directamente por POST/polling. La etiqueta Fish Audio
+identifica el origen de voz; el servicio advierte que no garantiza
+utilizar el motor de síntesis upstream Fish S2. Es necesario escuchar
+un audio real para verificar que las etiquetas se interpretan como se
+espera.
+
+El envío TTS se registra de forma durable antes de su POST. Si la
+respuesta se pierde, el estado `tts_submitting_unknown` bloquea el
+reenvío automático. Las consultas 429/502/503/504 se reintentan sin
+repetir el POST. Los artefactos se guardan en
+`data/output/<guion>/audio/runs/<run-id>/` y `audio/latest.json`
+apunta únicamente a una generación concluida. No se borra un TTS
+pendiente durante un rerun y `--regenerate-audio` crea otro run,
+conservando los audios anteriores.
+
+```powershell
+# Bots B sin audio, imágenes opcionales:
+.\run.ps1 test2 Jorge --no-audio
+# Bots B sin audio ni imágenes:
+.\run.ps1 test2 Jorge --no-audio --no-image
+# SOLO BotFish + TTS, con el mismo guion que la última ejecución B:
+.\run.ps1 test2 --regenerate-audio
+# Recuperar un task ID conocido sin repetir director ni POST de TTS:
+.\run.ps1 test2 --resume-audio
+```
+
+Los comandos de audio solo exigen el nombre del guion, nunca avatar.
+`--regenerate-audio` comprueba el SHA-256 del script frente a
+`run_report.json` y NO inicia B1.1/B1.2/B2, imágenes, Salad ni nuevas
+tareas de vídeo. `--no-audio` evita director y TTS aunque sí puede
+generar imágenes, salvo que también indiques `--no-image`. Una
+reanudación incompleta se atiende antes de solicitar otra generación
+de pago. Los gastos de OpenSpeaker se registran en créditos por tarea;
+no se convierten sin información de facturación a USD.
+
 ## AI33 Pro: imágenes a partir de las descripciones de B2
 
 Al terminar los tres bots y guardar el output completo de B2 y

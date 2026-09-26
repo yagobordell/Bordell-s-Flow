@@ -1,5 +1,6 @@
 # Short Windows PowerShell entrypoint for the existing B1.1 -> B1.2 -> B2 runner.
-# Usage: .\run.ps1 test2 Jorge --no-image
+# Usage: .\run.ps1 test2 Jorge --no-image --no-audio
+# Audio-only regeneration: .\run.ps1 test2 --regenerate-audio
 # Defaults here are intentionally local to the shortcut; the Python CLI remains compatible.
 $ErrorActionPreference = "Stop"
 

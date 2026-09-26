@@ -62,11 +62,33 @@ los avatares. El comando Python completo mantiene su ubicación predeterminada
 anterior (`data/input/`) para no romper automatizaciones existentes.
 
 ```powershell
-.\run.ps1 test2 Jorge --no-image   # Guarda B1.1, B1.2 y B2 sin imágenes
-.\run.ps1 test2 Jorge              # Genera imágenes después de B2
+.\run.ps1 test2 Jorge --no-image   # Bots B + Fish TTS, sin imágenes
+.\run.ps1 test2 Jorge --no-audio   # Bots B + imágenes, sin Fish TTS
+.\run.ps1 test2 Jorge --no-image --no-audio  # Solo B1.1, B1.2 y B2
+.\run.ps1 test2 Jorge              # Bots B + TTS + imágenes
+.\run.ps1 test2 --regenerate-audio # Solo Fish director + audio nuevo, sin avatar
+.\run.ps1 test2 --resume-audio     # Recupera una tarea Fish TTS guardada
 .\run.ps1 test2 --images-only      # Genera o recupera imágenes del B2 guardado
 .\run.ps1                         # Menú interactivo de guiones y avatares
 ```
+
+Fish Audio utiliza el documento de instrucciones
+`src/ai_video_factory/bots/prompts/fish_audio.md`, copiado del BotFish
+adjunto. Empieza **a la vez que B1.1**, recibe el mismo guion sin modificar
+y solo inserta etiquetas entre corchetes. Su salida se envía como `text`
+al endpoint TTS de OpenSpeaker con la voz
+`fishaudio_f8dfe9c83081432386f143e2fe9767ef`. La generación guarda
+`audio/runs/<id>/input.json`, `output.json`, `task.json` y el archivo
+de audio, además de `audio/latest.json`. Configura `AI33_API_KEY` junto
+con `OPENAI_API_KEY` en `.env`; no se ejecutan tareas de Salad para esto.
+`--no-audio` impide arrancar el director y evita toda solicitud TTS,
+mientras que `--regenerate-audio` crea una **nueva** generación con los
+bots B y la etapa de imágenes totalmente deshabilitados. Si una tarea
+remota se interrumpe, `--resume-audio` retoma el `task_id` anterior,
+sin repetir una solicitud de pago ni volver a ejecutar el director.
+El audio de Fish/AI33 no ha sido validado aún mediante una muestra real:
+la etiqueta de origen de voz de OpenSpeaker no garantiza que su puente
+de síntesis ejecute el modelo Fish S2.
 
 Las extensiones `.txt` y `.png` son opcionales. Las opciones adicionales
 (`--from B2`, `--output`, etc.) se pasan al runner existente. No se
