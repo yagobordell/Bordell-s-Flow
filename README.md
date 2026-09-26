@@ -84,6 +84,7 @@ uv run --locked --extra dev ruff check .
 ## Documentación
 
 - [Arquitectura](docs/architecture/overview.md)
+- [Auditoría de retirada de bots y preservación de Salad](docs/architecture/planning-retirement-audit.md)
 - [Estado de la integración del vídeo](docs/operations/production-runner.md)
 - [Configuración de Salad](deploy/salad/services.json)
 - [Índice de documentación](docs/README.md)

@@ -6,6 +6,7 @@ old image digests and retired implementation handoffs belong in Git history.
 ## Architecture
 
 - [System overview](architecture/overview.md)
+- [Planning retirement and Salad dependency audit](architecture/planning-retirement-audit.md)
 - [Shared inference worker core](architecture/inference-worker-core.md)
 
 ## Components

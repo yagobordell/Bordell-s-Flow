@@ -83,9 +83,11 @@ even after the ordinary drain TTL expires and even if demand rebounds. The hold 
 after a later reconciliation observes that the provider change is no longer pending and the current
 capacity can be treated as authoritative.
 
-`run_video_factory.ps1` requires a healthy controller before the DAG starts. The Python production
-runner checks controller health every 15 seconds while stages are active and cancels running stage
-process trees if control-plane health becomes stale.
+The former video-wide runner, including its periodic controller-health guard,
+was retired together with the old planning bots. The global Capacity Controller
+continues to own all shared Salad replica changes for independently submitted
+Postgres GPU jobs; new video-wide orchestration must restore equivalent health
+monitoring before it is enabled.
 
 ## Capacity tuning
 

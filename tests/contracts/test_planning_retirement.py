@@ -1,5 +1,6 @@
 """Prevent accidental resurrection of the retired planning bots and runner."""
 
+import json
 from pathlib import Path
 
 ROOT = next(
@@ -34,6 +35,17 @@ def test_active_application_has_no_retired_bot_imports() -> None:
 
 
 def test_independent_salad_control_plane_and_all_workers_are_preserved() -> None:
+    manifest = json.loads((ROOT / "deploy/salad/services.json").read_text(encoding="utf-8"))
+    required_services = {
+        "breeze_tts2", "fish_speech", "whisper", "ideogram4",
+        "qwen_image_21", "ltx25", "realesrgan",
+    }
+    assert manifest["stack"]["job_transport"] == "postgres"
+    assert set(manifest["services"]) == required_services
+    assert set(manifest["stack"]["service_order"]) == required_services
+    for service in manifest["services"].values():
+        assert (ROOT / service["dockerfile"]).is_file()
+
     for relative in (
         "deploy/salad/services.json",
         "src/ai_video_factory/inference/capacity_controller.py",
