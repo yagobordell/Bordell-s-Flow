@@ -198,7 +198,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     asyncio.run(runner.main())
 
     assert received == ["  Uno.\r\n\r\nDos.  ", "Tres.\nCuatro.", "  Uno.\r\n\r\nDos.  "]
-    first = tmp_path / "output" / "b_pipeline" / "roma"
+    first = tmp_path / "output" / "roma"
     second = tmp_path / "output" / "japon"
     assert not (first / "stale_previous_run.json").exists()
     for destination in (first, second):
