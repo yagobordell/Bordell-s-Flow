@@ -18,10 +18,14 @@ checksums are embedded in `workflow.py` and verified before API calls.
 
 ## Script library and selection
 
-Keep any number of authoritative UTF-8 plain-text scripts in `data/input/scripts/`,
-for example `historia_roma.txt` and `documental_japon.txt`. This directory is
-present in the repository, but its contents are ignored by Git so local scripts are
-not committed accidentally. Do not rename or copy a script to `script.txt`.
+Keep any number of authoritative UTF-8 plain-text scripts directly in
+`data/input/`, for example `historia_roma.txt` and `documental_japon.txt`.
+The input files are ignored by Git. There are no committed `.gitkeep`
+placeholders: on a clean clone, the B runner creates `data/input/` when listing
+or selecting scripts. To migrate previously ignored local files, move your
+`data/input/scripts/*.txt` files into `data/input/` without overwriting
+same-named files; the runner does not delete or move source scripts. Do not rename
+or copy a script to `script.txt`.
 From the repository root, after setting `OPENAI_API_KEY` in local `.env`:
 
 List the available scripts (no API key or inference is required for this command):

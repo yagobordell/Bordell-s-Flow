@@ -15,7 +15,7 @@ from ai_video_factory.bots.billing import ApiCostLedger
 from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
 
-DEFAULT_SCRIPTS_DIR = Path("data/input/scripts")
+DEFAULT_SCRIPTS_DIR = Path("data/input")
 _STAGES = ("B1.1", "B1.2", "B2")
 
 
@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
         "--scripts-dir",
         type=Path,
         default=DEFAULT_SCRIPTS_DIR,
-        help="Directory containing selectable .txt scripts (default: data/input/scripts).",
+        help="Directory containing selectable .txt scripts (default: data/input).",
     )
     parser.add_argument(
         "--script",
@@ -91,7 +91,7 @@ def select_script(
     if not scripts:
         raise SystemExit(
             f"No .txt scripts found in {scripts_dir}. "
-            "Create that directory and add one or more UTF-8 .txt scripts."
+            "Please add one or more UTF-8 .txt scripts there."
         )
     if script_name is not None:
         requested = (
@@ -255,6 +255,9 @@ def _print_metric(name: str, seconds: float, cost: object) -> None:
 
 async def main() -> None:
     args = parse_args()
+    # Git does not track empty directories: restore the local input root on fresh clones.
+    if args.script_file is None:
+        args.scripts_dir.mkdir(parents=True, exist_ok=True)
 
     if args.list_scripts:
         scripts = available_scripts(args.scripts_dir)

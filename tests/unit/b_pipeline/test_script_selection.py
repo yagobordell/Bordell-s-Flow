@@ -17,8 +17,40 @@ def _make_script(directory: Path, name: str, content: bytes = b"Guion.") -> Path
     return path
 
 
+def test_default_scripts_location_is_input_root() -> None:
+    assert runner.DEFAULT_SCRIPTS_DIR == Path("data/input")
+
+
+def test_missing_default_input_root_is_created_without_a_gitkeep(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    args = Namespace(
+        script_file=None,
+        scripts_dir=runner.DEFAULT_SCRIPTS_DIR,
+        script=None,
+        list_scripts=True,
+        output=None,
+        max_parallel_calls=8,
+    )
+    monkeypatch.setattr(runner, "parse_args", lambda: args)
+    monkeypatch.setattr(runner.settings, "openai_api_key", None)
+    monkeypatch.setattr(
+        runner, "OpenAIProvider",
+        lambda **_kwargs: pytest.fail("Listing must not create a provider"),
+    )
+
+    asyncio.run(runner.main())
+
+    assert (tmp_path / "data" / "input").is_dir()
+    assert not (tmp_path / "data" / "input" / "scripts").exists()
+    assert "No .txt scripts found in data/input" in capsys.readouterr().out
+
+
 def test_library_lists_only_txt_files_in_stable_name_order(tmp_path: Path) -> None:
-    folder = tmp_path / "scripts"
+    folder = tmp_path / "input"
     _make_script(folder, "zeta.txt")
     _make_script(folder, "Alfa.txt")
     _make_script(folder, "notes.md")
@@ -31,7 +63,7 @@ def test_library_lists_only_txt_files_in_stable_name_order(tmp_path: Path) -> No
 
 
 def test_named_script_selects_existing_file_without_renaming(tmp_path: Path) -> None:
-    folder = tmp_path / "scripts"
+    folder = tmp_path / "input"
     first = _make_script(folder, "historia_roma.txt")
     _make_script(folder, "documental_japon.txt")
 
@@ -41,7 +73,7 @@ def test_named_script_selects_existing_file_without_renaming(tmp_path: Path) -> 
 
 
 def test_unknown_named_script_does_not_fall_back_to_other_script(tmp_path: Path) -> None:
-    folder = tmp_path / "scripts"
+    folder = tmp_path / "input"
     _make_script(folder, "historia_roma.txt")
 
     with pytest.raises(SystemExit, match="not found"):
@@ -53,7 +85,7 @@ def test_interactive_menu_retries_until_a_valid_selection(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    folder = tmp_path / "scripts"
+    folder = tmp_path / "input"
     _make_script(folder, "a.txt")
     chosen = _make_script(folder, "b.txt")
     answers = iter(["0", "not a number", "2"])
@@ -66,7 +98,7 @@ def test_interactive_menu_retries_until_a_valid_selection(
 
 
 def test_noninteractive_run_requires_explicit_script(tmp_path: Path) -> None:
-    folder = tmp_path / "scripts"
+    folder = tmp_path / "input"
     _make_script(folder, "a.txt")
 
     with pytest.raises(SystemExit, match="--script NAME.txt"):
@@ -74,7 +106,7 @@ def test_noninteractive_run_requires_explicit_script(tmp_path: Path) -> None:
 
 
 def test_missing_library_reports_where_to_put_scripts(tmp_path: Path) -> None:
-    folder = tmp_path / "scripts"
+    folder = tmp_path / "input"
 
     with pytest.raises(SystemExit, match="add one or more UTF-8"):
         runner.select_script(scripts_dir=folder, interactive=False)
@@ -85,7 +117,7 @@ def test_list_scripts_does_not_require_api_key_or_start_inference(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    folder = tmp_path / "scripts"
+    folder = tmp_path / "input"
     _make_script(folder, "roma.txt")
     args = Namespace(
         script_file=None,
@@ -112,7 +144,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    folder = tmp_path / "scripts"
+    folder = tmp_path / "input"
     _make_script(folder, "roma.txt", b"  Uno.\r\n\r\nDos.  ")
     _make_script(folder, "japon.txt", b"Tres.\nCuatro.")
     args = Namespace(
@@ -289,7 +321,7 @@ def test_existing_direct_path_still_supported(tmp_path: Path) -> None:
 
 
 def test_repeating_same_script_resets_only_that_scripts_output(tmp_path: Path) -> None:
-    library = tmp_path / "scripts"
+    library = tmp_path / "input"
     roma = _make_script(library, "roma.txt")
     _make_script(library, "japon.txt")
     root = tmp_path / "output"
@@ -311,7 +343,7 @@ def test_repeating_same_script_resets_only_that_scripts_output(tmp_path: Path) -
 def test_reset_rejects_unrelated_existing_directories_and_input_roots(
     tmp_path: Path,
 ) -> None:
-    script = _make_script(tmp_path / "scripts", "roma.txt")
+    script = _make_script(tmp_path / "input", "roma.txt")
     output_root = tmp_path / "output"
     unrelated = output_root / "roma"
     unrelated.mkdir(parents=True)
@@ -326,7 +358,7 @@ def test_reset_rejects_unrelated_existing_directories_and_input_roots(
 
 
 def test_reset_recognizes_previous_standalone_runner_output(tmp_path: Path) -> None:
-    script = _make_script(tmp_path / "scripts", "old.txt")
+    script = _make_script(tmp_path / "input", "old.txt")
     old = tmp_path / "output" / "old"
     old.mkdir(parents=True)
     (old / "b1_1.json").write_text("old", encoding="utf-8")

@@ -21,14 +21,10 @@ venv/
 .idea/
 .DS_Store
 
-# Local runtime data
+# Local runtime data; input scripts are intentionally untracked
 data/*
 !data/input/
 data/input/*
-!data/input/.gitkeep
-!data/input/scripts/
-data/input/scripts/*
-!data/input/scripts/.gitkeep
 
 # Remotion / Node
 remotion/node_modules/

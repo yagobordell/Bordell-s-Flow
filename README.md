@@ -66,15 +66,16 @@ debe actualizar `pyproject.toml` y `uv.lock` conjuntamente.
 
 ## Ejecución
 
-Los ejemplos versionados viven en `examples/input/`. Guarda tantos guiones propios como
-necesites en `data/input/scripts/`, cada uno con su nombre, por ejemplo
-`historia_roma.txt` y `documental_japon.txt`. Sus contenidos no se versionan.
+Guarda tantos guiones propios como necesites directamente en `data/input/`, cada uno
+con su nombre, por ejemplo `historia_roma.txt` y `documental_japon.txt`. Los
+guiones locales no se versionan. Si `data/input/` no existe en una clonación
+nueva, el runner B la crea al consultar o seleccionar los guiones.
 El runner de producción actual acepta la ruta del guion que elijas:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
     .\scripts\pipeline\run_video_factory.ps1 `
-    -Input .\data\input\scripts\historia_roma.txt `
+    -Input .\data\input\historia_roma.txt `
     -NonInteractive
 ```
 
@@ -98,7 +99,7 @@ data/output/video_factory_metrics.json
 ## Nuevo pipeline B1.1 → B1.2 → B2 (ejecución independiente)
 
 Los nuevos bots de planificación usan GPT-6 Luna con razonamiento medium. Para elegir
-interactivamente uno de los guiones de `data/input/scripts/` y ejecutar solo estos
+interactivamente uno de los guiones de `data/input/` y ejecutar solo estos
 tres bots:
 
 ```powershell
