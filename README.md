@@ -53,6 +53,27 @@ debe actualizar `pyproject.toml` y `uv.lock` conjuntamente.
 
 ## Ejecución de B1.1 → B1.2 → B2
 
+### Comando corto en PowerShell
+
+Desde la raíz del repositorio puedes usar `run.ps1` sin escribir cada vez
+`uv run --locked --extra dev python ...`. Este acceso directo utiliza
+`data/input/scripts/` como biblioteca de guiones y `data/avatar/` para
+los avatares. El comando Python completo mantiene su ubicación predeterminada
+anterior (`data/input/`) para no romper automatizaciones existentes.
+
+```powershell
+.\run.ps1 test2 Jorge --no-image   # Guarda B1.1, B1.2 y B2 sin imágenes
+.\run.ps1 test2 Jorge              # Genera imágenes después de B2
+.\run.ps1 test2 --images-only      # Genera o recupera imágenes del B2 guardado
+.\run.ps1                         # Menú interactivo de guiones y avatares
+```
+
+Las extensiones `.txt` y `.png` son opcionales. Las opciones adicionales
+(`--from B2`, `--output`, etc.) se pasan al runner existente. No se
+cambian el modelo, los prompts, los costes, los estados ni el fallback de
+imágenes. Si PowerShell bloquea la ejecución de scripts por su política
+local, puedes seguir usando el comando Python completo.
+
 Guarda los guiones UTF-8 directamente en `data/input/` (por ejemplo,
 `historia_roma.txt`) y las imágenes PNG de avatar en `data/avatar/` (por ejemplo,
 `monje.png`). Las imágenes PNG y los guiones son locales y están ignorados por Git;

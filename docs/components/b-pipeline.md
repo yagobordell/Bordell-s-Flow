@@ -291,6 +291,16 @@ superado el plazo pueden seguir pendientes incluso si el fallback
 terminó. Los créditos AI33 no se mezclan con las métricas USD de
 OpenAI de B1.1/B1.2/B2.
 
+Para el uso habitual en PowerShell, desde la raíz del repositorio:
+```powershell
+.\run.ps1 test2 Jorge --no-image
+```
+El acceso directo establece la biblioteca `data/input/scripts/` y llama
+al runner Python con `uv run --locked --extra dev`; los nombres del guion
+y avatar admiten omitir `.txt` y `.png`. Si se omiten ambos, el runner
+muestra los menús interactivos. Esta configuración del acceso directo no
+cambia el valor por defecto de `--scripts-dir` en el runner original.
+
 Para iterar solo los bots sin crear imágenes, usa `--no-image`
 (alias compatible de `--skip-images`):
 

@@ -77,7 +77,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          Get-ChildItem scripts -Recurse -Filter *.ps1 | ForEach-Object {
+          @(Get-Item run.ps1) + @(Get-ChildItem scripts -Recurse -Filter *.ps1) |
+              ForEach-Object {
               $Tokens = $null
               $Errors = $null
               [System.Management.Automation.Language.Parser]::ParseFile(
@@ -88,6 +89,23 @@ jobs:
               if ($Errors) {
                   throw "PowerShell parse errors in $($_.FullName): $($Errors -join '; ')"
               }
+          }
+
+      - name: Short PowerShell runner smoke (no API calls)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $HelpText = (& ./run.ps1 --help 2>&1) -join "`n"
+          if ($LASTEXITCODE -ne 0 -or $HelpText -notmatch '--no-image') {
+              throw "run.ps1 did not forward --help to the B pipeline"
+          }
+
+          $NoScript = (& ./run.ps1 test2 Jorge --no-image 2>&1) -join "`n"
+          if ($LASTEXITCODE -eq 0 -or $NoScript -notmatch 'data/input/scripts') {
+              throw "run.ps1 did not forward the positional names and script library"
+          }
+          if ($NoScript -notmatch 'No \.txt scripts found') {
+              throw "run.ps1 did not reach script selection without paid API calls"
           }
 
       - name: Bash syntax
