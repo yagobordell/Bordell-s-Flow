@@ -253,7 +253,10 @@ def _print_timings(report: dict[str, object]) -> None:
     print("Tiempos reales (segundos):")
     for stage in _STAGES:
         value = stages[stage]["elapsed_seconds"]
-        print(f"  {stage} total: {value:.3f} s" if value is not None else f"  {stage}: no ejecutado")
+        if value is None:
+            print(f"  {stage}: no ejecutado")
+        else:
+            print(f"  {stage} total: {value:.3f} s")
     print(f"  Run total: {report['run_elapsed_seconds']:.3f} s")
 
 
