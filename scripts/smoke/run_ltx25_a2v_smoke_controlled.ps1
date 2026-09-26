@@ -13,7 +13,7 @@ param(
     [ValidateRange(120, 21600)][int]$BootstrapTimeoutSeconds = 7200,
     [string]$ExpectedPinnedImage = "",
     [ValidateSet(1, 2)][int]$StartupReplicas = 1,
-    [ValidateRange(120, 3600)][int]$RaceTimeoutSeconds = 2400,
+    [ValidateRange(120, 7200)][int]$RaceTimeoutSeconds = 2400,
     [switch]$NonInteractive
 )
 
