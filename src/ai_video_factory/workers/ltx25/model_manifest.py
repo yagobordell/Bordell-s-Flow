@@ -104,6 +104,48 @@ def model_bootstrap_is_ready(
     )
 
 
+def require_ltx_model_bootstrap(
+    *,
+    root: Path,
+    expected_files: Sequence[str],
+) -> None:
+    """Fail closed for production LTX only after the current start's receipt exists.
+
+    Development backends keep their isolated lightweight model fixtures; the
+    dedicated LTX container enables this gate explicitly in its Dockerfile.
+    """
+    if os.environ.get("LTX_REQUIRE_VERIFIED_MODEL_MANIFEST", "false").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return
+
+    from .reference_recipe import LTX25_MODEL_REVISION
+
+    revision = os.environ.get("LTX_MODEL_REVISION", LTX25_MODEL_REVISION).strip()
+    repository = os.environ.get("LTX_MODEL_REPOSITORY", "Lightricks/LTX-2.5").strip()
+    marker = Path(
+        os.environ.get(
+            "LTX_MODEL_BOOTSTRAP_COMPLETE_FILE",
+            "/tmp/ai-video-factory/ltx25-model-bootstrap.complete",
+        )
+    )
+    if not model_bootstrap_is_ready(
+        root=root,
+        repository=repository,
+        revision=revision,
+        expected_files=expected_files,
+        completion_marker=marker,
+    ):
+        raise FileNotFoundError(
+            "LTX-2.5 model bootstrap is not complete: waiting for the current "
+            "download process to publish its verified model manifest and "
+            "per-start completion marker"
+        )
+
+
 def validate_installed_model_manifest(
     installed_path: Path,
     *,
