@@ -46,6 +46,20 @@ Status: experimental investigation only. No paid generation or visual acceptance
    and [2026 LTX-2.5 talking-head lip-sync report](https://www.reddit.com/r/StableDiffusion/comments/1vw17li/is_ltx_25_just_terrible_for_lipsynctalkingphoto/).
    These are anecdotes, often for other checkpoints or ComfyUI workflows, not verified fixes
    for our pinned model and original input.
+8. [Lightricks LTX-2.5 discussion #54: unwanted zoom](https://huggingface.co/Lightricks/LTX-2.5/discussions/54)
+   reports zoom despite explicit locked-tripod/static-camera prompts in ComfyUI and the
+   desktop app (August 2026). This is direct user feedback on the 2.5 model, not a
+   confirmed upstream defect or evidence that our padding alone causes the zoom.
+   It rules out treating any camera wording as a reliable hard camera constraint.
+9. [Official static-camera LoRA](https://huggingface.co/Lightricks/LTX-2-19b-LoRA-Camera-Control-Static)
+   is explicitly trained for LTX-2 **19B** and documents the text/image two-stage
+   pipeline, not our LTX-2.5 **22B** audio-to-video checkpoint. The
+   [official LoRA guide](https://docs.ltx.io/open-source-model/usage-guides/lo-ra)
+   says to verify base-model and workflow compatibility. Do NOT silently install
+   this 19B LoRA on the 22B A2V pipeline or claim it ensures zero zoom.
+10. Video stabilization is not a model-side camera lock. Correcting a generated zoom
+    can discard visual context, enlarge the output and obscure true face motion.
+    Avoid auto-zoom stabilizers or crops that hide the failure. Compare full frames.
 
 ## Changes implemented now
 
