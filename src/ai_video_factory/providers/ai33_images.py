@@ -421,7 +421,8 @@ def generate_b2_images(
     _atomic_json(manifest_path, manifest)
     try:
         for index, job in enumerate(jobs, 1):
-            assert client is not None
+            if client is None:
+                raise AI33ImageError("Missing AI33 image client for described B2 beat")
             print(
                 f"  AI33 image {index}/{len(jobs)}: {job['beat_id']} "
                 f"({options.model_id})",
