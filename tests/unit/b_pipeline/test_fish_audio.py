@@ -118,7 +118,7 @@ def test_fish_director_prompt_is_exact_user_contract() -> None:
     assert "narrative_core" in prompt
     assert "emotional_exit" in prompt
     assert "original line-ending sequence" in prompt or "line endings" in prompt
-    assert "Return the final JSON only." in prompt
+    assert "Return only the final JSON object." in prompt
 
 
 def test_insertion_only_validator_preserves_crlf_bracketed_text_and_whitespace() -> None:
