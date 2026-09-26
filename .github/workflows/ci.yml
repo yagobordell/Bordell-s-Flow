@@ -94,14 +94,25 @@ jobs:
       - name: Short PowerShell runner smoke (no API calls)
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Continue"
+          $PSNativeCommandUseErrorActionPreference = $false
+          # Run as child PowerShell processes: a CLI's expected nonzero exit
+          # must not terminate this parent smoke-test process.
+          $HelpText = (& pwsh -NoProfile -File ./run.ps1 --help 2>&1) -join "`n"
+          $HelpExit = $LASTEXITCODE
+          Write-Host "Shortcut --help exit: $HelpExit"
+          Write-Host $HelpText
+
+          $NoScript = (& pwsh -NoProfile -File ./run.ps1 test2 Jorge --no-image 2>&1) -join "`n"
+          $NoScriptExit = $LASTEXITCODE
+          Write-Host "Shortcut no-script exit: $NoScriptExit"
+          Write-Host $NoScript
+
           $ErrorActionPreference = "Stop"
-          $HelpText = (& ./run.ps1 --help 2>&1) -join "`n"
-          if ($LASTEXITCODE -ne 0 -or $HelpText -notmatch '--no-image') {
+          if ($HelpExit -ne 0 -or $HelpText -notmatch '--no-image') {
               throw "run.ps1 did not forward --help to the B pipeline"
           }
-
-          $NoScript = (& ./run.ps1 test2 Jorge --no-image 2>&1) -join "`n"
-          if ($LASTEXITCODE -eq 0 -or $NoScript -notmatch 'data/input/scripts') {
+          if ($NoScriptExit -eq 0 -or $NoScript -notmatch 'data/input/scripts') {
               throw "run.ps1 did not forward the positional names and script library"
           }
           if ($NoScript -notmatch 'No \.txt scripts found') {
