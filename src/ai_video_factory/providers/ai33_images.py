@@ -20,6 +20,8 @@ from urllib.request import Request, urlopen
 
 from PIL import Image
 
+from .openai_images import OpenAIImageClient, OpenAIImageError
+
 API_BASE = "https://api.openspeaker.ai"
 _RETRYABLE_HTTP = {429, 502, 503, 504}
 _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", flags=re.ASCII)
@@ -27,6 +29,10 @@ _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", flags=re.ASCII)
 
 class AI33ImageError(RuntimeError):
     """Image generation failed or requires explicit recovery."""
+
+
+class AI33ImageTimeout(AI33ImageError):
+    """A known paid AI33 task did not complete within the configured deadline."""
 
 
 @dataclass(frozen=True)
@@ -207,14 +213,33 @@ def _poll(
     client: AI33ImageClient,
     task_id: str,
     options: AI33ImageOptions,
+    *,
+    submitted_at_unix: float | None = None,
 ) -> dict[str, Any]:
-    deadline = time.monotonic() + options.poll_timeout_seconds
+    """Use the original submission timestamp, including across --images-only runs."""
+    elapsed = (
+        max(0.0, time.time() - submitted_at_unix)
+        if submitted_at_unix is not None
+        else 0.0
+    )
+    deadline = time.monotonic() + max(0.0, options.poll_timeout_seconds - elapsed)
     retries = 0
+    path = f"/v1/task/{quote(task_id, safe='')}"
+
+    def check_result(result: dict[str, Any]) -> bool:
+        if result.get("code") == "server_busy":
+            return False
+        _check_success(result, "polling")
+        status = str(result.get("status", "")).lower()
+        if status == "done":
+            return True
+        if status in {"failed", "error", "cancelled", "canceled"}:
+            raise AI33ImageError(f"AI33 task {task_id} finished with status {status}")
+        return False
+
     while time.monotonic() < deadline:
         try:
-            result = client.request_json(
-                "GET", f"/v1/task/{quote(task_id, safe='')}"
-            )
+            result = client.request_json("GET", path)
         except HTTPError as exc:
             if exc.code not in _RETRYABLE_HTTP:
                 raise AI33ImageError(
@@ -228,20 +253,29 @@ def _poll(
             time.sleep(min(options.poll_interval_seconds * 2 ** min(retries, 3), 30))
             continue
 
-        if result.get("code") == "server_busy":
-            time.sleep(options.poll_interval_seconds)
-            continue
-        _check_success(result, "polling")
-        retries = 0
-        status = str(result.get("status", "")).lower()
-        if status == "done":
+        if check_result(result):
             return result
-        if status in {"failed", "error", "cancelled", "canceled"}:
-            raise AI33ImageError(f"AI33 task {task_id} finished with status {status}")
+        retries = 0
         time.sleep(options.poll_interval_seconds)
-    raise AI33ImageError(
-        f"AI33 task {task_id} is still pending. "
-        "Use --images-only to resume polling without paying again."
+
+    # One final status check avoids paying twice for a result that completed
+    # just as the deadline expired. Busy/503 is not evidence of completion.
+    try:
+        final_result = client.request_json("GET", path)
+    except HTTPError as exc:
+        if exc.code not in _RETRYABLE_HTTP:
+            raise AI33ImageError(
+                f"AI33 task {task_id} final poll failed (HTTP {exc.code})"
+            ) from exc
+    except (URLError, TimeoutError):
+        pass
+    else:
+        if check_result(final_result):
+            return final_result
+
+    raise AI33ImageTimeout(
+        f"AI33 task {task_id} is still pending after "
+        f"{options.poll_timeout_seconds} seconds."
     )
 
 
@@ -256,11 +290,101 @@ def _fingerprint(job: dict[str, Any], options: AI33ImageOptions) -> str:
     ).hexdigest()
 
 
+def _openai_fallback(
+    job: dict[str, Any],
+    options: AI33ImageOptions,
+    output: Path,
+    state: dict[str, Any],
+    state_path: Path,
+    image_path: Path,
+    *,
+    openai_api_key: str | None,
+    openai_client: OpenAIImageClient | None,
+) -> dict[str, Any]:
+    """Never repeat an official POST whose outcome may be unknown."""
+    if state.get("status") == "openai_submitting_unknown":
+        raise AI33ImageError(
+            f"Official OpenAI fallback for beat {job['beat_id']} may already have "
+            f"been charged. Inspect {state_path}; do not submit it again."
+        )
+    if state.get("status") != "ai33_timed_out" or not state.get("task_id"):
+        raise AI33ImageError("Official fallback requires a known timed-out AI33 task")
+    if openai_client is None:
+        if not openai_api_key:
+            raise AI33ImageError(
+                f"AI33 task {state['task_id']} timed out; OPENAI_API_KEY is missing. "
+                "Configure it and use --images-only to start the official fallback."
+            )
+        openai_client = OpenAIImageClient(openai_api_key)
+
+    state["fallback_request"] = {
+        "model": options.model_id,
+        "prompt_sha256": hashlib.sha256(job["description"].encode("utf-8")).hexdigest(),
+        "size": "1280x720",
+        "quality": options.quality,
+        "output_format": "png",
+    }
+    state["fallback_started_at_unix"] = time.time()
+    state["status"] = "openai_submitting_unknown"
+    _atomic_json(state_path, state)
+    try:
+        generated = openai_client.generate_png(
+            prompt=job["description"],
+            model=options.model_id,
+            destination=image_path,
+            size="1280x720",
+            quality=options.quality,
+            output_format="png",
+        )
+    except (HTTPError, URLError, TimeoutError, OpenAIImageError, ValueError) as exc:
+        raise AI33ImageError(
+            f"Official OpenAI fallback outcome for beat {job['beat_id']} is unknown. "
+            f"Inspect {state_path}; never automatically repeat a paid request."
+        ) from exc
+
+    artifact = {
+        **job,
+        **options.public(),
+        "provider": "openai_official_fallback",
+        "primary_provider": "ai33",
+        "fallback_reason": "ai33_timeout",
+        "ai33_timeout_seconds": options.poll_timeout_seconds,
+        "task_id": state["task_id"],
+        "file": image_path.relative_to(output).as_posix(),
+        "sha256": generated["sha256"],
+        "width": generated["width"],
+        "height": generated["height"],
+        "size": generated["size"],
+        "output_format": generated["output_format"],
+        "credit_cost": None,
+        "provider_credit_cost": None,
+        "openai_usage": generated.get("usage"),
+        "openai_created": generated.get("created"),
+        "ai33_may_complete_later": True,
+        "status": "completed",
+    }
+    state["fallback_result"] = {
+        "sha256": generated["sha256"],
+        "width": generated["width"],
+        "height": generated["height"],
+        "usage": generated.get("usage"),
+    }
+    state["artifact"] = artifact
+    state["sha256"] = generated["sha256"]
+    state["status"] = "completed"
+    _atomic_json(state_path, state)
+    return artifact
+
+
 def _one_image(
     client: AI33ImageClient,
     job: dict[str, Any],
     options: AI33ImageOptions,
     output: Path,
+    *,
+    fallback_enabled: bool = False,
+    openai_api_key: str | None = None,
+    openai_client: OpenAIImageClient | None = None,
 ) -> dict[str, Any]:
     folder = output / "images" / f"block_{job['block_id']}"
     state_path = folder / f"{job['beat_id']}.json"
@@ -284,15 +408,21 @@ def _one_image(
         }
         _atomic_json(state_path, state)
 
-    if state["status"] == "completed" and image_path.is_file():
-        actual_sha = hashlib.sha256(image_path.read_bytes()).hexdigest()
-        if actual_sha == state.get("sha256"):
-            return state["artifact"]
+    if state["status"] == "completed":
+        if image_path.is_file():
+            actual_sha = hashlib.sha256(image_path.read_bytes()).hexdigest()
+            if actual_sha == state.get("sha256"):
+                return state["artifact"]
+        if state.get("artifact", {}).get("provider") == "openai_official_fallback":
+            raise AI33ImageError(
+                f"Official fallback PNG for beat {job['beat_id']} is missing or modified. "
+                "Do not automatically repeat a paid OpenAI request."
+            )
 
-    if state["status"] in {"submitting_unknown", "rejected"}:
+    if state["status"] in {"submitting_unknown", "rejected", "openai_submitting_unknown"}:
         raise AI33ImageError(
-            f"AI33 submission for beat {job['beat_id']} cannot be retried safely. "
-            f"Inspect {state_path} and reconcile the task in AI33."
+            f"Paid submission for beat {job['beat_id']} cannot be retried safely. "
+            f"Inspect {state_path} and reconcile the task with its provider."
         )
 
     task_id = state.get("task_id")
@@ -306,6 +436,8 @@ def _one_image(
                 f"AI33 price request failed for beat {job['beat_id']}"
             ) from exc
         state["price_response"] = price
+        # The persisted timestamp survives process restarts and includes the POST time.
+        state["submitted_at_unix"] = time.time()
         state["status"] = "submitting_unknown"
         _atomic_json(state_path, state)
         try:
@@ -333,7 +465,53 @@ def _one_image(
         state["status"] = "submitted"
         _atomic_json(state_path, state)
 
-    result = _poll(client, str(task_id), options)
+    if state["status"] == "ai33_timed_out" and fallback_enabled:
+        return _openai_fallback(
+            job,
+            options,
+            output,
+            state,
+            state_path,
+            image_path,
+            openai_api_key=openai_api_key,
+            openai_client=openai_client,
+        )
+
+    if state["status"] == "download_pending" and isinstance(
+        state.get("last_poll"), dict
+    ) and state["last_poll"].get("status") == "done":
+        result = state["last_poll"]
+    else:
+        # Legacy checkpoints did not store a submission timestamp. Start their
+        # first deadline when they are resumed; do not guess an earlier time.
+        if not isinstance(state.get("submitted_at_unix"), (int, float)):
+            state["submitted_at_unix"] = time.time()
+            _atomic_json(state_path, state)
+        try:
+            result = _poll(
+                client,
+                str(task_id),
+                options,
+                submitted_at_unix=float(state["submitted_at_unix"]),
+            )
+        except AI33ImageTimeout:
+            if not fallback_enabled:
+                raise
+            state["status"] = "ai33_timed_out"
+            state["ai33_timeout_at_unix"] = time.time()
+            state["ai33_timeout_seconds"] = options.poll_timeout_seconds
+            _atomic_json(state_path, state)
+            return _openai_fallback(
+                job,
+                options,
+                output,
+                state,
+                state_path,
+                image_path,
+                openai_api_key=openai_api_key,
+                openai_client=openai_client,
+            )
+
     state["last_poll"] = result
     state["status"] = "download_pending"
     _atomic_json(state_path, state)
@@ -355,8 +533,10 @@ def _one_image(
         ) from exc
     if first.get("mimeType") not in (None, "image/png"):
         raise AI33ImageError("AI33 result image MIME type differs from PNG")
-    if (first.get("width") not in (None, width) or
-            first.get("height") not in (None, height)):
+    if (
+        first.get("width") not in (None, width)
+        or first.get("height") not in (None, height)
+    ):
         raise AI33ImageError("AI33 image dimensions differ from its task metadata")
 
     artifact = {
@@ -378,6 +558,8 @@ def _one_image(
     return artifact
 
 
+
+
 def generate_b2_images(
     output: Path,
     plan: dict[str, Any],
@@ -385,8 +567,11 @@ def generate_b2_images(
     api_key: str | None,
     options: AI33ImageOptions,
     client: AI33ImageClient | None = None,
+    fallback_enabled: bool = False,
+    openai_api_key: str | None = None,
+    openai_client: OpenAIImageClient | None = None,
 ) -> dict[str, Any]:
-    """Generate exactly one PNG per described beat and resume known AI33 tasks."""
+    """Generate one PNG per described beat, safely resuming known paid tasks."""
     jobs = described_beats(plan)
     manifest_path = output / "images" / "manifest.json"
     # Validate *all* previous requests before creating a paid task.
@@ -415,7 +600,11 @@ def generate_b2_images(
         "schema_version": "ai33-b2-images-v1",
         **options.public(),
         "status": "running",
+        "fallback_enabled": fallback_enabled,
+        "fallback_size": "1280x720" if fallback_enabled else None,
         "total_described_beats": len(jobs),
+        "ai33_count": 0,
+        "openai_fallback_count": 0,
         "items": [],
     }
     _atomic_json(manifest_path, manifest)
@@ -424,12 +613,27 @@ def generate_b2_images(
             if client is None:
                 raise AI33ImageError("Missing AI33 image client for described B2 beat")
             print(
-                f"  AI33 image {index}/{len(jobs)}: {job['beat_id']} "
-                f"({options.model_id})",
+                f"  Image {index}/{len(jobs)}: {job['beat_id']} "
+                f"(AI33 {options.model_id})",
                 flush=True,
             )
-            artifact = _one_image(client, job, options, output)
+            artifact = _one_image(
+                client,
+                job,
+                options,
+                output,
+                fallback_enabled=fallback_enabled,
+                openai_api_key=openai_api_key,
+                openai_client=openai_client,
+            )
             manifest["items"].append(artifact)
+            manifest["ai33_count"] = sum(
+                item["provider"] == "ai33" for item in manifest["items"]
+            )
+            manifest["openai_fallback_count"] = sum(
+                item["provider"] == "openai_official_fallback"
+                for item in manifest["items"]
+            )
             _atomic_json(manifest_path, manifest)
         manifest["status"] = "completed"
         _atomic_json(manifest_path, manifest)
@@ -438,6 +642,8 @@ def generate_b2_images(
         _atomic_json(manifest_path, manifest)
         raise
     return manifest
+
+
 
 
 def has_pending_image_tasks(output: Path) -> bool:
