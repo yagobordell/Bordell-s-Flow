@@ -228,6 +228,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         on_stage_duration,
         on_stage_complete,
         on_rejected_output,
+        on_rejected_b2_output,
         start_from,
         previous_b11,
         previous_b12,
@@ -235,6 +236,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         assert start_from == "B1.1"
         assert previous_b11 is None and previous_b12 is None
         assert callable(on_rejected_output)
+        assert callable(on_rejected_b2_output)
         assert provider.reasoning_effort == "medium"
         assert model == "gpt-6-luna"
         assert max_parallel_calls == 3
