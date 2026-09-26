@@ -8,6 +8,7 @@ import shutil
 import sys
 from pathlib import Path
 from time import perf_counter
+from typing import Literal
 
 from ai_video_factory.bots import run_b_pipeline
 from ai_video_factory.bots.billing import ApiCostLedger
@@ -153,6 +154,7 @@ def _prepare_output(output_root: Path, script_file: Path) -> Path:
         if not destination.is_dir():
             raise SystemExit(f"Output path is not a directory: {destination}")
         recognized = (
+            destination / "run_report.json",
             destination / ".b_pipeline_run.json",
             destination / "B1.1" / "input.json",
             destination / "b1_1.json",  # Previous standalone runner layout.
@@ -164,7 +166,6 @@ def _prepare_output(output_root: Path, script_file: Path) -> Path:
                 "choose a dedicated --output root."
             )
         shutil.rmtree(destination)
-        print(f"Removed previous B-pipeline output: {destination}")
     destination.mkdir(parents=True, exist_ok=False)
     return destination
 
@@ -246,37 +247,10 @@ class TimingLedger:
         }
 
 
-def _print_timings(report: dict[str, object]) -> None:
-    stages = report["stages"]
-    if not isinstance(stages, dict):
-        raise RuntimeError("Invalid timing report")
-    print("Tiempos reales (segundos):")
-    for stage in _STAGES:
-        value = stages[stage]["elapsed_seconds"]
-        if value is None:
-            print(f"  {stage}: no ejecutado")
-        else:
-            print(f"  {stage} total: {value:.3f} s")
-    print(f"  Run total: {report['run_elapsed_seconds']:.3f} s")
-
-
-def _print_costs(report: dict[str, object]) -> None:
-    stages = report["stages"]
-    if not isinstance(stages, dict):
-        raise RuntimeError("Invalid API cost report")
-    print("Costes API OpenAI (USD, estimados a partir del uso):")
-    for stage in _STAGES:
-        entry = stages[stage]
-        cost = entry["estimated_cost_usd"]
-        print(f"  {stage} total: ${cost}" if cost is not None else f"  {stage}: no disponible")
-    total = report["estimated_total_usd"]
-    if total is None:
-        print(
-            "  Run total: no disponible (uso o tarifa incompletos); "
-            f"subtotal conocido: ${report['priced_subtotal_usd']}"
-        )
-    else:
-        print(f"  Run total: ${total}")
+def _print_metric(name: str, seconds: float, cost: object) -> None:
+    """Print a single completed bot/run line, flushing as soon as it finishes."""
+    price = f"{chr(36)}{cost}" if cost is not None else "coste no disponible"
+    print(f"  {name} total: {seconds:.3f} s {price}", flush=True)
 
 
 async def main() -> None:
