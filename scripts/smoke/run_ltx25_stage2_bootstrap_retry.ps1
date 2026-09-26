@@ -82,7 +82,7 @@ if ($InitialStatus -notmatch "status=stopped" -or
     throw "Salad is not safely stopped on the previous pinned image."
 }
 
-$Prompt = "A locked-off shot with exactly the same camera distance, framing, face size, shoulder position and background as the reference image throughout the entire video. No zoom or reframing. The person speaks directly to camera with clear visible lip and jaw articulation precisely synchronized to the supplied speech audio. Lip sync matches every spoken phoneme. Natural blinking and restrained head movement. Only the facial movements needed for speech; the composition remains unchanged."
+$Prompt = "An elderly monk speaking calmly to the camera."
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $SegmentId = "ltx-a2v-monje-stage2two-parallel-race2-$Stamp"
 $OutputDir = Join-Path $RepoRoot "artifacts\$SegmentId"
