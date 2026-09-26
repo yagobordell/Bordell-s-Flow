@@ -54,7 +54,8 @@ async def main() -> None:
     for item in result.b12:
         _write(args.output / "b1_2" / f"block_{item.block_id}.json", item.model_dump())
     for item in result.b2:
-        assert item.blocks is not None
+        if item.blocks is None:
+            raise RuntimeError("B2 returned no validated blocks")
         _write(args.output / "b2" / f"block_{item.blocks[0].block_id}.json", item.model_dump())
     _write(args.output / "visual_plan.json", result.visual_plan())
     print(f"B1.1/B1.2/B2 validated; canonical artifacts: {args.output.resolve()}")
