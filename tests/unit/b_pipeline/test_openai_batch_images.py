@@ -405,12 +405,12 @@ def test_images_only_uses_saved_b2_and_official_openai_key(
     }]
 
 
+@pytest.mark.parametrize("model", ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"])
 @pytest.mark.parametrize("batch_failure", [None, "failed"])
-def test_gpt_image_2_is_supported_in_individual_batch_and_direct_fallback(
-    tmp_path: Path, batch_failure: str | None,
+def test_gpt_image_25_uses_same_model_for_individual_batch_and_direct_fallback(
+    tmp_path: Path, model: str, batch_failure: str | None,
 ) -> None:
-    """A pre-existing OPENAI_IMAGE_MODEL=gpt-image-2 must not require an env edit."""
-    opts = _opts(model_id="gpt-image-2")
+    opts = _opts(model_id=model)
     batch = FakeBatch(
         failures={"1B": batch_failure} if batch_failure is not None else {}
     )
@@ -422,7 +422,7 @@ def test_gpt_image_2_is_supported_in_individual_batch_and_direct_fallback(
     assert result["status"] == "completed"
     assert len(batch.uploads) == len(batch.created) == 1
     assert batch.uploads[0][1]["body"] == opts.request("Original 1B  ")
-    assert batch.uploads[0][1]["body"]["model"] == "gpt-image-2"
+    assert batch.uploads[0][1]["body"]["model"] == model
     assert batch.uploads[0][1]["body"]["n"] == 1
     if batch_failure is None:
         assert result["items"][0]["provider"] == "openai_batch"
@@ -431,8 +431,24 @@ def test_gpt_image_2_is_supported_in_individual_batch_and_direct_fallback(
         assert result["items"][0]["provider"] == "openai_direct_fallback"
         assert result["items"][0]["fallback_reason"] == "batch_failed"
         assert len(direct.calls) == 1
-        assert direct.calls[0]["model"] == "gpt-image-2"
+        assert direct.calls[0]["model"] == model
         assert direct.calls[0]["prompt"] == images.effective_image_prompt(
             "Original 1B  "
         )
-    assert result["items"][0]["model_id"] == "gpt-image-2"
+    assert result["items"][0]["model_id"] == model
+
+
+@pytest.mark.parametrize("old_model", ["gpt-image-2", "gpt-image-2.5"])
+def test_b2_image_batch_rejects_old_or_incomplete_model_id(
+    old_model: str,
+) -> None:
+    with pytest.raises(ValueError, match="Unsupported official GPT Image model"):
+        _opts(model_id=old_model)
+
+
+def test_text_and_image_configuration_defaults_use_gpt6_and_image25() -> None:
+    from ai_video_factory.config import Settings
+
+    assert Settings.model_fields["openai_model"].default == "gpt-6-luna"
+    assert Settings.model_fields["openai_b_model"].default == "gpt-6-luna"
+    assert Settings.model_fields["openai_image_model"].default == "gpt-image-2.5-flare"

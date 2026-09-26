@@ -311,10 +311,13 @@ OPENAI_IMAGE_BATCH_POLL_INTERVAL_SECONDS=8
 OPENAI_IMAGE_MAX_PARALLEL=4
 ```
 
-Se admiten `gpt-image-2`, Flare y Sunburst. Los tres modelos usan PNG,
-16:9, calidad low y 1280×720 tanto para el batch como para la generación
-directa. El valor actual de `OPENAI_IMAGE_MODEL=gpt-image-2` se conserva
-sin necesidad de modificar el `.env`. Cuatro beats pueden
+El pipeline utiliza **GPT Image 2.5**, con el ID `gpt-image-2.5-flare`
+por defecto o `gpt-image-2.5-sunburst` si se selecciona explícitamente.
+`gpt-image-2.5` sin variante no es un identificador válido para la API.
+El batch y la generación directa comparten modelo, PNG, 16:9,
+calidad low y 1280×720. Actualiza también el `.env` local si todavía
+contiene `OPENAI_IMAGE_MODEL=gpt-image-2`; un `git pull` no edita ese
+archivo privado. Cuatro beats pueden
 ejecutarse simultáneamente (límite configurable de 1 a 16), pero
 **cada batch sigue conteniendo exactamente una imagen**. El manifiesto
 `images/manifest.json` lo escribe el coordinador en orden B2,

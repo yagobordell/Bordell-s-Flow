@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     openai_api_key: str | None = None
-    openai_model: str = "gpt-5.6-luna"
+    openai_model: str = "gpt-6-luna"
     openai_reasoning_effort: str = "high"
     openai_b_model: str = "gpt-6-luna"
     openai_b_reasoning_effort: str = "medium"

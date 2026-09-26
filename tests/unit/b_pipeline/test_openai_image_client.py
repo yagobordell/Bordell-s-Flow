@@ -19,7 +19,7 @@ def _png(width: int = 1280, height: int = 720, fmt: str = "PNG") -> bytes:
 
 @pytest.mark.parametrize(
     "model",
-    ["gpt-image-2", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"],
+    ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"],
 )
 def test_direct_client_uses_the_same_model_prompt_size_quality_and_single_image(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model: str,
@@ -75,3 +75,15 @@ def test_direct_client_refuses_invalid_artifacts_without_writing(
             destination=destination,
         )
     assert not destination.exists()
+
+
+@pytest.mark.parametrize("old_model", ["gpt-image-2", "gpt-image-2.5"])
+def test_direct_fallback_rejects_old_or_incomplete_model_id(
+    old_model: str, tmp_path: Path,
+) -> None:
+    client = official.OpenAIImageClient("fake-key")
+    with pytest.raises(ValueError, match="same selected GPT Image model"):
+        client.generate_png(
+            prompt="Image", model=old_model, destination=tmp_path / "bad.png",
+        )
+    assert not (tmp_path / "bad.png").exists()
