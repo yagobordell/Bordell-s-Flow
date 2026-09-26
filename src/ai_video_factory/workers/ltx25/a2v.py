@@ -40,6 +40,7 @@ from .model import (
     _force_diffvae_eager_sdpa,
     _pipeline_dimensions,
 )
+from .model_manifest import require_ltx_model_bootstrap
 from .reference_recipe import (
     LTX25_MODEL_REVISION,
     LTX_A2V_REFERENCE_RECIPE,
@@ -1226,13 +1227,19 @@ class DirectLTX25AudioToVideoBackend:
 
     def _validate_runtime(self, bindings: _A2VBindings) -> None:
         self._model_files.validate()
-        if os.environ.get("LTX_INCLUDE_A2V_DEV_ASSETS", "false").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }:
+        include_dev = os.environ.get(
+            "LTX_INCLUDE_A2V_DEV_ASSETS", "false"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if include_dev:
             self._model_files.validate_dev_bootstrap()
+        root = self._model_files.shared.transformer.parent.parent
+        model_paths = list(self._model_files.shared.paths())
+        if include_dev:
+            model_paths.extend((self._model_files.dev_transformer, self._model_files.distilled_lora))
+        require_ltx_model_bootstrap(
+            root=root,
+            expected_files=[path.relative_to(root).as_posix() for path in model_paths],
+        )
         if self._device.startswith("cuda") and not bindings.torch.cuda.is_available():
             raise RuntimeError("CUDA is not available for the LTX-2.5 A2V runtime")
 
