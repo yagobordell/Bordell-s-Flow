@@ -96,35 +96,6 @@ def test_openai_provider_uses_high_reasoning_and_flex() -> None:
     }
 
 
-def test_openai_provider_passes_previous_response_id_for_stateful_calls() -> None:
-    expected = StructuredResult(title="Demo", hook="Hook", narration="Hook. Narración.")
-    responses = FakeResponses(expected, response_id="resp_2")
-    provider = _provider(responses)
-
-    result = asyncio.run(
-        provider.generate_structured_stateful(
-            model="test-model",
-            instructions="Keep continuity",
-            input_text="Bloque 2",
-            output_type=StructuredResult,
-            previous_response_id="resp_1",
-        )
-    )
-
-    assert result.output == expected
-    assert result.response_id == "resp_2"
-    assert responses.last_call == {
-        "model": "test-model",
-        "instructions": "Keep continuity",
-        "input": "Bloque 2",
-        "text_format": StructuredResult,
-        "previous_response_id": "resp_1",
-        "store": True,
-        "reasoning": {"effort": "high"},
-        "service_tier": "flex",
-    }
-
-
 def test_openai_provider_retries_once_with_default_when_flex_returns_404() -> None:
     expected = StructuredResult(title="Demo", hook="Hook", narration="Hook. Narración.")
     responses = FakeResponses(expected, failures=[FakeStatusError(404)])

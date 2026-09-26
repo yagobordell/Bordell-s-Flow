@@ -1,8 +1,8 @@
 """B1.1 → independent B1.2/B2 per-block workers, with exact source integrity.
 
-This module deliberately does not convert the new string beat IDs or four visual
-formats to the legacy integer-shot production pipeline. That needs a separate,
-explicitly versioned downstream migration before any production cutover.
+This module preserves the new string beat IDs and four visual formats exactly.
+Downstream GPU clients must adopt these contracts before an end-to-end video
+runner can be enabled; no lossy integer-shot conversion is performed.
 """
 
 import asyncio

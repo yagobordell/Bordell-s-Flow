@@ -136,21 +136,16 @@ field-level rules unchanged.
 Outputs are grouped directly under `data/output/<script-name>/`, within the
 `B1.1/`, `B1.2/block_<id>/` and `B2/block_<id>/` directories, with
 `B1.2/merged_output.json`, `B2/merged_output.json`, the application-owned
-`visual_plan.json` and the consolidated `run_report.json`. No legacy phase2
-artifact is changed.
+`visual_plan.json` and the consolidated `run_report.json`. No previous phase artifacts are generated.
 
-The old bot implementations live only in `src/ai_video_factory/legacy_bots/` for
-compatibility with the existing phase3–9 production path. The active
-`src/ai_video_factory/bots/` package contains only the replacement B1.1/B1.2/B2
-components. Existing legacy imports are redirected to `legacy_bots` until the
-downstream pipeline is migrated.
-
-**No production cutover:** the existing phase3–9 pipeline expects integer Beat IDs,
-scene/shot groupings, and shot-based keyframes/video. B1.2 emits string Beat IDs and
-B2 chooses avatar / still / video per beat. Feeding this visual plan into the old
-pipeline via a lossy adapter would silently discard the audited contracts. An
-explicit downstream schema, timeline, composition and caching migration is required
-and should pass end-to-end tests before enabling it in `run_video_factory.ps1`.
+The previous planning bots and their one-command production orchestration have
+been removed from this branch. Salad workers, Postgres/R2 inference, capacity
+control, and independent GPU stage clients remain available. Those stage clients
+still accept the old shot-based artifacts and are **not** a supported consumer
+of B2's string beat IDs and four visual strategies. A versioned downstream
+migration with audio alignment, per-beat visuals, avatar handling, timing and
+composition tests is required before restoring end-to-end video production.
+No lossy adapter or silent fallback to the retired bots is used.
 
 The validations here establish structural fidelity, source reconstruction, 40-word
 limits, type/ID preservation, and mandatory intro/close avatars. Whether a media

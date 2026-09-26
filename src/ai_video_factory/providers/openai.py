@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel
 
 from ai_video_factory.config import settings
-from ai_video_factory.providers.base import StatefulStructuredResult
 
 if TYPE_CHECKING:
     from openai import AsyncOpenAI
@@ -84,8 +83,8 @@ class OpenAIProvider:
     ) -> tuple[StructuredOutputT, Any]:
         """Return validated structured output and its original, usage-bearing API response.
 
-        Opt-in for metered pipelines. Ordinary and stateful provider behavior stays
-        unchanged; in particular, no estimated token counts replace API usage.
+        Opt-in for metered pipelines. API usage is returned unchanged; estimated
+        token counts never replace the provider's reported usage.
         """
         response = await self._parse_with_flex_fallback(
             model=model,
@@ -99,37 +98,6 @@ class OpenAIProvider:
         if not isinstance(parsed, output_type):
             raise RuntimeError("OpenAI returned an unexpected structured output type")
         return parsed, response
-
-    async def generate_structured_stateful[StructuredOutputT: BaseModel](
-        self,
-        *,
-        model: str,
-        instructions: str,
-        input_text: str,
-        output_type: type[StructuredOutputT],
-        previous_response_id: str | None,
-    ) -> StatefulStructuredResult[StructuredOutputT]:
-        response = await self._parse_with_flex_fallback(
-            model=model,
-            instructions=instructions,
-            input=input_text,
-            text_format=output_type,
-            previous_response_id=previous_response_id,
-            store=True,
-        )
-
-        parsed = response.output_parsed
-        if parsed is None:
-            raise RuntimeError("OpenAI returned no parsed structured output")
-
-        if not isinstance(parsed, output_type):
-            raise RuntimeError("OpenAI returned an unexpected structured output type")
-
-        response_id = getattr(response, "id", None)
-        if not isinstance(response_id, str) or not response_id:
-            raise RuntimeError("OpenAI returned no response id for stateful continuation")
-
-        return StatefulStructuredResult(output=parsed, response_id=response_id)
 
     async def _parse_with_flex_fallback(self, **kwargs: Any) -> Any:
         request_kwargs = {

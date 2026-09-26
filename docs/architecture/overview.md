@@ -1,67 +1,36 @@
 # Architecture overview
 
-The production pipeline transforms a script into a rendered video through planning, narration,
-alignment, visual generation, video generation, upscaling and composition.
-
-## Pipeline stages
-
-```text
-script
-  -> planning / shot structure
-  -> narration (Breeze, Fish fallback)
-  -> word alignment (Whisper)
-  -> reference images / storyboard keyframes (Qwen Image)
-  -> LTX 2.5 video clips
-  -> Real-ESRGAN upscale
-  -> Remotion / FFmpeg composition
-  -> final output
-```
-
-OpenAI is used for language/planning tasks. GPU inference workers run on Salad.
+The active planning pipeline is B1.1 → B1.2 → B2. It produces a source-preserving
+visual plan with string beat IDs and avatar/image/video strategies. The previous
+scene/shot-based planning bots and end-to-end production runner have been retired.
+GPU stage clients remain usable independently, but there is no supported
+end-to-end B2-to-final-video path until their contracts are migrated.
 
 ## Application control plane
 
-GPU inference has one application source of truth: Postgres `gpu.jobs`.
-
-Providers build deterministic `InferenceJobRequest` objects and submit them through the Postgres
-job transport. Workers poll Postgres, claim jobs with leases, download inputs from R2, perform
-inference, upload outputs and complete the job.
-
-R2 output metadata plus deterministic request fingerprints provide replay/idempotency before new GPU
-work is allocated.
+Postgres `gpu.jobs` is the authoritative queue. Providers submit deterministic
+`InferenceJobRequest` objects; dedicated workers on Salad claim jobs with leases,
+read their inputs from R2, execute inference and publish durable outputs.
+R2 manifests and request fingerprints provide replay and recovery.
 
 ## Salad's role
 
-Salad is a compute host, not a business-state or queue authority.
+Salad hosts the compute services defined in `deploy/salad/services.json`.
+Breeze TTS 2, Fish Speech, Whisper, Qwen Image 2.1, Ideogram 4 (optional),
+LTX 2.5 and Real-ESRGAN retain their worker runtimes and client integrations.
+The global Capacity Controller reconciles project capacity against Postgres
+demand. Model workers share inference contracts, health checks, Postgres
+claims/heartbeats, storage integrity and recovery. Salad is not the queue
+authority.
 
-`deploy/salad/services.json` defines one container group per model, GPU requirements, probes,
-priority and explicit replica bounds. Controlled pipeline wrappers inspect cache state before
-starting capacity and stop groups back to zero when work finishes.
+Service management, controlled per-stage GPU runners and smoke tests remain
+independent of the retired planning bots. The B runner itself calls OpenAI
+and does not allocate Salad GPU capacity.
 
-No Salad Job Queue or queue autoscaler is part of the production path.
+## Execution
 
-## Worker design
-
-All model services use the shared inference core for:
-
-- health/readiness;
-- task registration;
-- Postgres claims, leases and heartbeat;
-- object-storage integrity;
-- replay;
-- one-model-call-at-a-time process serialization.
-
-Model-specific packages own bootstrap and inference implementation only.
-
-Domain contracts do not contain Salad, R2 or Postgres transport details.
-
-## Supported end-to-end entrypoint
-
-The supported production entrypoint is:
-
-```powershell
-./scripts/pipeline/run_video_factory.ps1
-```
-
-It performs preflight checks, cache/resume planning, bounded GPU lifecycle, production DAG execution,
-composition and final cleanup.
+Use `scripts/pipeline/run_b_pipeline.py` for the active planning bots.
+Use the service-specific wrappers and smoke tests for GPU validation. There is
+no general video-production entrypoint until the downstream migration is tested.
+See [B pipeline](../components/b-pipeline.md) and
+[production-runner transition](../operations/production-runner.md).

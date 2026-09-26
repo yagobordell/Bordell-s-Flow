@@ -6,40 +6,27 @@ upscale y composición final reproducible.
 
 ## Estado actual
 
-El pipeline de producción está implementado hasta **Fase 9 — Compositor**. La siguiente etapa es
-**Fase 10 — Agentes de verificación**.
+El único flujo de **bots de planificación** es B1.1 → B1.2 → B2. Procesa el
+guion sin modificarlo, genera beats por bloque y selecciona estrategias visuales
+sin convertirlas a los contratos anteriores de escenas/shots.
 
-Flujo principal:
+El anterior runner de producción de extremo a extremo y los bots que lo alimentaban
+se han retirado. **Todavía no existe un recorrido automatizado B2 → vídeo final**:
+las fases de narración, Qwen, LTX, Real-ESRGAN y Remotion conservan herramientas
+y clientes independientes, pero requieren la migración explícita a los nuevos
+beat IDs y tipos visuales antes de poder componerse en una única ejecución.
+Consulta [estado de la integración](docs/operations/production-runner.md).
 
-```text
-guion
-  -> planificación narrativa y shots
-  -> narración + alineación temporal
-  -> Qwen-Image-2.1: referencias y keyframes 1280x736 sin recorte
-  -> LTX-2.5: vídeo 1280x720 @ 24 fps
-  -> Real-ESRGAN x2: 2560x1440 @ 24 fps
-  -> Remotion + FFmpeg
-  -> FinalVideo
-```
-
-Ruta de producción por defecto:
-
-- OpenAI: planificación estructurada.
-- Breeze TTS 2: narración principal.
-- Fish Speech S2 Pro: fallback de narración.
-- Whisper Large V3 Turbo: alineación/transcripción.
-- Qwen-Image-2.1: generador de imágenes activo.
-- LTX-2.5: generación de vídeo.
-- Real-ESRGAN x2: upscale.
-- Remotion + FFmpeg: composición y mux final.
-
-Ideogram permanece implementado para usos futuros, pero no forma parte del flujo normal.
+Los servicios GPU de Salad, la cola autoritativa en Postgres, R2, el Capacity
+Controller y los mecanismos de reintento/recuperación permanecen disponibles.
+Ideogram sigue siendo opcional; Qwen es el generador de imágenes utilizado
+en las herramientas de imagen.
 
 ## Requisitos
 
 - Python 3.12+
 - uv 0.12.18
-- Windows PowerShell para el runner end-to-end
+- Windows PowerShell para los scripts operativos de Salad y los runners GPU controlados
 - Node.js 22+ y npm
 - FFmpeg + ffprobe
 - Credenciales para OpenAI, SaladCloud, Cloudflare R2 y Postgres/Supabase
@@ -64,60 +51,27 @@ Completa `.env` con las credenciales y configuración necesarias. Los secretos y
 generados no deben versionarse. Python se instala desde `uv.lock`; cualquier cambio de dependencias
 debe actualizar `pyproject.toml` y `uv.lock` conjuntamente.
 
-## Ejecución
+## Ejecución de B1.1 → B1.2 → B2
 
-Guarda tantos guiones propios como necesites directamente en `data/input/`, cada uno
-con su nombre, por ejemplo `historia_roma.txt` y `documental_japon.txt`. Los
-guiones locales no se versionan. Si `data/input/` no existe en una clonación
-nueva, el runner B la crea al consultar o seleccionar los guiones.
-El runner de producción actual acepta la ruta del guion que elijas:
+Guarda los guiones UTF-8 directamente en `data/input/`, por ejemplo
+`data/input/historia_roma.txt`. Los archivos locales están ignorados por Git;
+el runner crea la carpeta al listar o seleccionar guiones si no existe.
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
-    .\scripts\pipeline\run_video_factory.ps1 `
-    -Input .\data\input\historia_roma.txt `
-    -NonInteractive
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --list-scripts
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt
 ```
 
-El runner realiza preflight, cache/resume, planificación por dependencias, gestión de workers Salad,
-generación multimedia, composición final y cleanup de recursos.
+Sin `--script`, el runner ofrece un menú en una terminal interactiva.
+Cada guion escribe en `data/output/<nombre-del-guion>/`: input/output de
+B1.1, output por bloque y merge de B1.2/B2, `visual_plan.json` y
+`run_report.json` con costes, tiempos y metadatos. La consola imprime
+una línea de tiempo y coste inmediatamente después de terminar cada bot.
 
-Salida principal:
-
-```text
-data/output/phase9/final_video.mp4
-```
-
-Métricas y diagnóstico:
-
-```text
-data/output/preflight_report.json
-data/output/production_metrics.json
-data/output/video_factory_metrics.json
-```
-
-## Nuevo pipeline B1.1 → B1.2 → B2 (ejecución independiente)
-
-Los nuevos bots de planificación usan GPT-6 Luna con razonamiento medium. Para elegir
-interactivamente uno de los guiones de `data/input/` y ejecutar solo estos
-tres bots:
-
-```powershell
-uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py
-```
-
-Para elegirlo sin menú, usa `--script historia_roma.txt`; para consultar los
-disponibles, usa `--list-scripts`. Cada nueva ejecución borra exclusivamente la
-salida anterior de ese guion. Los resultados se guardan en
-`data/output/<nombre-del-guion>/`, con carpetas `B1.1/`, `B1.2/` y
-`B2/` que conservan el `input.json` y `output.json` de cada llamada (por bloque
-en B1.2/B2). Tanto B1.2 como B2 incluyen además un `merged_output.json` con
-todos los bloques en su orden original. Cada bot imprime su tiempo y coste
-estimado en USD inmediatamente al terminar su etapa; el run imprime el total
-al finalizar. El archivo `run_report.json` reúne los datos del run, los
-costes y los tiempos, y se actualiza conforme terminan los bots. Este runner
-todavía no sustituye al flujo de producción de las fases posteriores; consulta
-[la guía del pipeline B](docs/components/b-pipeline.md).
+**Límite actual:** esto genera un plan visual, **no** un vídeo final.
+Los wrappers GPU independientes y los servicios de Salad siguen en el
+repositorio; no están conectados automáticamente a este plan.
+Consulta [la guía del pipeline B](docs/components/b-pipeline.md).
 
 ## Desarrollo
 
@@ -130,6 +84,6 @@ uv run --locked --extra dev ruff check .
 ## Documentación
 
 - [Arquitectura](docs/architecture/overview.md)
-- [Runner de producción](docs/operations/production-runner.md)
+- [Estado de la integración del vídeo](docs/operations/production-runner.md)
 - [Configuración de Salad](deploy/salad/services.json)
 - [Índice de documentación](docs/README.md)
