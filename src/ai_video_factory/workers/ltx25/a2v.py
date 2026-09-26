@@ -70,6 +70,29 @@ LTX_A2V_DEFAULT_PROMPT = (
     "changes, no exaggerated gestures, no identity drift, and no facial deformation."
 )
 
+# Experimental only: skip the FIRST intermediate Stage-2 sigma while preserving
+# the official first/last sigma, Stage-1 schedule, audio and image conditioning.
+# This is not an upstream quality-equivalent recipe; the video needs visual approval.
+_REFERENCE_STAGE_2_SIGMAS = (0.909375, 0.725, 0.421875, 0.0)
+
+
+def select_reference_stage_2_sigmas(sigmas: Any, steps: int) -> Any:
+    """Choose the opt-in two-step refinement schedule; never alter the default tensor."""
+    if steps == 3:
+        return sigmas
+    if steps != 2:
+        raise ValueError("experimental reference Stage 2 supports exactly 2 or 3 steps")
+    values = tuple(float(value) for value in sigmas)
+    if len(values) != len(_REFERENCE_STAGE_2_SIGMAS) or not all(
+        math.isclose(actual, expected, rel_tol=0.0, abs_tol=1e-6)
+        for actual, expected in zip(values, _REFERENCE_STAGE_2_SIGMAS, strict=True)
+    ):
+        raise ValueError("pinned upstream Stage-2 sigma schedule changed; refuse experiment")
+    if isinstance(sigmas, (tuple, list)):
+        return type(sigmas)((sigmas[0], sigmas[2], sigmas[3]))
+    return sigmas[[0, 2, 3]]
+
+
 _DEV_TRANSFORMER = "diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors"
 _DISTILLED_LORA = "loras/ltx-2.5-22b-distilled-lora-450-bf16.safetensors"
 
@@ -85,6 +108,7 @@ class LTXAudioToVideoParameters(BaseModel):
     width: int = Field(default=1280, gt=0, le=8192)
     height: int = Field(default=720, gt=0, le=8192)
     fps: int = Field(default=24, gt=0, le=120)
+    reference_stage_2_steps: int = Field(default=3, ge=2, le=3)
 
     @field_validator("generation_profile")
     @classmethod
@@ -110,6 +134,10 @@ class LTXAudioToVideoParameters(BaseModel):
 
     @model_validator(mode="after")
     def validate_shape(self) -> LTXAudioToVideoParameters:
+        if self.reference_stage_2_steps != 3 and (
+            self.generation_profile != LTX_A2V_REFERENCE_GENERATION_PROFILE
+        ):
+            raise ValueError("reference_stage_2_steps=2 requires the reference A2V profile")
         if (self.width, self.height) != (1280, 720):
             if self.width % 64 != 0 or self.height % 64 != 0:
                 raise ValueError(
@@ -975,6 +1003,13 @@ class DirectLTX25AudioToVideoBackend:
                 fast = parameters.generation_profile == LTX_A2V_GENERATION_PROFILE
                 distilled = fast or reference
                 stage_1_sigmas = bindings.distilled_sigmas if distilled else None
+                stage_2_sigmas = (
+                    select_reference_stage_2_sigmas(
+                        bindings.stage_2_sigmas, parameters.reference_stage_2_steps
+                    )
+                    if reference
+                    else bindings.stage_2_sigmas
+                )
                 stage_1_steps = (
                     len(bindings.distilled_sigmas) - 1
                     if distilled
@@ -1026,7 +1061,7 @@ class DirectLTX25AudioToVideoBackend:
                             num_frames=reference_audio_plan.num_frames,
                             frame_rate=float(parameters.fps),
                             stage_1_sigmas=bindings.distilled_sigmas,
-                            stage_2_sigmas=bindings.stage_2_sigmas,
+                            stage_2_sigmas=stage_2_sigmas,
                             images=[conditioning],
                             audio_path=str(pipeline_audio_path.resolve()),
                         )
@@ -1045,7 +1080,7 @@ class DirectLTX25AudioToVideoBackend:
                             frame_rate=float(parameters.fps),
                             num_inference_steps=stage_1_steps,
                             stage_1_sigmas=stage_1_sigmas,
-                            stage_2_sigmas=bindings.stage_2_sigmas,
+                            stage_2_sigmas=stage_2_sigmas,
                             video_guider_params=video_guider,
                             images=[conditioning],
                             audio_path=str(pipeline_audio_path.resolve()),
@@ -1128,10 +1163,17 @@ class DirectLTX25AudioToVideoBackend:
             "video_rescale_scale": video_guider.rescale_scale,
             "video_stg_blocks": list(video_guider.stg_blocks),
             "stage_1_steps": stage_1_steps,
-            "stage_2_steps": len(bindings.stage_2_sigmas) - 1,
+            "stage_2_steps": len(stage_2_sigmas) - 1,
+            "stage_2_sigma_values": [float(value) for value in stage_2_sigmas],
+            "reference_stage_2_steps_experimental": reference
+            and parameters.reference_stage_2_steps == 2,
             "transformer_variant": "distilled" if distilled else "dev",
             "generation_recipe": (
-                "distilled_reference"
+                (
+                    "distilled_reference_stage2_two_step_experimental"
+                    if parameters.reference_stage_2_steps == 2
+                    else "distilled_reference"
+                )
                 if reference
                 else (
                     "upstream_guided_dev"

@@ -212,9 +212,11 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
     assert state["calls"][3]["num_inference_steps"] == 8
 
 
+@pytest.mark.parametrize("stage_2_steps", [3, 2])
 def test_reference_a2v_uses_upward_grid_and_does_not_require_dev_assets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    stage_2_steps: int,
 ) -> None:
     model_root = tmp_path / "models"
     _seed_model_files(model_root)
@@ -286,6 +288,7 @@ def test_reference_a2v_uses_upward_grid_and_does_not_require_dev_assets(
         parameters=LTXAudioToVideoParameters(
             generation_profile=a2v.LTX_A2V_REFERENCE_GENERATION_PROFILE,
             prompt="A stable talking head.",
+            reference_stage_2_steps=stage_2_steps,
         ),
     )
 
@@ -295,9 +298,21 @@ def test_reference_a2v_uses_upward_grid_and_does_not_require_dev_assets(
     call = state["calls"][0]
     assert call["num_frames"] == 97
     assert call["stage_1_sigmas"] == bindings.distilled_sigmas
-    assert call["stage_2_sigmas"] == bindings.stage_2_sigmas
+    expected_sigmas = (
+        bindings.stage_2_sigmas
+        if stage_2_steps == 3
+        else (0.909375, 0.421875, 0.0)
+    )
+    assert call["stage_2_sigmas"] == expected_sigmas
     assert "negative_prompt" not in call
-    assert metadata["generation_recipe"] == "distilled_reference"
+    assert metadata["stage_2_steps"] == stage_2_steps
+    assert metadata["stage_2_sigma_values"] == list(expected_sigmas)
+    assert metadata["reference_stage_2_steps_experimental"] is (stage_2_steps == 2)
+    assert metadata["generation_recipe"] == (
+        "distilled_reference_stage2_two_step_experimental"
+        if stage_2_steps == 2
+        else "distilled_reference"
+    )
     assert metadata["stage_1_sampler"] == "euler_ancestral"
     assert metadata["stage_2_sampler"] == "euler"
     assert metadata["stage_1_image_strength"] == 0.7

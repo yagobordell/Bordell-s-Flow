@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory)][string]$Audio,
     [string]$AvatarImage = "",
     [ValidateSet("fast", "reference", "dev", "guided")][string]$Profile = "reference",
+    [ValidateSet(2, 3)][int]$ReferenceStage2Steps = 3,
     [string]$SegmentId = "smoke-001",
     [string]$Prompt = "",
     [long]$Seed = 4242,
@@ -12,7 +13,7 @@ param(
     [ValidateRange(120, 21600)][int]$BootstrapTimeoutSeconds = 7200,
     [string]$ExpectedPinnedImage = "",
     [ValidateSet(1, 2)][int]$StartupReplicas = 1,
-    [ValidateRange(120, 3600)][int]$RaceTimeoutSeconds = 2400,
+    [ValidateRange(120, 7200)][int]$RaceTimeoutSeconds = 2400,
     [switch]$NonInteractive
 )
 
@@ -25,6 +26,7 @@ $LifecycleMetrics = [ordered]@{
     schema_version = 1
     segment_id = $SegmentId
     profile = $Profile
+    reference_stage_2_steps = $ReferenceStage2Steps
     startup_replicas = $StartupReplicas
     preflight_seconds = $null
     capacity_start_seconds = $null
@@ -47,6 +49,12 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     $Python = (Get-Command python -ErrorAction Stop).Source
 }
 if ($Seed -lt 0) { throw "A2V seed must be non-negative." }
+if ($ReferenceStage2Steps -eq 2 -and $Profile -ne "reference") {
+    throw "Experimental two-step Stage 2 is valid only with -Profile reference."
+}
+if ($ReferenceStage2Steps -eq 2 -and [string]::IsNullOrWhiteSpace($ExpectedPinnedImage)) {
+    throw "Experimental Stage 2 requires an immutable -ExpectedPinnedImage from the rebuilt worker."
+}
 if (-not (Test-Path -LiteralPath $ReadyWait -PathType Leaf)) {
     throw "LTX worker readiness helper is missing: $ReadyWait"
 }
@@ -115,6 +123,9 @@ if (-not [string]::IsNullOrWhiteSpace($AvatarImage)) {
 }
 if ($MaxGenerationSeconds -gt 0) {
     $Arguments += @("--max-generation-seconds", $MaxGenerationSeconds)
+}
+if ($ReferenceStage2Steps -eq 2) {
+    $Arguments += @("--reference-stage2-steps", "2")
 }
 
 $Start = @{

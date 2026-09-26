@@ -1,9 +1,14 @@
+import json
 from pathlib import Path
 
+import pytest
+
+from ai_video_factory.workers.ltx25.model import LTXModelFiles
 from ai_video_factory.workers.ltx25.model_manifest import (
     validate_installed_model_manifest,
     write_installed_model_manifest,
 )
+from ai_video_factory.workers.ltx25.reference_recipe import LTX25_MODEL_REVISION
 
 BOOTSTRAP = Path("docker/workers/ltx25/download_models.sh")
 
@@ -25,6 +30,21 @@ def test_ltx_model_download_reuses_shared_watchdog() -> None:
     assert "--throughput-window-seconds" in script
     assert "--reallocate-on-slow" in script
     assert "/usr/local/bin/network-preflight" in script
+
+
+def test_ltx_pinned_bundle_download_is_bounded_and_preserves_manifest() -> None:
+    script = BOOTSTRAP.read_text(encoding="utf-8")
+    assert 'MAX_DOWNLOAD_WORKERS="${LTX_MODEL_DOWNLOAD_MAX_WORKERS:-1}"' in script
+    assert '[[ ! "${MAX_DOWNLOAD_WORKERS}" =~ ^[12]$ ]]' in script
+    assert 'hf download "${MODEL_REPOSITORY}" "${MODEL_FILES[@]}"' in script
+    assert '--max-workers 2' in script
+    assert '--revision "${MODEL_REVISION}"' in script
+    assert '--progress-root "${MODEL_ROOT}"' in script
+    assert '--reallocate-on-slow' in script
+    assert script.index('--max-workers 2') < script.index('ltx25.model_manifest write')
+    assert script.index('MODEL_VERIFY_DONE ${model_file}') < script.index(
+        'ltx25.model_manifest write'
+    )
 
 
 def test_ltx_model_download_fast_path_requires_pinned_provenance() -> None:
@@ -94,3 +114,39 @@ def test_ltx_salad_manifest_prefers_fast_high_priority_5090_nodes() -> None:
     assert service["environment"]["HF_HUB_ETAG_TIMEOUT"] == "15"
     assert service["environment"]["HF_XET_CLIENT_ENABLE_ADAPTIVE_CONCURRENCY"] == "true"
     assert "HF_XET_HIGH_PERFORMANCE" not in service["environment"]
+    assert service["environment"]["LTX_MODEL_DOWNLOAD_MAX_WORKERS"] == "2"
+    assert service["environment"]["LTX_REQUIRE_VERIFIED_SHARED_MANIFEST"] == "true"
+
+
+def test_ltx_worker_ready_waits_for_atomic_verified_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "models"
+    files = LTXModelFiles.from_root(root)
+    for path in files.paths():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"pinned-model-bytes")
+    monkeypatch.setenv("LTX_REQUIRE_VERIFIED_SHARED_MANIFEST", "true")
+    monkeypatch.setenv("LTX_MODEL_REPOSITORY", "Lightricks/LTX-2.5")
+    monkeypatch.setenv("LTX_MODEL_REVISION", LTX25_MODEL_REVISION)
+    with pytest.raises(FileNotFoundError, match="manifest is pending"):
+        files.validate()
+
+    installed = root / ".bordell-installed-model-manifest.json"
+    write_installed_model_manifest(
+        installed,
+        repository="Lightricks/LTX-2.5",
+        revision=LTX25_MODEL_REVISION,
+        root=root,
+        files=[p.relative_to(root).as_posix() for p in files.paths()],
+    )
+    files.validate()
+
+    data = json.loads(installed.read_text(encoding="utf-8"))
+    data["revision"] = "wrong-revision"
+    installed.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(FileNotFoundError, match="manifest is not ready"):
+        files.validate()
+
+    monkeypatch.delenv("LTX_REQUIRE_VERIFIED_SHARED_MANIFEST")
+    files.validate()

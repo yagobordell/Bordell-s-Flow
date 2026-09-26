@@ -235,6 +235,13 @@ def parse_args() -> argparse.Namespace:
         help="Functional avatar A2V baseline; fast/dev remain explicit comparison modes.",
     )
     parser.add_argument("--max-generation-seconds", type=float, default=0.0)
+    parser.add_argument(
+        "--reference-stage2-steps",
+        type=int,
+        choices=(2, 3),
+        default=3,
+        help="Experimental: two Stage-2 steps for reference only; default remains three.",
+    )
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--fps", type=int, default=24)
@@ -259,6 +266,8 @@ def main() -> None:
         "guided": LTX_A2V_GUIDED_GENERATION_PROFILE,
     }
     profile = profiles[args.profile]
+    if args.reference_stage2_steps != 3 and args.profile != "reference":
+        raise SystemExit("--reference-stage2-steps 2 is only valid with --profile reference")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     avatar = args.avatar_image
@@ -306,6 +315,17 @@ def main() -> None:
     image_type = mimetypes.guess_type(avatar.name)[0] or "application/octet-stream"
     audio_type = mimetypes.guess_type(audio.name)[0] or "application/octet-stream"
 
+    request_parameters = {
+        "generation_profile": profile,
+        "prompt": args.prompt,
+        "seed": args.seed,
+        "width": args.width,
+        "height": args.height,
+        "fps": args.fps,
+    }
+    if args.reference_stage2_steps == 2:
+        request_parameters["reference_stage_2_steps"] = 2
+
     request = InferenceJobRequest(
         job_id=job_id,
         task=LTX_A2V_TASK,
@@ -318,14 +338,7 @@ def main() -> None:
             "metadata": ObjectOutput(key=metadata_key, content_type="application/json")
         },
         max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
-        parameters={
-            "generation_profile": profile,
-            "prompt": args.prompt,
-            "seed": args.seed,
-            "width": args.width,
-            "height": args.height,
-            "fps": args.fps,
-        },
+        parameters=request_parameters,
     )
     (args.output_dir / f"job-request-{job_id}.json").write_text(
         request.model_dump_json(indent=2) + "\n",
@@ -454,8 +467,24 @@ def main() -> None:
     expected_cfg = 1.0 if distilled_profile else 3.0
     if metadata["transformer_variant"] != expected_variant:
         raise RuntimeError("A2V worker used the wrong transformer variant")
-    if int(metadata["stage_1_steps"]) != expected_steps or int(metadata["stage_2_steps"]) != 3:
+    expected_stage_2_steps = (
+        args.reference_stage2_steps if args.profile == "reference" else 3
+    )
+    if (
+        int(metadata["stage_1_steps"]) != expected_steps
+        or int(metadata["stage_2_steps"]) != expected_stage_2_steps
+    ):
         raise RuntimeError("A2V worker used an unexpected diffusion schedule")
+    if args.reference_stage2_steps == 2:
+        expected_sigmas = (0.909375, 0.421875, 0.0)
+        recorded = metadata.get("stage_2_sigma_values")
+        if not isinstance(recorded, list) or len(recorded) != len(expected_sigmas) or not all(
+            math.isclose(float(value), target, abs_tol=1e-6, rel_tol=0.0)
+            for value, target in zip(recorded, expected_sigmas, strict=True)
+        ):
+            raise RuntimeError("experimental Stage-2 sigma subset differs from reviewed recipe")
+        if metadata.get("reference_stage_2_steps_experimental") is not True:
+            raise RuntimeError("worker did not acknowledge experimental two-step mode")
     if float(metadata["video_cfg_scale"]) != expected_cfg:
         raise RuntimeError("A2V worker used an unexpected CFG scale")
     if args.profile == "guided":
@@ -510,7 +539,9 @@ def main() -> None:
                 + ", ".join(sorted(reference_missing))
             )
         expected_recipe = (
-            "distilled_reference" if args.profile == "reference" else "upstream_guided_dev"
+            "distilled_reference_stage2_two_step_experimental"
+            if args.reference_stage2_steps == 2
+            else ("distilled_reference" if args.profile == "reference" else "upstream_guided_dev")
         )
         expected_sampler = "euler_ancestral" if args.profile == "reference" else "euler"
         if metadata["generation_recipe"] != expected_recipe:
@@ -569,6 +600,8 @@ def main() -> None:
     print(f"input_audio_duration_seconds={input_duration:.6f}")
     print(f"output_video_duration_seconds={output_duration:.6f}")
     print(f"generation_profile={metadata['generation_profile']}")
+    print(f"stage_2_steps={metadata['stage_2_steps']}")
+    print(f"stage_2_sigma_values={metadata.get('stage_2_sigma_values', [])}")
     print(f"inference_seconds={metadata['inference_seconds']}")
     print(f"total_elapsed_seconds={metadata['total_elapsed_seconds']}")
     print(f"video_sha256={video_sha}")

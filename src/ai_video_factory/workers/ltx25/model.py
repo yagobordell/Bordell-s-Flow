@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import gc
+import json
 import math
+import os
 import threading
 from collections.abc import Mapping
 from contextlib import nullcontext
@@ -19,6 +21,8 @@ from ai_video_factory.image_contracts import (
 from ai_video_factory.inference.contracts import InferenceJobRequest
 from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.ports import LocalArtifact
+
+from .reference_recipe import LTX25_MODEL_REVISION
 
 LTX_VIDEO_TASK = "video.ltx25.generate"
 LTX_GENERATION_PROFILE = "ltx25-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
@@ -269,6 +273,49 @@ class LTXModelFiles:
         missing = [str(path) for path in self.paths() if not path.is_file()]
         if missing:
             raise FileNotFoundError("Missing LTX-2.5 model files: " + ", ".join(missing))
+
+        # Opt-in on Salad: the downloader atomically writes this manifest only
+        # after every pinned asset was downloaded and SHA-256 verified. Checking
+        # its record sizes here is cheap enough for the frequent /ready probe;
+        # re-hashing ~70 GB on every readiness call would not be.
+        if os.getenv("LTX_REQUIRE_VERIFIED_SHARED_MANIFEST", "").lower() in {
+            "1", "true", "yes", "on"
+        }:
+            root = self.transformer.parent.parent
+            installed_path = root / ".bordell-installed-model-manifest.json"
+            try:
+                installed = json.loads(installed_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raise FileNotFoundError(
+                    "LTX-2.5 verified shared-model manifest is pending"
+                ) from None
+            if not isinstance(installed, dict):
+                raise FileNotFoundError(
+                    "LTX-2.5 verified shared-model manifest is malformed"
+                )
+            records = installed.get("files")
+            if (
+                installed.get("schema_version") != 1
+                or installed.get("repository")
+                != os.getenv("LTX_MODEL_REPOSITORY", "Lightricks/LTX-2.5")
+                or installed.get("revision")
+                != os.getenv("LTX_MODEL_REVISION", LTX25_MODEL_REVISION)
+                or not isinstance(records, dict)
+            ):
+                raise FileNotFoundError(
+                    "LTX-2.5 verified shared-model manifest is not ready"
+                )
+            for path in self.paths():
+                record = records.get(path.relative_to(root).as_posix())
+                if (
+                    not isinstance(record, dict)
+                    or record.get("size") != path.stat().st_size
+                    or not isinstance(record.get("sha256"), str)
+                    or len(record["sha256"]) != 64
+                ):
+                    raise FileNotFoundError(
+                        f"LTX-2.5 verified manifest missing asset: {path.name}"
+                    )
 
     def paths(self) -> tuple[Path, ...]:
         return (

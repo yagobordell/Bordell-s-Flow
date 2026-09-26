@@ -15,6 +15,11 @@ MIN_PROGRESS_RESET_BYTES="${LTX_MODEL_DOWNLOAD_MIN_PROGRESS_RESET_BYTES:-6710886
 MIN_THROUGHPUT_MIBPS="${LTX_MODEL_DOWNLOAD_MIN_THROUGHPUT_MIBPS:-8}"
 THROUGHPUT_GRACE_SECONDS="${LTX_MODEL_DOWNLOAD_THROUGHPUT_GRACE_SECONDS:-300}"
 THROUGHPUT_WINDOW_SECONDS="${LTX_MODEL_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS:-180}"
+MAX_DOWNLOAD_WORKERS="${LTX_MODEL_DOWNLOAD_MAX_WORKERS:-1}"
+if [[ ! "${MAX_DOWNLOAD_WORKERS}" =~ ^[12]$ ]]; then
+  echo "LTX_MODEL_DOWNLOAD_MAX_WORKERS must be 1 or 2" >&2
+  exit 2
+fi
 
 [[ -r "${MANIFEST_PATH}" ]] || {
   echo "missing LTX model manifest: ${MANIFEST_PATH}" >&2
@@ -94,9 +99,14 @@ echo "ltx25 model bootstrap repository=${MODEL_REPOSITORY} revision=${MODEL_REVI
 if [[ "${manifest_is_valid}" == "true" ]]; then
   echo "MODEL_MANIFEST_VALID path=${INSTALLED_MANIFEST}"
 else
-  for model_file in "${MODEL_FILES[@]}"; do
-    destination="${MODEL_ROOT}/${model_file}"
-    echo "MODEL_VERIFY_START ${model_file}"
+  # The official HF CLI downloads multiple explicitly named files concurrently.
+  # Bound the workload to two download workers on 40 GiB-RAM Salad instances.
+  # Keep exact pinned weights; do not change model precision, audio, or recipe.
+  if [[ "${MAX_DOWNLOAD_WORKERS}" == "2" ]]; then
+    echo "MODEL_DOWNLOAD_MODE mode=parallel_pinned_files max_workers=2 files=${#MODEL_FILES[@]}"
+    for model_file in "${MODEL_FILES[@]}"; do
+      echo "MODEL_VERIFY_START ${model_file}"
+    done
     python -m ai_video_factory.workers.download_watchdog \
       --progress-root "${MODEL_ROOT}" \
       --stall-timeout-seconds "${STALL_TIMEOUT_SECONDS}" \
@@ -106,18 +116,48 @@ else
       --min-throughput-mibps "${MIN_THROUGHPUT_MIBPS}" \
       --throughput-grace-seconds "${THROUGHPUT_GRACE_SECONDS}" \
       --throughput-window-seconds "${THROUGHPUT_WINDOW_SECONDS}" \
-      --label "ltx25:${model_file}" \
+      --label "ltx25:pinned_model_bundle" \
       --reallocate-on-slow \
       -- \
-      hf download "${MODEL_REPOSITORY}" "${model_file}" \
+      hf download "${MODEL_REPOSITORY}" "${MODEL_FILES[@]}" \
         --revision "${MODEL_REVISION}" \
-        --local-dir "${MODEL_ROOT}"
-    [[ -s "${destination}" ]] || {
-      echo "missing model after pinned bootstrap: ${destination}" >&2
-      exit 1
-    }
-    echo "MODEL_VERIFY_DONE ${model_file} bytes=$(stat -c %s "${destination}")"
-  done
+        --local-dir "${MODEL_ROOT}" \
+        --max-workers 2
+    for model_file in "${MODEL_FILES[@]}"; do
+      destination="${MODEL_ROOT}/${model_file}"
+      [[ -s "${destination}" ]] || {
+        echo "missing model after pinned bundle download: ${destination}" >&2
+        exit 1
+      }
+      echo "MODEL_VERIFY_DONE ${model_file} bytes=$(stat -c %s "${destination}")"
+    done
+  else
+    echo "MODEL_DOWNLOAD_MODE mode=sequential max_workers=1"
+    for model_file in "${MODEL_FILES[@]}"; do
+      destination="${MODEL_ROOT}/${model_file}"
+      echo "MODEL_VERIFY_START ${model_file}"
+      python -m ai_video_factory.workers.download_watchdog \
+        --progress-root "${MODEL_ROOT}" \
+        --stall-timeout-seconds "${STALL_TIMEOUT_SECONDS}" \
+        --hard-timeout-seconds "${HARD_TIMEOUT_SECONDS}" \
+        --poll-seconds "${POLL_SECONDS}" \
+        --min-progress-reset-bytes "${MIN_PROGRESS_RESET_BYTES}" \
+        --min-throughput-mibps "${MIN_THROUGHPUT_MIBPS}" \
+        --throughput-grace-seconds "${THROUGHPUT_GRACE_SECONDS}" \
+        --throughput-window-seconds "${THROUGHPUT_WINDOW_SECONDS}" \
+        --label "ltx25:${model_file}" \
+        --reallocate-on-slow \
+        -- \
+        hf download "${MODEL_REPOSITORY}" "${model_file}" \
+          --revision "${MODEL_REVISION}" \
+          --local-dir "${MODEL_ROOT}"
+      [[ -s "${destination}" ]] || {
+        echo "missing model after pinned bootstrap: ${destination}" >&2
+        exit 1
+      }
+      echo "MODEL_VERIFY_DONE ${model_file} bytes=$(stat -c %s "${destination}")"
+    done
+  fi
 
   python -m ai_video_factory.workers.ltx25.model_manifest write \
     --installed-path "${INSTALLED_MANIFEST}" \

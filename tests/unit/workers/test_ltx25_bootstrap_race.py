@@ -158,6 +158,40 @@ def test_lost_winner_during_scale_in_fails_closed() -> None:
     assert client.replicas == 1
 
 
+def test_extended_cold_model_bootstrap_window_is_explicit_and_bounded() -> None:
+    module = _module()
+    clock = FakeClock()
+    client = FakeRaceClient(ready=False)
+    with pytest.raises(TimeoutError, match="two-replica"):
+        module.race_to_one(
+            client,
+            group_name=GROUP,
+            expected_image=IMAGE,
+            timeout_seconds=5400,
+            poll_seconds=60,
+            clock=clock.clock,
+            sleep=clock.sleep,
+            report=lambda _: None,
+        )
+    assert clock.seconds == 5400
+    assert client.events == ["replicas=2", "start"]
+
+    with pytest.raises(ValueError, match="bounded"):
+        module.race_to_one(
+            FakeRaceClient(),
+            group_name=GROUP,
+            expected_image=IMAGE,
+            timeout_seconds=7201,
+        )
+
+
+def test_wrapper_accepts_explicit_extended_race_timeout() -> None:
+    source = Path("scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "[ValidateRange(120, 7200)][int]$RaceTimeoutSeconds = 2400" in source
+
+
 def test_wrong_image_rejected_before_capacity_mutation() -> None:
     module = _module()
     client = FakeRaceClient(image="docker.io/example/worker@sha256:" + "b" * 64)
