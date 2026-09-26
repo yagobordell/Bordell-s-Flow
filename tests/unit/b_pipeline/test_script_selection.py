@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import re
 from argparse import Namespace
@@ -6,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from scripts.pipeline import run_b_pipeline as runner
 
@@ -14,6 +16,15 @@ def _make_script(directory: Path, name: str, content: bytes = b"Guion.") -> Path
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / name
     path.write_bytes(content)
+    return path
+
+
+def _make_avatar(
+    directory: Path, name: str, *, color: tuple[int, int, int] = (24, 48, 72)
+) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    Image.new("RGB", (2, 2), color).save(path, format="PNG")
     return path
 
 
@@ -32,6 +43,9 @@ def test_missing_default_input_root_is_created_without_a_gitkeep(
         scripts_dir=runner.DEFAULT_SCRIPTS_DIR,
         script=None,
         list_scripts=True,
+        avatars_dir=tmp_path / "avatar",
+        avatar=None,
+        list_avatars=False,
         output=None,
         max_parallel_calls=8,
     )
@@ -124,6 +138,9 @@ def test_list_scripts_does_not_require_api_key_or_start_inference(
         scripts_dir=folder,
         script=None,
         list_scripts=True,
+        avatars_dir=tmp_path / "avatar",
+        avatar=None,
+        list_avatars=False,
         output=None,
         max_parallel_calls=8,
     )
@@ -145,6 +162,9 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     folder = tmp_path / "input"
+    avatars = tmp_path / "avatar"
+    monk = _make_avatar(avatars, "monje.png")
+    teacher = _make_avatar(avatars, "maestra.png", color=(16, 48, 64))
     _make_script(folder, "roma.txt", b"  Uno.\r\n\r\nDos.  ")
     _make_script(folder, "japon.txt", b"Tres.\nCuatro.")
     args = Namespace(
@@ -152,6 +172,9 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         scripts_dir=folder,
         script="roma.txt",
         list_scripts=False,
+        avatars_dir=avatars,
+        avatar="monje.png",
+        list_avatars=False,
         output=None,
         max_parallel_calls=3,
     )
@@ -222,6 +245,10 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             report_path = tmp_path / "output" / ("roma" if "Uno." in script else "japon")
             partial = json.loads((report_path / "run_report.json").read_text(encoding="utf-8"))
             assert partial["run"]["status"] == "running"
+            expected_avatar = "monje.png" if "Uno." in script else "maestra.png"
+            assert partial["run"]["avatar"]["filename"] == expected_avatar
+            assert partial["run"]["avatar"]["file"] == "avatar.png"
+            assert (report_path / "avatar.png").is_file()
             assert partial["api_costs"]["stages"][stage]["estimated_cost_usd"] == (
                 "0.00002000"
             )
@@ -230,7 +257,14 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             b11=SimpleNamespace(model_dump=lambda: {"pipeline_stage": "B1.1"}),
             b12=[SimpleNamespace(block_id=1)],
             b2=[],
-            visual_plan=lambda: {"blocks": []},
+            visual_plan=lambda: {
+                "blocks": [{
+                    "beats": [
+                        {"beat_id": "1A", "visual_type": "avatar", "description": None},
+                        {"beat_id": "1B", "visual_type": "avatar_media", "description": "Mapa"},
+                    ]
+                }]
+            },
             merged_b12_output=lambda: {
                 "pipeline_stage": "B1.2",
                 "blocks": [{"block_id": 1, "beats": []}],
@@ -254,8 +288,10 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     previous_roma = tmp_path / "output" / "roma"
     (previous_roma / "stale_previous_run.json").write_text("obsolete", encoding="utf-8")
     args.script = "japon.txt"
+    args.avatar = "maestra.png"
     asyncio.run(runner.main())
     args.script = "roma.txt"
+    args.avatar = "monje.png"
     asyncio.run(runner.main())
 
     assert received == ["  Uno.\r\n\r\nDos.  ", "Tres.\nCuatro.", "  Uno.\r\n\r\nDos.  "]
@@ -282,6 +318,22 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         )
         assert consolidated["run"]["status"] == "completed"
         assert consolidated["run"]["script_file"] == destination.name + ".txt"
+        expected_file = monk if destination == first else teacher
+        avatar = consolidated["run"]["avatar"]
+        assert avatar["filename"] == expected_file.name
+        assert avatar["source"] == expected_file.as_posix()
+        assert avatar["file"] == "avatar.png"
+        assert avatar["sha256"] == hashlib.sha256(expected_file.read_bytes()).hexdigest()
+        assert avatar["width"] == 2 and avatar["height"] == 2
+        assert (destination / "avatar.png").read_bytes() == expected_file.read_bytes()
+        plan = json.loads((destination / "visual_plan.json").read_text(encoding="utf-8"))
+        assert plan["avatar"] == avatar
+        assert [beat["visual_type"] for beat in plan["blocks"][0]["beats"]] == [
+            "avatar", "avatar_media"
+        ]
+        assert "avatar" not in json.loads(
+            (destination / "B2" / "block_1" / "output.json").read_text(encoding="utf-8")
+        )
         assert consolidated["api_costs"]["pricing_status"] == "complete"
         assert consolidated["api_costs"]["estimated_total_usd"] == "0.00006000"
         timing = consolidated["timings"]

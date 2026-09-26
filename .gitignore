@@ -21,10 +21,13 @@ venv/
 .idea/
 .DS_Store
 
-# Local runtime data; input scripts are intentionally untracked
+# Local runtime data; keep only the avatar folder's instructions in Git
 data/*
 !data/input/
 data/input/*
+!data/avatar/
+data/avatar/*
+!data/avatar/README.md
 
 # Remotion / Node
 remotion/node_modules/

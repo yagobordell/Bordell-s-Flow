@@ -6,9 +6,12 @@ import hashlib
 import json
 import shutil
 import sys
+from io import BytesIO
 from pathlib import Path
 from time import perf_counter
 from typing import Literal
+
+from PIL import Image
 
 from ai_video_factory.bots import run_b_pipeline
 from ai_video_factory.bots.billing import ApiCostLedger
@@ -16,6 +19,7 @@ from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
 
 DEFAULT_SCRIPTS_DIR = Path("data/input")
+DEFAULT_AVATARS_DIR = Path("data/avatar")
 _STAGES = ("B1.1", "B1.2", "B2")
 
 
@@ -44,6 +48,22 @@ def parse_args() -> argparse.Namespace:
         help="List available scripts without starting inference or requiring an API key.",
     )
     parser.add_argument(
+        "--avatars-dir",
+        type=Path,
+        default=DEFAULT_AVATARS_DIR,
+        help="Directory containing selectable PNG avatars (default: data/avatar).",
+    )
+    parser.add_argument(
+        "--avatar",
+        metavar="NAME",
+        help="Select a PNG avatar from --avatars-dir, with or without its .png suffix.",
+    )
+    parser.add_argument(
+        "--list-avatars",
+        action="store_true",
+        help="List available PNG avatars without starting inference or requiring an API key.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -53,8 +73,12 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.script_file is not None and args.script is not None:
         parser.error("Specify either a direct script path or --script, not both.")
-    if args.list_scripts and (args.script_file is not None or args.script is not None):
-        parser.error("--list-scripts cannot be combined with a script selection.")
+    if args.list_scripts and args.list_avatars:
+        parser.error("Choose either --list-scripts or --list-avatars.")
+    if (args.list_scripts or args.list_avatars) and (
+        args.script_file is not None or args.script is not None or args.avatar is not None
+    ):
+        parser.error("Listing cannot be combined with script or avatar selection.")
     return args
 
 
@@ -129,6 +153,83 @@ def select_script(
         print(f"Enter a number between 1 and {len(scripts)}, or q to cancel.")
 
 
+def available_avatars(avatars_dir: Path) -> list[Path]:
+    """Discover ordinary PNG files only; never follow symlinks or nested directories."""
+    if not avatars_dir.is_dir():
+        return []
+    return sorted(
+        (
+            path
+            for path in avatars_dir.iterdir()
+            if path.is_file() and not path.is_symlink() and path.suffix.lower() == ".png"
+        ),
+        key=lambda path: (path.name.casefold(), path.name),
+    )
+
+
+def select_avatar(
+    *,
+    avatars_dir: Path,
+    avatar_name: str | None = None,
+    interactive: bool | None = None,
+) -> Path:
+    """Require an explicit avatar: by exact filename or an interactive menu."""
+    avatars = available_avatars(avatars_dir)
+    if not avatars:
+        raise SystemExit(
+            f"No PNG avatars found in {avatars_dir}. "
+            "Add one or more valid .png images there before running the pipeline."
+        )
+    if avatar_name is not None:
+        requested = (
+            avatar_name if avatar_name.lower().endswith(".png") else f"{avatar_name}.png"
+        )
+        match = next((path for path in avatars if path.name == requested), None)
+        if match is None:
+            available = ", ".join(path.name for path in avatars)
+            raise SystemExit(
+                f"Avatar {requested!r} not found in {avatars_dir}. Available: {available}"
+            )
+        return match
+
+    if interactive is None:
+        interactive = sys.stdin.isatty()
+    if not interactive:
+        raise SystemExit(
+            "Avatar selection requires an interactive terminal. "
+            "Use --avatar NAME.png or --list-avatars."
+        )
+
+    print(f"Available avatars in {avatars_dir}:")
+    for number, path in enumerate(avatars, start=1):
+        print(f"  {number}. {path.name}")
+
+    while True:
+        try:
+            selection = input("Select an avatar number (q to cancel): ").strip()
+        except (EOFError, KeyboardInterrupt) as exc:
+            raise SystemExit("Avatar selection cancelled.") from exc
+        if selection.lower() in {"q", "quit"}:
+            raise SystemExit("Avatar selection cancelled.")
+        if selection.isdecimal() and 1 <= int(selection) <= len(avatars):
+            return avatars[int(selection) - 1]
+        print(f"Enter a number between 1 and {len(avatars)}, or q to cancel.")
+
+
+def load_avatar_png(avatar_file: Path) -> tuple[bytes, int, int]:
+    """Validate the actual PNG, not just its extension, and keep exact source bytes."""
+    try:
+        data = avatar_file.read_bytes()
+        with Image.open(BytesIO(data)) as image:
+            if image.format != "PNG":
+                raise ValueError("The selected image is not a PNG")
+            width, height = image.size
+            image.verify()
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"Invalid PNG avatar: {avatar_file}") from exc
+    return data, width, height
+
+
 def _write(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -137,15 +238,29 @@ def _write(path: Path, payload: object) -> None:
     )
 
 
-def _prepare_output(output_root: Path, script_file: Path) -> Path:
+def _prepare_output(
+    output_root: Path, script_file: Path, *, avatar_file: Path | None = None
+) -> Path:
     """Replace only an identifiable B-pipeline output folder for this script."""
     root = output_root.resolve()
     source = script_file.resolve()
+    avatar_source = avatar_file.resolve() if avatar_file is not None else None
     cwd = Path.cwd().resolve()
-    if root == cwd or root in cwd.parents or source.is_relative_to(root):
+    if (
+        root == cwd
+        or root in cwd.parents
+        or source.is_relative_to(root)
+        or (
+            avatar_source is not None
+            and (
+                avatar_source.is_relative_to(root)
+                or root.is_relative_to(avatar_source.parent)
+            )
+        )
+    ):
         raise SystemExit(
             "--output must be a dedicated output directory, not the repository, "
-            "a parent of it, or the selected script's input directory."
+            "a parent of it, or an input directory (script or avatar)."
         )
     destination = output_root / script_file.stem
     if destination.is_symlink() or destination.is_junction():
@@ -255,9 +370,10 @@ def _print_metric(name: str, seconds: float, cost: object) -> None:
 
 async def main() -> None:
     args = parse_args()
-    # Git does not track empty directories: restore the local input root on fresh clones.
+    # Git does not track empty runtime directories: restore the local libraries.
     if args.script_file is None:
         args.scripts_dir.mkdir(parents=True, exist_ok=True)
+    args.avatars_dir.mkdir(parents=True, exist_ok=True)
 
     if args.list_scripts:
         scripts = available_scripts(args.scripts_dir)
@@ -269,11 +385,23 @@ async def main() -> None:
                 print(f"  {path.name}")
         return
 
+    if args.list_avatars:
+        avatars = available_avatars(args.avatars_dir)
+        if not avatars:
+            print(f"No PNG avatars found in {args.avatars_dir}.")
+        else:
+            print(f"Available avatars in {args.avatars_dir}:")
+            for path in avatars:
+                print(f"  {path.name}")
+        return
+
     script_file = select_script(
         scripts_dir=args.scripts_dir,
         script_name=args.script,
         script_file=args.script_file,
     )
+    avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
+    avatar_bytes, avatar_width, avatar_height = load_avatar_png(avatar_file)
     if not settings.openai_api_key:
         raise SystemExit("OPENAI_API_KEY is missing")
 
@@ -290,9 +418,20 @@ async def main() -> None:
 
     run_started = perf_counter()
     output_root = args.output if args.output is not None else settings.output_dir
-    output = _prepare_output(output_root, script_file)
+    output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
+    # Snapshot the selected PNG: later library changes cannot silently alter this run.
+    (output / "avatar.png").write_bytes(avatar_bytes)
+    avatar_metadata = {
+        "filename": avatar_file.name,
+        "source": avatar_file.as_posix(),
+        "file": "avatar.png",
+        "sha256": hashlib.sha256(avatar_bytes).hexdigest(),
+        "width": avatar_width,
+        "height": avatar_height,
+    }
     run_metadata = {
         "script_file": script_file.name,
+        "avatar": avatar_metadata,
         "script_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "model": settings.openai_b_model,
         "reasoning_effort": settings.openai_b_reasoning_effort,
@@ -352,7 +491,10 @@ async def main() -> None:
             on_stage_duration=timings.record_stage,
             on_stage_complete=stage_complete,
         )
-        _write(output / "visual_plan.json", result.visual_plan())
+        visual_plan = result.visual_plan()
+        # This application-owned binding is intentionally absent from audited B2 payloads.
+        visual_plan["avatar"] = avatar_metadata
+        _write(output / "visual_plan.json", visual_plan)
     except Exception:
         _, timing_report = save_report("failed", None)
         _print_metric("Run", timing_report["run_elapsed_seconds"], None)
