@@ -38,6 +38,7 @@ $LifecycleMetrics = [ordered]@{
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $WorkerManager = Join-Path $RepoRoot "scripts\salad\manage_salad_worker.ps1"
 $R2Preflight = Join-Path $RepoRoot "scripts\pipeline\check_r2_ready.py"
+$GpuAvailability = Join-Path $RepoRoot "scripts\salad\check_salad_gpu_availability.ps1"
 $Smoke = Join-Path $PSScriptRoot "submit_ltx25_a2v_smoke.py"
 $ReadyWait = Join-Path $PSScriptRoot "wait_salad_ltx25_ready.py"
 $RaceSelector = Join-Path $PSScriptRoot "start_ltx25_race_select.py"
@@ -83,6 +84,18 @@ if ($LASTEXITCODE -ne 0) {
 & $Python $R2Preflight
 if ($LASTEXITCODE -ne 0) {
     throw "R2 preflight failed; refusing LTX GPU allocation."
+}
+
+if ($StartupReplicas -eq 2) {
+    if (-not (Test-Path -LiteralPath $GpuAvailability -PathType Leaf)) {
+        throw "GPU availability preflight is missing: $GpuAvailability"
+    }
+    $Availability = @(& $GpuAvailability -Service ltx25 -EnvFile $EnvFile)
+    $AvailableHigh = @($Availability | Where-Object { $_.service -eq "ltx25" })
+    if ($AvailableHigh.Count -ne 1 -or [int]$AvailableHigh[0].available_gpu_high -lt 2) {
+        throw "LTX 2-GPU race requires at least two available High-priority RTX 5090 nodes; refusing GPU allocation."
+    }
+    Write-Host "LTX_RACE_PREFLIGHT available_gpu_high=$($AvailableHigh[0].available_gpu_high) (snapshot, not reservation)"
 }
 
 $Arguments = @(
