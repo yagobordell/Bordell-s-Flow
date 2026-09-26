@@ -1,4 +1,4 @@
-"""Verify Fish starts beside B1.1 and audio-only modes never call the B pipeline."""
+"""Verify Fish starts after B1.1 beside B1.2 and audio-only avoids B2/images."""
 
 import asyncio
 import hashlib
@@ -23,6 +23,19 @@ def _files(tmp_path: Path) -> tuple[Path, Path]:
     avatar.parent.mkdir()
     Image.new("RGB", (2, 2)).save(avatar, format="PNG")
     return script, avatar
+
+
+def _b11_payload() -> dict:
+    return {
+        "pipeline_stage": "B1.1",
+        "narrative_core": {"central_question": "Pregunta", "final_answer": "Respuesta"},
+        "blocks": [{
+            "block_id": 1, "type": "intro", "emotional_entry": "calm",
+            "emotional_exit": "curious",
+            "span": {"first_words": "Uno.", "last_words": "Dos."},
+        }],
+        "error": None,
+    }
 
 
 @pytest.mark.parametrize("no_audio", [False, True])
@@ -52,7 +65,7 @@ def test_full_b_run_starts_fish_concurrently_and_no_audio_skips_it(
         resume_audio=False,
     )
 
-    async def fake_audio(source, destination, *, provider=None, resume=False):
+    async def fake_audio(source, destination, *, provider=None, b11=None, max_parallel_calls=8, resume=False):
         created_audio.append((source, destination, provider, resume))
         started.set()
         await release.wait()
@@ -63,8 +76,9 @@ def test_full_b_run_starts_fish_concurrently_and_no_audio_skips_it(
             "file": "audio/runs/example/audio.mp3",
         }
 
-    async def fake_b(source, **_kwargs):
+    async def fake_b(source, **kwargs):
         assert source == script.read_bytes().decode("utf-8")
+        kwargs["on_output"]("B1.1", None, _b11_payload())
         if not no_audio:
             await asyncio.wait_for(started.wait(), 2)
         else:
@@ -110,6 +124,10 @@ def test_audio_only_mode_preserves_b_artifacts_and_skips_avatar_images(
     root = tmp_path / "output"
     folder = root / "test2"
     (folder / "B2").mkdir(parents=True)
+    (folder / "B1.1").mkdir(parents=True)
+    (folder / "B1.1/output.json").write_text(
+        json.dumps(_b11_payload()), encoding="utf-8"
+    )
     (folder / "B2" / "merged_output.json").write_text("{}", encoding="utf-8")
     (folder / "visual_plan.json").write_text("{}", encoding="utf-8")
     report = {
@@ -146,7 +164,7 @@ def test_audio_only_mode_preserves_b_artifacts_and_skips_avatar_images(
 
     calls = []
 
-    async def fake_audio(source, destination, *, provider=None, resume=False):
+    async def fake_audio(source, destination, *, provider=None, b11=None, max_parallel_calls=8, resume=False):
         calls.append((source, destination, provider, resume))
         return {"status": "completed", "file": "audio/new.mp3", "voice_id": VOICE}
 
@@ -215,14 +233,15 @@ def test_images_start_after_b2_without_waiting_for_fish_narration(
         resume_audio=False,
     )
 
-    async def fake_audio(_source, _output, *, provider=None, resume=False):
+    async def fake_audio(_source, _output, *, provider=None, b11=None, max_parallel_calls=8, resume=False):
         order.append("audio_started")
         audio_started.set()
         await audio_released.wait()
         order.append("audio_completed")
         return {"status": "completed", "voice_id": VOICE, "file": "audio/ready.mp3"}
 
-    async def fake_b(_source, **_kwargs):
+    async def fake_b(_source, **kwargs):
+        kwargs["on_output"]("B1.1", None, _b11_payload())
         await asyncio.wait_for(audio_started.wait(), 2)
         order.append("b2_completed")
         return SimpleNamespace(
