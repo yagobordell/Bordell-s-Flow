@@ -78,7 +78,7 @@ def race_to_one(
     assert_authority: Callable[[], None] = lambda: None,
 ) -> dict[str, Any]:
     """Return only when the FIRST ready instance is the SOLE running replica."""
-    if not 120 <= timeout_seconds <= 3600 or not 1 <= poll_seconds <= 60:
+    if not 120 <= timeout_seconds <= 7200 or not 1 <= poll_seconds <= 60:
         raise ValueError("race timeout/poll must be bounded")
     if _IMAGE_RE.fullmatch(expected_image) is None:
         raise ValueError("race requires an immutable --expected-image")
