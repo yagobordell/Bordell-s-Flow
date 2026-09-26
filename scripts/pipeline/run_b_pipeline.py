@@ -249,7 +249,7 @@ class TimingLedger:
 
 def _print_metric(name: str, seconds: float, cost: object) -> None:
     """Print a single completed bot/run line, flushing as soon as it finishes."""
-    price = f"{chr(36)}{cost}" if cost is not None else "coste no disponible"
+    price = f"${cost}" if cost is not None else "coste no disponible"
     print(f"  {name} total: {seconds:.3f} s {price}", flush=True)
 
 
