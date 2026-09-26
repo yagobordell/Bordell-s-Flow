@@ -209,6 +209,51 @@ def race_to_one(
                 client.set_container_group_instance_deletion_cost(str(item["id"]), 0)
     assert_authority()
     client.set_container_group_instance_deletion_cost(candidate, 100000)
+
+    # PATCH acknowledgement is not proof that the scheduler has observed the
+    # costs. Read them back twice, while BOTH current-version workers exist,
+    # before issuing a voluntary scale-in. Never scale on stale deletion costs.
+    protection_deadline = min(deadline, clock() + 90)
+    protection_confirmations = 0
+    while clock() < protection_deadline:
+        assert_authority()
+        protected_group = client.describe_container_group()
+        _verify_group(protected_group, name=group_name, image=expected_image)
+        if (
+            protected_group.get("version") != version
+            or protected_group.get("replicas") != 2
+            or protected_group.get("pending_change") is not False
+            or _status(protected_group) != "running"
+        ):
+            raise RuntimeError("LTX race changed before deletion costs were confirmed")
+        protected_instances = [
+            item for item in client.list_container_group_instances()
+            if item.get("version") == version and item.get("state") in _ACTIVE_STATES
+        ]
+        selected = next(
+            (item for item in protected_instances if item.get("id") == candidate), None
+        )
+        others = [item for item in protected_instances if item.get("id") != candidate]
+        if (
+            selected is not None
+            and selected.get("state") == "running"
+            and selected.get("started") is True
+            and selected.get("ready") is True
+            and selected.get("deletion_cost") == 100000
+            and len(others) == 1
+            and others[0].get("deletion_cost") == 0
+        ):
+            protection_confirmations += 1
+            if protection_confirmations >= 2:
+                break
+        else:
+            protection_confirmations = 0
+        sleep(min(poll_seconds, max(0.0, protection_deadline - clock())))
+    else:
+        raise TimeoutError(
+            "LTX race deletion costs were not confirmed before scale-in; no job submitted"
+        )
+    report(f"LTX_RACE deletion_costs_verified winner={candidate} confirmations=2/2")
     assert_authority()
     report(f"LTX_RACE winner={candidate}; scaling 2 -> 1 before submitting any job")
     client.set_container_group_replicas(1)
