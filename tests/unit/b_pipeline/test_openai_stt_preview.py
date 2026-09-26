@@ -6,8 +6,10 @@ import asyncio
 import hashlib
 import json
 import shutil
+import subprocess
 import struct
 import wave
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -226,6 +228,28 @@ def test_real_ffmpeg_preview_has_audio_cuts_and_avatar_media_50_50(
         left, right = still.getpixel((200, 360)), still.getpixel((1080, 360))
     assert left[0] > left[1] and left[0] > left[2]
     assert right[1] > right[0] and right[1] > right[2]
+
+    def rendered_pixel(seconds: float, x: int, y: int) -> tuple[int, int, int]:
+        decoded = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+                "-i", str(tmp_path / artifact["file"]), "-ss", str(seconds),
+                "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-",
+            ],
+            capture_output=True, check=True,
+        )
+        with Image.open(BytesIO(decoded.stdout)) as image:
+            return image.convert("RGB").getpixel((x, y))
+
+    intro = rendered_pixel(0.25, 200, 360)
+    illustration = rendered_pixel(1.0, 200, 360)
+    split_avatar = rendered_pixel(1.7, 200, 360)
+    split_media = rendered_pixel(1.7, 1080, 360)
+    assert intro[0] > intro[1] and intro[0] > intro[2]
+    assert illustration[2] > illustration[0] and illustration[2] > illustration[1]
+    assert split_avatar[0] > split_avatar[1] and split_avatar[0] > split_avatar[2]
+    assert split_media[1] > split_media[0] and split_media[1] > split_media[2]
+
     saved = json.loads((tmp_path / artifact["timeline_file"]).read_text(encoding="utf-8"))
     assert saved["beats"][2]["start_seconds"] == 1.5
 
