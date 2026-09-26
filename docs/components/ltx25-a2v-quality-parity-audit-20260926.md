@@ -64,6 +64,28 @@ dev experiment used video multimodal guidance, took about 530 seconds of
 inference on the recorded monk sample, and visibly deformed final frames.
 It is not an approved reference.
 
+## Cold-bootstrap validity risk in current main (code-level finding)
+
+The current reference backend's _validate_runtime() calls shared file
+validate(), which checks file presence and positive size. It requires the
+atomic installed-model manifest only when LTX_INCLUDE_A2V_DEV_ASSETS is true.
+The downloader writes the shared installed-model manifest after verification.
+The existing controlled PowerShell smoke starts one Salad replica and then
+submits the job; it does not itself prove the manifest finished before
+Postgres submission. Thus a cold trial could overlap model verification with
+initial lazy model preparation. This is a **risk established by code inspection**,
+not evidence that partial model files caused any previous lip-sync regression.
+A 'running' container or a valid MP4 is not proof of isolated cold timings.
+
+For a paid cold baseline, first verify the exact immutable deployed image,
+one-replica state, the completed installed-model receipt and stable readiness
+BEFORE submission; save timestamped proof. If the currently deployed image
+cannot provide that proof, treat cold inference timing as contaminated and
+do not promote the experiment as reproducible. Any future readiness fix
+must be designed and reviewed independently on this branch; do not
+cherry-pick the abandoned PR #232. Changing worker code requires a
+new image/digest and separately authorized Salad deployment.
+
 ## Input and prior outcome record
 
 Use the owner's source assets, never synthesized stand-ins:
