@@ -25,6 +25,7 @@ from ai_video_factory.compositor.static_preview import (
     generate_static_preview,
 )
 from ai_video_factory.providers.openai_stt import OpenAISttClient, OpenAISttError
+from scripts.pipeline import run_b_pipeline as runner
 
 
 def _sha(path: Path) -> str:
@@ -227,3 +228,40 @@ def test_real_ffmpeg_preview_has_audio_cuts_and_avatar_media_50_50(
     assert right[1] > right[0] and right[1] > right[2]
     saved = json.loads((tmp_path / artifact["timeline_file"]).read_text(encoding="utf-8"))
     assert saved["beats"][2]["start_seconds"] == 1.5
+
+
+def test_images_only_auto_renders_from_existing_stt_and_saved_images(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = tmp_path / "input" / "roma.txt"
+    script.parent.mkdir()
+    script.write_text("Hola mundo. Adiós", encoding="utf-8")
+    output = tmp_path / "output" / "roma"
+    output.mkdir(parents=True)
+    plan, audio, images = _fixture_assets(output)
+    images["model_id"] = "gpt-image-2.5-flare"
+    (output / "B2").mkdir()
+    (output / "B2" / "merged_output.json").write_text("{}", encoding="utf-8")
+    (output / "visual_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (output / "run_report.json").write_text(json.dumps({
+        "run": {
+            "script_sha256": _sha(script), "status": "failed",
+            "audio_generation": {"status": "completed", **audio},
+        },
+        "api_costs": {"run_status": "failed"},
+        "timings": {"status": "failed"},
+    }), encoding="utf-8")
+    generated = []
+
+    async def fake_images(destination: Path, visual_plan: dict) -> dict:
+        generated.append(destination)
+        return images
+
+    monkeypatch.setattr(runner, "_generate_images", fake_images)
+    asyncio.run(runner._run_images_only(script, tmp_path / "output"))
+    assert generated == [output]
+    report = json.loads((output / "run_report.json").read_text(encoding="utf-8"))
+    assert report["run"]["status"] == "completed"
+    preview = report["run"]["video_preview"]
+    assert preview["status"] == "completed"
+    assert (output / preview["file"]).is_file()
