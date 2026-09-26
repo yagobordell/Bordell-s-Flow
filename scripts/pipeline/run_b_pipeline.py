@@ -583,11 +583,15 @@ async def _generate_audio(
     output: Path,
     *,
     provider: OpenAIProvider | None = None,
+    b11: B11Output,
+    max_parallel_calls: int = 8,
     resume: bool = False,
 ) -> dict[str, object]:
     return await generate_fish_audio(
         script,
         output,
+        b11=b11,
+        max_parallel_calls=max_parallel_calls,
         director_model=settings.openai_b_model,
         provider=provider,
         ai33_api_key=settings.ai33_api_key,
@@ -627,6 +631,16 @@ async def _run_audio_only(
         raise SystemExit("OPENAI_API_KEY is required to rerun the Fish director")
     if not settings.ai33_api_key:
         raise SystemExit("AI33_API_KEY is required for the Fish Audio voice task")
+    b11_path = output / "B1.1" / "output.json"
+    if b11_path.is_symlink() or not b11_path.is_file():
+        raise SystemExit("Audio-only mode requires the saved validated B1.1 output")
+    try:
+        b11 = B11Output.model_validate(json.loads(b11_path.read_text(encoding="utf-8")))
+        if b11.error is not None or b11.blocks is None or b11.narrative_core is None:
+            raise ValueError("B1.1 checkpoint is not a successful output")
+        materialize_blocks(script, b11.blocks)
+    except (ValueError, OSError) as exc:
+        raise SystemExit(f"Invalid B1.1 audio checkpoint: {exc}") from exc
 
     provider = (
         None
@@ -638,7 +652,9 @@ async def _run_audio_only(
         )
     )
     try:
-        artifact = await _generate_audio(script, output, provider=provider, resume=resume)
+        artifact = await _generate_audio(
+            script, output, b11=b11, provider=provider, resume=resume
+        )
     except Exception:
         report["run"]["audio_generation"] = {"status": "incomplete"}
         _write(report_path, report)
@@ -979,20 +995,36 @@ async def main() -> None:
     save_report("running", None)
     audio_task: asyncio.Task[dict[str, object]] | None = None
     audio_joined = False
+    audio_enabled = args.from_stage == "B1.1" and not getattr(args, "no_audio", False)
+
+    def output_and_start_audio(
+        stage: str, block_id: int | None, payload: dict[str, object]
+    ) -> None:
+        nonlocal audio_task
+        artifacts.output(stage, block_id, payload)
+        if stage == "B1.1" and audio_enabled:
+            # B1.1 is validated and materialized before on_output. Reuse exactly
+            # its frozen block metadata; Fish and B1.2 now start together.
+            b11 = B11Output.model_validate(payload)
+            audio_task = asyncio.create_task(
+                _generate_audio(
+                    script,
+                    output,
+                    provider=provider,
+                    b11=b11,
+                    max_parallel_calls=args.max_parallel_calls,
+                )
+            )
+
     try:
         provider = OpenAIProvider(
             api_key=settings.openai_api_key,
             reasoning_effort=settings.openai_b_reasoning_effort,
             service_tier="default",
         )
-        if args.from_stage == "B1.1" and not getattr(args, "no_audio", False):
+        if audio_enabled:
             run_metadata["audio_generation"] = {"status": "running"}
             save_report("running", None)
-            # Start the independent director at the same time as B1.1. It
-            # immediately forwards its validated output to OpenSpeaker TTS.
-            audio_task = asyncio.create_task(
-                _generate_audio(script, output, provider=provider)
-            )
         elif args.from_stage == "B1.1":
             run_metadata["audio_generation"] = {"status": "skipped"}
             save_report("running", None)
@@ -1005,7 +1037,7 @@ async def main() -> None:
             previous_b11=previous_b11,
             previous_b12=previous_b12,
             on_input=artifacts.input,
-            on_output=artifacts.output,
+            on_output=output_and_start_audio,
             on_rejected_output=artifacts.rejected_b11,
             on_rejected_b2_output=artifacts.rejected_b2,
             on_api_response=ledger.record,
