@@ -106,3 +106,18 @@ def test_ltx_smoke_python_source_check_accepts_matching_worktree(tmp_path: Path)
     )
     assert rejected.returncode == 1
     assert "Wrong LTX Python source" in rejected.stderr
+
+
+def test_ltx_gpu_fast_start_waits_for_same_ready_instance_before_paid_job() -> None:
+    script = Path("scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert '[string]$Profile = "reference"' in script
+    assert "AllowBootstrappingInstance = $true" in script
+    assert "ExpectedPinnedImage" in script
+    assert "BootstrapTimeoutSeconds" in script
+    assert script.index("$ReadyWait = ") < script.index("& $WorkerManager @Start")
+    assert script.index("& $Python $ReadyWait @ReadyArgs") < script.index(
+        "& $Python $Smoke @Arguments"
+    )
+    assert "reference-compiled" not in script
