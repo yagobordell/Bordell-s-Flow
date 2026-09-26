@@ -235,8 +235,8 @@ terminados no se vuelven a cobrar al reanudar. Un POST con resultado
 incierto bloquea su reenvío automático; las demás tareas ya
 iniciadas se esperan sin cancelarlas al producirse un error.
 
-Una vez descargados **todos** los audios, FFmpeg decodifica los formatos
-de origen a PCM WAV mono de 48 kHz y los concatena por `block_id`
+Una vez descargados **todos** los audios, FFmpeg decodifica cada pista
+de origen a PCM WAV mono de 48 kHz. Se concatena por `block_id`
 ascendente con **exactamente 500 ms de silencio entre bloques** (nunca
 después del último). No se concatenan bytes MP3 ni se depende de los
 retrasos variables de los codificadores de audio. La pista final,
@@ -250,8 +250,9 @@ ni imágenes. La reanudación compara el hash del guion, las entradas
 por bloque, el prompt, la voz y la velocidad. Para ensamblar se necesita
 `ffmpeg` en el `PATH`. `--no-audio` omite íntegramente la etapa de voz.
 Las imágenes de AI33 siguen empezando al finalizar B2, sin esperar
-a la pista de voz final. Esta integración no ejecuta Salad ni genera
-automáticamente el vídeo final.
+a la pista de voz final. En cuanto están completos las imágenes,
+la voz y el STT, se monta automáticamente `preview/static_preview.mp4`.
+Este vídeo es un simulacro estático, sin animación ni sincronización labial.
 
 ```powershell
 # Ejecutar planificación e imágenes sin voz:
@@ -261,12 +262,41 @@ automáticamente el vídeo final.
 # Reanudar tareas conocidas sin duplicar POST de pago:
 .\run.ps1 test2 --resume-audio
 ```
+## STT por pista y montaje automático del simulacro
+
+Cuando AI33 Pro entrega cada pista, se envía directamente a OpenAI
+`whisper-1` con `response_format=verbose_json` y
+`timestamp_granularities=[word]`. El resultado, sujeto al SHA-256 del
+audio, se conserva como `audio/runs/<run-id>/blocks/block_<id>/stt.json`.
+No se reenvía automáticamente una petición STT cuyo POST pueda haberse
+cobrado: `stt_request.json` conserva ese estado para reconciliación.
+El proveedor usa la clave `OPENAI_API_KEY` existente y las pistas de
+voz se mantienen independientes durante la transcripción.
+
+El WAV final se une por muestras PCM: se publican las posiciones y
+duraciones de cada bloque calculadas a 48 kHz, con 24 000 muestras
+exactas de silencio entre bloques. El compositor alinea las palabras
+con los beats inmutables de B1.2/B2; si STT omite o modifica palabras,
+detiene el montaje en vez de inventar cortes. La pista estática y su
+`preview/timeline.json` se generan cuando terminan voz, STT e imágenes,
+también al recuperar los últimos artefactos mediante `--images-only` o
+`--resume-audio` si la otra mitad ya está lista. Se utiliza FFmpeg
++ FFprobe, vídeo H.264 1280×720 a 30 fps y audio AAC. `avatar_media` se
+representa provisionalmente con avatar a la izquierda e imagen generada
+a la derecha, 50/50; `media_video` usa su PNG estático. Los tiempos del
+STT son estimaciones a nivel palabra y los cambios visuales se cuantizan
+a fotogramas de 1/30 s. No se ejecutan animación, lip-sync ni llamadas
+GPU para crear el simulacro. Para la API de STT:
+https://developers.openai.com/api/docs/guides/speech-to-text
+
 ## AI33 Pro: imágenes a partir de las descripciones de B2
 
 Al terminar los tres bots y guardar el output completo de B2 y
 `visual_plan.json`, el runner genera **una imagen por beat con
 `description` no vacía**. Envía la descripción original de B2 sin
-transformaciones como campo `prompt`. Los beats `avatar` con
+transformaciones en el JSON del bot: el prompt efectivo enviado a AI33
+es `iphone 6 photo done by an elderly:  ` seguido de la descripción
+original, con sus espacios intactos. Los beats `avatar` con
 `description: null` se omiten; los `avatar_media`, `media_image` y
 `media_video` con descripción generan un PNG estático. Esta etapa no
 genera vídeo ni lipsync y no modifica los JSON del bot.
@@ -306,7 +336,7 @@ plazo, se realiza una última consulta de estado. Si no hay respuesta
 `done` y existe un `task_id` confirmado, el fallback
 `OPENAI_IMAGE_FALLBACK_ENABLED=true` llama a
 `POST https://api.openai.com/v1/images/generations` con el **mismo
-modelo** Flare/Sunburst, la `description` original de B2, `low`,
+modelo** Flare/Sunburst, el mismo prompt con prefijo, `low`,
 `png` y `size=1280x720`. Son las dimensiones 16:9 más pequeñas que
 cumplen el mínimo de píxeles, múltiplos de 16 y relación de aspecto
 documentados para la API oficial:
