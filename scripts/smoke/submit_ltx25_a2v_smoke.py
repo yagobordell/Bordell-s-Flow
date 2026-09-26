@@ -25,8 +25,8 @@ from ai_video_factory.workers.ltx25 import (
     LTX_A2V_DEV_GENERATION_PROFILE,
     LTX_A2V_GENERATION_PROFILE,
     LTX_A2V_GUIDED_GENERATION_PROFILE,
-    LTX_A2V_REFERENCE_GENERATION_PROFILE,
     LTX_A2V_REFERENCE_COMPILED_GENERATION_PROFILE,
+    LTX_A2V_REFERENCE_GENERATION_PROFILE,
     LTX_A2V_TASK,
     ltx_a2v_application_job_id,
 )
@@ -474,7 +474,7 @@ def main() -> None:
     ):
         raise RuntimeError("legacy A2V worker did not disable extra STG/modality guidance")
     expected_compilation = "blocks" if args.profile == "reference-compiled" else "eager"
-    if metadata.get("transformer_compilation") != expected_compilation:
+    if metadata.get("transformer_compilation", "eager") != expected_compilation:
         raise RuntimeError("A2V worker used an unexpected transformer compilation mode")
     if int(metadata["input_audio_channels"]) != input_channels:
         raise RuntimeError("A2V metadata input channel count does not match smoke input")
