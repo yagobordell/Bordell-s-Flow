@@ -92,6 +92,7 @@ def test_controlled_a2v_smoke_checks_local_python_before_gpu_allocation() -> Non
     assert "reference-compiled" in script
     assert "Refusing GPU allocation" in script
     assert "ExpectedPinnedImage" in script
+    assert "AllowBootstrappingInstance = $true" in script
     assert script.index("$ReadyWait = ") < script.index("& $WorkerManager @Start")
     assert script.index('if ($Profile -eq "reference-compiled") {') < script.index(
         "& $WorkerManager @Start"
