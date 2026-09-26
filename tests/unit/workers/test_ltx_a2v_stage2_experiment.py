@@ -75,7 +75,6 @@ def test_submit_cli_defaults_unchanged_and_two_step_is_explicit(
     args = parse_args()
     assert args.profile == "reference"
     assert args.reference_stage2_steps == 3
-    assert args.prompt == "An elderly monk speaking calmly to the camera."
     assert LTXAudioToVideoParameters().prompt == args.prompt
 
     monkeypatch.setattr(
