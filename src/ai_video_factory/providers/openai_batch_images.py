@@ -195,7 +195,7 @@ class OpenAIBatchImageClient:
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
             "Content-Type: application/jsonl\r\n\r\n"
-        ).encode("utf-8") + content + f"\r\n--{boundary}--\r\n".encode("ascii")
+        ).encode() + content + f"\r\n--{boundary}--\r\n".encode("ascii")
         request = Request(
             _BASE + "/files",
             data=body,
@@ -415,9 +415,11 @@ def _wait_for_batch(
     while True:
         try:
             batch = batch_client.retrieve_batch(batch_id)
-        except (HTTPError, URLError, TimeoutError):
+        except (HTTPError, URLError, TimeoutError) as exc:
             if time.time() >= deadline:
-                raise ImageBatchTimeout(f"Batch {batch_id} exceeded its 30-minute deadline")
+                raise ImageBatchTimeout(
+                    f"Batch {batch_id} exceeded its 30-minute deadline"
+                ) from exc
             time.sleep(min(options.poll_interval_seconds, max(0, deadline - time.time())))
             continue
         if batch.get("id") != batch_id or batch.get("input_file_id") != state["input_file_id"]:
@@ -470,8 +472,10 @@ def _one_image(
         _atomic_json(state_path, state)
 
     if state["status"] == "completed":
-        if image_path.is_file() and hashlib.sha256(image_path.read_bytes()).hexdigest() == state.get("sha256"):
-            return state["artifact"]
+        if image_path.is_file():
+            actual_sha = hashlib.sha256(image_path.read_bytes()).hexdigest()
+            if actual_sha == state.get("sha256"):
+                return state["artifact"]
         raise ImageBatchError(
             f"Completed PNG for {job['beat_id']} is missing or changed; "
             "do not automatically repeat a paid request."
@@ -502,10 +506,13 @@ def _one_image(
         # Uploading a second *file* after an uncertain upload cannot submit
         # another image; only the subsequent /batches POST starts processing.
         try:
-            file_id = batch_client.upload_jsonl(jsonl.encode("utf-8"), filename=f"{job['beat_id']}.jsonl")
+            file_id = batch_client.upload_jsonl(
+                jsonl.encode(), filename=f"{job['beat_id']}.jsonl"
+            )
         except Exception as exc:
             raise ImageBatchError(
-                f"Input file upload failed for {job['beat_id']}; --images-only may retry the upload."
+                f"Input file upload failed for {job['beat_id']}; "
+                "--images-only may retry the upload."
             ) from exc
         state["input_file_id"] = file_id
         state["status"] = "batch_ready"
@@ -530,8 +537,13 @@ def _one_image(
                 f"OpenAI returned no usable batch ID for {job['beat_id']}; "
                 "do not submit again."
             )
-        if batch.get("input_file_id") != state["input_file_id"] or batch.get("endpoint") != _IMAGE_ENDPOINT:
-            raise ImageBatchError("Created batch does not match the saved input file or endpoint")
+        if (
+            batch.get("input_file_id") != state["input_file_id"]
+            or batch.get("endpoint") != _IMAGE_ENDPOINT
+        ):
+            raise ImageBatchError(
+                "Created batch does not match the saved input file or endpoint"
+            )
         state["batch_id"] = batch_id
         state["batch_status"] = batch.get("status")
         state["status"] = "batch_submitted"
@@ -613,7 +625,8 @@ def generate_b2_images(
                 )
             if state.get("fingerprint") != _fingerprint(job, options):
                 raise ImageBatchError(
-                    f"Image request differs from saved beat {job['beat_id']}; use another output root."
+                    f"Image request differs from saved beat {job['beat_id']}; "
+                    "use another output root."
                 )
     if jobs and batch_client is None:
         if not api_key:
@@ -642,7 +655,8 @@ def generate_b2_images(
         if jobs:
             if batch_client is None:
                 raise ImageBatchError("Missing batch client")
-            with ThreadPoolExecutor(max_workers=min(options.max_parallel_images, len(jobs))) as pool:
+            worker_count = min(options.max_parallel_images, len(jobs))
+            with ThreadPoolExecutor(max_workers=worker_count) as pool:
                 futures = {
                     pool.submit(
                         _one_image, job, output, options, api_key=api_key,
@@ -668,7 +682,8 @@ def generate_b2_images(
         if failures:
             detail = "; ".join(f"{beat}: {exc}" for beat, exc in failures)
             raise ImageBatchError(
-                f"{len(failures)} of {len(jobs)} image beats failed; completed beats were saved: {detail}"
+                f"{len(failures)} of {len(jobs)} image beats failed; "
+                f"completed beats were saved: {detail}"
             ) from failures[0][1]
         manifest["status"] = "completed"
         _atomic_json(manifest_path, manifest)

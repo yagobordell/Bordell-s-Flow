@@ -100,7 +100,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--images-only",
         action="store_true",
-        help="Generate or resume official OpenAI image batches from an existing B2 visual plan, without repeating the planning bots.",
+        help=(
+            "Generate or resume official OpenAI image batches from a saved B2 plan, "
+            "without repeating the planning bots."
+        ),
     )
     parser.add_argument(
         "--no-audio",
@@ -590,7 +593,9 @@ async def _run_images_only(script_file: Path, output_root: Path) -> None:
         or not plan_path.is_file()
         or not (output / "B2" / "merged_output.json").is_file()
     ):
-        raise SystemExit("Cannot resume OpenAI image batches without a complete saved B2 visual plan")
+        raise SystemExit(
+            "Cannot resume OpenAI image batches without a complete saved B2 visual plan"
+        )
     report = json.loads(report_path.read_text(encoding="utf-8"))
     source_sha = hashlib.sha256(script_file.read_bytes()).hexdigest()
     if report.get("run", {}).get("script_sha256") != source_sha:
