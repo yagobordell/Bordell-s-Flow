@@ -177,12 +177,17 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     monkeypatch.setattr(runner, "run_b_pipeline", fake_run)
 
     asyncio.run(runner.main())
+    previous_roma = tmp_path / "output" / "b_pipeline" / "roma"
+    (previous_roma / "stale_previous_run.json").write_text("obsolete", encoding="utf-8")
     args.script = "japon.txt"
     asyncio.run(runner.main())
+    args.script = "roma.txt"
+    asyncio.run(runner.main())
 
-    assert received == ["  Uno.\r\n\r\nDos.  ", "Tres.\nCuatro."]
+    assert received == ["  Uno.\r\n\r\nDos.  ", "Tres.\nCuatro.", "  Uno.\r\n\r\nDos.  "]
     first = tmp_path / "output" / "b_pipeline" / "roma"
     second = tmp_path / "output" / "b_pipeline" / "japon"
+    assert not (first / "stale_previous_run.json").exists()
     for destination in (first, second):
         assert (destination / "B1.1" / "input.json").is_file()
         assert (destination / "B1.1" / "output.json").is_file()
