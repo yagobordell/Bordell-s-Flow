@@ -1,12 +1,16 @@
-"""Deterministic lossless WAV join with exactly 500 ms between TTS blocks."""
+"""Sample-accurate 48 kHz PCM narration, including exactly 500 ms between blocks."""
 
 from __future__ import annotations
 
 import hashlib
 import shutil
 import subprocess
+import tempfile
 import wave
 from pathlib import Path
+
+_SAMPLE_RATE = 48000
+_GAP_FRAMES = _SAMPLE_RATE // 2
 
 
 class AudioJoinError(RuntimeError):
@@ -14,12 +18,11 @@ class AudioJoinError(RuntimeError):
 
 
 def join_audio_blocks(inputs: list[Path], destination: Path) -> dict[str, object]:
-    """Decode mixed TTS formats once; join in block order with PCM silence.
+    """Decode each TTS source once, then concatenate PCM samples without timing drift.
 
-    ffmpeg is an existing project prerequisite. Every input is decoded to
-    48 kHz mono PCM; the output remains PCM WAV so the pause is not altered
-    by MP3/AAC encoder padding. Never write a successful final artifact until
-    the entire output has been verified.
+    The resulting per-block offsets come from the exact WAV sample counts, not
+    compressed-file metadata or guessed TTS durations. The same PCM samples are
+    used by the final video soundtrack and the word-to-beat timeline.
     """
     if not inputs:
         raise AudioJoinError("Cannot join an empty list of audio blocks")
@@ -28,71 +31,92 @@ def join_audio_blocks(inputs: list[Path], destination: Path) -> dict[str, object
             raise AudioJoinError(f"Missing or linked Fish Audio block: {source}")
     if shutil.which("ffmpeg") is None:
         raise AudioJoinError("ffmpeg is required on PATH to join Fish Audio blocks")
-
     if destination.parent.is_symlink() or destination.is_symlink():
         raise AudioJoinError("Refusing linked narration output directory or file")
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(destination.stem + ".part.wav")
     if temporary.is_symlink():
         raise AudioJoinError("Refusing linked temporary narration output")
-    if temporary.exists():
-        temporary.unlink()
+    temporary.unlink(missing_ok=True)
+    durations: list[float] = []
+    starts: list[float] = []
+    ends: list[float] = []
+    frame_position = 0
 
-    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y"]
-    for source in inputs:
-        command.extend(["-i", str(source)])
-
-    filters: list[str] = []
-    sequence: list[str] = []
-    for index in range(len(inputs)):
-        filters.append(
-            f"[{index}:a:0]aresample=48000,"
-            f"aformat=sample_fmts=s16:channel_layouts=mono,"
-            f"asetpts=PTS-STARTPTS[block{index}]"
-        )
-        sequence.append(f"[block{index}]")
-        if index < len(inputs) - 1:
-            filters.append(f"anullsrc=r=48000:cl=mono:d=0.5[gap{index}]")
-            sequence.append(f"[gap{index}]")
-    filters.append(
-        "".join(sequence) + f"concat=n={len(sequence)}:v=0:a=1[narration]"
-    )
-    command.extend(
-        [
-            "-filter_complex", ";".join(filters),
-            "-map", "[narration]",
-            "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "1",
-            "-f", "wav", str(temporary),
-        ]
-    )
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, check=False)
-        if completed.returncode != 0:
-            raise AudioJoinError(
-                "ffmpeg could not assemble Fish Audio blocks: "
-                + completed.stderr[-1200:]
-            )
-        with wave.open(str(temporary), "rb") as joined:
+        with tempfile.TemporaryDirectory(
+            prefix="fish-pcm-", dir=destination.parent
+        ) as scratch:
+            decoded: list[Path] = []
+            for index, source in enumerate(inputs):
+                pcm_path = Path(scratch) / f"block_{index}.wav"
+                command = [
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                    "-i", str(source), "-map", "0:a:0", "-vn",
+                    "-c:a", "pcm_s16le", "-ar", str(_SAMPLE_RATE), "-ac", "1",
+                    "-f", "wav", str(pcm_path),
+                ]
+                result = subprocess.run(
+                    command, capture_output=True, text=True, check=False
+                )
+                if result.returncode != 0:
+                    raise AudioJoinError(
+                        f"Cannot decode Fish Audio block {index + 1}: "
+                        + result.stderr[-1000:]
+                    )
+                decoded.append(pcm_path)
+
+            with wave.open(str(temporary), "wb") as joined:
+                joined.setnchannels(1)
+                joined.setsampwidth(2)
+                joined.setframerate(_SAMPLE_RATE)
+                for index, pcm_path in enumerate(decoded):
+                    if index:
+                        joined.writeframesraw(bytes(_GAP_FRAMES * 2))
+                        frame_position += _GAP_FRAMES
+                    with wave.open(str(pcm_path), "rb") as block:
+                        if (
+                            block.getnchannels() != 1
+                            or block.getframerate() != _SAMPLE_RATE
+                            or block.getsampwidth() != 2
+                            or block.getnframes() <= 0
+                        ):
+                            raise AudioJoinError(
+                                f"Decoded Fish Audio block {index + 1} has invalid PCM"
+                            )
+                        count = block.getnframes()
+                        starts.append(frame_position / _SAMPLE_RATE)
+                        durations.append(count / _SAMPLE_RATE)
+                        frame_position += count
+                        ends.append(frame_position / _SAMPLE_RATE)
+                        while frames := block.readframes(65536):
+                            joined.writeframesraw(frames)
+
+        with wave.open(str(temporary), "rb") as result:
             if (
-                joined.getnchannels() != 1
-                or joined.getframerate() != 48000
-                or joined.getsampwidth() != 2
-                or joined.getnframes() == 0
+                result.getnchannels() != 1
+                or result.getframerate() != _SAMPLE_RATE
+                or result.getsampwidth() != 2
+                or result.getnframes() != frame_position
             ):
-                raise AudioJoinError("Joined narration is not nonempty 48 kHz mono PCM16")
-            duration = joined.getnframes() / joined.getframerate()
+                raise AudioJoinError("Joined PCM sample count differs from block timeline")
         temporary.replace(destination)
     finally:
         temporary.unlink(missing_ok=True)
 
-    payload = destination.read_bytes()
+    with destination.open("rb") as payload:
+        digest = hashlib.file_digest(payload, "sha256").hexdigest()
     return {
         "file": destination.name,
-        "sha256": hashlib.sha256(payload).hexdigest(),
-        "bytes": len(payload),
+        "sha256": digest,
+        "bytes": destination.stat().st_size,
         "format": "wav",
-        "duration_seconds": duration,
+        "duration_seconds": frame_position / _SAMPLE_RATE,
         "pause_between_blocks_seconds": 0.5,
-        "sample_rate": 48000,
+        "sample_rate": _SAMPLE_RATE,
         "channels": 1,
+        "block_start_seconds": starts,
+        "block_end_seconds": ends,
+        "block_durations_seconds": durations,
     }
