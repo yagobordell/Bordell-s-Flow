@@ -309,6 +309,25 @@ def test_metered_parallel_pipeline_records_every_exact_input_output() -> None:
     outputs = {}
     stage_times = {}
     call_times = {}
+    stage_events: list[str] = []
+
+    def stage_complete(stage: str, blocks: int, merged: dict | None) -> None:
+        stage_events.append(stage)
+        assert blocks == 2
+        if stage == "B1.1":
+            assert merged is None
+            assert not fake.b12_started
+        elif stage == "B1.2":
+            assert fake.b12_finished == {1, 2}
+            assert not fake.b2_started
+            assert merged is not None
+            assert [block["block_id"] for block in merged["blocks"]] == [1, 2]
+        else:
+            assert stage == "B2"
+            assert fake.b2_started == {1, 2}
+            assert merged is not None
+            assert [block["block_id"] for block in merged["blocks"]] == [1, 2]
+
     result = asyncio.run(
         run_b_pipeline(
             SCRIPT,
@@ -321,6 +340,7 @@ def test_metered_parallel_pipeline_records_every_exact_input_output() -> None:
             ),
             on_api_response=ledger.record,
             on_stage_duration=lambda stage, seconds: stage_times.update({stage: seconds}),
+            on_stage_complete=stage_complete,
             on_call_duration=lambda stage, block_id, seconds: call_times.update(
                 {(stage, block_id): seconds}
             ),
@@ -343,6 +363,7 @@ def test_metered_parallel_pipeline_records_every_exact_input_output() -> None:
     assert outputs["B2", 2] == result.b2[1].model_dump()
     assert inputs["B2", 1]["blocks"][0]["beats"][0]["beat_id"] == "1A"
     assert len(ledger.records) == 5
+    assert stage_events == ["B1.1", "B1.2", "B2"]
     assert set(stage_times) == {"B1.1", "B1.2", "B2"}
     assert set(call_times) == expected
     assert all(seconds >= 0 for seconds in stage_times.values())
