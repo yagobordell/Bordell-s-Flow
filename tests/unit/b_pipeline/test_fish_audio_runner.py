@@ -65,7 +65,9 @@ def test_full_b_run_starts_fish_concurrently_and_no_audio_skips_it(
         resume_audio=False,
     )
 
-    async def fake_audio(source, destination, *, provider=None, b11=None, max_parallel_calls=8, resume=False):
+    async def fake_audio(
+        source, destination, *, provider=None, b11=None, max_parallel_calls=8, resume=False
+    ):
         created_audio.append((source, destination, provider, resume))
         started.set()
         await release.wait()
@@ -164,7 +166,9 @@ def test_audio_only_mode_preserves_b_artifacts_and_skips_avatar_images(
 
     calls = []
 
-    async def fake_audio(source, destination, *, provider=None, b11=None, max_parallel_calls=8, resume=False):
+    async def fake_audio(
+        source, destination, *, provider=None, b11=None, max_parallel_calls=8, resume=False
+    ):
         calls.append((source, destination, provider, resume))
         return {"status": "completed", "file": "audio/new.mp3", "voice_id": VOICE}
 
@@ -233,7 +237,9 @@ def test_images_start_after_b2_without_waiting_for_fish_narration(
         resume_audio=False,
     )
 
-    async def fake_audio(_source, _output, *, provider=None, b11=None, max_parallel_calls=8, resume=False):
+    async def fake_audio(
+        _source, _output, *, provider=None, b11=None, max_parallel_calls=8, resume=False
+    ):
         order.append("audio_started")
         audio_started.set()
         await audio_released.wait()
