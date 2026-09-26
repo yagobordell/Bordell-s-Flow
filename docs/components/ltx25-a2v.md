@@ -305,3 +305,56 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 
 The initial compilation may still be slow. A successful readiness wait proves
 the model bootstrap completed, not that lip-sync or GPU inference is accepted.
+
+### Instance-aware Salad startup and bounded node reallocation
+
+The controlled A2V smoke no longer waits up to 30 minutes for the *entire
+container group* to report `running` before it can check readiness.
+Its opt-in `-AllowBootstrappingInstance` path in
+`manage_salad_worker.ps1 -Action Start` waits for an instance of the current
+group version to reach `state=running, started=true`, even if the group
+still reports `deploying`. The separate readiness helper accepts a
+current-version instance reporting `ready=true` twice while the group
+is running or deploying. The API instance identifier is `id`, not
+`instance_id`. This corrects the first-readiness implementation without
+changing ordinary Start behavior for other workloads or production.
+
+The group still selects the **RTX 5090 (32 GB) class**, not a particular
+physical GPU. The Salad public API cannot rank available nodes by model
+performance or guarantee that the next assigned machine is better.
+Before the LTX container has started, the Start manager watches official
+per-instance `pulling_progress`; after **480 seconds without image-pull
+progress**, it can request an individual Salad reallocation, at most
+**twice per controlled start**, under the same Postgres advisory lock as
+the Capacity Controller. It rechecks group version, desired replicas,
+pending-change state, instance ID, pull state and progress immediately
+before requesting reallocation. Image pulls with measurable progress are
+retained.
+
+Once the container has started, the host stops making decisions based on
+the lack of readiness. The already deployed LTX worker runs a 100 Mbps
+Hugging Face network preflight and an 8 MiB/s sustained download watchdog
+(with configured grace and window), which request node reallocation only
+for measured poor network/download behavior. This avoids throwing away
+a healthy, actively downloading model just because the multi-gigabyte
+bootstrap takes time.
+
+The host startup is still bounded to 30 minutes and reports the current
+instance state/pull progress and any reallocation requests; after the
+container starts the separate 7200-second worker readiness budget
+applies. No job is enqueued until readiness succeeds, and the
+controlled script always stops Salad in `finally` on success or error.
+This fix changes only local scripts/tests/docs, **not the worker image
+or weights**, so the existing compiled image can be reused after
+confirming its immutable digest and stopped group state.
+
+Official Salad API references:
+- https://docs.salad.com/reference/saladcloud-api/container-groups/list-container-group-instances
+- https://docs.salad.com/reference/saladcloud-api/container-groups/reallocate-container-group-instance
+
+**Operational limit:** a long image pull with continued progress will not
+be reallocated merely for being slow, and model downloads are checked by
+their own byte-throughput watchdog. Logs for the failed start are required
+to distinguish no capacity, image-pull stalls and repeated poor network
+nodes. None of these improvements establishes A2V lip-sync or compiled
+speed gains.
