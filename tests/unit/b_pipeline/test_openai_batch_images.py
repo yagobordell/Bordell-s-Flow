@@ -450,5 +450,7 @@ def test_text_and_image_configuration_defaults_use_gpt6_and_image25() -> None:
     from ai_video_factory.config import Settings
 
     assert Settings.model_fields["openai_model"].default == "gpt-6-luna"
-    assert Settings.model_fields["openai_b_model"].default == "gpt-6-luna"
+    assert Settings.model_fields["openai_reasoning_effort"].default == "medium"
+    assert "openai_b_model" not in Settings.model_fields
+    assert "openai_b_reasoning_effort" not in Settings.model_fields
     assert Settings.model_fields["openai_image_model"].default == "gpt-image-2.5-flare"
