@@ -2,9 +2,14 @@
 
 Operational executables are grouped by responsibility:
 
-- `pipeline/`: production entry points, preflight, phase runners and orchestration wrappers.
-- `salad/`: SaladCloud lifecycle, queue and deployment management.
-- `smoke/`: explicit smoke and validation workloads.
-- `diagnostics/`: cache audits, inspectors, queue diagnostics and metrics collection.
+- `pipeline/run_b_pipeline.py`: active B1.1 → B1.2 → B2 planning with
+  local script and PNG avatar selection; no Salad capacity is requested by this runner.
+- `pipeline/`: independently runnable GPU and composition stage clients,
+  cache audits/preflights and controlled wrappers; no end-to-end video runner.
+- `salad/`: SaladCloud lifecycle, Postgres-backed capacity control and deployment.
+- `smoke/`: explicit inference smoke and validation workloads.
+- `diagnostics/`: queue, cache and recovery inspectors.
 
-The normal end-to-end entry point is `pipeline/run_video_factory.ps1`.
+The scene/shot planning bots and their one-command production orchestrator have
+been retired; stage clients remain for their existing explicitly supplied
+artifacts until a source-preserving downstream B2 migration is validated.

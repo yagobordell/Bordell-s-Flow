@@ -1,7 +1,8 @@
 # Salad deployment validation
 
-Use this runbook after changing a worker image, model bootstrap or Salad configuration. Normal video
-production should use `scripts/pipeline/run_video_factory.ps1`.
+Use this runbook after changing a worker image, model bootstrap or Salad configuration.
+The former end-to-end video runner was retired with the old planning bots;
+these checks validate the independent Salad services and their Postgres/R2 jobs.
 
 ## Prerequisites
 

@@ -67,6 +67,13 @@ jobs:
             psql "$TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f "$migration"
           done
 
+      - name: FFmpeg for exact Fish Audio gap test
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y ffmpeg
+          fi
+
       - name: Ruff
         run: uv run --no-sync ruff check .
 
@@ -77,7 +84,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          Get-ChildItem scripts -Recurse -Filter *.ps1 | ForEach-Object {
+          @(Get-Item run.ps1) + @(Get-ChildItem scripts -Recurse -Filter *.ps1) |
+              ForEach-Object {
               $Tokens = $null
               $Errors = $null
               [System.Management.Automation.Language.Parser]::ParseFile(
@@ -89,6 +97,37 @@ jobs:
                   throw "PowerShell parse errors in $($_.FullName): $($Errors -join '; ')"
               }
           }
+
+      - name: Short PowerShell runner smoke (no API calls)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $PSNativeCommandUseErrorActionPreference = $false
+          # Run as child PowerShell processes: a CLI's expected nonzero exit
+          # must not terminate this parent smoke-test process.
+          $HelpText = (& pwsh -NoProfile -File ./run.ps1 --help 2>&1) -join "`n"
+          $HelpExit = $LASTEXITCODE
+          Write-Host "Shortcut --help exit: $HelpExit"
+          Write-Host $HelpText
+
+          $NoScript = (& pwsh -NoProfile -File ./run.ps1 test2 Jorge --no-image 2>&1) -join "`n"
+          $NoScriptExit = $LASTEXITCODE
+          Write-Host "Shortcut no-script exit: $NoScriptExit"
+          Write-Host $NoScript
+
+          $ErrorActionPreference = "Stop"
+          if ($HelpExit -ne 0 -or $HelpText -notmatch '--no-image') {
+              throw "run.ps1 did not forward --help to the B pipeline"
+          }
+          if ($NoScriptExit -eq 0 -or $NoScript -notmatch 'data/input/scripts') {
+              throw "run.ps1 did not forward the positional names and script library"
+          }
+          if ($NoScript -notmatch 'No \.txt scripts found') {
+              throw "run.ps1 did not reach script selection without paid API calls"
+          }
+          # The expected negative smoke left LASTEXITCODE=1; explicitly mark
+          # this workflow step successful after all assertions have passed.
+          exit 0
 
       - name: Bash syntax
         shell: bash

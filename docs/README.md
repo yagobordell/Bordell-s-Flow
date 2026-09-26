@@ -6,10 +6,12 @@ old image digests and retired implementation handoffs belong in Git history.
 ## Architecture
 
 - [System overview](architecture/overview.md)
+- [Planning retirement and Salad dependency audit](architecture/planning-retirement-audit.md)
 - [Shared inference worker core](architecture/inference-worker-core.md)
 
 ## Components
 
+- [Active B1.1/B1.2/B2 planning pipeline](components/b-pipeline.md)
 - [Breeze TTS 2 worker](components/breeze-tts2-worker.md)
 - [Fish Speech fallback](components/fish-speech-fallback.md)
 - [Whisper worker](components/whisper-worker.md)
@@ -22,7 +24,7 @@ old image digests and retired implementation handoffs belong in Git history.
 
 ## Operations
 
-- [Production runner](operations/production-runner.md)
+- [End-to-end runner retirement and migration](operations/production-runner.md)
 - [Salad stack deployment](operations/salad-stack-deployment.md)
 - [Salad Capacity Controller](operations/salad-capacity-controller.md)
 - [Salad startup performance](operations/salad-startup-performance.md)
