@@ -31,8 +31,8 @@ jobs:
 
           root = pathlib.Path(".")
           parts = sorted((root / ".migration").glob("chunk_*.txt"))
-          if len(parts) != 1:
-              raise RuntimeError(f"Expected one migration patch part, got {len(parts)}")
+          if len(parts) != 3:
+              raise RuntimeError(f"Expected three migration patch parts, got {len(parts)}")
           encoded = "".join(part.read_text(encoding="ascii") for part in parts)
           patch = bz2.decompress(base64.b85decode(encoded))
           if hashlib.sha256(patch).hexdigest() != "e7b530dc7af3fe539dd750be618cd8b3bc5c9e03d89863086093c8cc84993528":
