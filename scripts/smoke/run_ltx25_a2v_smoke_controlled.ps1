@@ -11,17 +11,37 @@ param(
     [string]$EnvFile = ".env",
     [ValidateRange(120, 21600)][int]$BootstrapTimeoutSeconds = 7200,
     [string]$ExpectedPinnedImage = "",
+    [ValidateSet(1, 2)][int]$StartupReplicas = 1,
+    [ValidateRange(120, 3600)][int]$RaceTimeoutSeconds = 2400,
     [switch]$NonInteractive
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Timers cover the complete controlled command, not just worker inference.
+$LifecycleClock = [System.Diagnostics.Stopwatch]::StartNew()
+$LifecycleMetrics = [ordered]@{
+    schema_version = 1
+    segment_id = $SegmentId
+    profile = $Profile
+    startup_replicas = $StartupReplicas
+    preflight_seconds = $null
+    capacity_start_seconds = $null
+    readiness_seconds = $null
+    smoke_seconds = $null
+    cleanup_seconds = $null
+    end_to_end_seconds = $null
+    outcome = "failed"
+}
+
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $WorkerManager = Join-Path $RepoRoot "scripts\salad\manage_salad_worker.ps1"
 $R2Preflight = Join-Path $RepoRoot "scripts\pipeline\check_r2_ready.py"
+$GpuAvailability = Join-Path $RepoRoot "scripts\salad\check_salad_gpu_availability.ps1"
 $Smoke = Join-Path $PSScriptRoot "submit_ltx25_a2v_smoke.py"
 $ReadyWait = Join-Path $PSScriptRoot "wait_salad_ltx25_ready.py"
+$RaceSelector = Join-Path $PSScriptRoot "start_ltx25_race_select.py"
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     $Python = (Get-Command python -ErrorAction Stop).Source
@@ -33,6 +53,12 @@ if (-not (Test-Path -LiteralPath $ReadyWait -PathType Leaf)) {
 if (-not [string]::IsNullOrWhiteSpace($ExpectedPinnedImage) -and
     $ExpectedPinnedImage -notmatch "^[^\s@]+@sha256:[0-9a-fA-F]{64}$") {
     throw "-ExpectedPinnedImage must use immutable repo@sha256:digest form."
+}
+if ($StartupReplicas -eq 2 -and [string]::IsNullOrWhiteSpace($ExpectedPinnedImage)) {
+    throw "Two-GPU race requires -ExpectedPinnedImage to pin both instances by immutable digest."
+}
+if ($StartupReplicas -eq 2 -and -not (Test-Path -LiteralPath $RaceSelector -PathType Leaf)) {
+    throw "LTX race selector is missing: $RaceSelector"
 }
 if ($Profile -eq "guided") {
     $Services = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\salad\services.json") -Raw | ConvertFrom-Json
@@ -58,6 +84,18 @@ if ($LASTEXITCODE -ne 0) {
 & $Python $R2Preflight
 if ($LASTEXITCODE -ne 0) {
     throw "R2 preflight failed; refusing LTX GPU allocation."
+}
+
+if ($StartupReplicas -eq 2) {
+    if (-not (Test-Path -LiteralPath $GpuAvailability -PathType Leaf)) {
+        throw "GPU availability preflight is missing: $GpuAvailability"
+    }
+    $Availability = @(& $GpuAvailability -Service ltx25 -EnvFile $EnvFile)
+    $AvailableHigh = @($Availability | Where-Object { $_.service -eq "ltx25" })
+    if ($AvailableHigh.Count -ne 1 -or [int]$AvailableHigh[0].available_gpu_high -lt 2) {
+        throw "LTX 2-GPU race requires at least two available High-priority RTX 5090 nodes; refusing GPU allocation."
+    }
+    Write-Host "LTX_RACE_PREFLIGHT available_gpu_high=$($AvailableHigh[0].available_gpu_high) (snapshot, not reservation)"
 }
 
 $Arguments = @(
@@ -90,10 +128,32 @@ if ($NonInteractive) {
     $Start["NonInteractive"] = $true
 }
 
+$LifecycleMetrics.preflight_seconds = $LifecycleClock.Elapsed.TotalSeconds
+$PhaseClock = [System.Diagnostics.Stopwatch]::StartNew()
+$PhaseName = "capacity_start_seconds"
+
 try {
     Write-Host "=== LTX A2V explicit capacity: one RTX 5090 replica ===" -ForegroundColor Cyan
-    & $WorkerManager @Start
-    if (-not $?) { throw "LTX A2V compute-group start failed." }
+    if ($StartupReplicas -eq 2) {
+        Write-Warning "Experimental 2-GPU race: two running RTX 5090 instances can be billed until scale-in. The selector must verify the ONLY ready survivor before any Postgres job."
+        $RaceArgs = @(
+            "--env-file", $EnvFile,
+            "--expected-image", $ExpectedPinnedImage,
+            "--timeout-seconds", [string]$RaceTimeoutSeconds,
+            "--poll-seconds", "15"
+        )
+        & $Python $RaceSelector @RaceArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "LTX A2V race did not confirm a single ready instance; no job was submitted."
+        }
+    }
+    else {
+        & $WorkerManager @Start
+        if (-not $?) { throw "LTX A2V compute-group start failed." }
+    }
+    $LifecycleMetrics.capacity_start_seconds = $PhaseClock.Elapsed.TotalSeconds
+    $PhaseClock.Restart()
+    $PhaseName = "readiness_seconds"
 
     # The fast-start signal means the container started, not that the model is ready.
     # Refuse Postgres submission until the same current-version instance passes /ready twice.
@@ -109,6 +169,9 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "LTX worker did not become ready; no A2V job was submitted."
     }
+    $LifecycleMetrics.readiness_seconds = $PhaseClock.Elapsed.TotalSeconds
+    $PhaseClock.Restart()
+    $PhaseName = "smoke_seconds"
 
     if ($Profile -in @("fast", "dev")) {
         Write-Warning "fast/dev is comparison-only: a valid MP4 is not lip-sync acceptance."
@@ -120,7 +183,37 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "LTX A2V smoke failed with exit code $LASTEXITCODE."
     }
+    $LifecycleMetrics.smoke_seconds = $PhaseClock.Elapsed.TotalSeconds
+    $PhaseName = ""
+    $LifecycleMetrics.outcome = "generated"
 }
 finally {
-    & $WorkerManager -Action Stop -Service ltx25 -EnvFile $EnvFile -NonInteractive
+    # Preserve the partial phase measurement when Start, /ready or the job fails.
+    if ($PhaseName -and $null -eq $LifecycleMetrics[$PhaseName]) {
+        $LifecycleMetrics[$PhaseName] = $PhaseClock.Elapsed.TotalSeconds
+    }
+    $CleanupClock = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        & $WorkerManager -Action Stop -Service ltx25 -EnvFile $EnvFile -NonInteractive
+        if (-not $?) { throw "LTX A2V cleanup failed; verify stopped/replicas=0/pending=False." }
+        if ($StartupReplicas -eq 2) {
+            # Race may have failed with replicas=2. Restore count only AFTER Stop.
+            & $Python $RaceSelector --reset-stopped --env-file $EnvFile --expected-image $ExpectedPinnedImage
+            if ($LASTEXITCODE -ne 0) {
+                throw "LTX A2V race cleanup failed to restore stopped group to replicas=1."
+            }
+        }
+        if ($LifecycleMetrics.outcome -eq "generated") {
+            $LifecycleMetrics.outcome = "succeeded"
+        }
+    }
+    catch {
+        $LifecycleMetrics.outcome = "cleanup_failed"
+        throw
+    }
+    finally {
+        $LifecycleMetrics.cleanup_seconds = $CleanupClock.Elapsed.TotalSeconds
+        $LifecycleMetrics.end_to_end_seconds = $LifecycleClock.Elapsed.TotalSeconds
+        Write-Host ("LTX25_A2V_LIFECYCLE_METRICS " + ($LifecycleMetrics | ConvertTo-Json -Compress -Depth 4))
+    }
 }
