@@ -138,7 +138,6 @@ def materialize_blocks(script: str, blocks: list[BlockMeta]) -> list[Materialize
         last_candidates.append(last_positions)
 
     def has_valid_end(block_index: int, first_position: int, end: int) -> bool:
-        last = blocks[block_index].span.last_words
         return any(
             last_start >= first_position
             and last_end <= end
@@ -186,7 +185,6 @@ def materialize_blocks(script: str, blocks: list[BlockMeta]) -> list[Materialize
     for index, block in enumerate(blocks):
         start = 0 if index == 0 else starts[index]
         end = starts[index + 1] if index + 1 < len(starts) else len(script)
-        first_position = starts[index]
         result.append(
             MaterializedBlock(
                 block_id=block.block_id,

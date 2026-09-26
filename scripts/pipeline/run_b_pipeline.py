@@ -311,12 +311,16 @@ def _prepare_resume_output(
         or avatar_source.is_relative_to(root)
         or root.is_relative_to(avatar_source.parent)
     ):
-        raise SystemExit("--output must be a dedicated output directory, not an input or repository path.")
+        raise SystemExit(
+            "--output must be a dedicated output directory, not an input or repository path."
+        )
     destination = output_root / script_file.stem
     if destination.is_symlink() or destination.is_junction():
         raise SystemExit(f"Refusing to resume from a linked output directory: {destination}")
     if not destination.is_dir():
-        raise SystemExit(f"No prior run directory exists for --from {script_file.stem}: {destination}")
+        raise SystemExit(
+            f"No prior run directory exists for --from {script_file.stem}: {destination}"
+        )
     report_path = destination / "run_report.json"
     if not report_path.is_file() or report_path.is_symlink():
         raise SystemExit(f"Cannot resume: missing valid run report at {report_path}")
