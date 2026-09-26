@@ -287,6 +287,25 @@ def reset_stopped_group(
     print("LTX_RACE_RESET stopped=true configured_replicas=1")
 
 
+def _assert_no_existing_ltx_demand(dsn: str) -> None:
+    """Never start two Postgres pollers while older LTX work is claimable."""
+    import psycopg
+
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        row = connection.execute(
+            """
+            SELECT count(*)
+            FROM gpu.jobs
+            WHERE task IN ('video.ltx25.audio_to_video', 'video.ltx25.generate')
+              AND status IN ('pending', 'retryable_failed', 'running')
+            """
+        ).fetchone()
+    if row is None or int(row[0]) != 0:
+        raise RuntimeError(
+            "Existing LTX Postgres demand must be resolved before racing two workers"
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", default=".env")
@@ -334,6 +353,7 @@ def main() -> int:
                     assert_authority=authority.assert_held,
                 )
             else:
+                _assert_no_existing_ltx_demand(resolve_capacity_controller_dsn())
                 race_to_one(
                     client, group_name=service["group_name"],
                     expected_image=args.expected_image,
