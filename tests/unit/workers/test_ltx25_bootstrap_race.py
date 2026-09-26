@@ -41,6 +41,7 @@ class FakeRaceClient:
         self.ready = ready
         self.wrong_winner = wrong_winner
         self.deletion_costs: dict[str, int] = {}
+        self.cost_readback_enabled = True
         self.events: list[str] = []
         self.version = 13
 
@@ -76,7 +77,7 @@ class FakeRaceClient:
             "started": state == "running",
             "ready": ready,
             "pulling_progress": 55 if state == "downloading" else None,
-            "deletion_cost": self.deletion_costs.get(instance_id, 0),
+            "deletion_cost": self.deletion_costs.get(instance_id, 0) if self.cost_readback_enabled else 0,
         }
 
     def set_container_group_replicas(self, replicas: int) -> dict[str, Any]:
@@ -191,6 +192,27 @@ def test_wrapper_accepts_explicit_extended_race_timeout() -> None:
         encoding="utf-8"
     )
     assert "[ValidateRange(120, 7200)][int]$RaceTimeoutSeconds = 2400" in source
+
+
+def test_deletion_cost_must_be_observed_before_any_scale_in() -> None:
+    module = _module()
+    clock = FakeClock()
+    client = FakeRaceClient()
+    client.cost_readback_enabled = False
+    with pytest.raises(TimeoutError, match="deletion costs were not confirmed"):
+        module.race_to_one(
+            client,
+            group_name=GROUP,
+            expected_image=IMAGE,
+            timeout_seconds=180,
+            poll_seconds=15,
+            clock=clock.clock,
+            sleep=clock.sleep,
+            report=lambda _: None,
+        )
+    assert client.replicas == 2
+    assert f"deletion_cost={WINNER}:100000" in client.events
+    assert "replicas=1" not in client.events
 
 
 def test_wrong_image_rejected_before_capacity_mutation() -> None:
