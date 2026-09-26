@@ -260,3 +260,48 @@ and verify its immutable digest before updating the stopped Salad group. A passi
 contract still does not prove
 lip-sync quality; visually inspect mouth movement against the supplied speech before accepting an A2V
 profile.
+
+### Controlled Salad bootstrap readiness (cold-start smoke)
+
+The controlled `run_ltx25_a2v_smoke_controlled.ps1` smoke now waits for **one
+current-version LTX instance to pass the configured HTTP `/ready` probe twice**
+before submitting the A2V job to Postgres. The group-level `running` status
+only establishes capacity; it does **not** establish that multi-gigabyte model
+downloads and the worker's model validation have finished.
+
+Readiness polling uses Salad's read-only container-group and instance API.
+It requires an immutable deployed image, matching image repository and current
+group version, an unchanged single-replica group, the configured `/ready`
+probe, and consecutive `started=true, ready=true` observations of the same
+instance. Pass `-ExpectedPinnedImage repo@sha256:digest` to also validate
+the exact approved image. Unready or replaced instances reset the streak.
+Authentication/configuration errors fail immediately; transient API errors
+are retried a bounded number of times.
+
+Bootstrap has a **separate, explicit** 7200-second default budget, configurable
+via `-BootstrapTimeoutSeconds` (120–21600). A bootstrap timeout fails before
+an inference job is enqueued and the wrapper's `finally` still stops LTX.
+The existing 1800-second pending budget starts only after the worker is ready
+and the Postgres job is submitted. The running-job budget and worker's
+download watchdog remain unchanged. The helper only changes local scripts:
+the already built, reviewed LTX image can be reused without another Docker
+build or Salad `Prepare`, provided its deployed immutable digest is verified.
+
+Example after the stopped LTX group is prepared with the approved image:
+
+```powershell
+$SegmentId = "monje-compiled-ready-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+    -File .\scripts\smoke\run_ltx25_a2v_smoke_controlled.ps1 `
+    -Audio ".\data\input\avatar\monje.wav" `
+    -AvatarImage ".\data\input\avatar\monje.png" `
+    -Profile reference-compiled `
+    -Seed 4242 `
+    -SegmentId $SegmentId `
+    -ExpectedPinnedImage $PinnedImage `
+    -BootstrapTimeoutSeconds 7200 `
+    -EnvFile .env -NonInteractive
+```
+
+The initial compilation may still be slow. A successful readiness wait proves
+the model bootstrap completed, not that lip-sync or GPU inference is accepted.

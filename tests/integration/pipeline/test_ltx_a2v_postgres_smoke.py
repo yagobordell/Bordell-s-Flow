@@ -26,6 +26,11 @@ def test_ltx_a2v_controlled_wrapper_owns_explicit_capacity() -> None:
     assert "Replicas = 1" in script
     assert "-Action Stop -Service ltx25" in script
     assert "finally {" in script
+    assert "wait_salad_ltx25_ready.py" in script
+    assert script.index("& $Python $ReadyWait @ReadyArgs") < script.index(
+        "& $Python $Smoke @Arguments"
+    )
+    assert "BootstrapTimeoutSeconds" in script
     assert "start_salad_protected_smoke.ps1" not in script
 
 
