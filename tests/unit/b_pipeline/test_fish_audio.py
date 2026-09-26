@@ -140,7 +140,22 @@ def test_director_refuses_source_rewrite_before_paid_tts(tmp_path: Path) -> None
             )
         )
     assert not speech.creates
-    assert len(unfinished_audio_runs(tmp_path)) == 1
+    states = sorted((tmp_path / "audio/runs").glob("*/task.json"))
+    assert len(states) == 1
+    assert json.loads(states[0].read_text(encoding="utf-8"))["status"] == "director_invalid"
+    assert unfinished_audio_runs(tmp_path) == []
+    corrected = asyncio.run(
+        generate_fish_audio(
+            SCRIPT,
+            tmp_path,
+            provider=FakeDirector(),
+            director_model="gpt-6-luna",
+            ai33_api_key=None,
+            speech_client=speech,
+        )
+    )
+    assert corrected["status"] == "completed"
+    assert len(speech.creates) == 1
 
 
 def test_speech_endpoints_payload_and_audio_url_extraction(

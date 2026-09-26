@@ -17,7 +17,7 @@ from ai_video_factory.providers.ai33_speech import (
 )
 from ai_video_factory.providers.base import StructuredTextProvider
 
-from .fish_audio import fish_prompt_bytes, run_fish_director
+from .fish_audio import FishAudioScriptError, fish_prompt_bytes, run_fish_director
 
 _DEFAULT_VOICE_ID = "fishaudio_f8dfe9c83081432386f143e2fe9767ef"
 
@@ -57,7 +57,7 @@ def unfinished_audio_runs(output: Path) -> list[Path]:
     pending = []
     for state_path in sorted(folder.glob("*/task.json")):
         state = _read_json(state_path)
-        if state.get("status") != "completed":
+        if state.get("status") not in {"completed", "director_invalid"}:
             pending.append(state_path)
     return pending
 
@@ -155,6 +155,12 @@ async def generate_fish_audio(
             directed, response = await run_fish_director(
                 script, provider=provider, model=director_model
             )
+        except FishAudioScriptError:
+            # A rejected director output cannot have submitted any TTS request.
+            # An explicit regeneration may safely request a corrected director.
+            state["status"] = "director_invalid"
+            _atomic_json(state_path, state)
+            raise
         except Exception:
             state["status"] = "director_unknown"
             _atomic_json(state_path, state)

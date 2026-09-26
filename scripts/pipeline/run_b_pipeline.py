@@ -1017,15 +1017,17 @@ async def main() -> None:
         # This application-owned binding is intentionally absent from audited B2 payloads.
         visual_plan["avatar"] = avatar_metadata
         _write(output / "visual_plan.json", visual_plan)
-        if audio_task is not None:
-            run_metadata["audio_generation"] = await audio_task
-            audio_joined = True
-            save_report("running", len(result.b12))
+        # Images start as soon as B2 has written its visual plan, without
+        # waiting for the independent narration to finish.
         if not getattr(args, "skip_images", False):
             run_metadata["image_generation"] = {"status": "running"}
             save_report("running", len(result.b12))
             image_manifest = await _generate_images(output, visual_plan)
             run_metadata["image_generation"] = _image_summary(image_manifest)
+        if audio_task is not None:
+            run_metadata["audio_generation"] = await audio_task
+            audio_joined = True
+            save_report("running", len(result.b12))
     except Exception:
         if audio_task is not None and not audio_joined:
             # Never abandon an in-flight paid TTS submission by cancelling
