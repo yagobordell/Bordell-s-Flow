@@ -23,6 +23,12 @@ from PIL import Image
 from .openai_images import OpenAIImageClient, OpenAIImageError
 
 API_BASE = "https://api.openspeaker.ai"
+IMAGE_PROMPT_PREFIX = "iphone 6 photo done by an elderly:  "
+
+
+def effective_image_prompt(description: str) -> str:
+    """Keep B2 descriptions immutable and add the requested prefix only at submission."""
+    return IMAGE_PROMPT_PREFIX + description
 _RETRYABLE_HTTP = {429, 502, 503, 504}
 _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", flags=re.ASCII)
 
@@ -57,7 +63,7 @@ class AI33ImageOptions:
     def request(self, description: str) -> dict[str, object]:
         return {
             "model_id": self.model_id,
-            "prompt": description,
+            "prompt": effective_image_prompt(description),
             "aspect_ratio": self.aspect_ratio,
             "resolution": self.resolution,
             "quality": self.quality,
@@ -319,7 +325,9 @@ def _openai_fallback(
 
     state["fallback_request"] = {
         "model": options.model_id,
-        "prompt_sha256": hashlib.sha256(job["description"].encode("utf-8")).hexdigest(),
+        "prompt_sha256": hashlib.sha256(
+            effective_image_prompt(job["description"]).encode("utf-8")
+        ).hexdigest(),
         "size": "1280x720",
         "quality": options.quality,
         "output_format": "png",
@@ -329,7 +337,7 @@ def _openai_fallback(
     _atomic_json(state_path, state)
     try:
         generated = openai_client.generate_png(
-            prompt=job["description"],
+            prompt=effective_image_prompt(job["description"]),
             model=options.model_id,
             destination=image_path,
             size="1280x720",
