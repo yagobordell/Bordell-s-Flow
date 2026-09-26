@@ -161,7 +161,8 @@ class BPipelineResult:
 
     def visual_plan(self) -> dict[str, object]:
         """Application-owned ordered join, not a bot-owned B2 output object."""
-        assert self.b11.narrative_core is not None
+        if self.b11.narrative_core is None:
+            raise BPipelineValidationError("B1.1 narrative core is missing")
         return {
             "schema_version": "b-pipeline-v1",
             "narrative_core": self.b11.narrative_core.model_dump(),
