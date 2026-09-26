@@ -17,6 +17,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LTX_MODEL_REPOSITORY=Lightricks/LTX-2.5 \
     LTX_MODEL_REVISION=6c7e5e573ac1667efc83407806fe9b0b93730e60 \
     LTX_INCLUDE_A2V_DEV_ASSETS=false \
+    LTX_REQUIRE_VERIFIED_MODEL_MANIFEST=true \
+    LTX_MODEL_BOOTSTRAP_COMPLETE_FILE=/tmp/ai-video-factory/ltx25-model-bootstrap.complete \
     LTX_DEVICE=cuda 
 
 RUN apt-get update \
