@@ -103,6 +103,17 @@ try {
 
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Smoke -Audio $Audio -AvatarImage $Avatar -Profile reference -ReferenceStage2Steps 2 -SegmentId $SegmentId -Prompt $Prompt -Seed 4242 -OutputDir $OutputDir -StartupReplicas 2 -RaceTimeoutSeconds $RaceTimeoutSeconds -BootstrapTimeoutSeconds 300 -MaxGenerationSeconds 600 -ExpectedPinnedImage $ExperimentalPinnedImage -EnvFile $EnvFile -NonInteractive
     if ($LASTEXITCODE -ne 0) { throw "Controlled LTX two-GPU smoke failed." }
+
+    # The smoke has already stopped GPU capacity. Review files never modify MP4.
+    $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
+    if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+        $Python = (Get-Command python -ErrorAction Stop).Source
+    }
+    $ReviewScript = Join-Path $RepoRoot "scripts\diagnostics\ltx25_monje_review_sheet.py"
+    $ReviewSheet = Join-Path $OutputDir "monje_framing_review.png"
+    & $Python $ReviewScript --video (Join-Path $OutputDir "avatar_segment.mp4") --output $ReviewSheet
+    if ($LASTEXITCODE -ne 0) { throw "Cannot generate visual review sheet." }
+    Write-Host "VISUAL REVIEW REQUIRED: $ReviewSheet (not a passing zoom/lip-sync check)"
     $TestSucceeded = $true
 }
 finally {
