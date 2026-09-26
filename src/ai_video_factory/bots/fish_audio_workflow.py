@@ -16,6 +16,7 @@ from ai_video_factory.providers.ai33_speech import (
     task_id_of,
 )
 from ai_video_factory.providers.base import StructuredTextProvider
+from ai_video_factory.providers.openai_stt import OpenAISttClient
 
 from .audio_join import join_audio_blocks
 from .contracts import B11Output, B12Input
@@ -108,6 +109,72 @@ def _block_audio(output: Path, directory: Path, state: dict[str, Any]) -> dict[s
         "bytes": metadata["bytes"],
         "credit_cost": state.get("credit_cost"),
         "director_usage": state.get("director_usage"),
+    }
+
+
+async def _transcribe_block(
+    item: dict[str, Any],
+    *,
+    output: Path,
+    run_dir: Path,
+    stt_client: OpenAISttClient,
+) -> dict[str, Any]:
+    """Transcribe an individual completed TTS block; never repeat an uncertain POST."""
+    directory = run_dir / "blocks" / f"block_{item['block_id']}"
+    transcript_path = directory / "stt.json"
+    request_path = directory / "stt_request.json"
+    audio_path = output / item["file"]
+    if transcript_path.is_symlink() or request_path.is_symlink():
+        raise FishAudioWorkflowError("Refusing linked Fish STT state")
+    model = stt_client.model
+    if transcript_path.is_file():
+        cached = _read_json(transcript_path)
+        if (
+            cached.get("source_audio_sha256") != item["sha256"]
+            or cached.get("model") != model
+            or not isinstance(cached.get("words"), list)
+            or not cached["words"]
+        ):
+            raise FishAudioWorkflowError(
+                f"Saved STT differs from TTS block {item['block_id']}"
+            )
+    else:
+        if request_path.is_file():
+            previous = _read_json(request_path)
+            if previous.get("status") == "request_started_unknown":
+                raise FishAudioWorkflowError(
+                    f"OpenAI STT submission for block {item['block_id']} may be billed; "
+                    f"reconcile {request_path} before retrying"
+                )
+            if (
+                previous.get("source_audio_sha256") != item["sha256"]
+                or previous.get("model") != model
+            ):
+                raise FishAudioWorkflowError("Saved STT request differs from source audio")
+        _atomic_json(request_path, {
+            "status": "request_started_unknown",
+            "source_audio_sha256": item["sha256"],
+            "model": model,
+        })
+        transcript = await asyncio.to_thread(stt_client.transcribe, audio_path)
+        if transcript.get("model") != model:
+            raise FishAudioWorkflowError("OpenAI STT returned an unexpected model")
+        cached = {**transcript, "source_audio_sha256": item["sha256"]}
+        _atomic_json(transcript_path, cached)
+        _atomic_json(request_path, {
+            "status": "completed",
+            "source_audio_sha256": item["sha256"],
+            "model": model,
+        })
+    stt_sha = hashlib.sha256(transcript_path.read_bytes()).hexdigest()
+    return {
+        **item,
+        "stt": {
+            "file": transcript_path.relative_to(output).as_posix(),
+            "sha256": stt_sha,
+            "model": model,
+            "word_count": len(cached["words"]),
+        },
     }
 
 
@@ -261,6 +328,7 @@ async def generate_fish_audio(
     poll_interval_seconds: float = 8.0,
     resume: bool = False,
     speech_client: AI33SpeechClient | None = None,
+    stt_client: OpenAISttClient | None = None,
 ) -> dict[str, Any]:
     """Run each block independently, then publish a single ordered WAV narration."""
     if not isinstance(script, str) or not script.strip():
@@ -338,7 +406,7 @@ async def generate_fish_audio(
 
     async def one(payload: B12Input) -> dict[str, Any]:
         async with semaphore:
-            return await _generate_block(
+            item = await _generate_block(
                 payload,
                 output=output,
                 run_dir=run_dir,
@@ -350,6 +418,11 @@ async def generate_fish_audio(
                 poll_timeout_seconds=poll_timeout_seconds,
                 poll_interval_seconds=poll_interval_seconds,
             )
+            if stt_client is not None:
+                item = await _transcribe_block(
+                    item, output=output, run_dir=run_dir, stt_client=stt_client
+                )
+            return item
 
     # return_exceptions waits for ALL paid submissions and polls. An error in
     # one block must never cancel other blocks while their POST outcome is open.
@@ -402,6 +475,11 @@ async def generate_fish_audio(
         "bytes": merged["bytes"],
         "duration_seconds": merged["duration_seconds"],
         "pause_between_blocks_seconds": 0.5,
+        "block_start_seconds": merged.get("block_start_seconds"),
+        "block_end_seconds": merged.get("block_end_seconds"),
+        "block_durations_seconds": merged.get("block_durations_seconds"),
+        "stt_complete": stt_client is not None,
+        "stt_model": stt_client.model if stt_client is not None else None,
         "block_count": len(blocks),
         "blocks": blocks,
         "credit_cost": sum(credits) if all(value is not None for value in credits) else None,
