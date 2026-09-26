@@ -608,7 +608,14 @@ async def _run_images_only(script_file: Path, output_root: Path) -> None:
         _write(report_path, report)
         raise
     report["run"]["image_generation"] = _image_summary(manifest)
-    preview = await _preview_if_ready(output, report, plan=plan, images=manifest)
+    _write(report_path, report)
+    try:
+        preview = await _preview_if_ready(output, report, plan=plan, images=manifest)
+    except Exception:
+        report["run"]["video_preview"] = {"status": "incomplete"}
+        report["run"]["status"] = "failed"
+        _write(report_path, report)
+        raise
     if preview is not None:
         report["run"]["video_preview"] = preview
     report["run"]["status"] = "completed"
@@ -706,7 +713,13 @@ async def _run_audio_only(
         _write(report_path, report)
         raise
     report["run"]["audio_generation"] = artifact
-    preview = await _preview_if_ready(output, report)
+    _write(report_path, report)
+    try:
+        preview = await _preview_if_ready(output, report)
+    except Exception:
+        report["run"]["video_preview"] = {"status": "incomplete"}
+        _write(report_path, report)
+        raise
     if preview is not None:
         report["run"]["video_preview"] = preview
     _write(report_path, report)
@@ -1111,6 +1124,8 @@ async def main() -> None:
             audio_joined = True
             save_report("running", len(result.b12))
         if image_manifest is not None:
+            run_metadata["video_preview"] = {"status": "running"}
+            save_report("running", len(result.b12))
             report = {"run": run_metadata}
             preview = await _preview_if_ready(
                 output, report, plan=visual_plan, images=image_manifest
@@ -1128,6 +1143,8 @@ async def main() -> None:
                 run_metadata["audio_generation"] = {"status": "incomplete"}
         if run_metadata.get("image_generation") == {"status": "running"}:
             run_metadata["image_generation"] = {"status": "incomplete"}
+        if run_metadata.get("video_preview") == {"status": "running"}:
+            run_metadata["video_preview"] = {"status": "incomplete"}
         _, timing_report = save_report("failed", None)
         _print_metric("Run", timing_report["run_elapsed_seconds"], None)
         raise
