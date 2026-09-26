@@ -14,7 +14,7 @@ from ai_video_factory.providers.base import StructuredTextProvider
 
 from .contracts import B12Input
 
-_FISH_TAG = re.compile(r"\[[A-Za-z][A-Za-z -]{0,79}\]", flags=re.ASCII)
+_FISH_TAG = re.compile(r"\[[A-Za-z][A-Za-z0-9 ,.;:\'!?/_-]{0,159}\]", flags=re.ASCII)
 _STRUCTURED_SUFFIX = (
     "\n\nAPI transport: this request uses Responses API Structured Outputs. "
     "Return the exact JSON object through the supplied schema, with no Markdown fence. "
