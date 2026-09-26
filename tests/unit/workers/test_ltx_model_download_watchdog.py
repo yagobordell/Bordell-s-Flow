@@ -4,11 +4,11 @@ from pathlib import Path
 import pytest
 
 from ai_video_factory.workers.ltx25.model import LTXModelFiles
-from ai_video_factory.workers.ltx25.reference_recipe import LTX25_MODEL_REVISION
 from ai_video_factory.workers.ltx25.model_manifest import (
     validate_installed_model_manifest,
     write_installed_model_manifest,
 )
+from ai_video_factory.workers.ltx25.reference_recipe import LTX25_MODEL_REVISION
 
 BOOTSTRAP = Path("docker/workers/ltx25/download_models.sh")
 
