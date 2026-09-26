@@ -42,6 +42,7 @@ class FakeRaceClient:
         self.wrong_winner = wrong_winner
         self.deletion_costs: dict[str, int] = {}
         self.cost_readback_enabled = True
+        self.only_one_allocated = False
         self.list_cost_readback_enabled = True
         self.events: list[str] = []
         self.version = 13
@@ -65,6 +66,12 @@ class FakeRaceClient:
             return [
                 self._instance(
                     instance_id, ready=True, include_cost=self.list_cost_readback_enabled
+                )
+            ]
+        if self.only_one_allocated:
+            return [
+                self._instance(
+                    WINNER, ready=self.ready, include_cost=self.list_cost_readback_enabled
                 )
             ]
         return [
@@ -139,6 +146,67 @@ def test_two_replica_race_protects_first_ready_then_scales_in() -> None:
         f"deletion_cost={WINNER}:100000",
         "replicas=1",
     ]
+
+
+def test_one_allocated_ready_worker_can_scale_from_configured_two_to_one() -> None:
+    module = _module()
+    clock = FakeClock()
+    client = FakeRaceClient()
+    client.only_one_allocated = True
+    observations: list[str] = []
+
+    result = module.race_to_one(
+        client,
+        group_name=GROUP,
+        expected_image=IMAGE,
+        timeout_seconds=120,
+        poll_seconds=15,
+        clock=clock.clock,
+        sleep=clock.sleep,
+        report=observations.append,
+    )
+
+    assert result["winner_id"] == WINNER
+    assert result["replicas_before_job"] == 1
+    assert result["instances_seen"] == 1
+    assert client.events == [
+        "replicas=2",
+        "start",
+        f"deletion_cost={WINNER}:100000",
+        "replicas=1",
+    ]
+    assert any("loser=none confirmations=2/2" in line for line in observations)
+
+
+def test_late_second_worker_after_single_winner_readback_fails_closed() -> None:
+    module = _module()
+    clock = FakeClock()
+
+    class LateReplicaClient(FakeRaceClient):
+        reads = 0
+
+        def get_container_group_instance(self, instance_id: str) -> dict[str, Any]:
+            result = super().get_container_group_instance(instance_id)
+            self.reads += 1
+            if self.reads == 2:
+                self.only_one_allocated = False
+            return result
+
+    client = LateReplicaClient()
+    client.only_one_allocated = True
+    with pytest.raises(RuntimeError, match="topology changed after cost readback"):
+        module.race_to_one(
+            client,
+            group_name=GROUP,
+            expected_image=IMAGE,
+            timeout_seconds=120,
+            poll_seconds=15,
+            clock=clock.clock,
+            sleep=clock.sleep,
+            report=lambda _: None,
+        )
+    assert client.replicas == 2
+    assert "replicas=1" not in client.events
 
 
 def test_no_ready_instance_never_scales_in_or_submits() -> None:
