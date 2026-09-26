@@ -206,19 +206,19 @@ manual or model-based evaluation; schemas alone cannot prove that.
 ## AI33 Pro: imágenes a partir de las descripciones de B2
 
 Al terminar los tres bots y guardar el output completo de B2 y
-\`visual_plan.json\`, el runner genera **una imagen por beat con
-\`description\` no vacía**. Envía la descripción original de B2 sin
-transformaciones como campo \`prompt\`. Los beats \`avatar\` con
-\`description: null\` se omiten; los \`avatar_media\`, \`media_image\` y
-\`media_video\` con descripción generan un PNG estático. Esta etapa no
+`visual_plan.json`, el runner genera **una imagen por beat con
+`description` no vacía**. Envía la descripción original de B2 sin
+transformaciones como campo `prompt`. Los beats `avatar` con
+`description: null` se omiten; los `avatar_media`, `media_image` y
+`media_video` con descripción generan un PNG estático. Esta etapa no
 genera vídeo ni lipsync y no modifica los JSON del bot.
 
 El proveedor es AI33 Pro / OpenSpeaker. Su API usa el encabezado
-\`xi-api-key\` y los endpoints \`POST /v1i/task/price\`,
-\`POST /v1i/task/generate-image\` y \`GET /v1/task/{task_id}\`.
-La configuración en \`.env\` es:
+`xi-api-key` y los endpoints `POST /v1i/task/price`,
+`POST /v1i/task/generate-image` y `GET /v1/task/{task_id}`.
+La configuración en `.env` es:
 
-\`\`\`dotenv
+```dotenv
 AI33_API_KEY=
 AI33_IMAGE_MODEL=gpt-image-2.5-flare
 AI33_IMAGE_ASPECT_RATIO=16:9
@@ -226,32 +226,31 @@ AI33_IMAGE_RESOLUTION=1K
 AI33_IMAGE_QUALITY=low
 AI33_POLL_TIMEOUT_SECONDS=1800
 AI33_POLL_INTERVAL_SECONDS=8
-\`\`\`
+```
 
 El modelo predeterminado Flare es el que se ha verificado generando
-\`1280×720\` en formato PNG. Para utilizar Sunburst, cambia solo
-\`AI33_IMAGE_MODEL=gpt-image-2.5-sunburst\`. Ambos modelos admiten
-\`16:9\`, \`1K\` y \`low\` según el catálogo de la cuenta, aunque la
+`1280×720` en formato PNG. Para utilizar Sunburst, cambia solo
+`AI33_IMAGE_MODEL=gpt-image-2.5-sunburst`. Ambos modelos admiten
+`16:9`, `1K` y `low` según el catálogo de la cuenta, aunque la
 integración no ha ejecutado una generación real de Sunburst. No hay
 necesidad de cambiar ninguna imagen o conexión de Salad.
 
-Se crea \`images/manifest.json\`, más el PNG
-\`images/block_<id>/<beat_id>.png\` y su fichero de estado
-\`images/block_<id>/<beat_id>.json\`. El estado se persiste **antes** del
-POST de generación y conserva el \`task_id\` inmediatamente después de
-recibirlo. Un error de polling \`429/502/503/504\` se reintenta con
+Se crea `images/manifest.json`, más el PNG
+`images/block_<id>/<beat_id>.png` y su fichero de estado
+`images/block_<id>/<beat_id>.json`. El estado se persiste **antes** del
+POST de generación y conserva el `task_id` inmediatamente después de
+recibirlo. Un error de polling `429/502/503/504` se reintenta con
 backoff; el tiempo máximo por tarea es 30 minutos por defecto. Si la
 respuesta del POST se pierde, se detiene con estado
-\`submitting_unknown\`: no se repite una solicitud potencialmente
+`submitting_unknown`: no se repite una solicitud potencialmente
 cobrada sin comprobar antes la tarea en AI33.
 
 Para recuperar una ejecución después de un timeout o error de descarga,
 sin volver a llamar a OpenAI ni seleccionar otro avatar:
 
-\`\`\`powershell
-uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py \\
-  --script historia_roma.txt --images-only
-\`\`\`
+```powershell
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --images-only
+```
 
 Se verifica el SHA-256 del guion y la existencia de los artefactos B2
 antes de recuperar cualquier tarea. Una ejecución completa nueva evita
@@ -260,14 +259,14 @@ y cambia una descripción con una tarea previa del mismo beat, el runner
 se detiene en vez de reutilizar una imagen cuyo prompt ya no coincide.
 
 Los metadatos por beat y el manifiesto incluyen modelo, ID de tarea,
-archivo local, SHA-256, dimensiones y \`credit_cost\` real que comunica
-AI33; \`provider_credit_cost\` se conserva por separado. No se infiere
+archivo local, SHA-256, dimensiones y `credit_cost` real que comunica
+AI33; `provider_credit_cost` se conserva por separado. No se infiere
 que el coste del proveedor sea el importe facturado al usuario. Las
-métricas OpenAI de \`run_report.json\` siguen expresadas en USD y no se
+métricas OpenAI de `run_report.json` siguen expresadas en USD y no se
 mezclan con los créditos AI33.
 
-Para iterar solo los bots sin crear imágenes, usa \`--skip-images\`.
-Después ejecuta \`--images-only\` para generar lo pendiente a partir
+Para iterar solo los bots sin crear imágenes, usa `--skip-images`.
+Después ejecuta `--images-only` para generar lo pendiente a partir
 del B2 guardado. Los clientes GPU existentes siguen siendo herramientas
 independientes: esta etapa no activa Salad ni conecta todavía un vídeo
 final al plan B2.
