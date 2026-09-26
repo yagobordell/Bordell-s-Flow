@@ -290,7 +290,7 @@ def test_unknown_paid_tts_submission_is_never_resent_on_resume(tmp_path: Path) -
         )
     assert len(fake.creates) == 1
     assert len(unfinished_audio_runs(tmp_path)) == 1
-    with pytest.raises(FishAudioWorkflowError, match="unknown outcome"):
+    with pytest.raises(FishAudioWorkflowError, match="Unknown paid submission"):
         asyncio.run(
             generate_fish_audio(
                 SCRIPT,
