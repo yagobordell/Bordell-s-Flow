@@ -26,6 +26,9 @@ data/*
 !data/input/
 data/input/*
 !data/input/.gitkeep
+!data/input/scripts/
+data/input/scripts/*
+!data/input/scripts/.gitkeep
 
 # Remotion / Node
 remotion/node_modules/
