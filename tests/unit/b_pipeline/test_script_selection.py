@@ -204,6 +204,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         output=None,
         max_parallel_calls=3,
         from_stage="B1.1",
+        no_audio=True,
     )
     received: list[str] = []
     streamed_stages: list[str] = []

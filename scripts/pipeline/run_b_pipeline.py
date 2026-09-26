@@ -15,6 +15,10 @@ from PIL import Image
 
 from ai_video_factory.bots import run_b_pipeline
 from ai_video_factory.bots.billing import ApiCostLedger
+from ai_video_factory.bots.fish_audio_workflow import (
+    generate_fish_audio,
+    unfinished_audio_runs,
+)
 from ai_video_factory.bots.contracts import B11Output, B12Output
 from ai_video_factory.bots.workflow import materialize_blocks, validate_beats
 from ai_video_factory.config import settings
@@ -96,7 +100,37 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Generate or resume images from an existing B2 visual_plan.json, without OpenAI.",
     )
+    parser.add_argument(
+        "--no-audio",
+        action="store_true",
+        help="Run B1.1/B1.2/B2 (and optional images) without Fish director or TTS.",
+    )
+    parser.add_argument(
+        "--regenerate-audio",
+        action="store_true",
+        help="Run only Fish director and a NEW TTS task; never run B bots or images.",
+    )
+    parser.add_argument(
+        "--resume-audio",
+        action="store_true",
+        help="Resume a saved Fish TTS task without rerunning its director or B bots.",
+    )
     args = parser.parse_args()
+    if args.regenerate_audio and args.resume_audio:
+        parser.error("Choose either --regenerate-audio or --resume-audio.")
+    if (args.regenerate_audio or args.resume_audio) and (
+        args.images_only
+        or args.no_audio
+        or args.skip_images
+        or args.from_stage != "B1.1"
+        or args.avatar is not None
+    ):
+        parser.error(
+            "Audio-only modes cannot be combined with images, --from, "
+            "--no-audio or --avatar."
+        )
+    if args.images_only and args.no_audio:
+        parser.error("--images-only does not run audio; omit --no-audio.")
     if args.images_only and (args.skip_images or args.from_stage != "B1.1"):
         parser.error("--images-only cannot be combined with --no-image, --skip-images or --from.")
     if args.images_only and args.avatar is not None:
@@ -112,6 +146,9 @@ def parse_args() -> argparse.Namespace:
         or args.from_stage != "B1.1"
         or args.images_only
         or args.skip_images
+        or args.no_audio
+        or args.regenerate_audio
+        or args.resume_audio
     ):
         parser.error("Listing cannot be combined with generation options.")
     return args
@@ -540,6 +577,81 @@ async def _run_images_only(script_file: Path, output_root: Path) -> None:
     )
 
 
+
+async def _generate_audio(
+    script: str,
+    output: Path,
+    *,
+    provider: OpenAIProvider | None = None,
+    resume: bool = False,
+) -> dict[str, object]:
+    return await generate_fish_audio(
+        script,
+        output,
+        director_model=settings.openai_b_model,
+        provider=provider,
+        ai33_api_key=settings.ai33_api_key,
+        voice_id=settings.ai33_fish_voice_id,
+        speed=settings.ai33_fish_speed,
+        poll_timeout_seconds=settings.ai33_fish_poll_timeout_seconds,
+        poll_interval_seconds=settings.ai33_fish_poll_interval_seconds,
+        resume=resume,
+    )
+
+
+async def _run_audio_only(
+    script_file: Path,
+    output_root: Path,
+    *,
+    resume: bool,
+) -> None:
+    """An independent audio-only run: no avatar, B bots, B2 images or GPUs."""
+    root = output_root.resolve()
+    source = script_file.resolve()
+    cwd = Path.cwd().resolve()
+    if root == cwd or root in cwd.parents or source.is_relative_to(root):
+        raise SystemExit("--output must be outside the repository and source directory")
+    output = output_root / script_file.stem
+    report_path = output / "run_report.json"
+    if output.is_symlink() or report_path.is_symlink() or not report_path.is_file():
+        raise SystemExit("Audio-only mode requires the saved run_report.json")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    raw = script_file.read_bytes()
+    try:
+        script = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SystemExit("Audio source must be UTF-8") from exc
+    if report.get("run", {}).get("script_sha256") != hashlib.sha256(raw).hexdigest():
+        raise SystemExit("Script changed since the B run; audio-only mode is blocked")
+    if not resume and not settings.openai_api_key:
+        raise SystemExit("OPENAI_API_KEY is required to rerun the Fish director")
+    if not settings.ai33_api_key:
+        raise SystemExit("AI33_API_KEY is required for the Fish Audio voice task")
+
+    provider = (
+        None
+        if resume
+        else OpenAIProvider(
+            api_key=settings.openai_api_key,
+            reasoning_effort=settings.openai_b_reasoning_effort,
+            service_tier="default",
+        )
+    )
+    try:
+        artifact = await _generate_audio(script, output, provider=provider, resume=resume)
+    except Exception:
+        report["run"]["audio_generation"] = {"status": "incomplete"}
+        _write(report_path, report)
+        raise
+    report["run"]["audio_generation"] = artifact
+    _write(report_path, report)
+    print(
+        f"  Fish Audio ready: {artifact['file']} "
+        f"(voice {artifact['voice_id']})",
+        flush=True,
+    )
+
+
 class BotArtifacts:
     """Persist the exact request payload and validated response of every bot call."""
 
@@ -701,11 +813,27 @@ async def main() -> None:
         output_root = args.output if args.output is not None else settings.output_dir
         await _run_images_only(script_file, output_root)
         return
+    if getattr(args, "regenerate_audio", False) or getattr(args, "resume_audio", False):
+        output_root = args.output if args.output is not None else settings.output_dir
+        await _run_audio_only(
+            script_file,
+            output_root,
+            resume=bool(getattr(args, "resume_audio", False)),
+        )
+        return
 
     avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
     avatar_bytes, avatar_width, avatar_height = load_avatar_png(avatar_file)
     if not settings.openai_api_key:
         raise SystemExit("OPENAI_API_KEY is missing")
+    if (
+        args.from_stage == "B1.1"
+        and not getattr(args, "no_audio", False)
+        and not settings.ai33_api_key
+    ):
+        raise SystemExit(
+            "AI33_API_KEY is required for Fish TTS; pass --no-audio to skip."
+        )
 
     if args.max_parallel_calls < 1:
         raise SystemExit("--max-parallel-calls must be positive")
@@ -734,6 +862,11 @@ async def main() -> None:
             raise SystemExit(
                 "Existing AI33 tasks may still be running. Use --images-only to "
                 "recover them before starting a new B pipeline run."
+            )
+        if previous_output.exists() and unfinished_audio_runs(previous_output):
+            raise SystemExit(
+                "Existing Fish Audio tasks may be chargeable. Use --resume-audio "
+                "before replacing this script's output directory."
             )
         output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
     else:
@@ -780,6 +913,8 @@ async def main() -> None:
     }
     if args.from_stage != "B1.1":
         run_metadata["resumed_from"] = args.from_stage
+        if previous_report.get("run", {}).get("audio_generation"):
+            run_metadata["audio_generation"] = previous_report["run"]["audio_generation"]
     artifacts = BotArtifacts(output)
 
     def save_report(
@@ -842,12 +977,25 @@ async def main() -> None:
         _print_metric(stage, elapsed, costs["stages"][stage]["estimated_cost_usd"])
 
     save_report("running", None)
+    audio_task: asyncio.Task[dict[str, object]] | None = None
+    audio_joined = False
     try:
         provider = OpenAIProvider(
             api_key=settings.openai_api_key,
             reasoning_effort=settings.openai_b_reasoning_effort,
             service_tier="default",
         )
+        if args.from_stage == "B1.1" and not getattr(args, "no_audio", False):
+            run_metadata["audio_generation"] = {"status": "running"}
+            save_report("running", None)
+            # Start the independent director at the same time as B1.1. It
+            # immediately forwards its validated output to OpenSpeaker TTS.
+            audio_task = asyncio.create_task(
+                _generate_audio(script, output, provider=provider)
+            )
+        elif args.from_stage == "B1.1":
+            run_metadata["audio_generation"] = {"status": "skipped"}
+            save_report("running", None)
         result = await run_b_pipeline(
             script,
             provider=provider,
@@ -869,12 +1017,23 @@ async def main() -> None:
         # This application-owned binding is intentionally absent from audited B2 payloads.
         visual_plan["avatar"] = avatar_metadata
         _write(output / "visual_plan.json", visual_plan)
+        if audio_task is not None:
+            run_metadata["audio_generation"] = await audio_task
+            audio_joined = True
+            save_report("running", len(result.b12))
         if not getattr(args, "skip_images", False):
             run_metadata["image_generation"] = {"status": "running"}
             save_report("running", len(result.b12))
             image_manifest = await _generate_images(output, visual_plan)
             run_metadata["image_generation"] = _image_summary(image_manifest)
     except Exception:
+        if audio_task is not None and not audio_joined:
+            # Never abandon an in-flight paid TTS submission by cancelling
+            # its task when a separate B stage fails.
+            try:
+                run_metadata["audio_generation"] = await asyncio.shield(audio_task)
+            except Exception:
+                run_metadata["audio_generation"] = {"status": "incomplete"}
         if run_metadata.get("image_generation") == {"status": "running"}:
             run_metadata["image_generation"] = {"status": "incomplete"}
         _, timing_report = save_report("failed", None)
