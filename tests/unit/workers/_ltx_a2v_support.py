@@ -82,6 +82,11 @@ def make_a2v_bindings(state: dict[str, Any]) -> a2v._A2VBindings:
         CPU = "cpu"
         DISK = "disk"
 
+    class FakeCompilationConfig:
+        def __init__(self) -> None:
+            self.mode = None
+            self.capture = False
+
     class FakeDiffvaeApply:
         @staticmethod
         def natten_available() -> bool:
@@ -177,6 +182,7 @@ def make_a2v_bindings(state: dict[str, Any]) -> a2v._A2VBindings:
         model_paths=FakeModelPaths,
         quantization_kind=FakeQuantizationKind,
         offload_mode=FakeOffloadMode,
+        compilation_config=FakeCompilationConfig,
         image_conditioning_input=fake_conditioning,
         encode_video=fake_encode_video,
         get_video_chunks_number=lambda num_frames, tiling: 2,
