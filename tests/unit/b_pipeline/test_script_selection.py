@@ -1,4 +1,5 @@
 import asyncio
+import json
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
@@ -122,14 +123,47 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     )
     received: list[str] = []
 
-    async def fake_run(script: str, *, provider: object, model: str, max_parallel_calls: int):
+    async def fake_run(
+        script: str,
+        *,
+        provider: object,
+        model: str,
+        max_parallel_calls: int,
+        on_input,
+        on_output,
+        on_api_response,
+    ):
         assert provider.reasoning_effort == "medium"
         assert model == "gpt-6-luna"
         assert max_parallel_calls == 3
         received.append(script)
+        on_input("B1.1", None, {"plain_script_for_recording": script})
+        on_output("B1.1", None, {"pipeline_stage": "B1.1"})
+        on_input("B1.2", 1, {"current_block_id": 1, "blocks": [{"text": script}]})
+        on_output("B1.2", 1, {"pipeline_stage": "B1.2", "block_id": 1})
+        on_input("B2", 1, {"current_block_id": 1, "blocks": [{"beats": []}]})
+        on_output("B2", 1, {"pipeline_stage": "B2", "blocks": []})
+        for stage, block_id in (("B1.1", None), ("B1.2", 1), ("B2", 1)):
+            on_api_response(
+                stage,
+                block_id,
+                SimpleNamespace(
+                    id=f"resp_{stage}",
+                    model="gpt-6-luna",
+                    service_tier="default",
+                    usage=SimpleNamespace(
+                        input_tokens=100,
+                        input_tokens_details=SimpleNamespace(
+                            cached_tokens=0, cache_write_tokens=0
+                        ),
+                        output_tokens=20,
+                        output_tokens_details=SimpleNamespace(reasoning_tokens=5),
+                    ),
+                ),
+            )
         return SimpleNamespace(
             b11=SimpleNamespace(model_dump=lambda: {"pipeline_stage": "B1.1"}),
-            b12=[],
+            b12=[SimpleNamespace(block_id=1)],
             b2=[],
             visual_plan=lambda: {"blocks": []},
         )
@@ -147,8 +181,21 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     asyncio.run(runner.main())
 
     assert received == ["  Uno.\r\n\r\nDos.  ", "Tres.\nCuatro."]
-    assert (tmp_path / "output" / "b_pipeline" / "roma" / "b1_1.json").is_file()
-    assert (tmp_path / "output" / "b_pipeline" / "japon" / "b1_1.json").is_file()
+    first = tmp_path / "output" / "b_pipeline" / "roma"
+    second = tmp_path / "output" / "b_pipeline" / "japon"
+    for destination in (first, second):
+        assert (destination / "B1.1" / "input.json").is_file()
+        assert (destination / "B1.1" / "output.json").is_file()
+        assert (destination / "B1.2" / "block_1" / "input.json").is_file()
+        assert (destination / "B1.2" / "block_1" / "output.json").is_file()
+        assert (destination / "B2" / "block_1" / "input.json").is_file()
+        assert (destination / "B2" / "block_1" / "output.json").is_file()
+        costs = json.loads((destination / "api_costs.json").read_text(encoding="utf-8"))
+        assert costs["pricing_status"] == "complete"
+        assert costs["estimated_total_usd"] == "0.00006000"
+    assert json.loads((first / "B1.1" / "input.json").read_text(encoding="utf-8")) == {
+        "plain_script_for_recording": "  Uno.\r\n\r\nDos.  "
+    }
     assert (folder / "roma.txt").read_bytes() == b"  Uno.\r\n\r\nDos.  "
 
 
@@ -157,3 +204,51 @@ def test_existing_direct_path_still_supported(tmp_path: Path) -> None:
     assert runner.select_script(
         scripts_dir=tmp_path / "missing", script_file=direct, interactive=False
     ) == direct
+
+
+def test_repeating_same_script_resets_only_that_scripts_output(tmp_path: Path) -> None:
+    library = tmp_path / "scripts"
+    roma = _make_script(library, "roma.txt")
+    _make_script(library, "japon.txt")
+    root = tmp_path / "output" / "b_pipeline"
+    old = runner._prepare_output(root, roma)
+    (old / "stale.json").write_text("stale", encoding="utf-8")
+    other = root / "japon"
+    other.mkdir()
+    (other / "keep.json").write_text("other-script", encoding="utf-8")
+
+    replacement = runner._prepare_output(root, roma)
+
+    assert replacement == old
+    assert not (replacement / "stale.json").exists()
+    assert (other / "keep.json").read_text(encoding="utf-8") == "other-script"
+    assert roma.is_file()
+
+
+def test_reset_rejects_unrelated_existing_directories_and_input_roots(
+    tmp_path: Path,
+) -> None:
+    script = _make_script(tmp_path / "scripts", "roma.txt")
+    output_root = tmp_path / "output"
+    unrelated = output_root / "roma"
+    unrelated.mkdir(parents=True)
+    (unrelated / "notes.txt").write_text("do not delete", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="unrelated files"):
+        runner._prepare_output(output_root, script)
+    assert (unrelated / "notes.txt").read_text(encoding="utf-8") == "do not delete"
+
+    with pytest.raises(SystemExit, match="input directory"):
+        runner._prepare_output(script.parent, script)
+
+
+def test_reset_recognizes_previous_standalone_runner_output(tmp_path: Path) -> None:
+    script = _make_script(tmp_path / "scripts", "old.txt")
+    old = tmp_path / "output" / "old"
+    old.mkdir(parents=True)
+    (old / "b1_1.json").write_text("old", encoding="utf-8")
+
+    replacement = runner._prepare_output(tmp_path / "output", script)
+
+    assert replacement == old
+    assert list(replacement.iterdir()) == []
