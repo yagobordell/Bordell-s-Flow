@@ -146,8 +146,8 @@ def _prepare_output(output_root: Path, script_file: Path) -> Path:
             "a parent of it, or the selected script's input directory."
         )
     destination = output_root / script_file.stem
-    if destination.is_symlink():
-        raise SystemExit(f"Refusing to delete a symlinked output directory: {destination}")
+    if destination.is_symlink() or destination.is_junction():
+        raise SystemExit(f"Refusing to delete a linked output directory: {destination}")
     if destination.exists():
         if not destination.is_dir():
             raise SystemExit(f"Output path is not a directory: {destination}")
