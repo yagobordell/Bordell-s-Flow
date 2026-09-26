@@ -45,6 +45,19 @@ def test_a2v_smoke_defaults_to_reference_and_fast_is_explicit(
     monkeypatch.setattr(
         sys,
         "argv",
+        [
+            "submit_ltx25_a2v_smoke.py",
+            "--audio",
+            "speech.wav",
+            "--profile",
+            "reference-compiled",
+        ],
+    )
+    assert parse_args().profile == "reference-compiled"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
         ["submit_ltx25_a2v_smoke.py", "--audio", "speech.wav", "--profile", "guided"],
     )
     guided_args = parse_args()
