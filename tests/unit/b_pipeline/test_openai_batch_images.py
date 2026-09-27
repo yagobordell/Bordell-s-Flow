@@ -114,7 +114,9 @@ class FakeBatch:
                 "request_id": f"request-{beat}",
                 "body": {
                     "created": 5,
-                    "data": [{"b64_json": base64.b64encode(_png()).decode()}],
+                    "data": [{"b64_json": base64.b64encode(_png(
+                        size=tuple(map(int, request["body"]["size"].split("x")))
+                    )).decode()}],
                     "usage": {"input_tokens": 3},
                 },
             },
@@ -134,13 +136,15 @@ class FakeDirect:
             self.calls.append(kwargs)
         if self.unknown:
             raise URLError("lost direct image POST")
-        content = _png()
+        content = _png(size=tuple(map(int, kwargs["size"].split("x"))))
         target = kwargs["destination"]
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
         return {
             "sha256": hashlib.sha256(content).hexdigest(),
-            "width": 1280, "height": 720, "size": "1280x720",
+            "width": tuple(map(int, kwargs["size"].split("x")))[0],
+            "height": tuple(map(int, kwargs["size"].split("x")))[1],
+            "size": kwargs["size"],
             "output_format": "png", "usage": {"input_tokens": 4}, "created": 8,
         }
 
