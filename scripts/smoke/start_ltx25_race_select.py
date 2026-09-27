@@ -77,6 +77,7 @@ def race_to_one(
     sleep: Callable[[float], None] = time.sleep,
     report: Callable[[str], None] = print,
     assert_authority: Callable[[], None] = lambda: None,
+    worker_self_protection: bool = False,
 ) -> dict[str, Any]:
     """Return only when the FIRST ready instance is the SOLE running replica."""
     if not 120 <= timeout_seconds <= 7200 or not 1 <= poll_seconds <= 60:
@@ -119,6 +120,7 @@ def race_to_one(
     first_started_seconds = None
     first_ready_seconds = None
     seen: set[str] = set()
+    ever_ready: set[str] = set()
     last_state = ""
     last_report = float("-inf")
     while clock() < deadline:
@@ -153,6 +155,7 @@ def race_to_one(
             if item.get("ready") is True and item.get("version") == version
         ]
         ready_ids = sorted(str(item["id"]) for item in ready if item.get("id"))
+        ever_ready.update(ready_ids)
         ready_id = candidate if candidate in ready_ids else (ready_ids[0] if ready_ids else None)
         if ready_id is None:
             candidate, consecutive_ready = None, 0
@@ -241,10 +244,74 @@ def race_to_one(
             "allocated competitor; no deletion-cost PATCH required"
         )
         assert_authority()
+    elif worker_self_protection:
+        # A reviewed worker's /ready only succeeds after owning the first-ready
+        # Postgres election lock and verifying its OWN IMDS deletion cost.
+        # Never mix that local writer with external PATCH.
+        guard_deadline = min(deadline, clock() + 90)
+        guard_confirmations = 0
+        last_loser_id: str | None = None
+        while clock() < guard_deadline:
+            assert_authority()
+            protected_group = client.describe_container_group()
+            _verify_group(protected_group, name=group_name, image=expected_image)
+            active = [
+                item for item in client.list_container_group_instances()
+                if item.get("version") == version and item.get("state") in _ACTIVE_STATES
+            ]
+            selected = next((i for i in active if i.get("id") == candidate), None)
+            rivals = [i for i in active if i.get("id") != candidate]
+            if (
+                protected_group.get("version") != version
+                or protected_group.get("replicas") != 2
+                or protected_group.get("pending_change") is not False
+                or _status(protected_group) != "running"
+                or selected is None
+                or selected.get("state") != "running"
+                or selected.get("started") is not True
+                or selected.get("ready") is not True
+                or len(rivals) > 1
+            ):
+                raise RuntimeError(
+                    "LTX race lost IMDS-protected winner or group version; "
+                    "no job submitted"
+                )
+            rival_id = str(rivals[0]["id"]) if rivals else None
+            if rivals:
+                if rivals[0].get("ready") is True or rival_id in ever_ready:
+                    raise RuntimeError(
+                        "LTX race found a second ready worker; refusing unsafe scale-in"
+                    )
+                detail = client.get_container_group_instance(rival_id)
+                if (
+                    detail.get("id") != rival_id
+                    or detail.get("version") != version
+                    or detail.get("deletion_cost", 0) != 0
+                ):
+                    raise RuntimeError(
+                        "LTX race loser has unconfirmed deletion cost; no scale-in"
+                    )
+            if guard_confirmations and rival_id != last_loser_id:
+                guard_confirmations = 0
+            last_loser_id = rival_id
+            guard_confirmations += 1
+            if guard_confirmations >= 2:
+                break
+            sleep(min(poll_seconds, max(0.0, guard_deadline - clock())))
+        else:
+            raise TimeoutError("LTX race could not confirm IMDS-protected first-ready worker")
+        report(
+            "LTX_RACE imds_first_ready_verified "
+            f"winner={candidate} loser={last_loser_id or 'none'} confirmations=2/2"
+        )
+        assert_authority()
+        report(
+            f"LTX_RACE winner={candidate}; scaling 2 -> 1 using local IMDS "
+            "protection and no external deletion-cost PATCH"
+        )
     else:
-        # Multiple active instances REQUIRE independently confirmed protection.
-        # Never trust PATCH acknowledgement alone or scale down a ready winner
-        # while Salad still reads its deletion cost as zero.
+        # Legacy direct-selector mode: never trust PATCH acknowledgement without
+        # exact-instance GET confirming its deletion-cost protection.
         # Only configured capacity is two. Under supply pressure Salad may have
         # allocated just the one healthy winner. Treat zero active competitors as
         # a valid, explicitly checked fallback, never as proof of two live GPUs.
@@ -504,6 +571,7 @@ def main() -> int:
     parser.add_argument("--timeout-seconds", type=float, default=2400)
     parser.add_argument("--poll-seconds", type=float, default=15)
     parser.add_argument("--reset-stopped", action="store_true")
+    parser.add_argument("--ready-protected-by-imds", action="store_true")
     args = parser.parse_args()
     env_file = Path(args.env_file)
     if not env_file.is_absolute():
@@ -517,6 +585,10 @@ def main() -> int:
     if manifest["stack"]["job_transport"] != "postgres":
         raise SystemExit("LTX race requires canonical Postgres transport")
     service = manifest["services"]["ltx25"]
+    if args.ready_protected_by_imds and str(service["environment"].get(
+        "LTX_RACE_PROTECT_READY_WITH_IMDS", ""
+    )).lower() != "true":
+        raise SystemExit("IMDS race requires a reviewed protected worker manifest")
     if service["capacity"]["start_replicas"] != 1:
         raise SystemExit("LTX race requires manifest start_replicas=1")
     if args.expected_image.rsplit("@", 1)[0] != service["image"].rsplit(":", 1)[0]:
@@ -551,6 +623,7 @@ def main() -> int:
                     timeout_seconds=args.timeout_seconds,
                     poll_seconds=args.poll_seconds,
                     assert_authority=authority.assert_held,
+                    worker_self_protection=args.ready_protected_by_imds,
                 )
     except Exception as error:
         print(f"LTX_RACE_FAILED {type(error).__name__}: {error}", file=sys.stderr)
