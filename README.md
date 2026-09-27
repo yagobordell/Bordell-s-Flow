@@ -126,17 +126,26 @@ ambos argumentos. El runner comprueba que el avatar es un PNG válido antes
 de generar y copia sus bytes a `data/output/<nombre-del-guion>/avatar.png`.
 
 La primera vez que se selecciona un avatar sin QR, la CLI pide el enlace del
-ebook. GPT-6 Luna usa el prompt fijo de QR y la herramienta oficial de imagen
-de OpenAI para crear el PNG, que se guarda junto a su URL en
-`data/avatar/.qr/<nombre-avatar.png>/` y se reutiliza en futuras ejecuciones.
-También se copia como `qr.png` a la carpeta del guion y se referencia desde
-`run_report.json` y `visual_plan.json`; todavía no se sobreimprime en el vídeo.
-Para un primer uso no interactivo, usa la opción
-`--qr-url https://ejemplo.com/ebook` al ejecutar `run.ps1`.
-`--no-image` omite imágenes B2, pero no la creación inicial del QR del avatar.
-Antes de publicar, escanea el QR con tu teléfono y confirma el enlace.
-Si una solicitud de QR falla, `request_pending.json` evita repetir sin querer
-una operación que podría haberse cobrado.
+ebook y **Segno lo codifica localmente** como QR PNG, sin llamadas a GPT ni a
+ninguna API. El QR y la URL se guardan en
+`data/avatar/.qr/<nombre-avatar.png>/`, de modo que las siguientes
+generaciones con el mismo avatar lo reutilizan. También se guarda una copia
+`qr.png` en la carpeta de salida del guion y se referencia desde
+`run_report.json` y `visual_plan.json`. El QR todavía no se muestra sobre
+el vídeo. Si había un QR generado por GPT, se sustituye automáticamente
+usando la URL guardada, sin pedirla otra vez.
+
+Para una primera asignación no interactiva usa
+`--qr-url https://ejemplo.com/ebook`. Para crear o reparar solo un QR sin
+guion, créditos, ni clave de OpenAI:
+
+```powershell
+.\run.ps1 --qr-only --avatar Jorge --qr-url "https://ejemplo.com/ebook"
+```
+
+`--no-image` omite las imágenes B2, pero el QR local se prepara igualmente.
+Los tests de CI comprueban con ZBar que el PNG se decodifica a la URL exacta.
+Antes de publicar, escanea el QR con tu móvil y comprueba la página de venta.
 
 Cada guion escribe en `data/output/<nombre-del-guion>/`: input/output de
 B1.1, output por bloque y merge de B1.2/B2, `visual_plan.json` y
