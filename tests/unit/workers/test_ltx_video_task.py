@@ -27,12 +27,16 @@ class FakeBackend:
         self.calls: list[dict[str, Any]] = []
         self.prepare_calls = 0
         self.ready_calls = 0
+        self.invalidate_calls = 0
 
     def prepare(self) -> None:
         self.prepare_calls += 1
 
     def ready(self) -> None:
         self.ready_calls += 1
+
+    def invalidate_pipeline(self) -> None:
+        self.invalidate_calls += 1
 
     def generate(
         self,
@@ -154,6 +158,56 @@ def test_task_runner_generates_one_silent_ready_mp4_contract(tmp_path: Path) -> 
     assert len(backend.calls) == 1
     assert backend.calls[0]["parameters"].prompt == "A deliberate samurai motion shot."
     assert backend.calls[0]["parameters"].seed == 43
+
+
+def test_i2v_runner_invalidates_pipeline_after_retryable_gpu_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = FakeBackend()
+    runner = LTXVideoTaskRunner(backend=backend)
+    keyframe = tmp_path / "keyframe.png"
+    keyframe.write_bytes(b"png")
+
+    def fail_generation(**kwargs: Any) -> None:
+        del kwargs
+        raise RuntimeError("CUDA out of memory while executing I2V")
+
+    monkeypatch.setattr(backend, "generate", fail_generation)
+
+    with pytest.raises(RuntimeError, match="CUDA out of memory"):
+        runner.run(
+            request(),
+            {"keyframe": keyframe},
+            tmp_path / "retryable-gpu-failure",
+        )
+
+    assert backend.invalidate_calls == 1
+
+
+def test_i2v_runner_keeps_pipeline_for_non_gpu_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = FakeBackend()
+    runner = LTXVideoTaskRunner(backend=backend)
+    keyframe = tmp_path / "keyframe.png"
+    keyframe.write_bytes(b"png")
+
+    def fail_generation(**kwargs: Any) -> None:
+        del kwargs
+        raise RuntimeError("unexpected media encoder failure")
+
+    monkeypatch.setattr(backend, "generate", fail_generation)
+
+    with pytest.raises(RuntimeError, match="media encoder failure"):
+        runner.run(
+            request(),
+            {"keyframe": keyframe},
+            tmp_path / "non-gpu-failure",
+        )
+
+    assert backend.invalidate_calls == 0
 
 
 def test_task_runner_rejects_wrong_input_or_output_contract(tmp_path: Path) -> None:
@@ -358,6 +412,16 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     assert static_calls[0]["seed"] == validated.seed
     assert static_calls[0]["images"][0]["strength"] == 1.0
     assert state["encodes"][2]["audio"] is None
+
+    backend.invalidate_pipeline()
+    assert backend.pipeline_loaded is False
+    backend.generate(
+        keyframe_path=keyframe,
+        output_path=tmp_path / "after-transient-retry.mp4",
+        parameters=validated,
+    )
+    assert backend.pipeline_loaded is True
+    assert state["pipeline_builds"] == 2
 
 
 def test_qwen_keyframe_fits_ltx_grid_without_losing_image_edges(tmp_path: Path) -> None:

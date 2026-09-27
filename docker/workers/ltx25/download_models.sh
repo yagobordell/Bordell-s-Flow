@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+BOOTSTRAP_STARTED_EPOCH="$(date +%s)"
+
 MANIFEST_PATH="${LTX_MODEL_MANIFEST:-/usr/local/share/ltx25-model-manifest.json}"
 MODEL_ROOT="${LTX_MODEL_ROOT:-/workspace/models/ltx-2.5}"
 MODEL_REPOSITORY="${LTX_MODEL_REPOSITORY:-Lightricks/LTX-2.5}"
@@ -135,3 +137,6 @@ for model_file in "${MODEL_FILES[@]}"; do
   }
   echo "MODEL_READY ${model_file} bytes=$(stat -c %s "${destination}")"
 done
+
+BOOTSTRAP_FINISHED_EPOCH="$(date +%s)"
+echo "LTX25_MODEL_BOOTSTRAP_METRIC cache_hit=${manifest_is_valid} files=${#MODEL_FILES[@]} elapsed_seconds=$((BOOTSTRAP_FINISHED_EPOCH - BOOTSTRAP_STARTED_EPOCH))"
