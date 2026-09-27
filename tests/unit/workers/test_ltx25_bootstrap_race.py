@@ -362,7 +362,7 @@ def test_reset_requires_stopped_group_then_restores_one_replica() -> None:
         )
 
 
-def test_legacy_two_replica_race_is_not_used_by_controlled_wrapper() -> None:
+def test_wrapper_race_is_opt_in_and_stops_before_restoring_replicas() -> None:
     source = Path("scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1").read_text(
         encoding="utf-8"
     )
@@ -371,9 +371,9 @@ def test_legacy_two_replica_race_is_not_used_by_controlled_wrapper() -> None:
     assert source.index("& $Python $RaceSelector @RaceArgs") < source.index(
         "& $Python $ReadyWait @ReadyArgs"
     )
-    assert "start_ltx25_isolated_race.py" in source
-    assert "--reset-stopped" not in source
-    assert "-IsolatedRaceGroup" in source
+    assert source.index("& $WorkerManager -Action Stop -Service ltx25") < source.index(
+        "& $Python $RaceSelector --reset-stopped"
+    )
     assert source.index("& $Python $ReadyWait @ReadyArgs") < source.index(
         "& $Python $Smoke @Arguments"
     )
