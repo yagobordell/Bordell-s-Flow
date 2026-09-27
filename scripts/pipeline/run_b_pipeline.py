@@ -535,7 +535,20 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
             "sha256": item["sha256"],
             "provider": item.get("provider", "ai33"),
         }
-        for item in manifest["items"]
+        for item in manifest["items"] if item.get("grid") is None
+    ]
+    # A grid is not an individual beat image until a later cropping stage.
+    # Keep its complete panel map without pretending to have start-image crops.
+    plan["image_grids"] = [
+        {
+            "file": item["file"],
+            "sha256": item["sha256"],
+            "provider": item["provider"],
+            "size": item["size"],
+            "grid": item["grid"],
+            "panels": item["panels"],
+        }
+        for item in manifest["items"] if item.get("grid") is not None
     ]
     _write(output / "visual_plan.json", plan)
     return manifest
@@ -543,7 +556,7 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
 
 def _image_summary(manifest: dict[str, object]) -> dict[str, object]:
     items = manifest["items"]
-    return {
+    summary = {
         "status": "completed",
         "count": len(items),
         "model_id": manifest["model_id"],
@@ -557,6 +570,12 @@ def _image_summary(manifest: dict[str, object]) -> dict[str, object]:
             item.get("batch_may_complete_later") for item in items
         ),
     }
+    if any(item.get("grid") is not None for item in items):
+        summary["grid_count"] = sum(
+            item.get("grid") is not None for item in items
+        )
+        summary["beat_count"] = manifest["total_described_beats"]
+    return summary
 
 
 async def _render_preview(
@@ -576,6 +595,14 @@ async def _preview_if_ready(
     plan: dict[str, object] | None = None,
     images: dict[str, object] | None = None,
 ) -> dict[str, object] | None:
+    # No automatic grid panel cropping in this phase: do not render the full
+    # contact sheet as if it were each beat's individual 1280x720 start image.
+    if images is not None and images.get("grid_count", 0):
+        return {
+            "status": "deferred",
+            "reason": "grid_panels_not_cropped",
+            "grid_count": images["grid_count"],
+        }
     run = report.get("run", {})
     audio = run.get("audio_generation") if isinstance(run, dict) else None
     if (
@@ -596,6 +623,12 @@ async def _preview_if_ready(
         images = json.loads(manifest_path.read_text(encoding="utf-8"))
     if images.get("status") != "completed":
         return None
+    if images.get("grid_count", 0):
+        return {
+            "status": "deferred",
+            "reason": "grid_panels_not_cropped",
+            "grid_count": images["grid_count"],
+        }
     return await _render_preview(output, plan, audio, images)
 
 
