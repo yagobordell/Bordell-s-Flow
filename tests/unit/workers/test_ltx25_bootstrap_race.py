@@ -230,6 +230,84 @@ def test_solo_winner_still_must_survive_scale_in() -> None:
 
 
 
+
+def test_imds_guard_scales_while_second_is_still_downloading() -> None:
+    module = _module()
+    clock = FakeClock()
+    client = FakeRaceClient()
+    client.cost_readback_enabled = False
+    observations: list[str] = []
+
+    result = module.race_to_one(
+        client,
+        group_name=GROUP,
+        expected_image=IMAGE,
+        worker_self_protection=True,
+        timeout_seconds=120,
+        poll_seconds=15,
+        clock=clock.clock,
+        sleep=clock.sleep,
+        report=observations.append,
+    )
+
+    assert result["winner_id"] == WINNER
+    assert result["instances_seen"] == 2
+    assert result["replicas_before_job"] == 1
+    assert client.events == ["replicas=2", "start", "replicas=1"]
+    assert any("imds_first_ready_verified" in line for line in observations)
+    assert all("deletion_cost_patch" not in line for line in observations)
+
+
+def test_imds_guard_refuses_second_ready_instance() -> None:
+    module = _module()
+    clock = FakeClock()
+
+    class TwoReadyClient(FakeRaceClient):
+        def list_container_group_instances(self) -> list[dict[str, Any]]:
+            current = super().list_container_group_instances()
+            if self.replicas == 2 and len(current) == 2:
+                current[1]["state"] = "running"
+                current[1]["started"] = True
+                current[1]["ready"] = True
+            return current
+
+    client = TwoReadyClient()
+    with pytest.raises(RuntimeError, match="second ready worker"):
+        module.race_to_one(
+            client,
+            group_name=GROUP,
+            expected_image=IMAGE,
+            worker_self_protection=True,
+            timeout_seconds=120,
+            poll_seconds=15,
+            clock=clock.clock,
+            sleep=clock.sleep,
+            report=lambda _: None,
+        )
+    assert client.events == ["replicas=2", "start"]
+
+
+def test_imds_guard_refuses_loser_with_high_cost() -> None:
+    module = _module()
+    clock = FakeClock()
+    client = FakeRaceClient()
+    client.deletion_costs[LOSER] = 100000
+    with pytest.raises(RuntimeError, match="unconfirmed deletion cost"):
+        module.race_to_one(
+            client,
+            group_name=GROUP,
+            expected_image=IMAGE,
+            worker_self_protection=True,
+            timeout_seconds=120,
+            poll_seconds=15,
+            clock=clock.clock,
+            sleep=clock.sleep,
+            report=lambda _: None,
+        )
+    assert client.events == ["replicas=2", "start"]
+
+
+
 def test_no_ready_instance_never_scales_in_or_submits() -> None:
     module = _module()
     clock = FakeClock()
