@@ -45,23 +45,6 @@ def test_a2v_smoke_defaults_to_reference_and_fast_is_explicit(
     monkeypatch.setattr(
         sys,
         "argv",
-        [
-            "submit_ltx25_a2v_smoke.py",
-            "--audio",
-            "speech.wav",
-            "--profile",
-            "static-reference",
-            "--prompt",
-            "A woman whispering to the microphone",
-        ],
-    )
-    static_args = parse_args()
-    assert static_args.profile == "static-reference"
-    assert static_args.prompt == "A woman whispering to the microphone"
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
         ["submit_ltx25_a2v_smoke.py", "--audio", "speech.wav", "--profile", "guided"],
     )
     guided_args = parse_args()
@@ -138,31 +121,3 @@ def test_ltx_gpu_fast_start_waits_for_same_ready_instance_before_paid_job() -> N
         "& $Python $Smoke @Arguments"
     )
     assert "reference-compiled" not in script
-    assert '"static-reference"' in script
-    assert "Static-reference is experimental and requires -ExpectedPinnedImage" in script
-
-
-def test_static_reference_trial_requires_original_inputs_and_always_restores_group() -> None:
-    script = Path("scripts/smoke/run_ltx25_static_reference_trial.ps1").read_text(
-        encoding="utf-8"
-    )
-    assert "investigate/ltx25-monje-lipsync-latency-20260926" in script
-    assert "aaaefa0acd0dbf25b7526ccb349fb6ad4fd7a8511b9eadec66107244bd7bbe64" in script
-    assert "18d070d56289a7abb83abe1394bcbcc29d7cab09cf464220c38ac7297bc94553" in script
-    assert "ExpectedCommit" in script
-    assert "ExperimentalPinnedImage" in script
-    assert "Assert-MonkGroupStopped -PinnedImage $OriginalPinnedImage" in script
-    assert script.index("Assert-MonkGroupStopped -PinnedImage $OriginalPinnedImage") < (
-        script.index("$PrepareAttempted = $true")
-    )
-    assert '-Profile static-reference' in script
-    assert '-StartupReplicas 1' in script
-    assert '-Prompt "An elderly monk speaking calmly to the camera."' in script
-    assert script.index("finally {") < script.index("-Action Stop -Service ltx25")
-    assert script.index("-Action Stop -Service ltx25") < script.index(
-        "Assert-MonkGroupStopped -PinnedImage $ExperimentalPinnedImage",
-        script.index("finally {"),
-    )
-    assert script.index("-Action Prepare -Service ltx25 -Image $OriginalTag") > (
-        script.index("-Action Stop -Service ltx25")
-    )
