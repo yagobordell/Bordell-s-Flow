@@ -919,3 +919,68 @@ def test_images_only_saves_grid_map_and_defers_preview_without_cropping(
     assert report["run"]["video_preview"] == {
         "status": "deferred", "reason": "grid_panels_not_cropped", "grid_count": 1,
     }
+
+
+def test_separate_numbered_runs_make_two_grids_without_duplicate_fillers(
+    tmp_path: Path,
+) -> None:
+    plan = _numbered_grid_plan(2, after=2)
+    plan["blocks"][0]["beats"].extend([
+        {"beat_id": "1F", "visual_type": "media_video",
+         "description": "1. A continuous second scene begins"},
+        {"beat_id": "1G", "visual_type": "media_image",
+         "description": "2. The second scene continues"},
+        {"beat_id": "1H", "visual_type": "media_image",
+         "description": "Second scene following photo one"},
+        {"beat_id": "1I", "visual_type": "media_video",
+         "description": "Second scene following photo two"},
+    ])
+    batch = FakeBatch()
+    manifest = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+    )
+    assert manifest["grid_count"] == manifest["total_generation_jobs"] == 2
+    assert len(batch.created) == 2
+    assert [item["grid"]["numbered_beat_ids"] for item in manifest["items"]] == [
+        ["1B", "1C"], ["1F", "1G"],
+    ]
+    mapped = [panel["beat_id"] for item in manifest["items"] for panel in item["panels"]]
+    assert mapped == ["1B", "1C", "1D", "1E", "1F", "1G", "1H", "1I"]
+
+
+def test_final_grid_can_take_following_free_images_from_next_block(
+    tmp_path: Path,
+) -> None:
+    plan = _numbered_grid_plan(2)
+    plan["blocks"].append({"block_id": 2, "beats": [
+        {"beat_id": "2A", "visual_type": "media_video",
+         "description": "The following scene image"},
+        {"beat_id": "2B", "visual_type": "media_image",
+         "description": "An additional still"},
+    ]})
+    batch = FakeBatch()
+    manifest = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+    )
+    assert manifest["grid_count"] == 1
+    assert [p["beat_id"] for p in manifest["items"][0]["panels"]] == [
+        "1B", "1C", "2A", "2B",
+    ]
+    assert len(batch.created) == 1
+
+
+def test_changed_grid_panel_rejects_resume_without_second_paid_post(
+    tmp_path: Path,
+) -> None:
+    plan = _numbered_grid_plan(2, after=2)
+    batch = FakeBatch()
+    images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+    )
+    changed = json.loads(json.dumps(plan))
+    changed["blocks"][0]["beats"][-1]["description"] = "Different last panel"
+    with pytest.raises(images.ImageBatchError, match="differs"):
+        images.generate_b2_images(
+            tmp_path, changed, api_key=None, options=_opts(), batch_client=batch,
+        )
+    assert len(batch.created) == 1
