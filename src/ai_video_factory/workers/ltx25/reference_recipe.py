@@ -23,6 +23,16 @@ class LTXA2VReferenceRecipe:
 
 LTX_A2V_REFERENCE_RECIPE = LTXA2VReferenceRecipe()
 
+# The existing 8+3-step reference is unchanged. Camera stabilization is a
+# separate, explicitly selected A2V experiment, never a rewrite of the user's
+# positive prompt and never a silent change to reference or production.
+LTX_A2V_STATIC_IMAGE_STRENGTH = 0.8
+LTX_A2V_STATIC_VIDEO_CFG_SCALE = 1.25
+LTX_A2V_STATIC_NEGATIVE_PROMPT = (
+    "camera zoom, zoom in, push in, dolly in, camera drift, camera shake, "
+    "reframing, crop change, handheld camera, unintended camera movement"
+)
+
 
 def reference_num_frames_for_samples(
     sample_count: int,
