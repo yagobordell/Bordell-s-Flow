@@ -45,7 +45,10 @@ Run directly with:
 python scripts/pipeline/run_phase8_videos.py
 ```
 
-Normal production uses `scripts/pipeline/run_phase8_videos_controlled.ps1`.
+Normal production uses `scripts/pipeline/run_phase8_videos_controlled.ps1`, which
+starts the dedicated `ltx25_i2v` group, not the avatar `ltx25` group. The
+transport marker is `postgres:ltx25_i2v` to prevent silent reuse of a manifest
+bound to the former route. See the [isolated I2V smoke](../operations/ltx25-i2v-isolated-smoke.md).
 
 ## Artifact verification
 

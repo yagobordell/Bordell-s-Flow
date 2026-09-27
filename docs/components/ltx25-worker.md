@@ -45,19 +45,26 @@ are optional comparison assets enabled explicitly with `LTX_INCLUDE_A2V_DEV_ASSE
 Build and publish the new LTX Docker image tag before deploying the Qwen 1280x736 input
 contract: the old worker image rejects that keyframe geometry.
 
-The canonical service entry is `ltx25` in `deploy/salad/services.json`. The manifest owns the
-container group, queue, RTX 5090 profile, priority, replica ceiling and runtime environment.
+`deploy/salad/services.json` defines separate Salad groups: `ltx25_i2v` handles only
+`video.ltx25.generate`, and `ltx25` handles only avatar A2V jobs.
+`LTX_WORKER_TASK_MODE` restricts registered task runners and Postgres polling.
+Each group has independent RTX 5090 capacity, GPU instances and autoscaling.
+The candidate `ltx25-isolated-tasks-v11` image is NOT yet published or validated;
+it may be reused by digest in both groups after approval, without sharing a container.
+Do not enable the new capacity controller until both groups are prepared.
 
 Operate it with:
 
 ```powershell
-.\scripts\salad\manage_salad_worker.ps1 -Service ltx25 -Action Status
-.\scripts\salad\manage_salad_worker.ps1 -Service ltx25 -Action Prepare
-.\scripts\salad\manage_salad_worker.ps1 -Service ltx25 -Action Start
-.\scripts\salad\manage_salad_worker.ps1 -Service ltx25 -Action Stop
+.\scripts\salad\manage_salad_worker.ps1 -Service ltx25_i2v -Action Status
+.\scripts\salad\manage_salad_worker.ps1 -Service ltx25_i2v -Action Prepare
+.\scripts\salad\manage_salad_worker.ps1 -Service ltx25_i2v -Action Start
+.\scripts\salad\manage_salad_worker.ps1 -Service ltx25_i2v -Action Stop
 ```
 
-Queue autoscaling uses `min_replicas=0`; a started service does not imply an idle GPU replica.
+Production capacity is governed by the Postgres-backed predictive controller.
+Controlled paid smokes allocate one replica explicitly and stop it in `finally`.
+See [isolated I2V validation](../operations/ltx25-i2v-isolated-smoke.md).
 
 ## Reliability
 

@@ -32,8 +32,11 @@ the shared replay/idempotency path.
 
 ## Runtime
 
-A2V and normal image-to-video share the same LTX service and resident model family. They do not require
-separate Salad groups.
+A2V uses the existing Salad service `ltx25` with `LTX_WORKER_TASK_MODE=a2v`.
+I2V uses the separate Salad group `ltx25_i2v` with `LTX_WORKER_TASK_MODE=i2v`.
+Both can use the same pinned model family and Docker image, but they never share
+resident GPU containers or Postgres task ownership. This change remains in draft
+PR #238 until the isolated real I2V test is approved.
 
 A2V uses the shared GPU retry budget (`DEFAULT_GPU_MAX_ATTEMPTS=5`). OOM, CUDA-device and
 cuDNN/SDPA failures remain retryable through the Postgres job state machine. Before a later

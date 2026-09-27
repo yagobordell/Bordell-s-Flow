@@ -36,7 +36,7 @@ $Services = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\salad\services
 $I2V = $Services.services.ltx25_i2v
 $Avatar = $Services.services.ltx25
 $ImageRepository = [string]$I2V.image -replace ":[^/:]+$", ""
-if (-not $ExpectedPinnedImage.StartsWith("$ImageRepository@sha256:")) {
+if (-not $ExpectedPinnedImage.StartsWith("${ImageRepository}@sha256:")) {
     throw "The expected image digest must refer to the reviewed I2V Docker repository."
 }
 if ($I2V.group_name -eq $Avatar.group_name -or
