@@ -153,6 +153,7 @@ def test_one_allocated_ready_worker_can_scale_from_configured_two_to_one() -> No
     clock = FakeClock()
     client = FakeRaceClient()
     client.only_one_allocated = True
+    client.cost_readback_enabled = False  # Salad's PATCH/GET mismatch must not block a sole GPU.
     observations: list[str] = []
 
     result = module.race_to_one(
@@ -169,32 +170,52 @@ def test_one_allocated_ready_worker_can_scale_from_configured_two_to_one() -> No
     assert result["winner_id"] == WINNER
     assert result["replicas_before_job"] == 1
     assert result["instances_seen"] == 1
-    assert client.events == [
-        "replicas=2",
-        "start",
-        f"deletion_cost={WINNER}:100000",
-        "replicas=1",
-    ]
-    assert any("loser=none confirmations=2/2" in line for line in observations)
+    assert client.events == ["replicas=2", "start", "replicas=1"]
+    assert any("one_active_winner" in line for line in observations)
+    assert any("allocated_loser=none" in line for line in observations)
 
 
-def test_late_second_worker_after_single_winner_readback_fails_closed() -> None:
+def test_late_second_worker_blocks_unprotected_scale_in() -> None:
     module = _module()
     clock = FakeClock()
 
     class LateReplicaClient(FakeRaceClient):
         reads = 0
 
-        def get_container_group_instance(self, instance_id: str) -> dict[str, Any]:
-            result = super().get_container_group_instance(instance_id)
-            self.reads += 1
-            if self.reads == 2:
-                self.only_one_allocated = False
-            return result
+        def list_container_group_instances(self) -> list[dict[str, Any]]:
+            if self.status == "running" and self.replicas == 2:
+                self.reads += 1
+                if self.reads >= 5:
+                    self.only_one_allocated = False
+            return super().list_container_group_instances()
 
     client = LateReplicaClient()
     client.only_one_allocated = True
-    with pytest.raises(RuntimeError, match="topology changed after cost readback"):
+    client.cost_readback_enabled = False
+    with pytest.raises(TimeoutError, match="deletion costs were not confirmed"):
+        module.race_to_one(
+            client,
+            group_name=GROUP,
+            expected_image=IMAGE,
+            timeout_seconds=180,
+            poll_seconds=15,
+            clock=clock.clock,
+            sleep=clock.sleep,
+            report=lambda _: None,
+        )
+    assert client.replicas == 2
+    assert "replicas=1" not in client.events
+    assert f"deletion_cost={WINNER}:100000" in client.events
+
+
+def test_solo_winner_still_must_survive_scale_in() -> None:
+    module = _module()
+    clock = FakeClock()
+    client = FakeRaceClient(wrong_winner=True)
+    client.only_one_allocated = True
+    client.cost_readback_enabled = False
+
+    with pytest.raises(RuntimeError, match="lost the protected winner"):
         module.race_to_one(
             client,
             group_name=GROUP,
@@ -205,8 +226,8 @@ def test_late_second_worker_after_single_winner_readback_fails_closed() -> None:
             sleep=clock.sleep,
             report=lambda _: None,
         )
-    assert client.replicas == 2
-    assert "replicas=1" not in client.events
+    assert client.events == ["replicas=2", "start", "replicas=1"]
+
 
 
 def test_no_ready_instance_never_scales_in_or_submits() -> None:
