@@ -1017,3 +1017,81 @@ def test_changed_grid_panel_rejects_resume_without_second_paid_post(
             tmp_path, changed, api_key=None, options=_opts(), batch_client=batch,
         )
     assert len(batch.created) == 1
+
+
+def test_grid_prompt_uses_iphone_prefix_explicit_geometry_and_source_numbering() -> None:
+    plan = _numbered_grid_plan(2, before=2)
+    original = json.loads(json.dumps(plan))
+    jobs = images.plan_image_jobs(plan, images.described_beats(plan))
+    assert len(jobs) == 1
+    prompt = images.effective_image_prompt(jobs[0]["description"])
+    assert prompt.startswith(
+        "iphone 6 photo done by an elderly:  Generate ONE large 2x2"
+    )
+    assert "exactly 4 cells" in prompt
+    assert "aspect ratio 16:9" in prompt
+    assert "white divider lines" in prompt
+    assert "Panel 1 (row 1, column 1): 1. Previous standalone photo 1" in prompt
+    assert "Panel 2 (row 1, column 2): 2. Previous standalone photo 2" in prompt
+    assert "Panel 3 (row 2, column 1): 1. Continuous scene step 1" in prompt
+    assert "Panel 4 (row 2, column 2): 2. Continuous scene step 2" in prompt
+    assert plan == original
+
+
+def test_following_filler_gets_its_panel_number_without_rewriting_b2() -> None:
+    plan = _numbered_grid_plan(2, after=2)
+    prompt = images.plan_image_jobs(plan, images.described_beats(plan))[0]["description"]
+    assert "Panel 1 (row 1, column 1): 1. Continuous scene step 1" in prompt
+    assert "Panel 2 (row 1, column 2): 2. Continuous scene step 2" in prompt
+    assert "Panel 3 (row 2, column 1): 3. Following standalone photo 1" in prompt
+    assert "Panel 4 (row 2, column 2): 4. Following standalone photo 2" in prompt
+    assert plan["blocks"][0]["beats"][3]["description"] == "Following standalone photo 1"
+
+
+def test_complete_cropped_grids_enable_normal_preview_without_second_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    panel_map = [
+        {"block_id": 1, "beat_id": f"1{chr(ord('B') + index)}"}
+        for index in range(4)
+    ]
+    images_manifest = {
+        "status": "completed",
+        "grid_count": 1,
+        "items": [{"grid": {"columns": 2, "rows": 2}, "panels": panel_map}],
+        "panel_assets": panel_map,
+    }
+    report = {"run": {"audio_generation": {
+        "status": "completed", "stt_complete": True,
+    }}}
+    calls = []
+
+    async def fake_render(output, plan, audio, saved_images):
+        calls.append((output, plan, audio, saved_images))
+        return {"status": "completed", "file": "preview/static_preview.mp4"}
+
+    monkeypatch.setattr(runner, "_render_preview", fake_render)
+    visual = {"blocks": []}
+    result = asyncio.run(runner._preview_if_ready(
+        tmp_path, report, plan=visual, images=images_manifest
+    ))
+    assert result["status"] == "completed"
+    assert len(calls) == 1
+    assert calls[0][3] is images_manifest
+
+
+def test_unfinished_grid_crops_still_defer_preview_safely(tmp_path: Path) -> None:
+    images_manifest = {
+        "status": "completed", "grid_count": 1,
+        "items": [{"grid": {"columns": 2, "rows": 2},
+                   "panels": [{} for _ in range(4)]}],
+        "panel_assets": [{} for _ in range(3)],
+    }
+    result = asyncio.run(runner._preview_if_ready(
+        tmp_path, {"run": {}}, images=images_manifest
+    ))
+    assert result == {
+        "status": "deferred",
+        "reason": "grid_panels_not_cropped",
+        "grid_count": 1,
+    }
