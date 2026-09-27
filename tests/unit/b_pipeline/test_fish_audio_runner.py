@@ -212,8 +212,9 @@ def test_audio_only_rejects_modified_source_before_new_paid_calls(
         asyncio.run(runner._run_audio_only(script, tmp_path / "output", resume=False))
 
 
-def test_images_start_after_b2_without_waiting_for_fish_narration(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("alignment_ok", [True, False])
+def test_images_wait_for_b2_and_validated_stt_before_paid_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, alignment_ok: bool
 ) -> None:
     script, avatar = _files(tmp_path)
     audio_started = asyncio.Event()
@@ -250,16 +251,26 @@ def test_images_start_after_b2_without_waiting_for_fish_narration(
         kwargs["on_output"]("B1.1", None, _b11_payload())
         await asyncio.wait_for(audio_started.wait(), 2)
         order.append("b2_completed")
+        audio_released.set()
         return SimpleNamespace(
             b12=[SimpleNamespace(block_id=1)],
             visual_plan=lambda: {"blocks": []},
         )
 
-    async def fake_images(destination, _plan):
+    async def fake_alignment(destination: Path, _plan: dict, audio: dict):
+        assert destination == tmp_path / "output/test2"
+        assert audio["status"] == "completed"
+        order.append("stt_checked")
+        if not alignment_ok:
+            raise runner.SttAlignmentError(1, "STT mismatch")
+        return {"status": "completed"}
+
+    async def fake_images(destination: Path, _plan: dict):
         assert (destination / "visual_plan.json").is_file()
-        assert audio_started.is_set() and not audio_released.is_set()
+        assert order == [
+            "audio_started", "b2_completed", "audio_completed", "stt_checked",
+        ]
         order.append("images_started")
-        audio_released.set()
         return {"model_id": "gpt-image-2.5-flare", "items": []}
 
     monkeypatch.setattr(runner, "parse_args", lambda: args)
@@ -268,14 +279,29 @@ def test_images_start_after_b2_without_waiting_for_fish_narration(
     monkeypatch.setattr(runner, "OpenAIProvider", lambda **_kw: object())
     monkeypatch.setattr(runner, "run_b_pipeline", fake_b)
     monkeypatch.setattr(runner, "_generate_audio", fake_audio)
+    monkeypatch.setattr(runner, "_preflight_stt_alignment_with_retries", fake_alignment)
     monkeypatch.setattr(runner, "_generate_images", fake_images)
-    asyncio.run(runner.main())
-    assert order == [
-        "audio_started",
-        "b2_completed",
-        "images_started",
-        "audio_completed",
-    ]
+
+    async def run_bounded():
+        await asyncio.wait_for(runner.main(), timeout=5)
+
+    if alignment_ok:
+        asyncio.run(run_bounded())
+        assert order == [
+            "audio_started", "b2_completed", "audio_completed", "stt_checked",
+            "images_started",
+        ]
+    else:
+        with pytest.raises(runner.SttAlignmentError, match="STT mismatch"):
+            asyncio.run(run_bounded())
+        assert order == [
+            "audio_started", "b2_completed", "audio_completed", "stt_checked",
+        ]
+        report = json.loads(
+            (tmp_path / "output/test2/run_report.json").read_text(encoding="utf-8")
+        )
+        assert report["run"]["stt_alignment"]["status"] == "failed"
+
 
 
 def test_fish_director_uses_shared_text_model_without_external_calls(
