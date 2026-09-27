@@ -71,6 +71,7 @@ if [[ "${LTX_RACE_PROTECT_READY_WITH_IMDS:-false}" == "true" ]]; then
     echo "LTX_RACE_IMDS_PREFLIGHT_FAILED refusing expensive model download" >&2
     exit 1
   }
+  echo "LTX_RACE_IMDS_PREFLIGHT_OK before_model_download=true"
 fi
 
 mkdir -p "${MODEL_ROOT}"
