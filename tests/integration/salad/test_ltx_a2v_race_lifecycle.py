@@ -15,18 +15,19 @@ IMAGE = "docker.io/example/worker@sha256:" + "a" * 64
 
 
 @pytest.mark.parametrize(
-    ("failed_at", "expected_outcome"),
+    ("failed_at", "expected_outcome", "expected_events"),
     [
-        (None, "succeeded"),
-        ("race", "failed"),
-        ("ready", "failed"),
-        ("smoke", "failed"),
-        ("aux_stop", "cleanup_failed"),
-        ("main_stop", "cleanup_failed"),
+        (None, "succeeded", ["Stop"]),
+        ("race", "failed", ["Stop"]),
+        ("smoke", "failed", ["Stop"]),
+        ("reset", "cleanup_failed", ["Stop"]),
     ],
 )
-def test_isolated_two_gpu_race_always_stops_both_groups(
-    tmp_path: Path, failed_at: str | None, expected_outcome: str
+def test_two_gpu_race_stops_and_resets_before_reporting_success(
+    tmp_path: Path,
+    failed_at: str | None,
+    expected_outcome: str,
+    expected_events: list[str],
 ) -> None:
     repo = tmp_path / "fake_repo"
     smoke = repo / "scripts" / "smoke"
@@ -41,26 +42,17 @@ def test_isolated_two_gpu_race_always_stops_both_groups(
     (pipeline / "check_r2_ready.py").write_text(
         "print('fake R2 ready')\n", encoding="utf-8"
     )
-    (smoke / "start_ltx25_isolated_race.py").write_text(
-        "import json, pathlib, sys\n"
-        f"if {failed_at == 'race'!r}: sys.exit(1)\n"
-        "path = pathlib.Path(sys.argv[sys.argv.index('--output-json') + 1])\n"
-        "path.parent.mkdir(parents=True, exist_ok=True)\n"
-        "path.write_text(json.dumps({'strategy':"
-        " 'two_isolated_one_replica_groups_stop_loser',"
-        " 'winner_group': 'fake-main', 'winner_id': 'fake-node',"
-        " 'loser_stopped': True}))\n"
-        "print('fake isolated winner and loser stopped')\n",
+    (smoke / "start_ltx25_race_select.py").write_text(
+        "import sys\n"
+        "if '--reset-stopped' in sys.argv:\n"
+        "    print('fake race reset')\n"
+        f"    sys.exit({1 if failed_at == 'reset' else 0})\n"
+        "print('fake two-to-one race')\n"
+        f"sys.exit({1 if failed_at == 'race' else 0})\n",
         encoding="utf-8",
     )
     (smoke / "wait_salad_ltx25_ready.py").write_text(
-        "import sys\n"
-        "assert '--group-name' in sys.argv\n"
-        "assert sys.argv[sys.argv.index('--group-name')+1] == 'fake-main'\n"
-        "assert sys.argv[sys.argv.index('--expected-instance')+1] == 'fake-node'\n"
-        "print('fake selected winner ready')\n"
-        f"sys.exit({1 if failed_at == 'ready' else 0})\n",
-        encoding="utf-8",
+        "print('fake one ready survivor')\n", encoding="utf-8"
     )
     (smoke / "submit_ltx25_a2v_smoke.py").write_text(
         "import sys\nprint('fake video')\n"
@@ -76,22 +68,8 @@ def test_isolated_two_gpu_race_always_stops_both_groups(
         "[CmdletBinding()]\n"
         "param([string]$Action, [string]$Service, [int]$Replicas, "
         "[string]$EnvFile, [switch]$AllowBootstrappingInstance, "
-        "[switch]$NonInteractive, [switch]$IsolatedRaceGroup)\n"
-        "$Target = if ($IsolatedRaceGroup) { 'Aux' } else { 'Main' }\n"
-        "Add-Content -LiteralPath (Join-Path $PSScriptRoot 'events.txt') "
-        "-Value \"$Action$Target\"\n"
-        + (
-            "if ($Action -eq 'Stop' -and $IsolatedRaceGroup) "
-            "{ throw 'fake auxiliary stop failure' }\n"
-            if failed_at == "aux_stop"
-            else ""
-        )
-        + (
-            "if ($Action -eq 'Stop' -and -not $IsolatedRaceGroup) "
-            "{ throw 'fake main stop failure' }\n"
-            if failed_at == "main_stop"
-            else ""
-        ),
+        "[switch]$NonInteractive)\n"
+        "Add-Content -LiteralPath (Join-Path $PSScriptRoot 'events.txt') -Value $Action\n",
         encoding="utf-8",
     )
     audio, avatar = repo / "monje.wav", repo / "monje.png"
@@ -109,9 +87,7 @@ def test_isolated_two_gpu_race_always_stops_both_groups(
             "-AvatarImage",
             str(avatar),
             "-SegmentId",
-            "unique-mock-isolated-race",
-            "-OutputDir",
-            str(repo / "artifacts" / "unique-mock-isolated-race"),
+            "unique-mock-race",
             "-StartupReplicas",
             "2",
             "-RaceTimeoutSeconds",
@@ -134,14 +110,14 @@ def test_isolated_two_gpu_race_always_stops_both_groups(
     assert metrics[0]["outcome"] == expected_outcome
     assert metrics[0]["startup_replicas"] == 2
     events = (salad / "events.txt").read_text(encoding="utf-8").splitlines()
-    assert events == ["StopAux", "StopMain"]
+    assert events == expected_events
+    assert "fake race reset" in completed.stdout
     if failed_at is None:
         assert completed.returncode == 0, completed.stdout + completed.stderr
-        assert completed.stdout.index("fake selected winner ready") < completed.stdout.index(
+        assert completed.stdout.index("fake one ready survivor") < completed.stdout.index(
             "fake video"
         )
-        assert "fake isolated winner and loser stopped" in completed.stdout
     else:
         assert completed.returncode != 0
-    if failed_at in ("race", "ready"):
+    if failed_at == "race":
         assert "fake video" not in completed.stdout
