@@ -195,7 +195,11 @@ def main() -> int:
         description="Wait for one LTX Salad instance to pass the actual /ready probe."
     )
     parser.add_argument("--env-file", default=".env")
-    parser.add_argument("--services-path", type=Path, default=_REPO_ROOT / "deploy" / "salad" / "services.json")
+    parser.add_argument(
+        "--services-path",
+        type=Path,
+        default=_REPO_ROOT / "deploy" / "salad" / "services.json",
+    )
     parser.add_argument("--timeout-seconds", type=float, default=7200.0)
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument("--expected-image", default="")
