@@ -363,14 +363,13 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     # The QR provider is covered independently; keep this pipeline fixture offline.
     qr_png = _make_avatar(tmp_path, "fake_qr.png")
 
-    async def fake_avatar_qr(**_kwargs):
+    def fake_avatar_qr(**_kwargs):
         data = qr_png.read_bytes()
         return SimpleNamespace(
             url="https://example.com/ebook",
             png=data,
             sha256=hashlib.sha256(data).hexdigest(),
-            model="gpt-6-luna",
-            image_model="gpt-image-2.5-flare",
+            generator="segno",
         )
 
     monkeypatch.setattr(runner, "ensure_avatar_qr", fake_avatar_qr)
@@ -438,6 +437,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         assert avatar["width"] == 2 and avatar["height"] == 2
         assert avatar["qr"]["url"] == "https://example.com/ebook"
         assert avatar["qr"]["file"] == "qr.png"
+        assert avatar["qr"]["generator"] == "segno"
         assert (destination / "qr.png").read_bytes() == qr_png.read_bytes()
         assert (destination / "avatar.png").read_bytes() == expected_file.read_bytes()
         plan = json.loads((destination / "visual_plan.json").read_text(encoding="utf-8"))
