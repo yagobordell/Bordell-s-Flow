@@ -148,10 +148,16 @@ No existe una configuración independiente `OPENAI_B_MODEL`.
 Al terminar B2, el runner genera automáticamente **una imagen PNG por beat con
 `description` no vacía** mediante la API oficial de OpenAI, sin AI33
 para imágenes. Cada beat tiene **su propio batch**, con un archivo JSONL de
-**una única solicitud** a `/v1/images/generations` (`n=1`); nunca se agrupan
-dos imágenes en el mismo batch. Se conserva el prompt original de B2 con
-el prefijo `iphone 6 photo done by an elderly:  `, Flare por defecto, `low`,
-PNG y `1280x720`. Configura `OPENAI_API_KEY` en `.env`; AI33 sigue
+**una única solicitud** (`n=1`); nunca se agrupan dos imágenes en el mismo batch.
+Las descripciones que contienen la palabra completa `avatar` (sin distinguir
+mayúsculas) usan `/v1/images/edits`: adjuntan la copia `avatar.png` del run
+como referencia de identidad, previa comprobación de su SHA-256 en el plan.
+Las demás usan `/v1/images/generations` sin imagen de entrada. La descripción
+original de B2 permanece inalterada y solo se añade una instrucción de referencia
+al prompt enviado para esas ediciones. Si falta el avatar o ha cambiado, se
+detiene la solicitud antes de generar imágenes de pago. Se mantiene el prefijo
+`iphone 6 photo done by an elderly:  `, Flare por defecto, `low`, PNG
+y `1280x720`. Configura `OPENAI_API_KEY` en `.env`; AI33 sigue
 utilizándose únicamente para la voz. Los beats `avatar` sin descripción
 no crean batches. Un máximo de cuatro imágenes se procesan a la vez.
 
@@ -159,7 +165,8 @@ El límite **local** de cada batch es de 30 minutos desde su envío
 (`OPENAI_IMAGE_BATCH_TIMEOUT_SECONDS=1800`), aunque la ventana oficial
 de Batch API es `24h`. Si el batch no ha entregado la imagen a tiempo,
 el runner intenta cancelarlo y genera **solo ese beat** mediante
-`POST /v1/images/generations` estándar. La cancelación puede tardar,
+el mismo modelo y endpoint estándar correspondiente al beat
+(`POST /v1/images/generations` o `POST /v1/images/edits` con el mismo avatar). La cancelación puede tardar,
 por lo que un batch tardío podría facturarse además de la generación
 directa. Los IDs, tiempos y estados se conservan por beat para
 `--images-only`; una petición de pago con resultado desconocido no se
