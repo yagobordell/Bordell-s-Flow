@@ -1,10 +1,11 @@
 # Isolated Salad image-to-video smoke (draft PR #238)
 
-**Candidate only; not deployed.** The I2V and avatar jobs require separate
+**Draft candidate; isolated v11 I2V has completed one technically valid real smoke, but the camera push-in failed visual acceptance.** The I2V and avatar jobs require separate
 Salad container groups and task-restricted PostgreSQL polling. This test
 must not change the existing avatar group, merge the PR, or start the global
 capacity controller against an incomplete new manifest. The baked-model
-experiment in PR #237 is out of scope.
+experiment in PR #237 is out of scope. The opt-in static-camera experiment
+requires a NEW immutable image; the earlier v11 digest cannot run its code.
 
 ## Prerequisites (Windows PowerShell)
 
@@ -43,6 +44,34 @@ $PinnedImage = "docker.io/yagobordell/ai-video-factory@sha256:REPLACE_WITH_REAL_
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\salad\manage_salad_worker.ps1 -Action Prepare -Service ltx25_i2v -PinnedImage $PinnedImage -EnvFile .env -NonInteractive
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\salad\manage_salad_worker.ps1 -Action Status -Service ltx25_i2v -EnvFile .env -NonInteractive
 ```
+
+## Opt-in static-camera comparison (new image required)
+
+The original `i2v-smoke-003` with the v11 image produced one valid MP4, but
+visually zoomed in despite the fixed-camera positive prompt. This branch adds
+`--i2v-profile static-camera` behind an explicit opt-in smoke parameter.
+Stage 1 uses the exact camera-only negative from the A2V `static-reference`
+experiment with video CFG 1.25 and `GuidedDenoiser`, while keeping the original
+positive prompt, image strength 1.0, ancestral sampler, Stage 2, model weights,
+seed and safe eager-SDPA DiffVAE backend unchanged. The resident pipeline is
+reused. This is **not** evidence that the zoom is fixed: the new guided Stage 1
+may be slower or consume more VRAM. The normal I2V path stays upstream-distilled.
+
+After CI is green on the final reviewed commit, build and push a **new tag**,
+not the published `ltx25-isolated-tasks-v11` tag, and inspect its real
+`linux/amd64` digest. Prepare ONLY the stopped I2V group with that immutable
+digest; leave the avatar group unchanged. Preparing the group does not run
+inference, but starting it can incur significant cold-model download time.
+Do not reuse the old v11 pinned digest for the experiment.
+
+For a fair one-job comparison with the already reviewed baseline, use the
+existing `keyframe_i2v.png` and exactly the same positive prompt/duration,
+then pass `-I2VProfile static-camera -CompareWithRunId "i2v-smoke-003"`
+and a NEW `-RunId`. The wrapper checks the baseline MP4 hash, image,
+prompt and timing before GPU allocation; it derives the **same effective
+seed** from the baseline RunId, while the new generation profile creates a
+different application job ID and R2 output. It stops only the I2V group in
+`finally`. Never present a green ffprobe result as visual acceptance.
 
 ## One paid I2V generation
 

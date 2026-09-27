@@ -49,8 +49,12 @@ contract: the old worker image rejects that keyframe geometry.
 `video.ltx25.generate`, and `ltx25` handles only avatar A2V jobs.
 `LTX_WORKER_TASK_MODE` restricts registered task runners and Postgres polling.
 Each group has independent RTX 5090 capacity, GPU instances and autoscaling.
-The candidate `ltx25-isolated-tasks-v11` image is NOT yet published or validated;
-it may be reused by digest in both groups after approval, without sharing a container.
+The isolated v11 I2V image produced one technically valid real 2-second MP4,
+but its unexpected camera push-in still fails visual acceptance. An opt-in
+`static-camera` profile uses camera-only negative CFG 1.25 on Stage 1 of the
+same resident distilled I2V pipeline, retaining full first-frame strength 1.0
+and the original Stage 2. The camera experiment requires a NEW pinned image
+and a separate visual comparison; it is not enabled by default.
 Do not enable the new capacity controller until both groups are prepared.
 
 Operate it with:
