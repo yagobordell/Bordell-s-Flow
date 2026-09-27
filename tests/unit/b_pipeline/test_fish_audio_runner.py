@@ -16,6 +16,17 @@ from scripts.pipeline import run_b_pipeline as runner
 VOICE = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
 
 
+async def _fake_avatar_qr(*, avatar_file: Path, **_kwargs):
+    data = avatar_file.read_bytes()
+    return SimpleNamespace(
+        url="https://ebooks.example/avatar",
+        png=data,
+        sha256=hashlib.sha256(data).hexdigest(),
+        model="gpt-6-luna",
+        image_model="gpt-image-2.5-flare",
+    )
+
+
 def _files(tmp_path: Path) -> tuple[Path, Path]:
     script = tmp_path / "input" / "test2.txt"
     script.parent.mkdir()
@@ -96,6 +107,7 @@ def test_full_b_run_starts_fish_concurrently_and_no_audio_skips_it(
         raise AssertionError("--no-image must not submit images")
 
     monkeypatch.setattr(runner, "parse_args", lambda: args)
+    monkeypatch.setattr(runner, "ensure_avatar_qr", _fake_avatar_qr)
     monkeypatch.setattr(runner.settings, "openai_api_key", "test-openai-key")
     monkeypatch.setattr(runner.settings, "ai33_api_key", "test-ai33-key")
     monkeypatch.setattr(runner, "OpenAIProvider", lambda **_kw: object())
@@ -174,6 +186,7 @@ def test_audio_only_mode_preserves_b_artifacts_and_skips_avatar_images(
         return {"status": "completed", "file": "audio/new.mp3", "voice_id": VOICE}
 
     monkeypatch.setattr(runner, "parse_args", lambda: args)
+    monkeypatch.setattr(runner, "ensure_avatar_qr", _fake_avatar_qr)
     monkeypatch.setattr(runner.settings, "openai_api_key", "test-openai-key")
     monkeypatch.setattr(runner.settings, "ai33_api_key", "test-ai33-key")
     monkeypatch.setattr(runner, "OpenAIProvider", lambda **_kw: object())
@@ -275,6 +288,7 @@ def test_images_wait_for_b2_and_validated_stt_before_paid_requests(
         return {"model_id": "gpt-image-2.5-flare", "items": []}
 
     monkeypatch.setattr(runner, "parse_args", lambda: args)
+    monkeypatch.setattr(runner, "ensure_avatar_qr", _fake_avatar_qr)
     monkeypatch.setattr(runner.settings, "openai_api_key", "test-openai-key")
     monkeypatch.setattr(runner.settings, "ai33_api_key", "test-ai33-key")
     monkeypatch.setattr(runner, "OpenAIProvider", lambda **_kw: object())
@@ -409,6 +423,7 @@ def test_stop_saves_resumable_stages_without_audio_or_images(
         pytest.fail("--stop must not start Fish Audio or image requests")
 
     monkeypatch.setattr(runner, "parse_args", lambda: args)
+    monkeypatch.setattr(runner, "ensure_avatar_qr", _fake_avatar_qr)
     monkeypatch.setattr(runner.settings, "openai_api_key", "test-openai-key")
     monkeypatch.setattr(runner.settings, "ai33_api_key", None)
     monkeypatch.setattr(runner, "OpenAIProvider", lambda **_kw: FakeMeteredProvider())
