@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from ai_video_factory.inference.app import create_app
+from ai_video_factory.inference.capacity_controller import validate_capacity_controller_dsn
 from ai_video_factory.inference.runtime import build_worker
 from ai_video_factory.inference.tasks import TaskRunnerRegistry
 
@@ -40,7 +41,9 @@ if runtime_settings.race_protect_ready_with_imds:
     _dsn = runtime_settings.postgres_dsn
     if _dsn is None:
         raise RuntimeError("LTX race IMDS readiness requires POSTGRES_DSN")
-    _race_ready_guard = LTXRaceReadyGuard(_dsn.get_secret_value())
+    _race_ready_guard = LTXRaceReadyGuard(
+        validate_capacity_controller_dsn(_dsn.get_secret_value())
+    )
 
 app = create_app(
     build_ltx25_worker(runtime_settings),
