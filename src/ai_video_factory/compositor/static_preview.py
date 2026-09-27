@@ -402,6 +402,10 @@ def generate_static_preview(
         raise StaticPreviewError("ffmpeg and ffprobe are required for the static preview")
     if image_manifest.get("status") != "completed":
         raise StaticPreviewError("Static preview requires the completed B2 image manifest")
+    if any(item.get("grid") is not None for item in image_manifest.get("items", [])):
+        raise StaticPreviewError(
+            "Grid panels have not been cropped; cannot render them as individual beats"
+        )
     timeline = build_stt_beat_timeline(output, plan, audio)
     avatar_meta = plan.get("avatar")
     if not isinstance(avatar_meta, dict):
