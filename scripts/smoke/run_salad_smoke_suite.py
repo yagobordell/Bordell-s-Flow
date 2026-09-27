@@ -34,7 +34,7 @@ from ai_video_factory.workers.qwen_image_21 import (
 from ai_video_factory.workers.qwen_image_21.model import validate_qwen_output_image
 from ai_video_factory.workers.whisper import WHISPER_MODEL_ID
 
-_SERVICE_ORDER = ("breeze_tts2", "whisper", "qwen_image_21", "ltx25")
+_SERVICE_ORDER = ("breeze_tts2", "whisper", "qwen_image_21", "ltx25_i2v")
 _DEFAULT_OUTPUT_DIR = Path("data/output/deployment-validation")
 
 
@@ -324,7 +324,7 @@ def _prepare_ltx_landscape_keyframe(source: Path, destination: Path) -> Path:
     return destination
 
 
-def _smoke_ltx25(args: argparse.Namespace) -> None:
+def _smoke_ltx25_i2v(args: argparse.Namespace) -> None:
     started = time.monotonic()
     keyframe_path = args.ltx_keyframe or (args.output_dir / "qwen-image-21-keyframe.png")
     if not keyframe_path.is_file():
@@ -365,7 +365,7 @@ def _smoke_ltx25(args: argparse.Namespace) -> None:
         [ShotTiming(shot_id=1, start_seconds=0.0, end_seconds=1.0)],
     )
 
-    cloud_dir = args.output_dir / "ltx25-cloud"
+    cloud_dir = args.output_dir / "ltx25-i2v-cloud"
     command = [
         sys.executable,
         "scripts/pipeline/run_phase8_videos.py",
@@ -388,7 +388,7 @@ def _smoke_ltx25(args: argparse.Namespace) -> None:
         "--output-dir",
         str(cloud_dir),
     ]
-    log_path = args.output_dir / "ltx25-smoke.log"
+    log_path = args.output_dir / "ltx25-i2v-smoke.log"
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
@@ -407,13 +407,13 @@ def _smoke_ltx25(args: argparse.Namespace) -> None:
     if returncode != 0:
         raise subprocess.CalledProcessError(returncode, command)
 
-    videos = sorted(cloud_dir.glob("shot_*.mp4"))
+    videos = sorted((cloud_dir / "video_clips").glob("shot_*.mp4"))
     if len(videos) != 1 or videos[0].stat().st_size <= 0:
         raise RuntimeError("LTX smoke did not produce exactly one non-empty MP4")
     video = videos[0]
     report = {
         "status": "succeeded",
-        "service": "ltx25",
+        "service": "ltx25_i2v",
         "wall_seconds": round(time.monotonic() - started, 3),
         "input_keyframe": keyframe_path.as_posix(),
         "artifact": video.as_posix(),
@@ -421,7 +421,7 @@ def _smoke_ltx25(args: argparse.Namespace) -> None:
         "sha256": sha256_file(video),
         "log": log_path.as_posix(),
     }
-    path = _write_report(args.output_dir, "ltx25", report)
+    path = _write_report(args.output_dir, "ltx25_i2v", report)
     print(f"LTX 2.5 smoke: OK -> {video}")
     print(path)
 
@@ -439,8 +439,8 @@ async def main() -> None:
                 await _smoke_whisper(args)
             elif service == "qwen_image_21":
                 await _smoke_qwen_image_21(args)
-            elif service == "ltx25":
-                _smoke_ltx25(args)
+            elif service == "ltx25_i2v":
+                _smoke_ltx25_i2v(args)
             else:  # pragma: no cover - argparse prevents this branch
                 raise AssertionError(service)
             _update_summary(args.output_dir)

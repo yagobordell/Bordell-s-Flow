@@ -22,6 +22,9 @@ from ai_video_factory.inference.ports import LocalArtifact
 
 LTX_VIDEO_TASK = "video.ltx25.generate"
 LTX_GENERATION_PROFILE = "ltx25-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
+LTX_STATIC_CAMERA_GENERATION_PROFILE = (
+    "ltx25-distilled-static-camera-a95ab856-fp8cpu-gridpad-eagersdpa-v1"
+)
 _CANONICAL_LANDSCAPE_SIZE = (1280, 720)
 _LTX_TWO_STAGE_SPATIAL_GRID = 64
 
@@ -50,9 +53,9 @@ class LTXVideoParameters(BaseModel):
     @field_validator("generation_profile")
     @classmethod
     def validate_generation_profile(cls, value: str) -> str:
-        if value != LTX_GENERATION_PROFILE:
+        if value not in (LTX_GENERATION_PROFILE, LTX_STATIC_CAMERA_GENERATION_PROFILE):
             raise ValueError(
-                f"generation_profile must be exactly {LTX_GENERATION_PROFILE!r}"
+                "generation_profile must be a supported default or static-camera I2V profile"
             )
         return value
 
@@ -336,6 +339,13 @@ def _load_ltx_bindings() -> _LTXBindings:
     )
 
 
+def _load_static_camera_generator() -> Any:
+    # Import upstream pipeline modules only on the GPU worker, never in local CLI.
+    from .static_i2v import generate_static_camera
+
+    return generate_static_camera
+
+
 def _torch_inference_context(torch_module: Any) -> Any:
     inference_mode = getattr(torch_module, "inference_mode", None)
     if inference_mode is None:
@@ -469,15 +479,20 @@ class DirectLTX25Backend:
                     strength=1.0,
                     crf=None,
                 )
-                result = pipeline(
-                    prompt=parameters.prompt,
-                    seed=parameters.seed,
-                    height=pipeline_height,
-                    width=pipeline_width,
-                    frame_rate=float(parameters.fps),
-                    images=[conditioning],
-                    num_frames=parameters.num_frames,
-                )
+                pipeline_kwargs = {
+                    "prompt": parameters.prompt,
+                    "seed": parameters.seed,
+                    "height": pipeline_height,
+                    "width": pipeline_width,
+                    "frame_rate": float(parameters.fps),
+                    "images": [conditioning],
+                    "num_frames": parameters.num_frames,
+                }
+                if parameters.generation_profile == LTX_STATIC_CAMERA_GENERATION_PROFILE:
+                    # Reuse the resident distilled pipeline; do not rebuild model weights.
+                    result = _load_static_camera_generator()(pipeline, **pipeline_kwargs)
+                else:
+                    result = pipeline(**pipeline_kwargs)
                 output_video = result.video
                 if (pipeline_width, pipeline_height) != (
                     parameters.width,

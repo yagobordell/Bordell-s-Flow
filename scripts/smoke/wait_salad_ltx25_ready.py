@@ -1,4 +1,4 @@
-"""Wait for the actual LTX worker readiness probe before submitting a paid A2V job.
+"""Wait for the actual LTX worker readiness probe before submitting a paid I2V or A2V job.
 
 This helper is intentionally read-only: it never starts, stops, updates or replaces
 a Salad container group. The controlled PowerShell wrapper owns GPU cleanup.
@@ -37,6 +37,7 @@ def _readiness_observation(
     group_name: str,
     image_repository: str,
     expected_image: str = "",
+    expected_task_mode: str = "",
 ) -> tuple[str | None, str]:
     """Accept only a current-version instance passing the configured /ready probe."""
     if group.get("name") != group_name:
@@ -57,6 +58,18 @@ def _readiness_observation(
             "LTX Salad image does not match --expected-image; prepare the reviewed image first"
         )
 
+    if expected_task_mode:
+        environment = (
+            container.get("environment_variables") if isinstance(container, dict) else None
+        )
+        if (
+            not isinstance(environment, dict)
+            or environment.get("LTX_WORKER_TASK_MODE") != expected_task_mode
+        ):
+            raise RuntimeError(
+                "LTX group has wrong LTX_WORKER_TASK_MODE; refusing cross-service work"
+            )
+
     version = group.get("version")
     if isinstance(version, bool) or not isinstance(version, int) or version < 1:
         raise RuntimeError("Salad did not report a valid LTX container group version")
@@ -71,7 +84,7 @@ def _readiness_observation(
         return None, f"group_status={status} pending={group.get('pending_change')}"
 
     if group.get("replicas") != 1:
-        raise RuntimeError("Controlled LTX A2V readiness requires exactly one configured replica")
+        raise RuntimeError("Controlled LTX readiness requires exactly one configured replica")
     current_instances = [
         instance
         for instance in instances
@@ -107,6 +120,7 @@ def wait_for_ready(
     timeout_seconds: float,
     poll_seconds: float = 15.0,
     expected_image: str = "",
+    expected_task_mode: str = "",
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     report: Callable[[str], None] = print,
@@ -143,6 +157,7 @@ def wait_for_ready(
                 group_name=group_name,
                 image_repository=image_repository,
                 expected_image=expected_image,
+                expected_task_mode=expected_task_mode,
             )
             transient_failures = 0
         except SaladRequestError as error:
@@ -198,6 +213,7 @@ def main() -> int:
     parser.add_argument("--timeout-seconds", type=float, default=7200.0)
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument("--expected-image", default="")
+    parser.add_argument("--service", choices=("ltx25", "ltx25_i2v"), default="ltx25")
     args = parser.parse_args()
 
     env_file = Path(args.env_file)
@@ -211,7 +227,10 @@ def main() -> int:
         (_REPO_ROOT / "deploy" / "salad" / "services.json").read_text(encoding="utf-8")
     )
     stack = manifest["stack"]
-    ltx = manifest["services"]["ltx25"]
+    ltx = manifest["services"][args.service]
+    task_mode = ltx["environment"]["LTX_WORKER_TASK_MODE"]
+    if task_mode not in {"i2v", "a2v"}:
+        raise SystemExit("LTX worker must be dedicated to i2v or a2v")
     image = ltx["image"]
     image_repository = image.rsplit(":", maxsplit=1)[0]
     api_key = os.getenv("SALAD_API_KEY", "").strip()
@@ -235,6 +254,7 @@ def main() -> int:
             group_name=ltx["group_name"],
             image_repository=image_repository,
             expected_image=args.expected_image,
+            expected_task_mode=task_mode,
             timeout_seconds=args.timeout_seconds,
             poll_seconds=args.poll_seconds,
         )

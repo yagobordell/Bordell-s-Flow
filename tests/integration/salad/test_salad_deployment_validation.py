@@ -8,7 +8,7 @@ STACK_MANAGER = Path("scripts/salad/manage_salad_stack.ps1")
 def test_smoke_suite_uses_real_workers_and_postgres_transport() -> None:
     text = SMOKE_SCRIPT.read_text(encoding="utf-8")
 
-    assert '_SERVICE_ORDER = ("breeze_tts2", "whisper", "qwen_image_21", "ltx25")' in text
+    assert '_SERVICE_ORDER = ("breeze_tts2", "whisper", "qwen_image_21", "ltx25_i2v")' in text
     assert "SaladBreezeSpeechProvider" in text
     assert "SaladWhisperTranscriptionProvider" in text
     assert "SaladQwenImage21Provider" in text
@@ -54,7 +54,7 @@ def test_stack_manager_only_delegates_compute_lifecycle() -> None:
 def test_smoke_suite_persists_evidence_for_each_worker() -> None:
     text = SMOKE_SCRIPT.read_text(encoding="utf-8")
 
-    for service in ("breeze_tts2", "whisper", "qwen_image_21", "ltx25"):
+    for service in ("breeze_tts2", "whisper", "qwen_image_21", "ltx25_i2v"):
         assert f'_write_report(args.output_dir, "{service}"' in text
     assert '"smoke-summary.json"' in text
 

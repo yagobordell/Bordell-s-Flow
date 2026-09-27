@@ -708,16 +708,16 @@ function Show-Status {
     param([Parameter(Mandatory)][hashtable]$Headers)
     $Group = Try-Get-Group -Headers $Headers
     if ($null -eq $Group) {
-        Write-Host "service=$Service group=$GroupName status=missing" -ForegroundColor Yellow
+        Write-Output "service=$Service group=$GroupName status=missing"
         return
     }
-    Write-Host ("service={0} group={1} status={2} replicas={3} pending={4} transport=postgres legacy_queue={5} capacity={6}-{7} image={8}" -f $Service, $GroupName, (Get-GroupStatus -Group $Group), [int]$Group.replicas, [bool]$Group.pending_change, (Test-LegacyQueueAttachment -Group $Group), $StartReplicas, $MaxReplicas, [string]$Group.container.image)
+    Write-Output ("service={0} group={1} status={2} replicas={3} pending={4} transport=postgres legacy_queue={5} capacity={6}-{7} image={8}" -f $Service, $GroupName, (Get-GroupStatus -Group $Group), [int]$Group.replicas, [bool]$Group.pending_change, (Test-LegacyQueueAttachment -Group $Group), $StartReplicas, $MaxReplicas, [string]$Group.container.image)
 }
 
 Assert-ServiceDefinition
 Set-Location $RepoRoot
 if ($Recreate -and $Action -ne "Prepare") { throw "-Recreate is only valid with Prepare." }
-if ($AllowBootstrappingInstance -and ($Action -ne "Start" -or $Service -ne "ltx25" -or
+if ($AllowBootstrappingInstance -and ($Action -ne "Start" -or $Service -notin @("ltx25", "ltx25_i2v") -or
     $DesiredReplicas -ne 1)) {
     throw "-AllowBootstrappingInstance is only valid for LTX Start with one replica."
 }

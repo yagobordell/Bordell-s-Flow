@@ -13,6 +13,7 @@ from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInpu
 from ai_video_factory.inference.tasks import CopyTaskRunner, TaskRunnerRegistry
 from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
+    LTX_STATIC_CAMERA_GENERATION_PROFILE,
     DirectLTX25Backend,
     LTXModelFiles,
     LTXVideoParameters,
@@ -331,6 +332,32 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     ]
     assert len(state["encodes"]) == 2
     assert all(call["audio"] is None for call in state["encodes"])
+
+    # Experimental guidance reuses the same resident weights without changing
+    # the normal upstream call path or the frame-0 strength of 1.0.
+    static_calls: list[dict[str, Any]] = []
+
+    def fake_static_camera(pipeline: Any, **kwargs: Any) -> Any:
+        assert pipeline is backend._pipeline
+        static_calls.append(kwargs)
+        return pipeline(**kwargs)
+
+    monkeypatch.setattr(
+        ltx_video, "_load_static_camera_generator", lambda: fake_static_camera
+    )
+    backend.generate(
+        keyframe_path=keyframe,
+        output_path=tmp_path / "static.mp4",
+        parameters=LTXVideoParameters.model_validate(
+            parameters(generation_profile=LTX_STATIC_CAMERA_GENERATION_PROFILE)
+        ),
+    )
+    assert state["pipeline_builds"] == 1
+    assert len(state["pipeline_calls"]) == 3
+    assert static_calls[0]["prompt"] == validated.prompt
+    assert static_calls[0]["seed"] == validated.seed
+    assert static_calls[0]["images"][0]["strength"] == 1.0
+    assert state["encodes"][2]["audio"] is None
 
 
 def test_qwen_keyframe_fits_ltx_grid_without_losing_image_edges(tmp_path: Path) -> None:

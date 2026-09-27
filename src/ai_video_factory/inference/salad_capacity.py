@@ -44,7 +44,8 @@ _SERVICE_TASKS: dict[str, tuple[str, ...]] = {
     "fish_speech": (FISH_SPEECH_TASK,),
     "ideogram4": (IDEOGRAM4_REFERENCE_TASK, IDEOGRAM4_KEYFRAME_TASK),
     "qwen_image_21": (QWEN_IMAGE_21_REFERENCE_TASK, QWEN_IMAGE_21_KEYFRAME_TASK),
-    "ltx25": (LTX_VIDEO_TASK, LTX_A2V_TASK),
+    "ltx25_i2v": (LTX_VIDEO_TASK,),
+    "ltx25": (LTX_A2V_TASK,),
     "realesrgan": (REALESRGAN_TASK,),
 }
 
@@ -57,6 +58,7 @@ _FALLBACK_RUNTIME_SECONDS: dict[str, float] = {
     "fish_speech": 60.0,
     "ideogram4": 60.0,
     "qwen_image_21": 60.0,
+    "ltx25_i2v": 206.0,
     "ltx25": 206.0,
     "realesrgan": 53.0,
 }

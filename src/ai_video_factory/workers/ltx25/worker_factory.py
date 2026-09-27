@@ -1,0 +1,37 @@
+"""Build task-restricted LTX runners without starting the web service."""
+
+from __future__ import annotations
+
+from ai_video_factory.inference.tasks import TaskRunnerRegistry
+
+from .a2v import DirectLTX25AudioToVideoBackend, LTXAudioToVideoTaskRunner
+from .model import DirectLTX25Backend, LTXPipelineModeController, LTXVideoTaskRunner
+from .settings import LTX25WorkerSettings
+
+
+def build_ltx25_runners(settings: LTX25WorkerSettings) -> TaskRunnerRegistry:
+    # The Postgres poller selects jobs by registered task name. Do not register
+    # avatar tasks in the I2V group, or I2V tasks in the avatar group.
+    mode_controller = LTXPipelineModeController()
+    runners = []
+    if settings.task_mode in ("i2v", "both"):
+        runners.append(
+            LTXVideoTaskRunner(
+                backend=DirectLTX25Backend(
+                    model_root=settings.model_root,
+                    device=settings.device,
+                    mode_controller=mode_controller,
+                )
+            )
+        )
+    if settings.task_mode in ("a2v", "both"):
+        runners.append(
+            LTXAudioToVideoTaskRunner(
+                backend=DirectLTX25AudioToVideoBackend(
+                    model_root=settings.model_root,
+                    device=settings.device,
+                    mode_controller=mode_controller,
+                )
+            )
+        )
+    return TaskRunnerRegistry(runners)
