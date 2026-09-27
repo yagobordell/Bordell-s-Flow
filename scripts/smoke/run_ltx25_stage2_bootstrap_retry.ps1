@@ -4,7 +4,7 @@ param(
     [Parameter(Mandatory)][string]$ExperimentalTag,
     [Parameter(Mandatory)][string]$ExperimentalPinnedImage,
     [ValidateRange(120, 7200)][int]$RaceTimeoutSeconds = 5400,
-    [ValidateSet(1, 2)][int]$StartupReplicas = 1,
+    [ValidateSet(1, 2)][int]$StartupReplicas = 2,
     [string]$EnvFile = ".env"
 )
 
@@ -19,19 +19,27 @@ $Smoke = Join-Path $PSScriptRoot "run_ltx25_a2v_smoke_controlled.ps1"
 $RaceSelector = Join-Path $PSScriptRoot "start_ltx25_race_select.py"
 $Services = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\salad\services.json") -Raw | ConvertFrom-Json
 $OriginalTag = [string]$Services.services.ltx25.image
+$AuxGroupName = "$($Services.services.ltx25.group_name)-race"
 $OriginalPinnedImage = "docker.io/yagobordell/ai-video-factory@sha256:3a46d675c4ca93ea065c0540ba38efdb7a45cf447cecb841524aaee0d7342469"
 
 function Get-LtxStatus {
+    param([switch]$IsolatedRaceGroup)
+    $Extra = if ($IsolatedRaceGroup) { @("-IsolatedRaceGroup") } else { @() }
     $Lines = @(
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Manager -Action Status -Service ltx25 -EnvFile $EnvFile -NonInteractive
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Manager -Action Status -Service ltx25 -EnvFile $EnvFile -NonInteractive @Extra
     )
     if ($LASTEXITCODE -ne 0) { throw "Cannot query Salad status." }
     return ($Lines -join " ")
 }
 
 function Prepare-LtxImage {
-    param([Parameter(Mandatory)][string]$Tag, [Parameter(Mandatory)][string]$PinnedImage)
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Manager -Action Prepare -Service ltx25 -Image $Tag -PinnedImage $PinnedImage -SkipBuild -EnvFile $EnvFile -NonInteractive
+    param(
+        [Parameter(Mandatory)][string]$Tag,
+        [Parameter(Mandatory)][string]$PinnedImage,
+        [switch]$IsolatedRaceGroup
+    )
+    $Extra = if ($IsolatedRaceGroup) { @("-IsolatedRaceGroup") } else { @() }
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Manager -Action Prepare -Service ltx25 -Image $Tag -PinnedImage $PinnedImage -SkipBuild -EnvFile $EnvFile -NonInteractive @Extra
     if ($LASTEXITCODE -ne 0) { throw "Salad image prepare failed." }
 }
 
@@ -83,11 +91,22 @@ if ($InitialStatus -notmatch "status=stopped" -or
     throw "Salad is not safely stopped on the previous pinned image."
 }
 
+if ($StartupReplicas -eq 2) {
+    $AuxInitialStatus = Get-LtxStatus -IsolatedRaceGroup
+    if ($AuxInitialStatus -notmatch "status=missing" -and
+        ($AuxInitialStatus -notmatch "status=stopped" -or
+         $AuxInitialStatus -notmatch "replicas=1" -or
+         $AuxInitialStatus -notmatch "pending=False")) {
+        throw "Isolated race group is not safely stopped. Refusing to touch live capacity."
+    }
+}
+
 $Prompt = "An elderly monk speaking calmly to the camera."
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $SegmentId = "ltx-a2v-monje-stage2two-parallel-race2-$Stamp"
 $OutputDir = Join-Path $RepoRoot "artifacts\$SegmentId"
 $PrepareAttempted = $false
+$AuxPrepareAttempted = $false
 $TestSucceeded = $false
 
 try {
@@ -102,8 +121,20 @@ try {
         throw "Salad did not settle with the pinned experimental image."
     }
 
-    # Use one GPU by default. Two-GPU bootstrap is a separate explicit experiment;
-    # Salad has repeatedly acknowledged but not reflected deletion_cost=100000.
+    if ($StartupReplicas -eq 2) {
+        $AuxPrepareAttempted = $true
+        Prepare-LtxImage -Tag $ExperimentalTag -PinnedImage $ExperimentalPinnedImage -IsolatedRaceGroup
+        $AuxStatus = Get-LtxStatus -IsolatedRaceGroup
+        if ($AuxStatus -notmatch "status=stopped" -or
+            $AuxStatus -notmatch "replicas=1" -or
+            $AuxStatus -notmatch "pending=False" -or
+            -not $AuxStatus.Contains("image=$ExperimentalPinnedImage")) {
+            throw "Auxiliary isolated race group is not prepared and stopped on reviewed image."
+        }
+        Write-Host "LTX_ISOLATED groups=$($Services.services.ltx25.group_name),$AuxGroupName"
+    }
+
+    # The two-GPU path uses independent groups. It never scales in a ready worker.
     $BootstrapWaitSeconds = if ($StartupReplicas -eq 1) { 3600 } else { 300 }
     Write-Host "LTX_STARTUP_MODE replicas=$StartupReplicas readiness_timeout_seconds=$BootstrapWaitSeconds"
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Smoke -Audio $Audio -AvatarImage $Avatar -Profile reference -ReferenceStage2Steps 2 -SegmentId $SegmentId -Prompt $Prompt -Seed 4242 -OutputDir $OutputDir -StartupReplicas $StartupReplicas -RaceTimeoutSeconds $RaceTimeoutSeconds -BootstrapTimeoutSeconds $BootstrapWaitSeconds -MaxGenerationSeconds 600 -ExpectedPinnedImage $ExperimentalPinnedImage -EnvFile $EnvFile -NonInteractive
@@ -123,6 +154,20 @@ try {
 }
 finally {
     if ($PrepareAttempted) {
+        $AuxCleanupError = $null
+        if ($AuxPrepareAttempted) {
+            try {
+                & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Manager -Action Stop -Service ltx25 -IsolatedRaceGroup -EnvFile $EnvFile -NonInteractive
+                if ($LASTEXITCODE -ne 0) { throw "Cannot stop auxiliary isolated race group." }
+                $AuxStopped = Get-LtxStatus -IsolatedRaceGroup
+                if ($AuxStopped -notmatch "status=stopped" -or
+                    $AuxStopped -notmatch "replicas=1" -or
+                    $AuxStopped -notmatch "pending=False") {
+                    throw "Auxiliary isolated race group did not settle stopped/1/no-pending."
+                }
+            }
+            catch { $AuxCleanupError = $_ }
+        }
         $FinalStatus = Get-LtxStatus
         Write-Host $FinalStatus
 
@@ -160,6 +205,7 @@ finally {
             -not $RestoredStatus.Contains("image=$OriginalPinnedImage")) {
             throw "Salad original-image restoration could not be verified."
         }
+        if ($null -ne $AuxCleanupError) { throw $AuxCleanupError }
         Write-Host "SALAD DETENIDO E IMAGEN ORIGINAL RESTAURADA" -ForegroundColor Green
     }
 }
