@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from contextlib import asynccontextmanager
+from collections.abc import Callable
 
 from fastapi import FastAPI, Header, HTTPException, status
 
@@ -30,6 +31,7 @@ def create_app(
     prepare_retry_seconds: float = 5.0,
     poll_jobs_from_repository: bool = False,
     job_poll_seconds: float = 2.0,
+    readiness_hook: Callable[[], None] | None = None,
 ) -> FastAPI:
     if prepare_retry_seconds <= 0:
         raise ValueError("prepare_retry_seconds must be positive")
@@ -171,6 +173,8 @@ def create_app(
         ensure_prepared()
         try:
             worker.ready()
+            if readiness_hook is not None:
+                readiness_hook()
         except Exception as exc:
             logger.exception("worker readiness check failed")
             raise HTTPException(
