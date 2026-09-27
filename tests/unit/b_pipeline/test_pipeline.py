@@ -149,6 +149,58 @@ def test_pipeline_parallel_calls_exact_source_and_medium_model_routing(
     assert merged_beats["narrative_core"] == merged_visuals["narrative_core"]
 
 
+@pytest.mark.parametrize(
+    ("start", "stop", "expected_stages"),
+    [
+        ("B1.1", "B1.1", ["B1.1"]),
+        ("B1.1", "B1.2", ["B1.1", "B1.2"]),
+        ("B1.2", "B1.2", ["B1.2"]),
+        ("B2", "B2", ["B2"]),
+    ],
+)
+def test_stop_stage_never_starts_the_next_planning_wave(
+    start: str, stop: str, expected_stages: list[str]
+) -> None:
+    previous_b12 = None
+    if start == "B2":
+        checkpoint = asyncio.run(
+            run_b_pipeline(SCRIPT, provider=FakeProvider(), stop_after="B1.2")
+        )
+        previous_b12 = checkpoint.b12
+    provider = FakeProvider()
+    if start == "B2":
+        provider.b12_finished = {1, 2}
+    stages: list[str] = []
+    result = asyncio.run(
+        run_b_pipeline(
+            SCRIPT,
+            provider=provider,
+            start_from=start,
+            stop_after=stop,
+            previous_b11=b11() if start != "B1.1" else None,
+            previous_b12=previous_b12,
+            on_stage_complete=lambda stage, _blocks, _merged: stages.append(stage),
+        )
+    )
+    assert stages == expected_stages
+    assert len(result.b12) == (0 if stop == "B1.1" else 2)
+    assert len(result.b2) == (2 if stop == "B2" else 0)
+    assert len(provider.calls) == (
+        (1 if start == "B1.1" else 0)
+        + (2 if start in ("B1.1", "B1.2") and stop != "B1.1" else 0)
+        + (2 if stop == "B2" else 0)
+    )
+
+
+def test_stop_stage_rejects_a_range_that_goes_backwards() -> None:
+    with pytest.raises(ValueError, match="--stop cannot be earlier"):
+        asyncio.run(
+            run_b_pipeline(
+                SCRIPT, provider=FakeProvider(), start_from="B2", stop_after="B1.2"
+            )
+        )
+
+
 def test_current_prompt_files_load_with_transport_instructions() -> None:
     for filename in ("b1_1.md", "b1_2.md", "b2.md"):
         content = _instructions(filename)

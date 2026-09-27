@@ -329,6 +329,7 @@ async def run_b_pipeline(
     model: str | None = None,
     max_parallel_calls: int = 8,
     start_from: Literal["B1.1", "B1.2", "B2"] = "B1.1",
+    stop_after: Literal["B1.1", "B1.2", "B2"] = "B2",
     previous_b11: B11Output | None = None,
     previous_b12: tuple[B12Output, ...] | None = None,
     on_input: Callable[[str, int | None, dict[str, object]], None] | None = None,
@@ -353,6 +354,10 @@ async def run_b_pipeline(
         raise ValueError("max_parallel_calls must be at least 1")
     if start_from not in {"B1.1", "B1.2", "B2"}:
         raise ValueError(f"Unknown start stage: {start_from}")
+    if stop_after not in {"B1.1", "B1.2", "B2"}:
+        raise ValueError(f"Unknown stop stage: {stop_after}")
+    if ("B1.1", "B1.2", "B2").index(stop_after) < ("B1.1", "B1.2", "B2").index(start_from):
+        raise ValueError("--stop cannot be earlier than --from")
 
     async def call_b11(instructions_suffix: str = "") -> B11Output:
         output = await _call_stage(
@@ -414,6 +419,8 @@ async def run_b_pipeline(
                 on_stage_duration("B1.1", perf_counter() - b11_started)
         if on_stage_complete is not None:
             on_stage_complete("B1.1", len(materialized), None)
+        if stop_after == "B1.1":
+            return BPipelineResult(b11=b11, b12=(), b2=())
     else:
         if previous_b11 is None:
             raise ValueError(f"Starting from {start_from} requires a validated B1.1 checkpoint")
@@ -471,6 +478,8 @@ async def run_b_pipeline(
         if on_stage_complete is not None:
             partial = BPipelineResult(b11=b11, b12=tuple(b12_results), b2=())
             on_stage_complete("B1.2", len(b12_results), partial.merged_b12_output())
+    if stop_after == "B1.2":
+        return BPipelineResult(b11=b11, b12=tuple(b12_results), b2=())
 
     async def b2_one(
         meta: BlockMeta, block: MaterializedBlock, b12: B12Output

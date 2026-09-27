@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
+from ai_video_factory.bots.contracts import B2Output, B11Output, B12Output
 from scripts.pipeline import run_b_pipeline as runner
 
 VOICE = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
@@ -335,3 +336,110 @@ def test_fish_director_uses_shared_text_model_without_external_calls(
     assert captured["director_model"] == runner.settings.openai_model
     assert captured["provider"] is provider
     assert captured["stt_client"] is stt_client
+
+
+def test_stop_saves_resumable_stages_without_audio_or_images(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script, avatar = _files(tmp_path)
+    output = tmp_path / "output" / script.stem
+    args = Namespace(
+        script_file=None,
+        scripts_dir=script.parent,
+        script=script.name,
+        list_scripts=False,
+        avatars_dir=avatar.parent,
+        avatar=avatar.name,
+        list_avatars=False,
+        output=tmp_path / "output",
+        max_parallel_calls=1,
+        from_stage="B1.1",
+        stop_stage="B1.1",
+        skip_images=False,
+        no_audio=False,
+        images_only=False,
+        regenerate_audio=False,
+        resume_audio=False,
+    )
+    requested: list[str] = []
+
+    class FakeMeteredProvider:
+        async def generate_structured_with_response(self, **kwargs):
+            payload = json.loads(kwargs["input_text"])
+            output_type = kwargs["output_type"]
+            requested.append(output_type.__name__)
+            if output_type is B11Output:
+                result = B11Output.model_validate(_b11_payload())
+            elif output_type is B12Output:
+                result = B12Output.model_validate({
+                    "pipeline_stage": "B1.2",
+                    "block_id": 1,
+                    "beats": [{
+                        "beat_id": "1A", "text": payload["blocks"][0]["text"],
+                        "beat_type": "orientation",
+                    }],
+                    "error": None,
+                })
+            else:
+                assert output_type is B2Output
+                block = payload["blocks"][0]
+                block["beats"][0].update(visual_type="avatar", description=None)
+                result = B2Output.model_validate({
+                    "pipeline_stage": "B2",
+                    "narrative_core": payload["narrative_core"],
+                    "blocks": [block],
+                    "error": None,
+                })
+            response = SimpleNamespace(
+                id=f"response-{len(requested)}",
+                model="gpt-6-luna",
+                service_tier="default",
+                usage=SimpleNamespace(
+                    input_tokens=100,
+                    input_tokens_details=SimpleNamespace(
+                        cached_tokens=0, cache_write_tokens=0
+                    ),
+                    output_tokens=20,
+                    output_tokens_details=SimpleNamespace(reasoning_tokens=0),
+                ),
+            )
+            return result, response
+
+    def forbid_paid(*_args, **_kwargs):
+        pytest.fail("--stop must not start Fish Audio or image requests")
+
+    monkeypatch.setattr(runner, "parse_args", lambda: args)
+    monkeypatch.setattr(runner.settings, "openai_api_key", "test-openai-key")
+    monkeypatch.setattr(runner.settings, "ai33_api_key", None)
+    monkeypatch.setattr(runner, "OpenAIProvider", lambda **_kw: FakeMeteredProvider())
+    monkeypatch.setattr(runner, "_generate_audio", forbid_paid)
+    monkeypatch.setattr(runner, "_generate_images", forbid_paid)
+
+    for start, stop, expected, present, absent in (
+        ("B1.1", "B1.1", ["B11Output"], ["B1.1/output.json"], ["B1.2", "B2"]),
+        (
+            "B1.2", "B1.2", ["B11Output", "B12Output"],
+            ["B1.2/merged_output.json"], ["B2", "visual_plan.json"],
+        ),
+        (
+            "B2", "B2", ["B11Output", "B12Output", "B2Output"],
+            ["B2/merged_output.json", "visual_plan.json"], ["images"],
+        ),
+    ):
+        args.from_stage = start
+        args.stop_stage = stop
+        asyncio.run(runner.main())
+        report = json.loads((output / "run_report.json").read_text(encoding="utf-8"))
+        assert report["run"]["status"] == "completed"
+        assert report["run"]["stopped_after"] == stop
+        assert report["api_costs"]["pricing_status"] == "complete"
+        assert report["api_costs"]["stages"]["B2"]["expected_calls"] == (
+            1 if stop == "B2" else 0
+        )
+        assert requested == expected
+        for relative in present:
+            assert (output / relative).is_file()
+        for relative in absent:
+            assert not (output / relative).exists()
+        assert not (output / "audio").exists()
+

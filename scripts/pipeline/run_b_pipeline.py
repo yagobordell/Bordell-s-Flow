@@ -101,6 +101,13 @@ def parse_args() -> argparse.Namespace:
         help="Start at this stage using validated earlier outputs in data/output/<script>.",
     )
     parser.add_argument(
+        "--stop",
+        dest="stop_stage",
+        choices=_STAGES,
+        default=None,
+        help="Stop after this planning stage, without starting Fish Audio or image generation.",
+    )
+    parser.add_argument(
         "--skip-images",
         "--no-image",
         dest="skip_images",
@@ -138,6 +145,7 @@ def parse_args() -> argparse.Namespace:
         or args.no_audio
         or args.skip_images
         or args.from_stage != "B1.1"
+        or args.stop_stage is not None
         or args.avatar is not None
     ):
         parser.error(
@@ -146,10 +154,16 @@ def parse_args() -> argparse.Namespace:
         )
     if args.images_only and args.no_audio:
         parser.error("--images-only does not run audio; omit --no-audio.")
-    if args.images_only and (args.skip_images or args.from_stage != "B1.1"):
-        parser.error("--images-only cannot be combined with --no-image, --skip-images or --from.")
+    if args.images_only and (
+        args.skip_images or args.from_stage != "B1.1" or args.stop_stage is not None
+    ):
+        parser.error("--images-only cannot be combined with --no-image, --from or --stop.")
     if args.images_only and args.avatar is not None:
         parser.error("--images-only uses the saved avatar; omit --avatar.")
+    if args.stop_stage is not None and (
+        _STAGES.index(args.stop_stage) < _STAGES.index(args.from_stage)
+    ):
+        parser.error("--stop must be the same as or later than --from.")
     if args.script_file is not None and args.script is not None:
         parser.error("Specify either a direct script path or --script, not both.")
     if args.list_scripts and args.list_avatars:
@@ -159,6 +173,7 @@ def parse_args() -> argparse.Namespace:
         or args.script is not None
         or args.avatar is not None
         or args.from_stage != "B1.1"
+        or args.stop_stage is not None
         or args.images_only
         or args.skip_images
         or args.no_audio
@@ -1114,6 +1129,8 @@ async def main() -> None:
     timings = TimingLedger()
     resume_elapsed_offset = 0.0
     resume_expected_calls: dict[str, int | None] | None = None
+    stop_stage = getattr(args, "stop_stage", None)
+    stop_index = _STAGES.index(stop_stage) if stop_stage is not None else len(_STAGES) - 1
     planned_blocks: int | None = None
     previous_b11: B11Output | None = None
     previous_b12: tuple[B12Output, ...] | None = None
@@ -1149,7 +1166,9 @@ async def main() -> None:
             block_count = len(previous_b11.blocks or [])
             resume_expected_calls = {
                 stage: prior_counts[stage]
-                + (block_count if stage_index >= rerun_from_index else 0)
+                + (
+                    block_count if rerun_from_index <= stage_index <= stop_index else 0
+                )
                 for stage_index, stage in enumerate(_STAGES)
             }
         except (KeyError, TypeError, ValueError) as exc:
@@ -1173,6 +1192,8 @@ async def main() -> None:
         "model": settings.openai_model,
         "reasoning_effort": settings.openai_reasoning_effort,
     }
+    if stop_stage is not None:
+        run_metadata["stopped_after"] = stop_stage
     if args.from_stage != "B1.1":
         run_metadata["resumed_from"] = args.from_stage
         if previous_report.get("run", {}).get("audio_generation"):
@@ -1187,12 +1208,11 @@ async def main() -> None:
         if resume_expected_calls is None:
             expected_calls: dict[str, int | None] = {
                 "B1.1": max(1, timings.call_count("B1.1")),
-                "B1.2": report_blocks,
+                "B1.2": report_blocks if stop_index >= 1 else 0,
                 "B2": (
                     max(report_blocks, timings.call_count("B2"))
-                    if report_blocks is not None
-                    else None
-                ),
+                    if report_blocks is not None else None
+                ) if stop_index >= 2 else 0,
             }
         else:
             expected_calls = dict(resume_expected_calls)
@@ -1242,7 +1262,10 @@ async def main() -> None:
     audio_task: asyncio.Task[dict[str, object]] | None = None
     audio_joined = False
     image_manifest: dict[str, object] | None = None
-    audio_enabled = args.from_stage == "B1.1" and not getattr(args, "no_audio", False)
+    audio_enabled = (
+        stop_stage is None and args.from_stage == "B1.1"
+        and not getattr(args, "no_audio", False)
+    )
 
     def output_and_start_audio(
         stage: str, block_id: int | None, payload: dict[str, object]
@@ -1290,6 +1313,7 @@ async def main() -> None:
             model=settings.openai_model,
             max_parallel_calls=args.max_parallel_calls,
             start_from=args.from_stage,
+            stop_after=stop_stage or "B2",
             previous_b11=previous_b11,
             previous_b12=previous_b12,
             on_input=artifacts.input,
@@ -1301,11 +1325,15 @@ async def main() -> None:
             on_stage_duration=timings.record_stage,
             on_stage_complete=stage_complete,
         )
-        visual_plan = result.visual_plan()
-        # This application-owned binding is intentionally absent from audited B2 payloads.
-        visual_plan["avatar"] = avatar_metadata
-        _write(output / "visual_plan.json", visual_plan)
+        visual_plan = None
+        if stop_index >= 2:
+            visual_plan = result.visual_plan()
+            # This binding is intentionally absent from audited B2 payloads.
+            visual_plan["avatar"] = avatar_metadata
+            _write(output / "visual_plan.json", visual_plan)
         if audio_task is not None:
+            if visual_plan is None:
+                raise RuntimeError("Audio alignment requires a completed B2 plan")
             run_metadata["audio_generation"] = await audio_task
             audio_joined = True
             try:
@@ -1321,7 +1349,9 @@ async def main() -> None:
                 raise
             save_report("running", len(result.b12))
         # Wait for valid audio/STT alignment before starting paid image work.
-        if not getattr(args, "skip_images", False):
+        if stop_stage is None and not getattr(args, "skip_images", False):
+            if visual_plan is None:
+                raise RuntimeError("Image generation requires a completed B2 plan")
             run_metadata["image_generation"] = {"status": "running"}
             save_report("running", len(result.b12))
             image_manifest = await _generate_images(output, visual_plan)

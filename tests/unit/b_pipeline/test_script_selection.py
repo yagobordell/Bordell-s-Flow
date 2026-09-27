@@ -54,6 +54,43 @@ def test_no_image_cannot_be_combined_with_images_only(
         runner.parse_args()
 
 
+@pytest.mark.parametrize(
+    ("flags", "start", "stop"),
+    [
+        (["--stop", "B1.1"], "B1.1", "B1.1"),
+        (["--from", "B1.2", "--stop", "B1.2"], "B1.2", "B1.2"),
+        (["--from", "B2", "--stop", "B2"], "B2", "B2"),
+    ],
+)
+def test_stop_cli_accepts_inclusive_stage_range(
+    flags: list[str], start: str, stop: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("sys.argv", ["run_b_pipeline.py", *flags])
+    args = runner.parse_args()
+    assert args.from_stage == start
+    assert args.stop_stage == stop
+
+
+@pytest.mark.parametrize(
+    ("flags", "message"),
+    [
+        (["--from", "B2", "--stop", "B1.2"], "--stop must be"),
+        (["--images-only", "--stop", "B2"], "--images-only cannot"),
+        (["--regenerate-audio", "--stop", "B1.1"], "Audio-only modes cannot"),
+        (["--list-scripts", "--stop", "B1.1"], "Listing cannot"),
+    ],
+)
+def test_stop_cli_rejects_invalid_or_conflicting_modes(
+    flags: list[str], message: str, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr("sys.argv", ["run_b_pipeline.py", *flags])
+    with pytest.raises(SystemExit) as raised:
+        runner.parse_args()
+    assert raised.value.code == 2
+    assert message in capsys.readouterr().err
+
+
 def test_default_scripts_location_is_input_root() -> None:
     assert runner.DEFAULT_SCRIPTS_DIR == Path("data/input")
 
@@ -231,10 +268,12 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         on_rejected_output,
         on_rejected_b2_output,
         start_from,
+        stop_after,
         previous_b11,
         previous_b12,
     ):
         assert start_from == "B1.1"
+        assert stop_after == "B2"
         assert previous_b11 is None and previous_b12 is None
         assert callable(on_rejected_output)
         assert callable(on_rejected_b2_output)

@@ -107,6 +107,12 @@ uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --list-ava
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png --from B1.2
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png --from B2
+# Save only B1.1 (no Fish Audio, B1.2, B2 or images):
+.\run.ps1 historia_roma monje --stop B1.1
+# Run only B1.2 from the saved B1.1 checkpoint:
+.\run.ps1 historia_roma monje --from B1.2 --stop B1.2
+# Run only B2 from saved B1.1/B1.2 outputs, without images:
+.\run.ps1 historia_roma monje --from B2 --stop B2
 # Finish after B2, without generating images or invoking AI33/OpenAI image APIs:
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png --no-image
 # Resume independent official OpenAI image batches without repeating any planning bot:
@@ -125,7 +131,11 @@ B1.1, output por bloque y merge de B1.2/B2, `visual_plan.json` y
 avatar elegido, su imagen local de la ejecución, dimensiones y SHA-256; el
 modelo B2 sigue recibiendo y devolviendo sus contratos originales. Para repetir
 solo etapas posteriores, usa `--from B1.2` o `--from B2`; el runner valida y
-reutiliza los artefactos previos del mismo guion. La consola
+reutiliza los artefactos previos del mismo guion. `--stop` es inclusivo y puede
+combinarse con `--from` siempre que la etapa final no preceda a la inicial.
+Al usar `--stop` no se inicia Fish Audio ni se generan imágenes, y el informe
+registra `stopped_after`; las ejecuciones sin `--stop` mantienen su flujo normal.
+La consola
 imprime una línea de tiempo y coste inmediatamente después de terminar cada bot.
 
 B1.1, B1.2, B2 y el director de voz Fish usan el mismo modelo de
