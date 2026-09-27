@@ -158,7 +158,8 @@ def _verified_grid(output: Path, item: dict[str, Any]) -> Image.Image:
         raise GridCropError("Grid PNG path is outside images/grids")
     path = output / relative
     if (
-        path.is_symlink() or path.parent.is_symlink()
+        (output / "images").is_symlink()
+        or path.is_symlink() or path.parent.is_symlink()
         or not path.is_file()
     ):
         raise GridCropError(f"Missing or linked generated grid: {name}")
@@ -245,7 +246,7 @@ def crop_grid_assets(
             raise GridCropError("Grid panel map does not match its cell count")
         image = _verified_grid(output, grid)
         boxes = panel_boxes(image, columns=columns, rows=rows)
-        for panel, box in zip(panels, boxes, strict=True):
+        for index, (panel, box) in enumerate(zip(panels, boxes, strict=True)):
             block_id, beat_id = panel["block_id"], panel["beat_id"]
             if (
                 not isinstance(block_id, int) or isinstance(block_id, bool)
@@ -258,13 +259,8 @@ def crop_grid_assets(
             if key in seen:
                 raise GridCropError(f"Duplicate crop panel: {beat_id}")
             seen.add(key)
-            if (panel["row"], panel["column"]) != divmod(len(derived) % len(boxes), columns):
-                # Each grid's own row/column mapping must be exact.
-                index = next(
-                    i for i, candidate in enumerate(panels) if candidate is panel
-                )
-                if (panel["row"], panel["column"]) != divmod(index, columns):
-                    raise GridCropError(f"Invalid grid panel ordering: {beat_id}")
+            if (panel["row"], panel["column"]) != divmod(index, columns):
+                raise GridCropError(f"Invalid grid panel ordering: {beat_id}")
             result = ImageOps.fit(
                 image.crop(box), _IMAGE_SIZE, method=Image.Resampling.LANCZOS
             )
