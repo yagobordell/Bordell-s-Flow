@@ -14,7 +14,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageOps
+from PIL import Image
 
 _SHA256 = re.compile(r"[0-9a-f]{64}", flags=re.ASCII)
 _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", flags=re.ASCII)
@@ -261,8 +261,10 @@ def crop_grid_assets(
             seen.add(key)
             if (panel["row"], panel["column"]) != divmod(index, columns):
                 raise GridCropError(f"Invalid grid panel ordering: {beat_id}")
-            result = ImageOps.fit(
-                image.crop(box), _IMAGE_SIZE, method=Image.Resampling.LANCZOS
+            # Preserve the full photographic interior even if GPT's panel
+            # ratio differs slightly from the requested 16:9 geometry.
+            result = image.crop(box).resize(
+                _IMAGE_SIZE, resample=Image.Resampling.LANCZOS
             )
             buffer = BytesIO()
             result.save(buffer, format="PNG")

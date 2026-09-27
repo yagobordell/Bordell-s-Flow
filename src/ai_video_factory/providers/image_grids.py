@@ -37,7 +37,8 @@ def _grid_prompt(panels: list[dict[str, Any]], columns: int, rows: int) -> str:
         "rectangular layout with narrow white divider lines between cells; "
         "a small white exterior border is acceptable. Keep the divider "
         "lines straight and the panels distinct, so they can be cropped "
-        "after generation. Do not merge, repeat, omit or rearrange scenes.",
+        "after generation. Do not merge, repeat, omit or rearrange scenes. "
+        "The panel numbers are ordering instructions, not visible captions.",
         "Maintain the identities, objects and physical continuity of "
         "numbered descriptions. Each panel below is identified by its "
         "explicit row and column. Retain original B2 description numbers; "

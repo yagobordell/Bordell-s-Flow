@@ -868,6 +868,27 @@ def clear_previous_b2_images(output: Path, plan: dict[str, Any]) -> int:
     image_root = output / "images"
     if image_root.is_symlink():
         raise ImageBatchError("Refusing linked image directory")
+    # Cropped grids are derived locally from paid source PNGs. A resume must
+    # not delete verified panel outputs before the saved grid state is checked:
+    # a changed prompt must fail closed without destroying previous results.
+    crop_records: dict[str, str] = {}
+    manifest_path = image_root / "manifest.json"
+    if manifest_path.is_symlink():
+        raise ImageBatchError("Refusing linked image manifest")
+    if manifest_path.is_file():
+        prior = json.loads(manifest_path.read_text(encoding="utf-8"))
+        panels = prior.get("panel_assets", [])
+        if not isinstance(panels, list):
+            raise ImageBatchError("Invalid previous cropped panel manifest")
+        for panel in panels:
+            if (
+                not isinstance(panel, dict)
+                or not isinstance(panel.get("file"), str)
+                or not isinstance(panel.get("sha256"), str)
+                or re.fullmatch(r"[0-9a-f]{64}", panel["sha256"]) is None
+            ):
+                raise ImageBatchError("Invalid saved cropped panel record")
+            crop_records[panel["file"]] = panel["sha256"]
     assets: list[tuple[Path, Path, Path]] = []
     for job in jobs:
         folder = output / "images" / f"block_{job['block_id']}"
@@ -881,6 +902,13 @@ def clear_previous_b2_images(output: Path, plan: dict[str, Any]) -> int:
             if state.get("schema_version") == "openai-image-batch-v1":
                 # Preserve OpenAI's durable paid-task state for resume/reconciliation.
                 continue
+        crop_sha = crop_records.get(image_path.relative_to(output).as_posix())
+        if crop_sha is not None and image_path.is_file():
+            if hashlib.sha256(image_path.read_bytes()).hexdigest() != crop_sha:
+                raise ImageBatchError(
+                    f"Saved grid crop changed at {image_path}; reconcile manually"
+                )
+            continue
         assets.append((state_path, image_path, batch_path))
 
     archive = output / "images" / "replaced_states"

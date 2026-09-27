@@ -14,6 +14,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from ai_video_factory.providers import openai_batch_images as images
+from ai_video_factory.providers.grid_crops import crop_grid_assets
 from scripts.pipeline import run_b_pipeline as runner
 
 
@@ -1095,3 +1096,39 @@ def test_unfinished_grid_crops_still_defer_preview_safely(tmp_path: Path) -> Non
         "reason": "grid_panels_not_cropped",
         "grid_count": 1,
     }
+
+
+def test_images_only_clear_preserves_saved_grid_crops_until_grid_state_is_checked(
+    tmp_path: Path,
+) -> None:
+    plan = _numbered_grid_plan(2, after=2)
+    batch = FakeBatch()
+    manifest = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+    )
+    cropped = crop_grid_assets(tmp_path, manifest)
+    assert len(cropped) == 4
+    assert images.clear_previous_b2_images(tmp_path, plan) == 0
+    assert all((tmp_path / item["file"]).is_file() for item in cropped)
+    changed = json.loads(json.dumps(plan))
+    changed["blocks"][0]["beats"][-1]["description"] = "New filler photo"
+    with pytest.raises(images.ImageBatchError, match="differs"):
+        images.generate_b2_images(
+            tmp_path, changed, api_key=None, options=_opts(), batch_client=batch,
+        )
+    assert len(batch.created) == 1
+    assert all((tmp_path / item["file"]).is_file() for item in cropped)
+
+
+def test_images_only_clear_refuses_tampered_grid_crop(tmp_path: Path) -> None:
+    plan = _numbered_grid_plan(2, after=2)
+    batch = FakeBatch()
+    manifest = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+    )
+    cropped = crop_grid_assets(tmp_path, manifest)
+    target = tmp_path / cropped[0]["file"]
+    target.write_bytes(b"changed-after-cropping")
+    with pytest.raises(images.ImageBatchError, match="reconcile manually"):
+        images.clear_previous_b2_images(tmp_path, plan)
+    assert target.read_bytes() == b"changed-after-cropping"
