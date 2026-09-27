@@ -402,9 +402,23 @@ def generate_static_preview(
         raise StaticPreviewError("ffmpeg and ffprobe are required for the static preview")
     if image_manifest.get("status") != "completed":
         raise StaticPreviewError("Static preview requires the completed B2 image manifest")
-    if any(item.get("grid") is not None for item in image_manifest.get("items", [])):
+    grids = [
+        item for item in image_manifest.get("items", [])
+        if item.get("grid") is not None
+    ]
+    expected_panels = [
+        (panel["block_id"], panel["beat_id"])
+        for grid in grids for panel in grid["panels"]
+    ]
+    cropped = image_manifest.get("panel_assets", [])
+    if expected_panels and (
+        len(cropped) != len(expected_panels)
+        or len(set(expected_panels)) != len(expected_panels)
+        or {(item["block_id"], item["beat_id"]) for item in cropped}
+        != set(expected_panels)
+    ):
         raise StaticPreviewError(
-            "Grid panels have not been cropped; cannot render them as individual beats"
+            "Grid panel crops are incomplete or do not match the saved B2 panel map"
         )
     timeline = build_stt_beat_timeline(output, plan, audio)
     avatar_meta = plan.get("avatar")
@@ -412,7 +426,13 @@ def generate_static_preview(
         raise StaticPreviewError("Static preview requires the saved avatar")
     avatar = _verified_asset(output, avatar_meta.get("file"), avatar_meta.get("sha256"))
     assets: dict[tuple[int, str], Path] = {}
-    for item in image_manifest.get("items", []):
+    for item in [
+        *(
+            item for item in image_manifest.get("items", [])
+            if item.get("grid") is None
+        ),
+        *cropped,
+    ]:
         key = item.get("block_id"), item.get("beat_id")
         if key in assets:
             raise StaticPreviewError("Duplicate generated PNG for one B2 beat")
