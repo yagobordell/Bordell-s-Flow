@@ -54,7 +54,9 @@ class LTXVideoParameters(BaseModel):
     @classmethod
     def validate_generation_profile(cls, value: str) -> str:
         if value not in (LTX_GENERATION_PROFILE, LTX_STATIC_CAMERA_GENERATION_PROFILE):
-            raise ValueError("generation_profile must be a supported default or static-camera I2V profile")
+            raise ValueError(
+                "generation_profile must be a supported default or static-camera I2V profile"
+            )
         return value
 
     @field_validator("prompt")

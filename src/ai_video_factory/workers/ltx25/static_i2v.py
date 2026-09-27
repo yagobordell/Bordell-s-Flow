@@ -29,7 +29,12 @@ from ltx_pipelines.utils.helpers import (
     tiling_scale_factors_for_vae,
 )
 from ltx_pipelines.utils.media_io import HDRColorSpace
-from ltx_pipelines.utils.types import DEFAULT_AUTO_DURATION, AutoDuration, ModalitySpec, PipelineOutput
+from ltx_pipelines.utils.types import (
+    DEFAULT_AUTO_DURATION,
+    AutoDuration,
+    ModalitySpec,
+    PipelineOutput,
+)
 
 from .reference_recipe import LTX_A2V_STATIC_NEGATIVE_PROMPT, LTX_A2V_STATIC_VIDEO_CFG_SCALE
 
@@ -94,7 +99,9 @@ def generate_static_camera(  # noqa: PLR0913
         tiling_config,
         scale_factors=scale_factors,
         vae_checkpoint_path=self.video_decoder.checkpoint_path,
-        video_shape=VideoPixelShape(batch=1, frames=num_frames, height=height, width=width, fps=frame_rate),
+        video_shape=VideoPixelShape(
+            batch=1, frames=num_frames, height=height, width=width, fps=frame_rate
+        ),
         diffvae_optimization=self.video_decoder.diffvae_optimization,
         device=self.device,
     )
@@ -179,7 +186,11 @@ def generate_static_camera(  # noqa: PLR0913
         ),
     )
 
-    decoded_video = self.video_decoder(video_state.latent, tiling_config, generator, dtype=vae_dtype)
+    decoded_video = self.video_decoder(
+        video_state.latent, tiling_config, generator, dtype=vae_dtype
+    )
     decoded_audio = self.audio_decoder(audio_state.latent)
-    return PipelineOutput(decoded_video, decoded_audio, num_frames, tiling_config, None, video_state.latent)
+    return PipelineOutput(
+        decoded_video, decoded_audio, num_frames, tiling_config, None, video_state.latent
+    )
 

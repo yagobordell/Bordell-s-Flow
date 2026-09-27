@@ -8,11 +8,11 @@ from pathlib import Path
 
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
+from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
     LTX_STATIC_CAMERA_GENERATION_PROFILE,
 )
-from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.workflows.video_generation import (
     VideoGenerationManifest,
     build_video_generation_plan,
