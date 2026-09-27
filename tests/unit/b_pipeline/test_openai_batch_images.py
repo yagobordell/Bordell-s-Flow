@@ -630,3 +630,292 @@ def test_text_and_image_configuration_defaults_use_gpt6_and_image25() -> None:
     assert "openai_b_model" not in Settings.model_fields
     assert "openai_b_reasoning_effort" not in Settings.model_fields
     assert Settings.model_fields["openai_image_model"].default == "gpt-image-2.5-flare"
+
+
+def _numbered_grid_plan(
+    numbered: int, *, before: int = 0, after: int = 0,
+    video_positions: tuple[int, ...] = (),
+) -> dict:
+    beats = [{"beat_id": "1A", "visual_type": "avatar", "description": None}]
+    for index in range(before + numbered + after):
+        if index < before:
+            description = f"Previous standalone photo {index + 1}"
+        elif index < before + numbered:
+            description = f"{index - before + 1}. Continuous scene step {index - before + 1}"
+        else:
+            description = f"Following standalone photo {index - before - numbered + 1}"
+        beats.append({
+            "beat_id": f"1{chr(ord('B') + index)}",
+            "visual_type": "media_video" if index in video_positions else "media_image",
+            "description": description,
+        })
+    return {"blocks": [{"block_id": 1, "beats": beats}]}
+
+
+@pytest.mark.parametrize(
+    ("numbered", "columns", "rows", "size"),
+    [
+        (2, 2, 2, "2560x1440"),
+        (3, 2, 2, "2560x1440"),
+        (4, 2, 2, "2560x1440"),
+        (5, 3, 2, "3840x1440"),
+        (6, 3, 2, "3840x1440"),
+        (7, 3, 3, "3840x2160"),
+        (8, 3, 3, "3840x2160"),
+        (9, 3, 3, "3840x2160"),
+    ],
+)
+def test_numbered_beats_make_one_full_resolution_grid_per_shape(
+    tmp_path: Path, numbered: int, columns: int, rows: int, size: str,
+) -> None:
+    padding = columns * rows - numbered
+    plan = _numbered_grid_plan(numbered, after=padding)
+    unchanged = json.loads(json.dumps(plan))
+    batch = FakeBatch()
+    manifest = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+    )
+    assert manifest["status"] == "completed"
+    assert manifest["grid_count"] == 1
+    assert manifest["total_described_beats"] == numbered + padding
+    assert manifest["total_generation_jobs"] == 1
+    assert len(batch.uploads) == len(batch.created) == len(manifest["items"]) == 1
+    artifact = manifest["items"][0]
+    assert artifact["size"] == size
+    assert artifact["grid"]["columns"] == columns
+    assert artifact["grid"]["rows"] == rows
+    assert artifact["grid"]["panel_width"] == 1280
+    assert artifact["grid"]["panel_height"] == 720
+    assert len(artifact["panels"]) == columns * rows
+    assert len(artifact["grid"]["numbered_beat_ids"]) == numbered
+    assert [panel["source"] for panel in artifact["panels"]] == (
+        ["numbered"] * numbered + ["filler"] * padding
+    )
+    assert all(
+        (panel["row"], panel["column"]) == (index // columns, index % columns)
+        for index, panel in enumerate(artifact["panels"])
+    )
+    request = batch.uploads[0][1]
+    assert request["url"] == "/v1/images/generations"
+    assert request["body"]["size"] == size
+    assert request["body"]["n"] == 1
+    assert "Panel 1" in request["body"]["prompt"]
+    assert f"Panel {columns * rows}" in request["body"]["prompt"]
+    assert plan == unchanged
+    with Image.open(tmp_path / artifact["file"]) as grid:
+        assert grid.size == tuple(map(int, size.split("x")))
+    assert not any((tmp_path / "images").glob("block_*/*.png"))
+    resumed = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+    )
+    assert resumed["items"] == manifest["items"]
+    assert len(batch.created) == 1
+
+
+def test_video_start_images_and_following_images_share_one_grid(tmp_path: Path) -> None:
+    plan = _numbered_grid_plan(2, after=2, video_positions=(1, 3))
+    batch = FakeBatch()
+    result = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+    )
+    assert len(batch.created) == 1
+    assert [panel["visual_type"] for panel in result["items"][0]["panels"]] == [
+        "media_image", "media_video", "media_image", "media_video",
+    ]
+    assert [panel["beat_id"] for panel in result["items"][0]["panels"]] == [
+        "1B", "1C", "1D", "1E",
+    ]
+
+
+def test_filler_prefers_following_unassigned_beats_over_preceding(
+    tmp_path: Path,
+) -> None:
+    plan = _numbered_grid_plan(2, before=2, after=2)
+    batch = FakeBatch()
+    manifest = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+    )
+    assert manifest["total_generation_jobs"] == 3
+    assert manifest["grid_count"] == 1
+    grid = next(item for item in manifest["items"] if item.get("grid"))
+    assert [p["beat_id"] for p in grid["panels"]] == ["1D", "1E", "1F", "1G"]
+    assert {item["beat_id"] for item in manifest["items"] if not item.get("grid")} == {
+        "1B", "1C",
+    }
+
+
+def test_grid_uses_nearest_free_previous_images_when_no_following(
+    tmp_path: Path,
+) -> None:
+    plan = _numbered_grid_plan(2, before=2)
+    batch = FakeBatch()
+    manifest = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+    )
+    assert manifest["total_generation_jobs"] == 1
+    assert [panel["beat_id"] for panel in manifest["items"][0]["panels"]] == [
+        "1B", "1C", "1D", "1E",
+    ]
+    assert [panel["source"] for panel in manifest["items"][0]["panels"]] == [
+        "filler", "filler", "numbered", "numbered",
+    ]
+
+
+def test_grid_fails_before_paid_requests_when_no_distinct_fillers(
+    tmp_path: Path,
+) -> None:
+    plan = _numbered_grid_plan(2, after=1)
+    batch = FakeBatch()
+    with pytest.raises(images.ImageBatchError, match="insufficient free images"):
+        images.generate_b2_images(
+            tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+        )
+    assert batch.created == batch.uploads == []
+    assert not (tmp_path / "images/manifest.json").exists()
+
+
+@pytest.mark.parametrize(
+    "descriptions",
+    [
+        ("1. First beat", "3. Missing beat 2"),
+        ("1. First beat", "An unrelated photo"),
+    ],
+)
+def test_invalid_continuity_numbering_fails_before_any_paid_request(
+    tmp_path: Path, descriptions: tuple[str, str],
+) -> None:
+    plan = _numbered_grid_plan(2, after=2)
+    for beat, description in zip(plan["blocks"][0]["beats"][1:], descriptions):
+        beat["description"] = description
+    batch = FakeBatch()
+    with pytest.raises(images.ImageBatchError, match="number"):
+        images.generate_b2_images(
+            tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+        )
+    assert not batch.created
+
+
+def test_avatar_in_video_grid_uses_selected_run_reference_and_direct_fallback(
+    tmp_path: Path,
+) -> None:
+    plan = _numbered_grid_plan(2, after=2, video_positions=(1,))
+    plan["blocks"][0]["beats"][2]["description"] = (
+        "2. avatar gently turns toward the window"
+    )
+    avatar = _png(size=(3, 2))
+    (tmp_path / "avatar.png").write_bytes(avatar)
+    plan["avatar"] = {
+        "file": "avatar.png", "sha256": hashlib.sha256(avatar).hexdigest(),
+    }
+    batch = FakeBatch(failures={"1B": "failed"})
+    direct = FakeDirect()
+    manifest = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(),
+        batch_client=batch, direct_client=direct,
+    )
+    assert len(batch.uploads) == len(batch.created) == len(direct.calls) == 1
+    row = batch.uploads[0][1]
+    assert row["url"] == "/v1/images/edits"
+    assert row["body"]["size"] == "2560x1440"
+    assert base64.b64decode(
+        row["body"]["images"][0]["image_url"].split(",", 1)[1]
+    ) == avatar
+    assert direct.calls[0]["size"] == "2560x1440"
+    assert direct.calls[0]["reference_image_url"] == (
+        row["body"]["images"][0]["image_url"]
+    )
+    assert manifest["items"][0]["provider"] == "openai_direct_fallback"
+
+
+def test_grid_rejects_existing_individual_paid_state_before_all_uploads(
+    tmp_path: Path,
+) -> None:
+    plan = _numbered_grid_plan(2, after=2)
+    images._atomic_json(tmp_path / "images/block_1/1C.json", {
+        "schema_version": "openai-image-batch-v1",
+        "status": "batch_submitted", "fingerprint": "old",
+    })
+    batch = FakeBatch()
+    with pytest.raises(images.ImageBatchError, match="individual paid image state"):
+        images.generate_b2_images(
+            tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+        )
+    assert not batch.uploads
+
+
+def test_grid_pending_state_prevents_repeated_paid_submission(
+    tmp_path: Path,
+) -> None:
+    plan = _numbered_grid_plan(2, after=2)
+    batch = FakeBatch(failures={"1B": "unknown_create"})
+    with pytest.raises(images.ImageBatchError, match="unknown"):
+        images.generate_b2_images(
+            tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+        )
+    state = tmp_path / "images/grids/block_1_1B.json"
+    assert state.is_file()
+    assert images.has_pending_image_tasks(tmp_path)
+    with pytest.raises(images.ImageBatchError, match="unknown"):
+        images.generate_b2_images(
+            tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+        )
+    assert len(batch.created) == 1
+
+
+def test_grid_png_with_standard_dimensions_is_rejected(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(images.ImageBatchError, match="2560x1440"):
+        images._save_batch_png(
+            {
+                "data": [{"b64_json": base64.b64encode(_png()).decode()}],
+            },
+            tmp_path / "invalid-grid.png",
+            options=_opts(),
+            size="2560x1440",
+        )
+    assert not (tmp_path / "invalid-grid.png").exists()
+
+
+def test_images_only_saves_grid_map_and_defers_preview_without_cropping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = tmp_path / "input" / "roma.txt"
+    script.parent.mkdir()
+    script.write_bytes(b"Un guion.")
+    output = tmp_path / "output" / "roma"
+    (output / "B2").mkdir(parents=True)
+    (output / "B2/merged_output.json").write_text("{}", encoding="utf-8")
+    plan = _numbered_grid_plan(2, after=2)
+    (output / "visual_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (output / "run_report.json").write_text(json.dumps({
+        "run": {
+            "script_sha256": hashlib.sha256(script.read_bytes()).hexdigest(),
+            "status": "failed",
+        },
+        "api_costs": {"run_status": "failed"},
+        "timings": {"status": "failed"},
+    }), encoding="utf-8")
+    batch = FakeBatch()
+
+    def fake_generate(destination, saved_plan, *, api_key, options):
+        assert api_key == "fake-openai-key"
+        return images.generate_b2_images(
+            destination, saved_plan, api_key=None, options=options,
+            batch_client=batch,
+        )
+
+    monkeypatch.setattr(runner, "generate_b2_images", fake_generate)
+    monkeypatch.setattr(runner.settings, "openai_api_key", "fake-openai-key")
+    asyncio.run(runner._run_images_only(script, tmp_path / "output"))
+    assert len(batch.created) == 1
+    assert not (output / "preview").exists()
+    saved = json.loads((output / "visual_plan.json").read_text(encoding="utf-8"))
+    assert saved["image_assets"] == []
+    assert len(saved["image_grids"]) == 1
+    assert len(saved["image_grids"][0]["panels"]) == 4
+    report = json.loads((output / "run_report.json").read_text(encoding="utf-8"))
+    assert report["run"]["image_generation"]["grid_count"] == 1
+    assert report["run"]["video_preview"] == {
+        "status": "deferred", "reason": "grid_panels_not_cropped", "grid_count": 1,
+    }
