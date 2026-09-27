@@ -50,7 +50,7 @@ class FakeBatch:
         rows = content.decode("utf-8").splitlines()
         assert len(rows) == 1
         row = json.loads(rows[0])
-        assert row["url"] == "/v1/images/generations"
+        assert row["url"] in {"/v1/images/generations", "/v1/images/edits"}
         assert row["method"] == "POST"
         assert row["body"]["n"] == 1
         assert filename.endswith(".jsonl")
@@ -61,7 +61,10 @@ class FakeBatch:
             self.by_file[file_id] = row
         return file_id
 
-    def create_batch(self, file_id: str, *, beat_id: str, fingerprint: str):
+    def create_batch(
+        self, file_id: str, *, beat_id: str, fingerprint: str,
+        endpoint: str = "/v1/images/generations",
+    ):
         with self.lock:
             self.created.append((file_id, beat_id, fingerprint))
         if self.barrier:
@@ -71,7 +74,7 @@ class FakeBatch:
         batch = {
             "id": f"batch-{beat_id}",
             "input_file_id": file_id,
-            "endpoint": "/v1/images/generations",
+            "endpoint": endpoint,
             "status": "validating",
         }
         with self.lock:
@@ -144,6 +147,133 @@ class FakeDirect:
 
 def _opts(**overrides):
     return images.ImageBatchOptions(**overrides)
+
+
+
+def _avatar_plan(tmp_path: Path, *beats: tuple[str, str]) -> tuple[dict, bytes]:
+    avatar = _png(size=(3, 2))
+    (tmp_path / "avatar.png").write_bytes(avatar)
+    plan = {"avatar": {
+        "file": "avatar.png", "sha256": hashlib.sha256(avatar).hexdigest(),
+    }, "blocks": [{"block_id": 1, "beats": [
+        {"beat_id": "1A", "visual_type": "avatar", "description": None},
+        *({"beat_id": beat, "visual_type": "media_image", "description": description}
+          for beat, description in beats),
+    ]}]}
+    return plan, avatar
+
+
+def test_only_avatar_descriptions_attach_selected_png_to_edit_batches(tmp_path: Path) -> None:
+    plan, avatar = _avatar_plan(
+        tmp_path, ("1B", "The AVATAR walking through the market"),
+        ("1C", "An ancient city at dusk"), ("1D", "A portrait of avatar in the garden"),
+    )
+    original = json.loads(json.dumps(plan))
+    batch = FakeBatch()
+    result = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+    )
+    assert [item["beat_id"] for item in result["items"]] == ["1B", "1C", "1D"]
+    assert len(batch.created) == 3
+    assert plan == original
+    for _filename, row in batch.uploads:
+        body = row["body"]
+        beat = row["custom_id"].split("-")[1]
+        if beat in {"1B", "1D"}:
+            assert row["url"] == "/v1/images/edits"
+            assert batch.by_batch["batch-" + beat]["endpoint"] == "/v1/images/edits"
+            assert len(body["images"]) == 1
+            url = body["images"][0]["image_url"]
+            assert url.startswith("data:image/png;base64,")
+            assert base64.b64decode(url.split(",", 1)[1]) == avatar
+            assert "character reference" in body["prompt"]
+            assert result["items"][[item["beat_id"] for item in result["items"]].index(beat)][
+                "avatar_reference_sha256"
+            ] == hashlib.sha256(avatar).hexdigest()
+        else:
+            assert row["url"] == "/v1/images/generations"
+            assert "images" not in body
+            assert body["prompt"] == images.effective_image_prompt("An ancient city at dusk")
+    previous_calls = len(batch.created)
+    again = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+    )
+    assert again["items"] == result["items"]
+    assert len(batch.created) == previous_calls
+
+
+@pytest.mark.parametrize(
+    ("description", "expected"),
+    [
+        ("AVATAR at the harbor", True),
+        ("near the avatar.", True),
+        ("avatar-like silhouette", True),
+        ("avatars in a crowd", False),
+        ("avatarium", False),
+        ("a temple at dawn", False),
+    ],
+)
+def test_avatar_reference_requires_whole_word(description: str, expected: bool) -> None:
+    assert images._avatar_requested(description) is expected
+
+
+@pytest.mark.parametrize("failure", ["missing", "changed", "linked", "missing_metadata"])
+def test_avatar_preflight_blocks_unverified_reference_before_any_paid_work(
+    tmp_path: Path, failure: str,
+) -> None:
+    plan, _avatar = _avatar_plan(tmp_path, ("1B", "Avatar looking to camera"))
+    target = tmp_path / "avatar.png"
+    if failure == "missing":
+        target.unlink()
+    elif failure == "changed":
+        target.write_bytes(_png(size=(4, 3)))
+    elif failure == "linked":
+        original = tmp_path / "source.png"
+        target.replace(original)
+        target.symlink_to(original)
+    else:
+        plan.pop("avatar")
+    batch = FakeBatch()
+    with pytest.raises(images.ImageBatchError, match="avatar|Avatar"):
+        images.generate_b2_images(
+            tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+        )
+    assert batch.uploads == batch.created == []
+    assert not (tmp_path / "images/manifest.json").exists()
+
+
+def test_failed_edit_batch_keeps_avatar_reference_in_direct_fallback(tmp_path: Path) -> None:
+    plan, avatar = _avatar_plan(tmp_path, ("1B", "The avatar behind a microphone"))
+    batch = FakeBatch(failures={"1B": "failed"})
+    direct = FakeDirect()
+    result = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(),
+        batch_client=batch, direct_client=direct,
+    )
+    assert result["items"][0]["provider"] == "openai_direct_fallback"
+    assert len(direct.calls) == 1
+    url = direct.calls[0]["reference_image_url"]
+    assert url.startswith("data:image/png;base64,")
+    assert base64.b64decode(url.split(",", 1)[1]) == avatar
+    assert "character reference" in direct.calls[0]["prompt"]
+
+
+def test_existing_paid_text_batch_cannot_silently_switch_to_avatar_edit(
+    tmp_path: Path,
+) -> None:
+    plan, _avatar = _avatar_plan(tmp_path, ("1B", "Avatar seated by the river"))
+    job = images.described_beats(plan)[0]
+    old_fingerprint = images._fingerprint(job, _opts())
+    images._atomic_json(tmp_path / "images/block_1/1B.json", {
+        **job, "schema_version": "openai-image-batch-v1",
+        "fingerprint": old_fingerprint, "status": "batch_submitted",
+    })
+    batch = FakeBatch()
+    with pytest.raises(images.ImageBatchError, match="differs"):
+        images.generate_b2_images(
+            tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+        )
+    assert not batch.created
 
 
 def test_n_images_create_n_single_request_batches_in_parallel_and_preserve_b2_order(
