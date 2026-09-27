@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import os
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -56,6 +56,7 @@ class PredictiveAutoscalerConfig:
     stage_max_replicas: dict[str, int]
     fallback_runtime_seconds: dict[str, float]
     stage_cold_start_seconds: dict[str, float] | None = None
+    zero_demand_stable_polls: int = 1
     drain_grace_seconds: float = 5.0
     drain_ttl_seconds: float = 120.0
     nonconvergence_failure_polls: int = 4
@@ -84,6 +85,30 @@ class AutoscaleResult:
     changed: bool
     demand: StageDemand
     reason: str
+
+
+def next_reconcile_delay_seconds(
+    results: Mapping[str, AutoscaleResult],
+    *,
+    poll_seconds: float,
+    drain_grace_seconds: float,
+) -> float:
+    """Shorten only the safe follow-up poll after zero-demand drain publication."""
+
+    if poll_seconds <= 0:
+        raise ValueError("poll_seconds must be positive")
+    if drain_grace_seconds < 0:
+        raise ValueError("drain_grace_seconds must be non-negative")
+
+    zero_demand_drain_pending = any(
+        result.target_replicas == 0
+        and result.demand.remaining_work_seconds <= 0
+        and result.reason == "drain_grace_pending"
+        for result in results.values()
+    )
+    if not zero_demand_drain_pending:
+        return poll_seconds
+    return min(poll_seconds, max(drain_grace_seconds, 0.1))
 
 
 def publish_instance_drains(
@@ -340,6 +365,11 @@ def load_predictive_autoscaler_config(
             2,
             minimum=1,
         ),
+        zero_demand_stable_polls=_int_env(
+            "SALAD_AUTOSCALER_ZERO_DEMAND_STABLE_POLLS",
+            1,
+            minimum=1,
+        ),
         nonconvergence_failure_polls=_int_env(
             "SALAD_AUTOSCALER_NONCONVERGENCE_FAILURE_POLLS",
             4,
@@ -537,7 +567,10 @@ class PredictiveSaladAutoscaler:
                 self.store.clear_draining_instances(stage=stage)
                 continue
             stable_count = self._record_downscale_candidate(stage, target)
-            if stable_count < self.config.downscale_stable_polls:
+            stable_polls_required = self.config.downscale_stable_polls
+            if target == 0 and demands[stage].remaining_work_seconds <= 0:
+                stable_polls_required = self.config.zero_demand_stable_polls
+            if stable_count < stable_polls_required:
                 continue
             applied_target = max(
                 target,
@@ -825,7 +858,8 @@ class PredictiveSaladAutoscaler:
             f"{result.current_replicas}->{result.applied_replicas} "
             f"(target={result.target_replicas}), jobs [{statuses}], "
             f"runs={len(demand.run_counts)}, runtime_p="
-            f"{demand.expected_runtime_seconds:.1f}s."
+            f"{demand.expected_runtime_seconds:.1f}s, remaining_work="
+            f"{demand.remaining_work_seconds:.1f}s, reason={result.reason}."
         )
 
 
