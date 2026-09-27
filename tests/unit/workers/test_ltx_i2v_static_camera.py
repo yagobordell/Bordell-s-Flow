@@ -102,10 +102,23 @@ def test_static_camera_uses_real_guided_stage_one_and_unchanged_stage_two() -> N
     assert invoked.count("GuidedDenoiser") == 1
     assert invoked.count("SimpleDenoiser") == 1
     assert "negative_context=negative_video_context" in source
-    assert "[prompt, LTX_A2V_STATIC_NEGATIVE_PROMPT]" in source
-    assert "cfg_scale=LTX_A2V_STATIC_VIDEO_CFG_SCALE" in source
+    assert "[prompt, LTX_I2V_STATIC_CAMERA_NEGATIVE_PROMPT]" in source
+    assert "cfg_scale=LTX_I2V_STATIC_CAMERA_VIDEO_CFG_SCALE" in source
     assert "if enhance_prompt:" in source
     assert source.index("denoiser=GuidedDenoiser") < source.index("denoiser=SimpleDenoiser")
+    constants = {
+        node.targets[0].id: ast.literal_eval(node.value)
+        for node in syntax.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id.startswith("LTX_I2V_STATIC_CAMERA")
+    }
+    assert constants["LTX_I2V_STATIC_CAMERA_VIDEO_CFG_SCALE"] == 1.25
+    assert constants["LTX_I2V_STATIC_CAMERA_NEGATIVE_PROMPT"] == (
+        "camera zoom, zoom in, push in, dolly in, camera drift, camera shake, "
+        "reframing, crop change, handheld camera, unintended camera movement"
+    )
     assert "self._stage_1_sampler_kwargs(seed)" in source
     assert "self.video_decoder(" in source
 

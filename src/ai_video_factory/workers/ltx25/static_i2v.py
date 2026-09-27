@@ -36,7 +36,13 @@ from ltx_pipelines.utils.types import (
     PipelineOutput,
 )
 
-from .reference_recipe import LTX_A2V_STATIC_NEGATIVE_PROMPT, LTX_A2V_STATIC_VIDEO_CFG_SCALE
+# Independently pinned recipe: changes to the A2V experiment must not silently
+# alter existing I2V job identities or replay a different R2 generation.
+LTX_I2V_STATIC_CAMERA_VIDEO_CFG_SCALE = 1.25
+LTX_I2V_STATIC_CAMERA_NEGATIVE_PROMPT = (
+    "camera zoom, zoom in, push in, dolly in, camera drift, camera shake, "
+    "reframing, crop change, handheld camera, unintended camera movement"
+)
 
 
 def generate_static_camera(  # noqa: PLR0913
@@ -78,7 +84,7 @@ def generate_static_camera(  # noqa: PLR0913
         vae_dtype = dtype
 
     ctx_p, ctx_n = self.prompt_encoder(
-        [prompt, LTX_A2V_STATIC_NEGATIVE_PROMPT],
+        [prompt, LTX_I2V_STATIC_CAMERA_NEGATIVE_PROMPT],
         enhance_first_prompt=enhance_prompt,
         enhance_static_cache=enhance_static_cache,
         enhance_prompt_image=images[0][0] if len(images) > 0 else None,
@@ -128,7 +134,7 @@ def generate_static_camera(  # noqa: PLR0913
             a_context=audio_context,
             video_guider=MultiModalGuider(
                 params=MultiModalGuiderParams(
-                    cfg_scale=LTX_A2V_STATIC_VIDEO_CFG_SCALE,
+                    cfg_scale=LTX_I2V_STATIC_CAMERA_VIDEO_CFG_SCALE,
                     stg_scale=0.0,
                     rescale_scale=0.0,
                     modality_scale=1.0,
