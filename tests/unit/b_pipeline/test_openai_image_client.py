@@ -87,3 +87,35 @@ def test_direct_fallback_rejects_old_or_incomplete_model_id(
             prompt="Image", model=old_model, destination=tmp_path / "bad.png",
         )
     assert not (tmp_path / "bad.png").exists()
+
+
+def test_direct_edit_uses_the_selected_avatar_without_changing_model_or_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = official.OpenAIImageClient("fake-key")
+    payloads = []
+    monkeypatch.setattr(
+        client, "request_json",
+        lambda _payload: pytest.fail("Referenced avatar must use image edits"),
+    )
+
+    def fake_edit(payload):
+        payloads.append(payload)
+        return {
+            "created": 99,
+            "data": [{"b64_json": base64.b64encode(_png()).decode()}],
+        }
+
+    monkeypatch.setattr(client, "request_edit_json", fake_edit)
+    reference = "data:image/png;base64," + base64.b64encode(_png(3, 2)).decode()
+    result = client.generate_png(
+        prompt="Avatar in a scene", model="gpt-image-2.5-flare",
+        destination=tmp_path / "edited.png", reference_image_url=reference,
+    )
+    assert len(payloads) == 1
+    assert payloads[0]["images"] == [{"image_url": reference}]
+    assert payloads[0]["model"] == "gpt-image-2.5-flare"
+    assert payloads[0]["size"] == "1280x720"
+    assert payloads[0]["quality"] == "low"
+    assert payloads[0]["prompt"] == "Avatar in a scene"
+    assert result["sha256"] == hashlib.sha256(_png()).hexdigest()
