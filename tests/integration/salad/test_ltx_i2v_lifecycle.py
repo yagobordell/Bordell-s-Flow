@@ -141,3 +141,39 @@ def test_salad_manager_status_is_captureable_by_controlled_smoke() -> None:
     assert 'Write-Output "service=$Service group=$GroupName status=missing"' in status_function
     assert 'Write-Output ("service={0} group={1} status={2}' in status_function
     assert "Write-Host" not in status_function
+
+def test_static_i2v_comparison_without_baseline_never_allocates_gpu(tmp_path: Path) -> None:
+    wrapper, image, events = _fake_checkout(tmp_path, None)
+    completed = subprocess.run(
+        [
+            PWSH or "pwsh",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            str(wrapper),
+            "-Image",
+            str(image),
+            "-Prompt",
+            "The camera remains fixed.",
+            "-ExpectedPinnedImage",
+            PINNED,
+            "-OutputDir",
+            str(tmp_path / "outputs"),
+            "-I2VProfile",
+            "static-camera",
+            "-CompareWithRunId",
+            "i2v-smoke-003",
+            "-RunId",
+            "static-trial-001",
+            "-NonInteractive",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode != 0
+    assert "Comparison baseline must contain a technically validated MP4" in (
+        completed.stdout + completed.stderr
+    )
+    assert not events.exists()
