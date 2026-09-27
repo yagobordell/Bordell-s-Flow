@@ -10,6 +10,8 @@ param(
     [ValidateRange(0, 3600)][double]$MaxGenerationSeconds = 0,
     [string]$EnvFile = ".env",
     [ValidateRange(120, 21600)][int]$BootstrapTimeoutSeconds = 7200,
+    [ValidateRange(30, 180)][int]$LtxStartupTimeoutMinutes = 90,
+    [string]$ServicesPath = "",
     [string]$ExpectedPinnedImage = "",
     [switch]$NonInteractive
 )
@@ -37,6 +39,15 @@ $WorkerManager = Join-Path $RepoRoot "scripts\salad\manage_salad_worker.ps1"
 $R2Preflight = Join-Path $RepoRoot "scripts\pipeline\check_r2_ready.py"
 $Smoke = Join-Path $PSScriptRoot "submit_ltx25_a2v_smoke.py"
 $ReadyWait = Join-Path $PSScriptRoot "wait_salad_ltx25_ready.py"
+if (-not [string]::IsNullOrWhiteSpace($ServicesPath)) {
+    if (-not [IO.Path]::IsPathRooted($ServicesPath)) {
+        $ServicesPath = Join-Path $RepoRoot $ServicesPath
+    }
+    $ServicesPath = [IO.Path]::GetFullPath($ServicesPath)
+    if (-not (Test-Path -LiteralPath $ServicesPath -PathType Leaf)) {
+        throw "LTX candidate Salad services manifest is missing: $ServicesPath"
+    }
+}
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     $Python = (Get-Command python -ErrorAction Stop).Source
@@ -50,7 +61,8 @@ if (-not [string]::IsNullOrWhiteSpace($ExpectedPinnedImage) -and
     throw "-ExpectedPinnedImage must use immutable repo@sha256:digest form."
 }
 if ($Profile -eq "guided") {
-    $Services = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\salad\services.json") -Raw | ConvertFrom-Json
+    $SelectedManifest = if ($ServicesPath) { $ServicesPath } else { Join-Path $RepoRoot "deploy\salad\services.json" }
+    $Services = Get-Content -LiteralPath $SelectedManifest -Raw | ConvertFrom-Json
     if ($Services.services.ltx25.environment.LTX_INCLUDE_A2V_DEV_ASSETS -ne "true") {
         throw "Guided A2V requires LTX_INCLUDE_A2V_DEV_ASSETS=true and a newly published/pinned worker image; refusing GPU allocation."
     }
@@ -100,6 +112,10 @@ $Start = @{
     Replicas = 1
     EnvFile = $EnvFile
     AllowBootstrappingInstance = $true
+    LtxStartupTimeoutMinutes = $LtxStartupTimeoutMinutes
+}
+if ($ServicesPath) {
+    $Start["ServicesPath"] = $ServicesPath
 }
 if ($NonInteractive) {
     $Start["NonInteractive"] = $true
@@ -126,6 +142,9 @@ try {
     )
     if (-not [string]::IsNullOrWhiteSpace($ExpectedPinnedImage)) {
         $ReadyArgs += @("--expected-image", $ExpectedPinnedImage)
+    }
+    if ($ServicesPath) {
+        $ReadyArgs += @("--services-path", $ServicesPath)
     }
     & $Python $ReadyWait @ReadyArgs
     if ($LASTEXITCODE -ne 0) {
@@ -156,7 +175,9 @@ finally {
     }
     $CleanupClock = [System.Diagnostics.Stopwatch]::StartNew()
     try {
-        & $WorkerManager -Action Stop -Service ltx25 -EnvFile $EnvFile -NonInteractive
+        $Stop = @{ Action = "Stop"; Service = "ltx25"; EnvFile = $EnvFile; NonInteractive = $true }
+        if ($ServicesPath) { $Stop["ServicesPath"] = $ServicesPath }
+        & $WorkerManager @Stop
         if (-not $?) { throw "LTX A2V cleanup failed; verify stopped/replicas=0/pending=False." }
         if ($LifecycleMetrics.outcome -eq "generated") {
             $LifecycleMetrics.outcome = "succeeded"

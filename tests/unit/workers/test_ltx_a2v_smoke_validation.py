@@ -116,6 +116,10 @@ def test_ltx_gpu_fast_start_waits_for_same_ready_instance_before_paid_job() -> N
     assert "AllowBootstrappingInstance = $true" in script
     assert "ExpectedPinnedImage" in script
     assert "BootstrapTimeoutSeconds" in script
+    assert "LtxStartupTimeoutMinutes" in script
+    assert '$Start["ServicesPath"] = $ServicesPath' in script
+    assert '$ReadyArgs += @("--services-path", $ServicesPath)' in script
+    assert '$Stop["ServicesPath"] = $ServicesPath' in script
     assert script.index("$ReadyWait = ") < script.index("& $WorkerManager @Start")
     assert script.index("& $Python $ReadyWait @ReadyArgs") < script.index(
         "& $Python $Smoke @Arguments"

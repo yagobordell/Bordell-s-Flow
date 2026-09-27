@@ -23,11 +23,15 @@ def _start_function() -> str:
 def _run(fake: str, *, threshold_zero: bool = False) -> subprocess.CompletedProcess[str]:
     function = _start_function()
     if threshold_zero:
-        function = function.replace("$PullStallSeconds = 480", "$PullStallSeconds = 0")
+        function = function.replace(
+            'if ($Service -eq "ltx25") { 1200 } else { 480 }',
+            'if ($Service -eq "ltx25") { 0 } else { 480 }',
+        )
     script = (
         "$ErrorActionPreference = 'Stop'\n"
         "Set-StrictMode -Version Latest\n"
         "$Service = 'ltx25'\n"
+        "$LtxStartupTimeoutMinutes = 90\n"
         "$GroupName = 'ltx-test'\n"
         "$ContainersBase = 'https://api.salad.com/mock'\n"
         "$script:Polls = 0\n"
@@ -106,7 +110,9 @@ def test_started_instance_is_never_reallocated_by_host_pull_watchdog() -> None:
 
 def test_host_reallocation_requires_instance_progress_confirmation() -> None:
     source = _start_function()
-    assert "$PullStallSeconds = 480" in source
+    assert '$PullStallSeconds = if ($Service -eq "ltx25") { 1200 } else { 480 }' in source
+    assert '$StartupTimeoutMinutes = if ($Service -eq "ltx25")' in source
+    assert '$Deadline = (Get-Date).AddMinutes($StartupTimeoutMinutes)' in source
     assert "$MaxPullReallocations = 2" in source
     assert "$RequestedReallocations.ContainsKey($Id)" in source
     assert 'Get-Group -Headers $Headers' in source

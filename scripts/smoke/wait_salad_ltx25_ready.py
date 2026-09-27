@@ -195,6 +195,7 @@ def main() -> int:
         description="Wait for one LTX Salad instance to pass the actual /ready probe."
     )
     parser.add_argument("--env-file", default=".env")
+    parser.add_argument("--services-path", type=Path, default=_REPO_ROOT / "deploy" / "salad" / "services.json")
     parser.add_argument("--timeout-seconds", type=float, default=7200.0)
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument("--expected-image", default="")
@@ -207,9 +208,10 @@ def main() -> int:
         raise SystemExit(f"Salad environment file not found: {env_file}")
     load_dotenv(env_file, override=False)
 
-    manifest = json.loads(
-        (_REPO_ROOT / "deploy" / "salad" / "services.json").read_text(encoding="utf-8")
-    )
+    services_path = args.services_path
+    if not services_path.is_absolute():
+        services_path = _REPO_ROOT / services_path
+    manifest = json.loads(services_path.read_text(encoding="utf-8"))
     stack = manifest["stack"]
     ltx = manifest["services"]["ltx25"]
     image = ltx["image"]

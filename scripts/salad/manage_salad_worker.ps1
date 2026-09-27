@@ -7,6 +7,8 @@ param(
     [string]$PinnedImage = "",
     [string]$EnvFile = ".env",
     [ValidateRange(10, 180)][int]$PrepareTimeoutMinutes = 120,
+    [ValidateRange(30, 180)][int]$LtxStartupTimeoutMinutes = 90,
+    [string]$ServicesPath = "",
     [ValidateRange(0, 64)][int]$Replicas = 0,
     [switch]$SkipBuild,
     [switch]$AllowBootstrappingInstance,
@@ -19,7 +21,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
-$ServicesPath = Join-Path $RepoRoot "deploy\salad\services.json"
+if ([string]::IsNullOrWhiteSpace($ServicesPath)) {
+    $ServicesPath = Join-Path $RepoRoot "deploy\salad\services.json"
+}
+elseif (-not [IO.Path]::IsPathRooted($ServicesPath)) {
+    $ServicesPath = Join-Path $RepoRoot $ServicesPath
+}
+$ServicesPath = [IO.Path]::GetFullPath($ServicesPath)
 if (-not (Test-Path -LiteralPath $ServicesPath -PathType Leaf)) {
     throw "Salad service manifest not found: $ServicesPath"
 }
@@ -419,7 +427,8 @@ function Wait-ForRunningCapacity {
         [Parameter(Mandatory)][int]$ExpectedReplicas,
         [switch]$AllowBootstrappingInstance
     )
-    $Deadline = (Get-Date).AddMinutes(30)
+    $StartupTimeoutMinutes = if ($Service -eq "ltx25") { $LtxStartupTimeoutMinutes } else { 30 }
+    $Deadline = (Get-Date).AddMinutes($StartupTimeoutMinutes)
     $LastObservation = ""
     $LastReportAt = [DateTime]::MinValue
     $PullInstanceId = ""
@@ -428,7 +437,7 @@ function Wait-ForRunningCapacity {
     $RequestedReallocations = @{}
     $ReallocationCount = 0
     $MaxPullReallocations = 2
-    $PullStallSeconds = 480
+    $PullStallSeconds = if ($Service -eq "ltx25") { 1200 } else { 480 }
 
     do {
         Wait-ManualCapacityMutationInterval -Seconds 10
@@ -550,7 +559,7 @@ function Wait-ForRunningCapacity {
     } while ((Get-Date) -lt $Deadline)
     throw (
         "'$GroupName' did not start a current-version worker or reach " +
-        "running/replicas=$ExpectedReplicas before the 30-minute capacity deadline; " +
+        "running/replicas=$ExpectedReplicas before the $StartupTimeoutMinutes-minute capacity deadline; " +
         "last_observation=$LastObservation image_pull_reallocations=$ReallocationCount."
     )
 }

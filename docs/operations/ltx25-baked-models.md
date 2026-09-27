@@ -20,7 +20,11 @@ No A2V recipe, prompts, sampler, precision or audio parameters change.
 - Docker build bypasses Salad-only bandwidth thresholds and IMDS reallocation. The
   runtime fallback exists solely for explicitly opted-in recovery
   (`LTX_REQUIRE_BAKED_MODELS=false`) and is **not** the production profile.
-- The candidate uses a distinct `v11-baked` tag. Do not overwrite the validated
+- The candidate uses a distinct `v11-baked` tag. The controlled A2V smoke accepts
+  `-ServicesPath` to use a local, untracked manifest with a **separate candidate group**;
+  `Prepare`, `Start`, `/ready` and `Stop` must all use that same manifest. The
+  production Capacity Controller must not be active and the production LTX group
+  must be stopped before submitting a shared Postgres A2V test job. Do not overwrite the validated
   `v10` image, run `Prepare` against the production group or merge this PR until
   the following gates pass.
 
@@ -42,6 +46,18 @@ No A2V recipe, prompts, sampler, precision or audio parameters change.
    `--build-arg LTX_BAKE_A2V_DEV_ASSETS=true` and set
    `LTX_INCLUDE_A2V_DEV_ASSETS=true` only in that dedicated runtime. Do not enable
    dev assets on a shared-only image.
+
+## Image pull and readiness budgets
+
+The LTX-specific capacity-start deadline is now 90 minutes by default
+(`-LtxStartupTimeoutMinutes`, allowed 30–180), rather than 30 minutes. The
+Docker-pull watchdog reallocates a *confirmed* stalled, not-yet-started LTX
+instance only after 1,200 seconds (20 minutes) without progress, instead of
+480 seconds; it never reallocates a steadily progressing image pull. The
+controlled smoke starts its separate `/ready` budget of 7,200 seconds **after**
+Salad reports a started container. The startup/liveness probes begin in the
+running container, not while the image is downloading. Large images might still
+exceed Salad-side platform limits outside this repository; measure first pull.
 
 ## Paid validation gate (requires explicit operator authorization)
 
