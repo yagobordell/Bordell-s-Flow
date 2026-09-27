@@ -796,7 +796,17 @@ try {
             if (-not $SkipBuild) {
                 & docker version *> $null
                 if ($LASTEXITCODE -ne 0) { throw "Docker is not running." }
-                & docker buildx build --platform linux/amd64 --file $Dockerfile --tag $Image --push .
+                if ($Service -eq "ltx25") {
+                    if ([string]::IsNullOrWhiteSpace($env:HF_TOKEN)) {
+                        throw "LTX baked image build requires HF_TOKEN in the environment or EnvFile."
+                    }
+                    # BuildKit forwards the token from the process environment without
+                    # putting its value in build args, command history or image layers.
+                    & docker buildx build --platform linux/amd64 --file $Dockerfile --tag $Image --secret "id=hf_token,env=HF_TOKEN" --push .
+                }
+                else {
+                    & docker buildx build --platform linux/amd64 --file $Dockerfile --tag $Image --push .
+                }
                 if ($LASTEXITCODE -ne 0) { throw "Docker build or push failed." }
                 Assert-ManualCapacityMutationAuthority
             }

@@ -6,6 +6,13 @@ MODEL_ROOT="${LTX_MODEL_ROOT:-/workspace/models/ltx-2.5}"
 MODEL_REPOSITORY="${LTX_MODEL_REPOSITORY:-Lightricks/LTX-2.5}"
 MODEL_REVISION="${LTX_MODEL_REVISION:-6c7e5e573ac1667efc83407806fe9b0b93730e60}"
 INCLUDE_DEV_ASSETS="${LTX_INCLUDE_A2V_DEV_ASSETS:-false}"
+BOOTSTRAP_CONTEXT="${LTX_MODEL_BOOTSTRAP_CONTEXT:-runtime}"
+REQUIRE_BAKED_MODELS="${LTX_REQUIRE_BAKED_MODELS:-false}"
+
+if [[ "${BOOTSTRAP_CONTEXT}" != "build" && "${BOOTSTRAP_CONTEXT}" != "runtime" ]]; then
+  echo "invalid LTX model bootstrap context: ${BOOTSTRAP_CONTEXT}" >&2
+  exit 1
+fi
 INSTALLED_MANIFEST="${MODEL_ROOT}/.bordell-installed-model-manifest.json"
 
 POLL_SECONDS="${LTX_MODEL_DOWNLOAD_PROGRESS_INTERVAL_SECONDS:-30}"
@@ -70,9 +77,23 @@ then
 fi
 
 if [[ "${manifest_is_valid}" == "false" ]]; then
-  # An outdated manifest must not make the HTTP worker ready while assets download.
+  if [[ "${BOOTSTRAP_CONTEXT}" == "runtime" && "${REQUIRE_BAKED_MODELS}" == "true" ]]; then
+    echo "BAKED_MODEL_MANIFEST_INVALID path=${INSTALLED_MANIFEST} root=${MODEL_ROOT}; refusing runtime downloads" >&2
+    exit 1
+  fi
+  # Do not mark the worker ready with stale or incomplete weights.
   rm -f "${INSTALLED_MANIFEST}"
-  /usr/local/bin/network-preflight
+  if [[ "${BOOTSTRAP_CONTEXT}" == "runtime" ]]; then
+    /usr/local/bin/network-preflight
+  fi
+fi
+
+# Salad-only network thresholds and IMDS reallocation must never run in the
+# Docker builder. Runtime fallback remains explicitly opt-in for recovery.
+WATCHDOG_REALLOCATION_ARGS=(--reallocate-on-slow)
+if [[ "${BOOTSTRAP_CONTEXT}" == "build" ]]; then
+  WATCHDOG_REALLOCATION_ARGS=()
+  MIN_THROUGHPUT_MIBPS=0
 fi
 
 python3 - <<'PY'
@@ -89,7 +110,7 @@ print(
 )
 PY
 
-echo "ltx25 model bootstrap repository=${MODEL_REPOSITORY} revision=${MODEL_REVISION} root=${MODEL_ROOT} include_dev=${INCLUDE_DEV_ASSETS}"
+echo "ltx25 model bootstrap context=${BOOTSTRAP_CONTEXT} repository=${MODEL_REPOSITORY} revision=${MODEL_REVISION} root=${MODEL_ROOT} include_dev=${INCLUDE_DEV_ASSETS}"
 
 if [[ "${manifest_is_valid}" == "true" ]]; then
   echo "MODEL_MANIFEST_VALID path=${INSTALLED_MANIFEST}"
@@ -107,7 +128,7 @@ else
       --throughput-grace-seconds "${THROUGHPUT_GRACE_SECONDS}" \
       --throughput-window-seconds "${THROUGHPUT_WINDOW_SECONDS}" \
       --label "ltx25:${model_file}" \
-      --reallocate-on-slow \
+      "${WATCHDOG_REALLOCATION_ARGS[@]}" \
       -- \
       hf download "${MODEL_REPOSITORY}" "${model_file}" \
         --revision "${MODEL_REVISION}" \

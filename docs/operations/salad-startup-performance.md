@@ -3,7 +3,7 @@
 Cold start is now split into four observable stages:
 
 1. Salad node allocation and image pull;
-2. model download/bootstrap;
+2. model download/bootstrap (legacy workers), or baked-model SHA256 validation (LTX candidate);
 3. worker readiness and Postgres polling;
 4. inference.
 
@@ -25,9 +25,11 @@ request multiple replicas based on cache misses, capped by `capacity.max_replica
 Workers expose `/health` before long model bootstrap so Salad can distinguish an alive process from
 a ready model runtime. `/ready` becomes successful only after required model/runtime preparation.
 
-Model download/watchdog logic remains model-specific. Network preflight may request Salad instance
-reallocation when a node cannot sustain the required Hugging Face download path. This is a node
-selection mechanism, not a job-state mechanism.
+Model download/watchdog logic remains model-specific. The LTX candidate moves the pinned
+shared model download to image build; at runtime it validates baked provenance and refuses a
+missing, changed or corrupted checkpoint. No paid runtime fallback is enabled by default. For
+other workers, network preflight may still request Salad instance reallocation when a node
+cannot sustain the required Hugging Face download path.
 
 Do not weaken checksum, revision, gated-model or required-file validation to improve startup time.
 

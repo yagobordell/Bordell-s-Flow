@@ -17,6 +17,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LTX_MODEL_REPOSITORY=Lightricks/LTX-2.5 \
     LTX_MODEL_REVISION=6c7e5e573ac1667efc83407806fe9b0b93730e60 \
     LTX_INCLUDE_A2V_DEV_ASSETS=false \
+    LTX_REQUIRE_BAKED_MODELS=true \
     LTX_DEVICE=cuda 
 
 RUN apt-get update \
@@ -38,6 +39,7 @@ RUN python3 -c \
      assert torchaudio.__version__.startswith('2.11.0'), torchaudio.__version__"
 
 ARG LTX_SOURCE_COMMIT=a95ab856bf29407b6b066ede0abe1846050db56c
+ARG LTX_BAKE_A2V_DEV_ASSETS=false
 ENV LTX_SOURCE_COMMIT=${LTX_SOURCE_COMMIT}
 
 RUN git clone --filter=blob:none https://github.com/Lightricks/LTX-2.git /opt/ltx \
@@ -111,7 +113,19 @@ RUN python3 -c \
      print('ltx_i2v_pipeline=OK'); \
      print('ltx_a2v_pipeline=OK')"
 
+# BuildKit keeps the HF token out of Docker layers and image metadata. The
+# pinned shared checkpoints and their SHA256 provenance are baked as worker.
 USER worker
+RUN --mount=type=secret,id=hf_token,required=false,uid=10001,gid=10001,mode=0400 \
+    set -eu; \
+    if [ -s /run/secrets/hf_token ]; then \
+        export HF_TOKEN="$(cat /run/secrets/hf_token)"; \
+    fi; \
+    export LTX_INCLUDE_A2V_DEV_ASSETS="${LTX_BAKE_A2V_DEV_ASSETS}"; \
+    export LTX_MODEL_BOOTSTRAP_CONTEXT=build; \
+    /usr/local/bin/download-models; \
+    rm -rf "${HF_HOME}/xet" "${HF_HOME}/hub"
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5m --retries=3 \
