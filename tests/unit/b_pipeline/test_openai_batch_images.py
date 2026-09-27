@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.error import URLError
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from ai_video_factory.providers import openai_batch_images as images
 from scripts.pipeline import run_b_pipeline as runner
@@ -21,6 +21,29 @@ def _png(*, size=(1280, 720)) -> bytes:
     output = io.BytesIO()
     Image.new("RGB", size).save(output, format="PNG")
     return output.getvalue()
+
+
+def _grid_png(size: tuple[int, int]) -> bytes:
+    """Synthetic grids with the narrow white dividers typical of GPT."""
+    width, height = size
+    columns, rows = width // 1280, height // 720
+    canvas = Image.new("RGB", size)
+    for row in range(rows):
+        for col in range(columns):
+            canvas.paste(
+                Image.new("RGB", (1280, 720), ((col + 1) * 43, (row + 1) * 51, 90)),
+                (col * 1280, row * 720),
+            )
+    draw = ImageDraw.Draw(canvas)
+    for col in range(1, columns):
+        x = col * 1280 + 6
+        draw.rectangle((x - 9, 0, x + 9, height - 1), fill="white")
+    for row in range(1, rows):
+        y = row * 720 - 5
+        draw.rectangle((0, y - 9, width - 1, y + 9), fill="white")
+    buffer = io.BytesIO()
+    canvas.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _plan(*ids: str) -> dict[str, object]:
@@ -106,6 +129,8 @@ class FakeBatch:
         request = self.by_file[f"file-{beat}"]
         if self.failures.get(beat) == "bad_result":
             return b'{"custom_id":"incorrect","response":null}\n'
+        size = tuple(map(int, request["body"]["size"].split("x")))
+        content = _png(size=size) if size == (1280, 720) else _grid_png(size)
         row = {
             "id": f"batch_req_{beat}",
             "custom_id": request["custom_id"],
@@ -114,9 +139,7 @@ class FakeBatch:
                 "request_id": f"request-{beat}",
                 "body": {
                     "created": 5,
-                    "data": [{"b64_json": base64.b64encode(_png(
-                        size=tuple(map(int, request["body"]["size"].split("x")))
-                    )).decode()}],
+                    "data": [{"b64_json": base64.b64encode(content).decode()}],
                     "usage": {"input_tokens": 3},
                 },
             },
@@ -136,7 +159,8 @@ class FakeDirect:
             self.calls.append(kwargs)
         if self.unknown:
             raise URLError("lost direct image POST")
-        content = _png(size=tuple(map(int, kwargs["size"].split("x"))))
+        size = tuple(map(int, kwargs["size"].split("x")))
+        content = _png(size=size) if size == (1280, 720) else _grid_png(size)
         target = kwargs["destination"]
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
@@ -877,7 +901,7 @@ def test_grid_png_with_standard_dimensions_is_rejected(
     assert not (tmp_path / "invalid-grid.png").exists()
 
 
-def test_images_only_saves_grid_map_and_defers_preview_without_cropping(
+def test_images_only_saves_grid_map_and_crops_all_panels(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     script = tmp_path / "input" / "roma.txt"
@@ -911,14 +935,23 @@ def test_images_only_saves_grid_map_and_defers_preview_without_cropping(
     assert len(batch.created) == 1
     assert not (output / "preview").exists()
     saved = json.loads((output / "visual_plan.json").read_text(encoding="utf-8"))
-    assert saved["image_assets"] == []
+    assert len(saved["image_assets"]) == 4
+    assert all(asset["provider"] == "grid_crop" for asset in saved["image_assets"])
     assert len(saved["image_grids"]) == 1
     assert len(saved["image_grids"][0]["panels"]) == 4
+    for asset in saved["image_assets"]:
+        with Image.open(output / asset["file"]) as cropped:
+            assert cropped.size == (1280, 720)
+        assert hashlib.sha256((output / asset["file"]).read_bytes()).hexdigest() == (
+            asset["sha256"]
+        )
     report = json.loads((output / "run_report.json").read_text(encoding="utf-8"))
     assert report["run"]["image_generation"]["grid_count"] == 1
-    assert report["run"]["video_preview"] == {
-        "status": "deferred", "reason": "grid_panels_not_cropped", "grid_count": 1,
-    }
+    assert report["run"]["image_generation"]["cropped_panel_count"] == 4
+    assert report["run"].get("video_preview") is None
+    manifest = json.loads((output / "images/manifest.json").read_text(encoding="utf-8"))
+    assert manifest["cropping_status"] == "completed"
+    assert len(manifest["panel_assets"]) == 4
 
 
 def test_separate_numbered_runs_make_two_grids_without_duplicate_fillers(
