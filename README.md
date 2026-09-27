@@ -145,10 +145,13 @@ B1.1, B1.2, B2 y el director de voz Fish usan el mismo modelo de
 texto `OPENAI_MODEL=gpt-6-luna` y `OPENAI_REASONING_EFFORT=medium`.
 No existe una configuración independiente `OPENAI_B_MODEL`.
 
-Al terminar B2, el runner genera automáticamente **una imagen PNG por beat con
-`description` no vacía** mediante la API oficial de OpenAI, sin AI33
-para imágenes. Cada beat tiene **su propio batch**, con un archivo JSONL de
-**una única solicitud** (`n=1`); nunca se agrupan dos imágenes en el mismo batch.
+Al terminar B2, el runner genera imágenes PNG mediante la API oficial de OpenAI,
+sin AI33 para imágenes. Los beats con `description` no vacía y sin numeración
+de continuidad conservan una imagen por beat. Las secuencias consecutivas
+numeradas de B2 (`1.`, `2.`, etc., hasta nueve) se agrupan en **una única
+generación de grid** por secuencia; también participan los beats `media_video`,
+cuya imagen será la futura start image. Cada imagen individual o grid tiene
+**un único batch de una solicitud JSONL** (`n=1`).
 Las descripciones que contienen la palabra completa `avatar` (sin distinguir
 mayúsculas) usan `/v1/images/edits`: adjuntan la copia `avatar.png` del run
 como referencia de identidad, previa comprobación de su SHA-256 en el plan.
@@ -157,18 +160,40 @@ original de B2 permanece inalterada y solo se añade una instrucción de referen
 al prompt enviado para esas ediciones. Si falta el avatar o ha cambiado, se
 detiene la solicitud antes de generar imágenes de pago. Se mantiene el prefijo
 `iphone 6 photo done by an elderly:  `, Flare por defecto, `low`, PNG
-y `1280x720`. Configura `OPENAI_API_KEY` en `.env`; AI33 sigue
-utilizándose únicamente para la voz. Los beats `avatar` sin descripción
-no crean batches. Un máximo de cuatro imágenes se procesan a la vez.
+y `1280x720` para imágenes individuales. Configura `OPENAI_API_KEY`
+en `.env`; AI33 sigue utilizándose únicamente para la voz. Los beats
+`avatar` sin descripción no crean batches. Un máximo de cuatro generaciones
+se procesan a la vez.
+
+Los grids son siempre 2×2 (2–4 beats), 3×2 (5–6) o 3×3 (7–9). Los
+huecos se completan primero con imágenes siguientes no reservadas y,
+si no bastan, con las anteriores disponibles. Cada beat pertenece a
+una sola generación: las imágenes de relleno no se generan aparte.
+Si no hay suficientes imágenes distintas, la validación falla antes de
+crear solicitudes de pago. Cada panel ocupa 1280×720 píxeles en el grid:
+los PNG completos miden 2560×1440, 3840×1440 o 3840×2160.
+Los tamaños superiores a 2560×1440 son experimentales según OpenAI;
+se debe revisar visualmente la distribución real de paneles. Cuando
+algún panel menciona `avatar`, se adjunta el avatar verificado del run
+a la solicitud completa del grid. La descripción original de B2 se
+conserva en `panels` junto a su fila, columna y beat original.
+
+En esta fase **no se recortan paneles**. Los PNG grandes se guardan en
+`images/grids/`, sus mapas en el manifiesto y en
+`visual_plan.json:image_grids`. `image_assets` solo contiene imágenes
+individuales ya utilizables. La vista previa MP4 se marca como
+`deferred/grid_panels_not_cropped` cuando hay grids para no presentar
+el grid entero como si fuera una start image individual.
 
 El límite **local** de cada batch es de 30 minutos desde su envío
 (`OPENAI_IMAGE_BATCH_TIMEOUT_SECONDS=1800`), aunque la ventana oficial
 de Batch API es `24h`. Si el batch no ha entregado la imagen a tiempo,
-el runner intenta cancelarlo y genera **solo ese beat** mediante
-el mismo modelo y endpoint estándar correspondiente al beat
-(`POST /v1/images/generations` o `POST /v1/images/edits` con el mismo avatar). La cancelación puede tardar,
-por lo que un batch tardío podría facturarse además de la generación
-directa. Los IDs, tiempos y estados se conservan por beat para
+el runner intenta cancelarlo y regenera **solo esa generación individual o
+grid completo** con el mismo modelo, dimensiones y endpoint
+(`POST /v1/images/generations` o `POST /v1/images/edits` con el mismo avatar).
+La cancelación puede tardar, por lo que un batch tardío podría facturarse
+además de la generación directa. Los IDs, tiempos y estados se conservan
+por generación para
 `--images-only`; una petición de pago con resultado desconocido no se
 repite automáticamente. Si hay estados anteriores de AI33 pendientes,
 deben reconciliarse y usarse en otro output: no se los borra ni se
