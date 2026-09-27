@@ -27,23 +27,16 @@ simultaneous controller ownership. Ensure the existing avatar group is
 stopped or missing and no old I2V transports are running. The test checks
 avatar status but does **not** stop, reconfigure or deploy that group.
 
-Build and publish the reviewed PR source under a **new candidate tag**:
+## Historical v11 baseline (do not rebuild)
 
-```powershell
-$Tag = "docker.io/yagobordell/ai-video-factory:ltx25-isolated-tasks-v11"
-docker buildx build --platform linux/amd64 --file docker/workers/ltx25/Dockerfile --tag $Tag --push .
-docker buildx imagetools inspect $Tag
-```
-
-Take the **actual 64-hex published SHA-256 image digest** from inspect;
-never use a mutable tag or the placeholder in a paid test. Prepare *only*
-the isolated I2V group while stopped:
-
-```powershell
-$PinnedImage = "docker.io/yagobordell/ai-video-factory@sha256:REPLACE_WITH_REAL_64_HEX_DIGEST"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\salad\manage_salad_worker.ps1 -Action Prepare -Service ltx25_i2v -PinnedImage $PinnedImage -EnvFile .env -NonInteractive
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\salad\manage_salad_worker.ps1 -Action Status -Service ltx25_i2v -EnvFile .env -NonInteractive
-```
+The published v11 `linux/amd64` image digest used for `i2v-smoke-003` was
+`docker.io/yagobordell/ai-video-factory@sha256:bffdca9cfaf5e6e19cd9f20b7f88a562c3af8cf2854d7bad56e1f66700a87564`.
+That run passed technical validation but showed a camera push-in. Do not
+repush the v11 tag or reuse its digest for the camera-control experiment.
+The tracked service manifest retains the v11 tag until the new image and
+visual result are approved; a test-only `Prepare -Image $Tag -PinnedImage
+$PinnedImage` can configure the isolated stopped I2V group without changing
+production manifests.
 
 ## Opt-in static-camera comparison (new image required)
 
@@ -72,7 +65,7 @@ $Tag = "docker.io/yagobordell/ai-video-factory:ltx25-i2v-static-camera-v12"
 docker buildx build --platform linux/amd64 --file docker/workers/ltx25/Dockerfile --tag $Tag --push .
 docker buildx imagetools inspect $Tag
 $PinnedImage = "docker.io/yagobordell/ai-video-factory@sha256:REPLACE_WITH_REAL_LINUX_AMD64_MANIFEST_DIGEST"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\salad\\manage_salad_worker.ps1 -Action Prepare -Service ltx25_i2v -Image $Tag -PinnedImage $PinnedImage -EnvFile .env -NonInteractive
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\salad\manage_salad_worker.ps1 -Action Prepare -Service ltx25_i2v -Image $Tag -PinnedImage $PinnedImage -EnvFile .env -NonInteractive
 ```
 
 For a fair one-job comparison with the already reviewed baseline, use the
@@ -86,8 +79,8 @@ different application job ID and R2 output. It stops only the I2V group in
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass `
-  -File .\\scripts\\smoke\\run_ltx25_i2v_smoke_controlled.ps1 `
-  -Image ".\\data\\input\\keyframe_i2v.png" `
+  -File .\scripts\smoke\run_ltx25_i2v_smoke_controlled.ps1 `
+  -Image ".\data\input\keyframe_i2v.png" `
   -Prompt "The camera remains fixed. The subject gently moves with subtle natural motion in one continuous shot." `
   -ExpectedPinnedImage $PinnedImage `
   -I2VProfile static-camera `

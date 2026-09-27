@@ -76,7 +76,7 @@ if ($LASTEXITCODE -ne 0) { throw "I2V input preparation failed; no GPU allocated
 if (-not [string]::IsNullOrWhiteSpace($CompareWithRunId)) {
     $BaselinePath = Join-Path $OutputDir $CompareWithRunId
     $BaselineReport = Join-Path $BaselinePath "i2v-smoke-report.json"
-    $BaselineVideo = Join-Path $BaselinePath "output\\video_clips\\shot_001.mp4"
+    $BaselineVideo = Join-Path $BaselinePath "output\video_clips\shot_001.mp4"
     if (-not (Test-Path -LiteralPath $BaselineReport -PathType Leaf) -or
         -not (Test-Path -LiteralPath $BaselineVideo -PathType Leaf)) {
         throw "Comparison baseline must contain a technically validated MP4: $BaselinePath"
@@ -115,7 +115,7 @@ if ($I2VStatus -notmatch "status=stopped(\s|$)" -or
 }
 $Hasher = [System.Security.Cryptography.SHA256]::Create()
 try {
-$SeedIdentity = if ([string]::IsNullOrWhiteSpace($CompareWithRunId)) { $RunId } else { $CompareWithRunId }
+    $SeedIdentity = if ([string]::IsNullOrWhiteSpace($CompareWithRunId)) { $RunId } else { $CompareWithRunId }
     $RunSeedHash = $Hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($SeedIdentity))
 }
 finally {
