@@ -129,3 +129,29 @@ allocation and image download are not billed; running instances are billed
 per second. Do not equate the >45-minute wall clock with two billed GPU-hours,
 and use actual instance timelines/invoices rather than estimating cost from
 configured replica count.
+
+## 2026-09-27: repeated cost readback failure; single-GPU default
+
+Real v33 test: one RTX 5090 was allocated and became `ready=True` twice at
+~1,085 seconds from race start. PATCH acknowledged `deletion_cost=100000`,
+but **both the exact-ID GET and list GET returned 0 on six consecutive
+observations**. The selector correctly refused scale-in and did not submit any
+Postgres job. The controlled wrapper stopped and restored the original image.
+The container CSV verified that the one worker downloaded and verified all
+five pinned model files and reached the canonical Postgres polling state.
+
+This is now an observed Salad API readback problem on that instance, not a
+hypothetical stale list. Do not keep spending on 2-GPU protected races to test
+video quality while the platform does not confirm deletion cost. The guarded
+monk benchmark now defaults to `StartupReplicas=1`, invoking the existing
+one-replica `Start` + two matching current-version `/ready` checks, with a
+3,600-second readiness budget after start. This avoids both 2→1 scale-in and
+all deletion-cost assumptions. The earlier 2-GPU race remains explicitly
+opt-in for a separate infrastructure experiment; do not treat it as needed
+for lip-sync acceptance.
+
+The pinned A2V recipe, one original first-frame image, audio-frozen speech,
+short monk prompt, seed and 2-step Stage 2 stay unchanged. A new reviewed host
+commit and Docker digest must pass all CI checks before another paid run. The
+generated MP4 still requires human review for phoneme alignment, head motion,
+identity and actual background-scale changes.
