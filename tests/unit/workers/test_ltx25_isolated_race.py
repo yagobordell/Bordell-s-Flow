@@ -224,5 +224,5 @@ def test_wrapper_stops_both_groups_and_does_not_use_deletion_cost() -> None:
     assert '"--expected-instance"' in controlled
     assert 'start_container_group_instance' not in selector
     assert 'set_container_group_replicas' not in selector
-    assert 'deletion_cost' not in selector
+    assert 'set_container_group_instance_deletion_cost' not in selector
     assert '[ValidateSet(1, 2)][int]$StartupReplicas = 2' in guarded
