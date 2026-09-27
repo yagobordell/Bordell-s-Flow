@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 from ai_video_factory.inference.capacity_controller import (
     PostgresCapacityControllerOperationLock,
     resolve_capacity_controller_dsn,
+    validate_capacity_controller_dsn,
 )
 from ai_video_factory.inference.salad import (
     DEFAULT_SALAD_API_BASE_URL,
@@ -589,6 +590,10 @@ def main() -> int:
         "LTX_RACE_PROTECT_READY_WITH_IMDS", ""
     )).lower() != "true":
         raise SystemExit("IMDS race requires a reviewed protected worker manifest")
+    if args.ready_protected_by_imds:
+        # A session-scoped election cannot work through Supabase's known
+        # transaction-pooling port; reject before requesting paid GPUs.
+        validate_capacity_controller_dsn(os.getenv("POSTGRES_DSN", ""))
     if service["capacity"]["start_replicas"] != 1:
         raise SystemExit("LTX race requires manifest start_replicas=1")
     if args.expected_image.rsplit("@", 1)[0] != service["image"].rsplit(":", 1)[0]:
