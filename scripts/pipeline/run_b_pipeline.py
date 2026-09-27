@@ -1104,6 +1104,7 @@ async def main() -> None:
         raise SystemExit("OPENAI_API_KEY is missing")
     if (
         args.from_stage == "B1.1"
+        and getattr(args, "stop_stage", None) is None
         and not getattr(args, "no_audio", False)
         and not settings.ai33_api_key
     ):
