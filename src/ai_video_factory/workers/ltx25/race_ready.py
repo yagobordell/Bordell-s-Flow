@@ -126,15 +126,27 @@ class LTXRaceReadyGuard:
                     self.close()
                 raise
 
-            cost = self._get_cost()
-            if cost != _PROTECTED_COST:
-                self._put_cost(_PROTECTED_COST)
+            try:
                 cost = self._get_cost()
                 if cost != _PROTECTED_COST:
-                    raise RuntimeError(
-                        "Salad IMDS did not persist first-ready worker deletion cost"
-                    )
-                _LOGGER.info("LTX_RACE_IMDS_PROTECTED deletion_cost=%s", cost)
+                    self._put_cost(_PROTECTED_COST)
+                    cost = self._get_cost()
+                    if cost != _PROTECTED_COST:
+                        raise RuntimeError(
+                            "Salad IMDS did not persist first-ready worker deletion cost"
+                        )
+                    _LOGGER.info("LTX_RACE_IMDS_PROTECTED deletion_cost=%s", cost)
+            except Exception:
+                # A worker whose IMDS protection failed must not monopolize
+                # the first-ready election while the other GPU is healthy.
+                # Best-effort reset prevents a failed leader from retaining
+                # an elevated cost; scale-in still fails closed on ambiguity.
+                try:
+                    self._put_cost(0)
+                except Exception:
+                    _LOGGER.exception("LTX could not reset unsuccessful IMDS protection")
+                self.close()
+                raise
 
     def close(self) -> None:
         with self._mutex:
