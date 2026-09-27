@@ -34,6 +34,7 @@ def test_ltx_build_bakes_exactly_pinned_manifest_as_unprivileged_worker() -> Non
         "RUN --mount=type=secret,id=hf_token"
     )
     assert "/usr/local/bin/download-models;" in docker
+    assert "LTX_RUNTIME_BOOTSTRAP_MARKER=" in docker
     assert "LTX_MODEL_REVISION=" + manifest["revision"] in docker
     assert "ARG HF_TOKEN" not in docker
     assert "ENV HF_TOKEN" not in docker
@@ -102,6 +103,8 @@ def test_runtime_rejects_corrupt_baked_weights_before_any_network(
         "LTX_MODEL_REVISION": "pinned",
         "LTX_REQUIRE_BAKED_MODELS": "true",
         "LTX_MODEL_BOOTSTRAP_CONTEXT": "runtime",
+        "LTX_BOOTSTRAP_SESSION": "test-session",
+        "LTX_RUNTIME_BOOTSTRAP_MARKER": str(tmp_path / "verified-marker"),
     }
     result = subprocess.run(
         ["bash", str(BOOTSTRAP)],
@@ -117,3 +120,4 @@ def test_runtime_rejects_corrupt_baked_weights_before_any_network(
     assert "MODEL_VERIFY_START" not in result.stdout
     assert "SALAD_NETWORK_PREFLIGHT" not in result.stdout
     assert installed.read_bytes() == expected_manifest
+    assert not (tmp_path / "verified-marker").exists()

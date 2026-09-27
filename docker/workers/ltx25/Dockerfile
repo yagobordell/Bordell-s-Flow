@@ -18,6 +18,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LTX_MODEL_REVISION=6c7e5e573ac1667efc83407806fe9b0b93730e60 \
     LTX_INCLUDE_A2V_DEV_ASSETS=false \
     LTX_REQUIRE_BAKED_MODELS=true \
+    LTX_RUNTIME_BOOTSTRAP_MARKER=/tmp/ai-video-factory/ltx25-baked-verified \
     LTX_DEVICE=cuda 
 
 RUN apt-get update \

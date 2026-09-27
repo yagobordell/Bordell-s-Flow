@@ -30,7 +30,8 @@ inference worker.
 
 The production image downloads its required checkpoints during the Docker build, so Salad pulls
 an image that already contains the pinned weights. The worker checks baked provenance at startup
-and fails closed instead of downloading models on paid GPUs. LTX reuses
+and fails closed instead of downloading models on paid GPUs. A process-specific
+verification marker prevents `/ready` and job polling before checksums complete. LTX reuses
 `ai_video_factory.workers.download_watchdog` and pins both the LTX source commit and the
 Hugging Face model revision. `docker/workers/ltx25/model-manifest.json` defines the exact
 shared file set and optional dev-only assets. Bootstrap writes a provenance manifest with

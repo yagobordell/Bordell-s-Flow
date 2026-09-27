@@ -4,9 +4,9 @@ import logging
 
 from ai_video_factory.inference.app import create_app
 from ai_video_factory.inference.runtime import build_worker
-from ai_video_factory.inference.tasks import TaskRunnerRegistry
 
 from .a2v import DirectLTX25AudioToVideoBackend, LTXAudioToVideoTaskRunner
+from .bootstrap_gate import LTXBakedBootstrapGate
 from .model import DirectLTX25Backend, LTXPipelineModeController, LTXVideoTaskRunner
 from .settings import LTX25WorkerSettings
 
@@ -23,7 +23,7 @@ def build_ltx25_worker(settings: LTX25WorkerSettings):
         device=settings.device,
         mode_controller=mode_controller,
     )
-    runners = TaskRunnerRegistry(
+    runners = LTXBakedBootstrapGate(
         [
             LTXVideoTaskRunner(backend=video_backend),
             LTXAudioToVideoTaskRunner(backend=audio_to_video_backend),

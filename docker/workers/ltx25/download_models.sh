@@ -8,12 +8,22 @@ MODEL_REVISION="${LTX_MODEL_REVISION:-6c7e5e573ac1667efc83407806fe9b0b93730e60}"
 INCLUDE_DEV_ASSETS="${LTX_INCLUDE_A2V_DEV_ASSETS:-false}"
 BOOTSTRAP_CONTEXT="${LTX_MODEL_BOOTSTRAP_CONTEXT:-runtime}"
 REQUIRE_BAKED_MODELS="${LTX_REQUIRE_BAKED_MODELS:-false}"
+RUNTIME_MARKER="${LTX_RUNTIME_BOOTSTRAP_MARKER:-/tmp/ai-video-factory/ltx25-baked-verified}"
 
 if [[ "${BOOTSTRAP_CONTEXT}" != "build" && "${BOOTSTRAP_CONTEXT}" != "runtime" ]]; then
   echo "invalid LTX model bootstrap context: ${BOOTSTRAP_CONTEXT}" >&2
   exit 1
 fi
 INSTALLED_MANIFEST="${MODEL_ROOT}/.bordell-installed-model-manifest.json"
+
+if [[ "${BOOTSTRAP_CONTEXT}" == "runtime" && "${REQUIRE_BAKED_MODELS}" == "true" ]]; then
+  [[ -n "${LTX_BOOTSTRAP_SESSION:-}" ]] || {
+    echo "LTX_BOOTSTRAP_SESSION is required for baked runtime verification" >&2
+    exit 1
+  }
+  # A stale marker must never make /ready succeed while we rehash the weights.
+  rm -f "${RUNTIME_MARKER}"
+fi
 
 POLL_SECONDS="${LTX_MODEL_DOWNLOAD_PROGRESS_INTERVAL_SECONDS:-30}"
 STALL_TIMEOUT_SECONDS="${LTX_MODEL_DOWNLOAD_STALL_TIMEOUT_SECONDS:-600}"
@@ -156,3 +166,11 @@ for model_file in "${MODEL_FILES[@]}"; do
   }
   echo "MODEL_READY ${model_file} bytes=$(stat -c %s "${destination}")"
 done
+
+if [[ "${BOOTSTRAP_CONTEXT}" == "runtime" && "${REQUIRE_BAKED_MODELS}" == "true" ]]; then
+  mkdir -p "$(dirname "${RUNTIME_MARKER}")"
+  marker_tmp="${RUNTIME_MARKER}.${BASHPID}.tmp"
+  printf '%s\n' "${LTX_BOOTSTRAP_SESSION}" > "${marker_tmp}"
+  mv -f "${marker_tmp}" "${RUNTIME_MARKER}"
+  echo "BAKED_MODEL_RUNTIME_VERIFIED path=${RUNTIME_MARKER}"
+fi

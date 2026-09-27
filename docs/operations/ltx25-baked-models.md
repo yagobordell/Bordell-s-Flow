@@ -10,8 +10,10 @@ No A2V recipe, prompts, sampler, precision or audio parameters change.
 - The exact shared file list and pinned repository/revision are defined by
   `docker/workers/ltx25/model-manifest.json`; optional dev assets are excluded by
   default. Runtime `LTX_REQUIRE_BAKED_MODELS=true` rejects missing/corrupt assets
-  before any Hugging Face or Salad network preflight. This is intentional: a partial
-  image must not silently spend paid GPU time downloading.
+  before any Hugging Face or Salad network preflight. A per-process bootstrap token
+  gates worker preparation, `/ready` and Postgres polling until the runtime SHA256
+  check finishes, even if model files are already present. A partial image must not
+  silently spend paid GPU time downloading or claim jobs with unverified weights.
 - BuildKit injects the Hugging Face token as a **secret mount**, not a build argument.
   Do not put tokens in command lines, Dockerfiles, build logs or image metadata.
   The ordinary Salad manager loads `HF_TOKEN` from `.env` before a new LTX build.
