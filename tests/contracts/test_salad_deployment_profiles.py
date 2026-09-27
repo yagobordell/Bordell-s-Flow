@@ -67,7 +67,9 @@ def test_salad_manager_resolves_gpu_names_through_organization_api() -> None:
 def test_ltx_capacity_allows_parallel_shot_workers() -> None:
     service = _document()["services"]["ltx25"]
 
-    assert service["image"].endswith("ltx25-a2v-torch211-cu128-eagersdpa-xet-reference-claims-v11-baked")
+    assert service["image"].endswith(
+        "ltx25-a2v-torch211-cu128-eagersdpa-xet-reference-claims-v11-baked"
+    )
     assert service["environment"]["LTX_REQUIRE_BAKED_MODELS"] == "true"
     assert service["capacity"] == {"start_replicas": 1, "max_replicas": 4}
     assert "queue_name" not in service
