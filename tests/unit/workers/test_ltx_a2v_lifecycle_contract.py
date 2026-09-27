@@ -35,7 +35,7 @@ def test_lifecycle_logging_never_bypasses_readiness_or_cleanup() -> None:
     assert source.index("& $Python $ReadyWait @ReadyArgs") < source.index(
         "& $Python $Smoke @Arguments"
     )
-    assert source.index("& $WorkerManager -Action Stop -Service ltx25") < source.index(
+    assert source.index("& $WorkerManager @Stop") < source.index(
         "LTX25_A2V_LIFECYCLE_METRICS "
     )
     assert 'if ($PhaseName -and $null -eq $LifecycleMetrics[$PhaseName])' in source

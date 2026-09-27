@@ -25,7 +25,8 @@ def test_ltx_a2v_controlled_wrapper_owns_explicit_capacity() -> None:
     assert 'Service = "ltx25"' in script
     assert "Replicas = 1" in script
     assert "AllowBootstrappingInstance = $true" in script
-    assert "-Action Stop -Service ltx25" in script
+    assert '$Stop = @{ Action = "Stop"; Service = "ltx25"' in script
+    assert "& $WorkerManager @Stop" in script
     assert "finally {" in script
     assert "wait_salad_ltx25_ready.py" in script
     assert script.index("& $Python $ReadyWait @ReadyArgs") < script.index(

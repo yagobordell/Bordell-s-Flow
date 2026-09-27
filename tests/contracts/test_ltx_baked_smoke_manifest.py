@@ -36,5 +36,5 @@ def test_ltx_manager_and_controlled_smoke_support_the_same_candidate_manifest() 
     assert '$ServicesPath = [IO.Path]::GetFullPath($ServicesPath)' in manager
     assert '[string]$ServicesPath = ""' in smoke
     assert 'if ($ServicesPath) { $Stop["ServicesPath"] = $ServicesPath }' in smoke
-    assert 'parser.add_argument("--services-path"' in ready
+    assert '"--services-path",' in ready
     assert 'services_path = args.services_path' in ready

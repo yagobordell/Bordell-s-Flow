@@ -48,7 +48,7 @@ def _fake_checkout(
         "[CmdletBinding()]\n"
         "param([string]$Action, [string]$Service, [int]$Replicas, "
         "[string]$EnvFile, [switch]$AllowBootstrappingInstance, "
-        "[switch]$NonInteractive)\n"
+        "[switch]$NonInteractive, [int]$LtxStartupTimeoutMinutes, "\n        "[string]$ServicesPath)\n"
         "Add-Content -LiteralPath (Join-Path $PSScriptRoot 'events.txt') -Value $Action\n"
         + ("if ($Action -eq 'Stop') { throw 'fake stop failure' }\n"
            if fail_at == "stop" else ""),
