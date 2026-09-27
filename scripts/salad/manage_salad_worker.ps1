@@ -708,10 +708,10 @@ function Show-Status {
     param([Parameter(Mandatory)][hashtable]$Headers)
     $Group = Try-Get-Group -Headers $Headers
     if ($null -eq $Group) {
-        Write-Host "service=$Service group=$GroupName status=missing" -ForegroundColor Yellow
+        Write-Output "service=$Service group=$GroupName status=missing"
         return
     }
-    Write-Host ("service={0} group={1} status={2} replicas={3} pending={4} transport=postgres legacy_queue={5} capacity={6}-{7} image={8}" -f $Service, $GroupName, (Get-GroupStatus -Group $Group), [int]$Group.replicas, [bool]$Group.pending_change, (Test-LegacyQueueAttachment -Group $Group), $StartReplicas, $MaxReplicas, [string]$Group.container.image)
+    Write-Output ("service={0} group={1} status={2} replicas={3} pending={4} transport=postgres legacy_queue={5} capacity={6}-{7} image={8}" -f $Service, $GroupName, (Get-GroupStatus -Group $Group), [int]$Group.replicas, [bool]$Group.pending_change, (Test-LegacyQueueAttachment -Group $Group), $StartReplicas, $MaxReplicas, [string]$Group.container.image)
 }
 
 Assert-ServiceDefinition

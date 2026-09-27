@@ -44,15 +44,16 @@ def _fake_checkout(tmp_path: Path, fail_at: str | None) -> tuple[Path, Path, Pat
         "function Import-EnvFile { param([string]$Path) }\n", encoding="utf-8"
     )
     avatar_status = "running" if fail_at == "avatar" else "stopped"
+    status_writer = "Write-Host" if fail_at == "status_host" else "Write-Output"
     manager = (
         "[CmdletBinding()]\n"
         "param([string]$Action,[string]$Service,[int]$Replicas,[string]$EnvFile,"
         "[switch]$AllowBootstrappingInstance,[switch]$NonInteractive)\n"
         "if ($Action -eq 'Status') {\n"
         "  if ($Service -eq 'ltx25') {\n"
-        f"    Write-Output 'service=ltx25 status={avatar_status} replicas=0'; exit 0\n"
+        f"    {status_writer} 'service=ltx25 status={avatar_status} replicas=0'; exit 0\n"
         "  }\n"
-        f"  Write-Output 'service=ltx25_i2v status=stopped image={PINNED}'; exit 0\n"
+        f"  {status_writer} 'service=ltx25_i2v status=stopped image={PINNED}'; exit 0\n"
         "}\n"
         "Add-Content -LiteralPath (Join-Path $PSScriptRoot 'events.txt') "
         '-Value "$Service $Action"\n'
@@ -87,6 +88,7 @@ def _fake_checkout(tmp_path: Path, fail_at: str | None) -> tuple[Path, Path, Pat
         ("ready", False, ["ltx25_i2v Start", "ltx25_i2v Stop"]),
         ("runner", False, ["ltx25_i2v Start", "ltx25_i2v Stop"]),
         ("avatar", False, []),
+        ("status_host", False, []),
     ],
 )
 def test_isolated_i2v_never_operates_avatar_group_and_cleans_up(
@@ -127,3 +129,15 @@ def test_isolated_i2v_never_operates_avatar_group_and_cleans_up(
         events.read_text(encoding="utf-8").splitlines() if events.exists() else []
     )
     assert actual_events == expected_events
+
+def test_salad_manager_status_is_captureable_by_controlled_smoke() -> None:
+    """The real manager must emit Status on the success pipeline, not Write-Host."""
+    manager = (ROOT / "scripts" / "salad" / "manage_salad_worker.ps1").read_text(
+        encoding="utf-8"
+    )
+    status_function = manager.split("function Show-Status {", maxsplit=1)[1].split(
+        "\nAssert-ServiceDefinition", maxsplit=1
+    )[0]
+    assert 'Write-Output "service=$Service group=$GroupName status=missing"' in status_function
+    assert 'Write-Output ("service={0} group={1} status={2}' in status_function
+    assert "Write-Host" not in status_function
