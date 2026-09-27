@@ -43,7 +43,7 @@ $R2Preflight = Join-Path $RepoRoot "scripts\pipeline\check_r2_ready.py"
 $GpuAvailability = Join-Path $RepoRoot "scripts\salad\check_salad_gpu_availability.ps1"
 $Smoke = Join-Path $PSScriptRoot "submit_ltx25_a2v_smoke.py"
 $ReadyWait = Join-Path $PSScriptRoot "wait_salad_ltx25_ready.py"
-$RaceSelector = Join-Path $PSScriptRoot "start_ltx25_race_select.py"
+$RaceSelector = Join-Path $PSScriptRoot "start_ltx25_isolated_race.py"
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     $Python = (Get-Command python -ErrorAction Stop).Source
@@ -64,6 +64,9 @@ if (-not [string]::IsNullOrWhiteSpace($ExpectedPinnedImage) -and
 }
 if ($StartupReplicas -eq 2 -and [string]::IsNullOrWhiteSpace($ExpectedPinnedImage)) {
     throw "Two-GPU race requires -ExpectedPinnedImage to pin both instances by immutable digest."
+}
+if ($StartupReplicas -eq 2 -and [string]::IsNullOrWhiteSpace($OutputDir)) {
+    throw "Isolated two-GPU race requires an artifact output directory for its winner record."
 }
 if ($StartupReplicas -eq 2 -and -not (Test-Path -LiteralPath $RaceSelector -PathType Leaf)) {
     throw "LTX race selector is missing: $RaceSelector"
@@ -142,25 +145,35 @@ if ($NonInteractive) {
 $LifecycleMetrics.preflight_seconds = $LifecycleClock.Elapsed.TotalSeconds
 $PhaseClock = [System.Diagnostics.Stopwatch]::StartNew()
 $PhaseName = "capacity_start_seconds"
+$RaceData = $null
 
 try {
-    Write-Host "=== LTX A2V explicit capacity: one RTX 5090 replica ===" -ForegroundColor Cyan
+    Write-Host "=== LTX A2V isolated two-group race or one-GPU control ===" -ForegroundColor Cyan
     if ($StartupReplicas -eq 2) {
-        Write-Warning "Experimental 2-GPU race: two running RTX 5090 instances can be billed until scale-in. The selector must verify the ONLY ready survivor before any Postgres job."
+        Write-Warning "Experimental race: two independent one-GPU groups may be billed until loser stop; NEVER scales in a live winner."
+        $RaceDecisionPath = Join-Path $OutputDir "ltx25_race_winner.json"
         $RaceArgs = @(
             "--env-file", $EnvFile,
             "--expected-image", $ExpectedPinnedImage,
             "--timeout-seconds", [string]$RaceTimeoutSeconds,
-            "--poll-seconds", "15"
+            "--poll-seconds", "15",
+            "--output-json", $RaceDecisionPath
         )
         & $Python $RaceSelector @RaceArgs
         if ($LASTEXITCODE -ne 0) {
-            throw "LTX A2V race did not confirm a single ready instance; no job was submitted."
+            throw "LTX isolated race did not confirm winner and fully stopped loser; no job submitted."
+        }
+        $RaceData = Get-Content -LiteralPath $RaceDecisionPath -Raw | ConvertFrom-Json
+        if ($RaceData.strategy -ne "two_isolated_one_replica_groups_stop_loser" -or
+            $RaceData.loser_stopped -ne $true -or
+            [string]::IsNullOrWhiteSpace([string]$RaceData.winner_group) -or
+            [string]::IsNullOrWhiteSpace([string]$RaceData.winner_id)) {
+            throw "LTX isolated race did not produce a verified winner record."
         }
     }
     else {
         & $WorkerManager @Start
-        if (-not $?) { throw "LTX A2V compute-group start failed." }
+        if ($LASTEXITCODE -ne 0) { throw "LTX A2V compute-group start failed." }
     }
     $LifecycleMetrics.capacity_start_seconds = $PhaseClock.Elapsed.TotalSeconds
     $PhaseClock.Restart()
@@ -175,6 +188,10 @@ try {
     )
     if (-not [string]::IsNullOrWhiteSpace($ExpectedPinnedImage)) {
         $ReadyArgs += @("--expected-image", $ExpectedPinnedImage)
+    }
+    if ($null -ne $RaceData) {
+        $ReadyArgs += @("--group-name", [string]$RaceData.winner_group)
+        $ReadyArgs += @("--expected-instance", [string]$RaceData.winner_id)
     }
     & $Python $ReadyWait @ReadyArgs
     if ($LASTEXITCODE -ne 0) {
@@ -205,14 +222,17 @@ finally {
     }
     $CleanupClock = [System.Diagnostics.Stopwatch]::StartNew()
     try {
-        & $WorkerManager -Action Stop -Service ltx25 -EnvFile $EnvFile -NonInteractive
-        if (-not $?) { throw "LTX A2V cleanup failed; verify stopped/replicas=0/pending=False." }
-        if ($StartupReplicas -eq 2) {
-            # Race may have failed with replicas=2. Restore count only AFTER Stop.
-            & $Python $RaceSelector --reset-stopped --env-file $EnvFile --expected-image $ExpectedPinnedImage
-            if ($LASTEXITCODE -ne 0) {
-                throw "LTX A2V race cleanup failed to restore stopped group to replicas=1."
+        # Stop BOTH independent groups even when the first stop fails.
+        # The main group must never remain billable because auxiliary cleanup failed.
+        try {
+            if ($StartupReplicas -eq 2) {
+                & $WorkerManager -Action Stop -Service ltx25 -IsolatedRaceGroup -EnvFile $EnvFile -NonInteractive
+                if ($LASTEXITCODE -ne 0) { throw "LTX auxiliary race group stop failed." }
             }
+        }
+        finally {
+            & $WorkerManager -Action Stop -Service ltx25 -EnvFile $EnvFile -NonInteractive
+            if ($LASTEXITCODE -ne 0) { throw "LTX main group stop failed." }
         }
         if ($LifecycleMetrics.outcome -eq "generated") {
             $LifecycleMetrics.outcome = "succeeded"
