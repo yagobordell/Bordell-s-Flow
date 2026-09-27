@@ -119,6 +119,7 @@ def race(
     started_at = clock()
     deadline = started_at + timeout_seconds
     versions: dict[str, int | None] = {}
+    observed_started: set[str] = set()
     for name, client in clients:
         group = _group(client, name, expected_image)
         if _status(group) != "stopped" or group.get("pending_change") is not False:
@@ -143,10 +144,16 @@ def race(
         observations: list[str] = []
         for name, client in clients:
             group = _group(client, name, expected_image, version=versions[name])
+            if _status(group) == "stopped":
+                if name in observed_started or clock() - started_at >= 120:
+                    raise RuntimeError(
+                        f"LTX isolated race group {name} failed to start or stopped unexpectedly"
+                    )
+                observations.append(f"{name}=starting:[]")
+                continue
+            observed_started.add(name)
             if versions[name] is None and group.get("pending_change") is False:
                 versions[name] = group["version"]
-            if _status(group) == "stopped":
-                raise RuntimeError(f"LTX isolated race group {name} stopped unexpectedly")
             instances = _instances(client, versions[name]) if versions[name] is not None else []
             seen.update((name, str(item["id"])) for item in instances if item.get("id"))
             chosen = _ready_id(group, instances)
@@ -169,7 +176,7 @@ def race(
                 f"groups={observations} candidate={candidate} confirmations={confirmations}/2"
             )
             last_report = clock()
-        if confirmations >= 2 and candidate is not None:
+        if confirmations >= 2 and candidate is not None and len(observed_started) == 2:
             winner = candidate
             break
         sleep(min(poll_seconds, max(0.0, deadline - clock())))
