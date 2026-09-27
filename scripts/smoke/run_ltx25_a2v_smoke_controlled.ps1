@@ -14,7 +14,8 @@ param(
     [string]$ExpectedPinnedImage = "",
     [ValidateSet(1, 2)][int]$StartupReplicas = 1,
     [ValidateRange(120, 7200)][int]$RaceTimeoutSeconds = 2400,
-    [switch]$NonInteractive
+    [switch]$NonInteractive,
+    [switch]$UseImdsReadyProtection
 )
 
 Set-StrictMode -Version Latest
@@ -64,6 +65,15 @@ if (-not [string]::IsNullOrWhiteSpace($ExpectedPinnedImage) -and
 }
 if ($StartupReplicas -eq 2 -and [string]::IsNullOrWhiteSpace($ExpectedPinnedImage)) {
     throw "Two-GPU race requires -ExpectedPinnedImage to pin both instances by immutable digest."
+}
+if ($UseImdsReadyProtection -and $StartupReplicas -ne 2) {
+    throw "IMDS first-ready protection is valid only in the two-replica race."
+}
+if ($UseImdsReadyProtection) {
+    $ProtectionManifest = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\\salad\\services.json") -Raw | ConvertFrom-Json
+    if ([string]$ProtectionManifest.services.ltx25.environment.LTX_RACE_PROTECT_READY_WITH_IMDS -ne "true") {
+        throw "The LTX Docker/manifest must explicitly enable local IMDS readiness protection."
+    }
 }
 if ($StartupReplicas -eq 2 -and -not (Test-Path -LiteralPath $RaceSelector -PathType Leaf)) {
     throw "LTX race selector is missing: $RaceSelector"
@@ -153,6 +163,7 @@ try {
             "--timeout-seconds", [string]$RaceTimeoutSeconds,
             "--poll-seconds", "15"
         )
+        if ($UseImdsReadyProtection) { $RaceArgs += @("--ready-protected-by-imds") }
         & $Python $RaceSelector @RaceArgs
         if ($LASTEXITCODE -ne 0) {
             throw "LTX A2V race did not confirm a single ready instance; no job was submitted."
