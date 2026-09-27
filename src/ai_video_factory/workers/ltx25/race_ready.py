@@ -44,7 +44,7 @@ class LTXRaceReadyGuard:
         self._dsn = dsn
         self._connect = connect
         self._connection: Any | None = None
-        self._mutex = threading.Lock()
+        self._mutex = threading.RLock()
         # Ignore external HTTP(S)_PROXY when accessing link-local metadata.
         self._opener = build_opener(ProxyHandler({}))
 
