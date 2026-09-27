@@ -354,6 +354,59 @@ def test_real_media_image_preview_frames_change_during_one_beat(
     assert abs(artifact["rendered_duration_seconds"] - 1.9) < 0.15
 
 
+
+def test_real_corner_ken_burns_animates_second_media_image(
+    tmp_path: Path,
+) -> None:
+    if shutil.which("ffprobe") is None:
+        pytest.skip("ffprobe is required for MP4 validation")
+    plan, audio, images = _fixture_assets(tmp_path)
+    plan["blocks"][1]["beats"][0]["visual_type"] = "media_image"
+    source = tmp_path / images["items"][1]["file"]
+    patterned = Image.new("RGB", (1280, 720), (15, 240, 15))
+    draw = ImageDraw.Draw(patterned)
+    draw.rectangle((780, 130, 1050, 380), fill=(215, 15, 15))
+    draw.ellipse((250, 470, 580, 660), fill=(20, 60, 220))
+    patterned.save(source)
+    images["items"][1]["sha256"] = _sha(source)
+
+    artifact = generate_static_preview(tmp_path, plan, audio, images)
+    timeline = json.loads(
+        (tmp_path / artifact["timeline_file"]).read_text(encoding="utf-8")
+    )
+    assert artifact["media_image_motion"]["animated_beats"] == 2
+    assert timeline["beats"][2]["motion"] == {
+        "version": "media-image-zoompan-v1",
+        "mode": "ken_burns",
+        "direction": "out",
+        "origin": "top_left",
+        "zoom_start": 1.115,
+        "zoom_end": 1.035,
+    }
+
+    def frame_at(seconds: float) -> Image.Image:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+                "-i", str(tmp_path / artifact["file"]), "-ss", str(seconds),
+                "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-",
+            ],
+            capture_output=True, check=True,
+        )
+        with Image.open(BytesIO(result.stdout)) as frame:
+            return frame.convert("RGB")
+
+    early = frame_at(1.55)
+    late = frame_at(1.82)
+    region = (740, 90, 1180, 430)
+    movement = ImageChops.difference(early.crop(region), late.crop(region))
+    assert movement.getbbox() is not None
+    assert max(ImageStat.Stat(movement).mean) > 0.5
+    assert _sha(source) == images["items"][1]["sha256"]
+    assert abs(artifact["rendered_duration_seconds"] - 1.9) < 0.15
+
+
+
 def test_images_only_auto_renders_from_existing_stt_and_saved_images(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
