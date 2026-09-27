@@ -35,6 +35,18 @@ def test_two_gpu_race_stops_and_resets_before_reporting_success(
     pipeline = repo / "scripts" / "pipeline"
     for path in (smoke, salad, pipeline):
         path.mkdir(parents=True)
+    manifest = repo / "deploy" / "salad" / "services.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps({
+            "services": {
+                "ltx25": {
+                    "environment": {"LTX_RACE_PROTECT_READY_WITH_IMDS": "true"}
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
     (smoke / WRAPPER.name).write_text(WRAPPER.read_text(encoding="utf-8"), encoding="utf-8")
     (smoke / "check_ltx25_python_source.py").write_text(
         "print('fake source verified')\n", encoding="utf-8"
@@ -90,6 +102,7 @@ def test_two_gpu_race_stops_and_resets_before_reporting_success(
             "unique-mock-race",
             "-StartupReplicas",
             "2",
+            "-UseImdsReadyProtection",
             "-RaceTimeoutSeconds",
             "120",
             "-ExpectedPinnedImage",
