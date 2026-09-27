@@ -65,9 +65,9 @@ def test_salad_manager_resolves_gpu_names_through_organization_api() -> None:
 
 
 def test_ltx_capacity_allows_parallel_shot_workers() -> None:
-    service = _document()["services"]["ltx25"]
+    service = _document()["services"]["ltx25_i2v"]
 
-    assert service["image"].endswith("ltx25-a2v-torch211-cu128-eagersdpa-xet-reference-claims-v10")
+    assert service["image"].endswith("ltx25-isolated-tasks-v11")
     assert service["capacity"] == {"start_replicas": 1, "max_replicas": 4}
     assert "queue_name" not in service
     assert "autoscaler" not in service
@@ -117,3 +117,14 @@ def test_qwen_recovery_uses_new_group_without_legacy_queue_or_autostart() -> Non
     assert document["stack"]["job_transport"] == "postgres"
     assert "queue_name" not in service
     assert "autoscaler" not in service
+
+def test_ltx_i2v_and_avatar_are_distinct_schedulers_and_container_groups() -> None:
+    document = _document()
+    i2v = document["services"]["ltx25_i2v"]
+    avatar = document["services"]["ltx25"]
+    assert i2v["group_name"] != avatar["group_name"]
+    assert i2v["environment"]["LTX_WORKER_TASK_MODE"] == "i2v"
+    assert avatar["environment"]["LTX_WORKER_TASK_MODE"] == "a2v"
+    assert i2v["image"] == avatar["image"]
+    assert "ltx25_i2v" in document["stack"]["service_order"]
+    assert "ltx25" in document["stack"]["service_order"]

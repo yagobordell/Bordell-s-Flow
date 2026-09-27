@@ -717,7 +717,7 @@ function Show-Status {
 Assert-ServiceDefinition
 Set-Location $RepoRoot
 if ($Recreate -and $Action -ne "Prepare") { throw "-Recreate is only valid with Prepare." }
-if ($AllowBootstrappingInstance -and ($Action -ne "Start" -or $Service -ne "ltx25" -or
+if ($AllowBootstrappingInstance -and ($Action -ne "Start" -or $Service -notin @("ltx25", "ltx25_i2v") -or
     $DesiredReplicas -ne 1)) {
     throw "-AllowBootstrappingInstance is only valid for LTX Start with one replica."
 }

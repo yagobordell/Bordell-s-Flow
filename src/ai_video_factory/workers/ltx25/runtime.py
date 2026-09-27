@@ -12,24 +12,25 @@ from .settings import LTX25WorkerSettings
 
 
 def build_ltx25_worker(settings: LTX25WorkerSettings):
+    # Register only the tasks owned by this Salad service. The Postgres poller
+    # selects by registered task name, and /jobs rejects any other task.
     mode_controller = LTXPipelineModeController()
-    video_backend = DirectLTX25Backend(
-        model_root=settings.model_root,
-        device=settings.device,
-        mode_controller=mode_controller,
-    )
-    audio_to_video_backend = DirectLTX25AudioToVideoBackend(
-        model_root=settings.model_root,
-        device=settings.device,
-        mode_controller=mode_controller,
-    )
-    runners = TaskRunnerRegistry(
-        [
-            LTXVideoTaskRunner(backend=video_backend),
-            LTXAudioToVideoTaskRunner(backend=audio_to_video_backend),
-        ]
-    )
-    return build_worker(settings, runners=runners)
+    runners = []
+    if settings.task_mode in ("i2v", "both"):
+        video_backend = DirectLTX25Backend(
+            model_root=settings.model_root,
+            device=settings.device,
+            mode_controller=mode_controller,
+        )
+        runners.append(LTXVideoTaskRunner(backend=video_backend))
+    if settings.task_mode in ("a2v", "both"):
+        audio_to_video_backend = DirectLTX25AudioToVideoBackend(
+            model_root=settings.model_root,
+            device=settings.device,
+            mode_controller=mode_controller,
+        )
+        runners.append(LTXAudioToVideoTaskRunner(backend=audio_to_video_backend))
+    return build_worker(settings, runners=TaskRunnerRegistry(runners))
 
 
 runtime_settings = LTX25WorkerSettings()
