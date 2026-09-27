@@ -90,7 +90,7 @@ def test_phase8_checks_r2_replay_before_ltx_capacity() -> None:
     text = _read("scripts/pipeline/run_phase8_videos_controlled.ps1")
 
     audit = text.index("$CacheAudit")
-    start = text.index('Action = "Start"; Service = "ltx25"')
+    start = text.index('Action = "Start"; Service = "ltx25_i2v"')
     assert audit < start
     assert "All Phase 8 clips are cached; no LTX GPU allocation required." in text
 

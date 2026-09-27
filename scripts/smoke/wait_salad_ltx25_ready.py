@@ -59,9 +59,16 @@ def _readiness_observation(
         )
 
     if expected_task_mode:
-        environment = container.get("environment_variables") if isinstance(container, dict) else None
-        if not isinstance(environment, dict) or environment.get("LTX_WORKER_TASK_MODE") != expected_task_mode:
-            raise RuntimeError("LTX group has wrong LTX_WORKER_TASK_MODE; refusing cross-service work")
+        environment = (
+            container.get("environment_variables") if isinstance(container, dict) else None
+        )
+        if (
+            not isinstance(environment, dict)
+            or environment.get("LTX_WORKER_TASK_MODE") != expected_task_mode
+        ):
+            raise RuntimeError(
+                "LTX group has wrong LTX_WORKER_TASK_MODE; refusing cross-service work"
+            )
 
     version = group.get("version")
     if isinstance(version, bool) or not isinstance(version, int) or version < 1:

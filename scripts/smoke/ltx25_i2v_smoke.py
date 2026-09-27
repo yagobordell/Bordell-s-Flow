@@ -32,7 +32,8 @@ def prepare(image: Path, prompt: str, duration: float, output_dir: Path) -> None
         width < 1280 or height < 720 or width * 9 != height * 16
     ):
         raise ValueError(
-            f"I2V input must be 16:9 with at least 1280x720 or Qwen 1280x736; found {width}x{height}"
+            "I2V input must be 16:9 with at least 1280x720 or Qwen 1280x736; "
+            f"found {width}x{height}"
         )
     inputs = output_dir / "inputs"
     inputs.mkdir(parents=True, exist_ok=True)
