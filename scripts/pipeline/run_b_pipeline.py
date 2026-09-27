@@ -89,6 +89,11 @@ def parse_args() -> argparse.Namespace:
         help="Enlace del ebook para crear el QR de un avatar nuevo sin preguntar en la CLI.",
     )
     parser.add_argument(
+        "--qr-only",
+        action="store_true",
+        help="Genera o reutiliza el QR del avatar localmente, sin guion ni API.",
+    )
+    parser.add_argument(
         "--list-avatars",
         action="store_true",
         help="List available PNG avatars without starting inference or requiring an API key.",
@@ -145,6 +150,21 @@ def parse_args() -> argparse.Namespace:
         help="Resume a saved Fish TTS task without rerunning its director or B bots.",
     )
     args = parser.parse_args()
+    if args.qr_only and (
+        args.script_file is not None
+        or args.script is not None
+        or args.from_stage != "B1.1"
+        or args.stop_stage is not None
+        or args.images_only
+        or args.skip_images
+        or args.no_audio
+        or args.regenerate_audio
+        or args.resume_audio
+        or args.output is not None
+        or args.list_scripts
+        or args.list_avatars
+    ):
+        parser.error("--qr-only only accepts --avatar, --avatars-dir and --qr-url.")
     if args.regenerate_audio and args.resume_audio:
         parser.error("Choose either --regenerate-audio or --resume-audio.")
     if (args.regenerate_audio or args.resume_audio) and (
@@ -177,6 +197,7 @@ def parse_args() -> argparse.Namespace:
     if args.list_scripts and args.list_avatars:
         parser.error("Choose either --list-scripts or --list-avatars.")
     if (args.list_scripts or args.list_avatars) and (
+        args.qr_only
         args.script_file is not None
         or args.script is not None
         or args.avatar is not None
@@ -1168,6 +1189,18 @@ async def main() -> None:
                 print(f"  {path.name}")
         return
 
+    if getattr(args, "qr_only", False):
+        avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
+        load_avatar_png(avatar_file)
+        qr = ensure_avatar_qr(
+            avatar_file=avatar_file,
+            avatars_dir=args.avatars_dir,
+            input_url=getattr(args, "qr_url", None),
+        )
+        print(f"QR listo: {args.avatars_dir / '.qr' / avatar_file.name / 'qr.png'}")
+        print(f"URL: {qr.url}")
+        return
+
     script_file = select_script(
         scripts_dir=args.scripts_dir,
         script_name=args.script,
@@ -1236,12 +1269,9 @@ async def main() -> None:
                 "Existing Fish Audio tasks may be chargeable. Use --resume-audio "
                 "before replacing this script's output directory."
             )
-        qr = await ensure_avatar_qr(
+        qr = ensure_avatar_qr(
             avatar_file=avatar_file,
             avatars_dir=args.avatars_dir,
-            api_key=settings.openai_api_key,
-            model=settings.openai_model,
-            image_model=settings.openai_image_model,
             input_url=getattr(args, "qr_url", None),
         )
         output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
@@ -1270,12 +1300,9 @@ async def main() -> None:
             }
         except (KeyError, TypeError, ValueError) as exc:
             raise SystemExit(f"Cannot restore prior run accounting: {exc}") from exc
-        qr = await ensure_avatar_qr(
+        qr = ensure_avatar_qr(
             avatar_file=avatar_file,
             avatars_dir=args.avatars_dir,
-            api_key=settings.openai_api_key,
-            model=settings.openai_model,
-            image_model=settings.openai_image_model,
             input_url=getattr(args, "qr_url", None),
         )
         _clear_outputs_from(output, args.from_stage)
@@ -1294,9 +1321,8 @@ async def main() -> None:
             "file": "qr.png",
             "url": qr.url,
             "sha256": qr.sha256,
-            "model": qr.model,
-            "image_model": qr.image_model,
-            "verification": "png_validated_scan_pending",
+            "generator": qr.generator,
+            "verification": "deterministic_qr_encoding",
         },
     }
     run_metadata = {
