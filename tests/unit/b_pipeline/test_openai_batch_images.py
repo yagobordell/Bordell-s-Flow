@@ -276,6 +276,48 @@ def test_existing_paid_text_batch_cannot_silently_switch_to_avatar_edit(
     assert not batch.created
 
 
+
+def test_images_only_uses_the_saved_run_avatar_for_referenced_edits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = tmp_path / "input" / "roma.txt"
+    script.parent.mkdir()
+    script.write_bytes(b"Texto original.")
+    output = tmp_path / "output" / "roma"
+    (output / "B2").mkdir(parents=True)
+    (output / "B2/merged_output.json").write_text("{}", encoding="utf-8")
+    plan, avatar = _avatar_plan(output, ("1B", "Avatar studying the map"))
+    (output / "visual_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (output / "run_report.json").write_text(json.dumps({
+        "run": {
+            "script_sha256": hashlib.sha256(script.read_bytes()).hexdigest(),
+            "status": "failed",
+        },
+        "api_costs": {"run_status": "failed"},
+        "timings": {"status": "failed"},
+    }), encoding="utf-8")
+    batch = FakeBatch()
+
+    def fake_image_request(destination, saved_plan, *, api_key, options):
+        assert destination == output
+        assert api_key == "fake-openai-key"
+        return images.generate_b2_images(
+            destination, saved_plan, api_key=None, options=options,
+            batch_client=batch,
+        )
+
+    monkeypatch.setattr(runner, "generate_b2_images", fake_image_request)
+    monkeypatch.setattr(runner.settings, "openai_api_key", "fake-openai-key")
+    asyncio.run(runner._run_images_only(script, tmp_path / "output"))
+    assert len(batch.created) == 1
+    row = batch.uploads[0][1]
+    assert row["url"] == "/v1/images/edits"
+    image_url = row["body"]["images"][0]["image_url"]
+    assert base64.b64decode(image_url.split(",", 1)[1]) == avatar
+    report = json.loads((output / "run_report.json").read_text(encoding="utf-8"))
+    assert report["run"]["image_generation"]["status"] == "completed"
+
+
 def test_n_images_create_n_single_request_batches_in_parallel_and_preserve_b2_order(
     tmp_path: Path,
 ) -> None:
