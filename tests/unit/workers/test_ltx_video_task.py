@@ -355,20 +355,16 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     backend.prepare()
 
     validated = LTXVideoParameters.model_validate(parameters())
-    backend.generate(
-        keyframe_path=keyframe,
-        output_path=tmp_path / "first.mp4",
-        parameters=validated,
-    )
-    backend.generate(
-        keyframe_path=keyframe,
-        output_path=tmp_path / "second.mp4",
-        parameters=validated,
-    )
+    for index in range(5):
+        backend.generate(
+            keyframe_path=keyframe,
+            output_path=tmp_path / f"healthy-{index}.mp4",
+            parameters=validated,
+        )
 
     assert backend.pipeline_loaded is True
     assert state["pipeline_builds"] == 1
-    assert len(state["pipeline_calls"]) == 2
+    assert len(state["pipeline_calls"]) == 5
     assert state["pipeline_init"]["quantization"] == "fp8-policy"
     assert state["pipeline_init"]["offload_mode"] == "cpu"
     assert state["pipeline_init"]["device"] == "device:cuda"
@@ -384,7 +380,7 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
         (Ellipsis, slice(24, 744), slice(0, 1280), slice(None)),
         (Ellipsis, slice(24, 744), slice(0, 1280), slice(None)),
     ]
-    assert len(state["encodes"]) == 2
+    assert len(state["encodes"]) == 5
     assert all(call["audio"] is None for call in state["encodes"])
 
     # Experimental guidance reuses the same resident weights without changing
@@ -407,11 +403,11 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
         ),
     )
     assert state["pipeline_builds"] == 1
-    assert len(state["pipeline_calls"]) == 3
+    assert len(state["pipeline_calls"]) == 6
     assert static_calls[0]["prompt"] == validated.prompt
     assert static_calls[0]["seed"] == validated.seed
     assert static_calls[0]["images"][0]["strength"] == 1.0
-    assert state["encodes"][2]["audio"] is None
+    assert state["encodes"][5]["audio"] is None
 
     backend.invalidate_pipeline()
     assert backend.pipeline_loaded is False
