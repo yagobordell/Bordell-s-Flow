@@ -516,7 +516,6 @@ def _image_batch_options() -> ImageBatchOptions:
         quality=settings.openai_image_quality,
         timeout_seconds=settings.openai_image_batch_timeout_seconds,
         poll_interval_seconds=settings.openai_image_batch_poll_interval_seconds,
-        max_parallel_images=settings.openai_image_max_parallel,
     )
 
 

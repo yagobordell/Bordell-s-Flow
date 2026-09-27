@@ -29,7 +29,6 @@ class Settings(BaseSettings):
     openai_image_quality: str = "low"
     openai_image_batch_timeout_seconds: int = 1800
     openai_image_batch_poll_interval_seconds: float = 8.0
-    openai_image_max_parallel: int = 4
     openai_service_tier: str = "flex"
     openai_fallback_service_tier: str = "default"
     qwen_image_21_model: str = "Qwen/Qwen-Image-2.1"

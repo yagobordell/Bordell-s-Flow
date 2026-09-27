@@ -59,7 +59,7 @@ class ImageBatchOptions:
     quality: str = "low"
     timeout_seconds: int = 1800
     poll_interval_seconds: float = 8.0
-    max_parallel_images: int = 4
+    max_parallel_images: int | None = None
 
     def __post_init__(self) -> None:
         if self.model_id not in {
@@ -71,8 +71,8 @@ class ImageBatchOptions:
             raise ValueError("B2 images must use 1280x720 and low quality")
         if self.timeout_seconds < 1 or self.poll_interval_seconds <= 0:
             raise ValueError("Batch timeout and polling interval must be positive")
-        if not 1 <= self.max_parallel_images <= 16:
-            raise ValueError("max_parallel_images must be between 1 and 16")
+        if self.max_parallel_images is not None and self.max_parallel_images < 1:
+            raise ValueError("max_parallel_images must be positive when specified")
 
     def request(
         self, description: str, *, avatar_image_url: str | None = None,
@@ -801,7 +801,7 @@ def generate_b2_images(
         "quality": options.quality,
         "batch_completion_window": "24h",
         "batch_timeout_seconds": options.timeout_seconds,
-        "max_parallel_images": options.max_parallel_images,
+        "max_parallel_images": min(options.max_parallel_images or len(jobs), len(jobs)),
         "status": "running",
         "total_described_beats": len(described),
         "total_generation_jobs": len(jobs),
@@ -817,7 +817,7 @@ def generate_b2_images(
         if jobs:
             if batch_client is None:
                 raise ImageBatchError("Missing batch client")
-            worker_count = min(options.max_parallel_images, len(jobs))
+            worker_count = min(options.max_parallel_images or len(jobs), len(jobs))
             with ThreadPoolExecutor(max_workers=worker_count) as pool:
                 futures = {
                     pool.submit(
