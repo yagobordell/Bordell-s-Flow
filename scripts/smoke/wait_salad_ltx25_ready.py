@@ -107,7 +107,6 @@ def wait_for_ready(
     timeout_seconds: float,
     poll_seconds: float = 15.0,
     expected_image: str = "",
-    expected_instance: str = "",
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     report: Callable[[str], None] = print,
@@ -161,11 +160,6 @@ def wait_for_ready(
                 f"consecutive_failures={transient_failures}"
             )
 
-        if expected_instance and ready_id is not None and ready_id != expected_instance:
-            raise RuntimeError(
-                "LTX ready instance differs from the isolated race winner; "
-                "no inference job may be submitted"
-            )
         if ready_id is not None and ready_id == previous_ready_id:
             consecutive_ready += 1
         elif ready_id is not None:
@@ -204,8 +198,6 @@ def main() -> int:
     parser.add_argument("--timeout-seconds", type=float, default=7200.0)
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument("--expected-image", default="")
-    parser.add_argument("--group-name", default="")
-    parser.add_argument("--expected-instance", default="")
     args = parser.parse_args()
 
     env_file = Path(args.env_file)
@@ -221,10 +213,6 @@ def main() -> int:
     stack = manifest["stack"]
     ltx = manifest["services"]["ltx25"]
     image = ltx["image"]
-    allowed_groups = {ltx["group_name"], ltx["group_name"] + "-race"}
-    group_name = args.group_name or ltx["group_name"]
-    if group_name not in allowed_groups:
-        raise SystemExit("Unexpected LTX readiness group outside reviewed pair")
     image_repository = image.rsplit(":", maxsplit=1)[0]
     api_key = os.getenv("SALAD_API_KEY", "").strip()
     if not api_key:
@@ -238,18 +226,17 @@ def main() -> int:
             ).strip(),
             organization_name=stack["organization"],
             project_name=stack["project"],
-            container_group_name=group_name,
+            container_group_name=ltx["group_name"],
         )
     )
     try:
         wait_for_ready(
             client,
-            group_name=group_name,
+            group_name=ltx["group_name"],
             image_repository=image_repository,
             expected_image=args.expected_image,
             timeout_seconds=args.timeout_seconds,
             poll_seconds=args.poll_seconds,
-            expected_instance=args.expected_instance,
         )
     except (RuntimeError, TimeoutError, ValueError) as error:
         print(f"LTX readiness failed: {error}", file=sys.stderr)
