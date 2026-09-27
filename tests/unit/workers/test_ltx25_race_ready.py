@@ -246,7 +246,10 @@ def test_preflight_retries_transient_imds_read_without_expensive_bootstrap(
                 raise RuntimeError("Salad IMDS GET network failure: TimeoutError")
         return real_transport(method, payload)
 
-    monkeypatch.setattr(LTXRaceReadyGuard, "_request", flaky_transport)
+    monkeypatch.setattr(
+        LTXRaceReadyGuard, "_request",
+        lambda _self, method, payload=None: flaky_transport(method, payload),
+    )
     monkeypatch.setattr(race_ready_module.time, "sleep", lambda _seconds: None)
     LTXRaceReadyGuard.preflight_before_model_download()
     assert calls == 4
