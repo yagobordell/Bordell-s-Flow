@@ -35,8 +35,12 @@ the shared replay/idempotency path.
 A2V uses the existing Salad service `ltx25` with `LTX_WORKER_TASK_MODE=a2v`.
 I2V uses the separate Salad group `ltx25_i2v` with `LTX_WORKER_TASK_MODE=i2v`.
 Both can use the same pinned model family and Docker image, but they never share
-resident GPU containers or Postgres task ownership. This change remains in draft
-PR #238 until the isolated real I2V test is approved.
+resident GPU containers or Postgres task ownership. The I2V infrastructure and an
+opt-in experimental camera profile were integrated in PR #238 after a real
+technical smoke. Camera stabilization remains visually incomplete: do not treat
+the opt-in `static-camera` profile as a fixed-camera guarantee. Before enabling
+the new capacity controller, prepare the A2V group with the task-restricted
+image; its previously deployed image must not claim I2V jobs.
 
 A2V uses the shared GPU retry budget (`DEFAULT_GPU_MAX_ATTEMPTS=5`). OOM, CUDA-device and
 cuDNN/SDPA failures remain retryable through the Postgres job state machine. Before a later

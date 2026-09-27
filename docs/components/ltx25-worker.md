@@ -49,13 +49,18 @@ contract: the old worker image rejects that keyframe geometry.
 `video.ltx25.generate`, and `ltx25` handles only avatar A2V jobs.
 `LTX_WORKER_TASK_MODE` restricts registered task runners and Postgres polling.
 Each group has independent RTX 5090 capacity, GPU instances and autoscaling.
-The isolated v11 I2V image produced one technically valid real 2-second MP4,
-but its unexpected camera push-in still fails visual acceptance. An opt-in
-`static-camera` profile uses camera-only negative CFG 1.25 on Stage 1 of the
-same resident distilled I2V pipeline, retaining full first-frame strength 1.0
-and the original Stage 2. The camera experiment requires a NEW pinned image
-and a separate visual comparison; it is not enabled by default.
-Do not enable the new capacity controller until both groups are prepared.
+The isolated v11 I2V smoke (`i2v-smoke-003`) produced one technically valid
+2-second MP4 but showed unwanted camera push-in. The opt-in `static-camera`
+profile uses camera-only negative CFG 1.25 on Stage 1 of the same resident
+distilled I2V pipeline, retaining full first-frame strength 1.0 and Stage 2.
+The real v12 comparison (`i2v-static-camera-001`) was technically successful,
+with less but still clearly visible zoom; it is NOT a camera-lock guarantee.
+The v12 linux/amd64 manifest is
+`sha256:6aed710bedc75aea072a40108a20887bbd578e7520d39dfe4d961e3e745a2bf9`.
+The tracked manifest intentionally retains the v11 tag until deployment is
+separately approved; the tested Salad I2V group was pinned to v12 and stopped
+after the controlled smoke. Do not enable the new capacity controller until
+both groups are prepared with task-restricted images, including the A2V group.
 
 Operate it with:
 
