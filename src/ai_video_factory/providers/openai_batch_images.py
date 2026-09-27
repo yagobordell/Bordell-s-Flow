@@ -16,6 +16,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from io import BytesIO
+from itertools import chain
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -24,6 +25,7 @@ from urllib.request import Request, urlopen
 
 from PIL import Image
 
+from .image_grids import GridPlanError, plan_image_jobs
 from .openai_images import OpenAIImageClient
 
 _BASE = "https://api.openai.com/v1"
@@ -34,7 +36,7 @@ _MAX_AVATAR_PNG = 14 * 1024 * 1024
 _MAX_IMAGE_URL = 20_971_520
 _MAX_JSONL = 21 * 1024 * 1024
 _IMAGE_PREFIX = "iphone 6 photo done by an elderly:  "
-_MAX_PNG = 30 * 1024 * 1024
+_MAX_PNG = 40 * 1024 * 1024
 _MAX_OUTPUT = (_MAX_PNG * 4 // 3) + 1024 * 1024
 _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", flags=re.ASCII)
 _API_ID = re.compile(r"[A-Za-z0-9_-]+", flags=re.ASCII)
@@ -73,14 +75,15 @@ class ImageBatchOptions:
             raise ValueError("max_parallel_images must be between 1 and 16")
 
     def request(
-        self, description: str, *, avatar_image_url: str | None = None
+        self, description: str, *, avatar_image_url: str | None = None,
+        size: str | None = None,
     ) -> dict[str, Any]:
         request: dict[str, Any] = {
             "model": self.model_id,
             "prompt": effective_image_prompt(
                 description, avatar_reference=avatar_image_url is not None
             ),
-            "size": self.size,
+            "size": size or self.size,
             "quality": self.quality,
             "output_format": "png",
             "n": 1,
@@ -184,8 +187,11 @@ def _fingerprint(job: dict[str, Any], options: ImageBatchOptions) -> str:
     identity = {
         "beat_id": job["beat_id"],
         "block_id": job["block_id"],
-        **options.request(job["description"]),
+        **options.request(job["description"], size=job.get("size")),
     }
+    if job.get("grid") is not None:
+        identity["grid"] = job["grid"]
+        identity["panels"] = job["panels"]
     if job.get("avatar_reference_sha256") is not None:
         identity["prompt"] = effective_image_prompt(
             job["description"], avatar_reference=True
@@ -316,7 +322,8 @@ class OpenAIBatchImageClient:
 
 
 def _save_batch_png(
-    result: dict[str, Any], destination: Path, *, options: ImageBatchOptions
+    result: dict[str, Any], destination: Path, *, options: ImageBatchOptions,
+    size: str | None = None,
 ) -> dict[str, Any]:
     images = result.get("data")
     if not isinstance(images, list) or len(images) != 1 or not isinstance(images[0], dict):
@@ -338,8 +345,12 @@ def _save_batch_png(
             image.verify()
     except (OSError, ValueError) as exc:
         raise ImageBatchError("Invalid batch PNG bytes") from exc
-    if (width, height) != (1280, 720):
-        raise ImageBatchError("Batch PNG dimensions differ from 1280x720")
+    expected_size = size or options.size
+    expected_width, expected_height = map(int, expected_size.split("x"))
+    if (width, height) != (expected_width, expected_height):
+        raise ImageBatchError(
+            f"Batch PNG dimensions differ from requested {expected_size}"
+        )
     temporary = destination.with_name(destination.name + ".part")
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.is_symlink() or temporary.is_symlink():
@@ -354,7 +365,7 @@ def _save_batch_png(
         "sha256": hashlib.sha256(data).hexdigest(),
         "width": width,
         "height": height,
-        "size": options.size,
+        "size": expected_size,
         "output_format": "png",
         "usage": usage if isinstance(usage, dict) else None,
         "created": result.get("created"),
@@ -368,6 +379,7 @@ def _one_batch_result(
     custom_id: str,
     image_path: Path,
     options: ImageBatchOptions,
+    size: str | None = None,
 ) -> dict[str, Any]:
     file_id = batch.get("output_file_id")
     if not isinstance(file_id, str):
@@ -390,7 +402,9 @@ def _one_batch_result(
         or not isinstance(response.get("body"), dict)
     ):
         raise ImageBatchError("OpenAI batch image request failed")
-    return _save_batch_png(response["body"], image_path, options=options)
+    return _save_batch_png(
+        response["body"], image_path, options=options, size=size
+    )
 
 
 def _mark_complete(
@@ -408,7 +422,7 @@ def _mark_complete(
         **job,
         "provider": provider,
         "model_id": options.model_id,
-        "size": options.size,
+        "size": generated["size"],
         "quality": options.quality,
         "file": image_path.relative_to(output).as_posix(),
         "batch_id": state.get("batch_id"),
@@ -461,7 +475,7 @@ def _direct_fallback(
                 job["description"], avatar_reference=avatar_image_url is not None
             ),
             "model": options.model_id,
-            "size": options.size,
+            "size": job.get("size", options.size),
             "quality": options.quality,
             "output_format": "png",
             "destination": image_path,
@@ -513,6 +527,21 @@ def _wait_for_batch(
         time.sleep(min(options.poll_interval_seconds, max(0, deadline - time.time())))
 
 
+def _job_paths(
+    output: Path, job: dict[str, Any],
+) -> tuple[Path, Path, Path, Path]:
+    if job.get("grid") is not None:
+        folder = output / "images" / "grids"
+        stem = f"block_{job['block_id']}_{job['beat_id']}"
+    else:
+        folder = output / "images" / f"block_{job['block_id']}"
+        stem = job["beat_id"]
+    return (
+        folder, folder / f"{stem}.json", folder / f"{stem}.png",
+        folder / f"{stem}.batch.jsonl",
+    )
+
+
 def _one_image(
     job: dict[str, Any],
     output: Path,
@@ -527,11 +556,10 @@ def _one_image(
         avatar_image_url if job.get("avatar_reference_sha256") is not None else None
     )
     endpoint = _IMAGE_EDIT_ENDPOINT if reference_url is not None else _IMAGE_ENDPOINT
-    folder = output / "images" / f"block_{job['block_id']}"
-    state_path = folder / f"{job['beat_id']}.json"
-    image_path = folder / f"{job['beat_id']}.png"
-    batch_path = folder / f"{job['beat_id']}.batch.jsonl"
-    if any(path.is_symlink() for path in (folder, state_path, image_path, batch_path)):
+    folder, state_path, image_path, batch_path = _job_paths(output, job)
+    if any(path.is_symlink() for path in (
+        output / "images", folder, state_path, image_path, batch_path
+    )):
         raise ImageBatchError(f"Refusing linked image assets for {job['beat_id']}")
     fingerprint = _fingerprint(job, options)
     if state_path.exists():
@@ -583,7 +611,8 @@ def _one_image(
             "method": "POST",
             "url": endpoint,
             "body": options.request(
-                job["description"], avatar_image_url=reference_url
+                job["description"], avatar_image_url=reference_url,
+                size=job.get("size"),
             ),
         }
         jsonl = json.dumps(request, ensure_ascii=False, separators=(",", ":")) + "\n"
@@ -669,6 +698,7 @@ def _one_image(
             generated = _one_batch_result(
                 batch_client, batch, custom_id=state["custom_id"],
                 image_path=image_path, options=options,
+                size=job.get("size"),
             )
         except (ImageBatchError, HTTPError, URLError, TimeoutError) as exc:
             # Completion is known but its sole image is unusable. Do not submit
@@ -702,19 +732,40 @@ def generate_b2_images(
     batch_client: OpenAIBatchImageClient | None = None,
     direct_client: OpenAIImageClient | None = None,
 ) -> dict[str, Any]:
-    """Use N independent single-line batches for N described beats."""
-    jobs = described_beats(plan)
-    reference = _avatar_reference(output, plan, jobs)
+    """Generate independent single-image or complete-grid jobs safely."""
+    described = described_beats(plan)
+    try:
+        jobs = plan_image_jobs(plan, described)
+    except GridPlanError as exc:
+        raise ImageBatchError(str(exc)) from exc
+    reference = _avatar_reference(output, plan, described)
     if reference is not None:
         digest, _url = reference
         jobs = [
             {**job, "avatar_reference_sha256": digest}
-            if _avatar_requested(job["description"]) else job
+            if any(_avatar_requested(beat["description"])
+                   for beat in job.get("panels", [job]))
+            else job
             for job in jobs
         ]
+
+    # Reconcile all saved paid-task states before any new file upload or POST.
+    planned_grid_states: set[Path] = set()
     for job in jobs:
-        state_path = output / "images" / f"block_{job['block_id']}" / f"{job['beat_id']}.json"
-        if state_path.is_symlink():
+        folder, state_path, _image, _batch = _job_paths(output, job)
+        if job.get("grid") is not None:
+            planned_grid_states.add(state_path)
+            for panel in job["panels"]:
+                old_state = (
+                    output / "images" / f"block_{panel['block_id']}"
+                    / f"{panel['beat_id']}.json"
+                )
+                if old_state.exists() or old_state.is_symlink():
+                    raise ImageBatchError(
+                        f"Existing individual paid image state at {old_state}; "
+                        "reconcile it before grouping this beat in a grid."
+                    )
+        if folder.is_symlink() or state_path.is_symlink():
             raise ImageBatchError("Refusing linked image state")
         if state_path.is_file():
             state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -728,6 +779,15 @@ def generate_b2_images(
                     f"Image request differs from saved beat {job['beat_id']}; "
                     "use another output root."
                 )
+    grid_root = output / "images" / "grids"
+    if grid_root.is_symlink():
+        raise ImageBatchError("Refusing linked grid directory")
+    for old_state in grid_root.glob("*.json"):
+        if old_state not in planned_grid_states:
+            raise ImageBatchError(
+                f"Saved grid state {old_state} is not in the current plan; "
+                "reconcile it before generating new paid images."
+            )
     if jobs and batch_client is None:
         if not api_key:
             raise ImageBatchError("OPENAI_API_KEY is required for official GPT image batches")
@@ -743,7 +803,9 @@ def generate_b2_images(
         "batch_timeout_seconds": options.timeout_seconds,
         "max_parallel_images": options.max_parallel_images,
         "status": "running",
-        "total_described_beats": len(jobs),
+        "total_described_beats": len(described),
+        "total_generation_jobs": len(jobs),
+        "grid_count": sum(job.get("grid") is not None for job in jobs),
         "openai_batch_count": 0,
         "openai_direct_fallback_count": 0,
         "items": [],
@@ -843,7 +905,10 @@ def clear_previous_b2_images(output: Path, plan: dict[str, Any]) -> int:
 
 def has_pending_image_tasks(output: Path) -> bool:
     """Protect any durable image request, including old AI33 state, before B1 reruns."""
-    for state_path in (output / "images").glob("block_*/*.json"):
+    for state_path in chain(
+        (output / "images").glob("block_*/*.json"),
+        (output / "images" / "grids").glob("*.json"),
+    ):
         if state_path.is_symlink():
             return True
         state = json.loads(state_path.read_text(encoding="utf-8"))
