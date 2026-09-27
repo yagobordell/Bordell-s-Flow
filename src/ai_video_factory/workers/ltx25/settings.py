@@ -20,6 +20,9 @@ class LTX25WorkerSettings(InferenceWorkerSettings):
         validation_alias="LTX_MODEL_REPOSITORY",
     )
     device: str = Field(default="cuda", validation_alias="LTX_DEVICE")
+    race_protect_ready_with_imds: bool = Field(
+        default=False, validation_alias="LTX_RACE_PROTECT_READY_WITH_IMDS"
+    )
 
     @model_validator(mode="after")
     def validate_ltx25(self) -> Self:
