@@ -43,6 +43,9 @@ from .model import (
 from .reference_recipe import (
     LTX25_MODEL_REVISION,
     LTX_A2V_REFERENCE_RECIPE,
+    LTX_A2V_STATIC_IMAGE_STRENGTH,
+    LTX_A2V_STATIC_NEGATIVE_PROMPT,
+    LTX_A2V_STATIC_VIDEO_CFG_SCALE,
     reference_num_frames_for_samples,
 )
 
@@ -52,6 +55,9 @@ LTX_A2V_TASK = "video.ltx25.audio_to_video"
 LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v5"
 LTX_A2V_REFERENCE_GENERATION_PROFILE = (
     "ltx25-a2v-reference-distilled-a95ab856-model6c7e5e5-fp8cpu-eagersdpa-v1"
+)
+LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE = (
+    "ltx25-a2v-static-reference-distilled-a95ab856-model6c7e5e5-fp8cpu-eagersdpa-v1"
 )
 LTX_A2V_DEV_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
 LTX_A2V_GUIDED_GENERATION_PROFILE = (
@@ -92,11 +98,12 @@ class LTXAudioToVideoParameters(BaseModel):
         if value not in (
             LTX_A2V_GENERATION_PROFILE,
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_DEV_GENERATION_PROFILE,
             LTX_A2V_GUIDED_GENERATION_PROFILE,
         ):
             raise ValueError(
-                "generation_profile must be a supported fast, reference, dev, or guided A2V profile"
+                "generation_profile must be a supported fast, reference, static-reference, dev, or guided A2V profile"
             )
         return value
 
@@ -894,8 +901,12 @@ class DirectLTX25AudioToVideoBackend:
         generation_started = time.monotonic()
         audio_probe = probe_audio(audio_path)
         _validate_audio_duration(audio_probe, fps=parameters.fps)
-        reference = (
-            parameters.generation_profile == LTX_A2V_REFERENCE_GENERATION_PROFILE
+        static_reference = (
+            parameters.generation_profile == LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE
+        )
+        reference = parameters.generation_profile in (
+            LTX_A2V_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
         )
         guided = parameters.generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
         reference_audio_plan: ReferenceAudioPlan | None = None
@@ -997,7 +1008,14 @@ class DirectLTX25AudioToVideoBackend:
                         "stg_blocks": [],
                     }
                 if distilled:
-                    guider_updates.update(cfg_scale=1.0, rescale_scale=0.0)
+                    guider_updates.update(
+                        cfg_scale=(
+                            LTX_A2V_STATIC_VIDEO_CFG_SCALE
+                            if static_reference
+                            else 1.0
+                        ),
+                        rescale_scale=0.0,
+                    )
                 video_guider = replace(
                     self._pipeline_params.video_guider_params, **guider_updates
                 )
@@ -1029,6 +1047,16 @@ class DirectLTX25AudioToVideoBackend:
                             stage_2_sigmas=bindings.stage_2_sigmas,
                             images=[conditioning],
                             audio_path=str(pipeline_audio_path.resolve()),
+                            enhance_prompt=False,
+                            **(
+                                {
+                                    "negative_prompt": LTX_A2V_STATIC_NEGATIVE_PROMPT,
+                                    "stage_1_image_strength": LTX_A2V_STATIC_IMAGE_STRENGTH,
+                                    "video_cfg_scale": LTX_A2V_STATIC_VIDEO_CFG_SCALE,
+                                }
+                                if static_reference
+                                else {}
+                            ),
                         )
                     else:
                         result = pipeline(
@@ -1122,6 +1150,8 @@ class DirectLTX25AudioToVideoBackend:
         return {
             "generation_mode": "audio_to_video",
             "generation_profile": parameters.generation_profile,
+            "positive_prompt_enhanced": False,
+            "negative_prompt_applied": static_reference,
             "video_cfg_scale": video_guider.cfg_scale,
             "video_stg_scale": video_guider.stg_scale,
             "video_modality_scale": video_guider.modality_scale,
@@ -1131,7 +1161,11 @@ class DirectLTX25AudioToVideoBackend:
             "stage_2_steps": len(bindings.stage_2_sigmas) - 1,
             "transformer_variant": "distilled" if distilled else "dev",
             "generation_recipe": (
-                "distilled_reference"
+                (
+                    "distilled_static_reference"
+                    if static_reference
+                    else "distilled_reference"
+                )
                 if reference
                 else (
                     "upstream_guided_dev"
@@ -1144,7 +1178,11 @@ class DirectLTX25AudioToVideoBackend:
             ),
             "stage_2_sampler": LTX_A2V_REFERENCE_RECIPE.stage_2_sampler,
             "stage_1_image_strength": (
-                LTX_A2V_REFERENCE_RECIPE.stage_1_image_strength
+                (
+                    LTX_A2V_STATIC_IMAGE_STRENGTH
+                    if static_reference
+                    else LTX_A2V_REFERENCE_RECIPE.stage_1_image_strength
+                )
                 if reference
                 else 1.0
             ),
@@ -1244,7 +1282,10 @@ class DirectLTX25AudioToVideoBackend:
 
         self._mode_controller.activate("audio_to_video")
         fast = generation_profile == LTX_A2V_GENERATION_PROFILE
-        reference = generation_profile == LTX_A2V_REFERENCE_GENERATION_PROFILE
+        reference = generation_profile in (
+            LTX_A2V_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+        )
         distilled = fast or reference
         if not distilled:
             self._model_files.validate_dev()
