@@ -202,154 +202,197 @@ def race_to_one(
     ):
         raise RuntimeError("LTX race winner changed before scale-in; refusing job submission")
 
-    # Only configured capacity is two. Under supply pressure Salad may have
-    # allocated just the one healthy winner. Treat zero active competitors as
-    # a valid, explicitly checked fallback, never as proof of two live GPUs.
-    # Record every competitor whose deletion cost we explicitly set.
-    protected_loser_ids: set[str] = set()
-    for item in current:
-        if item.get("version") == version and item.get("id") != candidate:
-            if item.get("state") in _ACTIVE_STATES:
-                assert_authority()
-                loser_id = str(item["id"])
-                client.set_container_group_instance_deletion_cost(loser_id, 0)
-                protected_loser_ids.add(loser_id)
-    assert_authority()
-    winner_patch = client.set_container_group_instance_deletion_cost(candidate, 100000)
-    if winner_patch.get("id") not in (None, candidate):
-        raise RuntimeError("Salad acknowledged deletion cost for a different winner")
-    report(
-        "LTX_RACE deletion_cost_patch "
-        f"winner={candidate} acknowledged={winner_patch.get('deletion_cost')!r}"
-    )
-
-    # Read exact instances twice; PATCH acknowledgement is not proof of
-    # application. Also require a stable current-version instance topology.
-    protection_deadline = min(deadline, clock() + 90)
-    protection_confirmations = 0
-    confirmed_loser_id: str | None = None
-    while clock() < protection_deadline:
+    # A requested second replica is not necessarily an allocated instance.
+    # In the repeatedly observed cold-start case, only the ready winner exists.
+    # There is no loser to protect against: do not require a deletion-cost PATCH
+    # whose readback Salad has repeatedly failed to persist.
+    sole_confirmations = 0
+    for _ in range(3):
         assert_authority()
-        protected_group = client.describe_container_group()
-        _verify_group(protected_group, name=group_name, image=expected_image)
-        if (
-            protected_group.get("version") != version
-            or protected_group.get("replicas") != 2
-            or protected_group.get("pending_change") is not False
-            or _status(protected_group) != "running"
-        ):
-            raise RuntimeError("LTX race changed before deletion costs were confirmed")
-        protected_instances = [
+        sole_group = client.describe_container_group()
+        _verify_group(sole_group, name=group_name, image=expected_image)
+        sole_active = [
             item for item in client.list_container_group_instances()
             if item.get("version") == version and item.get("state") in _ACTIVE_STATES
         ]
-        selected = next(
-            (item for item in protected_instances if item.get("id") == candidate), None
-        )
-        others = [item for item in protected_instances if item.get("id") != candidate]
         if (
-            selected is None
-            or selected.get("state") != "running"
-            or selected.get("started") is not True
-            or selected.get("ready") is not True
-            or len(others) > 1
+            sole_group.get("version") == version
+            and sole_group.get("replicas") == 2
+            and sole_group.get("pending_change") is False
+            and _status(sole_group) == "running"
+            and len(sole_active) == 1
+            and sole_active[0].get("id") == candidate
+            and sole_active[0].get("state") == "running"
+            and sole_active[0].get("started") is True
+            and sole_active[0].get("ready") is True
         ):
-            raise RuntimeError(
-                "LTX race ready winner or current-version topology changed "
-                "before deletion cost confirmation; no job submitted"
-            )
-        loser_id = str(others[0]["id"]) if others else None
-        if loser_id is not None and loser_id not in protected_loser_ids:
-            # Another replica appeared while the winner was bootstrapping.
-            # Do not assume that its initial deletion cost is zero.
-            assert_authority()
-            client.set_container_group_instance_deletion_cost(loser_id, 0)
-            protected_loser_ids.add(loser_id)
-            protection_confirmations = 0
-            confirmed_loser_id = None
-            report(f"LTX_RACE late_competitor_protected loser={loser_id}")
-            sleep(min(poll_seconds, max(0.0, protection_deadline - clock())))
-            continue
+            sole_confirmations += 1
+        else:
+            break
+    sole_ready = sole_confirmations == 3
+    if sole_ready:
+        report(
+            "LTX_RACE one_active_winner "
+            f"winner={candidate} confirmations=3/3 "
+            "configured_replicas=2 allocated_loser=none"
+        )
+        report(
+            f"LTX_RACE winner={candidate}; scaling 2 -> 1 with no "
+            "allocated competitor; no deletion-cost PATCH required"
+        )
+        assert_authority()
+    else:
+        # Multiple active instances REQUIRE independently confirmed protection.
+        # Never trust PATCH acknowledgement alone or scale down a ready winner
+        # while Salad still reads its deletion cost as zero.
+        # Only configured capacity is two. Under supply pressure Salad may have
+        # allocated just the one healthy winner. Treat zero active competitors as
+        # a valid, explicitly checked fallback, never as proof of two live GPUs.
+        # Record every competitor whose deletion cost we explicitly set.
+        protected_loser_ids: set[str] = set()
+        for item in current:
+            if item.get("version") == version and item.get("id") != candidate:
+                if item.get("state") in _ACTIVE_STATES:
+                    assert_authority()
+                    loser_id = str(item["id"])
+                    client.set_container_group_instance_deletion_cost(loser_id, 0)
+                    protected_loser_ids.add(loser_id)
+        assert_authority()
+        winner_patch = client.set_container_group_instance_deletion_cost(candidate, 100000)
+        if winner_patch.get("id") not in (None, candidate):
+            raise RuntimeError("Salad acknowledged deletion cost for a different winner")
+        report(
+            "LTX_RACE deletion_cost_patch "
+            f"winner={candidate} acknowledged={winner_patch.get('deletion_cost')!r}"
+        )
 
-        winner_detail = client.get_container_group_instance(candidate)
-        loser_detail = (
-            client.get_container_group_instance(loser_id) if loser_id is not None else None
-        )
-        winner_cost = winner_detail.get("deletion_cost")
-        loser_cost = loser_detail.get("deletion_cost") if loser_detail is not None else None
+        # Read exact instances twice; PATCH acknowledgement is not proof of
+        # application. Also require a stable current-version instance topology.
+        protection_deadline = min(deadline, clock() + 90)
+        protection_confirmations = 0
+        confirmed_loser_id: str | None = None
+        while clock() < protection_deadline:
+            assert_authority()
+            protected_group = client.describe_container_group()
+            _verify_group(protected_group, name=group_name, image=expected_image)
+            if (
+                protected_group.get("version") != version
+                or protected_group.get("replicas") != 2
+                or protected_group.get("pending_change") is not False
+                or _status(protected_group) != "running"
+            ):
+                raise RuntimeError("LTX race changed before deletion costs were confirmed")
+            protected_instances = [
+                item for item in client.list_container_group_instances()
+                if item.get("version") == version and item.get("state") in _ACTIVE_STATES
+            ]
+            selected = next(
+                (item for item in protected_instances if item.get("id") == candidate), None
+            )
+            others = [item for item in protected_instances if item.get("id") != candidate]
+            if (
+                selected is None
+                or selected.get("state") != "running"
+                or selected.get("started") is not True
+                or selected.get("ready") is not True
+                or len(others) > 1
+            ):
+                raise RuntimeError(
+                    "LTX race ready winner or current-version topology changed "
+                    "before deletion cost confirmation; no job submitted"
+                )
+            loser_id = str(others[0]["id"]) if others else None
+            if loser_id is not None and loser_id not in protected_loser_ids:
+                # Another replica appeared while the winner was bootstrapping.
+                # Do not assume that its initial deletion cost is zero.
+                assert_authority()
+                client.set_container_group_instance_deletion_cost(loser_id, 0)
+                protected_loser_ids.add(loser_id)
+                protection_confirmations = 0
+                confirmed_loser_id = None
+                report(f"LTX_RACE late_competitor_protected loser={loser_id}")
+                sleep(min(poll_seconds, max(0.0, protection_deadline - clock())))
+                continue
+
+            winner_detail = client.get_container_group_instance(candidate)
+            loser_detail = (
+                client.get_container_group_instance(loser_id) if loser_id is not None else None
+            )
+            winner_cost = winner_detail.get("deletion_cost")
+            loser_cost = loser_detail.get("deletion_cost") if loser_detail is not None else None
+            if (
+                winner_detail.get("id") != candidate
+                or winner_detail.get("version") != version
+                or (loser_detail is not None and (
+                    loser_detail.get("id") != loser_id
+                    or loser_detail.get("version") != version
+                ))
+            ):
+                raise RuntimeError(
+                    "LTX race exact-instance readback changed identity/version; "
+                    "no job submitted"
+                )
+            report(
+                "LTX_RACE deletion_cost_readback "
+                f"winner={candidate} detail={winner_cost!r} "
+                f"list={selected.get('deletion_cost')!r} "
+                f"loser={loser_id or 'none'} detail={loser_cost!r} "
+                f"list={others[0].get('deletion_cost') if others else None!r}"
+            )
+            if (
+                winner_cost == 100000
+                and (loser_id is None or loser_cost == 0)
+            ):
+                if protection_confirmations and loser_id != confirmed_loser_id:
+                    protection_confirmations = 0
+                confirmed_loser_id = loser_id
+                protection_confirmations += 1
+                if protection_confirmations >= 2:
+                    break
+            else:
+                protection_confirmations = 0
+                confirmed_loser_id = None
+            sleep(min(poll_seconds, max(0.0, protection_deadline - clock())))
+        else:
+            raise TimeoutError(
+                "LTX race deletion costs were not confirmed before scale-in; no job submitted"
+            )
+
+        # A new competitor can be assigned after a valid cost readback. Fail
+        # closed if the instance topology changes between confirmation and PATCH.
+        assert_authority()
+        final_group = client.describe_container_group()
+        _verify_group(final_group, name=group_name, image=expected_image)
+        final_active = [
+            item for item in client.list_container_group_instances()
+            if item.get("version") == version and item.get("state") in _ACTIVE_STATES
+        ]
+        expected_ids = {candidate}
+        if confirmed_loser_id is not None:
+            expected_ids.add(confirmed_loser_id)
         if (
-            winner_detail.get("id") != candidate
-            or winner_detail.get("version") != version
-            or (loser_detail is not None and (
-                loser_detail.get("id") != loser_id
-                or loser_detail.get("version") != version
-            ))
+            final_group.get("version") != version
+            or final_group.get("replicas") != 2
+            or final_group.get("pending_change") is not False
+            or _status(final_group) != "running"
+            or {str(item.get("id")) for item in final_active} != expected_ids
+            or not any(
+                item.get("id") == candidate
+                and item.get("state") == "running"
+                and item.get("started") is True
+                and item.get("ready") is True
+                for item in final_active
+            )
         ):
             raise RuntimeError(
-                "LTX race exact-instance readback changed identity/version; "
-                "no job submitted"
+                "LTX race topology changed after cost readback; no job submitted"
             )
         report(
-            "LTX_RACE deletion_cost_readback "
-            f"winner={candidate} detail={winner_cost!r} "
-            f"list={selected.get('deletion_cost')!r} "
-            f"loser={loser_id or 'none'} detail={loser_cost!r} "
-            f"list={others[0].get('deletion_cost') if others else None!r}"
+            "LTX_RACE deletion_costs_verified "
+            f"winner={candidate} loser={confirmed_loser_id or 'none'} confirmations=2/2"
         )
-        if (
-            winner_cost == 100000
-            and (loser_id is None or loser_cost == 0)
-        ):
-            if protection_confirmations and loser_id != confirmed_loser_id:
-                protection_confirmations = 0
-            confirmed_loser_id = loser_id
-            protection_confirmations += 1
-            if protection_confirmations >= 2:
-                break
-        else:
-            protection_confirmations = 0
-            confirmed_loser_id = None
-        sleep(min(poll_seconds, max(0.0, protection_deadline - clock())))
-    else:
-        raise TimeoutError(
-            "LTX race deletion costs were not confirmed before scale-in; no job submitted"
-        )
-
-    # A new competitor can be assigned after a valid cost readback. Fail
-    # closed if the instance topology changes between confirmation and PATCH.
-    assert_authority()
-    final_group = client.describe_container_group()
-    _verify_group(final_group, name=group_name, image=expected_image)
-    final_active = [
-        item for item in client.list_container_group_instances()
-        if item.get("version") == version and item.get("state") in _ACTIVE_STATES
-    ]
-    expected_ids = {candidate}
-    if confirmed_loser_id is not None:
-        expected_ids.add(confirmed_loser_id)
-    if (
-        final_group.get("version") != version
-        or final_group.get("replicas") != 2
-        or final_group.get("pending_change") is not False
-        or _status(final_group) != "running"
-        or {str(item.get("id")) for item in final_active} != expected_ids
-        or not any(
-            item.get("id") == candidate
-            and item.get("state") == "running"
-            and item.get("started") is True
-            and item.get("ready") is True
-            for item in final_active
-        )
-    ):
-        raise RuntimeError(
-            "LTX race topology changed after cost readback; no job submitted"
-        )
-    report(
-        "LTX_RACE deletion_costs_verified "
-        f"winner={candidate} loser={confirmed_loser_id or 'none'} confirmations=2/2"
-    )
-    assert_authority()
-    report(f"LTX_RACE winner={candidate}; scaling 2 -> 1 before submitting any job")
+        assert_authority()
+        report(f"LTX_RACE winner={candidate}; scaling 2 -> 1 before submitting any job")
     client.set_container_group_replicas(1)
     scale_started = clock()
 
