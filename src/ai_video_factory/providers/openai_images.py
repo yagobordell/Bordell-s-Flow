@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 from PIL import Image
 
 _OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"
+_OPENAI_EDITS_URL = "https://api.openai.com/v1/images/edits"
 _MAX_PNG_BYTES = 30 * 1024 * 1024
 _FALLBACK_SIZE = "1280x720"
 
@@ -34,9 +35,11 @@ class OpenAIImageClient:
             raise ValueError("OPENAI_API_KEY is required for the official image fallback")
         self._api_key = api_key
 
-    def request_json(self, payload: dict[str, object]) -> dict[str, Any]:
+    def _request_json(
+        self, url: str, payload: dict[str, object]
+    ) -> dict[str, Any]:
         request = Request(
-            _OPENAI_IMAGES_URL,
+            url,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers={
                 "Authorization": f"Bearer {self._api_key}",
@@ -51,6 +54,12 @@ class OpenAIImageClient:
             raise OpenAIImageError("Official OpenAI image API returned non-object JSON")
         return result
 
+    def request_json(self, payload: dict[str, object]) -> dict[str, Any]:
+        return self._request_json(_OPENAI_IMAGES_URL, payload)
+
+    def request_edit_json(self, payload: dict[str, object]) -> dict[str, Any]:
+        return self._request_json(_OPENAI_EDITS_URL, payload)
+
     def generate_png(
         self,
         *,
@@ -60,6 +69,7 @@ class OpenAIImageClient:
         size: str = _FALLBACK_SIZE,
         quality: str = "low",
         output_format: str = "png",
+        reference_image_url: str | None = None,
     ) -> dict[str, Any]:
         if model not in {
             "gpt-image-2.5-flare",
@@ -76,7 +86,11 @@ class OpenAIImageClient:
             "output_format": output_format,
             "n": 1,
         }
-        response = self.request_json(payload)
+        if reference_image_url is not None:
+            payload["images"] = [{"image_url": reference_image_url}]
+            response = self.request_edit_json(payload)
+        else:
+            response = self.request_json(payload)
         images = response.get("data")
         if not isinstance(images, list) or not images or not isinstance(images[0], dict):
             raise OpenAIImageError("Official OpenAI image API did not return image data")
