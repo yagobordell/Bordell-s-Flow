@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)][string]$Audio,
     [string]$AvatarImage = "",
-    [ValidateSet("fast", "reference", "dev", "guided")][string]$Profile = "reference",
+    [ValidateSet("fast", "reference", "static-reference", "dev", "guided")][string]$Profile = "reference",
     [string]$SegmentId = "smoke-001",
     [string]$Prompt = "",
     [long]$Seed = 4242,
@@ -48,6 +48,9 @@ if (-not (Test-Path -LiteralPath $ReadyWait -PathType Leaf)) {
 if (-not [string]::IsNullOrWhiteSpace($ExpectedPinnedImage) -and
     $ExpectedPinnedImage -notmatch "^[^\s@]+@sha256:[0-9a-fA-F]{64}$") {
     throw "-ExpectedPinnedImage must use immutable repo@sha256:digest form."
+}
+if ($Profile -eq "static-reference" -and [string]::IsNullOrWhiteSpace($ExpectedPinnedImage)) {
+    throw "Static-reference is experimental and requires -ExpectedPinnedImage for a freshly reviewed Docker image."
 }
 if ($Profile -eq "guided") {
     $Services = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\salad\services.json") -Raw | ConvertFrom-Json
@@ -137,6 +140,9 @@ try {
 
     if ($Profile -in @("fast", "dev")) {
         Write-Warning "fast/dev is comparison-only: a valid MP4 is not lip-sync acceptance."
+    }
+    if ($Profile -eq "static-reference") {
+        Write-Warning "static-reference is an unvalidated camera-control experiment; inspect camera motion and lip-sync against the reference MP4."
     }
     if ($Profile -eq "guided") {
         Write-Warning "guided is experimental: technical MP4/audio checks do not establish visual lip-sync."

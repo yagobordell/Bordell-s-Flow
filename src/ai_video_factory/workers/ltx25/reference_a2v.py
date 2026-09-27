@@ -6,6 +6,7 @@ from functools import partial
 
 import torch
 from ltx_core.components.diffusion_steps import EulerAncestralDiffusionStep
+from ltx_core.components.guiders import MultiModalGuider, MultiModalGuiderParams
 from ltx_core.components.noisers import GaussianNoiser
 from ltx_core.model.audio_vae import encode_audio as vae_encode_audio
 from ltx_core.model.video_vae import AUTO_TILING, AutoTiling, TilingConfig
@@ -13,7 +14,7 @@ from ltx_core.types import Audio, AudioLatentShape, VideoPixelShape
 from ltx_pipelines.a2vid_two_stage import A2VidPipelineTwoStage
 from ltx_pipelines.utils.args import ImageConditioningInput
 from ltx_pipelines.utils.constants import DISTILLED_SIGMAS, STAGE_2_DISTILLED_SIGMAS
-from ltx_pipelines.utils.denoisers import SimpleDenoiser
+from ltx_pipelines.utils.denoisers import GuidedDenoiser, SimpleDenoiser
 from ltx_pipelines.utils.helpers import (
     assert_resolution,
     audio_duration_seconds,
@@ -70,16 +71,32 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
         stage_1_sigmas: torch.Tensor = DISTILLED_SIGMAS,
         stage_2_sigmas: torch.Tensor = STAGE_2_DISTILLED_SIGMAS,
         color_space: HDRColorSpace | None = None,
+        negative_prompt: str | None = None,
+        stage_1_image_strength: float | None = None,
+        video_cfg_scale: float = 1.0,
     ) -> PipelineOutput:
         if num_frames < 1 or (num_frames - 1) % 8 != 0:
             raise ValueError(
                 "reference A2V num_frames must satisfy the LTX 8k+1 temporal grid"
             )
         assert_resolution(height=height, width=width, is_two_stage=True)
+        if negative_prompt is not None and (not negative_prompt.strip() or video_cfg_scale <= 1.0):
+            raise ValueError("negative prompt requires nonempty text and active CFG > 1")
+        if negative_prompt is None and video_cfg_scale != 1.0:
+            raise ValueError("reference CFG must stay 1 without explicit negative guidance")
+        if negative_prompt is not None and enhance_prompt:
+            raise ValueError("static A2V must preserve the exact positive prompt")
+        strength = (
+            LTX_A2V_REFERENCE_RECIPE.stage_1_image_strength
+            if stage_1_image_strength is None
+            else stage_1_image_strength
+        )
+        if not 0.0 < strength <= 1.0:
+            raise ValueError("Stage 1 image conditioning strength must be in (0, 1]")
 
         images = self.image_conditioner.resolve_crf(images)
         stage_1_images = _with_strength(
-            images, LTX_A2V_REFERENCE_RECIPE.stage_1_image_strength
+            images, strength
         )
         stage_2_images = _with_strength(
             images, LTX_A2V_REFERENCE_RECIPE.stage_2_image_strength
@@ -105,14 +122,36 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
                 f"duration: {audio_duration:.6f}s < {video_duration:.6f}s"
             )
 
-        (ctx_p,) = self.prompt_encoder(
-            [prompt],
+        # The original reference does exactly one positive encode. Only the
+        # opt-in static variant encodes a *separate* negative; positive text is
+        # passed unchanged and the prompt enhancer is explicitly disabled.
+        contexts = self.prompt_encoder(
+            [prompt] if negative_prompt is None else [prompt, negative_prompt],
             enhance_first_prompt=enhance_prompt,
             enhance_static_cache=enhance_static_cache,
             enhance_prompt_image=stage_1_images[0][0] if stage_1_images else None,
         )
+        ctx_p = contexts[0]
         v_context_p = ctx_p.video_encoding
         a_context_p = ctx_p.audio_encoding
+        if negative_prompt is None:
+            stage_1_denoiser = SimpleDenoiser(v_context_p, a_context_p)
+        else:
+            stage_1_denoiser = GuidedDenoiser(
+                v_context=v_context_p,
+                a_context=a_context_p,
+                video_guider=MultiModalGuider(
+                    params=MultiModalGuiderParams(
+                        cfg_scale=video_cfg_scale,
+                        stg_scale=0.0,
+                        rescale_scale=0.0,
+                        modality_scale=1.0,
+                        stg_blocks=[],
+                    ),
+                    negative_context=contexts[1].video_encoding,
+                ),
+                audio_guider=MultiModalGuider(params=MultiModalGuiderParams()),
+            )
 
         scale_factors = tiling_scale_factors_for_vae(self.video_decoder.checkpoint_path)
         video_shape = VideoPixelShape(
@@ -181,7 +220,7 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
             ),
         }
         video_state, _ = self.stage_1(
-            denoiser=SimpleDenoiser(v_context_p, a_context_p),
+            denoiser=stage_1_denoiser,
             sigmas=stage_1_sigmas.to(dtype=torch.float32, device=self.device),
             noiser=noiser,
             width=stage_1_output_shape.width,

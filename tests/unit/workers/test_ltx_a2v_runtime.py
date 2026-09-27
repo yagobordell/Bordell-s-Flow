@@ -406,3 +406,99 @@ def test_guided_a2v_uses_upstream_guidance_and_preserves_padded_speech(
     assert metadata["conditioning_audio_samples"] == 97_000
     assert metadata["audio_padding_samples"] == 1_000
     assert metadata["num_frames"] == 97
+
+
+@pytest.mark.parametrize(
+    "positive_prompt",
+    [
+        "An elderly monk speaking calmly to the camera.",
+        "woman talks into a mic",
+        "A woman whispering to the microphone",
+    ],
+)
+def test_static_reference_preserves_simple_positive_prompt_with_real_negative_conditioning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    positive_prompt: str,
+) -> None:
+    model_root = tmp_path / "models"
+    _seed_model_files(model_root)
+    model_files = a2v.LTXA2VModelFiles.from_root(model_root)
+    model_files.dev_transformer.unlink()
+    model_files.distilled_lora.unlink()
+    image = tmp_path / "reference.png"
+    Image.new("RGB", (1280, 736), (80, 100, 120)).save(image)
+    audio = tmp_path / "speech.wav"
+    audio.write_bytes(b"fake-audio")
+    conditioning = tmp_path / "a2v_reference_conditioning.wav"
+    conditioning.write_bytes(b"padded")
+
+    state: dict[str, Any] = {
+        "builds": 0,
+        "calls": [],
+        "encodes": [],
+        "conditionings": [],
+        "inference_depth": 0,
+        "inference_entries": 0,
+    }
+    bindings = make_a2v_bindings(state)
+    monkeypatch.setattr(a2v, "_load_a2v_bindings", lambda: bindings)
+    monkeypatch.setattr(
+        a2v,
+        "probe_audio",
+        lambda _: a2v.AudioProbe(
+            "pcm_s16le", 24_000, 1, 4.0, sample_count=96_000
+        ),
+    )
+    plan = a2v.ReferenceAudioPlan(
+        path=conditioning,
+        decoded_probe=a2v.AudioProbe("pcm_s16le", 24_000, 2, 4.0, 96_000),
+        conditioning_probe=a2v.AudioProbe(
+            "pcm_s16le", 24_000, 2, 97 / 24, 97_000
+        ),
+        num_frames=97,
+        grid_video_duration_seconds=97 / 24,
+        padding_samples=1_000,
+    )
+    monkeypatch.setattr(
+        a2v, "_prepare_reference_pipeline_audio", lambda *args, **kwargs: plan
+    )
+    monkeypatch.setattr(a2v, "_output_duration", lambda _: 97 / 24)
+    backend = DirectLTX25AudioToVideoBackend(model_root=model_root)
+    backend.prepare()
+
+    metadata = backend.generate(
+        image_path=image,
+        audio_path=audio,
+        output_path=tmp_path / "static.mp4",
+        parameters=LTXAudioToVideoParameters(
+            generation_profile=a2v.LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+            prompt=positive_prompt,
+            seed=4242,
+        ),
+    )
+    call = state["calls"][0]
+    assert state["pipeline_init"]["distilled_lora"] == []
+    assert state["pipeline_init"]["offload_mode"] == "cpu"
+    assert call["prompt"] == positive_prompt
+    assert call["enhance_prompt"] is False
+    assert call["negative_prompt"] == a2v.LTX_A2V_STATIC_NEGATIVE_PROMPT
+    assert call["stage_1_image_strength"] == 0.8
+    assert call["video_cfg_scale"] == 1.25
+    assert call["stage_1_sigmas"] == bindings.distilled_sigmas
+    assert call["stage_2_sigmas"] == bindings.stage_2_sigmas
+    assert call["num_frames"] == 97
+    assert metadata["generation_recipe"] == "distilled_static_reference"
+    assert metadata["stage_1_steps"] == 8
+    assert metadata["stage_2_steps"] == 3
+    assert metadata["stage_1_image_strength"] == 0.8
+    assert metadata["stage_2_image_strength"] == 1.0
+    assert metadata["video_cfg_scale"] == 1.25
+    assert metadata["video_stg_scale"] == 0.0
+    assert metadata["audio_frozen_stage_1"] is True
+    assert metadata["audio_frozen_stage_2"] is True
+    assert metadata["positive_prompt_enhanced"] is False
+    assert metadata["negative_prompt_applied"] is True
+    assert metadata["decoded_speech_samples"] == 96_000
+    assert metadata["conditioning_audio_samples"] == 97_000
+    assert metadata["audio_padding_samples"] == 1_000
