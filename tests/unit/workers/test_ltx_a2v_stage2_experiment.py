@@ -120,7 +120,7 @@ def test_retry_orchestrator_pins_new_digest_and_restores_original_safely() -> No
     assert "A locked-off shot" not in script
     assert "LastFrame" not in script
     assert 'if ($Published -ne $ExperimentalPinnedImage)' in script
-    assert "[ValidateSet(1, 2)][int]$StartupReplicas = 1" in script
+    assert "[ValidateSet(1, 2)][int]$StartupReplicas = 2" in script
     assert "-StartupReplicas $StartupReplicas" in script
     assert "$BootstrapWaitSeconds = if ($StartupReplicas -eq 1) { 3600 } else { 300 }" in script
     assert "LTX_STARTUP_MODE replicas=$StartupReplicas" in script
@@ -132,9 +132,9 @@ def test_retry_orchestrator_pins_new_digest_and_restores_original_safely() -> No
     assert script.index('"SALAD DETENIDO E IMAGEN ORIGINAL RESTAURADA"') > script.index(
         'Prepare-LtxImage -Tag $OriginalTag'
     )
-    assert script.index('-Action Stop -Service ltx25') < script.index(
-        '--reset-stopped'
-    )
-    assert script.index('--reset-stopped') < script.index(
-        'Prepare-LtxImage -Tag $OriginalTag'
+    assert "-IsolatedRaceGroup" in script
+    assert "Prepare-LtxImage -Tag $ExperimentalTag" in script
+    assert "-StartupReplicas $StartupReplicas" in script
+    assert script.index("if ($AuxPrepareAttempted)") < script.index(
+        "Prepare-LtxImage -Tag $OriginalTag"
     )
