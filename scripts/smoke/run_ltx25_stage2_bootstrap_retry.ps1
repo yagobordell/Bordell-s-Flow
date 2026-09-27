@@ -23,12 +23,53 @@ $OriginalPinnedImage = "docker.io/yagobordell/ai-video-factory@sha256:3a46d675c4
 
 function Get-LtxStatus {
     param([switch]$IsolatedRaceGroup)
-    $Extra = if ($IsolatedRaceGroup) { @("-IsolatedRaceGroup") } else { @() }
-    $Lines = @(
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Manager -Action Status -Service ltx25 -EnvFile $EnvFile -NonInteractive @Extra
-    )
-    if ($LASTEXITCODE -ne 0) { throw "Cannot query Salad status." }
-    return ($Lines -join " ")
+    $ExpectedGroup = if ($IsolatedRaceGroup) {
+        $AuxGroupName
+    } else {
+        [string]$Services.services.ltx25.group_name
+    }
+    # Read-only preflight may hit a transient API/network failure. Do not
+    # start or prepare either group until this explicit query succeeds.
+    for ($Attempt = 1; $Attempt -le 3; $Attempt++) {
+        $Output = @()
+        $ExitCode = -1
+        $Failure = ""
+        try {
+            # Do not splat a dynamically constructed switch into a nested
+            # powershell.exe call: use the same literal args as manual Status.
+            if ($IsolatedRaceGroup) {
+                $Output = @(
+                    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Manager -Action Status -Service ltx25 -IsolatedRaceGroup -EnvFile $EnvFile -NonInteractive 2>&1
+                )
+            }
+            else {
+                $Output = @(
+                    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Manager -Action Status -Service ltx25 -EnvFile $EnvFile -NonInteractive 2>&1
+                )
+            }
+            $ExitCode = [int]$LASTEXITCODE
+        }
+        catch {
+            $Failure = [string]$_.Exception.Message
+            if ($null -ne $LASTEXITCODE) { $ExitCode = [int]$LASTEXITCODE }
+        }
+        $StatusText = (@($Output | ForEach-Object { [string]$_ }) -join " ").Trim()
+        # Exit 0 without an exact group/status line is not a verified preflight.
+        $Identity = "service=ltx25 group=$ExpectedGroup status="
+        if ($ExitCode -eq 0 -and $StatusText.Contains($Identity)) {
+            return $StatusText
+        }
+        $Diagnostic = if ($Failure) { $Failure } else { $StatusText }
+        if ($Diagnostic.Length -gt 1000) {
+            $Diagnostic = $Diagnostic.Substring(0, 1000) + " [truncated]"
+        }
+        Write-Warning (
+            "Read-only Salad Status failed for group=$ExpectedGroup " +
+            "attempt=$Attempt/3 exit_code=$ExitCode diagnostic=$Diagnostic"
+        )
+        if ($Attempt -lt 3) { Start-Sleep -Seconds (2 * $Attempt) }
+    }
+    throw "Salad Status could not confirm group=$ExpectedGroup after 3 read-only attempts; refusing GPU allocation."
 }
 
 function Prepare-LtxImage {
@@ -37,9 +78,17 @@ function Prepare-LtxImage {
         [Parameter(Mandatory)][string]$PinnedImage,
         [switch]$IsolatedRaceGroup
     )
-    $Extra = if ($IsolatedRaceGroup) { @("-IsolatedRaceGroup") } else { @() }
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Manager -Action Prepare -Service ltx25 -Image $Tag -PinnedImage $PinnedImage -SkipBuild -EnvFile $EnvFile -NonInteractive @Extra
-    if ($LASTEXITCODE -ne 0) { throw "Salad image prepare failed." }
+    if ($IsolatedRaceGroup) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Manager -Action Prepare -Service ltx25 -Image $Tag -PinnedImage $PinnedImage -SkipBuild -IsolatedRaceGroup -EnvFile $EnvFile -NonInteractive
+    }
+    else {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Manager -Action Prepare -Service ltx25 -Image $Tag -PinnedImage $PinnedImage -SkipBuild -EnvFile $EnvFile -NonInteractive
+    }
+    $ExitCode = [int]$LASTEXITCODE
+    if ($ExitCode -ne 0) {
+        $Target = if ($IsolatedRaceGroup) { $AuxGroupName } else { [string]$Services.services.ltx25.group_name }
+        throw "Salad image prepare failed for group=$Target exit_code=$ExitCode."
+    }
 }
 
 $CurrentCommit = (& git rev-parse HEAD).Trim()
