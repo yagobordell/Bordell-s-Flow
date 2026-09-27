@@ -26,6 +26,7 @@ RETIRED = (
 def test_retired_bot_paths_are_absent() -> None:
     assert all(not (ROOT / path).exists() for path in RETIRED)
     assert (ROOT / "src/ai_video_factory/bots/workflow.py").is_file()
+    assert (ROOT / "scripts/pipeline/run_b_pipeline.py").is_file()
 
 
 def test_active_application_has_no_retired_bot_imports() -> None:

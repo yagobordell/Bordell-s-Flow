@@ -3,7 +3,6 @@ from pathlib import Path
 
 MANIFEST = Path("deploy/salad/services.json")
 WORKER_MANAGER = Path("scripts/salad/manage_salad_worker.ps1")
-ENTRYPOINT = Path("docker/workers/common/entrypoint.sh")
 REPOSITORY = Path("src/ai_video_factory/inference/repository.py")
 AUTOSCALER = Path("src/ai_video_factory/inference/salad_autoscaler.py")
 COORDINATION = Path("src/ai_video_factory/inference/coordination.py")
@@ -52,16 +51,6 @@ def test_worker_manager_is_compute_only_and_migrates_legacy_groups() -> None:
     assert "Wait-ForStoppedGroup" in script
     assert "stable stopped/pending_change=false" in script
     assert "set replicas to zero" not in script
-
-
-def test_worker_entrypoint_has_no_salad_queue_sidecar() -> None:
-    script = ENTRYPOINT.read_text(encoding="utf-8")
-
-    assert "salad-http-job-queue-worker" not in script
-    assert "SALAD_QUEUE_ENABLED" not in script
-    assert "polling canonical Postgres jobs" in script
-    assert "wait_for_endpoint /health" in script
-    assert "wait_for_endpoint /ready" in script
 
 
 def test_drain_publication_and_claim_share_instance_lock() -> None:

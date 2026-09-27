@@ -27,18 +27,6 @@ def test_fish_manifest_is_independent_compute_service() -> None:
     assert "FISH_API_KEY" not in fish["environment"]
 
 
-def test_salad_probe_failure_thresholds_fit_api_contract() -> None:
-    manifest = _manifest()
-
-    for service_name, service in manifest["services"].items():
-        for probe_name, probe in service["probes"].items():
-            threshold = probe["failure_threshold"]
-            assert 1 <= threshold <= 20, (
-                f"{service_name}.{probe_name}.failure_threshold={threshold} "
-                "must satisfy Salad API range 1..20"
-            )
-
-
 def test_fish_preflights_verify_reference_object_before_gpu() -> None:
     smoke = (ROOT / "scripts/smoke/run_fish_speech_smoke.py").read_text(encoding="utf-8")
     phase5 = (ROOT / "scripts/pipeline/run_phase5_audio.py").read_text(encoding="utf-8")

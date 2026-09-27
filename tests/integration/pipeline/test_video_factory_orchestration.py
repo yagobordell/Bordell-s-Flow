@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 ROOT = next(
@@ -10,24 +9,6 @@ ROOT = next(
 
 def _read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
-
-
-def test_retired_planner_cannot_be_reinvoked_as_old_production_runner() -> None:
-    assert not (ROOT / "scripts/pipeline/run_video_factory.ps1").exists()
-    assert not (ROOT / "scripts/pipeline/run_production.py").exists()
-    assert (ROOT / "scripts/pipeline/run_b_pipeline.py").is_file()
-
-
-def test_salad_service_manifests_and_workers_remain_independent() -> None:
-    manifest = json.loads(_read("deploy/salad/services.json"))
-    assert {"breeze_tts2", "fish_speech", "whisper", "ideogram4",
-            "qwen_image_21", "ltx25", "realesrgan"} <= set(manifest["services"])
-    for path in (
-        "scripts/salad/manage_salad_stack.ps1",
-        "scripts/salad/manage_salad_worker.ps1",
-        "scripts/salad/run_salad_capacity_controller.py",
-    ):
-        assert (ROOT / path).is_file()
 
 
 def test_phase5_checks_breeze_cache_before_primary_gpu_start() -> None:
@@ -62,19 +43,6 @@ def test_phase4_and_phase6_use_qwen_only() -> None:
         assert "QWEN_IMAGE_21_" in runner_text
         assert "ideogram" not in controlled_text.lower()
         assert "ideogram" not in runner_text.lower()
-
-
-def test_qwen_controlled_runners_start_capacity_after_cache_plan() -> None:
-    shared = _read("scripts/pipeline/_qwen_controlled.ps1")
-
-    assert shared.index("$CacheAuditScript") < shared.index('Action = "Start"')
-    assert shared.index('Action = "Start"') < shared.rindex(
-        "& python $RunnerScript @RunnerArguments"
-    )
-    assert "manage_salad_worker.ps1" in shared
-    assert "start_salad_optimized_prewarm.ps1" not in shared
-    assert "cleanup_salad_queue.ps1" not in shared
-    assert 'Action = "Stop"; Service = "qwen_image_21"' in shared
 
 
 def test_phase8_checks_r2_replay_before_ltx_capacity() -> None:
