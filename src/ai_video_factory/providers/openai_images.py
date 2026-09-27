@@ -19,8 +19,9 @@ from PIL import Image
 
 _OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"
 _OPENAI_EDITS_URL = "https://api.openai.com/v1/images/edits"
-_MAX_PNG_BYTES = 30 * 1024 * 1024
+_MAX_PNG_BYTES = 40 * 1024 * 1024
 _FALLBACK_SIZE = "1280x720"
+_GRID_SIZES = {"2560x1440", "3840x1440", "3840x2160"}
 
 
 class OpenAIImageError(RuntimeError):
@@ -76,8 +77,10 @@ class OpenAIImageClient:
             "gpt-image-2.5-sunburst",
         }:
             raise ValueError("Fallback must use the same selected GPT Image model")
-        if size != _FALLBACK_SIZE or quality != "low" or output_format != "png":
-            raise ValueError("Official fallback requires 1280x720, low, PNG")
+        if size not in {_FALLBACK_SIZE, *_GRID_SIZES}:
+            raise ValueError("Official fallback requires a supported image or grid size")
+        if quality != "low" or output_format != "png":
+            raise ValueError("Official fallback requires low quality and PNG")
         payload: dict[str, object] = {
             "model": model,
             "prompt": prompt,
@@ -113,9 +116,10 @@ class OpenAIImageClient:
                 image.verify()
         except (OSError, ValueError) as exc:
             raise OpenAIImageError("Official OpenAI image contains invalid PNG bytes") from exc
-        if (width, height) != (1280, 720):
+        expected_width, expected_height = map(int, size.split("x"))
+        if (width, height) != (expected_width, expected_height):
             raise OpenAIImageError(
-                f"Official OpenAI image dimensions are {width}x{height}, not 1280x720"
+                f"Official OpenAI image dimensions are {width}x{height}, not {size}"
             )
         destination.parent.mkdir(parents=True, exist_ok=True)
         temporary = destination.with_name(destination.name + ".part")
