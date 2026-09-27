@@ -52,6 +52,9 @@ image digest and `LTX_WORKER_TASK_MODE=i2v`, checks two consecutive
 `/ready` observations, submits via Phase 8/Postgres/R2, validates the
 silent H.264 MP4 and stops only `ltx25_i2v` in `finally`.
 Cold image/model download can be substantially longer than inference.
+The wrapper derives a deterministic **effective seed** from `RunId` and
+`SeedBase`; keep `RunId` unique for each fresh paid generation. A cached
+R2 replay with no new Postgres submission is explicitly rejected.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\smoke\run_ltx25_i2v_smoke_controlled.ps1 `

@@ -62,6 +62,20 @@ def prepare(image: Path, prompt: str, duration: float, output_dir: Path) -> None
 def validate(video: Path, duration: float, output_dir: Path) -> None:
     if not video.is_file() or video.stat().st_size == 0:
         raise RuntimeError(f"I2V generated MP4 is missing or empty: {video}")
+    manifest_path = output_dir / "output" / "video_generation_manifest.json"
+    if not manifest_path.is_file():
+        raise RuntimeError("I2V smoke is missing the Phase 8 job manifest")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("transport_route") != "postgres:ltx25_i2v":
+        raise RuntimeError("I2V smoke used the wrong Postgres transport route")
+    jobs = manifest.get("jobs")
+    if not isinstance(jobs, list) or len(jobs) != 1:
+        raise RuntimeError("I2V smoke must contain exactly one Phase 8 job")
+    job = jobs[0]
+    if int(job.get("submission_count") or 0) < 1:
+        raise RuntimeError("I2V smoke replayed cached R2 output; no real job was submitted")
+    if job.get("transport_status") != "succeeded" or not job.get("transport_job_id"):
+        raise RuntimeError("I2V smoke did not complete a real Postgres transport")
     ffprobe = shutil.which("ffprobe")
     ffmpeg = shutil.which("ffmpeg")
     if not ffprobe or not ffmpeg:
@@ -105,6 +119,9 @@ def validate(video: Path, duration: float, output_dir: Path) -> None:
     report = {
         "status": "technically_valid_visual_review_pending",
         "task": "video.ltx25.generate",
+        "application_job_id": job["application_job_id"],
+        "postgres_job_id": job["transport_job_id"],
+        "submission_count": job["submission_count"],
         "video": str(video.resolve()),
         "video_sha256": sha256_file(video),
         "size_bytes": video.stat().st_size,

@@ -68,6 +68,16 @@ if ($I2VStatus -notmatch "status=stopped(\s|$)" -or
     $I2VStatus -notmatch [regex]::Escape("image=$ExpectedPinnedImage")) {
     throw "Prepare the dedicated stopped I2V group with the reviewed immutable image first: $I2VStatus"
 }
+$Hasher = [System.Security.Cryptography.SHA256]::Create()
+try {
+    $RunSeedHash = $Hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($RunId))
+}
+finally {
+    $Hasher.Dispose()
+}
+$RunIdOffset = [BitConverter]::ToUInt32($RunSeedHash, 0)
+$EffectiveSeedBase = [int](([long]$SeedBase + [long]$RunIdOffset) % 2147483646)
+Write-Host "I2V run_id=$RunId seed_base=$EffectiveSeedBase (unique per RunId)"
 $StartRequested = $false
 try {
     $StartRequested = $true
@@ -79,7 +89,7 @@ try {
     if ($AvatarStatus -notmatch "status=(stopped|missing)(\s|$)") {
         throw "Avatar group became active; refusing overlapping I2V job."
     }
-    & $Python $Runner --keyframes (Join-Path $Inputs "storyboard_keyframes.json") --prompts (Join-Path $Inputs "video_prompts.json") --timings (Join-Path $Inputs "shot_timings.json") --output-dir $Output --seed-base $SeedBase --timeout-seconds $TimeoutSeconds --poll-seconds 15
+    & $Python $Runner --keyframes (Join-Path $Inputs "storyboard_keyframes.json") --prompts (Join-Path $Inputs "video_prompts.json") --timings (Join-Path $Inputs "shot_timings.json") --output-dir $Output --seed-base $EffectiveSeedBase --timeout-seconds $TimeoutSeconds --poll-seconds 15
     if ($LASTEXITCODE -ne 0) { throw "I2V Postgres/R2 generation failed." }
     & $Python $Smoke validate --video (Join-Path $Output "video_clips\shot_001.mp4") --duration-seconds $DurationSeconds --output-dir $RunPath
     if ($LASTEXITCODE -ne 0) { throw "I2V output technical verification failed." }
