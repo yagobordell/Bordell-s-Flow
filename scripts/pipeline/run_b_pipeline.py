@@ -1236,7 +1236,15 @@ async def main() -> None:
                 "Existing Fish Audio tasks may be chargeable. Use --resume-audio "
                 "before replacing this script's output directory."
             )
-        qr = await ensure_avatar_qr(\n            avatar_file=avatar_file,\n            avatars_dir=args.avatars_dir,\n            api_key=settings.openai_api_key,\n            model=settings.openai_model,\n            image_model=settings.openai_image_model,\n            input_url=getattr(args, "qr_url", None),\n        )\n        output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
+        qr = await ensure_avatar_qr(
+            avatar_file=avatar_file,
+            avatars_dir=args.avatars_dir,
+            api_key=settings.openai_api_key,
+            model=settings.openai_model,
+            image_model=settings.openai_image_model,
+            input_url=getattr(args, "qr_url", None),
+        )
+        output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
     else:
         output = _prepare_resume_output(output_root, script_file, avatar_file=avatar_file)
         previous_report, previous_b11, previous_b12 = _load_resume_checkpoint(
@@ -1262,7 +1270,15 @@ async def main() -> None:
             }
         except (KeyError, TypeError, ValueError) as exc:
             raise SystemExit(f"Cannot restore prior run accounting: {exc}") from exc
-        qr = await ensure_avatar_qr(\n            avatar_file=avatar_file,\n            avatars_dir=args.avatars_dir,\n            api_key=settings.openai_api_key,\n            model=settings.openai_model,\n            image_model=settings.openai_image_model,\n            input_url=getattr(args, "qr_url", None),\n        )\n        _clear_outputs_from(output, args.from_stage)
+        qr = await ensure_avatar_qr(
+            avatar_file=avatar_file,
+            avatars_dir=args.avatars_dir,
+            api_key=settings.openai_api_key,
+            model=settings.openai_model,
+            image_model=settings.openai_image_model,
+            input_url=getattr(args, "qr_url", None),
+        )
+        _clear_outputs_from(output, args.from_stage)
 
     # Snapshot the selected PNG: later library changes cannot silently alter this run.
     (output / "avatar.png").write_bytes(avatar_bytes)
