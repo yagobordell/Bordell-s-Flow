@@ -2,8 +2,6 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from ai_video_factory.bots.billing import ApiCostLedger
 
 
