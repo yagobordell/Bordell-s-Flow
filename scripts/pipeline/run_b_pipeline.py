@@ -33,6 +33,7 @@ from ai_video_factory.compositor.static_preview import (
 from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
+from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.openai_batch_images import (
     ImageBatchOptions,
     clear_previous_b2_images,
@@ -527,6 +528,8 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
         api_key=settings.openai_api_key,
         options=_image_batch_options(),
     )
+    # Crop only saved grid PNGs; this step cannot make a new paid API call.
+    panel_assets = await asyncio.to_thread(crop_grid_assets, output, manifest)
     plan["image_assets"] = [
         {
             "block_id": item["block_id"],
@@ -535,10 +538,12 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
             "sha256": item["sha256"],
             "provider": item.get("provider", "ai33"),
         }
-        for item in manifest["items"] if item.get("grid") is None
+        for item in (
+            [job for job in manifest["items"] if job.get("grid") is None]
+            + panel_assets
+        )
     ]
-    # A grid is not an individual beat image until a later cropping stage.
-    # Keep its complete panel map without pretending to have start-image crops.
+    # Keep the original full-resolution grid and panel coordinates for audit.
     plan["image_grids"] = [
         {
             "file": item["file"],
@@ -575,6 +580,7 @@ def _image_summary(manifest: dict[str, object]) -> dict[str, object]:
             item.get("grid") is not None for item in items
         )
         summary["beat_count"] = manifest["total_described_beats"]
+        summary["cropped_panel_count"] = len(manifest.get("panel_assets", []))
     return summary
 
 
@@ -595,9 +601,17 @@ async def _preview_if_ready(
     plan: dict[str, object] | None = None,
     images: dict[str, object] | None = None,
 ) -> dict[str, object] | None:
-    # No automatic grid panel cropping in this phase: do not render the full
-    # contact sheet as if it were each beat's individual 1280x720 start image.
-    if images is not None and images.get("grid_count", 0):
+    # Older grid manifests may still lack crops; never use a full grid as a
+    # beat's start image. A completed crop map enables the normal preview.
+    def missing_panels(saved: dict[str, object]) -> bool:
+        expected = sum(
+            len(item["panels"])
+            for item in saved.get("items", [])
+            if item.get("grid") is not None
+        )
+        return expected > 0 and len(saved.get("panel_assets", [])) != expected
+
+    if images is not None and missing_panels(images):
         return {
             "status": "deferred",
             "reason": "grid_panels_not_cropped",
@@ -623,7 +637,7 @@ async def _preview_if_ready(
         images = json.loads(manifest_path.read_text(encoding="utf-8"))
     if images.get("status") != "completed":
         return None
-    if images.get("grid_count", 0):
+    if missing_panels(images):
         return {
             "status": "deferred",
             "reason": "grid_panels_not_cropped",
