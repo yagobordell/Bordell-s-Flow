@@ -33,7 +33,10 @@ python scripts/salad/run_salad_capacity_controller.py --poll-seconds 15
 ```
 
 Run this as a durable service/process independent of any individual video pipeline. Do not launch one
-controller per production run.
+controller per production run. The normal reconciliation cadence remains the requested poll interval.
+When a service reaches genuine zero demand and the controller has just published safe drain rows, the
+next reconciliation is scheduled after the shorter drain grace (when that is below the normal poll
+interval) so scale-to-zero does not pay an unnecessary full polling period.
 
 Check health without touching Salad:
 
@@ -65,7 +68,11 @@ remote group to be declared in `deploy/salad/services.json`. Unknown groups are 
 plane drift and fail reconciliation, preventing unaccounted GPU usage from bypassing the project
 budget. It calculates demand from all active `gpu.jobs`, protects running instances with deletion
 cost, and
-stops a group after aggregate demand reaches zero. A stopped group is treated as zero effective
+stops a group after aggregate demand reaches zero. Zero-demand shutdown has its own stability window,
+`SALAD_AUTOSCALER_ZERO_DEMAND_STABLE_POLLS` (default 1), while partial downscales continue to use
+`SALAD_AUTOSCALER_DOWNSCALE_STABLE_POLLS` (default 2). Fast zero-demand handling is used only when
+the service has no remaining pending, retryable or running work; a target of zero caused by project
+quota pressure does not use the fast path. A stopped group is treated as zero effective
 capacity even if Salad preserves a non-zero configured `replicas` value for the next start. Capacity
 reductions are never credited to the project budget merely because a PATCH or stop request was
 accepted: the controller keeps the previously observed capacity reserved until a later reconciliation
@@ -94,12 +101,19 @@ controller logs a warning when the project cap is at least the sum of all per-se
 therefore provides no additional project-wide constraint.
 
 The global cold-start default is `SALAD_AUTOSCALER_COLD_START_SECONDS`. Large services can override
-it independently, for example:
+it independently. LTX I2V and avatar A2V are separate workloads after task isolation and therefore
+have separate calibration keys:
 
 ```text
 SALAD_AUTOSCALER_QWEN_IMAGE_21_COLD_START_SECONDS=...
+SALAD_AUTOSCALER_LTX25_I2V_COLD_START_SECONDS=...
 SALAD_AUTOSCALER_LTX25_COLD_START_SECONDS=...
+SALAD_AUTOSCALER_LTX25_I2V_RUNTIME_SECONDS=...
+SALAD_AUTOSCALER_LTX25_RUNTIME_SECONDS=...
 ```
 
-Calibrate these values from measured Salad allocation, download, model-load and readiness times
-rather than guessing them.
+The controlled `i2v-static-camera-001` run recorded 3089.8 seconds of bootstrap, which demonstrates
+why the generic 180-second cold-start default is not a safe production estimate for LTX I2V. Treat
+that value as historical evidence, not a permanent constant: rebuilds, Salad nodes and network paths
+can change it. Calibrate I2V and A2V from measured allocation, image pull, Hugging Face bootstrap,
+pipeline load, readiness and inference timings on the deployed image.
