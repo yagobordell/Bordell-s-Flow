@@ -135,7 +135,7 @@ def test_dividers_are_found_at_their_actual_positions_not_exact_thirds() -> None
     image = _sample_grid(3, 2, divider=30, offset_x=22, offset_y=-15)
     boxes = panel_boxes(image, columns=3, rows=2)
     assert len(boxes) == 6
-    assert boxes[0][2] < 1280
+    assert 1280 < boxes[0][2] < 1320
     assert boxes[1][0] > 1280
     for index, box in enumerate(boxes):
         row, col = divmod(index, 3)
