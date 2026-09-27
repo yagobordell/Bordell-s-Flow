@@ -103,8 +103,8 @@ try {
         throw "Salad did not settle with the pinned experimental image."
     }
 
-    # Use one GPU by default. Two-GPU bootstrap is a separate explicit experiment;
-    # Salad has repeatedly acknowledged but not reflected deletion_cost=100000.
+    # One Salad group, two replicas by default. The first ready worker protects
+    # itself via local IMDS; the external deletion-cost PATCH is never mixed in.
     $BootstrapWaitSeconds = if ($StartupReplicas -eq 1) { 3600 } else { 300 }
     Write-Host "LTX_STARTUP_MODE replicas=$StartupReplicas readiness_timeout_seconds=$BootstrapWaitSeconds"
     if ($StartupReplicas -eq 2) {
