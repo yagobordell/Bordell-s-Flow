@@ -12,8 +12,7 @@ param(
     [switch]$AllowBootstrappingInstance,
     [switch]$Recreate,
     [switch]$AllowControllerOverride,
-    [switch]$NonInteractive,
-    [switch]$IsolatedRaceGroup
+    [switch]$NonInteractive
 )
 
 Set-StrictMode -Version Latest
@@ -62,10 +61,6 @@ function Get-ManifestString {
 $Organization = Get-ManifestString -Name "organization" -Primary $Stack -Fallback $Definition
 $Project = Get-ManifestString -Name "project" -Primary $Stack -Fallback $Definition
 $GroupName = Get-ManifestString -Name "group_name" -Primary $Definition -Fallback $null
-if ($IsolatedRaceGroup) {
-    if ($Service -ne "ltx25") { throw "-IsolatedRaceGroup is only valid for ltx25." }
-    $GroupName = "$GroupName-race"
-}
 $Dockerfile = Join-Path $RepoRoot (Get-ManifestString -Name "dockerfile" -Primary $Definition -Fallback $null)
 if ([string]::IsNullOrWhiteSpace($Image)) {
     $Image = Get-ManifestString -Name "image" -Primary $Definition -Fallback $null
