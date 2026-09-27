@@ -61,6 +61,18 @@ if [[ "${MODEL_REVISION}" != "${EXPECTED_REVISION}" ]]; then
   exit 1
 fi
 
+# Verify local Salad IMDS before downloading ~70 GiB of model weights.
+# This catches the previous paid-run failure while bootstrap is still cheap:
+# the instance may be able to download everything but unable to protect its
+# own deletion cost, so its /ready can never succeed in the two-replica race.
+if [[ "${LTX_RACE_PROTECT_READY_WITH_IMDS:-false}" == "true" ]]; then
+  echo "LTX_RACE_IMDS_PREFLIGHT_START before_model_download=true"
+  python -m ai_video_factory.workers.ltx25.race_ready --preflight-before-download || {
+    echo "LTX_RACE_IMDS_PREFLIGHT_FAILED refusing expensive model download" >&2
+    exit 1
+  }
+fi
+
 mkdir -p "${MODEL_ROOT}"
 
 manifest_is_valid=false
