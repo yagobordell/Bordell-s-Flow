@@ -121,7 +121,8 @@ def test_retry_orchestrator_pins_new_digest_and_restores_original_safely() -> No
     assert "LastFrame" not in script
     assert 'if ($Published -ne $ExperimentalPinnedImage)' in script
     assert "[ValidateSet(1, 2)][int]$StartupReplicas = 2" in script
-    assert "-StartupReplicas $StartupReplicas" in script
+    assert "-StartupReplicas 2" in script
+    assert "-UseImdsReadyProtection" in script
     assert "$BootstrapWaitSeconds = if ($StartupReplicas -eq 1) { 3600 } else { 300 }" in script
     assert "LTX_STARTUP_MODE replicas=$StartupReplicas" in script
     assert "-ReferenceStage2Steps 2" in script
