@@ -118,12 +118,12 @@ def race(
         raise ValueError("LTX isolated race requires two distinct pinned one-replica groups")
     started_at = clock()
     deadline = started_at + timeout_seconds
-    versions: dict[str, int] = {}
+    versions: dict[str, int | None] = {}
     for name, client in clients:
         group = _group(client, name, expected_image)
         if _status(group) != "stopped" or group.get("pending_change") is not False:
             raise RuntimeError(f"LTX isolated race requires {name} stopped and settled")
-        versions[name] = group["version"]
+        versions[name] = None  # Pin the current version only after start has settled.
 
     # Both PATCH-free starts happen before either worker is polled. The second
     # may remain unallocated indefinitely; a ready first worker can still win.
@@ -143,9 +143,11 @@ def race(
         observations: list[str] = []
         for name, client in clients:
             group = _group(client, name, expected_image, version=versions[name])
+            if versions[name] is None and group.get("pending_change") is False:
+                versions[name] = group["version"]
             if _status(group) == "stopped":
                 raise RuntimeError(f"LTX isolated race group {name} stopped unexpectedly")
-            instances = _instances(client, versions[name])
+            instances = _instances(client, versions[name]) if versions[name] is not None else []
             seen.update((name, str(item["id"])) for item in instances if item.get("id"))
             chosen = _ready_id(group, instances)
             if chosen is not None:
