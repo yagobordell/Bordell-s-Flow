@@ -16,14 +16,13 @@ from scripts.pipeline import run_b_pipeline as runner
 VOICE = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
 
 
-async def _fake_avatar_qr(*, avatar_file: Path, **_kwargs):
+def _fake_avatar_qr(*, avatar_file: Path, **_kwargs):
     data = avatar_file.read_bytes()
     return SimpleNamespace(
         url="https://ebooks.example/avatar",
         png=data,
         sha256=hashlib.sha256(data).hexdigest(),
-        model="gpt-6-luna",
-        image_model="gpt-image-2.5-flare",
+        generator="segno",
     )
 
 
