@@ -32,6 +32,7 @@ from ai_video_factory.compositor.static_preview import (
 )
 from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
+from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.openai_batch_images import (
@@ -81,6 +82,11 @@ def parse_args() -> argparse.Namespace:
         "--avatar",
         metavar="NAME",
         help="Select a PNG avatar from --avatars-dir, with or without its .png suffix.",
+    )
+    parser.add_argument(
+        "--qr-url",
+        metavar="URL",
+        help="Enlace del ebook para crear el QR de un avatar nuevo sin preguntar en la CLI.",
     )
     parser.add_argument(
         "--list-avatars",
@@ -148,6 +154,7 @@ def parse_args() -> argparse.Namespace:
         or args.from_stage != "B1.1"
         or args.stop_stage is not None
         or args.avatar is not None
+        or args.qr_url is not None
     ):
         parser.error(
             "Audio-only modes cannot be combined with images, --from, "
@@ -159,8 +166,8 @@ def parse_args() -> argparse.Namespace:
         args.skip_images or args.from_stage != "B1.1" or args.stop_stage is not None
     ):
         parser.error("--images-only cannot be combined with --no-image, --from or --stop.")
-    if args.images_only and args.avatar is not None:
-        parser.error("--images-only uses the saved avatar; omit --avatar.")
+    if args.images_only and (args.avatar is not None or args.qr_url is not None):
+        parser.error("--images-only uses the saved avatar; omit --avatar and --qr-url.")
     if args.stop_stage is not None and (
         _STAGES.index(args.stop_stage) < _STAGES.index(args.from_stage)
     ):
@@ -173,6 +180,7 @@ def parse_args() -> argparse.Namespace:
         args.script_file is not None
         or args.script is not None
         or args.avatar is not None
+        or args.qr_url is not None
         or args.from_stage != "B1.1"
         or args.stop_stage is not None
         or args.images_only
@@ -1228,7 +1236,7 @@ async def main() -> None:
                 "Existing Fish Audio tasks may be chargeable. Use --resume-audio "
                 "before replacing this script's output directory."
             )
-        output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
+        qr = await ensure_avatar_qr(\n            avatar_file=avatar_file,\n            avatars_dir=args.avatars_dir,\n            api_key=settings.openai_api_key,\n            model=settings.openai_model,\n            image_model=settings.openai_image_model,\n            input_url=getattr(args, "qr_url", None),\n        )\n        output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
     else:
         output = _prepare_resume_output(output_root, script_file, avatar_file=avatar_file)
         previous_report, previous_b11, previous_b12 = _load_resume_checkpoint(
@@ -1254,10 +1262,11 @@ async def main() -> None:
             }
         except (KeyError, TypeError, ValueError) as exc:
             raise SystemExit(f"Cannot restore prior run accounting: {exc}") from exc
-        _clear_outputs_from(output, args.from_stage)
+        qr = await ensure_avatar_qr(\n            avatar_file=avatar_file,\n            avatars_dir=args.avatars_dir,\n            api_key=settings.openai_api_key,\n            model=settings.openai_model,\n            image_model=settings.openai_image_model,\n            input_url=getattr(args, "qr_url", None),\n        )\n        _clear_outputs_from(output, args.from_stage)
 
     # Snapshot the selected PNG: later library changes cannot silently alter this run.
     (output / "avatar.png").write_bytes(avatar_bytes)
+    (output / "qr.png").write_bytes(qr.png)
     avatar_metadata = {
         "filename": avatar_file.name,
         "source": avatar_file.as_posix(),
@@ -1265,6 +1274,14 @@ async def main() -> None:
         "sha256": hashlib.sha256(avatar_bytes).hexdigest(),
         "width": avatar_width,
         "height": avatar_height,
+        "qr": {
+            "file": "qr.png",
+            "url": qr.url,
+            "sha256": qr.sha256,
+            "model": qr.model,
+            "image_model": qr.image_model,
+            "verification": "png_validated_scan_pending",
+        },
     }
     run_metadata = {
         "script_file": script_file.name,
