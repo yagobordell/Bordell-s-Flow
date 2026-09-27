@@ -16,7 +16,6 @@ Set-Location $RepoRoot
 
 $Manager = Join-Path $RepoRoot "scripts\salad\manage_salad_worker.ps1"
 $Smoke = Join-Path $PSScriptRoot "run_ltx25_a2v_smoke_controlled.ps1"
-$RaceSelector = Join-Path $PSScriptRoot "start_ltx25_race_select.py"
 $Services = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\salad\services.json") -Raw | ConvertFrom-Json
 $OriginalTag = [string]$Services.services.ltx25.image
 $AuxGroupName = "$($Services.services.ltx25.group_name)-race"
@@ -183,13 +182,8 @@ finally {
                 throw "Salad is not stably stopped; refusing to replace a live group."
             }
 
-            if ($FinalStatus -match "replicas=2\b") {
-                $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-                if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
-                    $Python = (Get-Command python -ErrorAction Stop).Source
-                }
-                & $Python $RaceSelector --reset-stopped --env-file $EnvFile --expected-image $ExperimentalPinnedImage
-                if ($LASTEXITCODE -ne 0) { throw "Cannot restore stopped group to one replica." }
+            if ($FinalStatus -notmatch "replicas=1") {
+                throw "Unexpected main group replica configuration; refusing image restoration."
             }
             Prepare-LtxImage -Tag $OriginalTag -PinnedImage $OriginalPinnedImage
         }
