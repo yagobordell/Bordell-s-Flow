@@ -70,18 +70,35 @@ class LTXRaceReadyGuard:
                 f"Salad IMDS {method} network failure: {type(error).__name__}"
             ) from error
 
-    def _get_cost(self) -> int:
-        status, data = self._request("GET")
-        if status != 200:
-            raise RuntimeError("Salad IMDS deletion-cost GET did not return 200")
-        try:
-            decoded = json.loads(data)
-        except (ValueError, TypeError) as error:
-            raise RuntimeError("Salad IMDS returned malformed deletion-cost JSON") from error
-        value = decoded.get("deletion_cost") if isinstance(decoded, dict) else None
-        if type(value) is not int:
-            raise RuntimeError("Salad IMDS did not expose an integer deletion cost")
-        return value
+    def _get_cost(self, *, retries: int = 1) -> int:
+        for attempt in range(retries):
+            try:
+                status, data = self._request("GET")
+            except RuntimeError as error:
+                # /ready remains quick. Only the cheap early preflight opts
+                # into bounded retries for intermittent IMDS network faults.
+                retryable = "network failure" in str(error) or any(
+                    f"HTTP {code}" in str(error) for code in (429, 500, 502, 503, 504)
+                )
+                if not retryable or attempt + 1 >= retries:
+                    raise
+                time.sleep(attempt + 1)
+                continue
+            if status != 200:
+                raise RuntimeError(
+                    f"Salad IMDS deletion-cost GET returned HTTP {status}, expected 200"
+                )
+            try:
+                decoded = json.loads(data)
+            except (ValueError, TypeError) as error:
+                raise RuntimeError(
+                    "Salad IMDS returned malformed deletion-cost JSON"
+                ) from error
+            value = decoded.get("deletion_cost") if isinstance(decoded, dict) else None
+            if type(value) is not int:
+                raise RuntimeError("Salad IMDS did not expose an integer deletion cost")
+            return value
+        raise AssertionError("IMDS read retry loop exhausted unexpectedly")
 
     def _put_cost(self, cost: int) -> None:
         status, _ = self._request(
@@ -109,16 +126,16 @@ class LTXRaceReadyGuard:
         could establish that local metadata writes actually work.
         """
         probe = cls("imds-preflight-only", connect=lambda *_args, **_kwargs: None)
-        if probe._get_cost() != 0:
+        if probe._get_cost(retries=3) != 0:
             raise RuntimeError("Salad IMDS preflight requires initial deletion_cost=0")
         try:
             probe._put_cost(1)
-            if probe._get_cost() != 1:
+            if probe._get_cost(retries=3) != 1:
                 raise RuntimeError("Salad IMDS preflight PUT=1 was not persisted")
         finally:
             # Never leave a pre-model worker with elevated deletion cost.
             probe._put_cost(0)
-            if probe._get_cost() != 0:
+            if probe._get_cost(retries=3) != 0:
                 raise RuntimeError("Salad IMDS preflight could not restore cost=0")
         _LOGGER.info("LTX_RACE_IMDS_PREFLIGHT_OK read_write_reset=true")
 
