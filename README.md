@@ -125,6 +125,19 @@ puedes elegir el avatar en el segundo menú; para automatizarlo especifica
 ambos argumentos. El runner comprueba que el avatar es un PNG válido antes
 de generar y copia sus bytes a `data/output/<nombre-del-guion>/avatar.png`.
 
+La primera vez que se selecciona un avatar sin QR, la CLI pide el enlace del
+ebook. GPT-6 Luna usa el prompt fijo de QR y la herramienta oficial de imagen
+de OpenAI para crear el PNG, que se guarda junto a su URL en
+`data/avatar/.qr/<nombre-avatar.png>/` y se reutiliza en futuras ejecuciones.
+También se copia como `qr.png` a la carpeta del guion y se referencia desde
+`run_report.json` y `visual_plan.json`; todavía no se sobreimprime en el vídeo.
+Para un primer uso no interactivo, usa la opción
+`--qr-url https://ejemplo.com/ebook` al ejecutar `run.ps1`.
+`--no-image` omite imágenes B2, pero no la creación inicial del QR del avatar.
+Antes de publicar, escanea el QR con tu teléfono y confirma el enlace.
+Si una solicitud de QR falla, `request_pending.json` evita repetir sin querer
+una operación que podría haberse cobrado.
+
 Cada guion escribe en `data/output/<nombre-del-guion>/`: input/output de
 B1.1, output por bloque y merge de B1.2/B2, `visual_plan.json` y
 `run_report.json` con costes, tiempos y metadatos. El coste estimado de GPT-6 Luna
