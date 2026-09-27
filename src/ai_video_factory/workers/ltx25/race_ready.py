@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-import socket
 import threading
 import time
 from collections.abc import Callable
@@ -65,7 +64,7 @@ class LTXRaceReadyGuard:
             raise RuntimeError(
                 f"Salad IMDS {method} returned HTTP {error.code}"
             ) from error
-        except (TimeoutError, socket.timeout, URLError, OSError) as error:
+        except (TimeoutError, URLError, OSError) as error:
             raise RuntimeError(
                 f"Salad IMDS {method} network failure: {type(error).__name__}"
             ) from error
