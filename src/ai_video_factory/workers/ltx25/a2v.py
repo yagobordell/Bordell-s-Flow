@@ -103,7 +103,8 @@ class LTXAudioToVideoParameters(BaseModel):
             LTX_A2V_GUIDED_GENERATION_PROFILE,
         ):
             raise ValueError(
-                "generation_profile must be a supported fast, reference, static-reference, dev, or guided A2V profile"
+                "generation_profile must be fast, reference, static-reference, "
+                "dev or guided A2V"
             )
         return value
 
