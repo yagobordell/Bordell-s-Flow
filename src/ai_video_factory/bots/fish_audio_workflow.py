@@ -679,7 +679,7 @@ async def _generate_block(
             raise
         directed_text = directed.plain_script_for_recording
         _atomic_json(directory / "output.json", directed.model_dump())
-fish old delayed usage        state["status"] = "director_completed"
+        state["status"] = "director_completed"
         _atomic_json(state_path, state)
 
     if state.get("status") == "completed":
