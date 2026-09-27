@@ -275,9 +275,20 @@ def test_images_only_auto_renders_from_existing_stt_and_saved_images(
         "api_costs": {"run_status": "failed"},
         "timings": {"status": "failed"},
     }), encoding="utf-8")
+    # Images-only removes untracked old PNGs before requesting fresh images.
+    # Simulate the image provider writing new artifacts with matching hashes.
+    original_pngs = {
+        item["file"]: (output / item["file"]).read_bytes()
+        for item in images["items"]
+    }
     generated = []
 
     async def fake_images(destination: Path, visual_plan: dict) -> dict:
+        assert all(not (destination / path).exists() for path in original_pngs)
+        for relative, data in original_pngs.items():
+            image_path = destination / relative
+            image_path.parent.mkdir(parents=True, exist_ok=True)
+            image_path.write_bytes(data)
         generated.append(destination)
         return images
 
