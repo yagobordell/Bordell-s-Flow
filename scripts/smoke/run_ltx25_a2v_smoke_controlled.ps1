@@ -173,7 +173,7 @@ try {
     }
     else {
         & $WorkerManager @Start
-        if ($LASTEXITCODE -ne 0) { throw "LTX A2V compute-group start failed." }
+        if (-not $?) { throw "LTX A2V compute-group start failed." }
     }
     $LifecycleMetrics.capacity_start_seconds = $PhaseClock.Elapsed.TotalSeconds
     $PhaseClock.Restart()
@@ -227,12 +227,12 @@ finally {
         try {
             if ($StartupReplicas -eq 2) {
                 & $WorkerManager -Action Stop -Service ltx25 -IsolatedRaceGroup -EnvFile $EnvFile -NonInteractive
-                if ($LASTEXITCODE -ne 0) { throw "LTX auxiliary race group stop failed." }
+                if (-not $?) { throw "LTX auxiliary race group stop failed." }
             }
         }
         finally {
             & $WorkerManager -Action Stop -Service ltx25 -EnvFile $EnvFile -NonInteractive
-            if ($LASTEXITCODE -ne 0) { throw "LTX main group stop failed." }
+            if (-not $?) { throw "LTX main group stop failed." }
         }
         if ($LifecycleMetrics.outcome -eq "generated") {
             $LifecycleMetrics.outcome = "succeeded"
