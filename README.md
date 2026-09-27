@@ -127,7 +127,10 @@ de generar y copia sus bytes a `data/output/<nombre-del-guion>/avatar.png`.
 
 Cada guion escribe en `data/output/<nombre-del-guion>/`: input/output de
 B1.1, output por bloque y merge de B1.2/B2, `visual_plan.json` y
-`run_report.json` con costes, tiempos y metadatos. Ambos JSON incluyen el
+`run_report.json` con costes, tiempos y metadatos. El coste estimado de GPT-6 Luna
+incluye los bots B y las llamadas del director Fish (también al regenerar audio),
+sin duplicarlas al reanudar. No incluye los cargos independientes de TTS, STT ni
+imágenes, y no sustituye a la facturación real de la API. Ambos JSON incluyen el
 avatar elegido, su imagen local de la ejecución, dimensiones y SHA-256; el
 modelo B2 sigue recibiendo y devolviendo sus contratos originales. Para repetir
 solo etapas posteriores, usa `--from B1.2` o `--from B2`; el runner valida y

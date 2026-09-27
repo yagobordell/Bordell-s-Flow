@@ -777,6 +777,35 @@ async def _generate_audio(
     )
 
 
+
+def _refresh_audio_costs(report: dict[str, object], output: Path) -> None:
+    """Reconcile paid Fish director calls without repeating earlier B charges."""
+    previous = report.get("api_costs")
+    if not isinstance(previous, dict) or not isinstance(previous.get("requests"), list):
+        return
+    ledger = ApiCostLedger()
+    ledger.restore_requests(previous["requests"])
+    ledger.sync_fish_director_usage(output)
+    stages = previous.get("stages")
+    if not isinstance(stages, dict):
+        return
+    expected = {
+        stage: stages[stage]["expected_calls"]
+        for stage in _STAGES
+        if isinstance(stages.get(stage), dict)
+    }
+    run = report.get("run")
+    state = run.get("status") if isinstance(run, dict) else None
+    audio = run.get("audio_generation") if isinstance(run, dict) else None
+    if isinstance(audio, dict) and audio.get("status") == "incomplete":
+        state = "failed"
+    if state not in ("running", "completed", "failed"):
+        state = "running"
+    report["api_costs"] = ledger.report(
+        blocks=None, run_status=state, expected_calls=expected,
+    )
+
+
 async def _run_audio_only(
     script_file: Path,
     output_root: Path,
@@ -837,9 +866,11 @@ async def _run_audio_only(
             )
     except Exception:
         report["run"]["audio_generation"] = {"status": "incomplete"}
+        _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
     report["run"]["audio_generation"] = artifact
+    _refresh_audio_costs(report, output)
     _write(report_path, report)
     plan_path = output / "visual_plan.json"
     if plan_path.is_file() and not plan_path.is_symlink():
@@ -855,6 +886,7 @@ async def _run_audio_only(
             report["timings"]["status"] = "failed"
             report["api_costs"]["run_status"] = "failed"
             report["run"]["video_preview"] = {"status": "blocked_by_stt_alignment"}
+            _refresh_audio_costs(report, output)
             _write(report_path, report)
             raise
         _write(report_path, report)
@@ -862,6 +894,7 @@ async def _run_audio_only(
         preview = await _preview_if_ready(output, report)
     except Exception:
         report["run"]["video_preview"] = {"status": "incomplete"}
+        _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
     if preview is not None:
@@ -876,6 +909,7 @@ async def _run_audio_only(
             run["status"] = "completed"
             report.setdefault("timings", {})["status"] = "completed"
             report.setdefault("api_costs", {})["run_status"] = "completed"
+    _refresh_audio_costs(report, output)
     _write(report_path, report)
     print(
         f"  {'Reused' if reused_audio else 'Fish Audio ready'}: {artifact['file']} "
@@ -1225,6 +1259,7 @@ async def main() -> None:
                     expected_calls["B2"] = max(
                         expected_calls["B2"] or 0, report_blocks, timings.call_count("B2")
                     )
+        ledger.sync_fish_director_usage(output)
         costs = ledger.report(
             blocks=report_blocks,
             run_status=status,

@@ -387,3 +387,39 @@ def test_audio_regeneration_conflicts_with_images(
     )
     with pytest.raises(SystemExit):
         runner.parse_args()
+
+
+def test_rejected_fish_director_persists_billed_response_before_tts(
+    tmp_path: Path,
+) -> None:
+    class InvalidMeteredDirector(FakeDirector):
+        async def generate_structured_with_response(self, **kwargs):
+            self.calls.append(kwargs)
+            return FishAudioScript(plain_script_for_recording="Texto inventado"), SimpleNamespace(
+                id="fish_invalid_1",
+                model="gpt-6-luna",
+                service_tier="default",
+                usage=SimpleNamespace(model_dump=lambda **_kw: {
+                    "input_tokens": 100, "output_tokens": 25,
+                    "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
+                    "output_tokens_details": {"reasoning_tokens": 10},
+                }),
+            )
+
+    speech = FakeSpeech()
+    with pytest.raises(FishAudioScriptError):
+        asyncio.run(generate_fish_audio(
+            SCRIPT, tmp_path, b11=B11, director_model="gpt-6-luna",
+            provider=InvalidMeteredDirector(), ai33_api_key="fake-key",
+            speech_client=speech,
+        ))
+    assert not speech.creates
+    files = list((tmp_path / "audio/runs").glob("*/blocks/block_1/task.json"))
+    assert len(files) == 1
+    state = json.loads(files[0].read_text(encoding="utf-8"))
+    assert state["status"] == "director_invalid"
+    assert state["director_response"]["id"] == "fish_invalid_1"
+    assert state["director_usage"]["output_tokens"] == 25
+    ledger = runner.ApiCostLedger()
+    ledger.sync_fish_director_usage(tmp_path)
+    assert ledger.records[0]["estimated_cost_usd"] == "0.00002250"

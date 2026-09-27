@@ -648,9 +648,26 @@ async def _generate_block(
             )
         state["status"] = "director_running"
         _atomic_json(state_path, state)
+        def save_director_response(response: Any) -> None:
+            usage = getattr(response, "usage", None)
+            usage_data = (
+                usage.model_dump(mode="json")
+                if usage is not None and callable(getattr(usage, "model_dump", None))
+                else usage if isinstance(usage, dict) else None
+            )
+            state["director_usage"] = usage_data
+            state["director_response"] = {
+                "id": getattr(response, "id", None),
+                "model": getattr(response, "model", None),
+                "service_tier": getattr(response, "service_tier", None),
+                "usage": usage_data,
+            }
+            _atomic_json(state_path, state)
+
         try:
-            directed, response = await run_fish_director(
-                payload, provider=provider, model=director_model
+            directed, _response = await run_fish_director(
+                payload, provider=provider, model=director_model,
+                on_response=save_director_response,
             )
         except FishAudioScriptError:
             state["status"] = "director_invalid"
@@ -662,10 +679,7 @@ async def _generate_block(
             raise
         directed_text = directed.plain_script_for_recording
         _atomic_json(directory / "output.json", directed.model_dump())
-        usage = getattr(response, "usage", None)
-        if usage is not None and callable(getattr(usage, "model_dump", None)):
-            state["director_usage"] = usage.model_dump(mode="json")
-        state["status"] = "director_completed"
+fish old delayed usage        state["status"] = "director_completed"
         _atomic_json(state_path, state)
 
     if state.get("status") == "completed":

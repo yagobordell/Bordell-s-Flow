@@ -4,8 +4,10 @@ This estimates API charges from returned Responses usage, not from narration wor
 counts or the length of the visible JSON. It is not an OpenAI invoice.
 """
 
+import json
 from collections.abc import Mapping
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Literal
 
 PRICING_URL = "https://developers.openai.com/api/docs/pricing"
@@ -17,7 +19,7 @@ _STANDARD_LUNA = {
     "cache_write": Decimal("0.125"),
     "output": Decimal("0.50"),
 }
-_STAGES = ("B1.1", "B1.2", "B2")
+_STAGES = ("B1.1", "B1.2", "B2", "Fish director")
 
 
 def _field(value: object, name: str, default: Any = None) -> Any:
@@ -110,6 +112,54 @@ class ApiCostLedger:
 
         self._records.append(record)
 
+    def sync_fish_director_usage(self, output: Path) -> None:
+        """Reconcile durable Fish director responses without double-counting resumes."""
+        runs = output / "audio" / "runs"
+        if not runs.exists():
+            return
+        if runs.is_symlink() or not runs.is_dir():
+            raise ValueError("Fish audio runs directory is invalid or linked")
+        for path in sorted(runs.glob("*/blocks/block_*/task.json")):
+            parents = (path, path.parent, path.parent.parent, path.parent.parent.parent)
+            if any(parent.is_symlink() for parent in parents):
+                raise ValueError(f"Refusing linked Fish director accounting state: {path}")
+            state = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict):
+                raise ValueError(f"Invalid Fish director accounting state: {path}")
+            response = state.get("director_response")
+            if response is not None and not isinstance(response, dict):
+                raise ValueError(f"Malformed saved Fish director response: {path}")
+            if response is None:
+                if state.get("director_usage") is None and state.get("status") not in {
+                    "completed", "director_completed", "director_invalid", "director_unknown",
+                }:
+                    continue
+                response = {
+                    "id": state.get("director_response_id"),
+                    "model": state.get("director_model"),
+                    "service_tier": state.get("director_service_tier", "default"),
+                    "usage": state.get("director_usage"),
+                }
+            else:
+                response = {
+                    "id": response.get("id"),
+                    "model": response.get("model") or state.get("director_model"),
+                    "service_tier": response.get("service_tier") or "default",
+                    "usage": response.get("usage"),
+                }
+            source = path.relative_to(output).as_posix()
+            current = next(
+                (
+                    index for index, item in enumerate(self._records)
+                    if item.get("director_state_file") == source
+                ),
+                None,
+            )
+            if current is not None:
+                self._records.pop(current)
+            self.record("Fish director", state.get("block_id"), response)
+            self._records[-1]["director_state_file"] = source
+
     def restore_requests(self, requests: list[object]) -> None:
         """Carry priced request history forward when continuing a prior run."""
         for request in requests:
@@ -133,6 +183,11 @@ class ApiCostLedger:
             {"B1.1": max(1, expected_b11_calls), "B1.2": blocks, "B2": blocks}
             if expected_calls is None
             else {stage: expected_calls.get(stage) for stage in _STAGES}
+        )
+        fish_count = sum(item["stage"] == "Fish director" for item in ordered)
+        expected["Fish director"] = (
+            fish_count if expected_calls is None
+            else expected_calls.get("Fish director", fish_count)
         )
         stages: dict[str, dict[str, object]] = {}
         subtotal = Decimal(0)
@@ -163,6 +218,8 @@ class ApiCostLedger:
         return {
             "currency": "USD",
             "kind": "estimated_api_token_cost_not_invoice",
+            "included": "GPT-6 Luna planning and Fish director token calls",
+            "excluded": "OpenAI STT, image generation and Fish TTS charges",
             "run_status": run_status,
             "pricing_status": "complete" if complete else "partial_or_unavailable",
             "pricing_model": "gpt-6-luna",

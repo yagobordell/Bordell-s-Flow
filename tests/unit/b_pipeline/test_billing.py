@@ -1,4 +1,8 @@
+import json
+from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from ai_video_factory.bots.billing import ApiCostLedger
 
@@ -134,3 +138,63 @@ def test_unreported_cache_write_usage_does_not_claim_complete_pricing() -> None:
     assert report["estimated_total_usd"] is None
     assert report["requests"][0]["estimated_cost_usd"] is None
     assert report["requests"][0]["cache_write_tokens"] is None
+
+
+def test_fish_director_is_billed_once_across_audio_runs_and_resume(tmp_path: Path) -> None:
+    path = tmp_path / "audio/runs/first/blocks/block_1/task.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "block_id": 1, "status": "completed", "director_model": "gpt-6-luna",
+        "director_response": {
+            "id": "fish_resp_1", "model": "gpt-6-luna", "service_tier": "default",
+            "usage": {
+                "input_tokens": 1000,
+                "input_tokens_details": {"cached_tokens": 200, "cache_write_tokens": 100},
+                "output_tokens": 100,
+                "output_tokens_details": {"reasoning_tokens": 25},
+            },
+        },
+    }), encoding="utf-8")
+    ledger = ApiCostLedger()
+    ledger.record("B1.1", None, response())
+    ledger.sync_fish_director_usage(tmp_path)
+    ledger.sync_fish_director_usage(tmp_path)
+    report = ledger.report(blocks=0, run_status="completed")
+    assert report["estimated_total_usd"] == "0.00026900"
+    assert report["stages"]["Fish director"]["estimated_cost_usd"] == "0.00013450"
+    assert len(report["requests"]) == 2
+
+    resumed = ApiCostLedger()
+    resumed.restore_requests(report["requests"])
+    resumed.sync_fish_director_usage(tmp_path)
+    after_resume = resumed.report(blocks=0, run_status="completed")
+    assert after_resume["estimated_total_usd"] == report["estimated_total_usd"]
+    assert len(after_resume["requests"]) == 2
+
+
+def test_unreported_director_usage_is_not_treated_as_free(tmp_path: Path) -> None:
+    path = tmp_path / "audio/runs/failed/blocks/block_1/task.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "block_id": 1, "status": "director_invalid", "director_model": "gpt-6-luna",
+    }), encoding="utf-8")
+    ledger = ApiCostLedger()
+    ledger.sync_fish_director_usage(tmp_path)
+    report = ledger.report(
+        blocks=0, run_status="completed",
+        expected_calls={"B1.1": 0, "B1.2": 0, "B2": 0},
+    )
+    assert report["pricing_status"] == "partial_or_unavailable"
+    assert report["estimated_total_usd"] is None
+    assert report["stages"]["Fish director"]["recorded_calls"] == 1
+    assert report["requests"][0]["estimated_cost_usd"] is None
+
+
+def test_medium_reasoning_tokens_are_already_inside_billed_output() -> None:
+    ledger = ApiCostLedger()
+    ledger.record("B1.1", None, response(
+        input_tokens=1000, cached_tokens=0, cache_write_tokens=0,
+        output_tokens=1100, reasoning_tokens=1000,
+    ))
+    assert ledger.records[0]["estimated_cost_usd"] == "0.00065000"
+    assert ledger.records[0]["reasoning_tokens_included_in_output"] == 1000

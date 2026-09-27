@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from collections.abc import Callable
 from importlib.resources import files
 from typing import Any
 
@@ -100,6 +101,7 @@ async def run_fish_director(
     *,
     provider: StructuredTextProvider,
     model: str,
+    on_response: Callable[[Any], None] | None = None,
 ) -> tuple[FishAudioScript, Any | None]:
     """Send the exact same per-block JSON input shape used by B1.2."""
     block = payload.blocks[0]
@@ -115,6 +117,8 @@ async def run_fish_director(
         output, response = await metered(**kwargs)
     else:
         output, response = await provider.generate_structured(**kwargs), None
+    if on_response is not None and response is not None:
+        on_response(response)
     if not isinstance(output, FishAudioScript):
         output = FishAudioScript.model_validate(output)
     validate_fish_script(block.text, output.plain_script_for_recording)
