@@ -74,12 +74,10 @@ def _source(
             "beat_id": f"1{chr(ord('B') + index)}",
             "visual_type": "media_video" if index % 2 else "media_image",
             "description": f"{index + 1}. Test panel",
-            "row": row,
-            "column": column,
+            "row": index // columns,
+            "column": index % columns,
         }
-        for index, (row, column) in enumerate(
-            (divmod(index, columns) for index in range(columns * rows))
-        )
+        for index in range(columns * rows)
     ]
     item = {
         "block_id": 1,
