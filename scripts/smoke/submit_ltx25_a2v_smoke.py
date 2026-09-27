@@ -26,6 +26,7 @@ from ai_video_factory.workers.ltx25 import (
     LTX_A2V_GENERATION_PROFILE,
     LTX_A2V_GUIDED_GENERATION_PROFILE,
     LTX_A2V_REFERENCE_GENERATION_PROFILE,
+    LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
     LTX_A2V_TASK,
     ltx_a2v_application_job_id,
 )
