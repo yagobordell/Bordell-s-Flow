@@ -89,7 +89,7 @@ uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py `
 
 Each script gets its own default output directory,
 `data/output/<script-name>/` (directly under the output root, without a `b_pipeline` subfolder). A repeated run of the same script removes
-**that script's previous output directory before the first API call**, then creates
+**that script's previous output directory before the first planning API call**, then creates
 a fresh run. Other script folders are not touched. The source `.txt` is never
 deleted or rewritten. `--output PATH` overrides the **output root**, not the
 per-script folder: the runner still appends `<script-name>/`. The runner refuses
@@ -106,6 +106,7 @@ per frozen block):
 ```text
 data/output/historia_roma/
   avatar.png
+  qr.png
   run_report.json
   B1.1/
     input.json
@@ -153,6 +154,32 @@ edits to `data/avatar/` cannot change the image used for this run. Original
 `B2/block_<id>/input.json` and `output.json` are unchanged; the top-level
 avatar binding applies to beats with `visual_type` `avatar` or `avatar_media`.
 Lip-sync/video generation is not implemented by this selection feature.
+
+### Persistent ebook QR per avatar
+
+The first ordinary run with an avatar without a QR asks for the ebook sales URL
+in the CLI. Paste the full HTTP(S) URL and press Enter. The runner sends only
+that URL as the user input to `OPENAI_MODEL=gpt-6-luna`, with the fixed system
+prompt `crea un QR para el link que se te adjunte.` and the official image
+generation tool using the existing `OPENAI_IMAGE_MODEL`. It saves the resulting
+PNG and the exact URL in `data/avatar/.qr/<avatar-filename>/qr.png` and
+`qr.json`, which are local runtime data and ignored by Git. On subsequent
+runs, the same named avatar reuses the QR with no prompt or paid QR call.
+The QR PNG is also snapshotted into each run as `qr.png`, and the URL, file,
+hash and generation models are recorded under `run.avatar.qr` and
+`visual_plan.json → avatar.qr`. This step prepares the asset for future video
+composition; the current B pipeline does **not** overlay the QR on videos.
+
+For a first run in a non-interactive shell, pass `--qr-url https://example.com/ebook`
+(along with `--script` and `--avatar`). If the avatar already has a QR,
+`--qr-url` must match its existing URL. Changing the destination is a deliberate
+manual operation: review and remove the avatar's `.qr/<avatar-filename>/`
+folder only after confirming the previous generated image and destination.
+A failed or timed-out paid request leaves `request_pending.json` to prevent an
+unintentional duplicate charge. Check the OpenAI request outcome before
+removing that marker and retrying. The runner checks image format and file
+integrity, but does not claim to decode or scan the generated QR: **scan the
+PNG with a phone and confirm the destination before publication**.
 
 The runner prints exactly one combined time/cost line as soon as each stage
 finishes: B1.1 immediately after its validated output, B1.2 after all parallel
