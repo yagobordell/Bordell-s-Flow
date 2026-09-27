@@ -120,7 +120,7 @@ def test_delayed_group_start_visibility_does_not_cancel_ready_first_worker() -> 
             self.status = "stopped"
 
         def describe_container_group(self) -> dict[str, Any]:
-            if self.events and clock.now >= 45:
+            if "start" in self.events and "stop" not in self.events and clock.now >= 45:
                 self.status = "running"
             return super().describe_container_group()
 
