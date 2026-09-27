@@ -41,7 +41,5 @@ def test_lifecycle_logging_never_bypasses_readiness_or_cleanup() -> None:
     assert 'if ($PhaseName -and $null -eq $LifecycleMetrics[$PhaseName])' in source
     assert 'outcome = "failed"' in source
     assert '$LifecycleMetrics.outcome = "cleanup_failed"' in source
-    assert "LTX main group stop failed." in source
-    assert "LTX auxiliary race group stop failed." in source
-    assert "-IsolatedRaceGroup" in source
+    assert 'stopped/replicas=0/pending=False' in source
     assert "reference-compiled" not in source
