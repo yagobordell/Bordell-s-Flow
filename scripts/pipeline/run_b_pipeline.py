@@ -32,8 +32,8 @@ from ai_video_factory.compositor.static_preview import (
 )
 from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
-from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
+from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.openai_batch_images import (
     ImageBatchOptions,
