@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)][string]$Audio,
     [string]$AvatarImage = "",
-    [ValidateSet("fast", "reference", "dev", "guided")][string]$Profile = "reference",
+    [ValidateSet("fast", "reference", "static-reference", "dev", "guided")][string]$Profile = "reference",
     [string]$SegmentId = "smoke-001",
     [string]$Prompt = "",
     [long]$Seed = 4242,
@@ -56,6 +56,9 @@ if (-not [string]::IsNullOrWhiteSpace($ExpectedPinnedImage) -and
 }
 if ($StartupReplicas -eq 2 -and [string]::IsNullOrWhiteSpace($ExpectedPinnedImage)) {
     throw "Two-GPU race requires -ExpectedPinnedImage to pin both instances by immutable digest."
+}
+if ($Profile -eq "static-reference" -and [string]::IsNullOrWhiteSpace($ExpectedPinnedImage)) {
+    throw "Static-reference is experimental and requires -ExpectedPinnedImage for a freshly reviewed Docker image."
 }
 if ($StartupReplicas -eq 2 -and -not (Test-Path -LiteralPath $RaceSelector -PathType Leaf)) {
     throw "LTX race selector is missing: $RaceSelector"
@@ -175,6 +178,9 @@ try {
 
     if ($Profile -in @("fast", "dev")) {
         Write-Warning "fast/dev is comparison-only: a valid MP4 is not lip-sync acceptance."
+    }
+    if ($Profile -eq "static-reference") {
+        Write-Warning "static-reference uses opt-in negative CFG and stronger image conditioning; review camera framing and lips against the original reference MP4."
     }
     if ($Profile -eq "guided") {
         Write-Warning "guided is experimental: technical MP4/audio checks do not establish visual lip-sync."
