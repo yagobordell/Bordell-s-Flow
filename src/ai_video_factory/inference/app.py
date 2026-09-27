@@ -32,6 +32,7 @@ def create_app(
     poll_jobs_from_repository: bool = False,
     job_poll_seconds: float = 2.0,
     readiness_hook: Callable[[], None] | None = None,
+    shutdown_hook: Callable[[], None] | None = None,
 ) -> FastAPI:
     if prepare_retry_seconds <= 0:
         raise ValueError("prepare_retry_seconds must be positive")
@@ -148,7 +149,11 @@ def create_app(
                 poll_thread.join(timeout=max(job_poll_seconds * 2, 1))
             if prepare_thread is not None:
                 prepare_thread.join(timeout=1)
-            worker.close()
+            try:
+                worker.close()
+            finally:
+                if shutdown_hook is not None:
+                    shutdown_hook()
 
     app = FastAPI(title="AI Video Factory Inference Worker", version="1.0", lifespan=lifespan)
 
