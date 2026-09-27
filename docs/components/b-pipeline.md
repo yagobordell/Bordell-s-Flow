@@ -320,7 +320,6 @@ OPENAI_IMAGE_SIZE=1280x720
 OPENAI_IMAGE_QUALITY=low
 OPENAI_IMAGE_BATCH_TIMEOUT_SECONDS=1800
 OPENAI_IMAGE_BATCH_POLL_INTERVAL_SECONDS=8
-OPENAI_IMAGE_MAX_PARALLEL=4
 ```
 
 El pipeline utiliza **GPT Image 2.5**, con el ID `gpt-image-2.5-flare`
@@ -329,9 +328,10 @@ por defecto o `gpt-image-2.5-sunburst` si se selecciona explícitamente.
 El batch y la generación directa comparten modelo, PNG, 16:9,
 calidad low y 1280×720. Actualiza también el `.env` local si todavía
 contiene `OPENAI_IMAGE_MODEL=gpt-image-2`; un `git pull` no edita ese
-archivo privado. Cuatro beats pueden
-ejecutarse simultáneamente (límite configurable de 1 a 16), pero
-**cada batch sigue conteniendo exactamente una imagen**. El manifiesto
+archivo privado. Las generaciones independientes se ejecutan en paralelo según la
+cantidad de jobs; `ImageBatchOptions.max_parallel_images` permite
+establecer un límite explícito cuando se invoca el proveedor.
+**Cada batch sigue conteniendo exactamente una imagen**. El manifiesto
 `images/manifest.json` lo escribe el coordinador en orden B2,
 con los PNG y estados individuales `images/block_<id>/<beat_id>.json`.
 

@@ -174,15 +174,15 @@ crear solicitudes de pago. Cada panel ocupa 1280×720 píxeles en el grid:
 los PNG completos miden 2560×1440, 3840×1440 o 3840×2160.
 Los tamaños superiores a 2560×1440 son experimentales según OpenAI;
 se debe revisar visualmente la distribución real de paneles. El prompt
-de cada grid se compone **por código**: primero el prefijo habitual
-`iphone 6 photo done by an elderly:  `, después la geometría `2x2`,
-`3x2` o `3x3`, el número de celdas y su proporción **16:9**.
+de cada grid se compone **por código** con la cabecera
+`iPhone 6 photograph done by an elderly:`, la línea `2x2 grid 16:9`
+(o `3x2`/`3x3`) y las descripciones numeradas, sin otro texto.
 Las descripciones numeradas por B2 mantienen literalmente su número;
 las imágenes de relleno reciben por código el número de su posición
-en el grid. Cada panel conserva también su fila y columna explícitas.
-El prompt **permite separadores blancos** para mantener la geometría:
-no intenta eliminarlos. Si algún panel menciona `avatar`, se adjunta
-el avatar verificado del run a la solicitud completa del grid.
+en el grid. Las filas y columnas se conservan en el mapa interno de
+paneles para el recorte, sin añadirse al prompt. Si algún panel
+menciona `avatar`, se adjunta el avatar verificado del run a la
+solicitud completa del grid.
 
 Tras guardar el PNG grande, un proceso **local, sin llamadas a la API**
 detecta los separadores blancos cerca de su posición nominal. Calcula

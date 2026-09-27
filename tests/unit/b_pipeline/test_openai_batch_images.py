@@ -724,8 +724,18 @@ def test_numbered_beats_make_one_full_resolution_grid_per_shape(
     assert request["url"] == "/v1/images/generations"
     assert request["body"]["size"] == size
     assert request["body"]["n"] == 1
-    assert "Panel 1" in request["body"]["prompt"]
-    assert f"Panel {columns * rows}" in request["body"]["prompt"]
+    prompt = request["body"]["prompt"]
+    assert prompt.startswith(
+        f"iPhone 6 photograph done by an elderly:\n\n"
+        f"{columns}x{rows} grid 16:9\n\n"
+    )
+    lines = prompt.split("\n\n", 2)[2].splitlines()
+    assert len(lines) == columns * rows
+    assert [line.split(".", 1)[0] for line in lines] == [
+        str(index) for index in range(1, columns * rows + 1)
+    ]
+    assert lines[0] == "1. Continuous scene step 1"
+    assert "Panel " not in prompt
     assert plan == unchanged
     with Image.open(tmp_path / artifact["file"]) as grid:
         assert grid.size == tuple(map(int, size.split("x")))
@@ -1026,26 +1036,34 @@ def test_grid_prompt_uses_iphone_prefix_explicit_geometry_and_source_numbering()
     jobs = images.plan_image_jobs(plan, images.described_beats(plan))
     assert len(jobs) == 1
     prompt = images.effective_image_prompt(jobs[0]["description"])
-    assert prompt.startswith(
-        "iphone 6 photo done by an elderly:  Generate ONE large 2x2"
+    assert prompt == (
+        "iPhone 6 photograph done by an elderly:\n\n"
+        "2x2 grid 16:9\n\n"
+        "1. Previous standalone photo 1\n"
+        "2. Previous standalone photo 2\n"
+        "1. Continuous scene step 1\n"
+        "2. Continuous scene step 2"
     )
-    assert "exactly 4 cells" in prompt
-    assert "aspect ratio 16:9" in prompt
-    assert "white divider lines" in prompt
-    assert "Panel 1 (row 1, column 1): 1. Previous standalone photo 1" in prompt
-    assert "Panel 2 (row 1, column 2): 2. Previous standalone photo 2" in prompt
-    assert "Panel 3 (row 2, column 1): 1. Continuous scene step 1" in prompt
-    assert "Panel 4 (row 2, column 2): 2. Continuous scene step 2" in prompt
+    assert images.effective_image_prompt("A quiet monastery") == (
+        "iphone 6 photo done by an elderly:  A quiet monastery"
+    )
+    assert images.effective_image_prompt(
+        jobs[0]["description"], avatar_reference=True
+    ).startswith(prompt + "\n\nUse the attached avatar image")
     assert plan == original
 
 
 def test_following_filler_gets_its_panel_number_without_rewriting_b2() -> None:
     plan = _numbered_grid_plan(2, after=2)
     prompt = images.plan_image_jobs(plan, images.described_beats(plan))[0]["description"]
-    assert "Panel 1 (row 1, column 1): 1. Continuous scene step 1" in prompt
-    assert "Panel 2 (row 1, column 2): 2. Continuous scene step 2" in prompt
-    assert "Panel 3 (row 2, column 1): 3. Following standalone photo 1" in prompt
-    assert "Panel 4 (row 2, column 2): 4. Following standalone photo 2" in prompt
+    assert prompt == (
+        "iPhone 6 photograph done by an elderly:\n\n"
+        "2x2 grid 16:9\n\n"
+        "1. Continuous scene step 1\n"
+        "2. Continuous scene step 2\n"
+        "3. Following standalone photo 1\n"
+        "4. Following standalone photo 2"
+    )
     assert plan["blocks"][0]["beats"][3]["description"] == "Following standalone photo 1"
 
 

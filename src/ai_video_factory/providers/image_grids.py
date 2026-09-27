@@ -18,6 +18,7 @@ _SHAPES = {
 }
 _PANEL_WIDTH = 1280
 _PANEL_HEIGHT = 720
+GRID_PHOTO_HEADER = "iPhone 6 photograph done by an elderly:\n\n"
 
 
 class GridPlanError(ValueError):
@@ -33,8 +34,8 @@ def _grid_prompt(panels: list[dict[str, Any]], columns: int, rows: int) -> str:
             description = f"{number}. {description}"
         descriptions.append(description)
     prompt = (
-        "iPhone 6 photograph done by an elderly:\n\n"
-        f"{columns}x{rows} grid 16:9\n\n"
+        GRID_PHOTO_HEADER
+        + f"{columns}x{rows} grid 16:9\n\n"
         + "\n".join(descriptions)
     )
     if len(prompt) + 400 > 32_000:

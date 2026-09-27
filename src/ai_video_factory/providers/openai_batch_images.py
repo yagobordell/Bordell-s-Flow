@@ -25,7 +25,7 @@ from urllib.request import Request, urlopen
 
 from PIL import Image
 
-from .image_grids import GridPlanError, plan_image_jobs
+from .image_grids import GRID_PHOTO_HEADER, GridPlanError, plan_image_jobs
 from .openai_images import OpenAIImageClient
 
 _BASE = "https://api.openai.com/v1"
@@ -95,7 +95,13 @@ class ImageBatchOptions:
 
 def effective_image_prompt(description: str, *, avatar_reference: bool = False) -> str:
     """Only adapt the outgoing request; preserve B2's original description."""
-    prompt = _IMAGE_PREFIX + description
+    # Grids already carry their explicit, user-chosen photo header.
+    # Ordinary single-image descriptions still receive the original prefix.
+    prompt = (
+        description
+        if description.startswith(GRID_PHOTO_HEADER)
+        else _IMAGE_PREFIX + description
+    )
     if avatar_reference:
         prompt += (
             "\n\nUse the attached avatar image as the character reference. "
