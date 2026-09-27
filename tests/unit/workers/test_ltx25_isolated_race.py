@@ -111,6 +111,36 @@ def test_one_ready_one_never_allocated_stops_loser_not_winner(
     assert loser.status == "stopped"
 
 
+def test_delayed_group_start_visibility_does_not_cancel_ready_first_worker() -> None:
+    clock = Clock()
+
+    class DelayedGroup(Group):
+        def start_container_group(self) -> None:
+            self.events.append("start")
+            self.status = "stopped"
+
+        def describe_container_group(self) -> dict[str, Any]:
+            if self.events and clock.now >= 45:
+                self.status = "running"
+            return super().describe_container_group()
+
+    main = Group(MAIN, clock=clock)
+    aux = DelayedGroup(AUX, clock=clock, allocated=False)
+    result = race(
+        [(MAIN, main), (AUX, aux)],
+        expected_image=IMAGE,
+        timeout_seconds=180,
+        poll_seconds=15,
+        clock=clock.clock,
+        sleep=clock.sleep,
+        report=lambda _: None,
+    )
+    assert result["winner_group"] == MAIN
+    assert result["loser_stopped"] is True
+    assert aux.events == ["start", "stop"]
+    assert main.events == ["start"]
+
+
 def test_ready_first_wins_even_if_second_is_downloading() -> None:
     clock = Clock()
     main = Group(MAIN, clock=clock, ready_at=30)
