@@ -169,3 +169,42 @@ The experimental LTX runtime now opts into a dedicated first-ready Postgres advi
 The original one-group/two-replica smoke passes `--ready-protected-by-imds` only when invoked with the protected benchmark flag and verified new image. The chooser first verifies the same worker's /ready twice, then confirms the other worker is unready with cost 0 (or is not allocated); never mixes local IMDS with external PATCH. After requesting configured replicas=1, it verifies the winning instance is the **only** current-version ready worker before sending a job. There is no guarantee against unplanned host failures or all possible concurrent Salad control-plane races; a failed winner check still prevents running on a different GPU.
 
 Offline mocked tests cover the IMDS election, exact local PUT/GET, failed persistence, lost leadership, two-active-but-one-downloading, a rival with high cost and a second-ready rival. They cannot prove the Salad scheduler honors IMDS updates until a real paid execution verifies the surviving UUID. Do not merge before real MP4 lip/head/zoom acceptance.
+
+## 2026-09-27: v37 real logs prove IMDS prevents /ready after successful bootstrap
+
+The most recent user-run v37 race allocated **two** current-version RTX 5090 instances,
+but both remained `ready=False`. The container logs (CSV export) show the first,
+ID `63769dac-8626-474f-ae83-f4f90715ff94`, downloaded and verified all
+five pinned model assets by 09:04:17 UTC and completed runtime preparation by
+09:04:20 UTC. It acquired the first-ready Postgres election lock at 09:04:24.
+The IMDS PUT immediately triggered the guard's "PUT was not confirmed (204)"
+exception; later IMDS GET requests timed out and the cleanup PUT also failed.
+Thus the guard blocked /ready despite fully loaded models. The other GPU,
+`c23cf469-6735-42a7-bcd4-a6112965f100`, was still downloading in its latest
+CSV rows. The user deliberately stopped the group around 1,134 seconds,
+the selector reported no winner and the guarded cleanup restored the original
+stopped image. No A2V job was submitted or video generated.
+
+Official Salad IMDS reference documents PUT HTTP 204 and GET HTTP 200. The CSV
+does NOT include the actual unexpected PUT HTTP status, so it is not evidence
+of HTTP 200, a specific HTTP error, or a broken local route by itself.
+The revised guard records non-204 2xx status and accepts its write ONLY when
+the next GET returns the exact desired cost; HTTP 4xx/5xx and transport errors
+produce short method/status/error-type diagnostics without private payloads.
+The early IMDS preflight now runs inside `download_models.sh` BEFORE the ~70 GiB
+bootstrap: GET initial 0, PUT temporary 1 and GET 1, then PUT 0 and GET 0.
+It exercises actual writes rather than merely assuming an existing default
+zero is evidence that PUT works. Transient GET network failures get bounded
+retries only during this cheap preflight; /ready remains time-bounded. A failed
+preflight exits before model download. Unit tests include a real local HTTP
+server emulating the documented and unexpected 200 PUT contracts, and ensure
+that a successful status without the exact readback does not pass.
+
+**Operational gate:** no more paid 2-GPU runs with the old v37 image. The
+new host/image commit must first pass final CI. If the next real preflight
+cannot confirm local IMDS even for temporary cost 1, stop and investigate
+Salad's per-container IMDS reachability and actual response before another
+long model download. This fix is a fail-fast verified protocol/diagnostic
+correction, NOT a claim that Salad's live IMDS is now operational, that
+the winner's UUID has survived live 2→1, or that monk lip-sync/no zoom has
+been visually accepted.
