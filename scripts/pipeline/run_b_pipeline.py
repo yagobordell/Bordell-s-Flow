@@ -17,15 +17,25 @@ from ai_video_factory.bots import run_b_pipeline
 from ai_video_factory.bots.billing import ApiCostLedger
 from ai_video_factory.bots.contracts import B11Output, B12Output
 from ai_video_factory.bots.fish_audio_workflow import (
+    AudioRegenerationLimitReached,
+    SttRetryLimitReached,
     generate_fish_audio,
+    regenerate_audio_block,
+    retranscribe_audio_block,
     unfinished_audio_runs,
 )
 from ai_video_factory.bots.workflow import materialize_blocks, validate_beats
-from ai_video_factory.compositor.static_preview import generate_static_preview
+from ai_video_factory.compositor.static_preview import (
+    SttAlignmentError,
+    build_stt_beat_timeline,
+    generate_static_preview,
+)
 from ai_video_factory.config import settings
 from ai_video_factory.providers import OpenAIProvider
+from ai_video_factory.providers.ai33_speech import AI33SpeechClient
 from ai_video_factory.providers.openai_batch_images import (
     ImageBatchOptions,
+    clear_previous_b2_images,
     generate_b2_images,
     has_pending_image_tasks,
 )
@@ -574,6 +584,84 @@ async def _preview_if_ready(
     return await _render_preview(output, plan, audio, images)
 
 
+def _preflight_stt_alignment(
+    output: Path,
+    plan: dict[str, object],
+    audio: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Validate saved STT against B2 before starting any paid image requests."""
+    if (
+        not isinstance(audio, dict)
+        or audio.get("status") != "completed"
+        or audio.get("stt_complete") is not True
+    ):
+        return None
+    timeline = build_stt_beat_timeline(output, plan, audio)
+    return {
+        "status": "completed",
+        "block_count": len(plan.get("blocks", [])),
+        "beat_count": len(timeline["beats"]),
+    }
+
+
+async def _preflight_stt_alignment_with_retries(
+    output: Path,
+    plan: dict[str, object],
+    audio: dict[str, object] | None,
+    *,
+    allow_audio_regeneration: bool = True,
+) -> dict[str, object] | None:
+    """Retry STT twice per audio version, then regenerate that block up to 3 times."""
+    if (
+        not isinstance(audio, dict)
+        or audio.get("status") != "completed"
+        or audio.get("stt_complete") is not True
+    ):
+        return None
+    stt_client: OpenAISttClient | None = None
+    while True:
+        try:
+            return _preflight_stt_alignment(output, plan, audio)
+        except SttAlignmentError as exc:
+            if stt_client is None:
+                stt_client = OpenAISttClient(api_key=settings.openai_api_key)
+            try:
+                attempt = await retranscribe_audio_block(
+                    output,
+                    audio,
+                    exc.block_id,
+                    stt_client=stt_client,
+                )
+            except SttRetryLimitReached:
+                if not allow_audio_regeneration:
+                    raise exc
+                try:
+                    regeneration = await regenerate_audio_block(
+                        output,
+                        audio,
+                        exc.block_id,
+                        speech_client=AI33SpeechClient(settings.ai33_api_key),
+                        stt_client=stt_client,
+                        poll_timeout_seconds=settings.ai33_fish_poll_timeout_seconds,
+                        poll_interval_seconds=settings.ai33_fish_poll_interval_seconds,
+                    )
+                except AudioRegenerationLimitReached:
+                    raise exc
+                print(
+                    f"  STT still mismatched in block {exc.block_id}; "
+                    f"regenerated its audio {regeneration}/3 times and transcribed it.",
+                    flush=True,
+                )
+                continue
+            except Exception as retry_error:
+                raise retry_error from exc
+            print(
+                f"  STT alignment mismatch in block {exc.block_id}; "
+                f"STT attempt {attempt}/2 completed on the same audio.",
+                flush=True,
+            )
+
+
 async def _run_images_only(script_file: Path, output_root: Path) -> None:
     """Resume image tasks using B2 artifacts without repeating any planning calls."""
     root = output_root.resolve()
@@ -602,6 +690,24 @@ async def _run_images_only(script_file: Path, output_root: Path) -> None:
         raise SystemExit("The selected script differs from the saved B2 image source")
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     try:
+        report["run"]["stt_alignment"] = await _preflight_stt_alignment_with_retries(
+            output,
+            plan,
+            report.get("run", {}).get("audio_generation"),
+            allow_audio_regeneration=False,
+        ) or {"status": "skipped"}
+    except Exception as exc:
+        report["run"]["stt_alignment"] = {"status": "failed", "error": str(exc)}
+        report["run"]["status"] = "failed"
+        report.setdefault("timings", {})["status"] = "failed"
+        report.setdefault("api_costs", {})["run_status"] = "failed"
+        _write(report_path, report)
+        raise
+    _write(report_path, report)
+    try:
+        removed_images = clear_previous_b2_images(output, plan)
+        if removed_images:
+            print(f"Removed {removed_images} previous image(s).", flush=True)
         manifest = await _generate_images(output, plan)
     except Exception:
         report["run"]["image_generation"] = {"status": "incomplete"}
@@ -705,15 +811,38 @@ async def _run_audio_only(
         )
     )
     try:
-        artifact = await _generate_audio(
-            script, output, b11=b11, provider=provider, resume=resume
-        )
+        reused_audio = False
+        artifact = None
+        if resume and not unfinished_audio_runs(output):
+            artifact = _latest_completed_audio(output, hashlib.sha256(raw).hexdigest())
+            reused_audio = artifact is not None
+        if artifact is None:
+            artifact = await _generate_audio(
+                script, output, b11=b11, provider=provider, resume=resume
+            )
     except Exception:
         report["run"]["audio_generation"] = {"status": "incomplete"}
         _write(report_path, report)
         raise
     report["run"]["audio_generation"] = artifact
     _write(report_path, report)
+    plan_path = output / "visual_plan.json"
+    if plan_path.is_file() and not plan_path.is_symlink():
+        try:
+            report["run"]["stt_alignment"] = await _preflight_stt_alignment_with_retries(
+                output,
+                json.loads(plan_path.read_text(encoding="utf-8")),
+                artifact,
+            ) or {"status": "skipped"}
+        except Exception as exc:
+            report["run"]["stt_alignment"] = {"status": "failed", "error": str(exc)}
+            report["run"]["status"] = "failed"
+            report["timings"]["status"] = "failed"
+            report["api_costs"]["run_status"] = "failed"
+            report["run"]["video_preview"] = {"status": "blocked_by_stt_alignment"}
+            _write(report_path, report)
+            raise
+        _write(report_path, report)
     try:
         preview = await _preview_if_ready(output, report)
     except Exception:
@@ -722,12 +851,66 @@ async def _run_audio_only(
         raise
     if preview is not None:
         report["run"]["video_preview"] = preview
+        run = report.get("run", {})
+        if (
+            isinstance(run, dict)
+            and run.get("audio_generation", {}).get("status") == "completed"
+            and run.get("image_generation", {}).get("status") == "completed"
+            and run.get("stt_alignment", {}).get("status") == "completed"
+        ):
+            run["status"] = "completed"
+            report.setdefault("timings", {})["status"] = "completed"
+            report.setdefault("api_costs", {})["run_status"] = "completed"
     _write(report_path, report)
     print(
-        f"  Fish Audio ready: {artifact['file']} "
+        f"  {'Reused' if reused_audio else 'Fish Audio ready'}: {artifact['file']} "
         f"(voice {artifact['voice_id']})",
         flush=True,
     )
+
+
+def _latest_completed_audio(output: Path, source_sha256: str) -> dict[str, object] | None:
+    """Load a verified completed audio run when resume has nothing pending."""
+    latest_path = output / "audio" / "latest.json"
+    if latest_path.is_symlink():
+        raise SystemExit("Refusing linked audio/latest.json")
+    if not latest_path.is_file():
+        return None
+    artifact = json.loads(latest_path.read_text(encoding="utf-8"))
+    if not isinstance(artifact, dict) or artifact.get("status") != "completed":
+        return None
+    run_id = artifact.get("run_id")
+    if not isinstance(run_id, str) or not run_id or Path(run_id).name != run_id:
+        return None
+    state_path = output / "audio" / "runs" / run_id / "task.json"
+    if state_path.is_symlink() or not state_path.is_file():
+        return None
+    task = json.loads(state_path.read_text(encoding="utf-8"))
+    if (
+        task.get("status") != "completed"
+        or task.get("run_id") != run_id
+        or task.get("source_sha256") != source_sha256
+        or task.get("audio") != artifact
+    ):
+        return None
+    relative = artifact.get("file")
+    digest = artifact.get("sha256")
+    if not isinstance(relative, str) or not isinstance(digest, str):
+        return None
+    relative_path = Path(relative)
+    if relative_path.is_absolute() or ".." in relative_path.parts:
+        return None
+    audio_path = output / relative_path
+    if (
+        audio_path.is_symlink()
+        or not audio_path.is_file()
+        or not audio_path.resolve().is_relative_to(output.resolve())
+    ):
+        return None
+    with audio_path.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
+            return None
+    return artifact
 
 
 class BotArtifacts:
@@ -1080,6 +1263,15 @@ async def main() -> None:
                 )
             )
 
+            def report_audio_error(task: asyncio.Task[dict[str, object]]) -> None:
+                if task.cancelled():
+                    return
+                error = task.exception()
+                if error is not None:
+                    print(f"Audio/STT failed: {error}", file=sys.stderr, flush=True)
+
+            audio_task.add_done_callback(report_audio_error)
+
     try:
         provider = OpenAIProvider(
             api_key=settings.openai_api_key,
@@ -1113,17 +1305,27 @@ async def main() -> None:
         # This application-owned binding is intentionally absent from audited B2 payloads.
         visual_plan["avatar"] = avatar_metadata
         _write(output / "visual_plan.json", visual_plan)
-        # Images start as soon as B2 has written its visual plan, without
-        # waiting for the independent narration to finish.
+        if audio_task is not None:
+            run_metadata["audio_generation"] = await audio_task
+            audio_joined = True
+            try:
+                run_metadata["stt_alignment"] = await _preflight_stt_alignment_with_retries(
+                    output, visual_plan, run_metadata["audio_generation"]
+                )
+            except Exception as exc:
+                run_metadata["stt_alignment"] = {
+                    "status": "failed",
+                    "error": str(exc),
+                }
+                save_report("failed", len(result.b12))
+                raise
+            save_report("running", len(result.b12))
+        # Wait for valid audio/STT alignment before starting paid image work.
         if not getattr(args, "skip_images", False):
             run_metadata["image_generation"] = {"status": "running"}
             save_report("running", len(result.b12))
             image_manifest = await _generate_images(output, visual_plan)
             run_metadata["image_generation"] = _image_summary(image_manifest)
-        if audio_task is not None:
-            run_metadata["audio_generation"] = await audio_task
-            audio_joined = True
-            save_report("running", len(result.b12))
         if image_manifest is not None:
             run_metadata["video_preview"] = {"status": "running"}
             save_report("running", len(result.b12))

@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import unicodedata
 import wave
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +21,26 @@ _WORDS = re.compile(r"[^\W_]+", re.UNICODE)
 _FPS = 30
 _WIDTH = 1280
 _HEIGHT = 720
+_NUMBER_WORDS = frozenset({
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+    "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+    "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "thirty", "forty",
+    "fifty", "sixty", "seventy", "eighty", "ninety", "hundred", "thousand",
+    "million", "billion",
+})
+_NUMBER_UNITS = frozenset({"cent", "cents", "dollar", "dollars", "percent", "percentage"})
 
 
 class StaticPreviewError(RuntimeError):
     """A required artifact is missing or cannot be aligned without guessing."""
+
+
+class SttAlignmentError(StaticPreviewError):
+    """A transcript's words differ from its corresponding B2 block."""
+
+    def __init__(self, block_id: int, message: str) -> None:
+        self.block_id = block_id
+        super().__init__(message)
 
 
 def _save_json(path: Path, payload: dict[str, Any]) -> None:
@@ -72,13 +89,118 @@ def _tokens(text: str) -> list[str]:
     ]
 
 
+def _is_number_token(token: str) -> bool:
+    return token.isdecimal() or token in _NUMBER_WORDS
+
+
+def _edit_distance_at_most_two(left: str, right: str) -> bool:
+    if abs(len(left) - len(right)) > 2:
+        return False
+    previous = list(range(len(right) + 1))
+    for row, left_char in enumerate(left, start=1):
+        current = [row]
+        for column, right_char in enumerate(right, start=1):
+            current.append(min(
+                current[-1] + 1,
+                previous[column] + 1,
+                previous[column - 1] + (left_char != right_char),
+            ))
+        if min(current) > 2:
+            return False
+        previous = current
+    return previous[-1] <= 2
+
+
+def _align_stt_tokens(
+    expected: list[str], actual: list[str], *, block_id: int,
+) -> list[int | None]:
+    """Align B2 words to STT words, ignoring numbers and tiny spelling errors."""
+    canonical_expected = ["<number>" if _is_number_token(token) else token for token in expected]
+    canonical_actual = ["<number>" if _is_number_token(token) else token for token in actual]
+    mapping: list[int | None] = [None] * len(expected)
+    matcher = SequenceMatcher(a=canonical_expected, b=canonical_actual, autojunk=False)
+
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        expected_part = expected[i1:i2]
+        actual_part = actual[j1:j2]
+        if tag == "equal":
+            for offset in range(i2 - i1):
+                mapping[i1 + offset] = j1 + offset
+            continue
+
+        number_related = any(_is_number_token(token) for token in expected_part + actual_part)
+        numeric_replacement = tag == "replace" and number_related
+        numeric_only_change = (
+            tag in {"delete", "insert"}
+            and bool(expected_part or actual_part)
+            and all(_is_number_token(token) for token in expected_part + actual_part)
+        )
+        short_spelling_change = (
+            tag == "replace"
+            and _edit_distance_at_most_two(
+                " ".join(expected_part), " ".join(actual_part)
+            )
+        )
+        short_omission_or_insertion = (
+            tag in {"delete", "insert"}
+            and sum(len(token) for token in expected_part + actual_part) <= 2
+        )
+        adjacent_number_unit = (
+            tag == "insert"
+            and j1 > 0
+            and _is_number_token(actual[j1 - 1])
+            and all(token in _NUMBER_UNITS for token in actual_part)
+        ) or (
+            tag == "delete"
+            and i1 > 0
+            and _is_number_token(expected[i1 - 1])
+            and all(token in _NUMBER_UNITS for token in expected_part)
+        )
+        if not (numeric_replacement or numeric_only_change
+                or short_spelling_change or short_omission_or_insertion
+                or adjacent_number_unit):
+            expected_text = " ".join(expected_part) or "<none>"
+            actual_text = " ".join(actual_part) or "<none>"
+            raise SttAlignmentError(
+                block_id,
+                f"STT words do not match B2 block {block_id}; "
+                f"token {i1 + 1}: expected {expected_text!r}, got {actual_text!r} "
+                f"(expected {len(expected)} words, received {len(actual)}). "
+                "Manual transcription review is required before video assembly."
+            )
+
+        if tag == "replace":
+            expected_numbers = [i for i in range(i1, i2) if _is_number_token(expected[i])]
+            actual_numbers = [j for j in range(j1, j2) if _is_number_token(actual[j])]
+            paired_expected: set[int] = set()
+            paired_actual: set[int] = set()
+            for expected_index, actual_index in zip(expected_numbers, actual_numbers):
+                mapping[expected_index] = actual_index
+                paired_expected.add(expected_index)
+                paired_actual.add(actual_index)
+            remaining_expected = [i for i in range(i1, i2) if i not in paired_expected]
+            remaining_actual = [j for j in range(j1, j2) if j not in paired_actual]
+            if len(remaining_actual) == 1 and remaining_expected:
+                for expected_index in remaining_expected:
+                    mapping[expected_index] = remaining_actual[0]
+                remaining_expected = []
+            for expected_index, actual_index in zip(remaining_expected, remaining_actual):
+                mapping[expected_index] = actual_index
+        elif tag == "delete":
+            anchor = j1 if j1 < len(actual) else (j1 - 1 if j1 else None)
+            for expected_index in range(i1, i2):
+                mapping[expected_index] = anchor
+
+    return mapping
+
+
 def build_stt_beat_timeline(
     output: Path, plan: dict[str, Any], audio: dict[str, Any],
 ) -> dict[str, Any]:
     """Align every B2 beat to STT words, keeping the exact WAV block offsets.
 
-    Only punctuation, case and diacritics can vary. If STT drops, changes or
-    combines spoken words, fail rather than inventing a visually plausible cut.
+    Numeric spelling and small transcription differences are normalized while
+    word timing stays tied to STT records. Larger text differences still fail.
     """
     blocks = plan.get("blocks")
     recorded = audio.get("blocks")
@@ -137,9 +259,10 @@ def build_stt_beat_timeline(
             if not isinstance(word, dict):
                 raise StaticPreviewError("Invalid STT word record")
             text = word.get("word")
+            word_tokens = _tokens(text) if isinstance(text, str) else []
             begin, end = word.get("start"), word.get("end")
             if (
-                not isinstance(text, str) or len(_tokens(text)) != 1
+                not isinstance(text, str) or not word_tokens
                 or isinstance(begin, bool) or isinstance(end, bool)
                 or not isinstance(begin, (int, float))
                 or not isinstance(end, (int, float))
@@ -148,20 +271,27 @@ def build_stt_beat_timeline(
                 or end > durations[index] + 0.15
             ):
                 raise StaticPreviewError("Unalignable or out-of-bounds OpenAI STT word")
-            aligned_words.append({"text": _tokens(text)[0], "start": begin, "end": end})
+            # Whisper sometimes emits contractions as one timed record even
+            # though the text tokenizer splits them into multiple tokens.
+            aligned_words.extend(
+                {"text": token, "start": begin, "end": end}
+                for token in word_tokens
+            )
             last_start = begin
         beats = block.get("beats")
         if not isinstance(beats, list) or not beats:
             raise StaticPreviewError("B2 block has no beats")
         expected_tokens = [_tokens(beat.get("text", "")) for beat in beats]
-        actual_tokens = [word["text"] for word in aligned_words]
-        if not all(expected_tokens) or [
-            token for words in expected_tokens for token in words
-        ] != actual_tokens:
+        flat_expected = [token for words in expected_tokens for token in words]
+        if not all(expected_tokens):
             raise StaticPreviewError(
-                f"STT words do not match B2 block {block['block_id']}; "
-                "manual transcription review is required before video assembly"
+                f"B2 block {block['block_id']} contains a beat with no alignable words"
             )
+        word_alignment = _align_stt_tokens(
+            flat_expected,
+            [word["text"] for word in aligned_words],
+            block_id=block["block_id"],
+        )
         cursor = 0
         for beat_index, (beat, tokens) in enumerate(zip(beats, expected_tokens, strict=True)):
             beat_id = beat.get("beat_id")
@@ -170,9 +300,19 @@ def build_stt_beat_timeline(
                 or not beat_id.startswith(str(block["block_id"]))
             ):
                 raise StaticPreviewError("Unsafe or mismatched B2 beat identifier")
-            start = (
-                starts[index] if beat_index == 0
-                else starts[index] + aligned_words[cursor]["start"]
+            mapped_words = [
+                word_alignment[position]
+                for position in range(cursor, cursor + len(tokens))
+                if word_alignment[position] is not None
+            ]
+            if not mapped_words:
+                raise StaticPreviewError(
+                    f"No STT timing could be assigned to B2 beat {beat_id}"
+                )
+            first_word_index = min(mapped_words)
+            last_word_index = max(mapped_words)
+            start = starts[index] if beat_index == 0 else (
+                starts[index] + aligned_words[first_word_index]["start"]
             )
             timeline.append({
                 "block_id": block["block_id"],
@@ -180,9 +320,11 @@ def build_stt_beat_timeline(
                 "visual_type": beat.get("visual_type"),
                 "description": beat.get("description"),
                 "start_seconds": float(start),
-                "first_word_seconds": float(starts[index] + aligned_words[cursor]["start"]),
+                "first_word_seconds": float(
+                    starts[index] + aligned_words[first_word_index]["start"]
+                ),
                 "last_word_end_seconds": float(
-                    starts[index] + aligned_words[cursor + len(tokens) - 1]["end"]
+                    starts[index] + aligned_words[last_word_index]["end"]
                 ),
                 "word_count": len(tokens),
             })

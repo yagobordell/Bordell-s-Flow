@@ -697,6 +697,52 @@ def generate_b2_images(
     return manifest
 
 
+def clear_previous_b2_images(output: Path, plan: dict[str, Any]) -> int:
+    """Remove prior images and archive their states before an images-only rerun.
+
+    Keep replaced legacy request records in an archive so paid-task history is
+    not lost. Existing OpenAI batch state is left intact so images-only can
+    resume it instead of creating duplicate paid requests.
+    """
+    jobs = described_beats(plan)
+    image_root = output / "images"
+    if image_root.is_symlink():
+        raise ImageBatchError("Refusing linked image directory")
+    assets: list[tuple[Path, Path, Path]] = []
+    for job in jobs:
+        folder = output / "images" / f"block_{job['block_id']}"
+        state_path = folder / f"{job['beat_id']}.json"
+        image_path = folder / f"{job['beat_id']}.png"
+        batch_path = folder / f"{job['beat_id']}.batch.jsonl"
+        if any(path.is_symlink() for path in (folder, state_path, image_path, batch_path)):
+            raise ImageBatchError(f"Refusing linked image assets for {job['beat_id']}")
+        if state_path.is_file():
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            if state.get("schema_version") == "openai-image-batch-v1":
+                # Preserve OpenAI's durable paid-task state for resume/reconciliation.
+                continue
+        assets.append((state_path, image_path, batch_path))
+
+    archive = output / "images" / "replaced_states"
+    if archive.is_symlink():
+        raise ImageBatchError("Refusing linked replaced-state archive")
+    stamp = uuid.uuid4().hex
+    removed = 0
+    for state_path, image_path, batch_path in assets:
+        if state_path.is_file():
+            destination = archive / state_path.parent.name / f"{state_path.stem}.{stamp}.json"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            state_path.replace(destination)
+        if batch_path.is_file():
+            destination = archive / batch_path.parent.name / f"{batch_path.stem}.{stamp}.jsonl"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            batch_path.replace(destination)
+        if image_path.is_file():
+            image_path.unlink()
+            removed += 1
+    return removed
+
+
 def has_pending_image_tasks(output: Path) -> bool:
     """Protect any durable image request, including old AI33 state, before B1 reruns."""
     for state_path in (output / "images").glob("block_*/*.json"):

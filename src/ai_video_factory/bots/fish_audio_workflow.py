@@ -35,6 +35,14 @@ class FishAudioWorkflowError(RuntimeError):
     """Speech state requires recovery or its saved source no longer matches."""
 
 
+class SttRetryLimitReached(FishAudioWorkflowError):
+    """A block has already used two STT attempts for this audio version."""
+
+
+class AudioRegenerationLimitReached(FishAudioWorkflowError):
+    """A block has already used all three audio regenerations."""
+
+
 def _atomic_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
@@ -181,6 +189,408 @@ async def _transcribe_block(
             "word_count": len(cached["words"]),
         },
     }
+
+
+async def retranscribe_audio_block(
+    output: Path,
+    audio_artifact: dict[str, Any],
+    block_id: int,
+    *,
+    stt_client: OpenAISttClient,
+) -> int:
+    """Retry STT on the same saved block audio and durably record each attempt."""
+    run_id = audio_artifact.get("run_id")
+    if not isinstance(run_id, str) or not run_id or Path(run_id).name != run_id:
+        raise FishAudioWorkflowError("Audio artifact has an invalid run ID for STT retry")
+    run_dir = output / "audio" / "runs" / run_id
+    task_path = run_dir / "task.json"
+    task = _read_json(task_path)
+    if task.get("status") != "completed" or task.get("audio") != audio_artifact:
+        raise FishAudioWorkflowError("Saved audio run is not complete or has changed")
+    records = audio_artifact.get("blocks")
+    if not isinstance(records, list):
+        raise FishAudioWorkflowError("Completed audio artifact has no block records")
+    matches = [item for item in records if item.get("block_id") == block_id]
+    if len(matches) != 1:
+        raise FishAudioWorkflowError(f"Audio block {block_id} is missing or duplicated")
+    item = matches[0]
+    transcript_ref = item.get("stt")
+    if not isinstance(transcript_ref, dict):
+        raise FishAudioWorkflowError(f"Audio block {block_id} has no saved STT reference")
+    transcript_name = transcript_ref.get("file")
+    if not isinstance(transcript_name, str):
+        raise FishAudioWorkflowError(f"Audio block {block_id} has an invalid STT path")
+    transcript_path = output / transcript_name
+    state_dir = (
+        transcript_path.parent.parent
+        if transcript_path.parent.name == "stt_attempts"
+        else transcript_path.parent
+    )
+    retry_path = state_dir / "stt_retry_state.json"
+    attempt_dir = state_dir / "stt_attempts"
+    latest_path = output / "audio" / "latest.json"
+    if (
+        state_dir.is_symlink() or retry_path.is_symlink() or attempt_dir.is_symlink()
+        or latest_path.is_symlink()
+        or transcript_path.is_symlink() or not transcript_path.is_file()
+    ):
+        raise FishAudioWorkflowError(f"Refusing linked or missing STT state for block {block_id}")
+    source_sha = item.get("sha256")
+    original = _read_json(transcript_path)
+    if original.get("source_audio_sha256") != source_sha:
+        raise FishAudioWorkflowError(f"Saved STT source differs for block {block_id}")
+
+    if retry_path.is_file():
+        retry_state = _read_json(retry_path)
+        if (
+            retry_state.get("schema_version") != "fish-stt-retries-v1"
+            or retry_state.get("source_audio_sha256") != source_sha
+            or retry_state.get("model") != stt_client.model
+        ):
+            raise FishAudioWorkflowError(f"Saved STT retry state differs for block {block_id}")
+        attempts = retry_state.get("attempts")
+        if not isinstance(attempts, list):
+            raise FishAudioWorkflowError(f"Invalid STT retry history for block {block_id}")
+        if any(entry.get("status") == "request_started_unknown" for entry in attempts):
+            raise FishAudioWorkflowError(
+                f"STT retry for block {block_id} has an uncertain paid outcome; "
+                f"reconcile {retry_path} before another attempt"
+            )
+    else:
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        first_path = attempt_dir / "attempt_1.json"
+        _atomic_json(first_path, original)
+        first_sha = hashlib.sha256(first_path.read_bytes()).hexdigest()
+        attempts = [{
+            "attempt": 1,
+            "status": "completed",
+            "file": first_path.relative_to(output).as_posix(),
+            "sha256": first_sha,
+            "word_count": len(original.get("words", [])),
+        }]
+        retry_state = {
+            "schema_version": "fish-stt-retries-v1",
+            "block_id": block_id,
+            "source_audio_sha256": source_sha,
+            "model": stt_client.model,
+            "attempts": attempts,
+        }
+
+    completed_numbers = [
+        entry.get("attempt") for entry in attempts
+        if entry.get("status") == "completed" and isinstance(entry.get("attempt"), int)
+    ]
+    attempt_number = max(completed_numbers, default=1) + 1
+    if attempt_number > 2:
+        raise SttRetryLimitReached(
+            f"STT block {block_id} already used both attempts for this audio"
+        )
+    retry_state["attempts"] = [
+        *attempts,
+        {"attempt": attempt_number, "status": "request_started_unknown"},
+    ]
+    _atomic_json(retry_path, retry_state)
+
+    audio_name = item.get("file")
+    if not isinstance(audio_name, str):
+        raise FishAudioWorkflowError(f"Audio block {block_id} has no file path")
+    audio_path = output / audio_name
+    transcript = await asyncio.to_thread(stt_client.transcribe, audio_path)
+    if transcript.get("model") != stt_client.model:
+        raise FishAudioWorkflowError("OpenAI STT retry returned an unexpected model")
+    retried = {**transcript, "source_audio_sha256": source_sha}
+    attempt_dir.mkdir(parents=True, exist_ok=True)
+    attempt_path = attempt_dir / f"attempt_{attempt_number}.json"
+    _atomic_json(attempt_path, retried)
+    attempt_sha = hashlib.sha256(attempt_path.read_bytes()).hexdigest()
+    completed_attempt = {
+        "attempt": attempt_number,
+        "status": "completed",
+        "file": attempt_path.relative_to(output).as_posix(),
+        "sha256": attempt_sha,
+        "word_count": len(retried["words"]),
+    }
+    retry_state["attempts"] = [*attempts, completed_attempt]
+    _atomic_json(retry_path, retry_state)
+
+    item["stt"] = {
+        "file": attempt_path.relative_to(output).as_posix(),
+        "sha256": attempt_sha,
+        "model": stt_client.model,
+        "word_count": len(retried["words"]),
+    }
+    task["audio"] = audio_artifact
+    _atomic_json(task_path, task)
+    _atomic_json(latest_path, audio_artifact)
+    return attempt_number
+
+
+async def _transcribe_regenerated_block(
+    output: Path,
+    audio_artifact: dict[str, Any],
+    item: dict[str, Any],
+    *,
+    stt_client: OpenAISttClient,
+) -> None:
+    audio_path = output / item["file"]
+    directory = audio_path.parent
+    transcript_path = directory / "stt.json"
+    request_path = directory / "stt_request.json"
+    if any(path.is_symlink() for path in (directory, transcript_path, request_path)):
+        raise FishAudioWorkflowError("Refusing linked regenerated STT state")
+    source_sha = item["sha256"]
+    if request_path.is_file():
+        request_state = _read_json(request_path)
+        if request_state.get("status") == "request_started_unknown":
+            raise FishAudioWorkflowError(
+                f"Regenerated STT for block {item['block_id']} has an uncertain outcome; "
+                f"reconcile {request_path} before retrying"
+            )
+    _atomic_json(request_path, {
+        "status": "request_started_unknown",
+        "source_audio_sha256": source_sha,
+        "model": stt_client.model,
+    })
+    transcript = await asyncio.to_thread(stt_client.transcribe, audio_path)
+    if transcript.get("model") != stt_client.model:
+        raise FishAudioWorkflowError("OpenAI STT returned an unexpected model")
+    saved = {**transcript, "source_audio_sha256": source_sha}
+    _atomic_json(transcript_path, saved)
+    _atomic_json(request_path, {
+        "status": "completed",
+        "source_audio_sha256": source_sha,
+        "model": stt_client.model,
+    })
+    item["stt"] = {
+        "file": transcript_path.relative_to(output).as_posix(),
+        "sha256": hashlib.sha256(transcript_path.read_bytes()).hexdigest(),
+        "model": stt_client.model,
+        "word_count": len(saved["words"]),
+    }
+    audio_artifact["stt_complete"] = all(
+        isinstance(block.get("stt"), dict) for block in audio_artifact["blocks"]
+    )
+    run_dir = output / "audio" / "runs" / audio_artifact["run_id"]
+    task_path = run_dir / "task.json"
+    task = _read_json(task_path)
+    task["audio"] = audio_artifact
+    _atomic_json(task_path, task)
+    latest_path = output / "audio" / "latest.json"
+    if latest_path.is_symlink():
+        raise FishAudioWorkflowError("Refusing linked audio/latest.json")
+    _atomic_json(latest_path, audio_artifact)
+
+
+async def regenerate_audio_block(
+    output: Path,
+    audio_artifact: dict[str, Any],
+    block_id: int,
+    *,
+    speech_client: AI33SpeechClient,
+    stt_client: OpenAISttClient,
+    poll_timeout_seconds: int = 3600,
+    poll_interval_seconds: float = 8.0,
+) -> int:
+    """Regenerate just one Fish TTS block, then run its first STT attempt."""
+    run_id = audio_artifact.get("run_id")
+    if not isinstance(run_id, str) or not run_id or Path(run_id).name != run_id:
+        raise FishAudioWorkflowError("Audio artifact has an invalid run ID")
+    run_dir = output / "audio" / "runs" / run_id
+    run_task_path = run_dir / "task.json"
+    latest_path = output / "audio" / "latest.json"
+    if latest_path.is_symlink():
+        raise FishAudioWorkflowError("Refusing linked audio/latest.json")
+    run_task = _read_json(run_task_path)
+    if run_task.get("status") != "completed" or run_task.get("audio") != audio_artifact:
+        raise FishAudioWorkflowError("Saved audio run is not complete or has changed")
+    records = audio_artifact.get("blocks")
+    if not isinstance(records, list):
+        raise FishAudioWorkflowError("Completed audio artifact has no blocks")
+    matches = [item for item in records if item.get("block_id") == block_id]
+    if len(matches) != 1:
+        raise FishAudioWorkflowError(f"Audio block {block_id} is missing or duplicated")
+    item = matches[0]
+    block_dir = run_dir / "blocks" / f"block_{block_id}"
+    block_state_path = block_dir / "task.json"
+    block_state = _read_json(block_state_path)
+    directed = _read_json(block_dir / "output.json")
+    directed_text = directed.get("plain_script_for_recording")
+    if not isinstance(directed_text, str) or not directed_text.strip():
+        raise FishAudioWorkflowError(f"Block {block_id} has no saved Fish recording text")
+
+    regen_path = block_dir / "audio_regeneration_state.json"
+    if regen_path.is_symlink():
+        raise FishAudioWorkflowError("Refusing linked audio regeneration state")
+    if regen_path.is_file():
+        regen_state = _read_json(regen_path)
+        if regen_state.get("source_sha256") != block_state.get("source_sha256"):
+            raise FishAudioWorkflowError("Block source changed since audio regeneration")
+        attempts = regen_state.get("attempts")
+        if not isinstance(attempts, list):
+            raise FishAudioWorkflowError("Invalid audio regeneration history")
+    else:
+        attempts = []
+        regen_state = {
+            "schema_version": "fish-audio-regenerations-v1",
+            "block_id": block_id,
+            "source_sha256": block_state.get("source_sha256"),
+            "attempts": attempts,
+        }
+
+    attempt = attempts[-1] if attempts else None
+    if attempt is not None and attempt.get("status") == "completed":
+        previous_audio = attempt.get("audio")
+        if isinstance(previous_audio, dict) and item.get("file") == previous_audio.get("file"):
+            attempt = None  # The current version has already failed its STT allowance.
+        elif isinstance(previous_audio, dict):
+            # Recover a completed paid TTS task if the process stopped before activation.
+            regenerate_number = attempt["attempt"]
+            attempt_dir = block_dir / "audio_regenerations" / f"attempt_{regenerate_number}"
+        else:
+            raise FishAudioWorkflowError("Completed audio regeneration has no audio artifact")
+    if attempt is not None and attempt.get("status") == "request_started_unknown":
+        raise FishAudioWorkflowError(
+            f"Audio regeneration for block {block_id} has an uncertain paid POST; "
+            f"reconcile {regen_path} before retrying"
+        )
+
+    if attempt is None:
+        regenerate_number = len(attempts) + 1
+        if regenerate_number > 3:
+            raise AudioRegenerationLimitReached(
+                f"Block {block_id} already used all three audio regenerations"
+            )
+        regen_root = block_dir / "audio_regenerations"
+        attempt_dir = regen_root / f"attempt_{regenerate_number}"
+        if regen_root.is_symlink() or attempt_dir.is_symlink():
+            raise FishAudioWorkflowError("Refusing linked audio regeneration directory")
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        attempt = {
+            "attempt": regenerate_number,
+            "status": "tts_submitting_unknown",
+            "directory": attempt_dir.relative_to(output).as_posix(),
+        }
+        attempts = [*attempts, attempt]
+        regen_state["attempts"] = attempts
+        _atomic_json(regen_path, regen_state)
+        try:
+            created = await asyncio.to_thread(
+                speech_client.create,
+                text=directed_text,
+                voice_id=audio_artifact["voice_id"],
+                speed=block_state["speed"],
+            )
+        except Exception as exc:
+            raise FishAudioWorkflowError(
+                f"Audio regeneration POST outcome is unknown for block {block_id}; "
+                f"reconcile {regen_path} before retrying"
+            ) from exc
+        task_id = task_id_of(created)
+        if not task_id:
+            _atomic_json(regen_path, regen_state)
+            raise FishAudioWorkflowError(
+                f"Regenerated TTS for block {block_id} returned no task ID"
+            )
+        attempt["create_response"] = created
+        attempt["task_id"] = task_id
+        attempt["status"] = "submitted"
+        _atomic_json(regen_path, regen_state)
+    else:
+        regenerate_number = attempt["attempt"]
+        regen_root = block_dir / "audio_regenerations"
+        attempt_dir = regen_root / f"attempt_{regenerate_number}"
+        if regen_root.is_symlink() or attempt_dir.is_symlink():
+            raise FishAudioWorkflowError("Refusing linked audio regeneration directory")
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+
+    if attempt.get("status") in {"submitted", "download_pending"}:
+        result = attempt.get("last_poll")
+        if not isinstance(result, dict) or str(result.get("status", "")).lower() not in {
+            "done", "completed", "success",
+        }:
+            result = await asyncio.to_thread(
+                speech_client.poll,
+                attempt["task_id"],
+                timeout_seconds=poll_timeout_seconds,
+                interval_seconds=poll_interval_seconds,
+            )
+            attempt["last_poll"] = result
+            attempt["status"] = "download_pending"
+            _atomic_json(regen_path, regen_state)
+        url = audio_url_of(result)
+        if not url:
+            raise AI33SpeechError(
+                f"Regenerated TTS block {block_id} has no audio URL; inspect {regen_path}"
+            )
+        audio_meta = await asyncio.to_thread(
+            speech_client.download_audio, url, attempt_dir
+        )
+        attempt["audio"] = {
+            **audio_meta,
+            "file": (attempt_dir / audio_meta["file"]).relative_to(output).as_posix(),
+        }
+        attempt["credit_cost"] = result.get("credit_cost")
+        attempt["status"] = "completed"
+        _atomic_json(regen_path, regen_state)
+    elif attempt.get("status") != "completed":
+        raise FishAudioWorkflowError(
+            f"Unrecognized audio regeneration state for block {block_id}: "
+            f"{attempt.get('status')}"
+        )
+
+    version_audio = attempt.get("audio")
+    if not isinstance(version_audio, dict):
+        raise FishAudioWorkflowError("Completed audio regeneration is missing its file")
+    audio_file = output / version_audio["file"]
+    if audio_file.is_symlink() or not audio_file.is_file():
+        raise FishAudioWorkflowError("Regenerated block audio is missing or linked")
+    with audio_file.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != version_audio["sha256"]:
+            raise FishAudioWorkflowError("Regenerated block audio failed SHA-256 verification")
+
+    item.update({
+        "task_id": attempt["task_id"],
+        "file": version_audio["file"],
+        "sha256": version_audio["sha256"],
+        "format": version_audio["format"],
+        "bytes": version_audio["bytes"],
+        "credit_cost": attempt.get("credit_cost"),
+    })
+    item.pop("stt", None)
+    audio_artifact["stt_complete"] = False
+    narration_path = run_dir / f"narration_audio_regen_{regenerate_number}.wav"
+    if narration_path.is_symlink():
+        raise FishAudioWorkflowError("Refusing linked regenerated narration")
+    merged = await asyncio.to_thread(
+        join_audio_blocks,
+        [output / block.get("file", "") for block in records],
+        narration_path,
+    )
+    credit_costs = [block.get("credit_cost") for block in records]
+    audio_artifact.update({
+        "file": narration_path.relative_to(output).as_posix(),
+        "sha256": merged["sha256"],
+        "format": merged["format"],
+        "bytes": merged["bytes"],
+        "duration_seconds": merged["duration_seconds"],
+        "block_start_seconds": merged["block_start_seconds"],
+        "block_end_seconds": merged["block_end_seconds"],
+        "block_durations_seconds": merged["block_durations_seconds"],
+        "credit_cost": (
+            sum(credit_costs)
+            if all(isinstance(value, (int, float)) for value in credit_costs)
+            else None
+        ),
+    })
+    attempt["active"] = True
+    _atomic_json(regen_path, regen_state)
+    run_task["audio"] = audio_artifact
+    _atomic_json(run_task_path, run_task)
+    _atomic_json(latest_path, audio_artifact)
+    await _transcribe_regenerated_block(
+        output, audio_artifact, item, stt_client=stt_client
+    )
+    return regenerate_number
 
 
 async def _generate_block(
