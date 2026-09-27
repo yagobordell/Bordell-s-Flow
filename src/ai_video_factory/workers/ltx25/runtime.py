@@ -8,6 +8,7 @@ from ai_video_factory.inference.tasks import TaskRunnerRegistry
 
 from .a2v import DirectLTX25AudioToVideoBackend, LTXAudioToVideoTaskRunner
 from .model import DirectLTX25Backend, LTXPipelineModeController, LTXVideoTaskRunner
+from .race_ready import LTXRaceReadyGuard
 from .settings import LTX25WorkerSettings
 
 
@@ -34,9 +35,20 @@ def build_ltx25_worker(settings: LTX25WorkerSettings):
 
 runtime_settings = LTX25WorkerSettings()
 logging.basicConfig(level=logging.INFO)
+_race_ready_guard = None
+if runtime_settings.race_protect_ready_with_imds:
+    _dsn = runtime_settings.postgres_dsn
+    if _dsn is None:
+        raise RuntimeError("LTX race IMDS readiness requires POSTGRES_DSN")
+    _race_ready_guard = LTXRaceReadyGuard(_dsn.get_secret_value())
+
 app = create_app(
     build_ltx25_worker(runtime_settings),
     prepare_in_background=True,
     poll_jobs_from_repository=runtime_settings.worker_poll_jobs,
     job_poll_seconds=runtime_settings.worker_job_poll_seconds,
+    readiness_hook=(
+        _race_ready_guard.ensure_protected if _race_ready_guard is not None else None
+    ),
+    shutdown_hook=_race_ready_guard.close if _race_ready_guard is not None else None,
 )
