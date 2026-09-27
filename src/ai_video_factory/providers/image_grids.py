@@ -27,22 +27,30 @@ class GridPlanError(ValueError):
 def _grid_prompt(panels: list[dict[str, Any]], columns: int, rows: int) -> str:
     """Describe independent full-resolution panels without changing B2 output."""
     instructions = [
-        f"Generate ONE single {columns}-column by {rows}-row contact sheet, "
-        f"exactly {len(panels)} equal panels, each 16:9.",
-        "Read panels left to right, then top to bottom. Every panel must be a "
-        "separate faithful photographable frame for its description. Maintain "
-        "the same identities, objects, surroundings and physical continuity "
-        "where the descriptions are numbered. No merged scenes, no omitted or "
-        "repeated panel, no borders, gutters, captions, panel numbers or text. "
-        "Fill the entire canvas with these panels.",
+        f"Generate ONE large {columns}x{rows} photographic grid "
+        f"({columns} columns x {rows} rows), exactly {len(panels)} cells.",
+        f"Every cell has aspect ratio 16:9, with a full grid canvas of "
+        f"{columns * _PANEL_WIDTH}x{rows * _PANEL_HEIGHT} pixels. "
+        "Each cell is an independent iPhone 6 photograph done by an elderly "
+        "person, in the same visual style as the usual image generation.",
+        "Arrange cells left to right, then top to bottom. Preserve a clear "
+        "rectangular layout with narrow white divider lines between cells; "
+        "a small white exterior border is acceptable. Keep the divider "
+        "lines straight and the panels distinct, so they can be cropped "
+        "after generation. Do not merge, repeat, omit or rearrange scenes.",
+        "Maintain the identities, objects and physical continuity of "
+        "numbered descriptions. Each panel below is identified by its "
+        "explicit row and column. Retain original B2 description numbers; "
+        "fillers receive their own panel position number.",
     ]
     for number, panel in enumerate(panels, 1):
         description = panel["description"]
-        match = _NUMBERED.match(description.lstrip())
-        if match:
-            description = match.group(2)
-        instructions.append(f"Panel {number} (row {panel['row'] + 1}, "
-                            f"column {panel['column'] + 1}): {description}")
+        if _NUMBERED.match(description.lstrip()) is None:
+            description = f"{number}. {description}"
+        instructions.append(
+            f"Panel {number} (row {panel['row'] + 1}, "
+            f"column {panel['column'] + 1}): {description}"
+        )
     prompt = "\n".join(instructions)
     if len(prompt) + 400 > 32_000:
         raise GridPlanError("Grid prompt exceeds the supported GPT Image prompt limit")
