@@ -785,7 +785,7 @@ def test_invalid_continuity_numbering_fails_before_any_paid_request(
     tmp_path: Path, descriptions: tuple[str, str],
 ) -> None:
     plan = _numbered_grid_plan(2, after=2)
-    for beat, description in zip(plan["blocks"][0]["beats"][1:], descriptions):
+    for beat, description in zip(plan["blocks"][0]["beats"][1:], descriptions, strict=False):
         beat["description"] = description
     batch = FakeBatch()
     with pytest.raises(images.ImageBatchError, match="number"):
