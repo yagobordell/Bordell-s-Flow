@@ -13,9 +13,12 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
 _LOGGER = logging.getLogger(__name__)
@@ -55,8 +58,17 @@ class LTXRaceReadyGuard:
         request = Request(
             _IMDS_URL, data=payload, headers=headers, method=method
         )
-        with self._opener.open(request, timeout=3) as response:
-            return int(response.status), response.read(4096)
+        try:
+            with self._opener.open(request, timeout=3) as response:
+                return int(response.status), response.read(4096)
+        except HTTPError as error:
+            raise RuntimeError(
+                f"Salad IMDS {method} returned HTTP {error.code}"
+            ) from error
+        except (TimeoutError, socket.timeout, URLError, OSError) as error:
+            raise RuntimeError(
+                f"Salad IMDS {method} network failure: {type(error).__name__}"
+            ) from error
 
     def _get_cost(self) -> int:
         status, data = self._request("GET")
@@ -75,8 +87,40 @@ class LTXRaceReadyGuard:
         status, _ = self._request(
             "PUT", json.dumps({"deletion_cost": cost}).encode("utf-8")
         )
+        # HTTP 204 is the published contract. A 200/202 is NOT proof of
+        # persistence; ensure_protected and the pre-download probe must GET
+        # the exact target value before treating this write as successful.
+        if status not in (200, 202, 204):
+            raise RuntimeError(
+                f"Salad IMDS deletion-cost PUT returned unexpected HTTP {status}"
+            )
         if status != 204:
-            raise RuntimeError("Salad IMDS deletion-cost PUT was not confirmed (204)")
+            _LOGGER.warning(
+                "Salad IMDS PUT returned HTTP %d (documented 204); "
+                "requiring exact GET confirmation", status
+            )
+
+    @classmethod
+    def preflight_before_model_download(cls) -> None:
+        """Exercise the exact IMDS read/write route before expensive model downloads.
+
+        A temporary cost of 1 is verified and then reset to 0. Neither a
+        successful PUT status nor a GET of the existing default zero alone
+        could establish that local metadata writes actually work.
+        """
+        probe = cls("imds-preflight-only", connect=lambda *_args, **_kwargs: None)
+        if probe._get_cost() != 0:
+            raise RuntimeError("Salad IMDS preflight requires initial deletion_cost=0")
+        try:
+            probe._put_cost(1)
+            if probe._get_cost() != 1:
+                raise RuntimeError("Salad IMDS preflight PUT=1 was not persisted")
+        finally:
+            # Never leave a pre-model worker with elevated deletion cost.
+            probe._put_cost(0)
+            if probe._get_cost() != 0:
+                raise RuntimeError("Salad IMDS preflight could not restore cost=0")
+        _LOGGER.info("LTX_RACE_IMDS_PREFLIGHT_OK read_write_reset=true")
 
     def _check_leadership(self) -> None:
         if self._connection is None:
@@ -153,3 +197,26 @@ class LTXRaceReadyGuard:
             connection, self._connection = self._connection, None
             if connection is not None:
                 connection.close()
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--preflight-before-download", action="store_true")
+    args = parser.parse_args()
+    if not args.preflight_before_download:
+        parser.error("--preflight-before-download is required")
+    try:
+        LTXRaceReadyGuard.preflight_before_model_download()
+    except Exception as error:
+        _LOGGER.error(
+            "LTX_RACE_IMDS_PREFLIGHT_FAILED reason=%s; model download not started",
+            str(error).splitlines()[0][:300],
+        )
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
