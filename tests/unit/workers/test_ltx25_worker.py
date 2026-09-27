@@ -86,6 +86,7 @@ def test_ltx25_model_download_uses_xet_with_resilient_timeouts() -> None:
     assert "huggingface_hub=" in bootstrap
     assert "hf_xet=" in bootstrap
     assert "xet_disabled=" in bootstrap
+    assert "LTX25_MODEL_BOOTSTRAP_METRIC" in bootstrap
 
     assert service["image"].endswith(
         ":ltx25-isolated-tasks-v11"

@@ -130,7 +130,7 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
         output_path=tmp_path / "output.mp4",
         parameters=LTXAudioToVideoParameters(prompt="A stable talking head."),
     )
-    backend.generate(
+    second_metadata = backend.generate(
         image_path=image,
         audio_path=audio,
         output_path=tmp_path / "second.mp4",
@@ -138,6 +138,7 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
     )
 
     assert state["builds"] == 1
+    assert second_metadata["pipeline_reused"] is True
     assert state["pipeline_init"]["quantization"] == "fp8-policy"
     assert state["pipeline_init"]["offload_mode"] == "cpu"
     assert "distilled-transformer" in state["model_paths"]["transformer_path"]
