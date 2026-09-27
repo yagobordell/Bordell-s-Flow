@@ -193,10 +193,15 @@ y se registran en `visual_plan.json:image_assets` y
 `images/manifest.json:panel_assets`; los grids originales no se borran
 y conservan el mapa de paneles en `visual_plan.json:image_grids`.
 Los beats `media_video` reciben así su imagen inicial individual.
-La vista previa puede usar estos recortes. Si un separador no se puede
-localizar con suficiente seguridad, el postproceso se detiene sin
-repetir ninguna generación de pago: el grid original queda disponible
-para inspección y `--images-only` puede reanudar los artefactos guardados.
+La vista previa puede usar estos recortes. Durante el montaje, cada
+`media_image` recibe un zoom in/out suave centrado o un Ken Burns in/out
+anclado en alguna de las cuatro esquinas, con movimiento durante el beat.
+Se alternan los estilos por orden de imágenes y se conservan los PNG
+originales; los beats `media_video`, `avatar` y `avatar_media` no
+reciben ese movimiento. Si un separador no se puede localizar con
+suficiente seguridad, el postproceso se detiene sin repetir ninguna
+generación de pago: el grid original queda disponible para inspección
+y `--images-only` puede reanudar los artefactos guardados.
 
 El límite **local** de cada batch es de 30 minutos desde su envío
 (`OPENAI_IMAGE_BATCH_TIMEOUT_SECONDS=1800`), aunque la ventana oficial

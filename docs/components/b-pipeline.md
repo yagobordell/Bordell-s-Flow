@@ -254,7 +254,9 @@ por bloque, el prompt, la voz y la velocidad. Para ensamblar se necesita
 Las imágenes de OpenAI Batch siguen empezando al finalizar B2, sin esperar
 a la pista de voz final. En cuanto están completos las imágenes,
 la voz y el STT, se monta automáticamente `preview/static_preview.mp4`.
-Este vídeo es un simulacro estático, sin animación ni sincronización labial.
+Este vídeo es un simulacro de montaje: los beats `media_image` tienen
+zoom suave continuo; no incluye todavía sincronización labial. El nombre
+`static_preview.mp4` se mantiene por compatibilidad.
 
 ```powershell
 # Ejecutar planificación e imágenes sin voz:
@@ -285,10 +287,18 @@ también al recuperar los últimos artefactos mediante `--images-only` o
 `--resume-audio` si la otra mitad ya está lista. Se utiliza FFmpeg
 + FFprobe, vídeo H.264 1280×720 a 30 fps y audio AAC. `avatar_media` se
 representa provisionalmente con avatar a la izquierda e imagen generada
-a la derecha, 50/50; `media_video` usa su PNG estático. Los tiempos del
-STT son estimaciones a nivel palabra y los cambios visuales se cuantizan
-a fotogramas de 1/30 s. No se ejecutan animación, lip-sync ni llamadas
-GPU para crear el simulacro. Para la API de STT:
+a la derecha, 50/50; `media_video` usa su PNG estático. Los beats
+`media_image` se animan localmente con FFmpeg mediante zoom in/out
+centrado o Ken Burns in/out anclado en cada una de las cuatro esquinas.
+Los estilos se alternan de forma determinista, con un zoom pequeño
+(1.035–1.115), durante toda la duración del beat. Ni las imágenes fuente
+ni sus recortes se modifican. `avatar`, `avatar_media` y `media_video`
+mantienen sus fotogramas actuales. Los tiempos del STT son estimaciones
+a nivel palabra y los cambios visuales se cuantizan a fotogramas de
+1/30 s. Un `media_image` de menos de dos fotogramas falla explícitamente
+antes de publicar un preview fijo. El movimiento queda registrado en
+`preview/timeline.json`; no se ejecutan lip-sync ni llamadas GPU para
+crear el simulacro. Para la API de STT:
 https://developers.openai.com/api/docs/guides/speech-to-text
 
 ## GPT Image oficial: un batch independiente por imagen de B2
