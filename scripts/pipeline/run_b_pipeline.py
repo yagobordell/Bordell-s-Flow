@@ -1221,9 +1221,10 @@ async def main() -> None:
                 expected_calls["B1.2"] = max(
                     expected_calls["B1.2"] or 0, timings.call_count("B1.2")
                 )
-                expected_calls["B2"] = max(
-                    expected_calls["B2"] or 0, report_blocks, timings.call_count("B2")
-                )
+                if stop_index >= 2:
+                    expected_calls["B2"] = max(
+                        expected_calls["B2"] or 0, report_blocks, timings.call_count("B2")
+                    )
         costs = ledger.report(
             blocks=report_blocks,
             run_status=status,
