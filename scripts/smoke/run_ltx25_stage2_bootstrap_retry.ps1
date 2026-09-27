@@ -50,7 +50,8 @@ if ($ExperimentalPinnedImage -notmatch "^docker[.]io/yagobordell/ai-video-factor
     throw "Expected an immutable NEW experimental Docker digest."
 }
 if ([string]$Services.services.ltx25.environment.LTX_MODEL_DOWNLOAD_MAX_WORKERS -ne "2" -or
-    [string]$Services.services.ltx25.environment.LTX_REQUIRE_VERIFIED_SHARED_MANIFEST -ne "true") {
+    [string]$Services.services.ltx25.environment.LTX_REQUIRE_VERIFIED_SHARED_MANIFEST -ne "true" -or
+    [string]$Services.services.ltx25.environment.LTX_RACE_PROTECT_READY_WITH_IMDS -ne "true") {
     throw "Local Salad manifest does not enable the reviewed bootstrap protections."
 }
 
@@ -106,7 +107,12 @@ try {
     # Salad has repeatedly acknowledged but not reflected deletion_cost=100000.
     $BootstrapWaitSeconds = if ($StartupReplicas -eq 1) { 3600 } else { 300 }
     Write-Host "LTX_STARTUP_MODE replicas=$StartupReplicas readiness_timeout_seconds=$BootstrapWaitSeconds"
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Smoke -Audio $Audio -AvatarImage $Avatar -Profile reference -ReferenceStage2Steps 2 -SegmentId $SegmentId -Prompt $Prompt -Seed 4242 -OutputDir $OutputDir -StartupReplicas $StartupReplicas -RaceTimeoutSeconds $RaceTimeoutSeconds -BootstrapTimeoutSeconds $BootstrapWaitSeconds -MaxGenerationSeconds 600 -ExpectedPinnedImage $ExperimentalPinnedImage -EnvFile $EnvFile -NonInteractive
+    if ($StartupReplicas -eq 2) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Smoke -Audio $Audio -AvatarImage $Avatar -Profile reference -ReferenceStage2Steps 2 -SegmentId $SegmentId -Prompt $Prompt -Seed 4242 -OutputDir $OutputDir -StartupReplicas 2 -RaceTimeoutSeconds $RaceTimeoutSeconds -BootstrapTimeoutSeconds $BootstrapWaitSeconds -MaxGenerationSeconds 600 -ExpectedPinnedImage $ExperimentalPinnedImage -EnvFile $EnvFile -NonInteractive -UseImdsReadyProtection
+    }
+    else {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Smoke -Audio $Audio -AvatarImage $Avatar -Profile reference -ReferenceStage2Steps 2 -SegmentId $SegmentId -Prompt $Prompt -Seed 4242 -OutputDir $OutputDir -StartupReplicas 1 -RaceTimeoutSeconds $RaceTimeoutSeconds -BootstrapTimeoutSeconds $BootstrapWaitSeconds -MaxGenerationSeconds 600 -ExpectedPinnedImage $ExperimentalPinnedImage -EnvFile $EnvFile -NonInteractive
+    }
     if ($LASTEXITCODE -ne 0) { throw "Controlled LTX two-GPU smoke failed." }
 
     # The smoke has already stopped GPU capacity. Review files never modify MP4.
