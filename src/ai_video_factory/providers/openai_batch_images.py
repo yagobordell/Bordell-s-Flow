@@ -28,6 +28,11 @@ from .openai_images import OpenAIImageClient
 
 _BASE = "https://api.openai.com/v1"
 _IMAGE_ENDPOINT = "/v1/images/generations"
+_IMAGE_EDIT_ENDPOINT = "/v1/images/edits"
+_AVATAR_WORD = re.compile(r"\bavatar\b", flags=re.IGNORECASE)
+_MAX_AVATAR_PNG = 14 * 1024 * 1024
+_MAX_IMAGE_URL = 20_971_520
+_MAX_JSONL = 21 * 1024 * 1024
 _IMAGE_PREFIX = "iphone 6 photo done by an elderly:  "
 _MAX_PNG = 30 * 1024 * 1024
 _MAX_OUTPUT = (_MAX_PNG * 4 // 3) + 1024 * 1024
@@ -67,20 +72,74 @@ class ImageBatchOptions:
         if not 1 <= self.max_parallel_images <= 16:
             raise ValueError("max_parallel_images must be between 1 and 16")
 
-    def request(self, description: str) -> dict[str, Any]:
-        return {
+    def request(
+        self, description: str, *, avatar_image_url: str | None = None
+    ) -> dict[str, Any]:
+        request: dict[str, Any] = {
             "model": self.model_id,
-            "prompt": effective_image_prompt(description),
+            "prompt": effective_image_prompt(
+                description, avatar_reference=avatar_image_url is not None
+            ),
             "size": self.size,
             "quality": self.quality,
             "output_format": "png",
             "n": 1,
         }
+        if avatar_image_url is not None:
+            request["images"] = [{"image_url": avatar_image_url}]
+        return request
 
 
-def effective_image_prompt(description: str) -> str:
-    """Prefix only the outgoing request; never rewrite B2's original description."""
-    return _IMAGE_PREFIX + description
+def effective_image_prompt(description: str, *, avatar_reference: bool = False) -> str:
+    """Only adapt the outgoing request; preserve B2's original description."""
+    prompt = _IMAGE_PREFIX + description
+    if avatar_reference:
+        prompt += (
+            "\n\nUse the attached avatar image as the character reference. "
+            "Preserve the avatar's recognizable face and appearance while "
+            "following the scene and composition in the description."
+        )
+    return prompt
+
+
+def _avatar_requested(description: str) -> bool:
+    return _AVATAR_WORD.search(description) is not None
+
+
+def _avatar_reference(
+    output: Path, plan: dict[str, Any], jobs: list[dict[str, Any]]
+) -> tuple[str, str] | None:
+    """Validate the run's selected avatar before any paid image requests."""
+    if not any(_avatar_requested(job["description"]) for job in jobs):
+        return None
+    metadata = plan.get("avatar")
+    if (
+        not isinstance(metadata, dict)
+        or metadata.get("file") != "avatar.png"
+        or not isinstance(metadata.get("sha256"), str)
+        or not re.fullmatch(r"[0-9a-f]{64}", metadata["sha256"])
+    ):
+        raise ImageBatchError("Avatar description requires the saved run avatar metadata")
+    path = output / "avatar.png"
+    if path.is_symlink() or not path.is_file():
+        raise ImageBatchError("Avatar description requires the saved run avatar.png")
+    data = path.read_bytes()
+    if not data or len(data) > _MAX_AVATAR_PNG:
+        raise ImageBatchError("Saved avatar PNG is empty or exceeds the reference size limit")
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != metadata["sha256"]:
+        raise ImageBatchError("Saved avatar bytes differ from the selected run avatar")
+    try:
+        with Image.open(BytesIO(data)) as image:
+            if image.format != "PNG":
+                raise ImageBatchError("Saved run avatar is not PNG")
+            image.verify()
+    except (OSError, ValueError) as exc:
+        raise ImageBatchError("Saved run avatar contains invalid PNG bytes") from exc
+    url = "data:image/png;base64," + base64.b64encode(data).decode("ascii")
+    if len(url) > _MAX_IMAGE_URL:
+        raise ImageBatchError("Saved avatar exceeds the supported image reference size")
+    return digest, url
 
 
 def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
@@ -127,6 +186,12 @@ def _fingerprint(job: dict[str, Any], options: ImageBatchOptions) -> str:
         "block_id": job["block_id"],
         **options.request(job["description"]),
     }
+    if job.get("avatar_reference_sha256") is not None:
+        identity["prompt"] = effective_image_prompt(
+            job["description"], avatar_reference=True
+        )
+        identity["image_endpoint"] = _IMAGE_EDIT_ENDPOINT
+        identity["avatar_reference_sha256"] = job["avatar_reference_sha256"]
     return hashlib.sha256(
         json.dumps(identity, sort_keys=True, ensure_ascii=False).encode("utf-8")
     ).hexdigest()
@@ -189,7 +254,7 @@ class OpenAIBatchImageClient:
         return result
 
     def upload_jsonl(self, content: bytes, *, filename: str) -> str:
-        if len(content) > 1024 * 1024 or not re.fullmatch(r"[a-zA-Z0-9_.-]+", filename):
+        if len(content) > _MAX_JSONL or not re.fullmatch(r"[a-zA-Z0-9_.-]+", filename):
             raise ImageBatchError("Invalid individual image batch input")
         boundary = "ai-video-factory-" + uuid.uuid4().hex
         body = (
@@ -212,12 +277,17 @@ class OpenAIBatchImageClient:
             raise ImageBatchError("OpenAI file upload returned no file ID")
         return _safe_id(file_id)
 
-    def create_batch(self, file_id: str, *, beat_id: str, fingerprint: str) -> dict[str, Any]:
+    def create_batch(
+        self, file_id: str, *, beat_id: str, fingerprint: str,
+        endpoint: str = _IMAGE_ENDPOINT,
+    ) -> dict[str, Any]:
+        if endpoint not in {_IMAGE_ENDPOINT, _IMAGE_EDIT_ENDPOINT}:
+            raise ImageBatchError("Unsupported image batch endpoint")
         return self._request_json(
             "POST", "/batches",
             {
                 "input_file_id": _safe_id(file_id),
-                "endpoint": _IMAGE_ENDPOINT,
+                "endpoint": endpoint,
                 "completion_window": "24h",
                 "metadata": {
                     "b2_beat_id": beat_id,
@@ -371,6 +441,7 @@ def _direct_fallback(
     *,
     api_key: str | None,
     direct_client: OpenAIImageClient | None,
+    avatar_image_url: str | None,
 ) -> dict[str, Any]:
     if state.get("status") not in {"batch_timed_out", "batch_failed"}:
         raise ImageBatchError("Direct generation requires a timed-out or failed batch")
@@ -385,14 +456,19 @@ def _direct_fallback(
     state["status"] = "direct_submitting_unknown"
     _atomic_json(state_path, state)
     try:
-        result = direct_client.generate_png(
-            prompt=effective_image_prompt(job["description"]),
-            model=options.model_id,
-            size=options.size,
-            quality=options.quality,
-            output_format="png",
-            destination=image_path,
-        )
+        kwargs: dict[str, Any] = {
+            "prompt": effective_image_prompt(
+                job["description"], avatar_reference=avatar_image_url is not None
+            ),
+            "model": options.model_id,
+            "size": options.size,
+            "quality": options.quality,
+            "output_format": "png",
+            "destination": image_path,
+        }
+        if avatar_image_url is not None:
+            kwargs["reference_image_url"] = avatar_image_url
+        result = direct_client.generate_png(**kwargs)
     except Exception as exc:
         raise ImageBatchError(
             f"Direct image POST outcome for {job['beat_id']} is unknown. "
@@ -445,7 +521,12 @@ def _one_image(
     api_key: str | None,
     batch_client: OpenAIBatchImageClient,
     direct_client: OpenAIImageClient | None,
+    avatar_image_url: str | None,
 ) -> dict[str, Any]:
+    reference_url = (
+        avatar_image_url if job.get("avatar_reference_sha256") is not None else None
+    )
+    endpoint = _IMAGE_EDIT_ENDPOINT if reference_url is not None else _IMAGE_ENDPOINT
     folder = output / "images" / f"block_{job['block_id']}"
     state_path = folder / f"{job['beat_id']}.json"
     image_path = folder / f"{job['beat_id']}.png"
@@ -492,6 +573,7 @@ def _one_image(
         return _direct_fallback(
             job, options, output, state, state_path, image_path,
             api_key=api_key, direct_client=direct_client,
+            avatar_image_url=reference_url,
         )
 
     if state["status"] == "upload_pending":
@@ -499,8 +581,10 @@ def _one_image(
         request = {
             "custom_id": custom_id,
             "method": "POST",
-            "url": _IMAGE_ENDPOINT,
-            "body": options.request(job["description"]),
+            "url": endpoint,
+            "body": options.request(
+                job["description"], avatar_image_url=reference_url
+            ),
         }
         jsonl = json.dumps(request, ensure_ascii=False, separators=(",", ":")) + "\n"
         _atomic_text(batch_path, jsonl)
@@ -526,9 +610,12 @@ def _one_image(
         state["status"] = "batch_creating_unknown"
         _atomic_json(state_path, state)
         try:
-            batch = batch_client.create_batch(
-                state["input_file_id"], beat_id=job["beat_id"], fingerprint=fingerprint
-            )
+            create_kwargs: dict[str, Any] = {
+                "beat_id": job["beat_id"], "fingerprint": fingerprint
+            }
+            if reference_url is not None:
+                create_kwargs["endpoint"] = endpoint
+            batch = batch_client.create_batch(state["input_file_id"], **create_kwargs)
         except Exception as exc:
             raise ImageBatchError(
                 f"Batch creation outcome for {job['beat_id']} is unknown. "
@@ -542,7 +629,7 @@ def _one_image(
             )
         if (
             batch.get("input_file_id") != state["input_file_id"]
-            or batch.get("endpoint") != _IMAGE_ENDPOINT
+            or batch.get("endpoint") != endpoint
         ):
             raise ImageBatchError(
                 "Created batch does not match the saved input file or endpoint"
@@ -572,6 +659,7 @@ def _one_image(
         return _direct_fallback(
             job, options, output, state, state_path, image_path,
             api_key=api_key, direct_client=direct_client,
+            avatar_image_url=reference_url,
         )
     state["batch_status"] = batch["status"]
     state["output_file_id"] = batch.get("output_file_id")
@@ -601,6 +689,7 @@ def _one_image(
     return _direct_fallback(
         job, options, output, state, state_path, image_path,
         api_key=api_key, direct_client=direct_client,
+        avatar_image_url=reference_url,
     )
 
 
@@ -615,6 +704,14 @@ def generate_b2_images(
 ) -> dict[str, Any]:
     """Use N independent single-line batches for N described beats."""
     jobs = described_beats(plan)
+    reference = _avatar_reference(output, plan, jobs)
+    if reference is not None:
+        digest, _url = reference
+        jobs = [
+            {**job, "avatar_reference_sha256": digest}
+            if _avatar_requested(job["description"]) else job
+            for job in jobs
+        ]
     for job in jobs:
         state_path = output / "images" / f"block_{job['block_id']}" / f"{job['beat_id']}.json"
         if state_path.is_symlink():
@@ -664,6 +761,7 @@ def generate_b2_images(
                     pool.submit(
                         _one_image, job, output, options, api_key=api_key,
                         batch_client=batch_client, direct_client=direct_client,
+                        avatar_image_url=reference[1] if reference is not None else None,
                     ): (i, job["beat_id"])
                     for i, job in enumerate(jobs)
                 }
