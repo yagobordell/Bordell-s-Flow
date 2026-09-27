@@ -184,7 +184,9 @@ def _align_stt_tokens(
                 for expected_index in remaining_expected:
                     mapping[expected_index] = remaining_actual[0]
                 remaining_expected = []
-            for expected_index, actual_index in zip(remaining_expected, remaining_actual, strict=False):
+            for expected_index, actual_index in zip(
+                remaining_expected, remaining_actual, strict=False
+            ):
                 mapping[expected_index] = actual_index
         elif tag == "delete":
             anchor = j1 if j1 < len(actual) else (j1 - 1 if j1 else None)
