@@ -198,7 +198,7 @@ def parse_args() -> argparse.Namespace:
         parser.error("Choose either --list-scripts or --list-avatars.")
     if (args.list_scripts or args.list_avatars) and (
         args.qr_only
-        args.script_file is not None
+        or args.script_file is not None
         or args.script is not None
         or args.avatar is not None
         or args.qr_url is not None
