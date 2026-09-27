@@ -93,8 +93,12 @@ def test_ready_fails_closed_if_imds_does_not_persist_write(
     monkeypatch.setattr(guard, "_request", _transport(state))
     with pytest.raises(RuntimeError, match="did not persist"):
         guard.ensure_protected()
-    assert registry.owner is not None
+    assert registry.owner is None
     assert state["cost"] == 0
+    assert state["puts"] == [
+        {"deletion_cost": 100000},
+        {"deletion_cost": 0},
+    ]
     guard.close()
 
 
