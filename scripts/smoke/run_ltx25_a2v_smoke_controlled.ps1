@@ -69,6 +69,15 @@ if ($StartupReplicas -eq 2 -and [string]::IsNullOrWhiteSpace($ExpectedPinnedImag
 if ($UseImdsReadyProtection -and $StartupReplicas -ne 2) {
     throw "IMDS first-ready protection is valid only in the two-replica race."
 }
+$ProtectionManifestPath = Join-Path $RepoRoot "deploy\\salad\\services.json"
+if ($StartupReplicas -eq 2 -and
+    (Test-Path -LiteralPath $ProtectionManifestPath -PathType Leaf)) {
+    $ReviewedManifest = Get-Content -LiteralPath $ProtectionManifestPath -Raw | ConvertFrom-Json
+    if ([string]$ReviewedManifest.services.ltx25.environment.LTX_RACE_PROTECT_READY_WITH_IMDS -eq "true" -and
+        -not $UseImdsReadyProtection) {
+        throw "The reviewed two-replica image requires -UseImdsReadyProtection; refusing to mix IMDS and external deletion-cost writers."
+    }
+}
 if ($UseImdsReadyProtection) {
     $ProtectionManifest = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\\salad\\services.json") -Raw | ConvertFrom-Json
     if ([string]$ProtectionManifest.services.ltx25.environment.LTX_RACE_PROTECT_READY_WITH_IMDS -ne "true") {
