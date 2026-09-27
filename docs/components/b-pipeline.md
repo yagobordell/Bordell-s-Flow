@@ -155,31 +155,44 @@ edits to `data/avatar/` cannot change the image used for this run. Original
 avatar binding applies to beats with `visual_type` `avatar` or `avatar_media`.
 Lip-sync/video generation is not implemented by this selection feature.
 
-### Persistent ebook QR per avatar
+### Persistent ebook QR per avatar (local, no GPT calls)
 
-The first ordinary run with an avatar without a QR asks for the ebook sales URL
-in the CLI. Paste the full HTTP(S) URL and press Enter. The runner sends only
-that URL as the user input to `OPENAI_MODEL=gpt-6-luna`, with the fixed system
-prompt `crea un QR para el link que se te adjunte.` and the official image
-generation tool using the existing `OPENAI_IMAGE_MODEL`. It saves the resulting
-PNG and the exact URL in `data/avatar/.qr/<avatar-filename>/qr.png` and
-`qr.json`, which are local runtime data and ignored by Git. On subsequent
-runs, the same named avatar reuses the QR with no prompt or paid QR call.
-The QR PNG is also snapshotted into each run as `qr.png`, and the URL, file,
-hash and generation models are recorded under `run.avatar.qr` and
-`visual_plan.json → avatar.qr`. This step prepares the asset for future video
-composition; the current B pipeline does **not** overlay the QR on videos.
+On the first ordinary run with an avatar without a QR, the CLI requests the
+ebook sales URL. Paste the complete HTTP(S) URL and press Enter. The runner uses
+the local `segno` Python package to encode **exactly that URL** into a standard
+black-on-white PNG with a four-module quiet zone and integer-size modules.
+Generating the QR does not use GPT, OpenAI's image API, an external service or
+paid credits. This does not affect the existing OpenAI planning and B2 image
+generation stages.
 
-For a first run in a non-interactive shell, pass `--qr-url https://example.com/ebook`
-(along with `--script` and `--avatar`). If the avatar already has a QR,
-`--qr-url` must match its existing URL. Changing the destination is a deliberate
-manual operation: review and remove the avatar's `.qr/<avatar-filename>/`
-folder only after confirming the previous generated image and destination.
-A failed or timed-out paid request leaves `request_pending.json` to prevent an
-unintentional duplicate charge. Check the OpenAI request outcome before
-removing that marker and retrying. The runner checks image format and file
-integrity, but does not claim to decode or scan the generated QR: **scan the
-PNG with a phone and confirm the destination before publication**.
+The QR and destination are saved under
+`data/avatar/.qr/<avatar-filename>/qr.png` and `qr.json` (ignored by Git).
+Subsequent runs reuse the asset for the same avatar without prompting. Every
+ordinary run snapshots the QR as `data/output/<script>/qr.png`, with the exact
+URL, PNG SHA-256 and `generator: "segno"` in `run_report.json → run.avatar.qr`
+and `visual_plan.json → avatar.qr`. The QR is prepared for future composition;
+this stage does **not** place the QR on a video.
+
+An existing GPT-generated QR is **never reused**: when its old metadata contains
+the sales URL, the next run automatically replaces its PNG and metadata with a
+Segno QR, without asking for the URL again. Old `request_pending.json` markers
+can also be resolved locally from their saved URLs. If the stored URL is missing
+or invalid, the runner stops for manual review instead of inventing a
+destination. Existing Segno QR assets with damaged PNGs or mismatched hashes
+are regenerated from their saved URL. If `--qr-url` differs from the saved URL,
+the runner refuses to silently change the destination.
+
+For a first non-interactive run, pass `--qr-url https://example.com/ebook`
+along with `--script` and `--avatar`. To generate or refresh **only** the QR
+without a guion, OpenAI key or calls to the rest of the pipeline, run:
+
+```powershell
+.\run.ps1 --qr-only --avatar monje --qr-url "https://example.com/ebook"
+```
+
+CI uses the independent ZBar decoder to verify that generated PNGs decode to
+the exact URL (including query parameters). For final publication, check the
+actual sales page on a phone and avoid shrinking or cropping the quiet zone.
 
 The runner prints exactly one combined time/cost line as soon as each stage
 finishes: B1.1 immediately after its validated output, B1.2 after all parallel
