@@ -1,5 +1,47 @@
 # LTX-2.5 monk A2V: short prompt, mouth sync and static framing
 
+## CURRENT: independent two-GPU race (supersedes the historical shared-group race)
+
+The first-ready bootstrap now uses **two independent Salad container groups**,
+each configured with exactly one RTX 5090. The primary group retains its
+existing name; the auxiliary group has the fixed suffix `-race` and is
+prepared from the same verified immutable Docker digest and original
+Postgres/R2/model configuration. Both groups must be stopped and settled
+before starting. A preflight confirms no existing claimable LTX jobs.
+
+The selector starts both groups without scaling either one. It observes both
+current-version /ready states and chooses the first worker to pass two
+consecutive ready checks. **The second group may remain entirely unallocated
+or downloading**; it is stopped via the group-level API, not by manipulating
+instance `deletion_cost`. It must be fully stopped (no active instance,
+pending=false) and the winning worker must remain the same ready instance
+on two further checks before a single Postgres job can be submitted. The
+controlled wrapper independently rechecks the exact winning group and
+instance. An exception or unsuccessful smoke stops BOTH groups; the guarded
+launcher also verifies the auxiliary stopped state and restores the primary
+original digest before exiting. The auxiliary group remains stopped on the
+reviewed experimental digest; it cannot incur running-GPU charges in that
+state.
+
+The official [Salad group stop API](https://docs.salad.com/reference/saladcloud-api/container-groups/stop-container-group)
+allows stopping one isolated group without voluntary scale-in of the winner.
+This avoids the observed control-plane contradiction where instance PATCH
+acknowledged 100000 but exact GET returned deletion_cost 0. The former
+shared-group selector is retained only for historical tests and is no
+longer called by the monk benchmark.
+
+The default protected monk benchmark is again `StartupReplicas=2`, now
+meaning two **independent one-replica groups**, not one group with two
+replicas. `StartupReplicas=1` remains an explicit fallback for isolated
+single-GPU diagnostic comparisons, not the primary strategy. All A2V
+conditioning and the exact minimal monk prompt remain unchanged.
+
+**Offline mocked tests/CI do not establish actual Salad API behavior.**
+The next paid run requires a new reviewed commit, green CI, a new immutable
+Docker digest and an explicit user-initiated command. No merge to main
+without review of real MP4 lip sync, head movement, no zoom and lifecycle
+metrics.
+
 Status: experimental investigation only. No paid generation or visual acceptance from this change.
 
 ## Exact next-test contract
@@ -130,7 +172,7 @@ per second. Do not equate the >45-minute wall clock with two billed GPU-hours,
 and use actual instance timelines/invoices rather than estimating cost from
 configured replica count.
 
-## 2026-09-27: repeated cost readback failure; single-GPU default
+## Historical (superseded): 2026-09-27 cost readback failure and one-GPU workaround
 
 Real v33 test: one RTX 5090 was allocated and became `ready=True` twice at
 ~1,085 seconds from race start. PATCH acknowledged `deletion_cost=100000`,
