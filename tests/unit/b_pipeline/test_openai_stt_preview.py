@@ -14,7 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw, ImageStat
 
 from ai_video_factory.bots.audio_join import join_audio_blocks
 from ai_video_factory.bots.fish_audio_workflow import (
@@ -23,6 +23,7 @@ from ai_video_factory.bots.fish_audio_workflow import (
 )
 from ai_video_factory.compositor.static_preview import (
     StaticPreviewError,
+    _media_image_motion_filter,
     build_stt_beat_timeline,
     generate_static_preview,
 )
@@ -85,7 +86,12 @@ def _fixture_assets(tmp_path: Path) -> tuple[dict, dict, dict]:
     media2 = tmp_path / "images" / "block_2" / "2A.png"
     media1.parent.mkdir(parents=True)
     media2.parent.mkdir(parents=True)
-    Image.new("RGB", (1280, 720), (15, 15, 240)).save(media1)
+    illustration = Image.new("RGB", (1280, 720), (15, 15, 240))
+    illustration_draw = ImageDraw.Draw(illustration)
+    illustration_draw.rectangle((600, 140, 960, 410), fill=(60, 110, 245))
+    illustration_draw.ellipse((800, 420, 1160, 690), fill=(50, 150, 235))
+    illustration_draw.rectangle((60, 70, 180, 195), fill=(170, 35, 225))
+    illustration.save(media1)
     Image.new("RGB", (1280, 720), (15, 240, 15)).save(media2)
     plan = {
         "avatar": {"file": "avatar.png", "sha256": _sha(avatar)},
@@ -221,6 +227,7 @@ def test_real_ffmpeg_preview_has_audio_cuts_and_avatar_media_50_50(
     assert artifact["status"] == "completed"
     assert artifact["beat_count"] == 3
     assert artifact["avatar_media_layout"] == "side_by_side_50_50"
+    assert artifact["media_image_motion"]["animated_beats"] == 1
     assert abs(artifact["rendered_duration_seconds"] - 1.9) < 0.15
     assert _sha(tmp_path / artifact["file"]) == artifact["sha256"]
     frame = tmp_path / "preview" / "frames" / "0002_2A.png"
@@ -252,6 +259,99 @@ def test_real_ffmpeg_preview_has_audio_cuts_and_avatar_media_50_50(
 
     saved = json.loads((tmp_path / artifact["timeline_file"]).read_text(encoding="utf-8"))
     assert saved["beats"][2]["start_seconds"] == 1.5
+    assert saved["beats"][1]["motion"] == {
+        "version": "media-image-zoompan-v1",
+        "mode": "zoom",
+        "direction": "in",
+        "origin": "center",
+        "zoom_start": 1.035,
+        "zoom_end": 1.115,
+    }
+    assert all("motion" not in saved["beats"][index] for index in (0, 2))
+
+
+
+def test_media_image_motion_cycles_center_and_every_corner_with_both_directions() -> None:
+    beats = [
+        {
+            "beat_id": f"1{chr(ord('B') + index)}",
+            "visual_type": "media_image",
+            "start_frame": index * 30,
+            "end_frame": (index + 1) * 30,
+        }
+        for index in range(10)
+    ]
+    still = {
+        "beat_id": "2A", "visual_type": "media_video",
+        "start_frame": 300, "end_frame": 330,
+    }
+    timeline = {"beats": [*beats, still]}
+    video_filter = _media_image_motion_filter(timeline)
+    assert video_filter.startswith("fps=30,zoompan=")
+    assert ":d=1:s=1280x720:fps=30,format=yuv420p" in video_filter
+    assert "on\\,0" in video_filter
+    assert "on\\,299" not in video_filter
+    assert all(beat["motion"]["zoom_start"] != beat["motion"]["zoom_end"] for beat in beats)
+    assert {(beat["motion"]["direction"], beat["motion"]["origin"])
+            for beat in beats if beat["motion"]["mode"] == "zoom"} == {
+                ("in", "center"), ("out", "center"),
+            }
+    assert {(beat["motion"]["direction"], beat["motion"]["origin"])
+            for beat in beats if beat["motion"]["mode"] == "ken_burns"} == {
+                (direction, corner)
+                for direction in ("in", "out")
+                for corner in ("top_left", "top_right", "bottom_left", "bottom_right")
+            }
+    assert "motion" not in still
+    second = {"beats": [{k: v for k, v in beat.items() if k != "motion"}
+                        for beat in [*beats, still]]}
+    assert _media_image_motion_filter(second) == video_filter
+
+
+def test_media_image_less_than_two_frames_cannot_be_published_static() -> None:
+    timeline = {"beats": [{
+        "beat_id": "1B", "visual_type": "media_image",
+        "start_frame": 0, "end_frame": 1,
+    }]}
+    with pytest.raises(StaticPreviewError, match="at least two"):
+        _media_image_motion_filter(timeline)
+    assert _media_image_motion_filter({"beats": [{
+        "beat_id": "1C", "visual_type": "media_video",
+        "start_frame": 0, "end_frame": 1,
+    }]}) == "fps=30,format=yuv420p"
+
+
+def test_real_media_image_preview_frames_change_during_one_beat(
+    tmp_path: Path,
+) -> None:
+    if shutil.which("ffprobe") is None:
+        pytest.skip("ffprobe is required for MP4 validation")
+    plan, audio, images = _fixture_assets(tmp_path)
+    artifact = generate_static_preview(tmp_path, plan, audio, images)
+
+    def decoded_frame(seconds: float) -> Image.Image:
+        output = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+                "-i", str(tmp_path / artifact["file"]), "-ss", str(seconds),
+                "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-",
+            ],
+            capture_output=True, check=True,
+        )
+        with Image.open(BytesIO(output.stdout)) as decoded:
+            return decoded.convert("RGB")
+
+    early = decoded_frame(0.65)
+    late = decoded_frame(1.25)
+    region = (570, 90, 1170, 690)
+    change = ImageChops.difference(early.crop(region), late.crop(region))
+    assert change.getbbox() is not None
+    assert max(ImageStat.Stat(change).mean) > 0.5
+    # Motion cannot shift the sample-accurate STT-aligned scene boundaries.
+    saved = json.loads((tmp_path / artifact["timeline_file"]).read_text(encoding="utf-8"))
+    assert saved["beats"][1]["start_seconds"] == 0.5
+    assert saved["beats"][1]["end_seconds"] == 1.5
+    assert abs(artifact["rendered_duration_seconds"] - 1.9) < 0.15
 
 
 def test_images_only_auto_renders_from_existing_stt_and_saved_images(
