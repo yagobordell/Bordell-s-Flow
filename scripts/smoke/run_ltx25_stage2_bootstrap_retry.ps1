@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)][string]$ExperimentalTag,
     [Parameter(Mandatory)][string]$ExperimentalPinnedImage,
     [ValidateRange(120, 7200)][int]$RaceTimeoutSeconds = 5400,
+    [ValidateSet(1, 2)][int]$StartupReplicas = 1,
     [string]$EnvFile = ".env"
 )
 
@@ -101,7 +102,11 @@ try {
         throw "Salad did not settle with the pinned experimental image."
     }
 
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Smoke -Audio $Audio -AvatarImage $Avatar -Profile reference -ReferenceStage2Steps 2 -SegmentId $SegmentId -Prompt $Prompt -Seed 4242 -OutputDir $OutputDir -StartupReplicas 2 -RaceTimeoutSeconds $RaceTimeoutSeconds -BootstrapTimeoutSeconds 300 -MaxGenerationSeconds 600 -ExpectedPinnedImage $ExperimentalPinnedImage -EnvFile $EnvFile -NonInteractive
+    # Use one GPU by default. Two-GPU bootstrap is a separate explicit experiment;
+    # Salad has repeatedly acknowledged but not reflected deletion_cost=100000.
+    $BootstrapWaitSeconds = if ($StartupReplicas -eq 1) { 3600 } else { 300 }
+    Write-Host "LTX_STARTUP_MODE replicas=$StartupReplicas readiness_timeout_seconds=$BootstrapWaitSeconds"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Smoke -Audio $Audio -AvatarImage $Avatar -Profile reference -ReferenceStage2Steps 2 -SegmentId $SegmentId -Prompt $Prompt -Seed 4242 -OutputDir $OutputDir -StartupReplicas $StartupReplicas -RaceTimeoutSeconds $RaceTimeoutSeconds -BootstrapTimeoutSeconds $BootstrapWaitSeconds -MaxGenerationSeconds 600 -ExpectedPinnedImage $ExperimentalPinnedImage -EnvFile $EnvFile -NonInteractive
     if ($LASTEXITCODE -ne 0) { throw "Controlled LTX two-GPU smoke failed." }
 
     # The smoke has already stopped GPU capacity. Review files never modify MP4.
