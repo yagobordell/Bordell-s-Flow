@@ -632,9 +632,9 @@ async def _preflight_stt_alignment_with_retries(
                     exc.block_id,
                     stt_client=stt_client,
                 )
-            except SttRetryLimitReached:
+            except SttRetryLimitReached as limit_exc:
                 if not allow_audio_regeneration:
-                    raise exc
+                    raise exc from limit_exc
                 try:
                     regeneration = await regenerate_audio_block(
                         output,
@@ -645,8 +645,8 @@ async def _preflight_stt_alignment_with_retries(
                         poll_timeout_seconds=settings.ai33_fish_poll_timeout_seconds,
                         poll_interval_seconds=settings.ai33_fish_poll_interval_seconds,
                     )
-                except AudioRegenerationLimitReached:
-                    raise exc
+                except AudioRegenerationLimitReached as limit_exc:
+                    raise exc from limit_exc
                 print(
                     f"  STT still mismatched in block {exc.block_id}; "
                     f"regenerated its audio {regeneration}/3 times and transcribed it.",

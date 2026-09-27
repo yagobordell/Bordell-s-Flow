@@ -174,7 +174,7 @@ def _align_stt_tokens(
             actual_numbers = [j for j in range(j1, j2) if _is_number_token(actual[j])]
             paired_expected: set[int] = set()
             paired_actual: set[int] = set()
-            for expected_index, actual_index in zip(expected_numbers, actual_numbers):
+            for expected_index, actual_index in zip(expected_numbers, actual_numbers, strict=False):
                 mapping[expected_index] = actual_index
                 paired_expected.add(expected_index)
                 paired_actual.add(actual_index)
@@ -184,7 +184,7 @@ def _align_stt_tokens(
                 for expected_index in remaining_expected:
                     mapping[expected_index] = remaining_actual[0]
                 remaining_expected = []
-            for expected_index, actual_index in zip(remaining_expected, remaining_actual):
+            for expected_index, actual_index in zip(remaining_expected, remaining_actual, strict=False):
                 mapping[expected_index] = actual_index
         elif tag == "delete":
             anchor = j1 if j1 < len(actual) else (j1 - 1 if j1 else None)
