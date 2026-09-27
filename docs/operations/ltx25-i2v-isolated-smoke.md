@@ -64,6 +64,17 @@ digest; leave the avatar group unchanged. Preparing the group does not run
 inference, but starting it can incur significant cold-model download time.
 Do not reuse the old v11 pinned digest for the experiment.
 
+When preparing the **new** candidate, use a fresh, never-reused tag.
+The following is an operator example, NOT a completed build or deployment:
+
+```powershell
+$Tag = "docker.io/yagobordell/ai-video-factory:ltx25-i2v-static-camera-v12"
+docker buildx build --platform linux/amd64 --file docker/workers/ltx25/Dockerfile --tag $Tag --push .
+docker buildx imagetools inspect $Tag
+$PinnedImage = "docker.io/yagobordell/ai-video-factory@sha256:REPLACE_WITH_REAL_LINUX_AMD64_MANIFEST_DIGEST"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\salad\\manage_salad_worker.ps1 -Action Prepare -Service ltx25_i2v -Image $Tag -PinnedImage $PinnedImage -EnvFile .env -NonInteractive
+```
+
 For a fair one-job comparison with the already reviewed baseline, use the
 existing `keyframe_i2v.png` and exactly the same positive prompt/duration,
 then pass `-I2VProfile static-camera -CompareWithRunId "i2v-smoke-003"`
@@ -72,6 +83,21 @@ prompt and timing before GPU allocation; it derives the **same effective
 seed** from the baseline RunId, while the new generation profile creates a
 different application job ID and R2 output. It stops only the I2V group in
 `finally`. Never present a green ffprobe result as visual acceptance.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\\scripts\\smoke\\run_ltx25_i2v_smoke_controlled.ps1 `
+  -Image ".\\data\\input\\keyframe_i2v.png" `
+  -Prompt "The camera remains fixed. The subject gently moves with subtle natural motion in one continuous shot." `
+  -ExpectedPinnedImage $PinnedImage `
+  -I2VProfile static-camera `
+  -CompareWithRunId "i2v-smoke-003" `
+  -DurationSeconds 2 `
+  -SeedBase 4242 `
+  -RunId "i2v-static-camera-001" `
+  -EnvFile .env `
+  -NonInteractive
+```
 
 ## One paid I2V generation
 

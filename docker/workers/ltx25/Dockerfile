@@ -100,7 +100,7 @@ RUN chmod 0755 \
         /opt/factory/data
 
 RUN python3 -c \
-    "import importlib.util, torch, ltx_pipelines.distilled, ltx_pipelines.a2vid_two_stage, ai_video_factory.workers.ltx25.reference_a2v; \
+    "import importlib.util, torch, ltx_pipelines.distilled, ltx_pipelines.a2vid_two_stage, ai_video_factory.workers.ltx25.reference_a2v, ai_video_factory.workers.ltx25.static_i2v; \
      assert torch.__version__.startswith('2.11.0'), torch.__version__; \
      assert torch.version.cuda == '12.8', torch.version.cuda; \
      assert importlib.util.find_spec('natten') is not None; \

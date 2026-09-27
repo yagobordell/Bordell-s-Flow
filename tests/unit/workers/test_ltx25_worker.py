@@ -91,6 +91,7 @@ def test_ltx25_model_download_uses_xet_with_resilient_timeouts() -> None:
         ":ltx25-isolated-tasks-v11"
     )
     assert "ltx_pipelines.a2vid_two_stage" in dockerfile
+    assert "ai_video_factory.workers.ltx25.static_i2v" in dockerfile
     model_manifest = json.loads(
         Path("docker/workers/ltx25/model-manifest.json").read_text(encoding="utf-8")
     )
