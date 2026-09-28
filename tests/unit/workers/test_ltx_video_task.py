@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 import ai_video_factory.workers.ltx25.model as ltx_video
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.tasks import CopyTaskRunner, TaskRunnerRegistry
 from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
@@ -444,6 +445,18 @@ def test_qwen_keyframe_fits_ltx_grid_without_losing_image_edges(tmp_path: Path) 
         assert result.getpixel((640, 0)) == (0, 255, 0)
         assert result.getpixel((640, 767)) == (255, 255, 0)
         assert result.getpixel((640, 384)) == (48, 48, 48)
+
+
+def test_i2v_prepare_waits_for_runtime_bootstrap_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = tmp_path / "bootstrap-complete"
+    monkeypatch.setenv("LTX_RUNTIME_BOOTSTRAP_MARKER", str(marker))
+    backend = DirectLTX25Backend(model_root=tmp_path / "models")
+
+    with pytest.raises(ModelBootstrapPendingError, match="bootstrap has not completed"):
+        backend.prepare()
 
 
 def test_direct_backend_rejects_missing_cuda_before_pipeline_build(
