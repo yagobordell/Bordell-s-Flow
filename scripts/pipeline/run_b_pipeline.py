@@ -721,7 +721,9 @@ def _require_ltx_capacity_controller() -> None:
     """Fail before paid LTX submissions if the shared capacity leader is absent."""
     dsn = settings.salad_capacity_controller_postgres_dsn or settings.postgres_dsn
     try:
-        health = read_capacity_controller_health(validate_capacity_controller_dsn(dsn or ""))
+        health = read_capacity_controller_health(
+            validate_capacity_controller_dsn(dsn or "")
+        )
     except Exception as exc:
         raise RuntimeError(
             "Cannot verify Salad Capacity Controller health before LTX submission. "
