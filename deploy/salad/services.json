@@ -1,8 +1,6 @@
 {
   "schema_version": 3,
   "stack": {
-    "organization": "yagobordellorg",
-    "project": "aivideofactory",
     "service_order": [
       "whisper",
       "breeze_tts2",
