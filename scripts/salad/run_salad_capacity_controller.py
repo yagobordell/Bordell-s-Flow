@@ -121,8 +121,8 @@ def main() -> None:
         return
 
     _required_env("SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS")
-    _required_env("SALAD_ORGANIZATION_NAME")
-    _required_env("SALAD_PROJECT_NAME")
+    _required_env("SALAD_ORGANIZATION")
+    _required_env("SALAD_PROJECT")
     runtime = None
     leadership = None
     try:
