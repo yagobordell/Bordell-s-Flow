@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import hashlib
 import json
@@ -19,6 +20,7 @@ from ai_video_factory.workers.ltx25.a2v import (
 )
 from ai_video_factory.workers.ltx25.model import LTX_VIDEO_TASK
 from ai_video_factory.workflows import b_video
+from scripts.pipeline import run_b_pipeline as runner
 
 
 def _sha(path: Path) -> str:
@@ -112,6 +114,7 @@ def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     assert len(first.request.inputs) == 2
     assert {item.name for item in first.request.inputs} == {"image", "audio"}
     assert video.request.task == LTX_VIDEO_TASK
+    assert video.request.job_id.startswith("b2-1D-")
     assert video.request.parameters["prompt"] == "A bird takes off."
     assert video.request.parameters["num_frames"] == 17
     assert video.request.inputs[0].sha256 == images["items"][1]["sha256"]
@@ -142,6 +145,85 @@ def test_long_consecutive_avatar_run_fails_before_paid_jobs(
     with pytest.raises(b_video.B2VideoError, match="single A2V"):
         b_video.build_b2_video_plan(tmp_path, plan, audio, images)
     assert not list((tmp_path / "video").rglob("*.wav"))
+
+
+
+def test_unrepresentable_24fps_beat_is_rejected_before_paid_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        b_video, "build_stt_beat_timeline",
+        lambda *_args: {
+            "duration_seconds": 3.0,
+            "beats": [
+                {
+                    "beat_id": "1A", "block_id": 1, "visual_type": "avatar",
+                    "description": None, "start_seconds": 0.0,
+                    "end_seconds": 0.01,
+                },
+                {
+                    "beat_id": "1B", "block_id": 1, "visual_type": "avatar_media",
+                    "description": "picture", "start_seconds": 0.01,
+                    "end_seconds": 3.0,
+                },
+            ],
+        },
+    )
+    with pytest.raises(b_video.B2VideoError, match="cannot be cut exactly"):
+        b_video.build_b2_video_plan(tmp_path, plan, audio, images)
+    assert not (tmp_path / "video" / "runs").exists()
+
+
+def test_automatic_ltx_activation_requires_complete_audio_and_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    report = {"run": {"audio_generation": audio}}
+    monkeypatch.setattr(runner.settings, "postgres_dsn", None)
+    assert asyncio.run(
+        runner._video_if_ready(tmp_path, report, plan=plan, images=images)
+    ) == {"status": "deferred", "reason": "ltx_transport_not_configured"}
+    with pytest.raises(RuntimeError, match="POSTGRES_DSN"):
+        asyncio.run(
+            runner._video_if_ready(
+                tmp_path, report, plan=plan, images=images, require=True
+            )
+        )
+    monkeypatch.setattr(runner.settings, "postgres_dsn", "postgres://test")
+    monkeypatch.setattr(runner.settings, "r2_endpoint_url", "https://r2.invalid")
+    monkeypatch.setattr(runner.settings, "r2_bucket", "test")
+    monkeypatch.setattr(runner.settings, "r2_access_key_id", "test")
+    monkeypatch.setattr(runner.settings, "r2_secret_access_key", "test")
+    closed: list[bool] = []
+    calls: list[tuple[object, ...]] = []
+
+    class FakeQueue:
+        def __init__(self, *, dsn: str) -> None:
+            assert dsn == "postgres://test"
+
+        def close(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr(runner, "PostgresJobQueueClient", FakeQueue)
+    monkeypatch.setattr(runner, "create_r2_storage", lambda **_kwargs: "storage")
+
+    def dispatch(
+        output: Path, selected_plan: dict, selected_audio: dict,
+        selected_images: dict, **kwargs: object,
+    ) -> dict:
+        calls.append((output, selected_plan, selected_audio, selected_images, kwargs))
+        return {"status": "completed", "file": "video/final.mp4"}
+
+    monkeypatch.setattr(runner, "generate_b2_ltx_video", dispatch)
+    result = asyncio.run(
+        runner._video_if_ready(tmp_path, report, plan=plan, images=images)
+    )
+    assert result == {"status": "completed", "file": "video/final.mp4"}
+    assert len(calls) == 1
+    assert calls[0][:4] == (tmp_path, plan, audio, images)
+    assert calls[0][4]["storage"] == "storage"
+    assert closed == [True]
 
 
 def test_pending_ltx_manifest_protects_paid_work(
