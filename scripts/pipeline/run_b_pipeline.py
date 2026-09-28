@@ -26,6 +26,7 @@ from ai_video_factory.bots.fish_audio_workflow import (
 )
 from ai_video_factory.bots.workflow import materialize_blocks, validate_beats
 from ai_video_factory.compositor.static_preview import (
+    StaticPreviewError,
     SttAlignmentError,
     _verified_asset,
     build_stt_beat_timeline,
