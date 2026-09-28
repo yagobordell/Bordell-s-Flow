@@ -68,8 +68,8 @@ def _build(tmp_path: Path) -> salad_capacity.SaladCapacityRuntime:
 def test_capacity_controller_uses_account_environment_not_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("SALAD_ORGANIZATION_NAME", "teammate-org")
-    monkeypatch.setenv("SALAD_PROJECT_NAME", "teammate-dev")
+    monkeypatch.setenv("SALAD_ORGANIZATION", "teammate-org")
+    monkeypatch.setenv("SALAD_PROJECT", "teammate-dev")
     opened_stores = _stub_remote_runtime(monkeypatch)
 
     runtime = _build(tmp_path)
@@ -81,12 +81,12 @@ def test_capacity_controller_uses_account_environment_not_manifest(
     assert opened_stores == ["postgresql://unused/test"]
 
 
-@pytest.mark.parametrize("missing", ["SALAD_ORGANIZATION_NAME", "SALAD_PROJECT_NAME"])
+@pytest.mark.parametrize("missing", ["SALAD_ORGANIZATION", "SALAD_PROJECT"])
 def test_capacity_controller_fails_closed_without_account(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
 ) -> None:
-    monkeypatch.setenv("SALAD_ORGANIZATION_NAME", "teammate-org")
-    monkeypatch.setenv("SALAD_PROJECT_NAME", "teammate-dev")
+    monkeypatch.setenv("SALAD_ORGANIZATION", "teammate-org")
+    monkeypatch.setenv("SALAD_PROJECT", "teammate-dev")
     monkeypatch.delenv(missing)
     opened_stores = _stub_remote_runtime(monkeypatch)
 
@@ -100,11 +100,11 @@ def test_capacity_controller_fails_closed_without_account(
 def test_capacity_controller_rejects_unsafe_account_slug(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: str
 ) -> None:
-    monkeypatch.setenv("SALAD_ORGANIZATION_NAME", invalid)
-    monkeypatch.setenv("SALAD_PROJECT_NAME", "teammate-dev")
+    monkeypatch.setenv("SALAD_ORGANIZATION", invalid)
+    monkeypatch.setenv("SALAD_PROJECT", "teammate-dev")
     opened_stores = _stub_remote_runtime(monkeypatch)
 
-    with pytest.raises(RuntimeError, match="SALAD_ORGANIZATION_NAME must be"):
+    with pytest.raises(RuntimeError, match="SALAD_ORGANIZATION must be"):
         _build(tmp_path)
 
     assert opened_stores == []
