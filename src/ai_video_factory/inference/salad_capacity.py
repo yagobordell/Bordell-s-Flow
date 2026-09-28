@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -74,8 +75,8 @@ def build_salad_capacity_runtime(
     document = _load_services_document(services_path)
     stack = _required_object(document, "stack")
     services = _required_object(document, "services")
-    organization = _required_text(stack, "organization")
-    project = _required_text(stack, "project")
+    organization = _required_salad_account_env("SALAD_ORGANIZATION_NAME")
+    project = _required_salad_account_env("SALAD_PROJECT_NAME")
     service_order = stack.get("service_order")
     if not isinstance(service_order, list) or not service_order:
         raise RuntimeError(
@@ -148,6 +149,20 @@ def build_salad_capacity_runtime(
         logger=logger,
     )
     return SaladCapacityRuntime(autoscaler=autoscaler, store=store)
+
+
+def _required_salad_account_env(name: str) -> str:
+    value = str(os.getenv(name) or "").strip()
+    if not value:
+        raise RuntimeError(
+            f"Missing {name} in the environment; refusing to select a Salad account"
+        )
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", value) is None:
+        raise RuntimeError(
+            f"{name} must be a Salad organization/project slug "
+            "(letters, digits, hyphens or underscores)"
+        )
+    return value
 
 
 def _load_services_document(path: Path) -> dict[str, object]:

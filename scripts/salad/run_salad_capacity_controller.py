@@ -7,6 +7,7 @@ import threading
 from pathlib import Path
 
 import psycopg
+from dotenv import load_dotenv
 
 from ai_video_factory.inference.capacity_controller import (
     CapacityControllerLeadershipError,
@@ -101,6 +102,8 @@ def _run_health_check(args: argparse.Namespace, postgres_dsn: str) -> None:
 
 
 def main() -> None:
+    # Mirror the PowerShell manager: process environment takes precedence over .env.
+    load_dotenv(REPO_ROOT / ".env", override=False)
     args = parse_args()
     if args.poll_seconds <= 0:
         raise SystemExit("--poll-seconds must be positive")
@@ -118,6 +121,8 @@ def main() -> None:
         return
 
     _required_env("SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS")
+    _required_env("SALAD_ORGANIZATION_NAME")
+    _required_env("SALAD_PROJECT_NAME")
     runtime = None
     leadership = None
     try:

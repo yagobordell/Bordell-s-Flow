@@ -58,8 +58,27 @@ function Get-ManifestString {
     return $Value.Trim()
 }
 
-$Organization = Get-ManifestString -Name "organization" -Primary $Stack -Fallback $Definition
-$Project = Get-ManifestString -Name "project" -Primary $Stack -Fallback $Definition
+# Account selection is local to the operator. Never fall back to a committed manifest target.
+function Get-RequiredSaladAccountSetting {
+    param([Parameter(Mandatory)][string]$Name)
+    $Value = [Environment]::GetEnvironmentVariable($Name, [EnvironmentVariableTarget]::Process)
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        throw "Missing $Name in the environment or .env; refusing to select a Salad account."
+    }
+    $Value = $Value.Trim()
+    if ($Value -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]*$') {
+        throw "$Name must be a Salad organization/project slug (letters, digits, hyphens or underscores)."
+    }
+    return $Value
+}
+
+# Validate remains offline and does not need account credentials.
+$Organization = if ($Action -eq "Validate") { "" } else {
+    Get-RequiredSaladAccountSetting -Name "SALAD_ORGANIZATION_NAME"
+}
+$Project = if ($Action -eq "Validate") { "" } else {
+    Get-RequiredSaladAccountSetting -Name "SALAD_PROJECT_NAME"
+}
 $GroupName = Get-ManifestString -Name "group_name" -Primary $Definition -Fallback $null
 $Dockerfile = Join-Path $RepoRoot (Get-ManifestString -Name "dockerfile" -Primary $Definition -Fallback $null)
 if ([string]::IsNullOrWhiteSpace($Image)) {

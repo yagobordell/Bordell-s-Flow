@@ -14,6 +14,19 @@ Schema version 3 uses:
 }
 ```
 
+Account selection is **never** read from this manifest. Every operator must set
+`SALAD_ORGANIZATION_NAME` and `SALAD_PROJECT_NAME` in their own `.env` (or process
+environment), alongside `SALAD_API_KEY`. The PowerShell manager imports `.env`
+without overwriting existing process variables; the Python Capacity Controller
+also loads `.env` with the same precedence. Account names must be URL-safe Salad
+slugs. Missing or invalid account settings fail before any Salad API request.
+`Validate` remains an offline schema check and does not require credentials.
+
+To run your own Salad organization without affecting production, use a separate
+Postgres control plane and preferably a separate R2 bucket. Two independent Salad
+accounts sharing the same `gpu.jobs` queue and Capacity Controller advisory lock
+are **not** isolated merely by changing their API keys or account names.
+
 Each model has its own unique Salad container group. The runtime rejects duplicate service-order
 entries or duplicate `group_name` assignments before opening the Postgres control plane. Postgres is
 the canonical job/control plane and R2 is shared object storage. Salad provides compute only.
@@ -98,7 +111,9 @@ Any `legacy_queue=True` result is a migration issue: stop the service until it i
 
 ## Secrets and runtime configuration
 
-The manager loads `.env` by default. Required secrets such as `POSTGRES_DSN`, R2 credentials,
+The manager loads `.env` by default. Set `SALAD_ORGANIZATION_NAME` and
+`SALAD_PROJECT_NAME` for every deployment; the manifest has no account fallback.
+Required secrets such as `POSTGRES_DSN`, R2 credentials,
 `HF_TOKEN` and `SALAD_API_KEY` are injected into the worker environment according to the manifest.
 
 Production workers poll Postgres directly. Do not add `SALAD_QUEUE_ENABLED`, per-model queue names
