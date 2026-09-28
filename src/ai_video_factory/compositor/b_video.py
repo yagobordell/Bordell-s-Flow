@@ -95,7 +95,7 @@ def _motion_filter(beat: dict[str, Any], frames: int, index: int) -> str:
     }
     # One zoompan output frame per input frame. Unlike looped static
     # images, the origin-specific continuous zoom keeps every media_image moving.
-    z = f"{initial:.4f}{final - initial:+.4f}*min(on/{max(1, frames - 1)},1)"
+    z = f"{initial:.4f}{final - initial:+.4f}*on/{max(1, frames - 1)}"
     return (
         f"zoompan=z='{z}':x='(iw-iw/zoom)*{x:.1f}':"
         f"y='(ih-ih/zoom)*{y:.1f}':"
