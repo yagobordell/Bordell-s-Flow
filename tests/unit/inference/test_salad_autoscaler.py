@@ -1017,6 +1017,24 @@ def test_ltx_groups_have_independent_runtime_and_cold_start_calibration(
     assert config.zero_demand_stable_polls == 1
 
 
+def test_cold_start_longer_than_drain_window_never_exceeds_active_jobs() -> None:
+    stage = "ltx25"
+    config = _config(
+        (stage,),
+        stage_max_replicas=4,
+        stage_cold_start_seconds={stage: 1934.0},
+    )
+
+    demands = build_global_demands(
+        rows_by_stage={stage: _pending_rows(1)},
+        runtime_by_stage={stage: 240.0},
+        config=config,
+        now=datetime(2026, 9, 28, tzinfo=UTC),
+    )
+
+    assert demands[stage].ideal_replicas == 1
+
+
 def test_stage_specific_cold_start_changes_capacity_estimate() -> None:
     stages = ("qwen_image_21", "whisper")
     config = _config(
