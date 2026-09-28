@@ -39,7 +39,7 @@ def test_independent_salad_control_plane_and_all_workers_are_preserved() -> None
     manifest = json.loads((ROOT / "deploy/salad/services.json").read_text(encoding="utf-8"))
     required_services = {
         "breeze_tts2", "fish_speech", "whisper", "ideogram4",
-        "qwen_image_21", "ltx25", "realesrgan",
+        "qwen_image_21", "ltx25", "ltx25_i2v", "realesrgan",
     }
     assert manifest["stack"]["job_transport"] == "postgres"
     assert set(manifest["services"]) == required_services
