@@ -852,7 +852,9 @@ async def _preflight_stt_alignment_with_retries(
             )
 
 
-async def _run_images_only(script_file: Path, output_root: Path) -> None:
+async def _run_images_only(
+    script_file: Path, output_root: Path, *, no_video: bool = False
+) -> None:
     """Resume image tasks using B2 artifacts without repeating any planning calls."""
     root = output_root.resolve()
     source = script_file.resolve()
@@ -914,6 +916,18 @@ async def _run_images_only(script_file: Path, output_root: Path) -> None:
         raise
     if preview is not None:
         report["run"]["video_preview"] = preview
+    if no_video:
+        report["run"]["video_generation"] = {"status": "skipped"}
+    else:
+        try:
+            video = await _video_if_ready(output, report, plan=plan, images=manifest)
+        except Exception:
+            report["run"]["video_generation"] = {"status": "incomplete"}
+            report["run"]["status"] = "failed"
+            _write(report_path, report)
+            raise
+        if video is not None:
+            report["run"]["video_generation"] = video
     report["run"]["status"] = "completed"
     report["timings"]["status"] = "completed"
     report["api_costs"]["run_status"] = "completed"
@@ -986,6 +1000,7 @@ async def _run_audio_only(
     output_root: Path,
     *,
     resume: bool,
+    no_video: bool = False,
 ) -> None:
     """An independent audio-only run: no avatar, B bots, B2 images or GPUs."""
     root = output_root.resolve()
@@ -1084,6 +1099,19 @@ async def _run_audio_only(
             run["status"] = "completed"
             report.setdefault("timings", {})["status"] = "completed"
             report.setdefault("api_costs", {})["run_status"] = "completed"
+    if no_video:
+        report["run"]["video_generation"] = {"status": "skipped"}
+    else:
+        try:
+            video = await _video_if_ready(output, report)
+        except Exception:
+            report["run"]["video_generation"] = {"status": "incomplete"}
+            report["run"]["status"] = "failed"
+            _refresh_audio_costs(report, output)
+            _write(report_path, report)
+            raise
+        if video is not None:
+            report["run"]["video_generation"] = video
     _refresh_audio_costs(report, output)
     _write(report_path, report)
     print(
@@ -1306,9 +1334,15 @@ async def main() -> None:
         script_name=args.script,
         script_file=args.script_file,
     )
+    if getattr(args, "videos_only", False):
+        output_root = args.output if args.output is not None else settings.output_dir
+        await _run_videos_only(script_file, output_root)
+        return
     if getattr(args, "images_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
-        await _run_images_only(script_file, output_root)
+        await _run_images_only(
+            script_file, output_root, no_video=bool(getattr(args, "no_video", False))
+        )
         return
     if getattr(args, "regenerate_audio", False) or getattr(args, "resume_audio", False):
         output_root = args.output if args.output is not None else settings.output_dir
@@ -1316,6 +1350,7 @@ async def main() -> None:
             script_file,
             output_root,
             resume=bool(getattr(args, "resume_audio", False)),
+            no_video=bool(getattr(args, "no_video", False)),
         )
         return
 
@@ -1358,6 +1393,11 @@ async def main() -> None:
     previous_b12: tuple[B12Output, ...] | None = None
     if args.from_stage == "B1.1":
         previous_output = output_root / script_file.stem
+        if previous_output.exists() and has_pending_b2_video(previous_output):
+            raise SystemExit(
+                "Previous paid LTX jobs are incomplete. Use --videos-only to resume "
+                "or reconcile their Postgres status before replacing this output."
+            )
         if previous_output.exists() and has_pending_image_tasks(previous_output):
             raise SystemExit(
                 "Existing paid image tasks may still be running (OpenAI Batch or legacy "
@@ -1608,6 +1648,19 @@ async def main() -> None:
             if preview is not None:
                 run_metadata["video_preview"] = preview
                 print(f"  Static video ready: {preview['file']}", flush=True)
+            if getattr(args, "no_video", False):
+                run_metadata["video_generation"] = {"status": "skipped"}
+            else:
+                run_metadata["video_generation"] = {"status": "running"}
+                save_report("running", len(result.b12))
+                video = await _video_if_ready(
+                    output, {"run": run_metadata},
+                    plan=visual_plan, images=image_manifest,
+                )
+                if video is not None:
+                    run_metadata["video_generation"] = video
+                    if video.get("status") == "completed":
+                        print(f"  LTX video ready: {video['file']}", flush=True)
     except Exception:
         if audio_task is not None and not audio_joined:
             # Never abandon an in-flight paid TTS submission by cancelling
@@ -1620,6 +1673,8 @@ async def main() -> None:
             run_metadata["image_generation"] = {"status": "incomplete"}
         if run_metadata.get("video_preview") == {"status": "running"}:
             run_metadata["video_preview"] = {"status": "incomplete"}
+        if run_metadata.get("video_generation") == {"status": "running"}:
+            run_metadata["video_generation"] = {"status": "incomplete"}
         _, timing_report = save_report("failed", None)
         _print_metric("Run", timing_report["run_elapsed_seconds"], None)
         raise
