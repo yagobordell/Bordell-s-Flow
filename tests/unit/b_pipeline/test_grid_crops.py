@@ -82,7 +82,7 @@ def _source(
     item = {
         "block_id": 1,
         "beat_id": "1B",
-        "provider": "openai_batch",
+        "provider": "openai_direct",
         "file": path.relative_to(output).as_posix(),
         "sha256": hashlib.sha256(data).hexdigest(),
         "grid": {

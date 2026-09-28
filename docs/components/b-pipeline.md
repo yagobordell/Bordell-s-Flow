@@ -341,13 +341,12 @@ antes de publicar un preview fijo. El movimiento queda registrado en
 crear el simulacro. Para la API de STT:
 https://developers.openai.com/api/docs/guides/speech-to-text
 
-## GPT Image oficial: un batch independiente por imagen de B2
+## GPT Image oficial: una solicitud estándar por imagen de B2
 
-Al finalizar B2, por cada beat con `description` no vacía se prepara un
-archivo `images/block_<id>/<beat_id>.batch.jsonl` con **una sola línea**
-y una única solicitud `POST /v1/images/generations`, `n=1`. El runner
-sube un archivo por beat y crea **un batch por archivo**; para N imágenes
-se crean N archivos y N batches, nunca un batch agrupado. El prompt
+Al finalizar B2, por cada beat con `description` no vacía se prepara una
+solicitud estándar `POST /v1/images/generations`, `n=1`. Para una imagen
+con avatar se usa `POST /v1/images/edits` con la referencia verificada. No se
+crean archivos JSONL ni trabajos en Batch API. El prompt
 conserva exactamente el prefijo `iphone 6 photo done by an elderly:  `
 más la descripción original de B2, sin modificar su JSON. Los beats
 `avatar` con `description: null` no generan nada. Esto genera PNG
@@ -358,55 +357,39 @@ estáticos, no lip-sync ni vídeo animado.
 OPENAI_IMAGE_MODEL=gpt-image-2.5-flare
 OPENAI_IMAGE_SIZE=1280x720
 OPENAI_IMAGE_QUALITY=low
-OPENAI_IMAGE_BATCH_TIMEOUT_SECONDS=1800
-OPENAI_IMAGE_BATCH_POLL_INTERVAL_SECONDS=8
 ```
 
 El pipeline utiliza **GPT Image 2.5**, con el ID `gpt-image-2.5-flare`
 por defecto o `gpt-image-2.5-sunburst` si se selecciona explícitamente.
 `gpt-image-2.5` sin variante no es un identificador válido para la API.
-El batch y la generación directa comparten modelo, PNG, 16:9,
+La generación estándar usa el modelo, PNG, 16:9,
 calidad low y 1280×720. Actualiza también el `.env` local si todavía
 contiene `OPENAI_IMAGE_MODEL=gpt-image-2`; un `git pull` no edita ese
 archivo privado. Las generaciones independientes se ejecutan en paralelo según la
-cantidad de jobs; `ImageBatchOptions.max_parallel_images` permite
+cantidad de jobs; `ImageOptions.max_parallel_images` permite
 establecer un límite explícito cuando se invoca el proveedor.
-**Cada batch sigue conteniendo exactamente una imagen**. El manifiesto
+Cada solicitud contiene exactamente una imagen. El manifiesto
 `images/manifest.json` lo escribe el coordinador en orden B2,
 con los PNG y estados individuales `images/block_<id>/<beat_id>.json`.
 
-La Batch API oficial exige `completion_window: "24h"`: el plazo de
-**30 minutos es local por beat** y se conserva entre reanudaciones.
-Si al llegar al plazo el batch no ha entregado su PNG, el runner
-registra `batch_timed_out`, solicita una cancelación no bloqueante y
-lanza una generación estándar de **ese mismo beat**. Un batch con fallo
-terminal o respuesta inválida también usa generación directa individual.
-La cancelación no garantiza que el batch no se cobre: puede acabar
-durante el proceso de cancelación; el manifiesto advierte de ese riesgo.
-Si la clave falta al intentar fallback, el estado permanece recuperable.
-
-Cada estado conserva `input_file_id`, `batch_id`, timestamp original,
-fingerprint del prompt efectivo, estado de cancelación y, cuando existe,
-`openai_usage`. Se escribe `batch_creating_unknown` **antes** de crear
-el batch y `direct_submitting_unknown` antes del POST de generación
-estándar: si la respuesta de pago se pierde, `--images-only` **no**
-duplica el POST ni inicia un segundo batch a ciegas. Una nueva subida
-de un archivo tras una subida incierta no lanza generación de imágenes,
-pues solo la creación posterior del batch inicia el trabajo.
+Cada estado conserva el fingerprint del prompt efectivo y, cuando existe,
+`openai_usage`. Se escribe `direct_submitting_unknown` **antes** del POST:
+si la respuesta de pago se pierde, `--images-only` no duplica la solicitud.
 
 ```powershell
 .\run.ps1 test2 --images-only
 ```
 
 El runner verifica el SHA-256 del guion y los artefactos B2 antes de
-reanudar. Los PNG y batches completados no se regeneran. Los estados
-heredados de AI33 se protegen: no se borran ni convierten implícitamente
-en nuevas solicitudes oficiales, para evitar duplicación de pagos.
-Reconcílialos primero y utiliza una raíz de salida separada para una
-nueva generación. AI33 se mantiene **solo** en la etapa de voz Fish.
+reanudar. Los PNG completados no se regeneran. Los estados
+heredados de AI33 o Batch se protegen en `--images-only`: no se convierten
+implícitamente en nuevas solicitudes oficiales, para evitar duplicación de
+pagos. Reconcílialos primero antes de reanudar imágenes. Una ejecución completa
+desde B1.1 elimina y recrea la carpeta anterior del guion; esto no cancela
+trabajos remotos que ya se hayan enviado. AI33 se mantiene **solo** en la etapa
+de voz Fish.
 
 Documentación oficial:
-https://developers.openai.com/api/docs/guides/batch
 https://developers.openai.com/api/docs/guides/image-generation
 
 Para el uso habitual en PowerShell, desde la raíz del repositorio:
@@ -418,6 +401,8 @@ al runner Python con `uv run --locked --extra dev`; los nombres del guion
 y avatar admiten omitir `.txt` y `.png`. Si se omiten ambos, el runner
 muestra los menús interactivos. Esta configuración del acceso directo no
 cambia el valor por defecto de `--scripts-dir` en el runner original.
+Una ejecución completa borra y sustituye `data/output/<guion>` antes de
+generarlo de nuevo.
 
 Para iterar solo los bots sin crear imágenes, usa `--no-image`
 (alias compatible de `--skip-images`):

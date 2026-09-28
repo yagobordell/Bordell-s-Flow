@@ -16,6 +16,8 @@ from typing import Any
 
 from PIL import Image, ImageOps
 
+from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE
+
 _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", re.ASCII)
 _WORDS = re.compile(r"[^\W_]+", re.UNICODE)
 _FPS = 30
@@ -480,6 +482,7 @@ def generate_static_preview(
     expected_panels = [
         (panel["block_id"], panel["beat_id"])
         for grid in grids for panel in grid["panels"]
+        if panel.get("source") != BLACK_PANEL_SOURCE
     ]
     cropped = image_manifest.get("panel_assets", [])
     if expected_panels and (

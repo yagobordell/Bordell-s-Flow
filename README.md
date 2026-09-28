@@ -72,6 +72,12 @@ anterior (`data/input/`) para no romper automatizaciones existentes.
 .\run.ps1                         # Menú interactivo de guiones y avatares
 ```
 
+Cada ejecución completa desde B1.1 sustituye `data/output/<guion>` y vuelve a
+generar el run desde cero, aunque esa carpeta ya exista. El borrado local no
+cancela trabajos remotos ya enviados; podrían terminar y generar cargos aunque
+sus estados locales se hayan eliminado. Usa `--images-only` o `--resume-audio`
+si quieres recuperar una tarea anterior.
+
 Fish Audio utiliza el documento de instrucciones
 `src/ai_video_factory/bots/prompts/fish_audio.md`, copiado del BotFish
 adjunto. Empieza **al finalizar B1.1**, en paralelo con B1.2, recibe el mismo guion sin modificar
@@ -115,7 +121,7 @@ uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script h
 .\run.ps1 historia_roma monje --from B2 --stop B2
 # Finish after B2, without generating images or invoking AI33/OpenAI image APIs:
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png --no-image
-# Resume independent official OpenAI image batches without repeating any planning bot:
+# Resume standard official OpenAI image requests without repeating any planning bot:
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --images-only
 ```
 
@@ -172,8 +178,8 @@ sin AI33 para imágenes. Los beats con `description` no vacía y sin numeración
 de continuidad conservan una imagen por beat. Las secuencias consecutivas
 numeradas de B2 (`1.`, `2.`, etc., hasta nueve) se agrupan en **una única
 generación de grid** por secuencia; también participan los beats `media_video`,
-cuya imagen será la futura start image. Cada imagen individual o grid tiene
-**un único batch de una solicitud JSONL** (`n=1`).
+cuya imagen será la futura start image. Cada imagen individual o grid usa
+**una única solicitud estándar** (`n=1`).
 Las descripciones que contienen la palabra completa `avatar` (sin distinguir
 mayúsculas) usan `/v1/images/edits`: adjuntan la copia `avatar.png` del run
 como referencia de identidad, previa comprobación de su SHA-256 en el plan.
@@ -184,7 +190,7 @@ detiene la solicitud antes de generar imágenes de pago. Se mantiene el prefijo
 `iphone 6 photo done by an elderly:  `, Flare por defecto, `low`, PNG
 y `1280x720` para imágenes individuales. Configura `OPENAI_API_KEY`
 en `.env`; AI33 sigue utilizándose únicamente para la voz. Los beats
-`avatar` sin descripción no crean batches. Un máximo de cuatro generaciones
+`avatar` sin descripción no crean imágenes. Un máximo de cuatro generaciones
 se procesan a la vez.
 
 Los grids son siempre 2×2 (2–4 beats), 3×2 (5–6) o 3×3 (7–9). Los
@@ -198,7 +204,9 @@ Los tamaños superiores a 2560×1440 son experimentales según OpenAI;
 se debe revisar visualmente la distribución real de paneles. El prompt
 de cada grid se compone **por código** con la cabecera
 `iPhone 6 photograph done by an elderly:`, la línea `2x2 grid 16:9`
-(o `3x2`/`3x3`) y las descripciones numeradas, sin otro texto.
+(o `3x2`/`3x3`), las descripciones numeradas, una sección
+`Voice over context:` con el `text` de cada beat incluido y la instrucción
+`Do not add text to the image.`
 Las descripciones numeradas por B2 mantienen literalmente su número;
 las imágenes de relleno reciben por código el número de su posición
 en el grid. Las filas y columnas se conservan en el mapa interno de
@@ -225,19 +233,13 @@ suficiente seguridad, el postproceso se detiene sin repetir ninguna
 generación de pago: el grid original queda disponible para inspección
 y `--images-only` puede reanudar los artefactos guardados.
 
-El límite **local** de cada batch es de 30 minutos desde su envío
-(`OPENAI_IMAGE_BATCH_TIMEOUT_SECONDS=1800`), aunque la ventana oficial
-de Batch API es `24h`. Si el batch no ha entregado la imagen a tiempo,
-el runner intenta cancelarlo y regenera **solo esa generación individual o
-grid completo** con el mismo modelo, dimensiones y endpoint
-(`POST /v1/images/generations` o `POST /v1/images/edits` con el mismo avatar).
-La cancelación puede tardar, por lo que un batch tardío podría facturarse
-además de la generación directa. Los IDs, tiempos y estados se conservan
-por generación para
-`--images-only`; una petición de pago con resultado desconocido no se
-repite automáticamente. Si hay estados anteriores de AI33 pendientes,
-deben reconciliarse y usarse en otro output: no se los borra ni se
-crean batches paralelos a ciegas. `--no-image` (alias `--skip-images`)
+Cada generación estándar guarda su estado antes del POST y conserva el
+fingerprint del prompt efectivo para `--images-only`. Si la respuesta de pago
+se pierde, el estado queda como `direct_submitting_unknown` y la petición no se
+repite automáticamente. `--images-only` protege los estados anteriores de AI33
+o Batch y exige reconciliarlos antes de lanzar solicitudes oficiales nuevas.
+Una ejecución completa desde B1.1 sí elimina la carpeta anterior del guion.
+`--no-image` (alias `--skip-images`)
 permite guardar B2 sin hacer ninguna llamada a la API de imágenes.
 
 **Límite actual:** esto genera un plan visual e imágenes fijas, **no** un vídeo final.
