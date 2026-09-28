@@ -37,7 +37,7 @@ from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE
 from ai_video_factory.providers.openai_batch_images import (
-    ImageBatchOptions,
+    ImageOptions,
     clear_previous_b2_images,
     generate_b2_images,
     has_pending_image_tasks,
@@ -131,7 +131,7 @@ def parse_args() -> argparse.Namespace:
         "--images-only",
         action="store_true",
         help=(
-            "Generate or resume official OpenAI image batches from a saved B2 plan, "
+            "Generate or resume standard official OpenAI images from a saved B2 plan, "
             "without repeating the planning bots."
         ),
     )
@@ -539,13 +539,11 @@ def _clear_outputs_from(output: Path, start_from: str) -> None:
 
 
 
-def _image_batch_options() -> ImageBatchOptions:
-    return ImageBatchOptions(
+def _image_options() -> ImageOptions:
+    return ImageOptions(
         model_id=settings.openai_image_model,
         size=settings.openai_image_size,
         quality=settings.openai_image_quality,
-        timeout_seconds=settings.openai_image_batch_timeout_seconds,
-        poll_interval_seconds=settings.openai_image_batch_poll_interval_seconds,
     )
 
 
@@ -555,7 +553,7 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
         output,
         plan,
         api_key=settings.openai_api_key,
-        options=_image_batch_options(),
+        options=_image_options(),
     )
     # Crop only saved grid PNGs; this step cannot make a new paid API call.
     panel_assets = await asyncio.to_thread(crop_grid_assets, output, manifest)
@@ -594,14 +592,8 @@ def _image_summary(manifest: dict[str, object]) -> dict[str, object]:
         "status": "completed",
         "count": len(items),
         "model_id": manifest["model_id"],
-        "openai_batch_count": sum(
-            item.get("provider") == "openai_batch" for item in items
-        ),
-        "openai_direct_fallback_count": sum(
-            item.get("provider") == "openai_direct_fallback" for item in items
-        ),
-        "batch_may_complete_later": any(
-            item.get("batch_may_complete_later") for item in items
+        "openai_direct_count": sum(
+            item.get("provider") == "openai_direct" for item in items
         ),
     }
     if any(item.get("grid") is not None for item in items):
@@ -776,7 +768,7 @@ async def _run_images_only(script_file: Path, output_root: Path) -> None:
         or not (output / "B2" / "merged_output.json").is_file()
     ):
         raise SystemExit(
-            "Cannot resume OpenAI image batches without a complete saved B2 visual plan"
+            "Cannot resume standard OpenAI images without a complete saved B2 visual plan"
         )
     report = json.loads(report_path.read_text(encoding="utf-8"))
     source_sha = hashlib.sha256(script_file.read_bytes()).hexdigest()
@@ -824,7 +816,7 @@ async def _run_images_only(script_file: Path, output_root: Path) -> None:
     _write(report_path, report)
     print(
         f"  Images complete: {len(manifest['items'])} PNG "
-        f"({manifest.get('openai_direct_fallback_count', 0)} direct fallbacks)",
+        f"({manifest.get('openai_direct_count', 0)} standard OpenAI requests)",
         flush=True,
     )
 
@@ -1264,9 +1256,9 @@ async def main() -> None:
         previous_output = output_root / script_file.stem
         if previous_output.exists() and has_pending_image_tasks(previous_output):
             raise SystemExit(
-                "Existing paid image tasks may still be running (OpenAI Batch or legacy "
-                "AI33). Use --images-only to resume an OpenAI batch, or reconcile "
-                "legacy tasks, before replacing this output."
+                "Existing paid image tasks may still be running (standard OpenAI or "
+                "legacy AI33). Use --images-only to resume them, or reconcile legacy "
+                "tasks, before replacing this output."
             )
         if previous_output.exists() and unfinished_audio_runs(previous_output):
             raise SystemExit(

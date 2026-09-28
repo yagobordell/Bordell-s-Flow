@@ -123,7 +123,8 @@ def test_missing_default_input_root_is_created_without_a_gitkeep(
 
     assert (tmp_path / "data" / "input").is_dir()
     assert not (tmp_path / "data" / "input" / "scripts").exists()
-    assert "No .txt scripts found in data/input" in capsys.readouterr().out
+    output = capsys.readouterr().out.replace("\\", "/")
+    assert "No .txt scripts found in data/input" in output
 
 
 def test_library_lists_only_txt_files_in_stable_name_order(tmp_path: Path) -> None:
@@ -379,7 +380,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         assert plan["avatar"]["file"] == "avatar.png"
         return {
             "model_id": "gpt-image-2.5-flare",
-            "items": [{"provider": "openai_batch"}],
+            "items": [{"provider": "openai_direct"}],
         }
 
     monkeypatch.setattr(runner, "_generate_images", fake_images)
@@ -423,9 +424,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             "status": "completed",
             "count": 1,
             "model_id": "gpt-image-2.5-flare",
-            "openai_batch_count": 1,
-            "openai_direct_fallback_count": 0,
-            "batch_may_complete_later": False,
+            "openai_direct_count": 1,
         }
         assert consolidated["run"]["script_file"] == destination.name + ".txt"
         expected_file = monk if destination == first else teacher

@@ -1,4 +1,4 @@
-"""Official OpenAI GPT Image fallback for AI33 tasks that exceed 30 minutes.
+"""Official OpenAI GPT Image client for standard image generation.
 
 The caller owns paid-request idempotency and persists its state before calling
 generate_png. Never automatically retry a POST with an unknown outcome.
@@ -20,7 +20,7 @@ from PIL import Image
 _OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"
 _OPENAI_EDITS_URL = "https://api.openai.com/v1/images/edits"
 _MAX_PNG_BYTES = 40 * 1024 * 1024
-_FALLBACK_SIZE = "1280x720"
+_DEFAULT_SIZE = "1280x720"
 _GRID_SIZES = {"2560x1440", "3840x1440", "3840x2160"}
 
 
@@ -29,11 +29,11 @@ class OpenAIImageError(RuntimeError):
 
 
 class OpenAIImageClient:
-    """Generate one PNG with the same GPT Image model and low quality as AI33."""
+    """Generate one PNG through the standard official OpenAI image API."""
 
     def __init__(self, api_key: str) -> None:
         if not api_key.strip():
-            raise ValueError("OPENAI_API_KEY is required for the official image fallback")
+            raise ValueError("OPENAI_API_KEY is required for official image generation")
         self._api_key = api_key
 
     def _request_json(
@@ -67,7 +67,7 @@ class OpenAIImageClient:
         prompt: str,
         model: str,
         destination: Path,
-        size: str = _FALLBACK_SIZE,
+        size: str = _DEFAULT_SIZE,
         quality: str = "low",
         output_format: str = "png",
         reference_image_url: str | None = None,
@@ -76,11 +76,11 @@ class OpenAIImageClient:
             "gpt-image-2.5-flare",
             "gpt-image-2.5-sunburst",
         }:
-            raise ValueError("Fallback must use the same selected GPT Image model")
-        if size not in {_FALLBACK_SIZE, *_GRID_SIZES}:
-            raise ValueError("Official fallback requires a supported image or grid size")
+            raise ValueError("Official image generation must use a supported GPT Image model")
+        if size not in {_DEFAULT_SIZE, *_GRID_SIZES}:
+            raise ValueError("Official image generation requires a supported image or grid size")
         if quality != "low" or output_format != "png":
-            raise ValueError("Official fallback requires low quality and PNG")
+            raise ValueError("Official image generation requires low quality and PNG")
         payload: dict[str, object] = {
             "model": model,
             "prompt": prompt,

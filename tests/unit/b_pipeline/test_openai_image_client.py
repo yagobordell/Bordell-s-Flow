@@ -1,4 +1,4 @@
-"""The standard official image endpoint remains the direct, paid batch fallback."""
+"""The standard official image endpoint used by B2."""
 
 import base64
 import hashlib
@@ -54,11 +54,15 @@ def test_direct_client_uses_the_same_model_prompt_size_quality_and_single_image(
     assert destination.read_bytes() == _png()
 
 
-@pytest.mark.parametrize(("content", "message"), [
-    (_png(1024, 1024), "dimensions"),
-    (_png(fmt="JPEG"), "not a PNG"),
-    (b"not a PNG", "invalid PNG"),
-])
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (_png(1024, 1024), "dimensions"),
+        (_png(fmt="JPEG"), "not a PNG"),
+        (b"not a PNG", "invalid PNG"),
+    ],
+    ids=["wrong_dimensions", "jpeg", "garbage"],
+)
 def test_direct_client_refuses_invalid_artifacts_without_writing(
     content: bytes, message: str, tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -78,11 +82,11 @@ def test_direct_client_refuses_invalid_artifacts_without_writing(
 
 
 @pytest.mark.parametrize("old_model", ["gpt-image-2", "gpt-image-2.5"])
-def test_direct_fallback_rejects_old_or_incomplete_model_id(
+def test_standard_client_rejects_old_or_incomplete_model_id(
     old_model: str, tmp_path: Path,
 ) -> None:
     client = official.OpenAIImageClient("fake-key")
-    with pytest.raises(ValueError, match="same selected GPT Image model"):
+    with pytest.raises(ValueError, match="supported GPT Image model"):
         client.generate_png(
             prompt="Image", model=old_model, destination=tmp_path / "bad.png",
         )

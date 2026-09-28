@@ -30,17 +30,24 @@ class GridPlanError(ValueError):
 
 
 def _grid_prompt(panels: list[dict[str, Any]], columns: int, rows: int) -> str:
-    """Keep the paid grid prompt to the user's concise requested format."""
+    """Build the grid prompt with visual descriptions and narration context."""
     descriptions: list[str] = []
+    voice_over: list[str] = []
     for number, panel in enumerate(panels, 1):
         description = panel["description"].strip()
         if _NUMBERED.match(description.lstrip()) is None:
             description = f"{number}. {description}"
         descriptions.append(description)
+        text = panel.get("text")
+        if panel.get("source") != BLACK_PANEL_SOURCE and isinstance(text, str) and text.strip():
+            voice_over.append(f"{panel['beat_id']}: {text.strip()}")
     prompt = (
         GRID_PHOTO_HEADER
         + f"{columns}x{rows} grid 16:9\n\n"
         + "\n".join(descriptions)
+        + "\n\nVoice over context:\n"
+        + "\n".join(voice_over)
+        + "\n\nDo not add text to the image."
     )
     if len(prompt) + 400 > 32_000:
         raise GridPlanError("Grid prompt exceeds the supported GPT Image prompt limit")

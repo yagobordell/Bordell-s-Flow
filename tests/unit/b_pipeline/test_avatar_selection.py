@@ -143,7 +143,8 @@ def test_list_avatars_creates_library_without_key_or_api(
     asyncio.run(runner.main())
 
     assert (tmp_path / "data" / "avatar").is_dir()
-    assert "No PNG avatars found in data/avatar" in capsys.readouterr().out
+    output = capsys.readouterr().out.replace("\\", "/")
+    assert "No PNG avatars found in data/avatar" in output
 
     _avatar(tmp_path / "data" / "avatar", "monje.png")
     asyncio.run(runner.main())
