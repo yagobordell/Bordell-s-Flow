@@ -13,6 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CUDA_MODULE_LOADING=LAZY \
     INFERENCE_WORKER_MODE=production \
     INFERENCE_WORKER_TEMP_DIR=/tmp/ai-video-factory \
+    LTX_RUNTIME_BOOTSTRAP_MARKER=/tmp/ai-video-factory/ltx25-bootstrap-complete \
     LTX_MODEL_ROOT=/workspace/models/ltx-2.5 \
     LTX_MODEL_REPOSITORY=Lightricks/LTX-2.5 \
     LTX_MODEL_REVISION=6c7e5e573ac1667efc83407806fe9b0b93730e60 \

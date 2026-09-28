@@ -1,11 +1,12 @@
 # Salad startup performance
 
-Cold start is now split into four observable stages:
+Cold start is split into five observable stages:
 
 1. Salad node allocation and image pull;
 2. model download/bootstrap;
-3. worker readiness and Postgres polling;
-4. inference.
+3. local model/pipeline construction;
+4. worker readiness and Postgres polling;
+5. inference.
 
 Queue dispatch is not part of the Salad lifecycle.
 
@@ -27,7 +28,9 @@ a ready model runtime. `/ready` becomes successful only after required model/run
 
 Model download/watchdog logic remains model-specific. Network preflight may request Salad instance
 reallocation when a node cannot sustain the required Hugging Face download path. This is a node
-selection mechanism, not a job-state mechanism.
+selection mechanism, not a job-state mechanism. LTX bootstrap emits
+`LTX25_MODEL_BOOTSTRAP_METRIC`, and the I2V runtime separately emits pipeline-load and inference
+metrics so network bootstrap is not conflated with local CUDA/model preparation.
 
 Do not weaken checksum, revision, gated-model or required-file validation to improve startup time.
 
@@ -42,6 +45,14 @@ pending time now measures real capacity/bootstrap pressure rather than a separat
 ## Scale to zero
 
 Scale-to-zero is explicit. There is no queue autoscaler and no remote `min_replicas` to restore.
+The singleton Capacity Controller remains the only component allowed to stop or resize production
+groups; workers never stop Salad themselves.
+
+When a service has genuine zero remaining work, the controller may use the dedicated
+`SALAD_AUTOSCALER_ZERO_DEMAND_STABLE_POLLS` window instead of the slower partial-downscale
+stability window. It still publishes drain protection first. After a zero-demand drain is published,
+the controller performs the next reconciliation after the drain grace when that is shorter than the
+normal controller polling interval. Pending or retryable work prevents this fast path.
 
 Cleanup succeeds only after the container group is stopped and replicas have remained zero across
 multiple observations. A replica rebound after this architecture is therefore a direct Salad
@@ -56,5 +67,10 @@ Prefer, in order:
 3. reliable model download paths and bounded watchdogs;
 4. correct explicit parallel replica count for known outstanding work;
 5. model/runtime optimizations.
+
+For LTX investigations, retain the lifecycle log boundaries: model bootstrap, I2V pipeline load,
+generic task start/end, durable artifact publication, autoscaler demand/remaining-work reason and
+provider stop confirmation. The useful cost measurements are `running -> first useful inference`
+and `last artifact/job completion -> stable stopped`, not `/ready` alone.
 
 Do not reintroduce an additional queue or scaler solely to reduce cold-start latency.

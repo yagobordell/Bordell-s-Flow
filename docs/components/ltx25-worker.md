@@ -39,6 +39,9 @@ are non-empty.
 The default worker bootstrap downloads only the shared distilled assets required by normal
 I2V, legacy fast A2V and the reference A2V profile. The dev transformer and distilled LoRA
 are optional comparison assets enabled explicitly with `LTX_INCLUDE_A2V_DEV_ASSETS=true`.
+The image remains intentionally weight-light: checkpoints are not baked into the OCI image.
+`download_models.sh` emits `LTX25_MODEL_BOOTSTRAP_METRIC` with cache-hit state and elapsed
+bootstrap time so paid runtime can be separated from model transfer/verification.
 
 ## Deployment
 
@@ -72,6 +75,9 @@ Operate it with:
 ```
 
 Production capacity is governed by the Postgres-backed predictive controller.
+I2V and A2V must use independent cold-start/runtime calibration because they are separate
+container groups even though they currently share the same worker image. The controller is the
+only production authority allowed to resize or stop those groups; workers never stop Salad directly.
 Controlled paid smokes allocate one replica explicitly and stop it in `finally`.
 See [isolated I2V validation](../operations/ltx25-i2v-isolated-smoke.md).
 
@@ -80,6 +86,17 @@ See [isolated I2V validation](../operations/ltx25-i2v-isolated-smoke.md).
 Application job identity is independent from the Salad transport job ID. Phase 8 can therefore resume
 or resubmit transport while preserving logical idempotency. Durable R2 output is checked before new
 transport work when possible.
+
+Healthy jobs reuse a resident pipeline within one replica: I2V loads during worker preparation,
+while A2V loads lazily on the first generation for a profile. A retryable GPU failure
+(`oom`, `cuda_device` or `cudnn_sdpa`) invalidates the affected resident pipeline before the
+shared retry cooldown. The retry then rebuilds from the already-downloaded local checkpoints instead
+of forcing another Hugging Face bootstrap or Salad cold start. Non-GPU failures do not discard a
+healthy resident pipeline.
+
+I2V emits pipeline-load and inference timing metrics; A2V already records model-load, inference,
+encode/mux and pipeline-reuse metrics. Generic worker logs record task start/end and durable artifact
+publication. These boundaries are the source of truth for the later RTX 5090 lifecycle benchmark.
 
 Paid validation uses dedicated scripts under `scripts/smoke/`; historical run IDs, image digests and
 benchmark hashes stay in Git history.

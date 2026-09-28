@@ -14,6 +14,7 @@ from ai_video_factory.inference.capacity_controller import (
     read_capacity_controller_health,
     resolve_capacity_controller_dsn,
 )
+from ai_video_factory.inference.salad_autoscaler import next_reconcile_delay_seconds
 from ai_video_factory.inference.salad_capacity import build_salad_capacity_runtime
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -152,8 +153,9 @@ def main() -> None:
         )
         while not stop.is_set():
             leadership.heartbeat()
+            next_delay_seconds = args.poll_seconds
             try:
-                runtime.autoscaler.reconcile()
+                results = runtime.autoscaler.reconcile()
             except Exception as error:
                 leadership.record_failure(error)
                 print(
@@ -164,9 +166,14 @@ def main() -> None:
                     raise
             else:
                 leadership.record_success()
+                next_delay_seconds = next_reconcile_delay_seconds(
+                    results,
+                    poll_seconds=args.poll_seconds,
+                    drain_grace_seconds=runtime.autoscaler.config.drain_grace_seconds,
+                )
             if args.once:
                 return
-            stop.wait(args.poll_seconds)
+            stop.wait(next_delay_seconds)
     finally:
         if runtime is not None:
             runtime.close()

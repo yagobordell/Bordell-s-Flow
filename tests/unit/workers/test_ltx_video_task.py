@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 import ai_video_factory.workers.ltx25.model as ltx_video
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
+from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.tasks import CopyTaskRunner, TaskRunnerRegistry
 from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
@@ -27,12 +28,16 @@ class FakeBackend:
         self.calls: list[dict[str, Any]] = []
         self.prepare_calls = 0
         self.ready_calls = 0
+        self.invalidate_calls = 0
 
     def prepare(self) -> None:
         self.prepare_calls += 1
 
     def ready(self) -> None:
         self.ready_calls += 1
+
+    def invalidate_pipeline(self) -> None:
+        self.invalidate_calls += 1
 
     def generate(
         self,
@@ -154,6 +159,56 @@ def test_task_runner_generates_one_silent_ready_mp4_contract(tmp_path: Path) -> 
     assert len(backend.calls) == 1
     assert backend.calls[0]["parameters"].prompt == "A deliberate samurai motion shot."
     assert backend.calls[0]["parameters"].seed == 43
+
+
+def test_i2v_runner_invalidates_pipeline_after_retryable_gpu_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = FakeBackend()
+    runner = LTXVideoTaskRunner(backend=backend)
+    keyframe = tmp_path / "keyframe.png"
+    keyframe.write_bytes(b"png")
+
+    def fail_generation(**kwargs: Any) -> None:
+        del kwargs
+        raise RuntimeError("CUDA out of memory while executing I2V")
+
+    monkeypatch.setattr(backend, "generate", fail_generation)
+
+    with pytest.raises(RuntimeError, match="CUDA out of memory"):
+        runner.run(
+            request(),
+            {"keyframe": keyframe},
+            tmp_path / "retryable-gpu-failure",
+        )
+
+    assert backend.invalidate_calls == 1
+
+
+def test_i2v_runner_keeps_pipeline_for_non_gpu_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = FakeBackend()
+    runner = LTXVideoTaskRunner(backend=backend)
+    keyframe = tmp_path / "keyframe.png"
+    keyframe.write_bytes(b"png")
+
+    def fail_generation(**kwargs: Any) -> None:
+        del kwargs
+        raise RuntimeError("unexpected media encoder failure")
+
+    monkeypatch.setattr(backend, "generate", fail_generation)
+
+    with pytest.raises(RuntimeError, match="media encoder failure"):
+        runner.run(
+            request(),
+            {"keyframe": keyframe},
+            tmp_path / "non-gpu-failure",
+        )
+
+    assert backend.invalidate_calls == 0
 
 
 def test_task_runner_rejects_wrong_input_or_output_contract(tmp_path: Path) -> None:
@@ -301,20 +356,16 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     backend.prepare()
 
     validated = LTXVideoParameters.model_validate(parameters())
-    backend.generate(
-        keyframe_path=keyframe,
-        output_path=tmp_path / "first.mp4",
-        parameters=validated,
-    )
-    backend.generate(
-        keyframe_path=keyframe,
-        output_path=tmp_path / "second.mp4",
-        parameters=validated,
-    )
+    for index in range(5):
+        backend.generate(
+            keyframe_path=keyframe,
+            output_path=tmp_path / f"healthy-{index}.mp4",
+            parameters=validated,
+        )
 
     assert backend.pipeline_loaded is True
     assert state["pipeline_builds"] == 1
-    assert len(state["pipeline_calls"]) == 2
+    assert len(state["pipeline_calls"]) == 5
     assert state["pipeline_init"]["quantization"] == "fp8-policy"
     assert state["pipeline_init"]["offload_mode"] == "cpu"
     assert state["pipeline_init"]["device"] == "device:cuda"
@@ -330,7 +381,7 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
         (Ellipsis, slice(24, 744), slice(0, 1280), slice(None)),
         (Ellipsis, slice(24, 744), slice(0, 1280), slice(None)),
     ]
-    assert len(state["encodes"]) == 2
+    assert len(state["encodes"]) == 5
     assert all(call["audio"] is None for call in state["encodes"])
 
     # Experimental guidance reuses the same resident weights without changing
@@ -353,11 +404,21 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
         ),
     )
     assert state["pipeline_builds"] == 1
-    assert len(state["pipeline_calls"]) == 3
+    assert len(state["pipeline_calls"]) == 6
     assert static_calls[0]["prompt"] == validated.prompt
     assert static_calls[0]["seed"] == validated.seed
     assert static_calls[0]["images"][0]["strength"] == 1.0
-    assert state["encodes"][2]["audio"] is None
+    assert state["encodes"][5]["audio"] is None
+
+    backend.invalidate_pipeline()
+    assert backend.pipeline_loaded is False
+    backend.generate(
+        keyframe_path=keyframe,
+        output_path=tmp_path / "after-transient-retry.mp4",
+        parameters=validated,
+    )
+    assert backend.pipeline_loaded is True
+    assert state["pipeline_builds"] == 2
 
 
 def test_qwen_keyframe_fits_ltx_grid_without_losing_image_edges(tmp_path: Path) -> None:
@@ -384,6 +445,18 @@ def test_qwen_keyframe_fits_ltx_grid_without_losing_image_edges(tmp_path: Path) 
         assert result.getpixel((640, 0)) == (0, 255, 0)
         assert result.getpixel((640, 767)) == (255, 255, 0)
         assert result.getpixel((640, 384)) == (48, 48, 48)
+
+
+def test_i2v_prepare_waits_for_runtime_bootstrap_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = tmp_path / "bootstrap-complete"
+    monkeypatch.setenv("LTX_RUNTIME_BOOTSTRAP_MARKER", str(marker))
+    backend = DirectLTX25Backend(model_root=tmp_path / "models")
+
+    with pytest.raises(ModelBootstrapPendingError, match="bootstrap has not completed"):
+        backend.prepare()
 
 
 def test_direct_backend_rejects_missing_cuda_before_pipeline_build(

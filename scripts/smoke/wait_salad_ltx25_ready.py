@@ -85,15 +85,25 @@ def _readiness_observation(
 
     if group.get("replicas") != 1:
         raise RuntimeError("Controlled LTX readiness requires exactly one configured replica")
-    current_instances = [
+    current_version_instances = [
         instance
         for instance in instances
-        if instance.get("state") == "running" and instance.get("version") == version
+        if instance.get("version") == version
+        and instance.get("state") in {"allocating", "downloading", "creating", "running"}
+    ]
+    current_instances = [
+        instance for instance in current_version_instances if instance.get("state") == "running"
     ]
     if len(current_instances) != 1:
+        states = ",".join(
+            f"{instance.get('id')}:{instance.get('state')}:"
+            f"started={instance.get('started')}:ready={instance.get('ready')}"
+            for instance in current_version_instances
+        ) or "<none>"
         return None, (
-            f"group_status=running current_version={version} "
-            f"running_current_instances={len(current_instances)}"
+            f"group_status={status} current_version={version} "
+            f"running_current_instances={len(current_instances)} "
+            f"current_version_instances={len(current_version_instances)} states=[{states}]"
         )
 
     instance = current_instances[0]
