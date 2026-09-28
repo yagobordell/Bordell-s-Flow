@@ -474,11 +474,28 @@ hashes y timeline de cada beat. `video/latest.json` y
 Cada tarea utiliza IDs y huellas inmutables en Postgres y artefactos R2.
 Si se interrumpe una ejecución, no se envía una solicitud pagada distinta
 para una tarea ya registrada; un manifiesto incompleto bloquea borrar la
-carpeta y comenzar un nuevo B1.1. Para reanudar solo las tareas LTX desde
-el guion, las imágenes y el audio ya guardados, sin repetir bots ni TTS:
+carpeta y comenzar un nuevo B1.1. Estos son los dos modos de ejecución
+desde Windows (ejemplo: guion `test2.txt` y avatar `Jorge.png`):
 
 ```powershell
-.\run.ps1 historia_roma --videos-only
+# B1/B2, Fish, imágenes y preview estático. No solicita ningún trabajo LTX.
+.\run.ps1 test2 Jorge --no-video
+
+# Cuando el preview ya existe, genera o reanuda solo el vídeo final con LTX.
+.\run.ps1 test2 --generate-video
+```
+
+`--generate-video` exige un preview completo y válido, junto con el mismo
+guion original, el plan B2, las imágenes y Fish/STT guardados. Comprueba el
+SHA-256 del preview antes de enviar trabajos GPU. Reutiliza los artefactos
+existentes y **no repite B1/B2, OpenAI Images, Fish ni el preview**.
+La antigua opción `--videos-only` continúa funcionando como alias.
+Si los guiones están en `data/input/` en vez de `data/input/scripts/`,
+usa directamente:
+
+```powershell
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script test2 --no-video --avatar Jorge
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script test2 --generate-video
 ```
 
 `--images-only` y `--resume-audio` también activan LTX cuando la otra
