@@ -22,10 +22,10 @@ from ai_video_factory.compositor.static_preview import (
 )
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
 from ai_video_factory.inference.gpu_failures import DEFAULT_GPU_MAX_ATTEMPTS
+from ai_video_factory.inference.ports import ObjectStorage
 from ai_video_factory.inference.storage import sha256_file
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.job_queue import JobQueueClient
-from ai_video_factory.inference.ports import ObjectStorage
 from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
     LTX_A2V_TASK,
