@@ -248,7 +248,15 @@ def render_b2_ltx_video(
             "-f", "concat", "-safe", "0", "-i", str(concat),
             "-i", str(soundtrack),
             "-map", "0:v:0", "-map", "1:a:0",
-            "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+            # Concat of independent MP4 tracks can carry tiny timestamp gaps
+            # even though each beat has the expected number of frames.
+            # Renumber every decoded frame to a true 24-fps output clock,
+            # without ever using LTX's embedded audio.
+            "-vf", f"setpts=N/({_FPS}*TB),fps={_FPS},format=yuv420p",
+            "-frames:v", str(total_frames), "-r", str(_FPS),
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
+            "-video_track_timescale", "12288",
+            "-c:a", "aac", "-b:a", "192k",
             "-t", f"{timeline['duration_seconds']:.9f}",
             "-movflags", "+faststart", str(temporary),
         ], "B2 LTX final mux")
