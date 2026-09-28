@@ -1,8 +1,10 @@
 """Plan one large image per B2 numbered sequence, before any paid image calls.
 
 The numbered beats are protected: fillers come only from unnumbered, still
-unassigned described beats. Each source beat belongs to exactly one job.
-No panel is cropped or materialized as a separate image in this stage.
+unassigned described beats. When there are not enough described beats to fill
+a grid, the remaining cells are explicit black panels. Each source beat
+belongs to exactly one job. No panel is cropped or materialized as a separate
+image in this stage.
 """
 
 from __future__ import annotations
@@ -19,10 +21,12 @@ _SHAPES = {
 _PANEL_WIDTH = 1280
 _PANEL_HEIGHT = 720
 GRID_PHOTO_HEADER = "iPhone 6 photograph done by an elderly:\n\n"
+BLACK_PANEL_SOURCE = "black_panel"
+BLACK_PANEL_DESCRIPTION = "black panel"
 
 
 class GridPlanError(ValueError):
-    """B2 numbering or available filler beats cannot make a valid grid."""
+    """B2 numbering or grid descriptions cannot make a valid grid."""
 
 
 def _grid_prompt(panels: list[dict[str, Any]], columns: int, rows: int) -> str:
@@ -121,21 +125,30 @@ def plan_image_jobs(
             key=positions.__getitem__,
             reverse=True,
         )[:missing]
-        if len(forward) + len(backward) != count - len(run):
-            raise GridPlanError(
-                f"Grid beginning at {run[0]['beat_id']} requires {count} "
-                "distinct described beats; insufficient free images for padding"
-            )
         selected = [available[key] for key in forward + backward] + run
         for key in forward + backward:
             del available[key]
         selected.sort(key=lambda b: positions[b["block_id"], b["beat_id"]])
+        black_panel_count = count - len(selected)
+        selected.extend(
+            {
+                "block_id": run[0]["block_id"],
+                "beat_id": (
+                    f"{run[0]['block_id']}BLACKPANEL"
+                    f"{chr(ord('A') + index)}"
+                ),
+                "visual_type": "media_image",
+                "description": BLACK_PANEL_DESCRIPTION,
+                "source": BLACK_PANEL_SOURCE,
+            }
+            for index in range(black_panel_count)
+        )
         panels = [
             {
                 **beat,
                 "row": index // columns,
                 "column": index % columns,
-                "source": (
+                "source": beat.get("source") or (
                     "numbered"
                     if (beat["block_id"], beat["beat_id"]) in numbered
                     else "filler"
@@ -161,8 +174,15 @@ def plan_image_jobs(
             "panels": panels,
         })
     jobs = list(available.values()) + grids
-    jobs.sort(key=lambda job: min(
-        positions[beat["block_id"], beat["beat_id"]]
-        for beat in job.get("panels", [job])
-    ))
+
+    def job_position(job: dict[str, Any]) -> int:
+        if job.get("grid") is None:
+            return positions[job["block_id"], job["beat_id"]]
+        return min(
+            positions[panel["block_id"], panel["beat_id"]]
+            for panel in job["panels"]
+            if panel.get("source") != BLACK_PANEL_SOURCE
+        )
+
+    jobs.sort(key=job_position)
     return jobs

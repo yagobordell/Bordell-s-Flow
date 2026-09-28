@@ -35,6 +35,7 @@ from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.grid_crops import crop_grid_assets
+from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE
 from ai_video_factory.providers.openai_batch_images import (
     ImageBatchOptions,
     clear_previous_b2_images,
@@ -633,7 +634,10 @@ async def _preview_if_ready(
     # beat's start image. A completed crop map enables the normal preview.
     def missing_panels(saved: dict[str, object]) -> bool:
         expected = sum(
-            len(item["panels"])
+            sum(
+                panel.get("source") != BLACK_PANEL_SOURCE
+                for panel in item["panels"]
+            )
             for item in saved.get("items", [])
             if item.get("grid") is not None
         )

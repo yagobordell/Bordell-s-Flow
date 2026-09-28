@@ -796,17 +796,25 @@ def test_grid_uses_nearest_free_previous_images_when_no_following(
     ]
 
 
-def test_grid_fails_before_paid_requests_when_no_distinct_fillers(
+def test_grid_uses_black_panels_when_no_distinct_fillers(
     tmp_path: Path,
 ) -> None:
     plan = _numbered_grid_plan(2, after=1)
     batch = FakeBatch()
-    with pytest.raises(images.ImageBatchError, match="insufficient free images"):
-        images.generate_b2_images(
-            tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
-        )
-    assert batch.created == batch.uploads == []
-    assert not (tmp_path / "images/manifest.json").exists()
+    manifest = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), batch_client=batch,
+    )
+    assert manifest["status"] == "completed"
+    assert manifest["grid_count"] == 1
+    assert manifest["total_generation_jobs"] == 1
+    assert len(batch.created) == len(batch.uploads) == 1
+    panels = manifest["items"][0]["panels"]
+    assert [panel["source"] for panel in panels] == [
+        "numbered", "numbered", "filler", "black_panel",
+    ]
+    assert "black panel" in batch.uploads[0][1]["body"]["prompt"]
+    cropped = crop_grid_assets(tmp_path, manifest)
+    assert len(cropped) == 3
 
 
 @pytest.mark.parametrize(

@@ -16,6 +16,8 @@ from typing import Any
 
 from PIL import Image
 
+from .image_grids import BLACK_PANEL_SOURCE
+
 _SHA256 = re.compile(r"[0-9a-f]{64}", flags=re.ASCII)
 _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", flags=re.ASCII)
 _IMAGE_SIZE = (1280, 720)
@@ -247,6 +249,15 @@ def crop_grid_assets(
         image = _verified_grid(output, grid)
         boxes = panel_boxes(image, columns=columns, rows=rows)
         for index, (panel, box) in enumerate(zip(panels, boxes, strict=True)):
+            if not isinstance(panel, dict):
+                raise GridCropError("Invalid grid panel record")
+            if (panel.get("row"), panel.get("column")) != divmod(index, columns):
+                raise GridCropError("Invalid grid panel ordering")
+            if panel.get("source") == BLACK_PANEL_SOURCE:
+                # Black cells are only structural padding for the paid grid;
+                # they do not correspond to a B2 beat and are not compositor
+                # image assets.
+                continue
             block_id, beat_id = panel["block_id"], panel["beat_id"]
             if (
                 not isinstance(block_id, int) or isinstance(block_id, bool)
@@ -259,8 +270,6 @@ def crop_grid_assets(
             if key in seen:
                 raise GridCropError(f"Duplicate crop panel: {beat_id}")
             seen.add(key)
-            if (panel["row"], panel["column"]) != divmod(index, columns):
-                raise GridCropError(f"Invalid grid panel ordering: {beat_id}")
             # Preserve the full photographic interior even if GPT's panel
             # ratio differs slightly from the requested 16:9 geometry.
             result = image.crop(box).resize(
