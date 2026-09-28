@@ -23,6 +23,8 @@ from ai_video_factory.inference.errors import ModelBootstrapPendingError
 from ai_video_factory.inference.gpu_failures import is_retryable_gpu_failure
 from ai_video_factory.inference.ports import LocalArtifact
 
+from .bootstrap import require_runtime_bootstrap_complete
+
 logger = logging.getLogger(__name__)
 
 LTX_VIDEO_TASK = "video.ltx25.generate"
@@ -435,6 +437,7 @@ class DirectLTX25Backend:
         """Load and retain the validated LTX pipeline before queue traffic is accepted."""
 
         prepare_started = time.monotonic()
+        require_runtime_bootstrap_complete()
         with self._lock:
             bindings = self._get_bindings()
             try:
@@ -458,6 +461,7 @@ class DirectLTX25Backend:
         causes repeated five-second probe timeouts and removes this instance
         from Salad job-queue dispatch midway through the job.
         """
+        require_runtime_bootstrap_complete()
         bindings = self._bindings
         if not self._prepared or bindings is None:
             raise RuntimeError("LTX-2.5 pipeline has not been prepared")
