@@ -22,6 +22,11 @@ also loads `.env` with the same precedence. Account names must be URL-safe Salad
 slugs. Missing or invalid account settings fail before any Salad API request.
 `Validate` remains an offline schema check and does not require credentials.
 
+Existing `SALAD_QUEUE_NAME`, `SALAD_LOG_LEVEL` and `SALAD_QUEUE_ENABLED=false`
+entries may remain in each developer's `.env` for compatibility. These settings
+do not select the account or enable the removed Salad Job Queue; Postgres remains
+the sole job transport. Do not turn `SALAD_QUEUE_ENABLED` on.
+
 To run your own Salad organization without affecting production, use a separate
 Postgres control plane and preferably a separate R2 bucket. Two independent Salad
 accounts sharing the same `gpu.jobs` queue and Capacity Controller advisory lock
