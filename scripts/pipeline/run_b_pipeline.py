@@ -33,6 +33,10 @@ from ai_video_factory.compositor.static_preview import (
     generate_static_preview,
 )
 from ai_video_factory.config import settings
+from ai_video_factory.inference.capacity_controller import (
+    read_capacity_controller_health,
+    validate_capacity_controller_dsn,
+)
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
@@ -713,6 +717,34 @@ def _ltx_transport_configured() -> bool:
     ))
 
 
+def _require_ltx_capacity_controller() -> None:
+    """Fail before paid LTX submissions if the shared capacity leader is absent."""
+    dsn = settings.salad_capacity_controller_postgres_dsn or settings.postgres_dsn
+    try:
+        health = read_capacity_controller_health(validate_capacity_controller_dsn(dsn or ""))
+    except Exception as exc:
+        raise RuntimeError(
+            "Cannot verify Salad Capacity Controller health before LTX submission. "
+            "Check POSTGRES_DSN / SALAD_CAPACITY_CONTROLLER_POSTGRES_DSN and run "
+            "'uv run --locked --extra dev python "
+            "scripts/salad/run_salad_capacity_controller.py --check-health'."
+        ) from exc
+    if not health.healthy:
+        raise RuntimeError(
+            f"Salad Capacity Controller is not healthy: {health.reason}. "
+            "No new LTX inference job was submitted. Start the existing singleton "
+            "controller as an independent service (SALAD_AUTOSCALER_ENABLED=true): "
+            "'uv run --locked --extra dev python "
+            "scripts/salad/run_salad_capacity_controller.py --poll-seconds 15'. "
+            "Use '--check-health' to verify it before retrying --generate-video."
+        )
+    print(
+        f"  Salad Capacity Controller healthy: id={health.controller_id} "
+        f"status={health.status}; Postgres demand controls LTX replicas",
+        flush=True,
+    )
+
+
 async def _video_if_ready(
     output: Path,
     report: dict[str, object],
@@ -768,6 +800,7 @@ async def _video_if_ready(
                 queue=queue, storage=storage,
                 poll_seconds=settings.inference_client_poll_seconds,
                 timeout_seconds=max(settings.inference_client_timeout_seconds, 21600.0),
+                check_capacity=_require_ltx_capacity_controller,
             )
         finally:
             queue.close()
@@ -971,6 +1004,11 @@ async def _run_videos_only(script_file: Path, output_root: Path) -> None:
         _verified_asset(output, preview.get("file"), preview.get("sha256"))
     except StaticPreviewError as exc:
         raise SystemExit(f"Saved preview is missing or invalid: {exc}") from exc
+    print(
+        "  Saved B2 plan, Fish/STT alignment and preview verified; "
+        "preparing LTX I2V/A2V jobs",
+        flush=True,
+    )
     try:
         video = await _video_if_ready(output, report, require=True)
     except Exception:
