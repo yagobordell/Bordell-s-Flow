@@ -42,6 +42,12 @@ from ai_video_factory.providers.openai_batch_images import (
     has_pending_image_tasks,
 )
 from ai_video_factory.providers.openai_stt import OpenAISttClient
+from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
+from ai_video_factory.providers.r2 import create_r2_storage
+from ai_video_factory.workflows.b_video import (
+    generate_b2_ltx_video,
+    has_pending_b2_video,
+)
 
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
@@ -135,6 +141,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--videos-only",
+        action="store_true",
+        help="Resume LTX video jobs from saved B2 images and aligned Fish audio only.",
+    )
+    parser.add_argument(
+        "--no-video",
+        action="store_true",
+        help="Skip paid LTX I2V/A2V; keep the local static preview.",
+    )
+    parser.add_argument(
         "--no-audio",
         action="store_true",
         help="Run B1.1/B1.2/B2 (and optional images) without Fish director or TTS.",
@@ -156,7 +172,9 @@ def parse_args() -> argparse.Namespace:
         or args.from_stage != "B1.1"
         or args.stop_stage is not None
         or args.images_only
+        or args.videos_only
         or args.skip_images
+        or args.no_video
         or args.no_audio
         or args.regenerate_audio
         or args.resume_audio
@@ -169,6 +187,7 @@ def parse_args() -> argparse.Namespace:
         parser.error("Choose either --regenerate-audio or --resume-audio.")
     if (args.regenerate_audio or args.resume_audio) and (
         args.images_only
+        or args.videos_only
         or args.no_audio
         or args.skip_images
         or args.from_stage != "B1.1"
@@ -180,6 +199,13 @@ def parse_args() -> argparse.Namespace:
             "Audio-only modes cannot be combined with images, --from, "
             "--no-audio or --avatar."
         )
+    if args.videos_only and (
+        args.images_only or args.no_audio or args.no_video or args.skip_images
+        or args.regenerate_audio or args.resume_audio
+        or args.from_stage != "B1.1" or args.stop_stage is not None
+        or args.avatar is not None or args.qr_url is not None
+    ):
+        parser.error("--videos-only requires saved B2/image/audio outputs; no other generation flags.")
     if args.images_only and args.no_audio:
         parser.error("--images-only does not run audio; omit --no-audio.")
     if args.images_only and (
@@ -205,7 +231,9 @@ def parse_args() -> argparse.Namespace:
         or args.from_stage != "B1.1"
         or args.stop_stage is not None
         or args.images_only
+        or args.videos_only
         or args.skip_images
+        or args.no_video
         or args.no_audio
         or args.regenerate_audio
         or args.resume_audio
@@ -672,6 +700,78 @@ async def _preview_if_ready(
             "grid_count": images["grid_count"],
         }
     return await _render_preview(output, plan, audio, images)
+
+
+def _ltx_transport_configured() -> bool:
+    return all((
+        settings.postgres_dsn,
+        settings.r2_endpoint_url,
+        settings.r2_bucket,
+        settings.r2_access_key_id,
+        settings.r2_secret_access_key,
+    ))
+
+
+async def _video_if_ready(
+    output: Path,
+    report: dict[str, object],
+    *,
+    plan: dict[str, object] | None = None,
+    images: dict[str, object] | None = None,
+    require: bool = False,
+) -> dict[str, object] | None:
+    """Connect verified B2 PNGs and STT-aligned Fish narration to LTX."""
+    run = report.get("run", {})
+    audio = run.get("audio_generation") if isinstance(run, dict) else None
+    if (
+        not isinstance(audio, dict) or audio.get("status") != "completed"
+        or audio.get("stt_complete") is not True
+    ):
+        if require:
+            raise RuntimeError("LTX requires completed Fish audio with word-level STT")
+        return None
+    if plan is None:
+        path = output / "visual_plan.json"
+        if path.is_symlink() or not path.is_file():
+            if require:
+                raise RuntimeError("LTX requires the saved visual_plan.json")
+            return None
+        plan = json.loads(path.read_text(encoding="utf-8"))
+    if images is None:
+        path = output / "images" / "manifest.json"
+        if path.is_symlink() or not path.is_file():
+            if require:
+                raise RuntimeError("LTX requires the completed B2 image manifest")
+            return None
+        images = json.loads(path.read_text(encoding="utf-8"))
+    if images.get("status") != "completed":
+        if require:
+            raise RuntimeError("LTX requires completed B2 images")
+        return None
+    if not _ltx_transport_configured():
+        if require:
+            raise RuntimeError("POSTGRES_DSN and all R2 credentials are required for LTX")
+        return {"status": "deferred", "reason": "ltx_transport_not_configured"}
+
+    def run_ltx() -> dict[str, object]:
+        queue = PostgresJobQueueClient(dsn=settings.postgres_dsn)
+        try:
+            storage = create_r2_storage(
+                endpoint_url=settings.r2_endpoint_url,
+                bucket=settings.r2_bucket,
+                access_key_id=settings.r2_access_key_id,
+                secret_access_key=settings.r2_secret_access_key,
+            )
+            return generate_b2_ltx_video(
+                output, plan, audio, images,
+                queue=queue, storage=storage,
+                poll_seconds=settings.inference_client_poll_seconds,
+                timeout_seconds=max(settings.inference_client_timeout_seconds, 21600.0),
+            )
+        finally:
+            queue.close()
+
+    return await asyncio.to_thread(run_ltx)
 
 
 def _preflight_stt_alignment(
