@@ -12,9 +12,10 @@ import math
 import shutil
 import subprocess
 import wave
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from ai_video_factory.compositor.static_preview import (
     _verified_asset,
