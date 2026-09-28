@@ -177,7 +177,7 @@ def _extract_pcm(soundtrack: Path, destination: Path, start: float, end: float) 
 
 
 def _fingerprint(
-    timeline: dict[str, Any], plan: dict[str, Any], audio: dict[str, Any],
+    timeline: dict[str, Any], audio: dict[str, Any],
     assets: dict[tuple[int, str], Path], avatar: Path,
 ) -> str:
     relevant = {
@@ -214,7 +214,7 @@ def build_b2_video_plan(
             not isinstance(beat["description"], str) or not beat["description"].strip()
         ):
             raise B2VideoError(f"Missing media_video description for {beat['beat_id']}")
-    digest = _fingerprint(timeline, plan, audio, assets, avatar)
+    digest = _fingerprint(timeline, audio, assets, avatar)
     run_dir = output / "video" / "runs" / digest[:20]
     if run_dir.is_symlink() or run_dir.parent.is_symlink():
         raise B2VideoError("Refusing linked B2 LTX run directory")
@@ -367,6 +367,22 @@ def _new_manifest(jobs: list[B2VideoJob], audio: dict[str, Any], digest: str) ->
     }
 
 
+def has_pending_b2_video(output: Path) -> bool:
+    """Protect in-flight Postgres/R2 jobs from destructive B1.1 resets."""
+    root = output / "video" / "runs"
+    if root.is_symlink():
+        return True
+    if not root.exists():
+        return False
+    for path in root.glob("*/manifest.json"):
+        if path.is_symlink():
+            return True
+        state = json.loads(path.read_text(encoding="utf-8"))
+        if state.get("status") != "completed":
+            return True
+    return False
+
+
 def generate_b2_ltx_video(
     output: Path, plan: dict[str, Any], audio: dict[str, Any],
     images: dict[str, Any], *, queue: JobQueueClient, storage: ObjectStorage,
@@ -471,6 +487,7 @@ def generate_b2_ltx_video(
         _save_json(manifest_path, manifest)
 
     if manifest.get("status") == "completed":
+        _verified_asset(output, manifest.get("file"), manifest.get("sha256"))
         return manifest
     result = render_b2_ltx_video(output, run_dir, timeline, jobs, manifest, images, audio)
     manifest.update(result)
