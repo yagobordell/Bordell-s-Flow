@@ -72,6 +72,12 @@ anterior (`data/input/`) para no romper automatizaciones existentes.
 .\run.ps1                         # Menú interactivo de guiones y avatares
 ```
 
+Cada ejecución completa desde B1.1 sustituye `data/output/<guion>` y vuelve a
+generar el run desde cero, aunque esa carpeta ya exista. El borrado local no
+cancela trabajos remotos ya enviados; podrían terminar y generar cargos aunque
+sus estados locales se hayan eliminado. Usa `--images-only` o `--resume-audio`
+si quieres recuperar una tarea anterior.
+
 Fish Audio utiliza el documento de instrucciones
 `src/ai_video_factory/bots/prompts/fish_audio.md`, copiado del BotFish
 adjunto. Empieza **al finalizar B1.1**, en paralelo con B1.2, recibe el mismo guion sin modificar
@@ -230,9 +236,10 @@ y `--images-only` puede reanudar los artefactos guardados.
 Cada generación estándar guarda su estado antes del POST y conserva el
 fingerprint del prompt efectivo para `--images-only`. Si la respuesta de pago
 se pierde, el estado queda como `direct_submitting_unknown` y la petición no se
-repite automáticamente. Si hay estados anteriores de AI33 o Batch pendientes,
-deben reconciliarse y usarse en otro output: no se los borra ni se crean
-solicitudes paralelas a ciegas. `--no-image` (alias `--skip-images`)
+repite automáticamente. `--images-only` protege los estados anteriores de AI33
+o Batch y exige reconciliarlos antes de lanzar solicitudes oficiales nuevas.
+Una ejecución completa desde B1.1 sí elimina la carpeta anterior del guion.
+`--no-image` (alias `--skip-images`)
 permite guardar B2 sin hacer ninguna llamada a la API de imágenes.
 
 **Límite actual:** esto genera un plan visual e imágenes fijas, **no** un vídeo final.

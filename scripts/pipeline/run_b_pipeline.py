@@ -40,7 +40,6 @@ from ai_video_factory.providers.openai_batch_images import (
     ImageOptions,
     clear_previous_b2_images,
     generate_b2_images,
-    has_pending_image_tasks,
 )
 from ai_video_factory.providers.openai_stt import OpenAISttClient
 
@@ -1253,18 +1252,6 @@ async def main() -> None:
     previous_b11: B11Output | None = None
     previous_b12: tuple[B12Output, ...] | None = None
     if args.from_stage == "B1.1":
-        previous_output = output_root / script_file.stem
-        if previous_output.exists() and has_pending_image_tasks(previous_output):
-            raise SystemExit(
-                "Existing paid image tasks may still be running (standard OpenAI or "
-                "legacy AI33). Use --images-only to resume them, or reconcile legacy "
-                "tasks, before replacing this output."
-            )
-        if previous_output.exists() and unfinished_audio_runs(previous_output):
-            raise SystemExit(
-                "Existing Fish Audio tasks may be chargeable. Use --resume-audio "
-                "before replacing this script's output directory."
-            )
         qr = ensure_avatar_qr(
             avatar_file=avatar_file,
             avatars_dir=args.avatars_dir,

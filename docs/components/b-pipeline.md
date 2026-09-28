@@ -382,10 +382,12 @@ si la respuesta de pago se pierde, `--images-only` no duplica la solicitud.
 
 El runner verifica el SHA-256 del guion y los artefactos B2 antes de
 reanudar. Los PNG completados no se regeneran. Los estados
-heredados de AI33 o Batch se protegen: no se borran ni convierten implícitamente
-en nuevas solicitudes oficiales, para evitar duplicación de pagos.
-Reconcílialos primero y utiliza una raíz de salida separada para una
-nueva generación. AI33 se mantiene **solo** en la etapa de voz Fish.
+heredados de AI33 o Batch se protegen en `--images-only`: no se convierten
+implícitamente en nuevas solicitudes oficiales, para evitar duplicación de
+pagos. Reconcílialos primero antes de reanudar imágenes. Una ejecución completa
+desde B1.1 elimina y recrea la carpeta anterior del guion; esto no cancela
+trabajos remotos que ya se hayan enviado. AI33 se mantiene **solo** en la etapa
+de voz Fish.
 
 Documentación oficial:
 https://developers.openai.com/api/docs/guides/image-generation
@@ -399,6 +401,8 @@ al runner Python con `uv run --locked --extra dev`; los nombres del guion
 y avatar admiten omitir `.txt` y `.png`. Si se omiten ambos, el runner
 muestra los menús interactivos. Esta configuración del acceso directo no
 cambia el valor por defecto de `--scripts-dir` en el runner original.
+Una ejecución completa borra y sustituye `data/output/<guion>` antes de
+generarlo de nuevo.
 
 Para iterar solo los bots sin crear imágenes, usa `--no-image`
 (alias compatible de `--skip-images`):
