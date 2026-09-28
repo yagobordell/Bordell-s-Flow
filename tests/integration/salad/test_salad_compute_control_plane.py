@@ -127,6 +127,9 @@ def test_killed_capacity_lock_helper_blocks_subsequent_salad_write() -> None:
     pwsh = shutil.which("pwsh")
     if pwsh is None:
         pytest.skip("PowerShell is unavailable")
+    test_dsn = os.environ.get("TEST_POSTGRES_DSN")
+    if not test_dsn:
+        pytest.skip("TEST_POSTGRES_DSN is required for the live capacity-lock test")
 
     probe = r"""
 $ErrorActionPreference = "Stop"
@@ -190,9 +193,7 @@ finally {
 }
 """
     environment = dict(os.environ)
-    environment["SALAD_CAPACITY_CONTROLLER_POSTGRES_DSN"] = environment[
-        "TEST_POSTGRES_DSN"
-    ]
+    environment["SALAD_CAPACITY_CONTROLLER_POSTGRES_DSN"] = test_dsn
     result = subprocess.run(
         [pwsh, "-NoProfile", "-NonInteractive", "-Command", probe],
         cwd=Path.cwd(),
