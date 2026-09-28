@@ -27,6 +27,7 @@ from ai_video_factory.bots.fish_audio_workflow import (
 from ai_video_factory.bots.workflow import materialize_blocks, validate_beats
 from ai_video_factory.compositor.static_preview import (
     SttAlignmentError,
+    _verified_asset,
     build_stt_beat_timeline,
     generate_static_preview,
 )
@@ -141,9 +142,11 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--generate-video",
         "--videos-only",
+        dest="videos_only",
         action="store_true",
-        help="Resume LTX video jobs from saved B2 images and aligned Fish audio only.",
+        help="Generate or resume LTX video from a saved completed preview; no B bots or TTS.",
     )
     parser.add_argument(
         "--no-video",
@@ -206,8 +209,7 @@ def parse_args() -> argparse.Namespace:
         or args.avatar is not None or args.qr_url is not None
     ):
         parser.error(
-            "--videos-only requires saved B2/image/audio outputs; "
-            "no other generation flags."
+            "--generate-video cannot be combined with other generation flags."
         )
     if args.images_only and args.no_audio:
         parser.error("--images-only does not run audio; omit --no-audio.")
@@ -954,17 +956,25 @@ async def _run_videos_only(script_file: Path, output_root: Path) -> None:
     report_path = output / "run_report.json"
     plan_path = output / "visual_plan.json"
     if (
-        output.is_symlink() or report_path.is_symlink() or plan_path.is_symlink()
+        output.is_symlink() or output.is_junction()
+        or report_path.is_symlink() or plan_path.is_symlink()
         or not report_path.is_file() or not plan_path.is_file()
     ):
-        raise SystemExit("--videos-only requires saved B2 and run report")
+        raise SystemExit("--generate-video requires a saved B2 plan and run report")
     report = json.loads(report_path.read_text(encoding="utf-8"))
     if report.get("run", {}).get("script_sha256") != hashlib.sha256(
         source.read_bytes()
     ).hexdigest():
         raise SystemExit("Script differs from the saved LTX input")
     if report.get("run", {}).get("stt_alignment", {}).get("status") != "completed":
-        raise SystemExit("--videos-only requires previously validated B2/STT alignment")
+        raise SystemExit("--generate-video requires previously validated B2/STT alignment")
+    preview = report.get("run", {}).get("video_preview")
+    if not isinstance(preview, dict) or preview.get("status") != "completed":
+        raise SystemExit("--generate-video requires an existing completed preview")
+    try:
+        _verified_asset(output, preview.get("file"), preview.get("sha256"))
+    except StaticPreviewError as exc:
+        raise SystemExit(f"Saved preview is missing or invalid: {exc}") from exc
     try:
         video = await _video_if_ready(output, report, require=True)
     except Exception:
