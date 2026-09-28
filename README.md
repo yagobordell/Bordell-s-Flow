@@ -47,8 +47,12 @@ npm.cmd ci
 Pop-Location
 ```
 
-Completa `.env` con las credenciales y configuración necesarias. Los secretos y los artefactos
-generados no deben versionarse. Python se instala desde `uv.lock`; cualquier cambio de dependencias
+Completa `.env` con las credenciales y configuración necesarias. Para usar SaladCloud,
+configura `SALAD_ORGANIZATION_NAME`, `SALAD_PROJECT_NAME` y `SALAD_API_KEY` con los datos
+de **tu propia cuenta**; el manifiesto `deploy/salad/services.json` no selecciona ninguna cuenta.
+Para una infraestructura de Salad independiente, usa también una base de datos Postgres
+separada: compartir la cola GPU entre cuentas no aísla las generaciones ni los costes.
+Los secretos y los artefactos generados no deben versionarse. Python se instala desde `uv.lock`; cualquier cambio de dependencias
 debe actualizar `pyproject.toml` y `uv.lock` conjuntamente.
 
 ## Ejecución de B1.1 → B1.2 → B2
