@@ -140,3 +140,12 @@ done
 
 BOOTSTRAP_FINISHED_EPOCH="$(date +%s)"
 echo "LTX25_MODEL_BOOTSTRAP_METRIC cache_hit=${manifest_is_valid} files=${#MODEL_FILES[@]} elapsed_seconds=$((BOOTSTRAP_FINISHED_EPOCH - BOOTSTRAP_STARTED_EPOCH))"
+
+if [[ -n "${LTX_RUNTIME_BOOTSTRAP_MARKER:-}" ]]; then
+  marker_dir="$(dirname "${LTX_RUNTIME_BOOTSTRAP_MARKER}")"
+  mkdir -p "${marker_dir}"
+  marker_tmp="${LTX_RUNTIME_BOOTSTRAP_MARKER}.tmp.$$"
+  printf '%s\n' "${MODEL_REPOSITORY}@${MODEL_REVISION}" > "${marker_tmp}"
+  mv -f "${marker_tmp}" "${LTX_RUNTIME_BOOTSTRAP_MARKER}"
+  echo "LTX25_RUNTIME_BOOTSTRAP_READY marker=${LTX_RUNTIME_BOOTSTRAP_MARKER}"
+fi
