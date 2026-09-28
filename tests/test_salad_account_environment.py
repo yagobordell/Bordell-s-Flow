@@ -121,7 +121,7 @@ def test_deployment_manifest_does_not_pin_an_account() -> None:
     assert "project" not in document["stack"]
 
 
-def test_existing_env_example_keeps_postgres_transport_and_queue_disabled() -> None:
+def test_original_env_example_leaves_salad_values_blank_and_uses_postgres() -> None:
     root = Path(__file__).resolve().parents[1]
     example = (root / ".env.example").read_text(encoding="utf-8")
     manifest = json.loads(
@@ -132,7 +132,15 @@ def test_existing_env_example_keeps_postgres_transport_and_queue_disabled() -> N
     assert "SALAD_PROJECT=" in example
     assert "SALAD_ORGANIZATION_NAME=" not in example
     assert "SALAD_PROJECT_NAME=" not in example
-    assert "SALAD_QUEUE_NAME=ai-video-factory-jobs" in example
-    assert "SALAD_LOG_LEVEL=info" in example
-    assert "SALAD_QUEUE_ENABLED=false" in example
+    # The versioned example is intentionally blank, not tied to anyone's account.
+    assert "SALAD_QUEUE_NAME=\n" in example
+    assert "SALAD_LOG_LEVEL=\n" in example
+    assert "SALAD_QUEUE_ENABLED=\n" in example
+    assert "SALAD_API_KEY=\n" in example
+    assert "FISH_SPEECH_REFERENCE_PROFILE=project-narrator-v1" in example
+    assert (
+        "FISH_SPEECH_REFERENCE_AUDIO_SHA256="
+        "bc9f0cb0ba8675aadb3247f9c93de532de693189faf31e849b9af2ec69cc97ab"
+        in example
+    )
     assert manifest["stack"]["job_transport"] == "postgres"
