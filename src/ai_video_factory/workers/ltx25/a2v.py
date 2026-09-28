@@ -31,6 +31,7 @@ from ai_video_factory.inference.gpu_failures import (
 )
 from ai_video_factory.inference.ports import LocalArtifact, LocalSidecarArtifact
 
+from .bootstrap import require_runtime_bootstrap_complete
 from .model import (
     _CANONICAL_LANDSCAPE_SIZE,
     LTXModelFiles,
@@ -872,6 +873,7 @@ class DirectLTX25AudioToVideoBackend:
     def prepare(self) -> None:
         # The dev assets are optional unless this worker explicitly downloads them.
         # Do not permit Postgres polling until their bootstrap has completed.
+        require_runtime_bootstrap_complete()
         with self._lock:
             bindings = self._get_bindings()
             try:
@@ -886,6 +888,7 @@ class DirectLTX25AudioToVideoBackend:
     def ready(self) -> None:
         # Read-only dependency checks must never wait for the inference/mode
         # lock: Salad polls /ready while a >60-second A2V job is executing.
+        require_runtime_bootstrap_complete()
         bindings = self._bindings
         if not self._prepared or bindings is None:
             raise RuntimeError("LTX-2.5 A2V runtime has not been prepared")
