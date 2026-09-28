@@ -16,6 +16,18 @@ from ai_video_factory.workers.ltx25 import (
 from ai_video_factory.workers.ltx25.model_manifest import write_installed_model_manifest
 
 
+def test_a2v_prepare_waits_for_runtime_bootstrap_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = tmp_path / "bootstrap-complete"
+    monkeypatch.setenv("LTX_RUNTIME_BOOTSTRAP_MARKER", str(marker))
+    backend = DirectLTX25AudioToVideoBackend(model_root=tmp_path / "models")
+
+    with pytest.raises(ModelBootstrapPendingError, match="bootstrap has not completed"):
+        backend.prepare()
+
+
 def test_guided_bootstrap_waits_for_atomic_dev_manifest_before_polling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
