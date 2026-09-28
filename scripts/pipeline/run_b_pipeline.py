@@ -1698,6 +1698,10 @@ async def main() -> None:
                     run_metadata["video_generation"] = video
                     if video.get("status") == "completed":
                         print(f"  LTX video ready: {video['file']}", flush=True)
+                else:
+                    run_metadata["video_generation"] = {
+                        "status": "deferred", "reason": "audio_or_images_incomplete",
+                    }
     except Exception:
         if audio_task is not None and not audio_joined:
             # Never abandon an in-flight paid TTS submission by cancelling
