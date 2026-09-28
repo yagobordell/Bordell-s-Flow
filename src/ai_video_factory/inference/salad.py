@@ -119,8 +119,8 @@ class SaladClient:
             name
             for name, value in (
                 ("SALAD_API_KEY", self.config.api_key),
-                ("SALAD_ORGANIZATION_NAME", self.config.organization_name),
-                ("SALAD_PROJECT_NAME", self.config.project_name),
+                ("SALAD_ORGANIZATION", self.config.organization_name),
+                ("SALAD_PROJECT", self.config.project_name),
             )
             if not str(value or "").strip()
         ]
@@ -135,8 +135,8 @@ class SaladClient:
             name
             for name, value in (
                 ("SALAD_API_KEY", self.config.api_key),
-                ("SALAD_ORGANIZATION_NAME", self.config.organization_name),
-                ("SALAD_PROJECT_NAME", self.config.project_name),
+                ("SALAD_ORGANIZATION", self.config.organization_name),
+                ("SALAD_PROJECT", self.config.project_name),
                 ("SALAD_CONTAINER_GROUP_NAME", self.config.container_group_name),
             )
             if not str(value or "").strip()
