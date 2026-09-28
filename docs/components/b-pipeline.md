@@ -441,7 +441,9 @@ palabras Fish/STT siempre que `POSTGRES_DSN` y R2 estén configurados. El
 controlador de capacidad Salad y los workers de inferencia deben estar activos
 por separado. Sin credenciales de transporte, sigue disponible
 `preview/static_preview.mp4` y `video_generation` queda `deferred`.
-Para conservar solo el simulacro local, usa `--no-video`.
+Para generar **únicamente el preview tradicional** (`preview/static_preview.mp4`),
+sin enviar trabajos I2V/A2V a Salad, usa `--no-video`. El runner conserva
+la generación habitual de imágenes, Fish Audio y STT.
 
 - Cada `media_video` genera **un I2V independiente**: PNG de B2 como start
   image, descripción original como prompt y duración del beat en la timeline STT.
