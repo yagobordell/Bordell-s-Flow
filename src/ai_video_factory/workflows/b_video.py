@@ -204,6 +204,18 @@ def build_b2_video_plan(
     """Validate all sources and durations BEFORE queuing any paid inference."""
     timeline = build_stt_beat_timeline(output, plan, audio)
     beats = timeline["beats"]
+    previous_frame = 0
+    for beat in beats:
+        first = round(beat["start_seconds"] * _FPS)
+        last = round(beat["end_seconds"] * _FPS)
+        if first != previous_frame or last <= first:
+            raise B2VideoError(
+                f"B2 beat {beat['beat_id']} cannot be cut exactly at {_FPS} fps; "
+                "no paid LTX requests were submitted"
+            )
+        previous_frame = last
+    if previous_frame != round(timeline["duration_seconds"] * _FPS):
+        raise B2VideoError("B2 frame timeline differs from master audio duration")
     avatar, assets = _source_assets(output, plan, images)
     for beat in beats:
         key = beat["block_id"], beat["beat_id"]
