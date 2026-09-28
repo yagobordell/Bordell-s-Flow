@@ -74,10 +74,10 @@ function Get-RequiredSaladAccountSetting {
 
 # Validate remains offline and does not need account credentials.
 $Organization = if ($Action -eq "Validate") { "" } else {
-    Get-RequiredSaladAccountSetting -Name "SALAD_ORGANIZATION_NAME"
+    Get-RequiredSaladAccountSetting -Name "SALAD_ORGANIZATION"
 }
 $Project = if ($Action -eq "Validate") { "" } else {
-    Get-RequiredSaladAccountSetting -Name "SALAD_PROJECT_NAME"
+    Get-RequiredSaladAccountSetting -Name "SALAD_PROJECT"
 }
 $GroupName = Get-ManifestString -Name "group_name" -Primary $Definition -Fallback $null
 $Dockerfile = Join-Path $RepoRoot (Get-ManifestString -Name "dockerfile" -Primary $Definition -Fallback $null)

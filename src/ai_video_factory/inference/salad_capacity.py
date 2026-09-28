@@ -75,8 +75,8 @@ def build_salad_capacity_runtime(
     document = _load_services_document(services_path)
     stack = _required_object(document, "stack")
     services = _required_object(document, "services")
-    organization = _required_salad_account_env("SALAD_ORGANIZATION_NAME")
-    project = _required_salad_account_env("SALAD_PROJECT_NAME")
+    organization = _required_salad_account_env("SALAD_ORGANIZATION")
+    project = _required_salad_account_env("SALAD_PROJECT")
     service_order = stack.get("service_order")
     if not isinstance(service_order, list) or not service_order:
         raise RuntimeError(

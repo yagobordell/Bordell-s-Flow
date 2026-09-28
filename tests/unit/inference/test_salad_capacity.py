@@ -32,8 +32,8 @@ def test_capacity_runtime_rejects_duplicate_service_order_before_postgres(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("SALAD_ORGANIZATION_NAME", "test-org")
-    monkeypatch.setenv("SALAD_PROJECT_NAME", "test-project")
+    monkeypatch.setenv("SALAD_ORGANIZATION", "test-org")
+    monkeypatch.setenv("SALAD_PROJECT", "test-project")
     manifest = _write_manifest(
         tmp_path / "services.json",
         service_order=["ltx25", "ltx25"],
@@ -52,8 +52,8 @@ def test_capacity_runtime_rejects_duplicate_remote_group_identity_before_postgre
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("SALAD_ORGANIZATION_NAME", "test-org")
-    monkeypatch.setenv("SALAD_PROJECT_NAME", "test-project")
+    monkeypatch.setenv("SALAD_ORGANIZATION", "test-org")
+    monkeypatch.setenv("SALAD_PROJECT", "test-project")
     manifest = _write_manifest(
         tmp_path / "services.json",
         service_order=["ltx25", "whisper"],

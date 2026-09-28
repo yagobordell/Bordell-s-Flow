@@ -68,8 +68,8 @@ def _build(tmp_path: Path) -> salad_capacity.SaladCapacityRuntime:
 def test_capacity_controller_uses_account_environment_not_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("SALAD_ORGANIZATION_NAME", "teammate-org")
-    monkeypatch.setenv("SALAD_PROJECT_NAME", "teammate-dev")
+    monkeypatch.setenv("SALAD_ORGANIZATION", "teammate-org")
+    monkeypatch.setenv("SALAD_PROJECT", "teammate-dev")
     opened_stores = _stub_remote_runtime(monkeypatch)
 
     runtime = _build(tmp_path)
@@ -81,13 +81,16 @@ def test_capacity_controller_uses_account_environment_not_manifest(
     assert opened_stores == ["postgresql://unused/test"]
 
 
-@pytest.mark.parametrize("missing", ["SALAD_ORGANIZATION_NAME", "SALAD_PROJECT_NAME"])
+@pytest.mark.parametrize("missing", ["SALAD_ORGANIZATION", "SALAD_PROJECT"])
 def test_capacity_controller_fails_closed_without_account(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
 ) -> None:
-    monkeypatch.setenv("SALAD_ORGANIZATION_NAME", "teammate-org")
-    monkeypatch.setenv("SALAD_PROJECT_NAME", "teammate-dev")
+    monkeypatch.setenv("SALAD_ORGANIZATION", "teammate-org")
+    monkeypatch.setenv("SALAD_PROJECT", "teammate-dev")
     monkeypatch.delenv(missing)
+    # Deprecated names must never act as a fallback to a different account.
+    monkeypatch.setenv("SALAD_ORGANIZATION_NAME", "wrong-organization")
+    monkeypatch.setenv("SALAD_PROJECT_NAME", "wrong-project")
     opened_stores = _stub_remote_runtime(monkeypatch)
 
     with pytest.raises(RuntimeError, match=f"Missing {missing}"):
@@ -100,11 +103,11 @@ def test_capacity_controller_fails_closed_without_account(
 def test_capacity_controller_rejects_unsafe_account_slug(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: str
 ) -> None:
-    monkeypatch.setenv("SALAD_ORGANIZATION_NAME", invalid)
-    monkeypatch.setenv("SALAD_PROJECT_NAME", "teammate-dev")
+    monkeypatch.setenv("SALAD_ORGANIZATION", invalid)
+    monkeypatch.setenv("SALAD_PROJECT", "teammate-dev")
     opened_stores = _stub_remote_runtime(monkeypatch)
 
-    with pytest.raises(RuntimeError, match="SALAD_ORGANIZATION_NAME must be"):
+    with pytest.raises(RuntimeError, match="SALAD_ORGANIZATION must be"):
         _build(tmp_path)
 
     assert opened_stores == []
@@ -116,3 +119,20 @@ def test_deployment_manifest_does_not_pin_an_account() -> None:
 
     assert "organization" not in document["stack"]
     assert "project" not in document["stack"]
+
+
+def test_existing_env_example_keeps_postgres_transport_and_queue_disabled() -> None:
+    root = Path(__file__).resolve().parents[1]
+    example = (root / ".env.example").read_text(encoding="utf-8")
+    manifest = json.loads(
+        (root / "deploy" / "salad" / "services.json").read_text(encoding="utf-8")
+    )
+
+    assert "SALAD_ORGANIZATION=" in example
+    assert "SALAD_PROJECT=" in example
+    assert "SALAD_ORGANIZATION_NAME=" not in example
+    assert "SALAD_PROJECT_NAME=" not in example
+    assert "SALAD_QUEUE_NAME=ai-video-factory-jobs" in example
+    assert "SALAD_LOG_LEVEL=info" in example
+    assert "SALAD_QUEUE_ENABLED=false" in example
+    assert manifest["stack"]["job_transport"] == "postgres"
