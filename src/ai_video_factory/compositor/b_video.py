@@ -200,7 +200,7 @@ def render_b2_ltx_video(
                     command.extend([
                         "-filter_complex",
                         f"[0:v]fps={_FPS},{_fit(_WIDTH // 2)}[left];"
-                        f"[1:v]{_fit(_WIDTH // 2)}[right];"
+                        f"[1:v]fps={_FPS},{_fit(_WIDTH // 2)}[right];"
                         f"[left][right]hstack=inputs=2,format=yuv420p,"
                         f"{padding}[v]",
                         "-map", "[v]",
