@@ -940,6 +940,43 @@ async def _run_images_only(
 
 
 
+async def _run_videos_only(script_file: Path, output_root: Path) -> None:
+    """Resume durable LTX jobs without repeating OpenAI images, bots or Fish TTS."""
+    root = output_root.resolve()
+    source = script_file.resolve()
+    cwd = Path.cwd().resolve()
+    if root == cwd or root in cwd.parents or source.is_relative_to(root):
+        raise SystemExit("--output must be outside the repository and source directory")
+    output = output_root / script_file.stem
+    report_path = output / "run_report.json"
+    plan_path = output / "visual_plan.json"
+    if (
+        output.is_symlink() or report_path.is_symlink() or plan_path.is_symlink()
+        or not report_path.is_file() or not plan_path.is_file()
+    ):
+        raise SystemExit("--videos-only requires saved B2 and run report")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if report.get("run", {}).get("script_sha256") != hashlib.sha256(
+        source.read_bytes()
+    ).hexdigest():
+        raise SystemExit("Script differs from the saved LTX input")
+    if report.get("run", {}).get("stt_alignment", {}).get("status") != "completed":
+        raise SystemExit("--videos-only requires previously validated B2/STT alignment")
+    try:
+        video = await _video_if_ready(output, report, require=True)
+    except Exception:
+        report["run"]["video_generation"] = {"status": "incomplete"}
+        report["run"]["status"] = "failed"
+        _write(report_path, report)
+        raise
+    report["run"]["video_generation"] = video
+    report["run"]["status"] = "completed"
+    report["timings"]["status"] = "completed"
+    report["api_costs"]["run_status"] = "completed"
+    _write(report_path, report)
+    print(f"  LTX video ready: {video['file']}", flush=True)
+
+
 async def _generate_audio(
     script: str,
     output: Path,
