@@ -45,6 +45,23 @@ def test_a2v_smoke_defaults_to_reference_and_fast_is_explicit(
     monkeypatch.setattr(
         sys,
         "argv",
+        [
+            "submit_ltx25_a2v_smoke.py",
+            "--audio",
+            "speech.wav",
+            "--profile",
+            "static-reference",
+            "--prompt",
+            "A woman whispering to the microphone",
+        ],
+    )
+    static_args = parse_args()
+    assert static_args.profile == "static-reference"
+    assert static_args.prompt == "A woman whispering to the microphone"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
         ["submit_ltx25_a2v_smoke.py", "--audio", "speech.wav", "--profile", "guided"],
     )
     guided_args = parse_args()
@@ -106,3 +123,20 @@ def test_ltx_smoke_python_source_check_accepts_matching_worktree(tmp_path: Path)
     )
     assert rejected.returncode == 1
     assert "Wrong LTX Python source" in rejected.stderr
+
+
+def test_ltx_gpu_fast_start_waits_for_same_ready_instance_before_paid_job() -> None:
+    script = Path("scripts/smoke/run_ltx25_a2v_smoke_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert '[string]$Profile = "reference"' in script
+    assert "AllowBootstrappingInstance = $true" in script
+    assert "ExpectedPinnedImage" in script
+    assert "BootstrapTimeoutSeconds" in script
+    assert script.index("$ReadyWait = ") < script.index("& $WorkerManager @Start")
+    assert script.index("& $Python $ReadyWait @ReadyArgs") < script.index(
+        "& $Python $Smoke @Arguments"
+    )
+    assert "reference-compiled" not in script
+    assert '"static-reference"' in script
+    assert "Static-reference is experimental and requires -ExpectedPinnedImage" in script

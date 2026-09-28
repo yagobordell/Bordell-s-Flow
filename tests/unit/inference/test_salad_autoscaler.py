@@ -11,6 +11,8 @@ from ai_video_factory.inference.salad_autoscaler import (
     PredictiveSaladAutoscaler,
     allocate_project_quota,
     build_global_demands,
+    load_predictive_autoscaler_config,
+    next_reconcile_delay_seconds,
 )
 
 
@@ -185,6 +187,7 @@ def _config(
     project_max_replicas: int = 30,
     stage_max_replicas: int = 4,
     downscale_stable_polls: int = 1,
+    zero_demand_stable_polls: int = 1,
     nonconvergence_failure_polls: int = 4,
     provider_pending_max_seconds: float = 7200.0,
     stage_cold_start_seconds: dict[str, float] | None = None,
@@ -198,6 +201,7 @@ def _config(
         runtime_percentile=0.75,
         runtime_history_limit=200,
         downscale_stable_polls=downscale_stable_polls,
+        zero_demand_stable_polls=zero_demand_stable_polls,
         nonconvergence_failure_polls=nonconvergence_failure_polls,
         max_upscale_per_poll=10,
         max_downscale_per_poll=10,
@@ -468,6 +472,73 @@ def test_stopped_pending_group_is_not_restarted_until_provider_settles() -> None
     assert result.reason == "provider_change_pending"
     assert client.replica_updates == []
     assert client.start_calls == 0
+
+
+def test_zero_demand_starts_drain_before_general_downscale_stability_window() -> None:
+    stage = "ltx25_i2v"
+    client = FakeSaladClient(
+        replicas=1,
+        instances=[{"id": "idle-instance", "deletion_cost": 0}],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config(
+            (stage,),
+            downscale_stable_polls=3,
+            zero_demand_stable_polls=1,
+        ),
+        store=FakeStore(rows={stage: []}, runtimes={stage: [206.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage)},
+        logger=lambda _message: None,
+    )
+
+    first = autoscaler.reconcile()[stage]
+
+    assert first.target_replicas == 0
+    assert first.reason == "drain_grace_pending"
+    assert next_reconcile_delay_seconds(
+        {stage: first},
+        poll_seconds=15.0,
+        drain_grace_seconds=5.0,
+    ) == 5.0
+
+
+def test_target_zero_with_pending_work_keeps_general_stability_window() -> None:
+    stages = ("busy", "blocked")
+    store = FakeStore(
+        rows={
+            "busy": _pending_rows(40),
+            "blocked": _pending_rows(1),
+        },
+        runtimes={"busy": [60.0], "blocked": [60.0]},
+    )
+    clients = {
+        "busy": FakeSaladClient(replicas=1, status="stopped"),
+        "blocked": FakeSaladClient(
+            replicas=1,
+            instances=[{"id": "blocked-idle", "deletion_cost": 0}],
+        ),
+    }
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config(
+            stages,
+            project_max_replicas=1,
+            stage_max_replicas=1,
+            downscale_stable_polls=3,
+            zero_demand_stable_polls=1,
+        ),
+        store=store,
+        clients=clients,
+        bindings={stage: _binding(stage, max_replicas=1) for stage in stages},
+        logger=lambda _message: None,
+    )
+
+    first = autoscaler.reconcile()
+
+    assert first["blocked"].target_replicas == 0
+    assert first["blocked"].demand.remaining_work_seconds > 0
+    assert first["blocked"].reason == "stable"
+    assert store.drains.get("blocked") in (None, {})
 
 
 def test_empty_global_queue_releases_capacity_only_after_stopped_is_observed() -> None:
@@ -917,6 +988,51 @@ def test_unknown_provider_state_fails_closed() -> None:
     assert client.replica_updates == []
     assert client.start_calls == 0
     assert client.stop_calls == 0
+
+
+def test_ltx_groups_have_independent_runtime_and_cold_start_calibration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_I2V_COLD_START_SECONDS", "3090")
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_COLD_START_SECONDS", "1200")
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_I2V_RUNTIME_SECONDS", "240")
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_RUNTIME_SECONDS", "320")
+    monkeypatch.setenv("SALAD_AUTOSCALER_ZERO_DEMAND_STABLE_POLLS", "1")
+
+    config = load_predictive_autoscaler_config(
+        stage_bindings=(
+            _binding("ltx25_i2v"),
+            _binding("ltx25"),
+        )
+    )
+
+    assert config.stage_cold_start_seconds == {
+        "ltx25_i2v": 3090.0,
+        "ltx25": 1200.0,
+    }
+    assert config.fallback_runtime_seconds == {
+        "ltx25_i2v": 240.0,
+        "ltx25": 320.0,
+    }
+    assert config.zero_demand_stable_polls == 1
+
+
+def test_cold_start_longer_than_drain_window_never_exceeds_active_jobs() -> None:
+    stage = "ltx25"
+    config = _config(
+        (stage,),
+        stage_max_replicas=4,
+        stage_cold_start_seconds={stage: 1934.0},
+    )
+
+    demands = build_global_demands(
+        rows_by_stage={stage: _pending_rows(1)},
+        runtime_by_stage={stage: 240.0},
+        config=config,
+        now=datetime(2026, 9, 28, tzinfo=UTC),
+    )
+
+    assert demands[stage].ideal_replicas == 1
 
 
 def test_stage_specific_cold_start_changes_capacity_estimate() -> None:

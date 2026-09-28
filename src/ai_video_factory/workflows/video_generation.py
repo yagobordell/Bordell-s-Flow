@@ -36,6 +36,7 @@ from ai_video_factory.providers.job_queue import (
 from ai_video_factory.workers.ltx25.jobs import ltx_video_application_job_id
 from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
+    LTX_STATIC_CAMERA_GENERATION_PROFILE,
     LTX_VIDEO_TASK,
     ltx_num_frames_for_duration,
 )
@@ -98,12 +99,15 @@ def build_video_generation_plan(
     height: int = 720,
     fps: int = 24,
     seed_base: int = 42,
+    generation_profile: str = LTX_GENERATION_PROFILE,
 ) -> list[VideoGenerationPlanItem]:
     """Build deterministic LTX queue requests for every canonical shot."""
 
     _validate_inputs(keyframes, prompts, timings)
     if (width, height, fps) != (1280, 720, 24):
         raise ValueError("Production LTX output must be exactly 1280x720 at 24 fps")
+    if generation_profile not in (LTX_GENERATION_PROFILE, LTX_STATIC_CAMERA_GENERATION_PROFILE):
+        raise ValueError("Unsupported I2V generation profile")
 
     base_dir = keyframe_base_dir.resolve()
     plan: list[VideoGenerationPlanItem] = []
@@ -149,6 +153,7 @@ def build_video_generation_plan(
             height=height,
             fps=fps,
             num_frames=num_frames,
+            generation_profile=generation_profile,
         )
         input_key = f"phase8/keyframes/{keyframe_sha256}.png"
         output_key = f"jobs/{job_id}/shot_{keyframe.shot_id:03d}.mp4"
@@ -165,7 +170,7 @@ def build_video_generation_plan(
             ],
             output=ObjectOutput(key=output_key, content_type="video/mp4"),
             parameters={
-                "generation_profile": LTX_GENERATION_PROFILE,
+                "generation_profile": generation_profile,
                 "prompt": prompt.prompt,
                 "seed": seed,
                 "width": width,

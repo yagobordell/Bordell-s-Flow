@@ -49,7 +49,7 @@ def test_ltx_capacity_is_bounded_by_manifest_and_cache_misses() -> None:
         encoding="utf-8"
     )
 
-    assert "$Services.services.ltx25.capacity.max_replicas" in script
+    assert "$Services.services.ltx25_i2v.capacity.max_replicas" in script
     assert "[Math]::Min($Misses, $MaxReplicas)" in script
     assert 'Replicas = $ReplicaCount' in script
     assert script.index("$CacheAudit") < script.index('Action = "Start"')

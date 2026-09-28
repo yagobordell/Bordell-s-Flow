@@ -13,6 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CUDA_MODULE_LOADING=LAZY \
     INFERENCE_WORKER_MODE=production \
     INFERENCE_WORKER_TEMP_DIR=/tmp/ai-video-factory \
+    LTX_RUNTIME_BOOTSTRAP_MARKER=/tmp/ai-video-factory/ltx25-bootstrap-complete \
     LTX_MODEL_ROOT=/workspace/models/ltx-2.5 \
     LTX_MODEL_REPOSITORY=Lightricks/LTX-2.5 \
     LTX_MODEL_REVISION=6c7e5e573ac1667efc83407806fe9b0b93730e60 \
@@ -100,7 +101,7 @@ RUN chmod 0755 \
         /opt/factory/data
 
 RUN python3 -c \
-    "import importlib.util, torch, ltx_pipelines.distilled, ltx_pipelines.a2vid_two_stage, ai_video_factory.workers.ltx25.reference_a2v; \
+    "import importlib.util, torch, ltx_pipelines.distilled, ltx_pipelines.a2vid_two_stage, ai_video_factory.workers.ltx25.reference_a2v, ai_video_factory.workers.ltx25.static_i2v; \
      assert torch.__version__.startswith('2.11.0'), torch.__version__; \
      assert torch.version.cuda == '12.8', torch.version.cuda; \
      assert importlib.util.find_spec('natten') is not None; \

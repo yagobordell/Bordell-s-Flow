@@ -32,8 +32,15 @@ the shared replay/idempotency path.
 
 ## Runtime
 
-A2V and normal image-to-video share the same LTX service and resident model family. They do not require
-separate Salad groups.
+A2V uses the existing Salad service `ltx25` with `LTX_WORKER_TASK_MODE=a2v`.
+I2V uses the separate Salad group `ltx25_i2v` with `LTX_WORKER_TASK_MODE=i2v`.
+Both can use the same pinned model family and Docker image, but they never share
+resident GPU containers or Postgres task ownership. The I2V infrastructure and an
+opt-in experimental camera profile were integrated in PR #238 after a real
+technical smoke. Camera stabilization remains visually incomplete: do not treat
+the opt-in `static-camera` profile as a fixed-camera guarantee. Before enabling
+the new capacity controller, prepare the A2V group with the task-restricted
+image; its previously deployed image must not claim I2V jobs.
 
 A2V uses the shared GPU retry budget (`DEFAULT_GPU_MAX_ATTEMPTS=5`). OOM, CUDA-device and
 cuDNN/SDPA failures remain retryable through the Postgres job state machine. Before a later
@@ -61,6 +68,30 @@ validated by this worker: `FP8_CAST`, CPU offload and eager-SDPA DiffVAE decodin
 is recorded in result metadata as a numerical/runtime deviation from a BF16 reference;
 BF16 comparison is a later GPU experiment, not a prerequisite for the first functional
 lip-sync baseline.
+
+### Experimental static-reference camera controls (restored from PR #235)
+
+`static-reference` is an explicitly selected **experimental A2V** profile restored
+from the original PR #235 implementation. It does not change the default
+`reference` recipe, the production route, I2V or the positive user prompt.
+Only Stage 1 adds a camera-only negative prompt (zoom / dolly / drift /
+reframing), increases reference-image strength from 0.7 to 0.8 and applies
+video CFG 1.25 with upstream `GuidedDenoiser`; Stage 2 remains the original
+3-step `SimpleDenoiser` with image strength 1.0. Stage 1 keeps the distilled
+8-step Euler-ancestral sampler and frozen speech conditioning. The additional
+CFG path can increase GPU work; no speed or camera-stability improvement is
+claimed without a real visual comparison. Ordinary `reference` remains
+unchanged and continues to use `SimpleDenoiser` without negative CFG.
+
+Use the controlled A2V smoke with `-Profile static-reference` and a newly
+published, immutable worker image supplied by `-ExpectedPinnedImage`. This
+recovery does **not** include the abandoned two-GPU race or alter the Salad
+manifest or Docker tag. A current deployed image will not acquire this Python
+code merely because the local branch was updated. Keep the group stopped
+until the exact new image is built and pinned. Compare the generated MP4 with
+the same original image, audio, seed and positive prompt, and inspect camera
+framing, mouth movement, identity and final speech. No paid GPU test or visual
+acceptance is implied by restoring the code.
 
 ### Experimental guided talking-avatar profile
 

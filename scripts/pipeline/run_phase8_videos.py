@@ -9,6 +9,10 @@ from pathlib import Path
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.r2 import create_r2_storage
+from ai_video_factory.workers.ltx25.model import (
+    LTX_GENERATION_PROFILE,
+    LTX_STATIC_CAMERA_GENERATION_PROFILE,
+)
 from ai_video_factory.workflows.video_generation import (
     VideoGenerationManifest,
     build_video_generation_plan,
@@ -118,6 +122,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed-base", type=int, default=42)
     parser.add_argument(
+        "--i2v-profile",
+        choices=("default", "static-camera"),
+        default="default",
+        help="Opt-in static-camera experiment; normal Phase 8 remains unchanged.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("data/output/phase8"),
@@ -166,6 +176,11 @@ def main() -> None:
         height=args.height,
         fps=args.fps,
         seed_base=args.seed_base,
+        generation_profile=(
+            LTX_STATIC_CAMERA_GENERATION_PROFILE
+            if args.i2v_profile == "static-camera"
+            else LTX_GENERATION_PROFILE
+        ),
     )
 
     storage = create_r2_storage(
@@ -203,7 +218,7 @@ def main() -> None:
             poll_seconds=args.poll_seconds,
             timeout_seconds=args.timeout_seconds,
             dispatch_timeout_seconds=args.dispatch_timeout_seconds,
-            transport_route="postgres:ltx25",
+            transport_route="postgres:ltx25_i2v",
         )
     finally:
         if progress_thread is not None:

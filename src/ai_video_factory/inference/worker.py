@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 from .bundle_publication import (
@@ -177,6 +178,13 @@ class InferenceWorker:
         if claim.decision is ClaimDecision.BUSY:
             raise JobBusyError(f"job is currently leased by another worker: {request.job_id}")
 
+        logger.info(
+            "INFERENCE_JOB_CLAIMED task=%s job_id=%s attempt=%d worker_id=%s",
+            request.task,
+            request.job_id,
+            claim.attempt_count,
+            self.worker_id,
+        )
         try:
             response = self._execute_claimed(request, request_sha256, claim.attempt_count)
         except LeaseLostError:
@@ -199,6 +207,16 @@ class InferenceWorker:
         except Exception as exc:
             retryable_gpu_failure = is_retryable_gpu_failure(exc)
             can_retry = claim.attempt_count < request.effective_max_attempts
+            logger.warning(
+                "INFERENCE_JOB_FAILED task=%s job_id=%s attempt=%d retryable=%s "
+                "gpu_failure=%s error_type=%s",
+                request.task,
+                request.job_id,
+                claim.attempt_count,
+                can_retry,
+                retryable_gpu_failure,
+                type(exc).__name__,
+            )
             self._mark_failed(
                 request,
                 request_sha256,
@@ -218,6 +236,13 @@ class InferenceWorker:
             request_sha256,
             owner=self.worker_id,
             result=response.model_dump(mode="json"),
+        )
+        logger.info(
+            "INFERENCE_JOB_SUCCEEDED task=%s job_id=%s attempt=%d replayed=%s",
+            request.task,
+            request.job_id,
+            claim.attempt_count,
+            response.replayed,
         )
         return response
 
@@ -446,7 +471,21 @@ class InferenceWorker:
                 heartbeat.ensure_owned()
 
                 runner = self.runners.get(request.task)
+                task_started = time.monotonic()
+                logger.info(
+                    "INFERENCE_JOB_TASK_START task=%s job_id=%s attempt=%d",
+                    request.task,
+                    request.job_id,
+                    attempt_count,
+                )
                 artifact = runner.run(request, inputs, work_dir)
+                logger.info(
+                    "INFERENCE_JOB_TASK_DONE task=%s job_id=%s attempt=%d task_seconds=%.3f",
+                    request.task,
+                    request.job_id,
+                    attempt_count,
+                    time.monotonic() - task_started,
+                )
                 self._validate_local_artifact(artifact.path, work_dir)
                 if artifact.content_type != request.output.content_type:
                     raise ValueError("task output content type does not match the job contract")
@@ -501,6 +540,15 @@ class InferenceWorker:
                     request,
                     request_sha256,
                     primary_sha256=output.sha256,
+                )
+                logger.info(
+                    "INFERENCE_JOB_ARTIFACT_COMMITTED task=%s job_id=%s attempt=%d "
+                    "created=%s output_key=%s",
+                    request.task,
+                    request.job_id,
+                    attempt_count,
+                    created,
+                    output.key,
                 )
 
         return InferenceJobResponse(

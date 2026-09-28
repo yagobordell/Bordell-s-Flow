@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import gc
+import logging
 import math
 import threading
+import time
 from collections.abc import Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
@@ -18,10 +20,18 @@ from ai_video_factory.image_contracts import (
 )
 from ai_video_factory.inference.contracts import InferenceJobRequest
 from ai_video_factory.inference.errors import ModelBootstrapPendingError
+from ai_video_factory.inference.gpu_failures import is_retryable_gpu_failure
 from ai_video_factory.inference.ports import LocalArtifact
+
+from .bootstrap import require_runtime_bootstrap_complete
+
+logger = logging.getLogger(__name__)
 
 LTX_VIDEO_TASK = "video.ltx25.generate"
 LTX_GENERATION_PROFILE = "ltx25-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
+LTX_STATIC_CAMERA_GENERATION_PROFILE = (
+    "ltx25-distilled-static-camera-a95ab856-fp8cpu-gridpad-eagersdpa-v1"
+)
 _CANONICAL_LANDSCAPE_SIZE = (1280, 720)
 _LTX_TWO_STAGE_SPATIAL_GRID = 64
 
@@ -50,9 +60,9 @@ class LTXVideoParameters(BaseModel):
     @field_validator("generation_profile")
     @classmethod
     def validate_generation_profile(cls, value: str) -> str:
-        if value != LTX_GENERATION_PROFILE:
+        if value not in (LTX_GENERATION_PROFILE, LTX_STATIC_CAMERA_GENERATION_PROFILE):
             raise ValueError(
-                f"generation_profile must be exactly {LTX_GENERATION_PROFILE!r}"
+                "generation_profile must be a supported default or static-camera I2V profile"
             )
         return value
 
@@ -336,6 +346,13 @@ def _load_ltx_bindings() -> _LTXBindings:
     )
 
 
+def _load_static_camera_generator() -> Any:
+    # Import upstream pipeline modules only on the GPU worker, never in local CLI.
+    from .static_i2v import generate_static_camera
+
+    return generate_static_camera
+
+
 def _torch_inference_context(torch_module: Any) -> Any:
     inference_mode = getattr(torch_module, "inference_mode", None)
     if inference_mode is None:
@@ -408,9 +425,19 @@ class DirectLTX25Backend:
     def pipeline_loaded(self) -> bool:
         return self._pipeline is not None
 
+    def invalidate_pipeline(self) -> None:
+        """Drop resident I2V GPU state so a transient retry rebuilds from local weights."""
+
+        with self._lock:
+            was_loaded = self._pipeline is not None
+            self._release_pipeline_locked()
+        logger.warning("LTX25_I2V_PIPELINE_INVALIDATED was_loaded=%s", was_loaded)
+
     def prepare(self) -> None:
         """Load and retain the validated LTX pipeline before queue traffic is accepted."""
 
+        prepare_started = time.monotonic()
+        require_runtime_bootstrap_complete()
         with self._lock:
             bindings = self._get_bindings()
             try:
@@ -420,6 +447,11 @@ class DirectLTX25Backend:
             with _torch_inference_context(bindings.torch):
                 self._get_or_build_pipeline(bindings)
             self._prepared = True
+        logger.info(
+            "LTX25_I2V_PREPARED prepare_seconds=%.3f pipeline_loaded=%s",
+            time.monotonic() - prepare_started,
+            self.pipeline_loaded,
+        )
 
     def ready(self) -> None:
         """Check prepared dependencies without waiting on a long GPU generation.
@@ -429,6 +461,7 @@ class DirectLTX25Backend:
         causes repeated five-second probe timeouts and removes this instance
         from Salad job-queue dispatch midway through the job.
         """
+        require_runtime_bootstrap_complete()
         bindings = self._bindings
         if not self._prepared or bindings is None:
             raise RuntimeError("LTX-2.5 pipeline has not been prepared")
@@ -444,6 +477,8 @@ class DirectLTX25Backend:
         if not keyframe_path.is_file():
             raise FileNotFoundError(f"LTX keyframe input does not exist: {keyframe_path}")
 
+        generation_started = time.monotonic()
+        pipeline_reused = self._pipeline is not None
         with self._lock:
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
@@ -469,15 +504,20 @@ class DirectLTX25Backend:
                     strength=1.0,
                     crf=None,
                 )
-                result = pipeline(
-                    prompt=parameters.prompt,
-                    seed=parameters.seed,
-                    height=pipeline_height,
-                    width=pipeline_width,
-                    frame_rate=float(parameters.fps),
-                    images=[conditioning],
-                    num_frames=parameters.num_frames,
-                )
+                pipeline_kwargs = {
+                    "prompt": parameters.prompt,
+                    "seed": parameters.seed,
+                    "height": pipeline_height,
+                    "width": pipeline_width,
+                    "frame_rate": float(parameters.fps),
+                    "images": [conditioning],
+                    "num_frames": parameters.num_frames,
+                }
+                if parameters.generation_profile == LTX_STATIC_CAMERA_GENERATION_PROFILE:
+                    # Reuse the resident distilled pipeline; do not rebuild model weights.
+                    result = _load_static_camera_generator()(pipeline, **pipeline_kwargs)
+                else:
+                    result = pipeline(**pipeline_kwargs)
                 output_video = result.video
                 if (pipeline_width, pipeline_height) != (
                     parameters.width,
@@ -500,6 +540,15 @@ class DirectLTX25Backend:
                         result.tiling_config,
                     ),
                 )
+        logger.info(
+            "LTX25_I2V_INFERENCE_METRIC generation_profile=%s num_frames=%d fps=%d "
+            "total_seconds=%.3f pipeline_reused=%s",
+            parameters.generation_profile,
+            parameters.num_frames,
+            parameters.fps,
+            time.monotonic() - generation_started,
+            pipeline_reused,
+        )
 
     def _get_bindings(self) -> _LTXBindings:
         if self._bindings is None:
@@ -526,6 +575,8 @@ class DirectLTX25Backend:
         if self._pipeline is not None:
             return self._pipeline
 
+        load_started = time.monotonic()
+        logger.info("LTX25_I2V_PIPELINE_LOAD_START device=%s", self._device)
         self._mode_controller.activate("image_to_video")
         model_paths = bindings.model_paths.from_split(
             transformer_path=str(self._model_files.transformer),
@@ -544,6 +595,10 @@ class DirectLTX25Backend:
             device=bindings.torch.device(self._device),
             quantization=quantization,
             offload_mode=bindings.offload_mode.CPU,
+        )
+        logger.info(
+            "LTX25_I2V_PIPELINE_LOAD_DONE seconds=%.3f",
+            time.monotonic() - load_started,
         )
         return self._pipeline
 
@@ -571,11 +626,23 @@ class LTXVideoTaskRunner:
         self._validate_request(request, inputs)
         parameters = LTXVideoParameters.model_validate(request.parameters)
         output = work_dir / "output.mp4"
-        self._backend.generate(
-            keyframe_path=inputs["keyframe"],
-            output_path=output,
-            parameters=parameters,
-        )
+        try:
+            self._backend.generate(
+                keyframe_path=inputs["keyframe"],
+                output_path=output,
+                parameters=parameters,
+            )
+        except Exception as exc:
+            if is_retryable_gpu_failure(exc):
+                invalidator = getattr(self._backend, "invalidate_pipeline", None)
+                if callable(invalidator):
+                    try:
+                        invalidator()
+                    except Exception:
+                        logger.exception(
+                            "failed to invalidate LTX I2V pipeline after transient GPU failure"
+                        )
+            raise
         if not output.is_file() or output.stat().st_size <= 0:
             raise ValueError("LTX-2.5 backend did not produce a non-empty MP4 artifact")
         return LocalArtifact(path=output, content_type="video/mp4")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import Field, model_validator
 
@@ -20,6 +20,9 @@ class LTX25WorkerSettings(InferenceWorkerSettings):
         validation_alias="LTX_MODEL_REPOSITORY",
     )
     device: str = Field(default="cuda", validation_alias="LTX_DEVICE")
+    task_mode: Literal["both", "i2v", "a2v"] = Field(
+        default="both", validation_alias="LTX_WORKER_TASK_MODE"
+    )
 
     @model_validator(mode="after")
     def validate_ltx25(self) -> Self:
@@ -27,4 +30,6 @@ class LTX25WorkerSettings(InferenceWorkerSettings):
             raise ValueError("LTX_MODEL_REPOSITORY must be non-empty")
         if not self.device.strip():
             raise ValueError("LTX_DEVICE must be non-empty")
+        if self.worker_mode == "production" and self.worker_poll_jobs and self.task_mode == "both":
+            raise ValueError("Production LTX polling requires LTX_WORKER_TASK_MODE=i2v or a2v")
         return self

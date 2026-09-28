@@ -59,14 +59,14 @@ if ($Misses -eq 0) {
 }
 
 $Services = Get-Content -LiteralPath $ServicesPath -Raw | ConvertFrom-Json
-$MaxReplicas = [int]$Services.services.ltx25.capacity.max_replicas
+$MaxReplicas = [int]$Services.services.ltx25_i2v.capacity.max_replicas
 $ReplicaCount = [Math]::Max(1, [Math]::Min($Misses, $MaxReplicas))
-$Start = @{ Action = "Start"; Service = "ltx25"; Replicas = $ReplicaCount }
-$Stop = @{ Action = "Stop"; Service = "ltx25" }
+$Start = @{ Action = "Start"; Service = "ltx25_i2v"; Replicas = $ReplicaCount }
+$Stop = @{ Action = "Stop"; Service = "ltx25_i2v" }
 if ($NonInteractive) { $Start["NonInteractive"] = $true; $Stop["NonInteractive"] = $true }
 
 try {
-    Write-Host "=== LTX capacity: explicit replicas=$ReplicaCount for misses=$Misses ===" -ForegroundColor Cyan
+    Write-Host "=== LTX I2V capacity: explicit replicas=$ReplicaCount for misses=$Misses ===" -ForegroundColor Cyan
     & $WorkerManager @Start
     if (-not $?) { throw "LTX worker start failed." }
 
