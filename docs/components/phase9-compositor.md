@@ -45,7 +45,9 @@ scripts/pipeline/run_phase9_motion.py
 scripts/pipeline/run_phase9_final.py
 ```
 
-Normal end-to-end production invokes Phase 9 through `run_video_factory.ps1`.
+These compositor scripts can be used with explicit, validated shot-based artifacts.
+The former end-to-end runner was retired with the old planning bots; Phase 9 is
+not yet connected to the active B2 beat-based visual plan.
 
 ## Output contract
 

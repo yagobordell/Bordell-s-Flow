@@ -2,7 +2,6 @@ from pathlib import Path
 
 SMOKE_SCRIPT = Path("scripts/smoke/run_salad_smoke_suite.py")
 WORKER_MANAGER = Path("scripts/salad/manage_salad_worker.ps1")
-STACK_MANAGER = Path("scripts/salad/manage_salad_stack.ps1")
 
 
 def test_smoke_suite_uses_real_workers_and_postgres_transport() -> None:
@@ -38,17 +37,6 @@ def test_worker_manager_keeps_expensive_actions_explicit() -> None:
     assert "Wait-ForStoppedZeroReplicas" not in text
     assert "queue_autoscaler =" not in text
     assert "queue_connection =" not in text
-
-
-def test_stack_manager_only_delegates_compute_lifecycle() -> None:
-    text = STACK_MANAGER.read_text(encoding="utf-8")
-
-    assert 'ValidateSet("Validate", "Prepare", "Start", "Status", "Stop")' in text
-    assert "$Document.stack.job_transport" in text
-    assert "postgres" in text
-    assert "start_salad_scale_to_zero.ps1" not in text
-    assert "restore_salad_scale_to_zero.ps1" not in text
-    assert "cleanup_salad_queue.ps1" not in text
 
 
 def test_smoke_suite_persists_evidence_for_each_worker() -> None:

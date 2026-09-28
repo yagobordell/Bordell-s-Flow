@@ -21,11 +21,13 @@ venv/
 .idea/
 .DS_Store
 
-# Local runtime data
+# Local runtime data; keep only the avatar folder's instructions in Git
 data/*
 !data/input/
 data/input/*
-!data/input/.gitkeep
+!data/avatar/
+data/avatar/*
+!data/avatar/README.md
 
 # Remotion / Node
 remotion/node_modules/

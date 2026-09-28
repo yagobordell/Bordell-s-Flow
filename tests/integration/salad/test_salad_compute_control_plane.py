@@ -15,6 +15,8 @@ def test_stack_manager_delegates_only_compute_lifecycle() -> None:
     assert 'ValidateSet("Validate", "Prepare", "Start", "Status", "Stop")' in script
     assert "repair_salad_queue_attachment.ps1" not in script
     assert "start_salad_scale_to_zero.ps1" not in script
+    assert "restore_salad_scale_to_zero.ps1" not in script
+    assert "cleanup_salad_queue.ps1" not in script
     assert "ensure_salad_zero_replicas.ps1" not in script
     assert "$Document.stack.job_transport" in script
     assert "postgres" in script

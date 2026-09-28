@@ -32,7 +32,8 @@ Run alignment directly for debugging with:
 python scripts/pipeline/run_phase5_alignment.py
 ```
 
-Normal production uses the controlled wrapper and end-to-end runner. Service lifecycle operations use
+The controlled Whisper wrapper remains available for explicit alignment inputs.
+There is no current end-to-end B2 video runner. Service lifecycle operations use
 `scripts/salad/manage_salad_worker.ps1`.
 
 OpenAI transcription remains an optional compatibility provider in code; it is not the normal Phase 5
