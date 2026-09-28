@@ -413,6 +413,77 @@ uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script h
 
 El runner termina después de escribir B2 y `visual_plan.json`, sin llamar
 a la API oficial de OpenAI para imágenes. Cuando quieras
-generarlas, ejecuta `--images-only` a partir del B2 guardado. Los clientes GPU existentes siguen siendo herramientas
-independientes: esta etapa no activa Salad ni conecta todavía un vídeo
-final al plan B2.
+generarlas, ejecuta `--images-only` a partir del B2 guardado. Cuando los PNG,
+Fish/STT y Postgres/R2 están listos, el runner encola automáticamente los beats
+que requieren LTX. El controlador de capacidad de Salad sigue siendo un servicio
+independiente: el runner no despliega GPUs.
+
+
+## Integración LTX para B2 (I2V y A2V agrupado)
+
+El runner inicia LTX después de terminar los PNG de B2 y la alineación de
+palabras Fish/STT siempre que `POSTGRES_DSN` y R2 estén configurados. El
+controlador de capacidad Salad y los workers de inferencia deben estar activos
+por separado. Sin credenciales de transporte, sigue disponible
+`preview/static_preview.mp4` y `video_generation` queda `deferred`.
+Para generar **únicamente el preview tradicional** (`preview/static_preview.mp4`),
+sin enviar trabajos I2V/A2V a Salad, usa `--no-video`. El runner conserva
+la generación habitual de imágenes, Fish Audio y STT.
+
+- Cada `media_video` genera **un I2V independiente**: PNG de B2 como start
+  image, descripción original como prompt y duración del beat en la timeline STT.
+  El generador ajusta la petición al grid temporal `8k+1` requerido por LTX.
+- Los beats `avatar` y `avatar_media` consecutivos, también a través de
+  límites entre bloques, forman **un solo A2V**. El runner recorta un único
+  WAV del `narration.wav` original para todo el grupo. El recorte incluye
+  los silencios de 500 ms entre bloques si están dentro del mismo grupo.
+  Un beat `media_video` o `media_image` termina el grupo de avatar.
+- El prompt positivo de todo A2V es exactamente
+  `A Person speaking to the camera.`. El perfil static-reference utiliza
+  el negativo fijo
+  `camera zoom, zoom in, push in, dolly in, camera drift, camera shake, reframing, crop change, handheld camera, unintended camera movement`.
+  No se usa ninguna descripción B2 como prompt del avatar.
+- `avatar_media` conserva la imagen del beat en la mitad derecha y el avatar
+  **animado** en la izquierda. `media_image` mantiene zoom/Ken Burns.
+- El worker A2V admite un máximo de 1024 fotogramas crudos. Si un grupo
+  consecutivo supera ese límite, el preflight falla antes de enviar trabajos
+  pagados, en lugar de dividirlo y romper la continuidad.
+
+El compositor transcodifica los beats a 24 fps, concatena los vídeos y
+**descarta los audios embebidos de LTX**. El mux final usa únicamente el WAV
+maestro Fish original, para que no se duplique el audio. La salida se guarda
+en `video/runs/<fingerprint>/final.mp4`, con el manifiesto de generación,
+hashes y timeline de cada beat. `video/latest.json` y
+`run_report.json -> run.video_generation` apuntan al resultado.
+
+Cada tarea utiliza IDs y huellas inmutables en Postgres y artefactos R2.
+Si se interrumpe una ejecución, no se envía una solicitud pagada distinta
+para una tarea ya registrada; un manifiesto incompleto bloquea borrar la
+carpeta y comenzar un nuevo B1.1. Estos son los dos modos de ejecución
+desde Windows (ejemplo: guion `test2.txt` y avatar `Jorge.png`):
+
+```powershell
+# B1/B2, Fish, imágenes y preview estático. No solicita ningún trabajo LTX.
+.\run.ps1 test2 Jorge --no-video
+
+# Cuando el preview ya existe, genera o reanuda solo el vídeo final con LTX.
+.\run.ps1 test2 --generate-video
+```
+
+`--generate-video` exige un preview completo y válido, junto con el mismo
+guion original, el plan B2, las imágenes y Fish/STT guardados. Comprueba el
+SHA-256 del preview antes de enviar trabajos GPU. Reutiliza los artefactos
+existentes y **no repite B1/B2, OpenAI Images, Fish ni el preview**.
+La antigua opción `--videos-only` continúa funcionando como alias.
+Si los guiones están en `data/input/` en vez de `data/input/scripts/`,
+usa directamente:
+
+```powershell
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script test2 --no-video --avatar Jorge
+uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script test2 --generate-video
+```
+
+`--images-only` y `--resume-audio` también activan LTX cuando la otra
+mitad de artefactos está disponible. Las comprobaciones automáticas son
+técnicas y no acreditan visualmente la sincronización de labios o la
+inmovilidad de cámara; se requiere revisión de una generación real en Salad.

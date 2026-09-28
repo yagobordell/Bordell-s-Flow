@@ -26,7 +26,9 @@ from ai_video_factory.bots.fish_audio_workflow import (
 )
 from ai_video_factory.bots.workflow import materialize_blocks, validate_beats
 from ai_video_factory.compositor.static_preview import (
+    StaticPreviewError,
     SttAlignmentError,
+    _verified_asset,
     build_stt_beat_timeline,
     generate_static_preview,
 )
@@ -42,6 +44,12 @@ from ai_video_factory.providers.openai_batch_images import (
     generate_b2_images,
 )
 from ai_video_factory.providers.openai_stt import OpenAISttClient
+from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
+from ai_video_factory.providers.r2 import create_r2_storage
+from ai_video_factory.workflows.b_video import (
+    generate_b2_ltx_video,
+    has_pending_b2_video,
+)
 
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
@@ -135,6 +143,18 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--generate-video",
+        "--videos-only",
+        dest="videos_only",
+        action="store_true",
+        help="Generate or resume LTX video from a saved completed preview; no B bots or TTS.",
+    )
+    parser.add_argument(
+        "--no-video",
+        action="store_true",
+        help="Skip paid LTX I2V/A2V; keep the local static preview.",
+    )
+    parser.add_argument(
         "--no-audio",
         action="store_true",
         help="Run B1.1/B1.2/B2 (and optional images) without Fish director or TTS.",
@@ -156,7 +176,9 @@ def parse_args() -> argparse.Namespace:
         or args.from_stage != "B1.1"
         or args.stop_stage is not None
         or args.images_only
+        or args.videos_only
         or args.skip_images
+        or args.no_video
         or args.no_audio
         or args.regenerate_audio
         or args.resume_audio
@@ -169,6 +191,7 @@ def parse_args() -> argparse.Namespace:
         parser.error("Choose either --regenerate-audio or --resume-audio.")
     if (args.regenerate_audio or args.resume_audio) and (
         args.images_only
+        or args.videos_only
         or args.no_audio
         or args.skip_images
         or args.from_stage != "B1.1"
@@ -179,6 +202,15 @@ def parse_args() -> argparse.Namespace:
         parser.error(
             "Audio-only modes cannot be combined with images, --from, "
             "--no-audio or --avatar."
+        )
+    if args.videos_only and (
+        args.images_only or args.no_audio or args.no_video or args.skip_images
+        or args.regenerate_audio or args.resume_audio
+        or args.from_stage != "B1.1" or args.stop_stage is not None
+        or args.avatar is not None or args.qr_url is not None
+    ):
+        parser.error(
+            "--generate-video cannot be combined with other generation flags."
         )
     if args.images_only and args.no_audio:
         parser.error("--images-only does not run audio; omit --no-audio.")
@@ -205,7 +237,9 @@ def parse_args() -> argparse.Namespace:
         or args.from_stage != "B1.1"
         or args.stop_stage is not None
         or args.images_only
+        or args.videos_only
         or args.skip_images
+        or args.no_video
         or args.no_audio
         or args.regenerate_audio
         or args.resume_audio
@@ -669,6 +703,78 @@ async def _preview_if_ready(
     return await _render_preview(output, plan, audio, images)
 
 
+def _ltx_transport_configured() -> bool:
+    return all((
+        settings.postgres_dsn,
+        settings.r2_endpoint_url,
+        settings.r2_bucket,
+        settings.r2_access_key_id,
+        settings.r2_secret_access_key,
+    ))
+
+
+async def _video_if_ready(
+    output: Path,
+    report: dict[str, object],
+    *,
+    plan: dict[str, object] | None = None,
+    images: dict[str, object] | None = None,
+    require: bool = False,
+) -> dict[str, object] | None:
+    """Connect verified B2 PNGs and STT-aligned Fish narration to LTX."""
+    run = report.get("run", {})
+    audio = run.get("audio_generation") if isinstance(run, dict) else None
+    if (
+        not isinstance(audio, dict) or audio.get("status") != "completed"
+        or audio.get("stt_complete") is not True
+    ):
+        if require:
+            raise RuntimeError("LTX requires completed Fish audio with word-level STT")
+        return None
+    if plan is None:
+        path = output / "visual_plan.json"
+        if path.is_symlink() or not path.is_file():
+            if require:
+                raise RuntimeError("LTX requires the saved visual_plan.json")
+            return None
+        plan = json.loads(path.read_text(encoding="utf-8"))
+    if images is None:
+        path = output / "images" / "manifest.json"
+        if path.is_symlink() or not path.is_file():
+            if require:
+                raise RuntimeError("LTX requires the completed B2 image manifest")
+            return None
+        images = json.loads(path.read_text(encoding="utf-8"))
+    if images.get("status") != "completed":
+        if require:
+            raise RuntimeError("LTX requires completed B2 images")
+        return None
+    if not _ltx_transport_configured():
+        if require:
+            raise RuntimeError("POSTGRES_DSN and all R2 credentials are required for LTX")
+        return {"status": "deferred", "reason": "ltx_transport_not_configured"}
+
+    def run_ltx() -> dict[str, object]:
+        queue = PostgresJobQueueClient(dsn=settings.postgres_dsn)
+        try:
+            storage = create_r2_storage(
+                endpoint_url=settings.r2_endpoint_url,
+                bucket=settings.r2_bucket,
+                access_key_id=settings.r2_access_key_id,
+                secret_access_key=settings.r2_secret_access_key,
+            )
+            return generate_b2_ltx_video(
+                output, plan, audio, images,
+                queue=queue, storage=storage,
+                poll_seconds=settings.inference_client_poll_seconds,
+                timeout_seconds=max(settings.inference_client_timeout_seconds, 21600.0),
+            )
+        finally:
+            queue.close()
+
+    return await asyncio.to_thread(run_ltx)
+
+
 def _preflight_stt_alignment(
     output: Path,
     plan: dict[str, object],
@@ -747,7 +853,9 @@ async def _preflight_stt_alignment_with_retries(
             )
 
 
-async def _run_images_only(script_file: Path, output_root: Path) -> None:
+async def _run_images_only(
+    script_file: Path, output_root: Path, *, no_video: bool = False
+) -> None:
     """Resume image tasks using B2 artifacts without repeating any planning calls."""
     root = output_root.resolve()
     source = script_file.resolve()
@@ -809,6 +917,18 @@ async def _run_images_only(script_file: Path, output_root: Path) -> None:
         raise
     if preview is not None:
         report["run"]["video_preview"] = preview
+    if no_video:
+        report["run"]["video_generation"] = {"status": "skipped"}
+    else:
+        try:
+            video = await _video_if_ready(output, report, plan=plan, images=manifest)
+        except Exception:
+            report["run"]["video_generation"] = {"status": "incomplete"}
+            report["run"]["status"] = "failed"
+            _write(report_path, report)
+            raise
+        if video is not None:
+            report["run"]["video_generation"] = video
     report["run"]["status"] = "completed"
     report["timings"]["status"] = "completed"
     report["api_costs"]["run_status"] = "completed"
@@ -819,6 +939,51 @@ async def _run_images_only(script_file: Path, output_root: Path) -> None:
         flush=True,
     )
 
+
+
+async def _run_videos_only(script_file: Path, output_root: Path) -> None:
+    """Resume durable LTX jobs without repeating OpenAI images, bots or Fish TTS."""
+    root = output_root.resolve()
+    source = script_file.resolve()
+    cwd = Path.cwd().resolve()
+    if root == cwd or root in cwd.parents or source.is_relative_to(root):
+        raise SystemExit("--output must be outside the repository and source directory")
+    output = output_root / script_file.stem
+    report_path = output / "run_report.json"
+    plan_path = output / "visual_plan.json"
+    if (
+        output.is_symlink() or output.is_junction()
+        or report_path.is_symlink() or plan_path.is_symlink()
+        or not report_path.is_file() or not plan_path.is_file()
+    ):
+        raise SystemExit("--generate-video requires a saved B2 plan and run report")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if report.get("run", {}).get("script_sha256") != hashlib.sha256(
+        source.read_bytes()
+    ).hexdigest():
+        raise SystemExit("Script differs from the saved LTX input")
+    if report.get("run", {}).get("stt_alignment", {}).get("status") != "completed":
+        raise SystemExit("--generate-video requires previously validated B2/STT alignment")
+    preview = report.get("run", {}).get("video_preview")
+    if not isinstance(preview, dict) or preview.get("status") != "completed":
+        raise SystemExit("--generate-video requires an existing completed preview")
+    try:
+        _verified_asset(output, preview.get("file"), preview.get("sha256"))
+    except StaticPreviewError as exc:
+        raise SystemExit(f"Saved preview is missing or invalid: {exc}") from exc
+    try:
+        video = await _video_if_ready(output, report, require=True)
+    except Exception:
+        report["run"]["video_generation"] = {"status": "incomplete"}
+        report["run"]["status"] = "failed"
+        _write(report_path, report)
+        raise
+    report["run"]["video_generation"] = video
+    report["run"]["status"] = "completed"
+    report["timings"]["status"] = "completed"
+    report["api_costs"]["run_status"] = "completed"
+    _write(report_path, report)
+    print(f"  LTX video ready: {video['file']}", flush=True)
 
 
 async def _generate_audio(
@@ -881,6 +1046,7 @@ async def _run_audio_only(
     output_root: Path,
     *,
     resume: bool,
+    no_video: bool = False,
 ) -> None:
     """An independent audio-only run: no avatar, B bots, B2 images or GPUs."""
     root = output_root.resolve()
@@ -979,6 +1145,19 @@ async def _run_audio_only(
             run["status"] = "completed"
             report.setdefault("timings", {})["status"] = "completed"
             report.setdefault("api_costs", {})["run_status"] = "completed"
+    if no_video:
+        report["run"]["video_generation"] = {"status": "skipped"}
+    else:
+        try:
+            video = await _video_if_ready(output, report)
+        except Exception:
+            report["run"]["video_generation"] = {"status": "incomplete"}
+            report["run"]["status"] = "failed"
+            _refresh_audio_costs(report, output)
+            _write(report_path, report)
+            raise
+        if video is not None:
+            report["run"]["video_generation"] = video
     _refresh_audio_costs(report, output)
     _write(report_path, report)
     print(
@@ -1201,9 +1380,15 @@ async def main() -> None:
         script_name=args.script,
         script_file=args.script_file,
     )
+    if getattr(args, "videos_only", False):
+        output_root = args.output if args.output is not None else settings.output_dir
+        await _run_videos_only(script_file, output_root)
+        return
     if getattr(args, "images_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
-        await _run_images_only(script_file, output_root)
+        await _run_images_only(
+            script_file, output_root, no_video=bool(getattr(args, "no_video", False))
+        )
         return
     if getattr(args, "regenerate_audio", False) or getattr(args, "resume_audio", False):
         output_root = args.output if args.output is not None else settings.output_dir
@@ -1211,6 +1396,7 @@ async def main() -> None:
             script_file,
             output_root,
             resume=bool(getattr(args, "resume_audio", False)),
+            no_video=bool(getattr(args, "no_video", False)),
         )
         return
 
@@ -1252,6 +1438,12 @@ async def main() -> None:
     previous_b11: B11Output | None = None
     previous_b12: tuple[B12Output, ...] | None = None
     if args.from_stage == "B1.1":
+        previous_output = output_root / script_file.stem
+        if previous_output.exists() and has_pending_b2_video(previous_output):
+            raise SystemExit(
+                "Previous paid LTX jobs are incomplete. Use --videos-only to resume "
+                "or reconcile their Postgres status before replacing this output."
+            )
         qr = ensure_avatar_qr(
             avatar_file=avatar_file,
             avatars_dir=args.avatars_dir,
@@ -1491,6 +1683,23 @@ async def main() -> None:
             if preview is not None:
                 run_metadata["video_preview"] = preview
                 print(f"  Static video ready: {preview['file']}", flush=True)
+            if getattr(args, "no_video", False):
+                run_metadata["video_generation"] = {"status": "skipped"}
+            else:
+                run_metadata["video_generation"] = {"status": "running"}
+                save_report("running", len(result.b12))
+                video = await _video_if_ready(
+                    output, {"run": run_metadata},
+                    plan=visual_plan, images=image_manifest,
+                )
+                if video is not None:
+                    run_metadata["video_generation"] = video
+                    if video.get("status") == "completed":
+                        print(f"  LTX video ready: {video['file']}", flush=True)
+                else:
+                    run_metadata["video_generation"] = {
+                        "status": "deferred", "reason": "audio_or_images_incomplete",
+                    }
     except Exception:
         if audio_task is not None and not audio_joined:
             # Never abandon an in-flight paid TTS submission by cancelling
@@ -1503,6 +1712,8 @@ async def main() -> None:
             run_metadata["image_generation"] = {"status": "incomplete"}
         if run_metadata.get("video_preview") == {"status": "running"}:
             run_metadata["video_preview"] = {"status": "incomplete"}
+        if run_metadata.get("video_generation") == {"status": "running"}:
+            run_metadata["video_generation"] = {"status": "incomplete"}
         _, timing_report = save_report("failed", None)
         _print_metric("Run", timing_report["run_elapsed_seconds"], None)
         raise
