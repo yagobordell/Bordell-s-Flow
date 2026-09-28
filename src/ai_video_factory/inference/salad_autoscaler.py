@@ -910,9 +910,10 @@ def build_global_demands(
             if work_seconds > 0
             else 0
         )
+        active_job_count = queued_count + len(running_rows)
         ideal = max(
             len(running_rows),
-            min(ideal, config.stage_max_replicas[stage]),
+            min(ideal, active_job_count, config.stage_max_replicas[stage]),
         )
         demands[stage] = StageDemand(
             stage=stage,
