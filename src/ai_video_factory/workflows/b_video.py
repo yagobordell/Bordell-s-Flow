@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 from ai_video_factory.compositor.static_preview import (
-    StaticPreviewError,
     _verified_asset,
     build_stt_beat_timeline,
 )
