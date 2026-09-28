@@ -121,7 +121,7 @@ def test_deployment_manifest_does_not_pin_an_account() -> None:
     assert "project" not in document["stack"]
 
 
-def test_existing_env_example_keeps_postgres_transport_and_queue_disabled() -> None:
+def test_original_env_example_leaves_salad_values_blank_and_uses_postgres() -> None:
     root = Path(__file__).resolve().parents[1]
     example = (root / ".env.example").read_text(encoding="utf-8")
     manifest = json.loads(
