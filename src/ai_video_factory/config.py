@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     salad_api_key: str | None = None
     hf_token: str | None = None
     postgres_dsn: str | None = None
+    # The capacity leader may require a session DSN distinct from the worker pool.
+    salad_capacity_controller_postgres_dsn: str | None = None
 
     r2_endpoint_url: str | None = None
     r2_bucket: str | None = None

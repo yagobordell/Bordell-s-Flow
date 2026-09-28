@@ -828,6 +828,70 @@ def test_stale_provider_pending_change_degrades_reconciliation() -> None:
     assert client.stop_calls == 0
 
 
+
+def test_old_deploying_group_remains_read_only_while_instance_progresses() -> None:
+    stage = "ltx25_i2v"
+    client = FakeSaladClient(
+        replicas=1,
+        status="deploying",
+        pending_change=False,
+        update_time="2000-01-01T00:00:00+00:00",
+        instances=[{
+            "id": "i2v-allocated", "version": 4,
+            "state": "allocating", "started": False, "pulling_progress": None,
+        }],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config(
+            (stage,), project_max_replicas=1, provider_pending_max_seconds=60.0,
+        ),
+        store=FakeStore(rows={stage: _pending_rows(1)}, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=1)},
+        logger=lambda _message: None,
+    )
+
+    assert autoscaler.reconcile()[stage].reason == "provider_change_pending"
+    client.instances[0]["state"] = "downloading"
+    client.instances[0]["pulling_progress"] = 0.46
+    assert autoscaler.reconcile()[stage].reason == "provider_change_pending"
+
+    # Progress must not grant unlimited grace to a genuinely stalled pull.
+    snapshot, _last_progress = autoscaler._provider_bootstrap_progress[stage]
+    autoscaler._provider_bootstrap_progress[stage] = (
+        snapshot, datetime(2000, 1, 1, tzinfo=UTC),
+    )
+    with pytest.raises(AutoscalerReconciliationError, match="has remained active"):
+        autoscaler.reconcile()
+    assert client.replica_updates == []
+    assert client.start_calls == 0
+    assert client.stop_calls == 0
+
+
+def test_old_deploying_group_without_instances_still_fails_closed() -> None:
+    stage = "ltx25_i2v"
+    client = FakeSaladClient(
+        replicas=1,
+        status="deploying",
+        pending_change=False,
+        update_time="2000-01-01T00:00:00+00:00",
+        instances=[],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config(
+            (stage,), project_max_replicas=1, provider_pending_max_seconds=60.0,
+        ),
+        store=FakeStore(rows={stage: _pending_rows(1)}, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=1)},
+        logger=lambda _message: None,
+    )
+    with pytest.raises(AutoscalerReconciliationError, match="has remained active"):
+        autoscaler.reconcile()
+    assert client.start_calls == 0
+
+
+
 def test_pending_watchdog_fallback_starts_fresh_when_update_time_is_missing() -> None:
     stage = "ltx25"
     client = FakeSaladClient(
@@ -1169,6 +1233,42 @@ def test_persistent_safe_downscale_deferral_degrades_reconciliation(
     ):
         autoscaler.reconcile()
     assert client.replica_updates == []
+
+
+
+def test_nonconvergence_counter_resets_when_deferral_reason_changes() -> None:
+    stage = "ltx25_i2v"
+    store = FakeStore(
+        rows={stage: [{
+            "job_id": "job-running", "run_id": "run-a", "status": "running",
+            "worker_id": "worker-instance-active", "started_at": None,
+        }]},
+        runtimes={stage: [60.0]},
+    )
+    client = FakeSaladClient(
+        replicas=2, instances=[{"id": "different-instance", "deletion_cost": 0}],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,), nonconvergence_failure_polls=2),
+        store=store,
+        clients={stage: client},
+        bindings={stage: _binding(stage)},
+        logger=lambda _message: None,
+    )
+
+    assert (
+        autoscaler.reconcile()[stage].reason
+        == "active_instance_mapping_incomplete"
+    )
+    client.instances = [{"id": "instance-active", "deletion_cost": 100_000}]
+    assert autoscaler.reconcile()[stage].reason == "insufficient_idle_instances"
+    with pytest.raises(
+        AutoscalerReconciliationError, match="insufficient_idle_instances",
+    ):
+        autoscaler.reconcile()
+    assert client.stop_calls == 0
+    assert client.replica_updates == []
+
 
 
 def test_nonconvergence_counter_resets_when_capacity_target_recovers() -> None:

@@ -50,15 +50,24 @@ failures eventually make health fail. Failures while applying drain protection a
 failures rather than successful no-op passes. Safe downscale deferrals caused by incomplete
 worker-to-instance mapping or insufficient observed idle instances are allowed to be transient, but
 after `SALAD_AUTOSCALER_NONCONVERGENCE_FAILURE_POLLS` consecutive blocked reconciliations for the
-same target they also fail reconciliation and allow health monitoring to degrade. Salad provider
+same target **and reason** they also fail reconciliation and allow health monitoring to degrade.
+The controller never stops a group while it cannot identify enough idle instances; once job demand
+reaches zero and instances become observable, normal drain protection and stop reconciliation
+resume. Salad provider
 transitions are also bounded: `pending_change=true` and the provider statuses `pending` or
-`deploying` are treated as in-flight states, using the group's provider `update_time` as a
-restart-safe age signal. If that transition exceeds
-`SALAD_AUTOSCALER_PROVIDER_PENDING_MAX_SECONDS` (default two hours), reconciliation fails so
-controller health degrades instead of remaining green indefinitely. If `update_time` is unavailable,
-the leader falls back to the first transition observation for that process. Terminal provider states
-`failed` and `succeeded` are never counted as healthy worker capacity; they fail reconciliation
-immediately, and unknown provider states fail closed.
+`deploying` are treated as in-flight states. Pending configuration changes retain the group's
+provider `update_time` as their restart-safe age signal. A `deploying` group with
+`pending_change=false` may retain an old group timestamp while Salad allocates a **new** worker:
+only observed forward progress from its current-version instance (allocation, download progress,
+creation or startup) refreshes the in-process watchdog. Merely polling an unchanged instance,
+seeing a stale group timestamp, or listing zero instances does not count as progress. If the
+provider transition has no progress for `SALAD_AUTOSCALER_PROVIDER_PENDING_MAX_SECONDS`
+(default two hours), reconciliation fails so controller health degrades instead of remaining green
+indefinitely. If `update_time` is unavailable, the leader falls back to the first transition
+observation for that process. A controller restart can begin a new observed-bootstrap window for a
+currently listed instance; this does **not** grant permission to resize a transitioning group.
+Terminal provider states `failed` and `succeeded` are never counted as healthy worker capacity;
+they fail reconciliation immediately, and unknown provider states fail closed.
 
 ## Production ownership
 

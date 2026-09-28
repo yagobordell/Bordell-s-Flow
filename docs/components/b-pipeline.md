@@ -475,6 +475,35 @@ guion original, el plan B2, las imágenes y Fish/STT guardados. Comprueba el
 SHA-256 del preview antes de enviar trabajos GPU. Reutiliza los artefactos
 existentes y **no repite B1/B2, OpenAI Images, Fish ni el preview**.
 La antigua opción `--videos-only` continúa funcionando como alias.
+
+**Salad no arranca directamente desde `run.ps1`.** El Capacity Controller
+único es el responsable de arrancar y detener los contenedores I2V/A2V según
+la demanda en Postgres, incluso cuando se reanuda un vídeo. Antes de enviar
+cada trabajo nuevo, el runner comprueba que este controlador tenga heartbeat y
+reconciliación recientes; si no está operativo, falla con instrucciones en vez
+de mantener silenciosamente un trabajo en `pending` durante horas. Los clips
+LTX ya terminados y verificados pueden reutilizarse sin enviar trabajos GPU.
+
+Comprueba el controlador desde la raíz del repositorio (sin solicitar GPU):
+
+```powershell
+uv run --locked --extra dev python scripts/salad/run_salad_capacity_controller.py --check-health
+```
+
+Si no existe un líder saludable, arranca **una sola instancia duradera** en una
+terminal o servicio independiente, con `.env` configurado
+(`SALAD_AUTOSCALER_ENABLED=true`, `SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS`,
+`SALAD_ORGANIZATION`, `SALAD_PROJECT`, `SALAD_API_KEY`,
+`SALAD_CAPACITY_CONTROLLER_POSTGRES_DSN` Direct/Session y Postgres/R2):
+
+```powershell
+uv run --locked --extra dev python scripts/salad/run_salad_capacity_controller.py --poll-seconds 15
+```
+
+No arranques ni detengas manualmente los Container Groups mientras el
+controlador sea el propietario de la capacidad. Si tu `POSTGRES_DSN` utiliza un
+pooler transaccional, configura el DSN de sesión independiente del controlador
+antes de ejecutar `--generate-video`.
 Si los guiones están en `data/input/` en vez de `data/input/scripts/`,
 usa directamente:
 

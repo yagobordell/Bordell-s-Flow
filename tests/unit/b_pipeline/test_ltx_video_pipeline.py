@@ -216,6 +216,11 @@ def test_automatic_ltx_activation_requires_complete_audio_and_transport(
         return {"status": "completed", "file": "video/final.mp4"}
 
     monkeypatch.setattr(runner, "generate_b2_ltx_video", dispatch)
+    checked: list[str] = []
+    monkeypatch.setattr(
+        runner, "_require_ltx_capacity_controller",
+        lambda: checked.append("checked"),
+    )
     result = asyncio.run(
         runner._video_if_ready(tmp_path, report, plan=plan, images=images)
     )
@@ -223,7 +228,80 @@ def test_automatic_ltx_activation_requires_complete_audio_and_transport(
     assert len(calls) == 1
     assert calls[0][:4] == (tmp_path, plan, audio, images)
     assert calls[0][4]["storage"] == "storage"
+    calls[0][4]["check_capacity"]()
+    assert checked == ["checked"]
     assert closed == [True]
+
+
+def test_capacity_guard_accepts_healthy_singleton(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(runner.settings, "postgres_dsn", "postgres://worker/pg")
+    monkeypatch.setattr(
+        runner.settings, "salad_capacity_controller_postgres_dsn",
+        "postgres://leader/pg",
+    )
+    seen: list[str] = []
+
+    def fake_health(dsn: str) -> SimpleNamespace:
+        seen.append(dsn)
+        return SimpleNamespace(
+            healthy=True, reason="healthy",
+            status="running", controller_id="leader-1",
+        )
+
+    monkeypatch.setattr(runner, "read_capacity_controller_health", fake_health)
+    runner._require_ltx_capacity_controller()
+    assert seen == ["postgres://leader/pg"]
+    assert "Capacity Controller healthy" in capsys.readouterr().out
+
+
+def test_capacity_guard_rejects_missing_or_stale_leader(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner.settings, "postgres_dsn", "postgres://worker/pg")
+    monkeypatch.setattr(
+        runner.settings, "salad_capacity_controller_postgres_dsn", None,
+    )
+    monkeypatch.setattr(
+        runner, "read_capacity_controller_health",
+        lambda _dsn: SimpleNamespace(
+            healthy=False, reason="capacity controller heartbeat is stale",
+            status="running", controller_id="leader-1",
+        ),
+    )
+    with pytest.raises(RuntimeError, match="heartbeat is stale.*No new LTX"):
+        runner._require_ltx_capacity_controller()
+
+
+def test_ltx_capacity_guard_blocks_paid_submission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    submitted: list[str] = []
+
+    class NoSubmissionExecutor:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def ensure_input(self, *_args: object, **_kwargs: object) -> None:
+            submitted.append("upload")
+
+        def execute(self, *_args: object, **_kwargs: object) -> None:
+            submitted.append("submit")
+
+    def unhealthy() -> None:
+        raise RuntimeError("Salad Capacity Controller is not healthy")
+
+    monkeypatch.setattr(b_video, "InferenceJobExecutor", NoSubmissionExecutor)
+    with pytest.raises(RuntimeError, match="Controller is not healthy"):
+        b_video.generate_b2_ltx_video(
+            tmp_path, plan, audio, images,
+            queue=SimpleNamespace(), storage=SimpleNamespace(),
+            check_capacity=unhealthy,
+        )
+    assert submitted == []
+    assert list((tmp_path / "video" / "runs").glob("*/manifest.json"))
 
 
 def test_pending_ltx_manifest_protects_paid_work(

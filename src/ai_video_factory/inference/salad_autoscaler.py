@@ -18,6 +18,9 @@ ACTIVE_STATUSES = (
 
 _PROVIDER_STABLE_STATUSES = {"running", "stopped"}
 _PROVIDER_TRANSITION_STATUSES = {"pending", "deploying"}
+_PROVIDER_BOOTSTRAP_STATE_RANK = {
+    "allocating": 1, "downloading": 2, "creating": 3, "running": 4,
+}
 _PROVIDER_TERMINAL_STATUSES = {"failed", "succeeded"}
 _PROVIDER_KNOWN_STATUSES = (
     _PROVIDER_STABLE_STATUSES
@@ -440,6 +443,9 @@ class PredictiveSaladAutoscaler:
         self._downscale_candidates: dict[str, tuple[int, int]] = {}
         self._nonconvergence_candidates: dict[str, tuple[int, int, str]] = {}
         self._provider_transition_first_seen: dict[str, datetime] = {}
+        self._provider_bootstrap_progress: dict[
+            str, tuple[dict[str, tuple[int | None, int, bool, float | None]], datetime]
+        ] = {}
         self._last_log_snapshot: dict[str, tuple[object, ...]] = {}
 
     def reconcile(self) -> dict[str, AutoscaleResult]:
@@ -481,6 +487,7 @@ class PredictiveSaladAutoscaler:
             stage: bool(groups[stage].get("pending_change")) for stage in self.clients
         }
         group_transitioning: dict[str, bool] = {}
+        transition_instances: dict[str, list[dict[str, object]]] = {}
         observed_at = datetime.now(UTC)
         for stage in self.clients:
             status = group_status[stage]
@@ -500,7 +507,20 @@ class PredictiveSaladAutoscaler:
             group_transitioning[stage] = transitioning
             if not transitioning:
                 self._provider_transition_first_seen.pop(stage, None)
+                self._provider_bootstrap_progress.pop(stage, None)
                 continue
+
+            # Always account for in-flight capacity before considering a provider
+            # transition healthy. Reuse this snapshot when reserving project quota.
+            try:
+                transition_instances[stage] = (
+                    self.clients[stage].list_container_group_instances()
+                )
+            except Exception as exc:
+                raise AutoscalerReconciliationError(
+                    "Salad capacity reconciliation cannot safely account for an "
+                    f"active provider transition on {stage}: {exc}"
+                ) from exc
 
             provider_updated_at = _parse_datetime(groups[stage].get("update_time"))
             transition_since = provider_updated_at
@@ -509,6 +529,20 @@ class PredictiveSaladAutoscaler:
                     stage,
                     observed_at,
                 )
+            if not group_pending_change[stage] and status == "deploying":
+                # Salad's group update_time can predate a freshly allocated
+                # instance by hours. Only *observable forward* bootstrap progress
+                # refreshes this watchdog; a stalled download still times out.
+                last_progress = self._record_provider_bootstrap_progress(
+                    stage,
+                    instances=transition_instances[stage],
+                    group_version=_optional_int(groups[stage].get("version")),
+                    observed_at=observed_at,
+                )
+                if last_progress is not None:
+                    transition_since = max(transition_since, last_progress)
+            else:
+                self._provider_bootstrap_progress.pop(stage, None)
             transition_age_seconds = max(
                 (observed_at - transition_since).total_seconds(),
                 0.0,
@@ -524,13 +558,7 @@ class PredictiveSaladAutoscaler:
         for stage in self.clients:
             configured = max(int(groups[stage].get("replicas") or 0), 0)
             if group_transitioning[stage]:
-                try:
-                    live_instances = len(self.clients[stage].list_container_group_instances())
-                except Exception as exc:
-                    raise AutoscalerReconciliationError(
-                        "Salad capacity reconciliation cannot safely account for an "
-                        f"active provider transition on {stage}: {exc}"
-                    ) from exc
+                live_instances = len(transition_instances[stage])
                 current[stage] = max(configured, live_instances)
                 continue
             if group_status[stage] == "stopped":
@@ -722,12 +750,70 @@ class PredictiveSaladAutoscaler:
                 f"deploy/salad/services.json: {', '.join(unmanaged)}"
             )
 
+    def _record_provider_bootstrap_progress(
+        self,
+        stage: str,
+        *,
+        instances: list[dict[str, object]],
+        group_version: int | None,
+        observed_at: datetime,
+    ) -> datetime | None:
+        """Track actual instance progress, not an unrelated group update_time."""
+        current: dict[str, tuple[int | None, int, bool, float | None]] = {}
+        for instance in instances:
+            instance_id = str(instance.get("id") or "").strip()
+            version = _optional_int(instance.get("version"))
+            if group_version is not None and version not in (None, group_version):
+                continue
+            rank = _PROVIDER_BOOTSTRAP_STATE_RANK.get(
+                str(instance.get("state") or "").strip().lower(), 0
+            )
+            if not instance_id or rank == 0:
+                continue
+            try:
+                raw_progress = instance.get("pulling_progress")
+                progress = float(raw_progress) if raw_progress is not None else None
+            except (TypeError, ValueError, OverflowError):
+                progress = None
+            if progress is not None and not math.isfinite(progress):
+                progress = None
+            current[instance_id] = (
+                version, rank, instance.get("started") is True, progress,
+            )
+
+        previous = self._provider_bootstrap_progress.get(stage)
+        if previous is None:
+            if not current:
+                return None
+            last_progress = observed_at
+        else:
+            prior, last_progress = previous
+            for instance_id, (version, rank, started, progress) in current.items():
+                old = prior.get(instance_id)
+                if (
+                    old is None
+                    or (version is not None and version != old[0])
+                    or rank > old[1]
+                    or (started and not old[2])
+                    or (
+                        progress is not None
+                        and (old[3] is None or progress > old[3] + 0.0001)
+                    )
+                ):
+                    last_progress = observed_at
+                    break
+        self._provider_bootstrap_progress[stage] = (current, last_progress)
+        return last_progress
+
     def _record_nonconvergence(self, stage: str, target: int, reason: str) -> int:
-        previous_target, previous_count, _ = self._nonconvergence_candidates.get(
-            stage,
-            (-1, 0, ""),
+        previous_target, previous_count, previous_reason = (
+            self._nonconvergence_candidates.get(stage, (-1, 0, ""))
         )
-        count = previous_count + 1 if previous_target == target else 1
+        count = (
+            previous_count + 1
+            if previous_target == target and previous_reason == reason
+            else 1
+        )
         self._nonconvergence_candidates[stage] = (target, count, reason)
         return count
 
