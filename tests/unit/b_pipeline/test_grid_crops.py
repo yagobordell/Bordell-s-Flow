@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -178,7 +179,12 @@ def test_crop_rejects_linked_grid_source(tmp_path: Path) -> None:
     source = tmp_path / manifest["items"][0]["file"]
     actual = tmp_path / "backing.png"
     source.replace(actual)
-    source.symlink_to(actual)
+    try:
+        source.symlink_to(actual)
+    except OSError as exc:
+        if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows account lacks the privilege to create file symlinks")
+        raise
     with pytest.raises(GridCropError, match="linked"):
         crop_grid_assets(tmp_path, manifest)
     assert not list((tmp_path / "images").glob("block_*/*.png"))
