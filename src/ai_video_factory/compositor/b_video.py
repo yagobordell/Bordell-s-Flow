@@ -11,7 +11,7 @@ import math
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ai_video_factory.compositor.static_preview import (
     _MOTION_PRESETS,
