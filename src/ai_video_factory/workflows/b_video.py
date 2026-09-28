@@ -14,7 +14,7 @@ import subprocess
 import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from ai_video_factory.compositor.static_preview import (
     _verified_asset,
@@ -398,6 +398,7 @@ def generate_b2_ltx_video(
     output: Path, plan: dict[str, Any], audio: dict[str, Any],
     images: dict[str, Any], *, queue: JobQueueClient, storage: ObjectStorage,
     poll_seconds: float = 15.0, timeout_seconds: float = 21600.0,
+    check_capacity: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Durably submit exactly one LTX request per video beat/avatar group, then mux.
 
@@ -445,6 +446,15 @@ def generate_b2_ltx_video(
         if clip.is_symlink() or clip.parent.is_symlink():
             raise B2VideoError("Refusing linked LTX output path")
         clip.parent.mkdir(parents=True, exist_ok=True)
+        # The singleton controller, not this client, owns Salad replica changes.
+        # Check before any new inference submission, including resumed runs.
+        if check_capacity is not None:
+            check_capacity()
+        print(
+            f"  LTX {job.kind.upper()} beats={','.join(job.beats)}: "
+            f"preparing Postgres job {job.request.job_id}",
+            flush=True,
+        )
         for item in job.request.inputs:
             source = (
                 job.audio if item.name == "audio" else job.image
@@ -458,8 +468,18 @@ def generate_b2_ltx_video(
             )
         # Postgres job_id and immutable request fingerprint provide replay safety
         # if the client exits after submission but before writing its manifest.
+        print(
+            f"  LTX {job.kind.upper()} job={job.request.job_id}: "
+            "submitting/resuming; waiting for a Salad worker",
+            flush=True,
+        )
         response = executor.execute(
             job.request, metadata={"capability": f"b2-ltx-{job.kind}"},
+        )
+        print(
+            f"  LTX {job.kind.upper()} job={job.request.job_id}: "
+            "inference completed; verifying MP4",
+            flush=True,
         )
         part = clip.with_suffix(".part.mp4")
         if part.is_symlink():
