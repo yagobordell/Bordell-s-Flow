@@ -88,6 +88,9 @@ def test_capacity_controller_fails_closed_without_account(
     monkeypatch.setenv("SALAD_ORGANIZATION", "teammate-org")
     monkeypatch.setenv("SALAD_PROJECT", "teammate-dev")
     monkeypatch.delenv(missing)
+    # Deprecated names must never act as a fallback to a different account.
+    monkeypatch.setenv("SALAD_ORGANIZATION_NAME", "wrong-organization")
+    monkeypatch.setenv("SALAD_PROJECT_NAME", "wrong-project")
     opened_stores = _stub_remote_runtime(monkeypatch)
 
     with pytest.raises(RuntimeError, match=f"Missing {missing}"):
@@ -116,3 +119,20 @@ def test_deployment_manifest_does_not_pin_an_account() -> None:
 
     assert "organization" not in document["stack"]
     assert "project" not in document["stack"]
+
+
+def test_existing_env_example_keeps_postgres_transport_and_queue_disabled() -> None:
+    root = Path(__file__).resolve().parents[1]
+    example = (root / ".env.example").read_text(encoding="utf-8")
+    manifest = json.loads(
+        (root / "deploy" / "salad" / "services.json").read_text(encoding="utf-8")
+    )
+
+    assert "SALAD_ORGANIZATION=" in example
+    assert "SALAD_PROJECT=" in example
+    assert "SALAD_ORGANIZATION_NAME=" not in example
+    assert "SALAD_PROJECT_NAME=" not in example
+    assert "SALAD_QUEUE_NAME=ai-video-factory-jobs" in example
+    assert "SALAD_LOG_LEVEL=info" in example
+    assert "SALAD_QUEUE_ENABLED=false" in example
+    assert manifest["stack"]["job_transport"] == "postgres"
