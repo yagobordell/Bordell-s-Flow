@@ -251,7 +251,7 @@ def build_b2_video_plan(
             image_sha = sha256_file(image)
             num_frames = ltx_num_frames_for_duration(end - start, fps=_FPS)
             prompt = beat["description"]
-            job_id = ltx_video_application_job_id(
+            job_id = f"b2-{beat_ids[0]}-" + ltx_video_application_job_id(
                 shot_id=ordinal, prompt=prompt, keyframe_sha256=image_sha,
                 seed=seed, width=1280, height=720, fps=_FPS,
                 num_frames=num_frames, generation_profile=LTX_GENERATION_PROFILE,
