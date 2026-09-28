@@ -446,10 +446,16 @@ def test_images_only_auto_renders_from_existing_stt_and_saved_images(
         return images
 
     monkeypatch.setattr(runner, "_generate_images", fake_images)
-    asyncio.run(runner._run_images_only(script, tmp_path / "output"))
+
+    async def forbid_ltx(*_args: object, **_kwargs: object) -> dict:
+        raise AssertionError("Static-preview-only test must not dispatch LTX jobs")
+
+    monkeypatch.setattr(runner, "_video_if_ready", forbid_ltx)
+    asyncio.run(runner._run_images_only(script, tmp_path / "output", no_video=True))
     assert generated == [output]
     report = json.loads((output / "run_report.json").read_text(encoding="utf-8"))
     assert report["run"]["status"] == "completed"
     preview = report["run"]["video_preview"]
     assert preview["status"] == "completed"
     assert (output / preview["file"]).is_file()
+    assert report["run"]["video_generation"] == {"status": "skipped"}
