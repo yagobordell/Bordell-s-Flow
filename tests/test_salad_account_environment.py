@@ -138,5 +138,9 @@ def test_original_env_example_leaves_salad_values_blank_and_uses_postgres() -> N
     assert "SALAD_QUEUE_ENABLED=\n" in example
     assert "SALAD_API_KEY=\n" in example
     assert "FISH_SPEECH_REFERENCE_PROFILE=project-narrator-v1" in example
-    assert "FISH_SPEECH_REFERENCE_AUDIO_SHA256=bc9f0cb0ba8675aadb3247f9c93de532de693189faf31e849b9af2ec69cc97ab" in example
+    assert (
+        "FISH_SPEECH_REFERENCE_AUDIO_SHA256="
+        "bc9f0cb0ba8675aadb3247f9c93de532de693189faf31e849b9af2ec69cc97ab"
+        in example
+    )
     assert manifest["stack"]["job_transport"] == "postgres"
