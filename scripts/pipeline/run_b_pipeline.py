@@ -205,7 +205,10 @@ def parse_args() -> argparse.Namespace:
         or args.from_stage != "B1.1" or args.stop_stage is not None
         or args.avatar is not None or args.qr_url is not None
     ):
-        parser.error("--videos-only requires saved B2/image/audio outputs; no other generation flags.")
+        parser.error(
+            "--videos-only requires saved B2/image/audio outputs; "
+            "no other generation flags."
+        )
     if args.images_only and args.no_audio:
         parser.error("--images-only does not run audio; omit --no-audio.")
     if args.images_only and (
