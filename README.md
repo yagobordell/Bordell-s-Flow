@@ -216,6 +216,38 @@ registra `stopped_after`; las ejecuciones sin `--stop` mantienen su flujo normal
 La consola
 imprime una línea de tiempo y coste inmediatamente después de terminar cada bot.
 
+### Costes observados de Salad (LTX)
+
+Durante la generación de vídeo LTX, el runner consulta las instancias de los
+grupos ltx25 (A2V) y ltx25_i2v (I2V) cada 15 segundos. Suma los segundos
+en estado running por réplica; la descarga y el arranque no generan coste.
+Muestra un subtotal provisional cada minuto y otro al terminar la etapa.
+El diario persistente video/salad_costs.json permite recuperar importes
+observados sin duplicar periodos al reanudar el vídeo.
+
+run_report.json incluye salad_costs y
+api_costs.priced_subtotal_including_salad_usd. El campo
+api_costs.estimated_total_usd se mantiene exclusivamente para OpenAI;
+estimated_total_including_salad_usd solo existe como importe cuando los
+dos componentes están completos.
+
+Para las RTX 5090 High de ambos servicios se usa el precio público de
+Salad de 0,50 USD por GPU/hora, vigente desde el 12 de septiembre de 2026.
+Los precios personalizados pueden indicarse en .env mediante
+SALAD_LTX25_USD_PER_GPU_HOUR y SALAD_LTX25_I2V_USD_PER_GPU_HOUR.
+Si cambian la GPU o la prioridad y no hay precio configurado, no se
+presupone una tarifa. Fuente: https://salad.com/pricing.
+
+El cálculo refleja el coste observado de los grupos completos **durante
+la fase de vídeo**, incluidas las réplicas encendidas sin procesar trabajos.
+No es un coste exacto por beat ni una factura: los grupos pueden procesar
+trabajos ajenos y continuar generando cargos antes o después del vídeo,
+por ejemplo, durante el drenaje del Capacity Controller. Las interrupciones
+de la telemetría y los periodos no observados se marcan como parciales,
+nunca como coste cero. Consulta la facturación de Salad para conocer el
+importe real de toda la cuenta.
+
+
 B1.1, B1.2, B2 y el director de voz Fish usan el mismo modelo de
 texto `OPENAI_MODEL=gpt-6-luna` y `OPENAI_REASONING_EFFORT=medium`.
 No existe una configuración independiente `OPENAI_B_MODEL`.
