@@ -1086,6 +1086,7 @@ async def _run_images_only(
         f"({manifest.get('openai_direct_count', 0)} standard OpenAI requests)",
         flush=True,
     )
+    _print_observed_salad_total(report["api_costs"])
 
 
 
@@ -1438,6 +1439,7 @@ async def _run_audio_only(
         f"(voice {artifact['voice_id']})",
         flush=True,
     )
+    _print_observed_salad_total(report["api_costs"])
 
 
 def _latest_completed_audio(output: Path, source_sha256: str) -> dict[str, object] | None:
