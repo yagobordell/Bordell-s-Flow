@@ -1136,6 +1136,7 @@ async def _run_videos_only(script_file: Path, output_root: Path) -> None:
     _refresh_audio_costs(report, output)
     _write(report_path, report)
     print(f"  LTX video ready: {video['file']}", flush=True)
+    _print_observed_salad_total(report["api_costs"])
 
 
 
@@ -2099,6 +2100,7 @@ async def main() -> None:
         timing_report["run_elapsed_seconds"],
         costs["estimated_total_usd"],
     )
+    _print_observed_salad_total(costs)
 
 
 if __name__ == "__main__":
