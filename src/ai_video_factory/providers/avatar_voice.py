@@ -171,6 +171,24 @@ def ensure_avatar_voice(
     else:
         desired_mode, desired_value = None, None
 
+    # Explicit recovery of an ambiguous paid clone: the user has checked AI33Pro
+    # and supplied the resulting ID. Never submit the same recording again.
+    if (
+        record is not None
+        and record["mode"] == "clone"
+        and record["status"] in {"clone_submitting_unknown", "clone_poll_pending"}
+        and input_voice_id is not None
+    ):
+        record["voice_id"] = _valid_voice_id(input_voice_id)
+        record["status"] = "ready"
+        _save(path, record)
+        return AvatarVoice(
+            mode="clone",
+            voice_id=record["voice_id"],
+            audio_filename=record["audio_filename"],
+            audio_sha256=record["audio_sha256"],
+        )
+
     if record is not None and desired_mode is not None and (
         record["mode"] != desired_mode
         or (
