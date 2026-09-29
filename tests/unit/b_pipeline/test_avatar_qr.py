@@ -246,7 +246,10 @@ def test_qr_only_runs_without_guion_or_openai_key(
         lambda **_kwargs: pytest.fail("--qr-only must not create an OpenAI provider"),
     )
     asyncio.run(runner.main())
-    assert (avatar.parent / ".qr" / avatar.name / "qr.png").is_file()
+    organized = avatar.parent / avatar.stem / avatar.name
+    assert organized.is_file() and not avatar.exists()
+    assert (organized.parent / "qr.png").is_file()
+    assert (organized.parent / "qr.json").is_file()
     assert "QR listo:" in capsys.readouterr().out
 
 

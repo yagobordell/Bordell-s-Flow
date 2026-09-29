@@ -13,6 +13,8 @@ from urllib.parse import urlsplit
 import segno
 from PIL import Image
 
+from ai_video_factory.providers.avatar_library import avatar_directory
+
 _GENERATOR = "segno"
 _MAX_PNG_BYTES = 20 * 1024 * 1024
 
@@ -117,12 +119,17 @@ def ensure_avatar_qr(
     be resolved locally from its saved URL without any new API request.
     """
     requested_url = validate_ebook_url(input_url) if input_url is not None else None
-    store = avatars_dir / ".qr"
-    slot = store / avatar_file.name
+    folder = avatar_directory(avatar_file, avatars_dir)
+    if avatar_file.parent.resolve() == avatars_dir.resolve():
+        store = avatars_dir / ".qr"
+        slot = store / avatar_file.name
+    else:
+        store = folder
+        slot = folder
     png_path = slot / "qr.png"
     metadata_path = slot / "qr.json"
     legacy_pending = slot / "request_pending.json"
-    _no_links(store, slot, png_path, metadata_path, legacy_pending)
+    _no_links(avatars_dir, avatar_file, store, slot, png_path, metadata_path, legacy_pending)
 
     record = (
         _read_record(metadata_path, avatar_filename=avatar_file.name)
@@ -176,7 +183,7 @@ def ensure_avatar_qr(
     png = _generate_png(url)
     digest = hashlib.sha256(png).hexdigest()
     slot.mkdir(parents=True, exist_ok=True)
-    _no_links(store, slot, png_path, metadata_path, legacy_pending)
+    _no_links(avatars_dir, avatar_file, store, slot, png_path, metadata_path, legacy_pending)
     metadata = {
         "avatar_filename": avatar_file.name,
         "url": url,

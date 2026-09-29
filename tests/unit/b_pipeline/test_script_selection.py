@@ -429,7 +429,9 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             "openai_direct_count": 1,
         }
         assert consolidated["run"]["script_file"] == destination.name + ".txt"
-        expected_file = monk if destination == first else teacher
+        original_file = monk if destination == first else teacher
+        expected_file = original_file.parent / original_file.stem / original_file.name
+        assert expected_file.is_file() and not original_file.exists()
         avatar = consolidated["run"]["avatar"]
         assert avatar["filename"] == expected_file.name
         assert avatar["source"] == expected_file.as_posix()
