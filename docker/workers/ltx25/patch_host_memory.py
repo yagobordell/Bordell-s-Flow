@@ -57,7 +57,11 @@ def _report_host_memory_event(phase: str, **details: int | str) -> None:
     )
     utils_source = _replace_once(
         utils_source,
-        "    err = int(cudart.cudaHostRegister(ptr, nbytes, 0))\n    if err != 0:\n        return None",
+        (
+            "    err = int(cudart.cudaHostRegister(ptr, nbytes, 0))\n"
+            "    if err != 0:\n"
+            "        return None"
+        ),
         '''    err = int(cudart.cudaHostRegister(ptr, nbytes, 0))
     if err != 0:
         logger.warning(
