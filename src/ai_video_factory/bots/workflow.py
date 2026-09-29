@@ -643,6 +643,7 @@ async def run_b_pipeline(
     async def b2_one(
         meta: BlockMeta, block: MaterializedBlock, b12: B12Output,
         correction_suffix: str = "",
+        rejection_attempt_offset: int = 0,
     ) -> B2Output | ProfessionalB2Output:
         beats = validate_beats(b12, block)
         b2_input = B2Input(
@@ -682,7 +683,8 @@ async def run_b_pipeline(
         except BPipelineValidationError as first_error:
             if on_rejected_b2_output is not None:
                 on_rejected_b2_output(
-                    block.block_id, 1, str(first_error), output.model_dump()
+                    block.block_id, rejection_attempt_offset + 1,
+                    str(first_error), output.model_dump()
                 )
             retry_suffix = (
                 "\n\nB2 automatic correction attempt. Your previous structured response "
@@ -703,7 +705,8 @@ async def run_b_pipeline(
             except BPipelineValidationError as retry_error:
                 if on_rejected_b2_output is not None:
                     on_rejected_b2_output(
-                        block.block_id, 2, str(retry_error), retry_output.model_dump()
+                        block.block_id, rejection_attempt_offset + 2,
+                        str(retry_error), retry_output.model_dump()
                     )
                 raise BPipelineValidationError(
                     f"B2 block {block.block_id} failed validation after one retry: "
@@ -771,10 +774,13 @@ async def run_b_pipeline(
             _, _, block_id, target_beat_id = min(candidates)
             previous = b2_results[block_id - 1]
             correction_number = global_corrections.get(block_id, 0) + 1
+            # Reserve attempts 1/2 for local validation and 3 slots per
+            # whole-video correction so the runner retains all rejected JSON.
+            global_attempt = 3 + (correction_number - 1) * 3
             error = _avatar_run_error(run, total)
             if on_rejected_b2_output is not None:
                 on_rejected_b2_output(
-                    block_id, correction_number, error, previous.model_dump()
+                    block_id, global_attempt, error, previous.model_dump()
                 )
             global_corrections[block_id] = correction_number
             suffix = (
@@ -791,7 +797,8 @@ async def run_b_pipeline(
             )
             index = block_id - 1
             b2_results[index] = await b2_one(
-                b11.blocks[index], materialized[index], b12_results[index], suffix
+                b11.blocks[index], materialized[index], b12_results[index],
+                suffix, global_attempt,
             )
     finally:
         if on_stage_duration is not None:
