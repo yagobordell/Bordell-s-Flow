@@ -174,7 +174,8 @@ class SaladCostMeter:
         current: dict[str, dict[str, str]] = {}
         seen: set[str] = set()
         session_start = _utc(self._session["started_at"])
-        assert session_start is not None
+        if session_start is None:
+            raise ValueError("Salad cost session start is invalid")
         for item in instances:
             instance_id = str(item.get("id") or item.get("instance_id") or "")
             if not instance_id or instance_id in seen:
@@ -192,13 +193,15 @@ class SaladCostMeter:
                     since = max(session_start, transition)
                 else:
                     old_time = _utc(old["observed_until"])
-                    assert old_time is not None
+                    if old_time is None:
+                        raise ValueError("Salad last observation time is invalid")
                     since = max(old_time, transition)
                 entry["gpu_running_seconds"] += max(0.0, (now - since).total_seconds())
                 current[instance_id] = {"observed_until": now.isoformat()}
             elif old is not None:
                 old_time = _utc(old["observed_until"])
-                assert old_time is not None
+                if old_time is None:
+                    raise ValueError("Salad last observation time is invalid")
                 if transition is None:
                     entry["unobserved_instances"] += 1
                 elif transition > old_time:
