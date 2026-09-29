@@ -66,7 +66,8 @@ def _safe_slot(avatar_file: Path, avatars_dir: Path) -> tuple[Path, Path]:
     record_path = slot / "voice.json"
     if avatar_file.is_symlink() or avatar_file.parent.resolve() != avatars_dir.resolve():
         raise SystemExit("El avatar debe ser un PNG local no enlazado de --avatars-dir.")
-    if any(p.is_symlink() for p in (store, slot, record_path, record_path.with_suffix(".json.part"))):
+    paths = (store, slot, record_path, record_path.with_suffix(".json.part"))
+    if any(path.is_symlink() for path in paths):
         raise SystemExit("No se permiten enlaces simbólicos en el almacén de voces.")
     return slot, record_path
 
@@ -104,7 +105,9 @@ def _load(path: Path, avatar_file: Path) -> dict[str, Any]:
                 raise ValueError(f"El audio {filename} cambió desde la selección inicial.")
         return record
     except (OSError, KeyError, TypeError, ValueError) as exc:
-        raise SystemExit(f"Configuración de voz inválida para {avatar_file.name}: {path}: {exc}") from exc
+        raise SystemExit(
+            f"Configuración de voz inválida para {avatar_file.name}: {path}: {exc}"
+        ) from exc
 
 
 def _choose(avatar_file: Path, *, interactive: bool) -> tuple[str, str | None]:
