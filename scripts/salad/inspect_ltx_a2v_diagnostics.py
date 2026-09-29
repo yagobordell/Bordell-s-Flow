@@ -40,18 +40,25 @@ def main() -> int:
 
     postgres_dsn = os.getenv("POSTGRES_DSN")
     if postgres_dsn:
-        with psycopg.connect(postgres_dsn) as conn:
-            row = conn.execute(
-                "SELECT job_id, status, attempt_count, last_error "
-                "FROM gpu.jobs WHERE job_id = %s",
-                (args.job_id,),
-            ).fetchone()
-        if row is None:
-            print(f"Postgres job not found: {args.job_id}")
+        try:
+            with psycopg.connect(postgres_dsn) as conn:
+                row = conn.execute(
+                    "SELECT job_id, status, attempt_count, last_error "
+                    "FROM gpu.jobs WHERE job_id = %s",
+                    (args.job_id,),
+                ).fetchone()
+        except psycopg.Error as error:
+            print(
+                f"Postgres unavailable ({type(error).__name__}); "
+                "continuing with the independently stored R2 checkpoints."
+            )
         else:
-            print(f"Postgres job={row[0]} status={row[1]} attempts={row[2]}")
-            if row[3]:
-                print(f"Postgres last_error={row[3]}")
+            if row is None:
+                print(f"Postgres job not found: {args.job_id}")
+            else:
+                print(f"Postgres job={row[0]} status={row[1]} attempts={row[2]}")
+                if row[3]:
+                    print(f"Postgres last_error={row[3]}")
     else:
         print("POSTGRES_DSN not configured; inspecting R2 diagnostics only")
 
