@@ -929,8 +929,13 @@ async def _run_images_only(
         report["run"]["status"] = "failed"
         report.setdefault("timings", {})["status"] = "failed"
         report.setdefault("api_costs", {})["run_status"] = "failed"
+        _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
+    report["run"]["image_generation"] = {"status": "running"}
+    report["run"]["status"] = "running"
+    report.setdefault("timings", {})["status"] = "running"
+    _refresh_audio_costs(report, output)
     _write(report_path, report)
     try:
         removed_images = clear_previous_b2_images(output, plan)
@@ -939,15 +944,20 @@ async def _run_images_only(
         manifest = await _generate_images(output, plan)
     except Exception:
         report["run"]["image_generation"] = {"status": "incomplete"}
+        report["run"]["status"] = "failed"
+        report.setdefault("timings", {})["status"] = "failed"
+        _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
     report["run"]["image_generation"] = _image_summary(manifest)
+    _refresh_audio_costs(report, output)
     _write(report_path, report)
     try:
         preview = await _preview_if_ready(output, report, plan=plan, images=manifest)
     except Exception:
         report["run"]["video_preview"] = {"status": "incomplete"}
         report["run"]["status"] = "failed"
+        _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
     if preview is not None:
@@ -960,14 +970,22 @@ async def _run_images_only(
         except Exception:
             report["run"]["video_generation"] = {"status": "incomplete"}
             report["run"]["status"] = "failed"
+            _refresh_audio_costs(report, output)
             _write(report_path, report)
             raise
         if video is not None:
             report["run"]["video_generation"] = video
     report["run"]["status"] = "completed"
     report["timings"]["status"] = "completed"
-    report["api_costs"]["run_status"] = "completed"
+    _refresh_audio_costs(report, output)
     _write(report_path, report)
+    image_stage = report.get("api_costs", {}).get("stages", {}).get("B2 images", {})
+    price = image_stage.get("estimated_cost_usd")
+    print(
+        f"  B2 images cost: ${price}" if price is not None
+        else "  B2 images cost: coste no disponible",
+        flush=True,
+    )
     print(
         f"  Images complete: {len(manifest['items'])} PNG "
         f"({manifest.get('openai_direct_count', 0)} standard OpenAI requests)",
@@ -1011,17 +1029,19 @@ async def _run_videos_only(script_file: Path, output_root: Path) -> None:
         "preparing LTX I2V/A2V jobs",
         flush=True,
     )
+    _refresh_audio_costs(report, output)
     try:
         video = await _video_if_ready(output, report, require=True)
     except Exception:
         report["run"]["video_generation"] = {"status": "incomplete"}
         report["run"]["status"] = "failed"
+        _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
     report["run"]["video_generation"] = video
     report["run"]["status"] = "completed"
     report["timings"]["status"] = "completed"
-    report["api_costs"]["run_status"] = "completed"
+    _refresh_audio_costs(report, output)
     _write(report_path, report)
     print(f"  LTX video ready: {video['file']}", flush=True)
 
@@ -1061,6 +1081,7 @@ def _refresh_audio_costs(report: dict[str, object], output: Path) -> None:
     ledger = ApiCostLedger()
     ledger.restore_requests(previous["requests"])
     ledger.sync_fish_director_usage(output)
+    ledger.sync_image_usage(output)
     stages = previous.get("stages")
     if not isinstance(stages, dict):
         return
@@ -1591,6 +1612,7 @@ async def main() -> None:
                         expected_calls["B2"] or 0, report_blocks, timings.call_count("B2")
                     )
         ledger.sync_fish_director_usage(output)
+        ledger.sync_image_usage(output)
         costs = ledger.report(
             blocks=report_blocks,
             run_status=status,
@@ -1723,8 +1745,15 @@ async def main() -> None:
                 raise RuntimeError("Image generation requires a completed B2 plan")
             run_metadata["image_generation"] = {"status": "running"}
             save_report("running", len(result.b12))
+            image_started = perf_counter()
             image_manifest = await _generate_images(output, visual_plan)
             run_metadata["image_generation"] = _image_summary(image_manifest)
+            image_costs, _ = save_report("running", len(result.b12))
+            _print_metric(
+                "B2 images",
+                perf_counter() - image_started,
+                image_costs["stages"]["B2 images"]["estimated_cost_usd"],
+            )
         if image_manifest is not None:
             run_metadata["video_preview"] = {"status": "running"}
             save_report("running", len(result.b12))

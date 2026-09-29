@@ -464,19 +464,23 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     assert (folder / "roma.txt").read_bytes() == b"  Uno.\r\n\r\nDos.  "
     terminal = capsys.readouterr().out
     lines = terminal.splitlines()
-    assert len(lines) == 12
-    for offset in (0, 4, 8):
+    assert len(lines) == 15
+    for offset in (0, 5, 10):
         assert lines[offset:offset + 3] == [
             "  B1.1 total: 0.250 s $0.00002000",
             "  B1.2 total: 0.250 s $0.00002000",
             "  B2 total: 0.250 s $0.00002000",
         ]
         assert re.fullmatch(
-            r"  Run total: \d+\.\d{3} s \$0\.00006000",
+            r"  B2 images total: \d+\.\d{3} s \$0\.00000000",
             lines[offset + 3],
         ) is not None
+        assert re.fullmatch(
+            r"  Run total: \d+\.\d{3} s \$0\.00006000",
+            lines[offset + 4],
+        ) is not None
     assert streamed_stages == ["B1.1", "B1.2", "B2"] * 3
-    assert printed_events == ["B1.1", "B1.2", "B2", "Run"] * 3
+    assert printed_events == ["B1.1", "B1.2", "B2", "B2 images", "Run"] * 3
     assert "This token-based estimate is not an OpenAI invoice" not in terminal
 
     # The new alias must stop after B2, preserving all planning artifacts.

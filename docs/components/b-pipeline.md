@@ -227,6 +227,23 @@ multipliers. Source: https://developers.openai.com/api/docs/pricing .
 When API usage or pricing is missing, the corresponding cost is marked
 unavailable instead of silently reporting zero.
 
+GPT Image 2.5 Flare/Sunburst costs are included in the **same**
+`run_report.json → api_costs` ledger as stage `B2 images`. Direct
+Image API generations and edits are priced from each completed image
+state's persisted `artifact.openai_usage`, not from an assumed fixed
+price per image: USD per million tokens (2026-09-29) are $5 text input,
+$8 image input and $30 image output. Both models use those token rates,
+but their actual token counts may differ. Grid generation is charged
+per API request, not per cropped panel. The report preserves the
+breakdown per image, the stage subtotal and the combined run total.
+`--images-only` reconciles the saved request states, including archived
+images replaced by a later paid generation, without charging cached
+responses twice. A missing usage breakdown or unknown POST outcome
+leaves the complete total unavailable while still showing the known
+subtotal. The figures are estimates from returned usage, not an invoice;
+OpenAI STT and Fish TTS are excluded. Source:
+https://developers.openai.com/api/docs/guides/image-generation .
+
 
 B1.1, B1.2, B2 and the Fish director use the **same** text model
 `OPENAI_MODEL=gpt-6-luna` and `OPENAI_REASONING_EFFORT=medium`.
