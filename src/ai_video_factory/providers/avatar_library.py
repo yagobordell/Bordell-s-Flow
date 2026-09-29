@@ -110,9 +110,13 @@ def organize_avatar(
         ):
             raise SystemExit("El audio de referencia debe ser un nombre local válido.")
         audio_names.add(reference_audio)
-    recorded = _recorded_audio(avatars_dir / ".voice" / avatar_file.name / "voice.json")
-    if recorded is not None:
-        audio_names.add(recorded)
+    for voice_record in (
+        avatars_dir / ".voice" / avatar_file.name / "voice.json",
+        folder / "voice.json",
+    ):
+        recorded = _recorded_audio(voice_record)
+        if recorded is not None:
+            audio_names.add(recorded)
     # A same-stem reference placed beside a new PNG moves with it, too.
     for path in avatars_dir.iterdir():
         if (
