@@ -16,6 +16,11 @@ from typing import Any
 
 from PIL import Image, ImageOps
 
+from ai_video_factory.compositor.ken_burns import MOTION_VERSION as _MOTION_VERSION
+from ai_video_factory.compositor.ken_burns import (
+    build_timeline_ken_burns_filter,
+    motion_metadata,
+)
 from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE
 
 _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", re.ASCII)
@@ -23,21 +28,6 @@ _WORDS = re.compile(r"[^\W_]+", re.UNICODE)
 _FPS = 30
 _WIDTH = 1280
 _HEIGHT = 720
-_MOTION_VERSION = "media-image-zoompan-v1"
-# mode, direction, origin, starting zoom, ending zoom, x anchor, y anchor.
-# Center zoom and every corner's zoom-in/out appear in a deterministic cycle.
-_MOTION_PRESETS = (
-    ("zoom", "in", "center", 1.035, 1.115, 0.5, 0.5),
-    ("ken_burns", "out", "top_left", 1.115, 1.035, 0.0, 0.0),
-    ("ken_burns", "in", "top_right", 1.035, 1.115, 1.0, 0.0),
-    ("zoom", "out", "center", 1.115, 1.035, 0.5, 0.5),
-    ("ken_burns", "in", "bottom_right", 1.035, 1.115, 1.0, 1.0),
-    ("ken_burns", "out", "bottom_left", 1.115, 1.035, 0.0, 1.0),
-    ("ken_burns", "out", "top_right", 1.115, 1.035, 1.0, 0.0),
-    ("ken_burns", "in", "bottom_left", 1.035, 1.115, 0.0, 1.0),
-    ("ken_burns", "out", "bottom_right", 1.115, 1.035, 1.0, 1.0),
-    ("ken_burns", "in", "top_left", 1.035, 1.115, 0.0, 0.0),
-)
 _NUMBER_WORDS = frozenset({
     "zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
     "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
@@ -412,57 +402,32 @@ def _beat_frame(
 
 
 def _media_image_motion_filter(timeline: dict[str, Any]) -> str:
-    """Animate only media_image frames with deterministic, gentle FFmpeg zoompan.
+    """Animate media_image beats with Media Pipeline's scale+crop Ken Burns."""
 
-    Concat's original beat timestamps pass through fps=30 first, so the filter
-    uses global output frame indices, not another timing estimate. A one-frame
-    image has no visible motion and must be corrected upstream rather than
-    silently published as a still.
-    """
-    zoom_terms: list[str] = []
-    x_terms: list[str] = []
-    y_terms: list[str] = []
-    image_count = 0
+    intervals: list[tuple[float, float]] = []
     for beat in timeline["beats"]:
         if beat["visual_type"] != "media_image":
             continue
-        start, end = beat["start_frame"], beat["end_frame"]
-        if end - start < 2:
+
+        start_frame = beat["start_frame"]
+        end_frame = beat["end_frame"]
+        if end_frame - start_frame < 2:
             raise StaticPreviewError(
                 f"media_image {beat['beat_id']} needs at least two preview "
                 "frames for visible motion"
             )
-        mode, direction, origin, initial, final, anchor_x, anchor_y = (
-            _MOTION_PRESETS[image_count % len(_MOTION_PRESETS)]
-        )
-        image_count += 1
-        beat["motion"] = {
-            "version": _MOTION_VERSION,
-            "mode": mode,
-            "direction": direction,
-            "origin": origin,
-            "zoom_start": initial,
-            "zoom_end": final,
-        }
-        # Escaped commas are required by FFmpeg's filtergraph expression parser.
-        active = f"(gte(on\\,{start})*lt(on\\,{end}))"
-        slope = final - initial
-        zoom_terms.append(
-            f"{active}*({initial - 1:.4f}{slope:+.4f}"
-            f"*(on-{start})/{end - start - 1})"
-        )
-        if anchor_x:
-            x_terms.append(f"{active}*{anchor_x:.1f}")
-        if anchor_y:
-            y_terms.append(f"{active}*{anchor_y:.1f}")
-    if not image_count:
-        return f"fps={_FPS},format=yuv420p"
-    zoom = "1+" + "+".join(f"({term})" for term in zoom_terms)
-    x = "(iw-iw/zoom)*(" + ("+".join(x_terms) or "0") + ")"
-    y = "(ih-ih/zoom)*(" + ("+".join(y_terms) or "0") + ")"
-    return (
-        f"fps={_FPS},zoompan=z='{zoom}':x='{x}':y='{y}':"
-        f"d=1:s={_WIDTH}x{_HEIGHT}:fps={_FPS},format=yuv420p"
+
+        start_seconds = float(beat.get("start_seconds", start_frame / _FPS))
+        end_seconds = float(beat.get("end_seconds", end_frame / _FPS))
+        duration_seconds = end_seconds - start_seconds
+        beat["motion"] = motion_metadata(duration_seconds)
+        intervals.append((start_seconds, end_seconds))
+
+    return build_timeline_ken_burns_filter(
+        intervals,
+        width=_WIDTH,
+        height=_HEIGHT,
+        fps=_FPS,
     )
 
 

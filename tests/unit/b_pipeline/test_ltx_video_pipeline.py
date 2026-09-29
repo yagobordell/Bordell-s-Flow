@@ -392,7 +392,13 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     assert saved["beats"][1]["ltx_job_id"] == saved["beats"][0]["ltx_job_id"]
     assert saved["beats"][2]["ltx_job_id"] == saved["beats"][0]["ltx_job_id"]
     assert saved["beats"][3]["ltx_job_id"] != saved["beats"][0]["ltx_job_id"]
-    assert saved["beats"][4]["motion"]["version"] == "media-image-zoompan-v1"
+    motion = saved["beats"][4]["motion"]
+    assert motion["version"] == "media-image-scale-crop-v1"
+    assert motion["mode"] == "ken_burns"
+    assert motion["direction"] == "out"
+    assert motion["origin"] == "bottom_left"
+    assert motion["zoom_start"] == pytest.approx(1 + (14 / 24) * 0.02)
+    assert motion["zoom_end"] == 1.0
     again = b_video.generate_b2_ltx_video(
         tmp_path, plan, audio, images, queue=SimpleNamespace(),
         storage=FakeStorage(),

@@ -260,18 +260,18 @@ def test_real_ffmpeg_preview_has_audio_cuts_and_avatar_media_50_50(
     saved = json.loads((tmp_path / artifact["timeline_file"]).read_text(encoding="utf-8"))
     assert saved["beats"][2]["start_seconds"] == 1.5
     assert saved["beats"][1]["motion"] == {
-        "version": "media-image-zoompan-v1",
-        "mode": "zoom",
-        "direction": "in",
-        "origin": "center",
-        "zoom_start": 1.035,
-        "zoom_end": 1.115,
+        "version": "media-image-scale-crop-v1",
+        "mode": "ken_burns",
+        "direction": "out",
+        "origin": "bottom_left",
+        "zoom_start": 1.02,
+        "zoom_end": 1.0,
     }
     assert all("motion" not in saved["beats"][index] for index in (0, 2))
 
 
 
-def test_media_image_motion_cycles_center_and_every_corner_with_both_directions() -> None:
+def test_media_image_motion_matches_media_pipeline_zoom_model() -> None:
     beats = [
         {
             "beat_id": f"1{chr(ord('B') + index)}",
@@ -287,22 +287,22 @@ def test_media_image_motion_cycles_center_and_every_corner_with_both_directions(
     }
     timeline = {"beats": [*beats, still]}
     video_filter = _media_image_motion_filter(timeline)
-    assert video_filter.startswith("fps=30,zoompan=")
-    assert ":d=1:s=1280x720:fps=30,format=yuv420p" in video_filter
-    assert "on\\,0" in video_filter
-    assert "on\\,299" not in video_filter
-    assert all(beat["motion"]["zoom_start"] != beat["motion"]["zoom_end"] for beat in beats)
-    assert {(beat["motion"]["direction"], beat["motion"]["origin"])
-            for beat in beats if beat["motion"]["mode"] == "zoom"} == {
-                ("in", "center"), ("out", "center"),
-            }
-    assert {(beat["motion"]["direction"], beat["motion"]["origin"])
-            for beat in beats if beat["motion"]["mode"] == "ken_burns"} == {
-                (direction, corner)
-                for direction in ("in", "out")
-                for corner in ("top_left", "top_right", "bottom_left", "bottom_right")
-            }
+
+    assert video_filter.startswith("fps=30,scale=w='")
+    assert "zoompan=" not in video_filter
+    assert "crop=1280:720" in video_filter
+    assert "setsar=1" in video_filter
+    assert video_filter.endswith("format=yuv420p")
+    assert all(beat["motion"] == {
+        "version": "media-image-scale-crop-v1",
+        "mode": "ken_burns",
+        "direction": "out",
+        "origin": "bottom_left",
+        "zoom_start": 1.02,
+        "zoom_end": 1.0,
+    } for beat in beats)
     assert "motion" not in still
+
     second = {"beats": [{k: v for k, v in beat.items() if k != "motion"}
                         for beat in [*beats, still]]}
     assert _media_image_motion_filter(second) == video_filter
@@ -355,7 +355,7 @@ def test_real_media_image_preview_frames_change_during_one_beat(
 
 
 
-def test_real_corner_ken_burns_animates_second_media_image(
+def test_real_bottom_left_ken_burns_animates_second_media_image(
     tmp_path: Path,
 ) -> None:
     if shutil.which("ffprobe") is None:
@@ -376,12 +376,12 @@ def test_real_corner_ken_burns_animates_second_media_image(
     )
     assert artifact["media_image_motion"]["animated_beats"] == 2
     assert timeline["beats"][2]["motion"] == {
-        "version": "media-image-zoompan-v1",
+        "version": "media-image-scale-crop-v1",
         "mode": "ken_burns",
         "direction": "out",
-        "origin": "top_left",
-        "zoom_start": 1.115,
-        "zoom_end": 1.035,
+        "origin": "bottom_left",
+        "zoom_start": 1.008,
+        "zoom_end": 1.0,
     }
 
     def frame_at(seconds: float) -> Image.Image:
