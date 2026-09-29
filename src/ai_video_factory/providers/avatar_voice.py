@@ -10,12 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ai_video_factory.providers.avatar_library import avatar_directory
 from ai_video_factory.providers.ai33_speech import (
     AI33SpeechClient,
     task_id_of,
     voice_id_of,
 )
+from ai_video_factory.providers.avatar_library import avatar_directory
 
 _AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".webm", ".flac", ".opus"}
 _MAX_AUDIO_BYTES = 10 * 1024 * 1024
@@ -72,7 +72,10 @@ def _safe_slot(avatar_file: Path, avatars_dir: Path) -> tuple[Path, Path]:
         store = folder
         slot = folder
     record_path = slot / "voice.json"
-    paths = (avatars_dir, avatar_file, store, slot, record_path, record_path.with_suffix(".json.part"))
+    paths = (
+        avatars_dir, avatar_file, store, slot, record_path,
+        record_path.with_suffix(".json.part"),
+    )
     if any(path.is_symlink() for path in paths):
         raise SystemExit("No se permiten enlaces simbólicos en el almacén de voces.")
     return slot, record_path
