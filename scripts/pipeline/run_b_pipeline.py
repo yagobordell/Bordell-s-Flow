@@ -1145,6 +1145,53 @@ def _refresh_audio_costs(report: dict[str, object], output: Path) -> None:
     )
 
 
+def _activate_pending_avatar_clone(
+    output: Path, report: dict[str, object]
+) -> None:
+    """Resolve a deferred avatar clone before the first audio-only generation."""
+    snapshot_path = output / "avatar_voice.json"
+    if snapshot_path.is_symlink() or not snapshot_path.is_file():
+        return
+    try:
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        if not isinstance(snapshot, dict):
+            raise ValueError("Voice snapshot is not an object")
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"Snapshot de voz inválido: {snapshot_path}") from exc
+    if snapshot.get("mode") != "clone" or snapshot.get("voice_id") is not None:
+        return
+    run = report.get("run")
+    avatar = run.get("avatar") if isinstance(run, dict) else None
+    source = avatar.get("source") if isinstance(avatar, dict) else None
+    if not isinstance(source, str) or not source:
+        raise SystemExit("Falta la ubicación original del avatar para clonar su voz.")
+    avatar_file = Path(source)
+    pending = ensure_avatar_voice(
+        avatar_file=avatar_file,
+        avatars_dir=avatar_file.parent,
+        default_voice_id=settings.ai33_fish_voice_id,
+        activate=False,
+    )
+    if (
+        pending.mode != "clone"
+        or pending.audio_filename != snapshot.get("audio_filename")
+        or pending.audio_sha256 != snapshot.get("audio_sha256")
+    ):
+        raise SystemExit("La voz del avatar cambió desde el inicio del run.")
+    active = ensure_avatar_voice(
+        avatar_file=avatar_file,
+        avatars_dir=avatar_file.parent,
+        default_voice_id=settings.ai33_fish_voice_id,
+        api_key=settings.ai33_api_key,
+    )
+    if active.voice_id is None:
+        raise SystemExit("La voz clonada aún no tiene Voice ID.")
+    ready = active.snapshot()
+    _write(snapshot_path, ready)
+    avatar["voice"] = ready
+    _write(output / "run_report.json", report)
+
+
 async def _run_audio_only(
     script_file: Path,
     output_root: Path,
@@ -1174,6 +1221,7 @@ async def _run_audio_only(
         raise SystemExit("OPENAI_API_KEY is required to rerun the Fish director")
     if not settings.ai33_api_key:
         raise SystemExit("AI33_API_KEY is required for the Fish Audio voice task")
+    _activate_pending_avatar_clone(output, report)
     b11_path = output / "B1.1" / "output.json"
     if b11_path.is_symlink() or not b11_path.is_file():
         raise SystemExit("Audio-only mode requires the saved validated B1.1 output")
