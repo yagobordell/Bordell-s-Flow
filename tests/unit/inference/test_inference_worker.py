@@ -273,6 +273,50 @@ def test_ltx_a2v_unsatisfiable_diffvae_budget_never_retries(tmp_path: Path) -> N
     assert runner.calls == 1
 
 
+def test_a2v_failure_has_persistent_phase_and_r2_pointer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ai_video_factory.inference import gpu_diagnostics
+
+    monkeypatch.setattr(gpu_diagnostics, "_gpu_identity", lambda: {})
+    monkeypatch.setattr(gpu_diagnostics, "_cuda_snapshot", lambda: {"available": False})
+    monkeypatch.setattr(gpu_diagnostics, "_read_linux_memory", lambda: {})
+
+    class DiagnosticOomRunner:
+        task_name = "video.ltx25.audio_to_video"
+
+        def run(self, request, inputs, work_dir):
+            del request, inputs, work_dir
+            gpu_diagnostics.diagnostic_checkpoint("reference.gemma.prompt_encode.start")
+            raise RuntimeError("AcceleratorError: CUDA error: out of memory")
+
+    storage = LocalObjectStorage(tmp_path / "objects")
+    repository = InMemoryJobRepository()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([DiagnosticOomRunner()]),
+        worker_id="worker-1", temp_dir=tmp_path / "temp",
+        lease_seconds=60, heartbeat_seconds=10,
+    )
+    digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\\n")
+    request = build_request("a2v-diagnostic-oom", digest).model_copy(
+        update={"task": DiagnosticOomRunner.task_name, "max_attempts": 1}
+    )
+    with pytest.raises(NonRetryableTaskError, match="out of memory"):
+        worker.process(request)
+
+    last_error = repository._jobs[request.job_id].last_error
+    assert last_error is not None
+    assert "diagnostic_phase=reference.gemma.prompt_encode.start" in last_error
+    assert "diagnostic_r2=diagnostics/ltx-a2v/a2v-diagnostic-oom/" in last_error
+    key = (
+        "diagnostics/ltx-a2v/a2v-diagnostic-oom/"
+        "attempt-01/003-failed.json"
+    )
+    assert storage.stat(key) is not None
+
+
 def test_worker_rejects_same_job_id_with_different_request(tmp_path: Path) -> None:
     worker, storage, _, _ = build_worker(tmp_path)
     digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
