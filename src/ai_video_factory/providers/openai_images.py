@@ -79,8 +79,8 @@ class OpenAIImageClient:
             raise ValueError("Official image generation must use a supported GPT Image model")
         if size not in {_DEFAULT_SIZE, *_GRID_SIZES}:
             raise ValueError("Official image generation requires a supported image or grid size")
-        if quality != "low" or output_format != "png":
-            raise ValueError("Official image generation requires low quality and PNG")
+        if quality not in {"low", "medium"} or output_format != "png":
+            raise ValueError("Official image generation requires low/medium quality and PNG")
         payload: dict[str, object] = {
             "model": model,
             "prompt": prompt,
