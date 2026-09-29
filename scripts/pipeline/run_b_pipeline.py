@@ -1761,8 +1761,10 @@ async def main() -> None:
         )
         return
 
+    avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
+    avatar_bytes, avatar_width, avatar_height = load_avatar_png(avatar_file)
     output_root_for_style = args.output if args.output is not None else settings.output_dir
-    if args.from_stage == "B2" and getattr(args, "visual_style", None) is None:
+    if getattr(args, "from_stage", "B1.1") == "B2" and getattr(args, "visual_style", None) is None:
         report_path = output_root_for_style / script_file.stem / "run_report.json"
         if report_path.is_file() and not report_path.is_symlink():
             previous_style = json.loads(
@@ -1770,8 +1772,6 @@ async def main() -> None:
             ).get("run", {}).get("visual_style", "casero")
             args.visual_style = previous_style
     visual_style = select_visual_style(getattr(args, "visual_style", None))
-    avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
-    avatar_bytes, avatar_width, avatar_height = load_avatar_png(avatar_file)
     avatar_file = _recover_avatar_layout(
         avatar_file, args.avatars_dir,
         reference_audio=getattr(args, "voice_audio", None),
@@ -2061,8 +2061,8 @@ async def main() -> None:
             provider=provider,
             model=settings.openai_model,
             max_parallel_calls=args.max_parallel_calls,
-            visual_style=visual_style,
-            avatar_image=avatar_bytes if visual_style == "profesional" else None,
+            **({"visual_style": visual_style, "avatar_image": avatar_bytes}
+               if visual_style == "profesional" else {}),
             start_from=args.from_stage,
             stop_after=stop_stage or "B2",
             previous_b11=previous_b11,
@@ -2123,8 +2123,8 @@ async def main() -> None:
                     provider=provider,
                     model=settings.openai_model,
                     max_parallel_calls=args.max_parallel_calls,
-                    visual_style=visual_style,
-                    avatar_image=avatar_bytes if visual_style == "profesional" else None,
+                    **({"visual_style": visual_style, "avatar_image": avatar_bytes}
+                       if visual_style == "profesional" else {}),
                     start_from="B2",
                     stop_after="B2",
                     previous_b11=result.b11,
