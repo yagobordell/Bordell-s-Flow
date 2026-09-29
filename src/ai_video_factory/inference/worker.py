@@ -211,11 +211,13 @@ class InferenceWorker:
             # Permit one clean-pipeline retry; keep the global five-attempt
             # budget for unrelated tasks and non-memory failures.
             budget = request.effective_max_attempts
-            if (
-                request.task == "video.ltx25.audio_to_video"
-                and gpu_failure_kind == "oom"
-            ):
-                budget = min(budget, 2)
+            if request.task == "video.ltx25.audio_to_video":
+                if gpu_failure_kind == "oom":
+                    budget = min(budget, 2)
+                elif gpu_failure_kind == "decoder_budget":
+                    # This is an unsatisfiable tile plan, not a transient CUDA error.
+                    # Retrying the same immutable request cannot make it fit.
+                    budget = 1
             can_retry = claim.attempt_count < budget
             logger.warning(
                 "INFERENCE_JOB_FAILED task=%s job_id=%s attempt=%d retryable=%s "

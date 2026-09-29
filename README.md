@@ -326,49 +326,41 @@ Los wrappers GPU independientes y los servicios de Salad siguen en el
 repositorio; no están conectados automáticamente a este plan.
 Consulta [la guía del pipeline B](docs/components/b-pipeline.md).
 
-### Recuperar un vídeo LTX A2V que falló por CUDA OOM
+### Recuperar un vídeo LTX A2V tras OOM o presupuesto DiffVAE insuficiente
 
-El nuevo perfil de producción A2V `static-safe` conserva **1280×720, 24 fps,
-prompt positivo/negativo, audio, semilla, modelo y dos etapas** del perfil
-anterior. Utiliza las opciones upstream FP8_CAST + *disk offload* para reducir
-las reservas de memoria fija de la CPU y limita a 2 GiB el presupuesto
-automático de activaciones del decodificador DiffVAE. El perfil anterior
-continúa soportado para trabajos ya enviados, pero no se vuelve a ejecutar
-automáticamente. El nuevo perfil genera un fingerprint y un ID de trabajo
-distintos; solo puede sustituir un run anterior si Postgres confirma que
-todos sus trabajos pendientes finalizaron en OOM terminal o nunca fueron
-enviados. Los estados y artefactos viejos quedan conservados.
+El perfil de producción **v3** conserva 1280×720, 24 fps, los prompts,
+el audio, la semilla y las dos etapas. Usa FP8_CAST y disk offload y deja
+que el planificador DiffVAE calcule el tamaño de los tiles con la VRAM libre
+real después de limpiar las cachés; retiene un margen adicional de 1 GiB
+sobre las reservas internas del planificador. El antiguo límite fijo de 2 GiB
+era inferior a sus gastos mínimos de modelo, reserva y características de
+etapa 4: en `test02` produjo `usable_bytes=0`. El perfil v2 se conserva
+solo para la identidad de los trabajos antiguos; **no se reenvía** como
+solución. No hay todavía una prueba GPU de pago que demuestre que v3 completa
+ese vídeo. Los errores de tile imposible son terminales al primer intento;
+los OOM CUDA siguen limitados a dos intentos A2V.
 
-**Es imprescindible desplegar una imagen Docker nueva:** un `git pull` del
-runner no cambia el código de la imagen v11 ya desplegada en Salad. No se
-ha validado este perfil con una ejecución GPU de pago; se han probado offline
-el contrato, el presupuesto y la recuperación. La mejora reduce fuentes
-conocidas de presión de memoria, pero no puede garantizar que nunca haya
-otro OOM. Si sucede otra vez, el worker aborta después de un único reintento
-con pipeline limpio, en lugar de agotar cinco intentos.
+Para recuperar el run guardado **sin regenerar B1, Fish TTS ni imágenes**:
 
-Para recuperar `test02` sin repetir los bots, TTS ni imágenes:
-
-1. Confirma en Postgres que el job A2V antiguo está en `failed` con
-   `last_error` de OOM y que **no queda ningún trabajo antiguo activo**.
-   Detén el Capacity Controller únicamente cuando no haya demanda y el
-   grupo `ltx25` esté estable y detenido. No canceles trabajos ajenos.
-2. Construye, publica y prepara **solo** `ltx25` usando el script de
-   despliegue existente, una etiqueta nueva (nunca reutilices v11) y
-   `-Action Prepare -Service ltx25 -Image <imagen-nueva>`. Este paso
-   necesita Docker y tus credenciales de Salad y Docker; no se ejecuta
-   automáticamente con el runner. Deja `ltx25_i2v` como estaba.
-3. Comprueba con `-Action Status -Service ltx25` la imagen **real**
-   `repositorio@sha256:digest` que Salad declara activa. Copia esa
-   referencia exacta a `SALAD_LTX25_SAFE_A2V_IMAGE` en `.env`.
-   El runner impedirá cualquier nueva solicitud A2V si falta ese valor
-   o no coincide con el digest desplegado.
-4. Con el Capacity Controller sano, recupera el run guardado:
-   `./run.ps1 test02 --generate-video` (en PowerShell, también
-   `.\run.ps1 test02 --generate-video`). El runner verifica el estado
-   terminal previo antes de crear las nuevas solicitudes, conserva el
-   historial del OOM y reutiliza cualquier I2V que ya haya terminado en
-   Postgres/R2. **No ejecutes** `.\run.ps1 test02 mecanico` desde cero.
+1. Comprueba que los A2V previos están en `failed` con errores de CUDA OOM
+   o presupuesto DiffVAE y que no quedan trabajos activos. Espera a que
+   `ltx25` esté `stopped` con `pending=False`; entonces detén el único
+   Capacity Controller para liberar el advisory lock de Postgres.
+2. Construye y publica una **nueva etiqueta Docker** y prepara solo `ltx25`
+   con `manage_salad_worker.ps1 -Action Prepare -Service ltx25 -Image <imagen-nueva>`.
+   Nunca reutilices la imagen anterior: un `git pull` no actualiza Salad.
+   Deja `ltx25_i2v` sin cambios.
+3. Consulta `-Action Status -Service ltx25` y copia la referencia
+   `repositorio@sha256:digest` de la nueva imagen a
+   `SALAD_LTX25_AUTOTILING_A2V_IMAGE` en `.env`. La variable anterior
+   `SALAD_LTX25_SAFE_A2V_IMAGE` identifica v2 y **no** habilita v3.
+   La comprobación del runner falla antes de enviar un trabajo GPU si falta
+   el nuevo digest o no coincide con el desplegado.
+4. Arranca el Capacity Controller y verifica su salud. Recupera el run con
+   `.\\run.ps1 test02 --generate-video`. El perfil v3 genera un fingerprint
+   y un job ID nuevos; el reconciliador conserva ambos historiales antiguos
+   y solo los supersede si Postgres confirma estados terminales recuperables.
+   Nunca reinicies el run completo con `.\\run.ps1 test02 mecanico`.
 
 El motivo real del CUDA OOM puede estar en VRAM o en reservas de memoria
 fijada del sistema: en anteriores smokes de este repositorio, un OOM ocurrió

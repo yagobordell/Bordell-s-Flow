@@ -241,13 +241,13 @@ def test_new_memory_safe_a2v_requires_exact_deployed_image_digest(
     monkeypatch.setattr(runner.settings, "salad_api_key", "test-key")
     monkeypatch.setenv("SALAD_ORGANIZATION", "org")
     monkeypatch.setenv("SALAD_PROJECT", "project")
-    monkeypatch.delenv("SALAD_LTX25_SAFE_A2V_IMAGE", raising=False)
+    monkeypatch.delenv("SALAD_LTX25_AUTOTILING_A2V_IMAGE", raising=False)
 
-    with pytest.raises(RuntimeError, match="SALAD_LTX25_SAFE_A2V_IMAGE"):
+    with pytest.raises(RuntimeError, match="SALAD_LTX25_AUTOTILING_A2V_IMAGE"):
         runner._require_ltx_safe_a2v_worker()
 
     pinned = "docker.io/test/factory@sha256:" + "a" * 64
-    monkeypatch.setenv("SALAD_LTX25_SAFE_A2V_IMAGE", pinned)
+    monkeypatch.setenv("SALAD_LTX25_AUTOTILING_A2V_IMAGE", pinned)
     deployed = {"image": "docker.io/test/factory@sha256:" + "b" * 64}
 
     class FakeSaladClient:
@@ -394,6 +394,41 @@ def test_terminal_oom_old_run_is_preserved_and_superseded(
     assert old["superseded_by"] == "safe-v2"
     assert old["previous_status"] == "running"
     assert old["jobs"][0]["job_id"] == "old-a2v"
+    assert not b_video.has_pending_b2_video(tmp_path)
+
+
+def test_terminal_a2v_diffvae_budget_old_run_can_be_superseded(tmp_path: Path) -> None:
+    from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
+
+    previous = tmp_path / "video" / "runs" / "old-v2" / "manifest.json"
+    previous.parent.mkdir(parents=True)
+    previous.write_text(json.dumps({
+        "fingerprint": "v2", "master_audio_sha256": "a" * 64,
+        "status": "running",
+        "jobs": [{"job_id": "a2v-v2", "kind": "a2v", "status": "pending"}],
+    }), encoding="utf-8")
+
+    class Queue:
+        def get(self, job_id: str) -> QueueJobSnapshot:
+            assert job_id == "a2v-v2"
+            return QueueJobSnapshot(
+                id=job_id, status=QueueJobStatus.FAILED,
+                provider_payload={
+                    "attempt_count": 5,
+                    "last_error": (
+                        "ValueError: Cannot fit a DiffVAE decode tile under the memory budget: "
+                        "stage4_feature_bytes=1022361600, usable_bytes=0."
+                    ),
+                },
+            )
+
+    b_video._reconcile_prior_failed_video_runs(
+        tmp_path, new_digest="autotiling-v3", audio_sha256="a" * 64, queue=Queue()
+    )
+    old = json.loads(previous.read_text(encoding="utf-8"))
+    assert old["status"] == "superseded"
+    assert old["superseded_by"] == "autotiling-v3"
+    assert old["jobs"][0]["job_id"] == "a2v-v2"
     assert not b_video.has_pending_b2_video(tmp_path)
 
 

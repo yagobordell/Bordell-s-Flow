@@ -43,34 +43,40 @@ the new capacity controller, prepare the A2V group with the task-restricted
 image; its previously deployed image must not claim I2V jobs.
 
 A2V keeps the shared request ceiling (`DEFAULT_GPU_MAX_ATTEMPTS=5`) for
-non-OOM failures, but CUDA OOM is limited to **two physical attempts**: the
-first failure invalidates the pipeline and cleans CUDA memory, and a second
-OOM is terminal. This avoids paying for five identical memory failures.
-CUDA-device and cuDNN/SDPA failures retain the normal bounded retry policy.
-Input/contract failures remain non-retryable.
+non-memory failures, but CUDA OOM is limited to **two physical attempts**.
+The upstream DiffVAE error `Cannot fit a DiffVAE decode tile under the memory
+budget` is a deterministic budget failure, not a transient CUDA OOM: it
+becomes terminal after **one** inference attempt. This prevents five
+identical paid decoder-budget failures. Other CUDA-device or cuDNN/SDPA
+failures retain the normal bounded retry policy. Input/contract failures
+remain non-retryable.
 
-The B2 production route now selects a new immutable `static-safe` A2V
-profile. It retains the original positive and negative prompts, 1280×720
-output, 24 fps, audio, seed and two-stage sampler. Unlike the legacy
-`static-reference` profile, it uses upstream FP8_CAST with disk offload
-and caps automatic DiffVAE decoder activation tiling at 2 GiB. Disk
-streaming may increase inference latency. Existing v1 jobs remain
-replayable; the v2 profile creates different job IDs and is **never**
-submitted to the old v11 Docker image. The host runner requires
-`SALAD_LTX25_SAFE_A2V_IMAGE` to match the deployed immutable image
-before any paid LTX work starts. Rebuilding/publishing/preparing a new
-A2V Docker image is a separate operator action.
+The B2 production route now selects immutable A2V `static-safe` **v3**.
+It retains both prompts, 1280×720 output at 24 fps, the audio, seed,
+sampler stages and FP8_CAST disk offload. It removes v2's fixed 2-GiB
+decoder activation budget, which cannot cover upstream model cost, safety
+reserve and full-volume stage-4 features for the failed `test02` clip.
+The v3 decoder instead sizes tiles from the live GPU activation budget
+after upstream cleanup, less an additional 1-GiB margin. This is still a
+memory heuristic, not a guarantee that 720p A2V will finish on a 32-GB
+GPU. v2 remains supported only for already submitted requests.
 
-An incomplete old manifest can be superseded only if its saved audio
-matches and Postgres confirms terminal OOM for every unfinished paid
-job (or confirms the job was never submitted). Pending, running,
-cancelled, succeeded-but-not-materialized and non-OOM failed work
-block a new paid generation. Prior manifests and costs are retained.
-Recover through `.\run.ps1 <script> --generate-video` after deploying
-the reviewed worker; do not restart B1.1. The changes have offline
-contract tests, not a claim that a new paid GPU smoke has passed.
+Because v3 has a new generation profile and fingerprint, `test02` must
+use a **new Docker image** and a **new job ID**. The host runner requires
+`SALAD_LTX25_AUTOTILING_A2V_IMAGE=<repository>@sha256:<digest>` to match
+the deployed A2V group. The old `SALAD_LTX25_SAFE_A2V_IMAGE` variable
+cannot certify a v3 image. Before submitting new paid work, B2 checks all
+previous incomplete runs: a failed job is recoverable only when Postgres
+confirms terminal CUDA OOM or (for A2V only) the precise DiffVAE decoder
+budget error. Other failed, cancelled, pending, running, or ambiguous jobs
+block replacement. Historical manifests, job IDs and costs are preserved.
 
-The worker-specific deployment contract is documented in [LTX 2.5 worker](ltx25-worker.md).
+Do not rerun the full script or resubmit the failed v2 job. First verify
+Postgres and idle Salad groups, stop the Capacity Controller, prepare the
+new A2V image with a unique tag, pin its digest in `.env`, restart the
+controller and run `.\\run.ps1 test02 --generate-video`. Offline tests
+cover budget calculation, classification, retry cap and recovery; **v3 has
+not been GPU validated**.
 
 ## Speech-driven avatar settings
 

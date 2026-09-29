@@ -18,6 +18,11 @@ from ai_video_factory.inference.gpu_failures import (
     [
         ("CUDA out of memory while allocating tensor", "oom"),
         ("RuntimeError: out of memory", "oom"),
+        (
+            "ValueError: Cannot fit a DiffVAE decode tile under the memory budget: "
+            "stage4_feature_bytes=1022361600, usable_bytes=0.",
+            "decoder_budget",
+        ),
         ("CUDA error: device not ready", "cuda_device"),
         ("cuDNN frontend error: graph rejected", "cudnn_sdpa"),
         ("No valid execution plans built for scaled dot product attention", "cudnn_sdpa"),
@@ -38,6 +43,12 @@ def test_gpu_failure_classification_walks_wrapped_exception_chain() -> None:
 
     assert classify_gpu_failure(wrapped) == "cuda_device"
     assert is_retryable_gpu_failure(wrapped) is True
+
+
+def test_diffvae_unsatisfiable_budget_is_not_retryable() -> None:
+    error = ValueError("Cannot fit a DiffVAE decode tile under the memory budget")
+    assert classify_gpu_failure(error) == "decoder_budget"
+    assert is_retryable_gpu_failure(error) is False
 
 
 def test_cleanup_cuda_memory_collects_cuda_cache(monkeypatch) -> None:
