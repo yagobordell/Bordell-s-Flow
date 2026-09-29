@@ -25,13 +25,13 @@ from .contracts import (
     B2Input,
     B2InputBlock,
     B2Output,
-    ProfessionalB2Output,
     B11Output,
     B12Input,
     B12Output,
     Beat,
     BlockMeta,
     MaterializedBlock,
+    ProfessionalB2Output,
 )
 
 # Transport adaptation to Responses API Structured Outputs.
