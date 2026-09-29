@@ -40,6 +40,7 @@ from ai_video_factory.inference.capacity_controller import (
 )
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
+from ai_video_factory.providers.avatar_library import organize_avatar
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice
 from ai_video_factory.providers.grid_crops import crop_grid_assets
@@ -350,17 +351,36 @@ def select_script(
 
 
 def available_avatars(avatars_dir: Path) -> list[Path]:
-    """Discover ordinary PNG files only; never follow symlinks or nested directories."""
+    """Discover unmigrated PNGs and canonical one-level avatar folders."""
     if not avatars_dir.is_dir():
         return []
-    return sorted(
-        (
-            path
-            for path in avatars_dir.iterdir()
-            if path.is_file() and not path.is_symlink() and path.suffix.lower() == ".png"
-        ),
-        key=lambda path: (path.name.casefold(), path.name),
-    )
+    avatars: list[Path] = []
+    for entry in avatars_dir.iterdir():
+        if entry.is_symlink() or entry.is_junction():
+            continue
+        if entry.is_file() and entry.suffix.lower() == ".png":
+            avatars.append(entry)
+        elif entry.is_dir() and not entry.name.startswith("."):
+            avatars.extend(
+                image for image in entry.iterdir()
+                if (
+                    image.is_file()
+                    and not image.is_symlink()
+                    and image.suffix.lower() == ".png"
+                    and image.stem == entry.name
+                )
+            )
+    avatars.sort(key=lambda path: (path.name.casefold(), path.name))
+    names: set[str] = set()
+    for avatar in avatars:
+        key = avatar.name.casefold()
+        if key in names:
+            raise SystemExit(
+                f"Hay dos avatares con el mismo nombre: {avatar.name}. "
+                "Resuelve el duplicado antes de continuar."
+            )
+        names.add(key)
+    return avatars
 
 
 def select_avatar(
@@ -441,6 +461,11 @@ def _prepare_output(
     root = output_root.resolve()
     source = script_file.resolve()
     avatar_source = avatar_file.resolve() if avatar_file is not None else None
+    avatar_library = (
+        avatar_source.parent.parent
+        if avatar_source is not None and avatar_source.parent.name == avatar_source.stem
+        else avatar_source.parent if avatar_source is not None else None
+    )
     cwd = Path.cwd().resolve()
     if (
         root == cwd
@@ -450,7 +475,7 @@ def _prepare_output(
             avatar_source is not None
             and (
                 avatar_source.is_relative_to(root)
-                or root.is_relative_to(avatar_source.parent)
+                or (avatar_library is not None and root.is_relative_to(avatar_library))
             )
         )
     ):
@@ -487,13 +512,18 @@ def _prepare_resume_output(
     root = output_root.resolve()
     source = script_file.resolve()
     avatar_source = avatar_file.resolve()
+    avatar_library = (
+        avatar_source.parent.parent
+        if avatar_source.parent.name == avatar_source.stem
+        else avatar_source.parent
+    )
     cwd = Path.cwd().resolve()
     if (
         root == cwd
         or root in cwd.parents
         or source.is_relative_to(root)
         or avatar_source.is_relative_to(root)
-        or root.is_relative_to(avatar_source.parent)
+        or root.is_relative_to(avatar_library)
     ):
         raise SystemExit(
             "--output must be a dedicated output directory, not an input or repository path."
@@ -1176,9 +1206,21 @@ def _activate_pending_avatar_clone(
     if not isinstance(source, str) or not source:
         raise SystemExit("Falta la ubicación original del avatar para clonar su voz.")
     avatar_file = Path(source)
+    if not avatar_file.is_file():
+        # Older run reports may point to the PNG before it was organized.
+        migrated = avatar_file.parent / avatar_file.stem / avatar_file.name
+        if not migrated.is_file():
+            raise SystemExit(f"El PNG original del avatar ya no está disponible: {source}")
+        avatar_file = migrated
+    avatars_dir = (
+        avatar_file.parent.parent
+        if avatar_file.parent.name == avatar_file.stem
+        else avatar_file.parent
+    )
+    avatar_file = organize_avatar(avatar_file, avatars_dir)
     pending = ensure_avatar_voice(
         avatar_file=avatar_file,
-        avatars_dir=avatar_file.parent,
+        avatars_dir=avatars_dir,
         default_voice_id=settings.ai33_fish_voice_id,
         activate=False,
     )
@@ -1190,7 +1232,7 @@ def _activate_pending_avatar_clone(
         raise SystemExit("La voz del avatar cambió desde el inicio del run.")
     active = ensure_avatar_voice(
         avatar_file=avatar_file,
-        avatars_dir=avatar_file.parent,
+        avatars_dir=avatars_dir,
         default_voice_id=settings.ai33_fish_voice_id,
         api_key=settings.ai33_api_key,
     )
@@ -1537,12 +1579,15 @@ async def main() -> None:
     if getattr(args, "qr_only", False):
         avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
         load_avatar_png(avatar_file)
+        if avatar_file.parent.resolve() != args.avatars_dir.resolve():
+            avatar_file = organize_avatar(avatar_file, args.avatars_dir)
         qr = ensure_avatar_qr(
             avatar_file=avatar_file,
             avatars_dir=args.avatars_dir,
             input_url=getattr(args, "qr_url", None),
         )
-        print(f"QR listo: {args.avatars_dir / '.qr' / avatar_file.name / 'qr.png'}")
+        avatar_file = organize_avatar(avatar_file, args.avatars_dir)
+        print(f"QR listo: {avatar_file.parent / 'qr.png'}")
         print(f"URL: {qr.url}")
         return
 
@@ -1573,6 +1618,8 @@ async def main() -> None:
 
     avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
     avatar_bytes, avatar_width, avatar_height = load_avatar_png(avatar_file)
+    if avatar_file.parent.resolve() != args.avatars_dir.resolve():
+        avatar_file = organize_avatar(avatar_file, args.avatars_dir)
     if not settings.openai_api_key:
         raise SystemExit("OPENAI_API_KEY is missing")
     if (
@@ -1630,6 +1677,9 @@ async def main() -> None:
             api_key=settings.ai33_api_key,
             activate=stop_stage is None and not getattr(args, "no_audio", False),
         )
+        avatar_file = organize_avatar(
+            avatar_file, args.avatars_dir, reference_audio=voice.audio_filename
+        )
         output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
     else:
         output = _prepare_resume_output(output_root, script_file, avatar_file=avatar_file)
@@ -1670,6 +1720,9 @@ async def main() -> None:
             default_voice_id=settings.ai33_fish_voice_id,
             api_key=settings.ai33_api_key,
             activate=False,
+        )
+        avatar_file = organize_avatar(
+            avatar_file, args.avatars_dir, reference_audio=voice.audio_filename
         )
         _clear_outputs_from(output, args.from_stage)
 
