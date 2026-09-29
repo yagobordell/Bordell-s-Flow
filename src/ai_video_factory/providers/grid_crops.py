@@ -63,9 +63,12 @@ def _separator(
         else:
             runs.append((position, position + 1))
     max_width = max(6, round(cell_length * 0.065))
+    # GPT can render a valid divider as a single bright pixel, especially on
+    # one axis, while other grids use a much thicker white band. A one-pixel
+    # band is still safe because the crop is inset on both sides below.
     plausible = [
         band for band in runs
-        if 2 <= band[1] - band[0] <= max_width
+        if 1 <= band[1] - band[0] <= max_width
     ]
     if not plausible:
         raise GridCropError(

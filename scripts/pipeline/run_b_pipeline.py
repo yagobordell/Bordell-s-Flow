@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import re
 import shutil
 import sys
 from io import BytesIO
@@ -42,8 +43,9 @@ from ai_video_factory.providers.ai33_speech import AI33SpeechClient
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice
 from ai_video_factory.providers.grid_crops import crop_grid_assets
-from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE
+from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE, GridPlanError
 from ai_video_factory.providers.openai_batch_images import (
+    ImageGenerationError,
     ImageOptions,
     clear_previous_b2_images,
     generate_b2_images,
@@ -645,6 +647,14 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
     ]
     _write(output / "visual_plan.json", plan)
     return manifest
+
+
+def _continuity_retry_block_id(error: ImageGenerationError) -> int | None:
+    """Return the B2 block implicated by a preflight continuity error."""
+    if not isinstance(error.__cause__, GridPlanError):
+        return None
+    match = re.search(r"continuity numbering at (\d+)[A-Z]", str(error))
+    return int(match.group(1)) if match else None
 
 
 def _image_summary(manifest: dict[str, object]) -> dict[str, object]:
@@ -1879,7 +1889,40 @@ async def main() -> None:
             run_metadata["image_generation"] = {"status": "running"}
             save_report("running", len(result.b12))
             image_started = perf_counter()
-            image_manifest = await _generate_images(output, visual_plan)
+            try:
+                image_manifest = await _generate_images(output, visual_plan)
+            except ImageGenerationError as image_error:
+                retry_block_id = _continuity_retry_block_id(image_error)
+                if retry_block_id is None:
+                    raise
+                print(
+                    f"  B2 bloque {retry_block_id}: numeración de continuidad inválida; "
+                    "reintentando solo ese bloque...",
+                    flush=True,
+                )
+                result = await run_b_pipeline(
+                    script,
+                    provider=provider,
+                    model=settings.openai_model,
+                    max_parallel_calls=args.max_parallel_calls,
+                    start_from="B2",
+                    stop_after="B2",
+                    previous_b11=result.b11,
+                    previous_b12=result.b12,
+                    previous_b2=result.b2,
+                    retry_b2_block_ids=frozenset({retry_block_id}),
+                    on_input=artifacts.input,
+                    on_output=output_and_start_audio,
+                    on_rejected_b2_output=artifacts.rejected_b2,
+                    on_api_response=ledger.record,
+                    on_call_duration=timings.record_call,
+                    on_stage_duration=timings.record_stage,
+                    on_stage_complete=stage_complete,
+                )
+                visual_plan = result.visual_plan()
+                visual_plan["avatar"] = avatar_metadata
+                _write(output / "visual_plan.json", visual_plan)
+                image_manifest = await _generate_images(output, visual_plan)
             run_metadata["image_generation"] = _image_summary(image_manifest)
             image_costs, _ = save_report("running", len(result.b12))
             _print_metric(

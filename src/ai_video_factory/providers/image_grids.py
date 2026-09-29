@@ -47,6 +47,7 @@ def _grid_prompt(panels: list[dict[str, Any]], columns: int, rows: int) -> str:
         + "\n".join(descriptions)
         + "\n\nVoice over context:\n"
         + "\n".join(voice_over)
+        + "\n\nUse the thinnest possible straight white separator lines between all grid cells"
         + "\n\nDo not add text to the image."
     )
     if len(prompt) + 400 > 32_000:

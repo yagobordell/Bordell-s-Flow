@@ -356,6 +356,8 @@ async def run_b_pipeline(
     stop_after: Literal["B1.1", "B1.2", "B2"] = "B2",
     previous_b11: B11Output | None = None,
     previous_b12: tuple[B12Output, ...] | None = None,
+    previous_b2: tuple[B2Output, ...] | None = None,
+    retry_b2_block_ids: frozenset[int] | None = None,
     on_input: Callable[[str, int | None, dict[str, object]], None] | None = None,
     on_output: Callable[[str, int | None, dict[str, object]], None] | None = None,
     on_rejected_output: Callable[[int, str, dict[str, object]], None] | None = None,
@@ -379,6 +381,8 @@ async def run_b_pipeline(
         raise BPipelineValidationError("Authoritative script must not be empty")
     if max_parallel_calls < 1:
         raise ValueError("max_parallel_calls must be at least 1")
+    if retry_b2_block_ids is not None and start_from != "B2":
+        raise ValueError("B2 block retries require start_from='B2'")
     if start_from not in {"B1.1", "B1.2", "B2"}:
         raise ValueError(f"Unknown start stage: {start_from}")
     if stop_after not in {"B1.1", "B1.2", "B2"}:
@@ -629,14 +633,34 @@ async def run_b_pipeline(
             on_output("B2", block.block_id, output.model_dump())
         return output
 
+    retry_ids = set(retry_b2_block_ids or ())
+    if retry_ids:
+        if previous_b2 is None or len(previous_b2) != len(materialized):
+            raise ValueError("B2 block retries require a complete validated B2 checkpoint")
+        previous_by_id = {item.blocks[0].block_id: item for item in previous_b2}
+        expected_ids = set(range(1, len(materialized) + 1))
+        if set(previous_by_id) != expected_ids or not retry_ids <= expected_ids:
+            raise BPipelineValidationError("B2 retry checkpoint block IDs are invalid")
+    else:
+        previous_by_id = {}
+
     b2_started = perf_counter()
     try:
-        b2_results = await asyncio.gather(
+        generated_b2 = await asyncio.gather(
             *(
                 b2_one(meta, block, b12)
                 for meta, block, b12 in zip(b11.blocks, materialized, b12_results, strict=True)
+                if not retry_ids or meta.block_id in retry_ids
             )
         )
+        if retry_ids:
+            generated_by_id = {item.blocks[0].block_id: item for item in generated_b2}
+            b2_results = [
+                generated_by_id.get(block_id, previous_by_id[block_id])
+                for block_id in range(1, len(materialized) + 1)
+            ]
+        else:
+            b2_results = list(generated_b2)
     finally:
         if on_stage_duration is not None:
             on_stage_duration("B2", perf_counter() - b2_started)
