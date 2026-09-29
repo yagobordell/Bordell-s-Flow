@@ -38,6 +38,8 @@ class AvatarVoice:
 
 
 def _valid_voice_id(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError("El Voice ID de AI33Pro debe ser texto.")
     value = value.strip()
     if not _VOICE_ID.fullmatch(value):
         raise ValueError("El Voice ID de AI33Pro no tiene un formato válido.")
@@ -100,9 +102,19 @@ def _load(path: Path, avatar_file: Path) -> dict[str, Any]:
         if mode == "voice_id" or (mode == "clone" and status == "ready"):
             _valid_voice_id(record["voice_id"])
         if mode == "clone":
-            filename, digest = _reference(avatar_file, record["audio_filename"])
-            if digest != record["audio_sha256"]:
-                raise ValueError(f"El audio {filename} cambió desde la selección inicial.")
+            filename = record["audio_filename"]
+            if (
+                not isinstance(filename, str)
+                or Path(filename).name != filename
+                or "/" in filename
+                or "\\\\" in filename
+                or Path(filename).suffix.lower() not in _AUDIO_SUFFIXES
+            ):
+                raise ValueError("El nombre del audio guardado es inválido.")
+            if status != "ready":
+                _, digest = _reference(avatar_file, filename)
+                if digest != record["audio_sha256"]:
+                    raise ValueError(f"El audio {filename} cambió desde la selección inicial.")
         return record
     except (OSError, KeyError, TypeError, ValueError) as exc:
         raise SystemExit(
