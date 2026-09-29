@@ -245,6 +245,62 @@ def _beat_character_length_errors(
     return errors
 
 
+_MAX_CONSECUTIVE_AVATAR_CHARACTERS = 120
+_PRESENTER_VISUAL_TYPES = frozenset({"avatar", "avatar_media"})
+
+
+@dataclass(frozen=True)
+class _AvatarRunBeat:
+    block_id: int
+    beat_id: str
+    characters: int
+    mandatory_anchor: bool
+
+
+def _overlong_avatar_run(
+    outputs: list[B2Output | ProfessionalB2Output] | tuple[B2Output | ProfessionalB2Output, ...],
+) -> tuple[list[_AvatarRunBeat], int] | None:
+    """Find the first overlong presenter run in whole-video beat order."""
+    run: list[_AvatarRunBeat] = []
+    characters = 0
+    for output in outputs:
+        if not output.blocks:
+            raise BPipelineValidationError("B2 output is missing its block")
+        block = output.blocks[0]
+        for index, beat in enumerate(block.beats):
+            if beat.visual_type not in _PRESENTER_VISUAL_TYPES:
+                if characters > _MAX_CONSECUTIVE_AVATAR_CHARACTERS:
+                    return run, characters
+                run = []
+                characters = 0
+                continue
+            length = len(beat.text.strip())
+            run.append(
+                _AvatarRunBeat(
+                    block_id=block.block_id,
+                    beat_id=beat.beat_id,
+                    characters=length,
+                    mandatory_anchor=(
+                        (block.type == "intro" and index == 0)
+                        or (block.type == "close" and index == len(block.beats) - 1)
+                    ),
+                )
+            )
+            characters += length
+    if characters > _MAX_CONSECUTIVE_AVATAR_CHARACTERS:
+        return run, characters
+    return None
+
+
+def _avatar_run_error(run: list[_AvatarRunBeat], characters: int) -> str:
+    beats = ", ".join(f"{beat.beat_id} ({beat.characters})" for beat in run)
+    return (
+        f"B2 consecutive avatar/avatar_media beats {beats} total {characters} characters "
+        f"(maximum {_MAX_CONSECUTIVE_AVATAR_CHARACTERS}); assign a faithful non-presenter "
+        "visual to a discretionary beat without changing frozen narration or mandatory anchors"
+    )
+
+
 def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input) -> None:
     _require_success("B2", result.error)
     if result.narrative_core != supplied.narrative_core or not result.blocks:
@@ -265,6 +321,9 @@ def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input)
         raise BPipelineValidationError("B2 must anchor intro opening with avatar")
     if expected.type == "close" and actual.beats[-1].visual_type != "avatar":
         raise BPipelineValidationError("B2 must anchor close ending with avatar")
+    overflow = _overlong_avatar_run((result,))
+    if overflow is not None:
+        raise BPipelineValidationError(_avatar_run_error(*overflow))
 
 
 @dataclass(frozen=True)
@@ -582,7 +641,9 @@ async def run_b_pipeline(
         return BPipelineResult(b11=b11, b12=tuple(b12_results), b2=())
 
     async def b2_one(
-        meta: BlockMeta, block: MaterializedBlock, b12: B12Output
+        meta: BlockMeta, block: MaterializedBlock, b12: B12Output,
+        correction_suffix: str = "",
+        rejection_attempt_offset: int = 0,
     ) -> B2Output | ProfessionalB2Output:
         beats = validate_beats(b12, block)
         b2_input = B2Input(
@@ -616,13 +677,14 @@ async def run_b_pipeline(
                     on_call_duration=on_call_duration,
                 )
 
-        output = await call_b2()
+        output = await call_b2(correction_suffix)
         try:
             validate_visuals(output, b2_input)
         except BPipelineValidationError as first_error:
             if on_rejected_b2_output is not None:
                 on_rejected_b2_output(
-                    block.block_id, 1, str(first_error), output.model_dump()
+                    block.block_id, rejection_attempt_offset + 1,
+                    str(first_error), output.model_dump()
                 )
             retry_suffix = (
                 "\n\nB2 automatic correction attempt. Your previous structured response "
@@ -637,13 +699,14 @@ async def run_b_pipeline(
                 "Previous B2 response:\n"
                 f"{_payload(output.model_dump())}"
             )
-            retry_output = await call_b2(retry_suffix)
+            retry_output = await call_b2(correction_suffix + retry_suffix)
             try:
                 validate_visuals(retry_output, b2_input)
             except BPipelineValidationError as retry_error:
                 if on_rejected_b2_output is not None:
                     on_rejected_b2_output(
-                        block.block_id, 2, str(retry_error), retry_output.model_dump()
+                        block.block_id, rejection_attempt_offset + 2,
+                        str(retry_error), retry_output.model_dump()
                     )
                 raise BPipelineValidationError(
                     f"B2 block {block.block_id} failed validation after one retry: "
@@ -682,6 +745,61 @@ async def run_b_pipeline(
             ]
         else:
             b2_results = list(generated_b2)
+
+        # Parallel block calls cannot see presenter runs crossing block boundaries.
+        # Validate the ordered join and repair only the relevant block if needed.
+        global_corrections: dict[int, int] = {}
+        while (overflow := _overlong_avatar_run(b2_results)) is not None:
+            run, total = overflow
+            offset = 0
+            candidates: list[tuple[int, int, int, str]] = []
+            for beat in run:
+                left = offset
+                right = total - left - beat.characters
+                offset += beat.characters
+                if not beat.mandatory_anchor and global_corrections.get(beat.block_id, 0) < 2:
+                    candidates.append(
+                        (
+                            max(left, right),
+                            global_corrections.get(beat.block_id, 0),
+                            beat.block_id,
+                            beat.beat_id,
+                        )
+                    )
+            if not candidates:
+                raise BPipelineValidationError(
+                    _avatar_run_error(run, total)
+                    + "; no correctable discretionary B2 beat remains"
+                )
+            _, _, block_id, target_beat_id = min(candidates)
+            previous = b2_results[block_id - 1]
+            correction_number = global_corrections.get(block_id, 0) + 1
+            # Reserve attempts 1/2 for local validation and 3 slots per
+            # whole-video correction so the runner retains all rejected JSON.
+            global_attempt = 3 + (correction_number - 1) * 3
+            error = _avatar_run_error(run, total)
+            if on_rejected_b2_output is not None:
+                on_rejected_b2_output(
+                    block_id, global_attempt, error, previous.model_dump()
+                )
+            global_corrections[block_id] = correction_number
+            suffix = (
+                "\n\nB2 whole-video avatar-run correction. The other blocks have "
+                "already been assigned. The joined result violates a hard limit: "
+                f"{error}. Change the visual assignment of beat {target_beat_id} "
+                "in YOUR block to a faithful media_image or media_video visual "
+                "(not avatar_media), or break this run with another discretionary "
+                "beat in your block. Keep every frozen beat text and mandatory "
+                "intro/close anchor unchanged. Preserve every other valid visual "
+                "decision where possible. Return only the corrected complete "
+                "B2 block. Previous response for this block:\n"
+                f"{_payload(previous.model_dump())}"
+            )
+            index = block_id - 1
+            b2_results[index] = await b2_one(
+                b11.blocks[index], materialized[index], b12_results[index],
+                suffix, global_attempt,
+            )
     finally:
         if on_stage_duration is not None:
             on_stage_duration("B2", perf_counter() - b2_started)
