@@ -87,8 +87,8 @@ Fish Audio utiliza el documento de instrucciones
 `src/ai_video_factory/bots/prompts/fish_audio.md`, copiado del BotFish
 adjunto. Empieza **al finalizar B1.1**, en paralelo con B1.2, recibe el mismo guion sin modificar
 y solo inserta etiquetas entre corchetes. Su salida se envía como `text`
-al endpoint TTS de OpenSpeaker con la voz
-`fishaudio_80e34d5e0b2b4577a486f3a77e357261`. La generación guarda
+al endpoint TTS de OpenSpeaker con la voz asignada al avatar; si se elige
+la voz predeterminada se usa `AI33_FISH_VOICE_ID`. La generación guarda
 `audio/runs/<id>/input.json`, `output.json`, `task.json` y el archivo
 de audio, además de `audio/latest.json`. Configura `AI33_API_KEY` junto
 con `OPENAI_API_KEY` en `.env`; no se ejecutan tareas de Salad para esto.
@@ -157,6 +157,35 @@ guion, créditos, ni clave de OpenAI:
 `--no-image` omite las imágenes B2, pero el QR local se prepara igualmente.
 Los tests de CI comprueban con ZBar que el PNG se decodifica a la URL exacta.
 Antes de publicar, escanea el QR con tu móvil y comprueba la página de venta.
+
+### Voz persistente por avatar
+
+Al seleccionar por primera vez un avatar, además del QR, la CLI pide un
+**Voice ID de AI33Pro**, el **nombre de un audio de referencia** situado en
+la misma carpeta que el PNG o `q` para guardar la voz predeterminada.
+La elección se conserva en `data/avatar/.voice/<avatar.png>/voice.json` y no se
+vuelve a preguntar. Solo utiliza grabaciones propias o con autorización expresa.
+En una ejecución no interactiva sin selección previa se conserva la voz por
+defecto, para no interrumpir automatizaciones existentes.
+
+```powershell
+# El archivo data/avatar/Jorge.wav debe existir junto a Jorge.png.
+.\run.ps1 test2 Jorge --voice-audio Jorge.wav
+.\run.ps1 test2 Jorge --voice-id fishaudio_mi_voz
+.\run.ps1 test2 Jorge --default-voice
+```
+
+Las opciones anteriores sirven para la **primera** asignación y no cambian una
+voz ya guardada. El audio de referencia tiene límite de 10 MiB; OpenSpeaker
+recomienda 3–30 segundos de voz clara. La clonación se solicita cuando la
+generación necesita TTS, no durante `--no-audio` ni `--stop`. El Voice ID
+resultante se guarda para futuras generaciones y el run copia su selección a
+`avatar_voice.json` para que `--regenerate-audio` y `--resume-audio` usen la misma voz.
+Si una solicitud de clonación queda con resultado desconocido, no se repite
+automáticamente: consulta la cuenta de AI33Pro y, si recuperas el Voice ID,
+introduce `--voice-id ID` con ese avatar para resolver la asignación pendiente.
+Los nombres de los campos del formulario de clonación deben contrastarse con
+la documentación autenticada de AI33Pro; no se ha hecho una prueba real con créditos.
 
 Cada guion escribe en `data/output/<nombre-del-guion>/`: input/output de
 B1.1, output por bloque y merge de B1.2/B2, `visual_plan.json` y
