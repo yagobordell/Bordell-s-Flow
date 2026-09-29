@@ -43,8 +43,8 @@ def _scale_crop_filter(
     materialize_fps_first: bool,
 ) -> str:
     cover = f"max({width}/iw\\,{height}/ih)"
-    scaled_width = f"trunc((iw*{cover}*{zoom_expression})/2)*2"
-    scaled_height = f"trunc((ih*{cover}*{zoom_expression})/2)*2"
+    scaled_width = f"trunc((iw*{cover}*({zoom_expression}))/2)*2"
+    scaled_height = f"trunc((ih*{cover}*({zoom_expression}))/2)*2"
     x_expression = (
         "max(0,min(in_w-out_w,"
         f"(in_w-out_w)*{ANCHOR_X:.6f}))"
