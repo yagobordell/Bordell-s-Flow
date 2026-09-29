@@ -21,11 +21,11 @@ from ai_video_factory.image_contracts import (
     QWEN_IMAGE_21_PRODUCTION_WIDTH,
 )
 from ai_video_factory.inference.contracts import InferenceJobRequest
-from ai_video_factory.inference.gpu_diagnostics import diagnostic_checkpoint
 from ai_video_factory.inference.errors import (
     ModelBootstrapPendingError,
     NonRetryableTaskError,
 )
+from ai_video_factory.inference.gpu_diagnostics import diagnostic_checkpoint
 from ai_video_factory.inference.gpu_failures import (
     DEFAULT_GPU_MAX_ATTEMPTS,
     classify_gpu_failure,
