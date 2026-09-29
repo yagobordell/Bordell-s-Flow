@@ -108,9 +108,12 @@ imágenes. Si PowerShell bloquea la ejecución de scripts por su política
 local, puedes seguir usando el comando Python completo.
 
 Guarda los guiones UTF-8 directamente en `data/input/` (por ejemplo,
-`historia_roma.txt`) y las imágenes PNG de avatar en `data/avatar/` (por ejemplo,
-`monje.png`). Las imágenes PNG y los guiones son locales y están ignorados por Git;
-en `data/avatar/README.md` están las instrucciones para esta biblioteca.
+`historia_roma.txt`) y los PNG nuevos en `data/avatar/` (por ejemplo,
+`Jorge.png`). Al usar el avatar, el runner lo organiza automáticamente como
+`data/avatar/Jorge/Jorge.png`, con `qr.png`, `qr.json` y `voice.json` **en la
+misma carpeta**, sin subcarpetas para QR ni voz. `--list-avatars` y `--avatar Jorge`
+aceptan tanto los PNG nuevos de la raíz como los avatares ya organizados.
+Los archivos de esta biblioteca y los guiones son locales y están ignorados por Git.
 
 ```powershell
 uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --list-scripts
@@ -139,8 +142,8 @@ de generar y copia sus bytes a `data/output/<nombre-del-guion>/avatar.png`.
 La primera vez que se selecciona un avatar sin QR, la CLI pide el enlace del
 ebook y **Segno lo codifica localmente** como QR PNG, sin llamadas a GPT ni a
 ninguna API. El QR y la URL se guardan en
-`data/avatar/.qr/<nombre-avatar.png>/`, de modo que las siguientes
-generaciones con el mismo avatar lo reutilizan. También se guarda una copia
+`data/avatar/<nombre-avatar>/qr.png` y `qr.json`, de modo que las siguientes
+generaciones con el mismo avatar los reutilizan. También se guarda una copia
 `qr.png` en la carpeta de salida del guion y se referencia desde
 `run_report.json` y `visual_plan.json`. El QR todavía no se muestra sobre
 el vídeo. Si había un QR generado por GPT, se sustituye automáticamente
@@ -163,13 +166,15 @@ Antes de publicar, escanea el QR con tu móvil y comprueba la página de venta.
 Al seleccionar por primera vez un avatar, además del QR, la CLI pide un
 **Voice ID de AI33Pro**, el **nombre de un audio de referencia** situado en
 la misma carpeta que el PNG o `q` para guardar la voz predeterminada.
-La elección se conserva en `data/avatar/.voice/<avatar.png>/voice.json` y no se
+La elección se conserva en `data/avatar/<nombre-avatar>/voice.json` y no se
 vuelve a preguntar. Solo utiliza grabaciones propias o con autorización expresa.
 En una ejecución no interactiva sin selección previa se conserva la voz por
 defecto, para no interrumpir automatizaciones existentes.
 
 ```powershell
-# El archivo data/avatar/Jorge.wav debe existir junto a Jorge.png.
+# En el primer run, Jorge.wav puede estar junto a data/avatar/Jorge.png;
+# después ambos quedan en data/avatar/Jorge/. También puedes crear esa carpeta
+# de antemano y poner Jorge.png y Jorge.wav dentro.
 .\run.ps1 test2 Jorge --voice-audio Jorge.wav
 .\run.ps1 test2 Jorge --voice-id fishaudio_mi_voz
 .\run.ps1 test2 Jorge --default-voice
@@ -186,6 +191,14 @@ automáticamente: consulta la cuenta de AI33Pro y, si recuperas el Voice ID,
 introduce `--voice-id ID` con ese avatar para resolver la asignación pendiente.
 Los nombres de los campos del formulario de clonación deben contrastarse con
 la documentación autenticada de AI33Pro; no se ha hecho una prueba real con créditos.
+
+Los avatares ya usados con la estructura antigua se migran al seleccionarlos:
+`data/avatar/.qr/<avatar.png>/` y `data/avatar/.voice/<avatar.png>/` se integran
+con el PNG en su propia carpeta. Se conservan la URL, el Voice ID y cualquier
+clonación pendiente; el runner no vuelve a pedir estos datos. El audio de
+referencia asignado se mueve junto al PNG. Si encuentra un archivo de destino
+con el mismo nombre, detiene la migración sin sobrescribirlo. Los runs previos
+conservan sus copias de avatar y voz.
 
 Cada guion escribe en `data/output/<nombre-del-guion>/`: input/output de
 B1.1, output por bloque y merge de B1.2/B2, `visual_plan.json` y
