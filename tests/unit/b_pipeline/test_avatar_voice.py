@@ -229,6 +229,67 @@ def test_pending_clone_reuses_task_id_without_another_submission(tmp_path: Path)
     assert calls == ["submit", "poll", "poll"]
 
 
+
+def test_ready_clone_reuses_id_after_reference_is_removed(tmp_path: Path) -> None:
+    avatar = _avatar(tmp_path)
+    reference = avatar.parent / "sample.wav"
+    reference.write_bytes(b"reference")
+
+    class FakeClient:
+        def clone_voice(self, **_kwargs: object) -> dict:
+            return {"voice_id": OTHER}
+
+    ready = ensure_avatar_voice(
+        avatar_file=avatar,
+        avatars_dir=avatar.parent,
+        default_voice_id=DEFAULT,
+        input_audio_filename=reference.name,
+        client=FakeClient(),
+    )
+    reference.unlink()
+    assert ensure_avatar_voice(
+        avatar_file=avatar, avatars_dir=avatar.parent, default_voice_id=DEFAULT
+    ) == ready
+
+
+def test_deferred_audio_only_clone_updates_run_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    avatar = _avatar(tmp_path)
+    reference = avatar.parent / "sample.wav"
+    reference.write_bytes(b"reference")
+    pending = ensure_avatar_voice(
+        avatar_file=avatar,
+        avatars_dir=avatar.parent,
+        default_voice_id=DEFAULT,
+        input_audio_filename=reference.name,
+        activate=False,
+    )
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "avatar_voice.json").write_text(
+        json.dumps(pending.snapshot()), encoding="utf-8",
+    )
+    report = {"run": {"avatar": {"source": avatar.as_posix(), "voice": pending.snapshot()}}}
+    (output / "run_report.json").write_text(json.dumps(report), encoding="utf-8")
+
+    class FakeClient:
+        def __init__(self, _api_key: str) -> None:
+            pass
+
+        def clone_voice(self, **_kwargs: object) -> dict:
+            return {"data": {"voice_id": OTHER}}
+
+    monkeypatch.setattr(
+        "ai_video_factory.providers.avatar_voice.AI33SpeechClient", FakeClient
+    )
+    monkeypatch.setattr(runner.settings, "ai33_api_key", "fake-key")
+    runner._activate_pending_avatar_clone(output, report)
+    assert runner._run_voice_id(output) == OTHER
+    updated = json.loads((output / "run_report.json").read_text(encoding="utf-8"))
+    assert updated["run"]["avatar"]["voice"]["voice_id"] == OTHER
+
+
 def test_run_snapshot_selects_voice_even_if_global_default_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
