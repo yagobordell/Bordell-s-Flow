@@ -119,8 +119,7 @@ claimed by offline tests.**
 To inspect a completed or failed attempt without Salad UI filtering:
 
 ```powershell
-uv run --locked --extra dev python scripts/salad/inspect_ltx_a2v_diagnostics.py \`
-    --job-id <new-A2V-job-ID>
+uv run --locked --extra dev python scripts/salad/inspect_ltx_a2v_diagnostics.py --job-id <new-A2V-job-ID>
 ```
 
 The local command queries Postgres and downloads all matching R2 objects,
