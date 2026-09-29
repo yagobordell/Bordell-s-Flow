@@ -123,3 +123,41 @@ def test_direct_edit_uses_the_selected_avatar_without_changing_model_or_size(
     assert payloads[0]["quality"] == "low"
     assert payloads[0]["prompt"] == "Avatar in a scene"
     assert result["sha256"] == hashlib.sha256(_png()).hexdigest()
+
+
+@pytest.mark.parametrize("model", ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"])
+@pytest.mark.parametrize("with_reference", [False, True])
+def test_medium_quality_grid_reaches_the_official_generation_or_edit_endpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model: str,
+    with_reference: bool,
+) -> None:
+    client = official.OpenAIImageClient("fake-key")
+    calls = []
+    response = {
+        "data": [{"b64_json": base64.b64encode(_png(2560, 1440)).decode()}],
+    }
+    monkeypatch.setattr(
+        client, "request_json",
+        lambda payload: calls.append(("generate", payload)) or response,
+    )
+    monkeypatch.setattr(
+        client, "request_edit_json",
+        lambda payload: calls.append(("edit", payload)) or response,
+    )
+    reference_url = "data:image/png;base64,AAAA" if with_reference else None
+
+    result = client.generate_png(
+        prompt="One coherent 2x2 grid", model=model, size="2560x1440",
+        quality="medium", destination=tmp_path / "grid.png",
+        reference_image_url=reference_url,
+    )
+
+    assert len(calls) == 1
+    endpoint, payload = calls[0]
+    assert endpoint == ("edit" if with_reference else "generate")
+    assert payload["model"] == model
+    assert payload["size"] == "2560x1440"
+    assert payload["quality"] == "medium"
+    assert payload["output_format"] == "png"
+    assert ("images" in payload) is with_reference
+    assert result["quality"] == "medium"
