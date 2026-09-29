@@ -82,8 +82,8 @@ not been GPU validated**.
 
 The third paid `test02` recovery (v3) failed with CUDA OOM after two
 attempts. Salad logs exported by job ID omitted the traceback and CUDA
-phase data, so **the exact offending operation remains unknown**. Production
-now selects v4 with the same model, 1280×720/24fps, audio, prompts,
+phase data, so **the exact offending operation was then unknown**. The
+diagnostic v4 attempt selected the same model, 1280×720/24fps, audio, prompts,
 samplers, offload and live DiffVAE tiling budget as v3. Only its immutable
 profile identity and observability differ; v2/v3 jobs remain replayable,
 but the terminal v3 run must not be resubmitted.
@@ -113,8 +113,8 @@ The v4 runner requires an exact immutable deployed image digest in
 Publish a **new** Docker tag and prepare only the stopped `ltx25` group
 after stopping the singleton Capacity Controller. Do not modify
 `ltx25_i2v`. Restart the controller and recover the saved `test02`
-with `.\\run.ps1 test02 --generate-video`. **No v4 paid GPU result is
-claimed by offline tests.**
+with `.\\run.ps1 test02 --generate-video`. The subsequent real v4 run
+failed at Gemma's pinned host buffer on A2V beat 7C.
 
 To inspect a completed or failed attempt without Salad UI filtering:
 
@@ -125,6 +125,51 @@ uv run --locked --extra dev python scripts/salad/inspect_ltx_a2v_diagnostics.py 
 The local command queries Postgres and downloads all matching R2 objects,
 including the failure traceback if it was emitted. Default output:
 `data/output/ltx-a2v-diagnostics/<job_id>/`.
+
+### Production v5: safe pageable Gemma fallback and selective v4 recovery
+
+Both paid v4 attempts for beat 7C failed while creating the upstream
+`StreamingModelBuilder` CPU `BufferPool` for Gemma. Its
+`cudaHostRegister` path returned no registered buffer; the second
+`torch.empty(..., pin_memory=True)` path reported `AcceleratorError: CUDA
+error: out of memory`, despite about 30 GiB of free VRAM and very little
+PyTorch CUDA allocation. Beat duration is not implicated in this allocation.
+
+The A2V Dockerfile patches **only** the fixed upstream LTX source revision
+during image build; builds fail if the exact source anchors have drifted.
+Upstream pinned-host registration and PyTorch pinned allocation remain the
+first choices. If pinned allocation specifically fails with CUDA OOM, the
+patched allocator allocates a pageable CPU buffer of the same byte size.
+The patched `WeightsProvider` uses a **blocking** H2D copy when
+`cpu_buffer.is_pinned()` is false, before the buffer may be released or
+reused; pinned buffers retain asynchronous copies and existing event guards.
+Unrelated exceptions are not suppressed. A real host-RAM limit remains a
+possible terminal failure and pageable transfers may be slower.
+
+Immutable v5 changes only this host-memory runtime and diagnostics: the
+previous v4 generation configuration (model, 720p24, audio, prompts, seed,
+samplers, FP8 disk offload, live tiling plus 1-GiB reserve) is retained.
+The new diagnostic events include requested pinned buffer bytes and the
+CUDA host-registration error code; Linux `RLIMIT_MEMLOCK` and available
+cgroup v1/v2 counters are included where accessible.
+
+The host runner requires `SALAD_LTX25_PAGEABLE_A2V_IMAGE` to equal the
+exact new deployed `ltx25` image digest. Previous image flags remain
+historical and do not permit new paid work. After Postgres confirms v4's
+terminal failure and the capacity controller is stopped, publish and
+prepare only `ltx25`, pin its digest, restart the controller, then use
+`.\\run.ps1 test02 --generate-video`. The recovery checks the **full
+original v4 fingerprint** and each completed job's original request
+fingerprint, media hash, ffprobe result and A2V metadata before copying
+those clips into the v5 run. Completed v4 I2V and A2V clips are never
+resubmitted, and the old manifest is preserved as superseded. Missing
+or incompatible completed outputs block paid regeneration instead of
+silently charging twice. The failed beat receives a new v5 job ID.
+
+The 12-second avatar-group ceiling already exists and is unchanged;
+this fix does not segment speech or alter successful videos.
+Offline tests cover the fallback, blocking copy and v4 reuse, but
+**no paid v5 GPU success is claimed**.
 
 ## Speech-driven avatar settings
 
