@@ -762,8 +762,8 @@ async def generate_fish_audio(
     """Run each block independently, then publish a single ordered WAV narration."""
     if not isinstance(script, str) or not script.strip():
         raise FishAudioWorkflowError("The source script must not be empty")
-    if not voice_id.startswith("fishaudio_"):
-        raise FishAudioWorkflowError("Fish voice ID is not a Fish Audio source ID")
+    if not isinstance(voice_id, str) or not voice_id.strip() or any(ch.isspace() for ch in voice_id):
+        raise FishAudioWorkflowError("AI33 voice ID is missing or invalid")
     if max_parallel_calls < 1:
         raise FishAudioWorkflowError("max_parallel_calls must be positive")
     inputs = _inputs(script, b11)
@@ -895,7 +895,7 @@ async def generate_fish_audio(
     artifact: dict[str, Any] = {
         "status": "completed",
         "provider": "ai33",
-        "voice_source": "fishaudio",
+        "voice_source": voice_id.split("_", 1)[0] if "_" in voice_id else "ai33",
         "voice_id": voice_id,
         "run_id": state["run_id"],
         "file": (run_dir / merged["file"]).relative_to(output).as_posix(),
