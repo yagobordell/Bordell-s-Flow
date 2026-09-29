@@ -1195,11 +1195,12 @@ def _attach_salad_costs(
     salad = read_salad_costs(output / "video" / "salad_costs.json")
     if salad is None:
         return None
-    subtotal = (
-        Decimal(str(api_costs["priced_subtotal_usd"]))
-        + Decimal(str(salad["priced_subtotal_usd"]))
-    )
-    api_costs["priced_subtotal_including_salad_usd"] = f"{subtotal:.8f}"
+    observed = salad.get("priced_subtotal_usd")
+    if observed is None:
+        api_costs["priced_subtotal_including_salad_usd"] = None
+    else:
+        subtotal = Decimal(str(api_costs["priced_subtotal_usd"])) + Decimal(str(observed))
+        api_costs["priced_subtotal_including_salad_usd"] = f"{subtotal:.8f}"
     api_total = api_costs.get("estimated_total_usd")
     gpu_total = salad.get("estimated_observed_cost_usd")
     api_costs["estimated_total_including_salad_usd"] = (
