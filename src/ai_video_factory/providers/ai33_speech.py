@@ -11,12 +11,12 @@ import json
 import mimetypes
 import re
 import time
-from uuid import uuid4
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 _API_BASE = "https://api.openspeaker.ai"
 _RETRYABLE = {429, 502, 503, 504}
@@ -43,7 +43,6 @@ def task_id_of(response: dict[str, Any]) -> str | None:
                 if isinstance(value, str) and value.strip():
                     return value.strip()
     return None
-
 
 
 def voice_id_of(response: dict[str, Any]) -> str | None:
@@ -166,7 +165,6 @@ class AI33SpeechClient:
             "/v3/text-to-speech",
             {"text": text, "voice_id": voice_id, "speed": speed},
         )
-
 
     def clone_voice(self, *, audio_path: Path, name: str) -> dict[str, Any]:
         """Submit a consented reference recording once, without automatic paid retries.
