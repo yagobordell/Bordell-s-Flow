@@ -11,6 +11,7 @@ import base64
 import hashlib
 import json
 import re
+import shutil
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -581,6 +582,55 @@ def clear_previous_b2_images(output: Path, plan: dict[str, Any]) -> int:
         if image_path.is_file():
             image_path.unlink()
             removed += 1
+    return removed
+
+
+def clear_b2_images_for_rerun(output: Path) -> int:
+    """Delete the complete B2 image tree before an explicit B2 rerun.
+
+    A B2 rerun produces a new visual plan, so image states from the previous
+    plan cannot be used for fingerprint validation. Unfinished/ambiguous paid
+    requests are left in place and block the rerun rather than being silently
+    replaced.
+    """
+    image_root = output / "images"
+    if not image_root.exists():
+        return 0
+    if image_root.is_symlink() or image_root.is_junction():
+        raise ImageGenerationError("Refusing linked image directory")
+
+    for state_path in chain(
+        image_root.glob("block_*/*.json"),
+        (image_root / "grids").glob("*.json"),
+    ):
+        if state_path.is_symlink():
+            raise ImageGenerationError(f"Refusing linked image state: {state_path}")
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if state.get("status") != "completed":
+            raise ImageGenerationError(
+                f"Previous paid image task is unfinished at {state_path}; "
+                "reconcile it before rerunning B2."
+            )
+        image_path = state_path.with_suffix(".png")
+        if not image_path.is_file():
+            raise ImageGenerationError(
+                f"Completed image is missing for {state_path}; reconcile it before rerunning B2."
+            )
+
+    removed = sum(1 for _ in image_root.rglob("*.png"))
+    for child in image_root.iterdir():
+        if child.is_symlink():
+            raise ImageGenerationError(f"Refusing linked image asset: {child}")
+    for child in image_root.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    legacy_archive = output / "images_replaced_b2"
+    if legacy_archive.exists():
+        if legacy_archive.is_symlink() or legacy_archive.is_junction():
+            raise ImageGenerationError("Refusing linked legacy B2 image archive")
+        shutil.rmtree(legacy_archive)
     return removed
 
 

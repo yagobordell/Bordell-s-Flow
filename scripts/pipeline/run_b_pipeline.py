@@ -57,6 +57,7 @@ from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE, GridPlanE
 from ai_video_factory.providers.openai_batch_images import (
     ImageGenerationError,
     ImageOptions,
+    clear_b2_images_for_rerun,
     clear_previous_b2_images,
     generate_b2_images,
 )
@@ -2104,6 +2105,13 @@ async def main() -> None:
         if stop_stage is None and not getattr(args, "skip_images", False):
             if visual_plan is None:
                 raise RuntimeError("Image generation requires a completed B2 plan")
+            if args.from_stage == "B2":
+                removed = await asyncio.to_thread(clear_b2_images_for_rerun, output)
+                if removed:
+                    print(
+                        f"  Removed {removed} previous B2 image(s) before rerun.",
+                        flush=True,
+                    )
             run_metadata["image_generation"] = {"status": "running"}
             save_report("running", len(result.b12))
             image_started = perf_counter()
