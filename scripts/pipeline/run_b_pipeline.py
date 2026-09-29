@@ -58,7 +58,6 @@ from ai_video_factory.providers.openai_batch_images import (
     ImageGenerationError,
     ImageOptions,
     clear_b2_images_for_rerun,
-    clear_previous_b2_images,
     generate_b2_images,
 )
 from ai_video_factory.providers.openai_stt import OpenAISttClient
@@ -1110,9 +1109,9 @@ async def _run_images_only(
     _refresh_audio_costs(report, output)
     _write(report_path, report)
     try:
-        removed_images = clear_previous_b2_images(output, plan)
+        removed_images = await asyncio.to_thread(clear_b2_images_for_rerun, output)
         if removed_images:
-            print(f"Removed {removed_images} previous image(s).", flush=True)
+            print(f"Removed {removed_images} previous B2 image(s).", flush=True)
         manifest = await _generate_images(output, plan)
     except Exception:
         report["run"]["image_generation"] = {"status": "incomplete"}

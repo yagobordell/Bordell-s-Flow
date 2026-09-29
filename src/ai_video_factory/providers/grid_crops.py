@@ -71,10 +71,10 @@ def _separator(
         if 1 <= band[1] - band[0] <= max_width
     ]
     if not plausible:
-        raise GridCropError(
-            f"No reliable white {axis}-divider near pixel {nominal}; "
-            "the original paid grid is preserved for manual inspection"
-        )
+        # The image model may omit, soften, or partially obscure the requested
+        # divider. Fall back to the mathematical seam instead of rejecting an
+        # otherwise valid paid grid; the crop inset keeps adjacent panels apart.
+        return nominal, nominal + 1
     return min(
         plausible,
         key=lambda band: (
