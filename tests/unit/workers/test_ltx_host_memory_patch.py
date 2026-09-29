@@ -39,7 +39,11 @@ def alloc_buffer(nbytes: int, device: object, pin_memory: bool):
 '''
     provider = '''class WeightsProvider:
     def _copy_to_gpu(self, idx, raw, gpu_weights, cpu_buffer, nbytes):
-        if not cpu_buffer.is_contiguous() or cpu_buffer.dtype != torch.uint8 or cpu_buffer.numel() < nbytes:
+        if (
+            not cpu_buffer.is_contiguous()
+            or cpu_buffer.dtype != torch.uint8
+            or cpu_buffer.numel() < nbytes
+        ):
             raise ValueError("invalid source buffer")
         with self._sync.copy_scope():
             raw[:nbytes].copy_(cpu_buffer[:nbytes], non_blocking=self._sync.is_async_copy)
@@ -157,7 +161,9 @@ def test_pageable_gpu_copy_is_blocking_before_source_reuse(
         is_async_copy=True, copy_scope=nullcontext,
         commit_copy=lambda: "copy-finished-event",
     )
-    copy_to_gpu = _load_function(provider, "_copy_to_gpu", {"torch": SimpleNamespace(uint8="uint8")})
+    copy_to_gpu = _load_function(
+        provider, "_copy_to_gpu", {"torch": SimpleNamespace(uint8="uint8")},
+    )
     service = SimpleNamespace(_sync=sync, _lora_sources=[])
     assert copy_to_gpu(service, 0, gpu, {}, cpu, 100) == "copy-finished-event"
     assert flags == [expected_non_blocking]
