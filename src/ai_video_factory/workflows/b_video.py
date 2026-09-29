@@ -124,18 +124,31 @@ def _source_assets(
 
 
 def _group_beats(beats: list[dict[str, Any]]) -> list[tuple[str, int, int]]:
-    """Avatar/side-by-side avatar beats remain one continuous talking-head shot."""
+    """Group consecutive speech beats only when they share the same start image."""
     groups: list[tuple[str, int, int]] = []
     avatar_start: int | None = None
+    avatar_source: tuple[object, ...] | None = None
     for index, beat in enumerate(beats):
         kind = beat["visual_type"]
-        if kind in {"avatar", "avatar_media"}:
+        speaks = kind in {"avatar", "avatar_media"} or beat.get("audio") is True
+        if speaks:
+            if kind in {"media_image", "media_video"} or (
+                kind == "avatar" and beat.get("prompt") is not None
+            ):
+                source = (beat["block_id"], beat["beat_id"])
+            elif kind in {"avatar", "avatar_media"}:
+                source = ("original_avatar",)
+            else:
+                raise B2VideoError(f"Unsupported speaking visual type: {kind!r}")
+            if avatar_start is not None and source != avatar_source:
+                groups.append(("a2v", avatar_start, index - 1))
+                avatar_start = None
             if avatar_start is None:
-                avatar_start = index
+                avatar_start, avatar_source = index, source
             continue
         if avatar_start is not None:
             groups.append(("a2v", avatar_start, index - 1))
-            avatar_start = None
+            avatar_start, avatar_source = None, None
         if kind == "media_video":
             groups.append(("i2v", index, index))
         elif kind != "media_image":
@@ -228,7 +241,9 @@ def build_b2_video_plan(
     avatar, assets = _source_assets(output, plan, images)
     for beat in beats:
         key = beat["block_id"], beat["beat_id"]
-        if beat["visual_type"] != "avatar" and key not in assets:
+        if (
+            beat["visual_type"] != "avatar" or beat.get("prompt") is not None
+        ) and key not in assets:
             raise B2VideoError(f"Missing generated B2 PNG for {beat['beat_id']}")
         if beat["visual_type"] == "media_video" and (
             not isinstance(beat["description"], str) or not beat["description"].strip()
@@ -280,6 +295,13 @@ def build_b2_video_plan(
             image_sha = sha256_file(image)
             num_frames = ltx_num_frames_for_duration(end - start, fps=_FPS)
             prompt = beat["description"]
+            if beat.get("prompt") is not None:
+                prompt = (
+                    "Animate the supplied start image in one continuous realistic take. "
+                    "Show the single beat-supported action or natural process described "
+                    f"by the narration: {beat['text']}. "
+                    "Preserve the image identity, setting and framing; no cuts or invented events."
+                )
             job_id = f"b2-{beat_ids[0]}-" + ltx_video_application_job_id(
                 shot_id=ordinal, prompt=prompt, keyframe_sha256=image_sha,
                 seed=seed, width=1280, height=720, fps=_FPS,
@@ -305,7 +327,14 @@ def build_b2_video_plan(
             )
             audio_path = None
         else:
-            image = avatar
+            first_beat = selection[0]
+            if first_beat["visual_type"] in {"media_image", "media_video"} or (
+                first_beat["visual_type"] == "avatar"
+                and first_beat.get("prompt") is not None
+            ):
+                image = assets[(first_beat["block_id"], first_beat["beat_id"])]
+            else:
+                image = avatar
             image_sha = sha256_file(image)
             audio_path = run_dir / "audio" / f"{beat_ids[0]}-{beat_ids[-1]}.wav"
             audio_sha = _extract_pcm(master, audio_path, start, end)

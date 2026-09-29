@@ -73,11 +73,13 @@ class ImageOptions:
         *,
         avatar_image_url: str | None = None,
         size: str | None = None,
+        visual_style: str = "casero",
     ) -> dict[str, Any]:
         request: dict[str, Any] = {
             "model": self.model_id,
             "prompt": effective_image_prompt(
-                description, avatar_reference=avatar_image_url is not None
+                description, avatar_reference=avatar_image_url is not None,
+                visual_style=visual_style,
             ),
             "size": size or self.size,
             "quality": self.quality,
@@ -89,8 +91,15 @@ class ImageOptions:
         return request
 
 
-def effective_image_prompt(description: str, *, avatar_reference: bool = False) -> str:
-    """Build the outgoing prompt without changing B2's saved description."""
+def effective_image_prompt(
+    description: str, *, avatar_reference: bool = False,
+    visual_style: str = "casero",
+) -> str:
+    """Do not add legacy amateur styling or identity instructions to professional B2."""
+    if visual_style == "profesional":
+        return description
+    if visual_style != "casero":
+        raise ValueError("Unknown B2 visual style")
     prompt = (
         description
         if description.startswith("iPhone 6 photograph done by an elderly:\n\n")
@@ -114,7 +123,11 @@ def _avatar_reference(
     output: Path, plan: dict[str, Any], jobs: list[dict[str, Any]]
 ) -> tuple[str, str] | None:
     """Validate the selected avatar before any paid image request."""
-    if not any(_avatar_requested(job["description"]) for job in jobs):
+    if not any(
+        job.get("reference") if plan.get("visual_style") == "profesional"
+        else _avatar_requested(job["description"])
+        for job in jobs
+    ):
         return None
     metadata = plan.get("avatar")
     if (
@@ -151,6 +164,9 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(blocks, list):
         raise ImageGenerationError("B2 visual plan is missing its blocks")
     result: list[dict[str, Any]] = []
+    visual_style = plan.get("visual_style", "casero")
+    if visual_style not in {"casero", "profesional"}:
+        raise ImageGenerationError("Unknown B2 visual style")
     seen: set[tuple[int, str]] = set()
     for block in blocks:
         block_id = block.get("block_id")
@@ -160,9 +176,23 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(beats, list):
             raise ImageGenerationError("Invalid B2 beats")
         for beat in beats:
-            description = beat.get("description")
-            if description is None or (isinstance(description, str) and not description.strip()):
-                continue
+            if visual_style == "profesional":
+                if (not isinstance(beat.get("reference"), bool)
+                    or not isinstance(beat.get("audio"), bool)):
+                    raise ImageGenerationError("Professional B2 requires reference/audio booleans")
+                description = beat.get("prompt")
+                if description is None:
+                    if beat.get("visual_type") != "avatar" or beat["reference"]:
+                        raise ImageGenerationError("Only a reused avatar can omit its prompt")
+                    continue
+                if (beat.get("visual_type") == "avatar" and not beat["reference"]):
+                    raise ImageGenerationError("Regenerated avatar requires reference=true")
+            else:
+                description = beat.get("description")
+                if description is None or (
+                    isinstance(description, str) and not description.strip()
+                ):
+                    continue
             beat_id = beat.get("beat_id")
             if (
                 not isinstance(description, str)
@@ -181,6 +211,8 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
                 "visual_type": beat.get("visual_type"),
                 "text": beat.get("text"),
                 "description": description,
+                **({"reference": beat["reference"], "visual_style": visual_style}
+                   if visual_style == "profesional" else {}),
             })
     return result
 
@@ -189,11 +221,15 @@ def _fingerprint(job: dict[str, Any], options: ImageOptions) -> str:
     identity = {
         "beat_id": job["beat_id"],
         "block_id": job["block_id"],
-        **options.request(job["description"], size=job.get("size")),
+        **options.request(
+            job["description"], size=job.get("size"),
+            visual_style=job.get("visual_style", "casero"),
+        ),
     }
     if job.get("avatar_reference_sha256") is not None:
         identity["prompt"] = effective_image_prompt(
-            job["description"], avatar_reference=True
+            job["description"], avatar_reference=True,
+            visual_style=job.get("visual_style", "casero"),
         )
         identity["image_endpoint"] = "/v1/images/edits"
         identity["avatar_reference_sha256"] = job["avatar_reference_sha256"]
@@ -323,7 +359,8 @@ def _one_image(
     try:
         kwargs: dict[str, Any] = {
             "prompt": effective_image_prompt(
-                job["description"], avatar_reference=reference_url is not None
+                job["description"], avatar_reference=reference_url is not None,
+                visual_style=job.get("visual_style", "casero"),
             ),
             "model": options.model_id,
             "size": job.get("size", options.size),
@@ -359,12 +396,16 @@ def generate_b2_images(
     except GridPlanError as exc:
         raise ImageGenerationError(str(exc)) from exc
     reference = _avatar_reference(output, plan, described)
+    visual_style = plan.get("visual_style", "casero")
     if reference is not None:
         digest, _url = reference
         jobs = [
             {**job, "avatar_reference_sha256": digest}
-            if any(_avatar_requested(beat["description"])
-                   for beat in job.get("panels", [job]))
+            if any(
+                beat.get("reference") if visual_style == "profesional"
+                else _avatar_requested(beat["description"])
+                for beat in job.get("panels", [job])
+            )
             else job
             for job in jobs
         ]

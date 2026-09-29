@@ -147,6 +147,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-parallel-calls", type=int, default=8)
     parser.add_argument(
+        "--style", "--b2-style", dest="visual_style",
+        choices=("casero", "profesional"),
+        help="B2 visual style; interactive runs ask when omitted.",
+    )
+    parser.add_argument(
         "--from",
         dest="from_stage",
         choices=("B1.1", "B1.2", "B2"),
@@ -219,8 +224,14 @@ def parse_args() -> argparse.Namespace:
         or args.list_scripts
         or args.list_avatars
         or args.voice_id is not None or args.voice_audio is not None or args.default_voice
+        or args.visual_style is not None
     ):
         parser.error("--qr-only only accepts --avatar, --avatars-dir and --qr-url.")
+    if args.visual_style is not None and (
+        args.images_only or args.videos_only or args.regenerate_audio
+        or args.resume_audio or args.list_scripts or args.list_avatars
+    ):
+        parser.error("--style is for planning runs; resumed assets use the saved B2 style.")
     if args.regenerate_audio and args.resume_audio:
         parser.error("Choose either --regenerate-audio or --resume-audio.")
     if (args.regenerate_audio or args.resume_audio) and (
@@ -357,6 +368,29 @@ def select_script(
         if selection.isdecimal() and 1 <= int(selection) <= len(scripts):
             return scripts[int(selection) - 1]
         print(f"Enter a number between 1 and {len(scripts)}, or q to cancel.")
+
+
+def select_visual_style(selected: str | None, *, interactive: bool | None = None) -> str:
+    """Pick a style for a new planning run, without prompting unattended scripts."""
+    if selected is not None:
+        return selected
+    if interactive is None:
+        interactive = sys.stdin.isatty()
+    if not interactive:
+        return "casero"
+    print("Estilo visual de B2:\n  1. Casero\n  2. Profesional")
+    while True:
+        try:
+            answer = input("Elige estilo (1/2; q para cancelar): ").strip().lower()
+        except (EOFError, KeyboardInterrupt) as exc:
+            raise SystemExit("Selección de estilo cancelada.") from exc
+        if answer in {"1", "casero"}:
+            return "casero"
+        if answer in {"2", "profesional"}:
+            return "profesional"
+        if answer in {"q", "quit"}:
+            raise SystemExit("Selección de estilo cancelada.")
+        print("Introduce 1 o 2, o q para cancelar.")
 
 
 def _recover_avatar_layout(
@@ -1727,6 +1761,15 @@ async def main() -> None:
         )
         return
 
+    output_root_for_style = args.output if args.output is not None else settings.output_dir
+    if args.from_stage == "B2" and getattr(args, "visual_style", None) is None:
+        report_path = output_root_for_style / script_file.stem / "run_report.json"
+        if report_path.is_file() and not report_path.is_symlink():
+            previous_style = json.loads(
+                report_path.read_text(encoding="utf-8")
+            ).get("run", {}).get("visual_style", "casero")
+            args.visual_style = previous_style
+    visual_style = select_visual_style(getattr(args, "visual_style", None))
     avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
     avatar_bytes, avatar_width, avatar_height = load_avatar_png(avatar_file)
     avatar_file = _recover_avatar_layout(
@@ -1802,6 +1845,11 @@ async def main() -> None:
             script=script,
             script_sha256=script_sha256,
         )
+        if (args.from_stage == "B2" and
+            previous_report["run"].get("visual_style", "casero") != visual_style):
+            raise SystemExit(
+                "B2 checkpoint style differs; choose the saved style or rerun from B1.2."
+            )
         try:
             previous_costs = previous_report["api_costs"]
             previous_timing = previous_report["timings"]
@@ -1884,6 +1932,7 @@ async def main() -> None:
         "script_sha256": script_sha256,
         "model": settings.openai_model,
         "reasoning_effort": settings.openai_reasoning_effort,
+        "visual_style": visual_style,
     }
     if stop_stage is not None:
         run_metadata["stopped_after"] = stop_stage
@@ -2012,6 +2061,8 @@ async def main() -> None:
             provider=provider,
             model=settings.openai_model,
             max_parallel_calls=args.max_parallel_calls,
+            visual_style=visual_style,
+            avatar_image=avatar_bytes if visual_style == "profesional" else None,
             start_from=args.from_stage,
             stop_after=stop_stage or "B2",
             previous_b11=previous_b11,
@@ -2072,6 +2123,8 @@ async def main() -> None:
                     provider=provider,
                     model=settings.openai_model,
                     max_parallel_calls=args.max_parallel_calls,
+                    visual_style=visual_style,
+                    avatar_image=avatar_bytes if visual_style == "profesional" else None,
                     start_from="B2",
                     stop_after="B2",
                     previous_b11=result.b11,

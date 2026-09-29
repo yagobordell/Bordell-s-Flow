@@ -356,7 +356,9 @@ def build_stt_beat_timeline(
                 "block_id": block["block_id"],
                 "beat_id": beat_id,
                 "visual_type": beat.get("visual_type"),
-                "description": beat.get("description"),
+                "description": beat.get("description", beat.get("prompt")),
+                **({"prompt": beat["prompt"], "audio": beat["audio"]}
+                   if "prompt" in beat else {}),
                 "start_seconds": float(start),
                 "first_word_seconds": float(
                     starts[index] + aligned_words[first_word_index]["start"]
@@ -522,7 +524,12 @@ def generate_static_preview(
         frame = frames / frame_name
         if frame.is_symlink():
             raise StaticPreviewError("Refusing linked preview frame")
-        _beat_frame(avatar, assets.get(key), beat["visual_type"], frame)
+        presenter_image = avatar
+        if beat["visual_type"] == "avatar" and beat.get("prompt") is not None:
+            presenter_image = assets.get(key)
+            if presenter_image is None:
+                raise StaticPreviewError(f"Regenerated avatar {beat['beat_id']} has no PNG")
+        _beat_frame(presenter_image, assets.get(key), beat["visual_type"], frame)
         entries.append(f"file 'frames/{frame_name}'")
         entries.append(f"duration {beat['duration_seconds']:.9f}")
     entries.append(entries[-2])  # Repeated last frame preserves its last duration.

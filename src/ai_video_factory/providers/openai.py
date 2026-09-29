@@ -56,11 +56,18 @@ class OpenAIProvider:
         instructions: str,
         input_text: str,
         output_type: type[StructuredOutputT],
+        input_image_url: str | None = None,
     ) -> StructuredOutputT:
         response = await self._parse_with_flex_fallback(
             model=model,
             instructions=instructions,
-            input=input_text,
+            input=(
+                [{"role": "user", "content": [
+                    {"type": "input_text", "text": input_text},
+                    {"type": "input_image", "image_url": input_image_url},
+                ]}]
+                if input_image_url is not None else input_text
+            ),
             text_format=output_type,
         )
 
@@ -80,6 +87,7 @@ class OpenAIProvider:
         instructions: str,
         input_text: str,
         output_type: type[StructuredOutputT],
+        input_image_url: str | None = None,
     ) -> tuple[StructuredOutputT, Any]:
         """Return validated structured output and its original, usage-bearing API response.
 
@@ -89,7 +97,13 @@ class OpenAIProvider:
         response = await self._parse_with_flex_fallback(
             model=model,
             instructions=instructions,
-            input=input_text,
+            input=(
+                [{"role": "user", "content": [
+                    {"type": "input_text", "text": input_text},
+                    {"type": "input_image", "image_url": input_image_url},
+                ]}]
+                if input_image_url is not None else input_text
+            ),
             text_format=output_type,
         )
         parsed = response.output_parsed
