@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -61,6 +62,36 @@ def _report(ledger: ApiCostLedger) -> dict:
         run_status="completed",
         expected_calls={"B1.1": 0, "B1.2": 0, "B2": 0, "Fish director": 0},
     )
+
+
+def test_planning_and_image_usage_share_the_same_run_total(tmp_path: Path) -> None:
+    _manifest(tmp_path, 1)
+    _state(tmp_path, usage=_usage())
+    ledger = ApiCostLedger()
+    ledger.record(
+        "B1.1", None, SimpleNamespace(
+            id="resp_planning",
+            model="gpt-6-luna",
+            service_tier="default",
+            usage=SimpleNamespace(
+                input_tokens=1000,
+                input_tokens_details=SimpleNamespace(
+                    cached_tokens=200, cache_write_tokens=100,
+                ),
+                output_tokens=100,
+                output_tokens_details=SimpleNamespace(reasoning_tokens=25),
+            ),
+        ),
+    )
+    ledger.sync_image_usage(tmp_path)
+    report = ledger.report(
+        blocks=0, run_status="completed",
+        expected_calls={"B1.1": 1, "B1.2": 0, "B2": 0, "Fish director": 0},
+    )
+
+    assert report["stages"]["B1.1"]["estimated_cost_usd"] == "0.00013450"
+    assert report["stages"]["B2 images"]["estimated_cost_usd"] == "0.03066000"
+    assert report["estimated_total_usd"] == "0.03079450"
 
 
 def test_image_usage_is_priced_and_added_to_completed_run(tmp_path: Path) -> None:
