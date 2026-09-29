@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,127}$")
-EVENT_NAME_PATTERN = re.compile(r"^attempt-[0-9]{2}/[0-9]{3}-[a-z0-9-]+\.json$")
+EVENT_NAME_PATTERN = re.compile(r"^attempt-[0-9]{2}/[0-9]{3}-[a-z0-9_-]+\.json$")
 
 
 def main() -> int:
