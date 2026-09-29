@@ -152,6 +152,7 @@ class GpuJobDiagnostics:
         self.last_phase = "claimed"
         self.last_key: str | None = None
         self.sequence = 0
+        self._checkpoint_upload_failed = False
         self.identity = _gpu_identity()
 
     def checkpoint(self, phase: str, *, sync_cuda: bool = False) -> None:
@@ -225,6 +226,10 @@ class GpuJobDiagnostics:
             key,
             json.dumps(payload["cuda"], sort_keys=True),
         )
+        # Do not keep paying for repeated network timeouts after one failure;
+        # still retry once for the final traceback in case R2 recovered.
+        if self._checkpoint_upload_failed and phase != "failed":
+            return
         try:
             folder = self.work_dir / "gpu-diagnostics"
             folder.mkdir(parents=True, exist_ok=True)
@@ -244,6 +249,7 @@ class GpuJobDiagnostics:
                 },
             )
         except Exception as upload_error:
+            self._checkpoint_upload_failed = True
             logger.warning(
                 "LTX_A2V_DIAGNOSTIC_UPLOAD_FAILED job_id=%s attempt=%d phase=%s "
                 "error_type=%s",
