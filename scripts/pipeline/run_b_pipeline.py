@@ -1571,7 +1571,10 @@ async def main() -> None:
         if resume_expected_calls is None:
             expected_calls: dict[str, int | None] = {
                 "B1.1": max(1, timings.call_count("B1.1")),
-                "B1.2": report_blocks if stop_index >= 1 else 0,
+                "B1.2": (
+                    max(report_blocks, timings.call_count("B1.2"))
+                    if report_blocks is not None else None
+                ) if stop_index >= 1 else 0,
                 "B2": (
                     max(report_blocks, timings.call_count("B2"))
                     if report_blocks is not None else None
