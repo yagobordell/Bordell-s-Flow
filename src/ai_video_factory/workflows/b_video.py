@@ -29,8 +29,11 @@ from ai_video_factory.inference.gpu_failures import (
 from ai_video_factory.inference.ports import ObjectStorage
 from ai_video_factory.inference.storage import sha256_file
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
-from ai_video_factory.providers.job_queue import QueueJobNotFoundError, QueueJobStatus
-from ai_video_factory.providers.job_queue import JobQueueClient
+from ai_video_factory.providers.job_queue import (
+    JobQueueClient,
+    QueueJobNotFoundError,
+    QueueJobStatus,
+)
 from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_RECOMMENDED_MAX_SECONDS,
     LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
