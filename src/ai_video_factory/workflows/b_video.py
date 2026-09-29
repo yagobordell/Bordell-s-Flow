@@ -32,6 +32,7 @@ from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.job_queue import QueueJobNotFoundError, QueueJobStatus
 from ai_video_factory.providers.job_queue import JobQueueClient
 from ai_video_factory.workers.ltx25.a2v import (
+    LTX_A2V_RECOMMENDED_MAX_SECONDS,
     LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
     LTX_A2V_TASK,
 )
@@ -244,6 +245,14 @@ def build_b2_video_plan(
             count = round(beats[last]["end_seconds"] * _RATE) - round(
                 beats[first]["start_seconds"] * _RATE
             )
+            if count > round(LTX_A2V_RECOMMENDED_MAX_SECONDS * _RATE):
+                raise B2VideoError(
+                    "Consecutive avatar beats exceed the supported single A2V "
+                    f"speech duration ({beats[first]['beat_id']}–"
+                    f"{beats[last]['beat_id']}, {count / _RATE:.2f}s > "
+                    f"{LTX_A2V_RECOMMENDED_MAX_SECONDS:.0f}s). "
+                    "Split the avatar timeline before any paid inference."
+                )
             try:
                 reference_num_frames_for_samples(
                     count, sample_rate=_RATE, fps=_FPS,
