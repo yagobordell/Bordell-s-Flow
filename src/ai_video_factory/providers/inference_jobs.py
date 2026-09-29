@@ -296,9 +296,17 @@ class InferenceJobExecutor:
                 continue
 
         if snapshot.status != QueueJobStatus.SUCCEEDED:
+            provider = snapshot.provider_payload or {}
+            attempts = provider.get("attempt_count")
+            last_error = provider.get("last_error")
+            diagnostic = (
+                f"; attempt_count={attempts}" if isinstance(attempts, int) else ""
+            )
+            if isinstance(last_error, str) and last_error.strip():
+                diagnostic += f"; last_error={last_error.strip()[-800:]}"
             raise InferenceTransportFailedError(
                 f"Inference job {request.job_id} finished with transport status "
-                f"{snapshot.status.value}; transport_job_id={snapshot.id}",
+                f"{snapshot.status.value}; transport_job_id={snapshot.id}{diagnostic}",
                 status=snapshot.status,
             )
         rejection = _terminal_rejection_detail(snapshot.output)
