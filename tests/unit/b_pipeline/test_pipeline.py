@@ -344,13 +344,14 @@ def test_crlf_script_is_reconstructed_without_newline_normalization() -> None:
 
 def test_b12_ignores_whitespace_and_punctuation_differences() -> None:
     block = MaterializedBlock(
-        block_id=3, type="development", emotional_entry="a", emotional_exit="b", text="Uno. Dos."
+        block_id=3, type="development", emotional_entry="a", emotional_exit="b",
+        text="La primera frase es completa. La segunda frase también es completa."
     )
     bad = B12Output(
         pipeline_stage="B1.2", block_id=3,
         beats=[
-            Beat(beat_id="3A", text="Uno,", beat_type="claim"),
-            Beat(beat_id="3B", text="\nDos", beat_type="claim"),
+            Beat(beat_id="3A", text="La primera frase es completa, ", beat_type="claim"),
+            Beat(beat_id="3B", text="\nLa segunda frase también es completa", beat_type="claim"),
         ], error=None,
     )
     assert validate_beats(bad, block) == bad.beats
