@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
+import re
 import time
+from uuid import uuid4
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -18,6 +21,8 @@ from urllib.request import Request, urlopen
 _API_BASE = "https://api.openspeaker.ai"
 _RETRYABLE = {429, 502, 503, 504}
 _MAX_AUDIO_BYTES = 200 * 1024 * 1024
+_MAX_CLONE_BYTES = 10 * 1024 * 1024
+_VOICE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_:-]{1,255}\Z")
 _DOWNLOAD_USER_AGENT = "Mozilla/5.0"
 
 
@@ -37,6 +42,32 @@ def task_id_of(response: dict[str, Any]) -> str | None:
                 value = obj.get(key)
                 if isinstance(value, str) and value.strip():
                     return value.strip()
+    return None
+
+
+
+def voice_id_of(response: dict[str, Any]) -> str | None:
+    """Find a reusable voice ID without treating a task ID as a voice ID."""
+    queue: list[object] = [response]
+    for _ in range(12):
+        if not queue:
+            break
+        obj = queue.pop(0)
+        if not isinstance(obj, dict):
+            continue
+        for key in ("voice_id", "voiceId", "speaker_id", "speakerId"):
+            value = obj.get(key)
+            if isinstance(value, str) and _VOICE_ID.fullmatch(value):
+                return value
+        voice = obj.get("voice")
+        if isinstance(voice, dict):
+            value = voice.get("id")
+            if isinstance(value, str) and _VOICE_ID.fullmatch(value):
+                return value
+            queue.append(voice)
+        for key in ("data", "result", "output", "metadata"):
+            if isinstance(obj.get(key), dict):
+                queue.append(obj[key])
     return None
 
 
@@ -126,8 +157,8 @@ class AI33SpeechClient:
         return result
 
     def create(self, *, text: str, voice_id: str, speed: float = 0.9) -> dict[str, Any]:
-        if not text.strip() or not voice_id.startswith("fishaudio_"):
-            raise ValueError("Fish TTS needs nonempty text and a Fish voice ID")
+        if not text.strip() or not _VOICE_ID.fullmatch(voice_id):
+            raise ValueError("OpenSpeaker TTS needs nonempty text and a valid AI33 voice ID")
         if not 0.5 <= speed <= 1.5:
             raise ValueError("OpenSpeaker TTS speed must be between 0.5 and 1.5")
         return self.request_json(
@@ -135,6 +166,46 @@ class AI33SpeechClient:
             "/v3/text-to-speech",
             {"text": text, "voice_id": voice_id, "speed": speed},
         )
+
+
+    def clone_voice(self, *, audio_path: Path, name: str) -> dict[str, Any]:
+        """Submit a consented reference recording once, without automatic paid retries.
+
+        The public API confirms multipart/form-data and the endpoint. The form's
+        field names must also be checked against the account's API documentation.
+        """
+        if audio_path.is_symlink() or not audio_path.is_file():
+            raise AI33SpeechError("Voice reference must be a real local audio file")
+        if not name or "\r" in name or "\n" in name:
+            raise ValueError("Voice clone name is invalid")
+        with audio_path.open("rb") as stream:
+            audio = stream.read(_MAX_CLONE_BYTES + 1)
+        if not audio or len(audio) > _MAX_CLONE_BYTES:
+            raise ValueError("Voice reference must be between 1 byte and 10 MiB")
+        mime_type = mimetypes.guess_type(audio_path.name)[0] or "application/octet-stream"
+        boundary = "ai33-voice-" + uuid4().hex
+        fields = (
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"name\"\r\n\r\n"
+            f"{name}\r\n--{boundary}\r\n"
+            "Content-Disposition: form-data; name=\"audio\"; filename=\"reference"
+            f"{audio_path.suffix.lower()}\"\r\nContent-Type: {mime_type}\r\n\r\n"
+        ).encode("utf-8")
+        body = fields + audio + f"\r\n--{boundary}--\r\n".encode("ascii")
+        request = Request(
+            self._base_url + "/v3/text-to-speech/voice-clone",
+            data=body,
+            headers={
+                "xi-api-key": self._api_key,
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        with urlopen(request, timeout=120) as response:
+            result = json.load(response)
+        if not isinstance(result, dict) or result.get("success") is False:
+            raise AI33SpeechError("OpenSpeaker did not accept the voice clone request")
+        return result
 
     def poll(
         self, task_id: str, *, timeout_seconds: int = 3600, interval_seconds: float = 8.0
