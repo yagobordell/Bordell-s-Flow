@@ -25,7 +25,7 @@ from ai_video_factory.inference.errors import (
     ModelBootstrapPendingError,
     NonRetryableTaskError,
 )
-from ai_video_factory.inference.gpu_diagnostics import diagnostic_checkpoint
+from ai_video_factory.inference.gpu_diagnostics import diagnostic_checkpoint, diagnostic_failure
 from ai_video_factory.inference.gpu_failures import (
     DEFAULT_GPU_MAX_ATTEMPTS,
     classify_gpu_failure,
@@ -1461,6 +1461,9 @@ class LTXAudioToVideoTaskRunner:
                 parameters=parameters,
             )
         except Exception as exc:
+            # Record the OOM with its original allocator state, before cleanup
+            # invalidates resident models and obscures the failing allocation.
+            diagnostic_failure(exc)
             if is_retryable_gpu_failure(exc) or classify_gpu_failure(exc) == "decoder_budget":
                 invalidator = getattr(self._backend, "invalidate_pipeline", None)
                 if callable(invalidator):
