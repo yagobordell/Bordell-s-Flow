@@ -239,3 +239,70 @@ def test_legacy_run_source_can_activate_clone_after_png_is_moved(
     assert json.loads(
         (organized.parent / "voice.json").read_text(encoding="utf-8")
     )["status"] == "ready"
+
+
+def test_interrupted_move_of_qr_and_voice_finishes_without_reprompting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    avatar = _avatar(tmp_path)
+    library = avatar.parent
+    (library / "otra-muestra.wav").write_bytes(b"reference")
+    qr = ensure_avatar_qr(
+        avatar_file=avatar, avatars_dir=library, input_url=URL,
+    )
+    selected = ensure_avatar_voice(
+        avatar_file=avatar, avatars_dir=library,
+        default_voice_id=DEFAULT,
+        input_audio_filename="otra-muestra.wav", activate=False,
+    )
+    folder = library / avatar.stem
+    folder.mkdir()
+    (library / ".qr" / avatar.name / "qr.png").rename(folder / "qr.png")
+    (library / ".qr" / avatar.name / "qr.json").rename(folder / "qr.json")
+    (library / ".voice" / avatar.name / "voice.json").rename(folder / "voice.json")
+    # Simulate interruption before the audio and PNG were moved.
+    monkeypatch.setattr(
+        "builtins.input", lambda _prompt: pytest.fail("Must not ask again"),
+    )
+    recovered = runner._recover_avatar_layout(avatar, library)
+    assert recovered == folder / avatar.name
+    assert recovered.is_file() and not avatar.exists()
+    assert (folder / "otra-muestra.wav").read_bytes() == b"reference"
+    assert ensure_avatar_qr(
+        avatar_file=recovered, avatars_dir=library, interactive=True,
+    ) == qr
+    assert ensure_avatar_voice(
+        avatar_file=recovered, avatars_dir=library,
+        default_voice_id=DEFAULT, interactive=True, activate=False,
+    ) == selected
+
+
+def test_qr_only_recovers_interrupted_legacy_move_before_prompting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    import asyncio
+    from argparse import Namespace
+
+    avatar = _avatar(tmp_path)
+    library = avatar.parent
+    qr = ensure_avatar_qr(
+        avatar_file=avatar, avatars_dir=library, input_url=URL,
+    )
+    folder = library / avatar.stem
+    folder.mkdir()
+    (library / ".qr" / avatar.name / "qr.png").rename(folder / "qr.png")
+    (library / ".qr" / avatar.name / "qr.json").rename(folder / "qr.json")
+    args = Namespace(
+        script_file=None, scripts_dir=tmp_path / "scripts", script=None,
+        list_scripts=False, avatars_dir=library, avatar=avatar.name,
+        qr_url=None, qr_only=True, list_avatars=False,
+    )
+    monkeypatch.setattr(runner, "parse_args", lambda: args)
+    monkeypatch.setattr(
+        "builtins.input", lambda _prompt: pytest.fail("Saved QR must not reprompt"),
+    )
+    monkeypatch.setattr(runner.settings, "openai_api_key", None)
+    asyncio.run(runner.main())
+    assert (folder / avatar.name).is_file()
+    assert (folder / "qr.png").read_bytes() == qr.png
+    assert "QR listo:" in capsys.readouterr().out
