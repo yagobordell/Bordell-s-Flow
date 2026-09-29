@@ -929,6 +929,7 @@ async def _run_images_only(
         report["run"]["status"] = "failed"
         report.setdefault("timings", {})["status"] = "failed"
         report.setdefault("api_costs", {})["run_status"] = "failed"
+        _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
     report["run"]["image_generation"] = {"status": "running"}
@@ -956,6 +957,7 @@ async def _run_images_only(
     except Exception:
         report["run"]["video_preview"] = {"status": "incomplete"}
         report["run"]["status"] = "failed"
+        _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
     if preview is not None:
@@ -968,6 +970,7 @@ async def _run_images_only(
         except Exception:
             report["run"]["video_generation"] = {"status": "incomplete"}
             report["run"]["status"] = "failed"
+            _refresh_audio_costs(report, output)
             _write(report_path, report)
             raise
         if video is not None:
@@ -1022,17 +1025,19 @@ async def _run_videos_only(script_file: Path, output_root: Path) -> None:
         "preparing LTX I2V/A2V jobs",
         flush=True,
     )
+    _refresh_audio_costs(report, output)
     try:
         video = await _video_if_ready(output, report, require=True)
     except Exception:
         report["run"]["video_generation"] = {"status": "incomplete"}
         report["run"]["status"] = "failed"
+        _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
     report["run"]["video_generation"] = video
     report["run"]["status"] = "completed"
     report["timings"]["status"] = "completed"
-    report["api_costs"]["run_status"] = "completed"
+    _refresh_audio_costs(report, output)
     _write(report_path, report)
     print(f"  LTX video ready: {video['file']}", flush=True)
 
