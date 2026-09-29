@@ -100,6 +100,11 @@ def _is_number_token(token: str) -> bool:
     return token.isdecimal() or token in _NUMBER_WORDS
 
 
+def _is_number_phrase_token(token: str) -> bool:
+    """Return whether a token belongs to a spoken number/currency phrase."""
+    return _is_number_token(token) or token in _NUMBER_UNITS
+
+
 def _edit_distance_at_most_two(left: str, right: str) -> bool:
     if abs(len(left) - len(right)) > 2:
         return False
@@ -163,7 +168,20 @@ def _align_stt_tokens(
             and _is_number_token(expected[i1 - 1])
             and all(token in _NUMBER_UNITS for token in expected_part)
         )
-        if not (numeric_replacement or numeric_only_change
+        numeric_phrase_change = (
+            tag in {"replace", "delete", "insert"}
+            and bool(expected_part or actual_part)
+            and all(
+                _is_number_phrase_token(token)
+                for token in expected_part + actual_part
+            )
+            and (
+                any(_is_number_token(token) for token in expected_part + actual_part)
+                or (i1 > 0 and _is_number_token(expected[i1 - 1]))
+                or (j1 > 0 and _is_number_token(actual[j1 - 1]))
+            )
+        )
+        if not (numeric_replacement or numeric_only_change or numeric_phrase_change
                 or short_spelling_change or short_omission_or_insertion
                 or adjacent_number_unit):
             expected_text = " ".join(expected_part) or "<none>"
@@ -196,7 +214,18 @@ def _align_stt_tokens(
             ):
                 mapping[expected_index] = actual_index
         elif tag == "delete":
-            anchor = j1 if j1 < len(actual) else (j1 - 1 if j1 else None)
+            if (
+                j1 > 0
+                and _is_number_token(actual[j1 - 1])
+                and expected_part
+                and all(_is_number_phrase_token(token) for token in expected_part)
+            ):
+                # Whisper may collapse "forty-seven dollars" into one "47"
+                # token and omit the currency unit. Keep all expected words
+                # timed against that single numeric STT token.
+                anchor = j1 - 1
+            else:
+                anchor = j1 if j1 < len(actual) else (j1 - 1 if j1 else None)
             for expected_index in range(i1, i2):
                 mapping[expected_index] = anchor
 

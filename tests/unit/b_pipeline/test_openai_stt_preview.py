@@ -23,6 +23,7 @@ from ai_video_factory.bots.fish_audio_workflow import (
 )
 from ai_video_factory.compositor.static_preview import (
     StaticPreviewError,
+    _align_stt_tokens,
     _media_image_motion_filter,
     build_stt_beat_timeline,
     generate_static_preview,
@@ -215,6 +216,13 @@ def test_timeline_fails_closed_when_stt_changes_a_word(tmp_path: Path) -> None:
     with pytest.raises(StaticPreviewError, match="do not match"):
         generate_static_preview(tmp_path, plan, audio, images)
     assert not (tmp_path / "preview" / "static_preview.mp4").exists()
+
+
+def test_stt_accepts_spoken_currency_as_collapsed_numeric_token() -> None:
+    mapping = _align_stt_tokens(
+        ["forty", "seven", "dollars"], ["47"], block_id=3,
+    )
+    assert mapping == [0, 0, 0]
 
 
 def test_real_ffmpeg_preview_has_audio_cuts_and_avatar_media_50_50(
