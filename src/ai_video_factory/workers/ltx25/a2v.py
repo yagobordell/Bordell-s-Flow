@@ -65,9 +65,8 @@ LTX_A2V_DEV_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdp
 LTX_A2V_GUIDED_GENERATION_PROFILE = (
     "ltx25-a2v-guided-dev-a95ab856-model6c7e5e5-fp8disk-eagersdpa-v2"
 )
-# New immutable profile: keep the static prompt, sampling and 720p output intact,
-# but stream weights from disk and cap automatic decoder activation allocations.
-# The legacy static profile remains supported for previously submitted job IDs.
+# Preserve immutable v2 requests while v3 retains their prompts and 720p output,
+# streams weights from disk and sizes decoder tiles from live CUDA memory.
 # Keep v2 immutable for already-submitted requests; the 2-GiB cap is too small
 # for DiffVAE's model, safety reserve, and full-volume stage-4 features.
 LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE = (
