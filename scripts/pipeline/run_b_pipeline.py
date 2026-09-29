@@ -14,6 +14,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Literal
 
+from dotenv import load_dotenv
 from PIL import Image
 
 from ai_video_factory.bots import run_b_pipeline
@@ -881,6 +882,8 @@ async def _video_if_ready(
                 access_key_id=settings.r2_access_key_id,
                 secret_access_key=settings.r2_secret_access_key,
             )
+            # Pydantic reads .env but does not export Salad account/rate variables.
+            load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
             with SaladCostMeter(
                 output,
                 services_path=Path(__file__).resolve().parents[2]
