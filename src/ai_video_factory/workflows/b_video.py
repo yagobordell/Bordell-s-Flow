@@ -22,10 +22,14 @@ from ai_video_factory.compositor.static_preview import (
     build_stt_beat_timeline,
 )
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
-from ai_video_factory.inference.gpu_failures import DEFAULT_GPU_MAX_ATTEMPTS
+from ai_video_factory.inference.gpu_failures import (
+    DEFAULT_GPU_MAX_ATTEMPTS,
+    classify_gpu_failure,
+)
 from ai_video_factory.inference.ports import ObjectStorage
 from ai_video_factory.inference.storage import sha256_file
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
+from ai_video_factory.providers.job_queue import QueueJobNotFoundError, QueueJobStatus
 from ai_video_factory.providers.job_queue import JobQueueClient
 from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
@@ -390,9 +394,83 @@ def has_pending_b2_video(output: Path) -> bool:
         if path.is_symlink():
             return True
         state = json.loads(path.read_text(encoding="utf-8"))
-        if state.get("status") != "completed":
+        if state.get("status") not in {"completed", "superseded"}:
             return True
     return False
+
+
+def _reconcile_prior_failed_video_runs(
+    output: Path,
+    *,
+    new_digest: str,
+    audio_sha256: str,
+    queue: JobQueueClient,
+) -> None:
+    """Supersede only old OOM runs proven terminal in authoritative Postgres.
+
+    Do not recreate paid jobs while an old request is pending, running,
+    succeeded-but-not-materialized, cancelled or in an unknown state.
+    """
+    runs = output / "video" / "runs"
+    if runs.is_symlink():
+        raise B2VideoError("Refusing linked LTX video runs directory")
+    for previous_path in sorted(runs.glob("*/manifest.json")):
+        if previous_path.is_symlink() or previous_path.parent.is_symlink():
+            raise B2VideoError("Refusing linked previous LTX manifest")
+        old = json.loads(previous_path.read_text(encoding="utf-8"))
+        if not isinstance(old, dict) or not isinstance(old.get("jobs"), list):
+            raise B2VideoError(f"Invalid previous LTX manifest: {previous_path}")
+        if old.get("fingerprint") == new_digest or old.get("status") in {
+            "completed", "superseded"
+        }:
+            continue
+        if old.get("master_audio_sha256") != audio_sha256:
+            raise B2VideoError(
+                "A previous incomplete LTX run has a different soundtrack; "
+                "reconcile it before generating a new video"
+            )
+        for record in old["jobs"]:
+            if not isinstance(record, dict):
+                raise B2VideoError("Invalid previous LTX job record")
+            if record.get("status") == "completed":
+                continue
+            old_id = record.get("job_id")
+            if not isinstance(old_id, str) or not old_id:
+                raise B2VideoError("Previous LTX job has no durable ID")
+            try:
+                snapshot = queue.get(old_id)
+            except QueueJobNotFoundError:
+                if record.get("status") == "pending":
+                    continue  # Manifest saved before any authoritative submission.
+                raise B2VideoError(
+                    f"Previous LTX job {old_id} is missing from Postgres; "
+                    "cannot verify whether its paid inference completed"
+                ) from None
+            if snapshot.status is not QueueJobStatus.FAILED:
+                raise B2VideoError(
+                    f"Previous LTX job {old_id} is {snapshot.status.value}; "
+                    "refusing to submit another paid video while its result is unresolved"
+                )
+            provider = snapshot.provider_payload or {}
+            last_error = provider.get("last_error")
+            if not isinstance(last_error, str) or classify_gpu_failure(
+                RuntimeError(last_error)
+            ) != "oom":
+                raise B2VideoError(
+                    f"Previous LTX job {old_id} failed for a non-OOM or unknown reason; "
+                    "manual reconciliation is required before retrying"
+                )
+        prior_status = old["status"]
+        old["status"] = "superseded"
+        old["superseded_by"] = new_digest
+        old["superseded_reason"] = "Postgres-confirmed terminal OOM"
+        old["previous_status"] = prior_status
+        _save_json(previous_path, old)
+        print(
+            f"  Previous LTX run {previous_path.parent.name} was terminally OOM; "
+            "preserving its artifacts and using new memory-safe request IDs",
+            flush=True,
+        )
 
 
 def generate_b2_ltx_video(
@@ -440,6 +518,9 @@ def generate_b2_ltx_video(
         # Fail before any paid I2V/A2V submissions if the new worker image
         # is not deployed. A repo pull never updates Salad's pinned Docker image.
         check_a2v_worker()
+    _reconcile_prior_failed_video_runs(
+        output, new_digest=digest, audio_sha256=audio["sha256"], queue=queue
+    )
     executor = InferenceJobExecutor(
         queue=queue, storage=storage,
         poll_seconds=poll_seconds, timeout_seconds=timeout_seconds,
