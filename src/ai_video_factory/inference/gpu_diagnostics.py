@@ -49,10 +49,20 @@ def _read_linux_memory() -> dict[str, int | str]:
     for key, filename in (
         ("cgroup_memory_current_bytes", "/sys/fs/cgroup/memory.current"),
         ("cgroup_memory_max_bytes", "/sys/fs/cgroup/memory.max"),
+        ("cgroup_v1_memory_current_bytes", "/sys/fs/cgroup/memory/memory.usage_in_bytes"),
+        ("cgroup_v1_memory_limit_bytes", "/sys/fs/cgroup/memory/memory.limit_in_bytes"),
     ):
         with suppress(OSError):
             value = Path(filename).read_text(encoding="utf-8").strip()
             values[key] = int(value) if value.isdigit() else value
+    try:
+        import resource
+
+        soft, hard = resource.getrlimit(resource.RLIMIT_MEMLOCK)
+        values["memlock_soft_bytes"] = soft
+        values["memlock_hard_bytes"] = hard
+    except (ImportError, OSError, ValueError):
+        pass
     return values
 
 
@@ -172,6 +182,11 @@ class GpuJobDiagnostics:
         self.last_phase = phase
         self._persist(phase, None)
 
+    def host_memory_event(self, phase: str, **details: int | str) -> None:
+        if not _SAFE_PHASE.fullmatch(phase):
+            raise ValueError("host-memory diagnostic phase must be a fixed safe identifier")
+        self._persist(phase, None, details=details)
+
     def failure(self, error: BaseException) -> None:
         if self._failure_recorded:
             return
@@ -199,7 +214,13 @@ class GpuJobDiagnostics:
             exc_info=(type(error), error, error.__traceback__),
         )
 
-    def _persist(self, phase: str, failure: dict[str, str] | None) -> None:
+    def _persist(
+        self,
+        phase: str,
+        failure: dict[str, str] | None,
+        *,
+        details: dict[str, int | str] | None = None,
+    ) -> None:
         self.sequence += 1
         key = (
             f"diagnostics/ltx-a2v/{self.job_id}/"
@@ -222,6 +243,8 @@ class GpuJobDiagnostics:
         }
         if failure is not None:
             payload["failure"] = failure
+        if details is not None:
+            payload["host_memory_event"] = details
         logger.info(
             "LTX_A2V_DIAGNOSTIC job_id=%s attempt=%d phase=%s r2_key=%s cuda=%s",
             self.job_id,
@@ -279,6 +302,12 @@ def diagnostic_checkpoint(phase: str, *, sync_cuda: bool = False) -> None:
     current = _ACTIVE_DIAGNOSTICS.get()
     if current is not None:
         current.checkpoint(phase, sync_cuda=sync_cuda)
+
+
+def diagnostic_host_memory_event(phase: str, **details: int | str) -> None:
+    current = _ACTIVE_DIAGNOSTICS.get()
+    if current is not None:
+        current.host_memory_event(phase, **details)
 
 
 def diagnostic_failure(error: BaseException) -> None:
