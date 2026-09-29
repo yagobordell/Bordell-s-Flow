@@ -437,9 +437,14 @@ def test_guided_a2v_uses_upstream_guidance_and_preserves_padded_speech(
     [
         (a2v.LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE, "cpu", 20_000_000_000),
         (
-            a2v.LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+            a2v.LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             "disk",
             a2v.LTX_A2V_SAFE_TILING_BUDGET_BYTES,
+        ),
+        (
+            a2v.LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+            "disk",
+            20_000_000_000 - a2v.LTX_A2V_SAFE_TILING_RESERVE_BYTES,
         ),
     ],
 )
@@ -522,7 +527,12 @@ def test_static_reference_preserves_simple_positive_prompt_with_real_negative_co
     assert metadata["generation_recipe"] == "distilled_static_reference"
     assert metadata["offload_mode"] == expected_offload
     assert metadata["activation_budget_cap_bytes"] == (
-        expected_budget if expected_offload == "disk" else None
+        a2v.LTX_A2V_SAFE_TILING_BUDGET_BYTES
+        if profile == a2v.LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE else None
+    )
+    assert metadata["activation_budget_reserve_bytes"] == (
+        a2v.LTX_A2V_SAFE_TILING_RESERVE_BYTES
+        if profile == a2v.LTX_A2V_STATIC_SAFE_GENERATION_PROFILE else 0
     )
     assert metadata["stage_1_steps"] == 8
     assert metadata["stage_2_steps"] == 3
