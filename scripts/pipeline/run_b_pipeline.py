@@ -4,14 +4,17 @@ import argparse
 import asyncio
 import hashlib
 import json
+import os
 import re
 import shutil
 import sys
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from time import perf_counter
 from typing import Literal
 
+from dotenv import load_dotenv
 from PIL import Image
 
 from ai_video_factory.bots import run_b_pipeline
@@ -38,6 +41,7 @@ from ai_video_factory.inference.capacity_controller import (
     read_capacity_controller_health,
     validate_capacity_controller_dsn,
 )
+from ai_video_factory.inference.salad_billing import SaladCostMeter, read_salad_costs
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
 from ai_video_factory.providers.avatar_library import avatar_directory, organize_avatar
@@ -878,13 +882,23 @@ async def _video_if_ready(
                 access_key_id=settings.r2_access_key_id,
                 secret_access_key=settings.r2_secret_access_key,
             )
-            return generate_b2_ltx_video(
-                output, plan, audio, images,
-                queue=queue, storage=storage,
-                poll_seconds=settings.inference_client_poll_seconds,
-                timeout_seconds=max(settings.inference_client_timeout_seconds, 21600.0),
-                check_capacity=_require_ltx_capacity_controller,
-            )
+            # Pydantic reads .env but does not export Salad account/rate variables.
+            load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+            with SaladCostMeter(
+                output,
+                services_path=Path(__file__).resolve().parents[2]
+                / "deploy" / "salad" / "services.json",
+                api_key=settings.salad_api_key,
+                organization=os.getenv("SALAD_ORGANIZATION"),
+                project=os.getenv("SALAD_PROJECT"),
+            ):
+                return generate_b2_ltx_video(
+                    output, plan, audio, images,
+                    queue=queue, storage=storage,
+                    poll_seconds=settings.inference_client_poll_seconds,
+                    timeout_seconds=max(settings.inference_client_timeout_seconds, 21600.0),
+                    check_capacity=_require_ltx_capacity_controller,
+                )
         finally:
             queue.close()
 
@@ -1072,6 +1086,7 @@ async def _run_images_only(
         f"({manifest.get('openai_direct_count', 0)} standard OpenAI requests)",
         flush=True,
     )
+    _print_observed_salad_total(report["api_costs"])
 
 
 
@@ -1125,6 +1140,7 @@ async def _run_videos_only(script_file: Path, output_root: Path) -> None:
     _refresh_audio_costs(report, output)
     _write(report_path, report)
     print(f"  LTX video ready: {video['file']}", flush=True)
+    _print_observed_salad_total(report["api_costs"])
 
 
 
@@ -1173,6 +1189,39 @@ async def _generate_audio(
 
 
 
+def _attach_salad_costs(
+    api_costs: dict[str, object], output: Path
+) -> dict[str, object] | None:
+    """Keep the OpenAI-only total intact; add the observed Salad subtotal."""
+    salad = read_salad_costs(output / "video" / "salad_costs.json")
+    if salad is None:
+        return None
+    observed = salad.get("priced_subtotal_usd")
+    if observed is None:
+        api_costs["priced_subtotal_including_salad_usd"] = None
+    else:
+        subtotal = Decimal(str(api_costs["priced_subtotal_usd"])) + Decimal(str(observed))
+        api_costs["priced_subtotal_including_salad_usd"] = f"{subtotal:.8f}"
+    api_total = api_costs.get("estimated_total_usd")
+    gpu_total = salad.get("estimated_observed_cost_usd")
+    api_costs["estimated_total_including_salad_usd"] = (
+        f"{Decimal(str(api_total)) + Decimal(str(gpu_total)):.8f}"
+        if api_total is not None and gpu_total is not None
+        else None
+    )
+    return salad
+
+
+def _print_observed_salad_total(api_costs: dict[str, object]) -> None:
+    combined = api_costs.get("priced_subtotal_including_salad_usd")
+    if combined is not None:
+        print(
+            "  OpenAI + observed Salad subtotal: $" + str(combined)
+            + " (provisional; Salad outside the video stage is not included)",
+            flush=True,
+        )
+
+
 def _refresh_audio_costs(report: dict[str, object], output: Path) -> None:
     """Reconcile paid Fish director calls without repeating earlier B charges."""
     previous = report.get("api_costs")
@@ -1200,6 +1249,9 @@ def _refresh_audio_costs(report: dict[str, object], output: Path) -> None:
     report["api_costs"] = ledger.report(
         blocks=None, run_status=state, expected_calls=expected,
     )
+    salad = _attach_salad_costs(report["api_costs"], output)
+    if salad is not None:
+        report["salad_costs"] = salad
 
 
 def _activate_pending_avatar_clone(
@@ -1387,6 +1439,7 @@ async def _run_audio_only(
         f"(voice {artifact['voice_id']})",
         flush=True,
     )
+    _print_observed_salad_total(report["api_costs"])
 
 
 def _latest_completed_audio(output: Path, source_sha256: str) -> dict[str, object] | None:
@@ -1837,14 +1890,15 @@ async def main() -> None:
             run_seconds=resume_elapsed_offset + perf_counter() - run_started,
             status=status,
         )
-        _write(
-            output / "run_report.json",
-            {
-                "run": {**run_metadata, "status": status},
-                "api_costs": costs,
-                "timings": timing_report,
-            },
-        )
+        salad = _attach_salad_costs(costs, output)
+        report_payload = {
+            "run": {**run_metadata, "status": status},
+            "api_costs": costs,
+            "timings": timing_report,
+        }
+        if salad is not None:
+            report_payload["salad_costs"] = salad
+        _write(output / "run_report.json", report_payload)
         return costs, timing_report
 
     def stage_complete(
@@ -2052,6 +2106,7 @@ async def main() -> None:
         timing_report["run_elapsed_seconds"],
         costs["estimated_total_usd"],
     )
+    _print_observed_salad_total(costs)
 
 
 if __name__ == "__main__":
