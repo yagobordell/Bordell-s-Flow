@@ -32,6 +32,7 @@ _MAX_IMAGE_URL = 20_971_520
 _MAX_PNG = 40 * 1024 * 1024
 _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", flags=re.ASCII)
 _IMAGE_PREFIX = "iphone 6 photo done by an elderly:  "
+_GRID_IMAGE_QUALITY = "medium"
 _AVATAR_REFERENCE_PROMPT_SUFFIX = (
     "set the reference image ONLY to preserve the avatar's general identity and appearance. "
     "Do NOT copy the reference image's lighting, camera quality, composition, background, "
@@ -74,6 +75,7 @@ class ImageOptions:
         *,
         avatar_image_url: str | None = None,
         size: str | None = None,
+        quality: str | None = None,
         visual_style: str = "casero",
     ) -> dict[str, Any]:
         request: dict[str, Any] = {
@@ -83,13 +85,18 @@ class ImageOptions:
                 visual_style=visual_style,
             ),
             "size": size or self.size,
-            "quality": self.quality,
+            "quality": self.quality if quality is None else quality,
             "output_format": "png",
             "n": 1,
         }
         if avatar_image_url is not None:
             request["images"] = [{"image_url": avatar_image_url}]
         return request
+
+
+def _job_quality(job: dict[str, Any], options: ImageOptions) -> str:
+    """Only composite grids use medium; individual image jobs keep the configured low."""
+    return _GRID_IMAGE_QUALITY if job.get("grid") is not None else options.quality
 
 
 def effective_image_prompt(
@@ -224,6 +231,7 @@ def _fingerprint(job: dict[str, Any], options: ImageOptions) -> str:
         "block_id": job["block_id"],
         **options.request(
             job["description"], size=job.get("size"),
+            quality=_job_quality(job, options),
             visual_style=job.get("visual_style", "casero"),
         ),
     }
@@ -277,7 +285,7 @@ def _mark_complete(
         "provider": "openai_direct",
         "model_id": options.model_id,
         "size": generated["size"],
-        "quality": options.quality,
+        "quality": _job_quality(job, options),
         "file": image_path.relative_to(output).as_posix(),
         "sha256": generated["sha256"],
         "width": generated["width"],
@@ -327,6 +335,7 @@ def _one_image(
             "schema_version": "openai-image-v1",
             "fingerprint": fingerprint,
             "model_id": options.model_id,
+            "quality": _job_quality(job, options),
             "status": "direct_pending",
         }
         _atomic_json(state_path, state)
@@ -365,7 +374,7 @@ def _one_image(
             ),
             "model": options.model_id,
             "size": job.get("size", options.size),
-            "quality": options.quality,
+            "quality": _job_quality(job, options),
             "output_format": "png",
             "destination": image_path,
         }
@@ -459,6 +468,7 @@ def generate_b2_images(
         "model_id": options.model_id,
         "size": options.size,
         "quality": options.quality,
+        "grid_quality": _GRID_IMAGE_QUALITY,
         "max_parallel_images": min(options.max_parallel_images or len(jobs), len(jobs)),
         "status": "running",
         "total_described_beats": len(described),
