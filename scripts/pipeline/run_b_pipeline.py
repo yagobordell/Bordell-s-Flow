@@ -1282,6 +1282,14 @@ class BotArtifacts:
             {"attempt": attempt, "validation_error": error, "response": payload},
         )
 
+    def rejected_b12(
+        self, block_id: int, attempt: int, error: str, payload: dict[str, object]
+    ) -> None:
+        _write(
+            self._folder("B1.2", block_id) / f"rejected_attempt_{attempt}.json",
+            {"attempt": attempt, "validation_error": error, "response": payload},
+        )
+
     def rejected_b2(
         self, block_id: int, attempt: int, error: str, payload: dict[str, object]
     ) -> None:
@@ -1563,7 +1571,10 @@ async def main() -> None:
         if resume_expected_calls is None:
             expected_calls: dict[str, int | None] = {
                 "B1.1": max(1, timings.call_count("B1.1")),
-                "B1.2": report_blocks if stop_index >= 1 else 0,
+                "B1.2": (
+                    max(report_blocks, timings.call_count("B1.2"))
+                    if report_blocks is not None else None
+                ) if stop_index >= 1 else 0,
                 "B2": (
                     max(report_blocks, timings.call_count("B2"))
                     if report_blocks is not None else None
@@ -1676,6 +1687,7 @@ async def main() -> None:
             on_input=artifacts.input,
             on_output=output_and_start_audio,
             on_rejected_output=artifacts.rejected_b11,
+            on_rejected_b12_output=artifacts.rejected_b12,
             on_rejected_b2_output=artifacts.rejected_b2,
             on_api_response=ledger.record,
             on_call_duration=timings.record_call,

@@ -9,9 +9,19 @@ Structured Outputs is appended at runtime.
   verbatim `first_words` / `last_words` anchors into contiguous block text and refuses any
   gap, duplicate, overlap, normalized text, or ambiguous anchor.
 - B1.2 runs independently for each single materialized block. It emits 1A, 1B, ... 1AA,
-  2A, ... IDs and enforces 40 words per beat. Validation ignores whitespace and punctuation
-  differences when checking that the ordered beat text matches the block; other character
-  changes remain errors.
+  2A, ... IDs and enforces 40 words and 13–100 decoded characters per beat (excluding
+  leading/trailing whitespace). A sole beat in a block of at most 12 stripped characters
+  is the unavoidable exception because B1.2 cannot merge across blocks. Validation
+  ignores whitespace and punctuation differences when checking the ordered beat text
+  against the block; other character changes remain errors.
+- B1.2 responses with beats over 100 or at most 12 characters (outside that exception)
+  receive one automatic Responses API Structured Outputs correction call for that block.
+  The model receives the original block, validation error and rejected response; it
+  splits/merges only adjacent immutable source slices and renumbers beat IDs. The corrected
+  response must reconstruct the original block character for character. Rejected responses
+  are stored in `B1.2/block_<id>/rejected_attempt_<n>.json`, and corrections are included
+  in B1.2 usage, cost and timing. If the correction is still invalid, the block fails
+  without starting B2.
 - B2 runs independently on each completed B1.2 block, preserves all upstream text,
   IDs and metadata, and assigns exactly one of `avatar`, `avatar_media`, `media_image`,
   `media_video` with the documented description/null rules.
@@ -242,7 +252,7 @@ composition tests is required before restoring end-to-end video production.
 No lossy adapter or silent fallback to the retired bots is used.
 
 The validations here establish structural fidelity, source-word order after ignoring
-whitespace and punctuation, 40-word
+whitespace and punctuation, 40-word and 13–100-character
 limits, type/ID preservation, and mandatory intro/close avatars. Whether a media
 brief is *semantically* faithful or physically feasible still needs representative
 manual or model-based evaluation; schemas alone cannot prove that.

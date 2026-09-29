@@ -216,7 +216,31 @@ def validate_beats(result: B12Output, block: MaterializedBlock) -> list[Beat]:
         raise BPipelineValidationError(
             "B1.2 beat text differs from the materialized block beyond whitespace or punctuation"
         )
+    length_errors = _beat_character_length_errors(result.beats, block)
+    if length_errors:
+        raise BPipelineValidationError("; ".join(length_errors))
     return result.beats
+
+
+def _beat_character_length_errors(
+    beats: list[Beat], block: MaterializedBlock
+) -> list[str]:
+    """Count decoded narration characters, excluding boundary whitespace."""
+    errors: list[str] = []
+    only_short_block = len(beats) == 1 and len(block.text.strip()) <= 12
+    for beat in beats:
+        characters = len(beat.text.strip())
+        if characters > 100:
+            errors.append(
+                f"B1.2 beat {beat.beat_id} has {characters} characters (maximum 100); "
+                "split it into two or more beats"
+            )
+        elif characters <= 12 and not only_short_block:
+            errors.append(
+                f"B1.2 beat {beat.beat_id} has {characters} characters (minimum 13); "
+                "merge it with the previous or next beat in the same block"
+            )
+    return errors
 
 
 def validate_visuals(result: B2Output, supplied: B2Input) -> None:
@@ -335,6 +359,9 @@ async def run_b_pipeline(
     on_input: Callable[[str, int | None, dict[str, object]], None] | None = None,
     on_output: Callable[[str, int | None, dict[str, object]], None] | None = None,
     on_rejected_output: Callable[[int, str, dict[str, object]], None] | None = None,
+    on_rejected_b12_output: (
+        Callable[[int, int, str, dict[str, object]], None] | None
+    ) = None,
     on_rejected_b2_output: (
         Callable[[int, int, str, dict[str, object]], None] | None
     ) = None,
@@ -451,20 +478,70 @@ async def run_b_pipeline(
                 current_block_id=block.block_id,
                 blocks=(block,),
             )
-            async with semaphore:
-                output = await _call_stage(
-                    "B1.2",
-                    block.block_id,
-                    b12_input.model_dump(),
-                    provider=provider,
-                    model=model,
-                    prompt="b1_2.md",
-                    output_type=B12Output,
-                    on_input=on_input,
-                    on_api_response=on_api_response,
-                    on_call_duration=on_call_duration,
+            async def call_b12(instructions_suffix: str = "") -> B12Output:
+                async with semaphore:
+                    return await _call_stage(
+                        "B1.2",
+                        block.block_id,
+                        b12_input.model_dump(),
+                        provider=provider,
+                        model=model,
+                        prompt="b1_2.md",
+                        instructions_suffix=instructions_suffix,
+                        output_type=B12Output,
+                        on_input=on_input,
+                        on_api_response=on_api_response,
+                        on_call_duration=on_call_duration,
+                    )
+
+            output = await call_b12()
+            try:
+                validate_beats(output, block)
+            except BPipelineValidationError as first_error:
+                # Only the new character-boundary defects trigger a paid correction.
+                # Other upstream failures retain B1.2's existing fail-closed behavior.
+                if not output.beats or not _beat_character_length_errors(output.beats, block):
+                    raise
+                if on_rejected_b12_output is not None:
+                    on_rejected_b12_output(
+                        block.block_id, 1, str(first_error), output.model_dump()
+                    )
+                retry_suffix = (
+                    "\n\nB1.2 automatic beat-length correction. Your previous response "
+                    f"failed validation: {first_error}\n"
+                    "Return a corrected complete B1.2 object for the SAME original input "
+                    "block. Every beat must contain 13 to 100 characters after stripping "
+                    "boundary whitespace, except when the entire block is one beat with "
+                    "at most 12 characters. Split beats longer than 100 characters into "
+                    "as many contiguous source slices as necessary. Merge beats of at "
+                    "most 12 characters into the preceding or following beat within "
+                    "this block; choose the semantically appropriate neighbor without "
+                    "exceeding 100 characters or 40 words. If needed, relocate adjacent "
+                    "boundaries. Never edit, remove, reorder or duplicate source characters: "
+                    "the concatenated beat texts MUST equal blocks[0].text character for "
+                    "character. Reassign beat IDs consecutively from the block ID plus A, "
+                    "and assign beat_type for each resulting beat. Keep the original block "
+                    "metadata and narrative context unchanged. Follow the output schema.\n"
+                    "Previous invalid B1.2 response:\n"
+                    f"{_payload(output.model_dump())}"
                 )
-            validate_beats(output, block)
+                retry_output = await call_b12(retry_suffix)
+                try:
+                    validate_beats(retry_output, block)
+                    if "".join(beat.text for beat in retry_output.beats or []) != block.text:
+                        raise BPipelineValidationError(
+                            "B1.2 corrected beats do not reconstruct the original block exactly"
+                        )
+                except BPipelineValidationError as retry_error:
+                    if on_rejected_b12_output is not None:
+                        on_rejected_b12_output(
+                            block.block_id, 2, str(retry_error), retry_output.model_dump()
+                        )
+                    raise BPipelineValidationError(
+                        f"B1.2 block {block.block_id} failed character-length correction "
+                        f"after one retry: {retry_error}"
+                    ) from retry_error
+                output = retry_output
             if on_output is not None:
                 on_output("B1.2", block.block_id, output.model_dump())
             return output
