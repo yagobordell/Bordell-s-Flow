@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 PRICING_URL = "https://developers.openai.com/api/docs/pricing"
-PRICING_AS_OF = "2026-09-26"
+PRICING_AS_OF = "2026-09-29"
 _PER_MILLION = Decimal("1000000")
 _STANDARD_LUNA = {
     "ordinary_input": Decimal("0.10"),
@@ -19,7 +19,14 @@ _STANDARD_LUNA = {
     "cache_write": Decimal("0.125"),
     "output": Decimal("0.50"),
 }
-_STAGES = ("B1.1", "B1.2", "B2", "Fish director")
+_IMAGE_STAGE = "B2 images"
+_IMAGE_MODELS = {"gpt-image-2.5-flare", "gpt-image-2.5-sunburst"}
+_IMAGE_PRICING = {
+    "text_input": Decimal("5.00"),
+    "image_input": Decimal("8.00"),
+    "image_output": Decimal("30.00"),
+}
+_STAGES = ("B1.1", "B1.2", "B2", "Fish director", _IMAGE_STAGE)
 
 
 def _field(value: object, name: str, default: Any = None) -> Any:
@@ -42,14 +49,15 @@ class ApiCostLedger:
 
     def __init__(self) -> None:
         self._records: list[dict[str, object]] = []
+        self._expected_image_calls = 0
 
     @property
     def records(self) -> tuple[dict[str, object], ...]:
         return tuple(self._records)
 
     def record(self, stage: str, block_id: int | None, response: object) -> None:
-        if stage not in _STAGES:
-            raise ValueError(f"Unknown billing stage: {stage}")
+        if stage not in _STAGES or stage == _IMAGE_STAGE:
+            raise ValueError(f"Unknown text billing stage: {stage}")
 
         usage = _field(response, "usage")
         model = _field(response, "model")
@@ -167,6 +175,100 @@ class ApiCostLedger:
                 raise ValueError("Cannot restore malformed API request history")
             self._records.append(dict(request))
 
+    def sync_image_usage(self, output: Path) -> None:
+        """Rebuild image charges from durable POST states, including replaced images.
+
+        Rebuilding rather than appending makes resumes and repeat reconciliations
+        idempotent. An unknown POST outcome is never interpreted as a free call.
+        """
+        self._records = [
+            item for item in self._records if item.get("stage") != _IMAGE_STAGE
+        ]
+        self._expected_image_calls = 0
+        root = output / "images"
+        manifest_path = root / "manifest.json"
+        archive = root / "replaced_states"
+        if any(path.is_symlink() for path in (root, manifest_path, archive, root / "grids")):
+            raise ValueError("Refusing linked image accounting state")
+
+        planned: int | None = None
+        if manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(manifest, dict):
+                raise ValueError("Invalid image accounting manifest")
+            planned = _tokens(manifest.get("total_generation_jobs"))
+            if planned is None and "total_generation_jobs" in manifest:
+                raise ValueError("Invalid planned image request count")
+
+        active = sorted(root.glob("block_*/*.json")) + sorted(
+            (root / "grids").glob("*.json")
+        )
+        replaced = sorted(archive.glob("block_*/*.json"))
+        active_count = 0
+        replaced_count = 0
+        for path in (*active, *replaced):
+            if path.is_symlink() or path.parent.is_symlink():
+                raise ValueError(f"Refusing linked image accounting state: {path}")
+            state = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict) or state.get("schema_version") != "openai-image-v1":
+                raise ValueError(f"Invalid image accounting state: {path}")
+            status = state.get("status")
+            if status not in ("completed", "direct_submitting_unknown"):
+                continue  # direct_pending has not been submitted to the paid API.
+            if path.is_relative_to(archive):
+                replaced_count += 1
+            else:
+                active_count += 1
+
+            artifact = state.get("artifact")
+            if not isinstance(artifact, dict):
+                artifact = {}
+            usage = artifact.get("openai_usage")
+            details = _field(usage, "input_tokens_details")
+            input_tokens = _tokens(_field(usage, "input_tokens"))
+            text_tokens = _tokens(_field(details, "text_tokens"))
+            image_tokens = _tokens(_field(details, "image_tokens"))
+            output_tokens = _tokens(_field(usage, "output_tokens"))
+            model = artifact.get("model_id") or state.get("model_id")
+            record: dict[str, object] = {
+                "stage": _IMAGE_STAGE,
+                "block_id": state.get("block_id"),
+                "beat_id": state.get("beat_id"),
+                "image_state_file": path.relative_to(output).as_posix(),
+                "image_request_status": status,
+                "model": model,
+                "service_tier": "standard",
+                "input_tokens": input_tokens,
+                "text_input_tokens": text_tokens,
+                "image_input_tokens": image_tokens,
+                "output_tokens": output_tokens,
+                "estimated_cost_usd": None,
+                "pricing_note": None,
+            }
+            if status != "completed":
+                record["pricing_note"] = "Image POST outcome is unknown; charge may apply"
+            elif model not in _IMAGE_MODELS:
+                record["pricing_note"] = "No verified price for returned image model"
+            elif (
+                input_tokens is None
+                or text_tokens is None
+                or image_tokens is None
+                or output_tokens is None
+                or text_tokens + image_tokens != input_tokens
+            ):
+                record["pricing_note"] = "Missing or inconsistent image API token usage"
+            else:
+                amount = (
+                    Decimal(text_tokens) * _IMAGE_PRICING["text_input"]
+                    + Decimal(image_tokens) * _IMAGE_PRICING["image_input"]
+                    + Decimal(output_tokens) * _IMAGE_PRICING["image_output"]
+                ) / _PER_MILLION
+                record["estimated_cost_usd"] = _usd(amount)
+            self._records.append(record)
+        self._expected_image_calls = replaced_count + max(
+            planned if planned is not None else active_count, active_count
+        )
+
     def report(
         self,
         *,
@@ -183,6 +285,13 @@ class ApiCostLedger:
             {"B1.1": max(1, expected_b11_calls), "B1.2": blocks, "B2": blocks}
             if expected_calls is None
             else {stage: expected_calls.get(stage) for stage in _STAGES}
+        )
+        previous_image_count = expected.get(_IMAGE_STAGE)
+        expected[_IMAGE_STAGE] = max(
+            self._expected_image_calls,
+            previous_image_count
+            if type(previous_image_count) is int and previous_image_count >= 0
+            else 0,
         )
         fish_count = sum(item["stage"] == "Fish director" for item in ordered)
         expected["Fish director"] = (
@@ -218,8 +327,8 @@ class ApiCostLedger:
         return {
             "currency": "USD",
             "kind": "estimated_api_token_cost_not_invoice",
-            "included": "GPT-6 Luna planning and Fish director token calls",
-            "excluded": "OpenAI STT, image generation and Fish TTS charges",
+            "included": "GPT-6 Luna planning, Fish director and GPT Image 2.5 calls",
+            "excluded": "OpenAI STT and Fish TTS charges",
             "run_status": run_status,
             "pricing_status": "complete" if complete else "partial_or_unavailable",
             "pricing_model": "gpt-6-luna",
@@ -228,6 +337,10 @@ class ApiCostLedger:
             "pricing_source": PRICING_URL,
             "pricing_per_million_usd": {
                 key: str(value) for key, value in _STANDARD_LUNA.items()
+            },
+            "image_pricing_models": sorted(_IMAGE_MODELS),
+            "image_pricing_per_million_usd": {
+                key: str(value) for key, value in _IMAGE_PRICING.items()
             },
             "estimated_total_usd": _usd(subtotal) if complete else None,
             "priced_subtotal_usd": _usd(subtotal),
