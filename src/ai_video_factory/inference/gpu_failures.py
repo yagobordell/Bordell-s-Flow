@@ -13,6 +13,8 @@ def classify_gpu_failure(error: BaseException) -> str | None:
 
     for current in _exception_chain(error):
         message = str(current).lower()
+        if "cannot fit a diffvae decode tile under the memory budget" in message:
+            return "decoder_budget"
         if "cuda out of memory" in message or "out of memory" in message:
             return "oom"
         if "device not ready" in message:
