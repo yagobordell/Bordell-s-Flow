@@ -57,6 +57,7 @@ def test_timeline_filter_materializes_frames_before_dynamic_scale() -> None:
     )
 
     assert filter_chain.startswith("fps=30,scale=w='")
+    assert "max(1280/iw\\,720/ih)*(1+" in filter_chain
     assert "zoompan=" not in filter_chain
     assert "gte(t\\,0.500000000)" in filter_chain
     assert "lt(t\\,1.500000000)" in filter_chain
