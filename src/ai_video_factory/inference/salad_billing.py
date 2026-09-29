@@ -87,6 +87,7 @@ class SaladCostMeter:
         self.poll_seconds = poll_seconds
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._poll_count = 0
         self._journal: dict[str, Any] = {}
         self._session: dict[str, Any] = {}
         self._clients: dict[str, SaladClient] = {}
@@ -136,6 +137,7 @@ class SaladCostMeter:
                     "gpu_running_seconds": 0.0,
                     "last_running": {},
                     "sample_errors": 0,
+                    "successful_samples": 0,
                     "unobserved_instances": 0,
                 }
                 for service, definition in self._definitions.items()
@@ -154,6 +156,15 @@ class SaladCostMeter:
     def _poll(self) -> None:
         while not self._stop.wait(self.poll_seconds):
             self._sample()
+            self._poll_count += 1
+            if self._poll_count % 4 == 0:
+                summary = read_salad_costs(self.path)
+                if summary is not None and summary["priced_subtotal_usd"] is not None:
+                    print(
+                        "  Salad LTX cost so far (observed): $"
+                        + str(summary["priced_subtotal_usd"]),
+                        flush=True,
+                    )
 
     def _observe(
         self, service: str, instances: list[dict[str, object]], now: datetime
@@ -209,6 +220,7 @@ class SaladCostMeter:
                 if not isinstance(instances, list):
                     raise ValueError("Salad instance list is invalid")
                 self._observe(service, instances, datetime.now(UTC))
+                self._session["services"][service]["successful_samples"] += 1
             except Exception as error:
                 self._session["services"][service]["sample_errors"] += 1
                 print(
@@ -228,9 +240,10 @@ class SaladCostMeter:
         _save(self.path, self._journal)
         summary = read_salad_costs(self.path)
         if summary is not None:
+            amount = summary["priced_subtotal_usd"]
             print(
-                "  Salad LTX observed group cost: $"
-                + str(summary["priced_subtotal_usd"])
+                "  Salad LTX observed group cost: "
+                + ("coste no disponible" if amount is None else "$" + str(amount))
                 + " ("
                 + str(summary["pricing_status"])
                 + "; excludes capacity outside the video stage)",
@@ -253,14 +266,19 @@ def read_salad_costs(path: Path) -> dict[str, Any] | None:
     }
     subtotal = Decimal(0)
     incomplete = False
+    successful_samples = 0
     for session in journal["sessions"]:
         incomplete |= session.get("status") != "completed"
         for service in _SERVICES:
             entry = session["services"][service]
+            successful_samples += entry.get("successful_samples", 0)
             seconds = float(entry["gpu_running_seconds"])
             totals[service]["gpu_running_seconds"] += seconds
             rate = entry["hourly_rate_usd"]
-            if rate is None or entry["sample_errors"] or entry["unobserved_instances"]:
+            if (
+                rate is None or entry["sample_errors"] or entry["unobserved_instances"]
+                or not entry.get("successful_samples")
+            ):
                 incomplete = True
             if rate is not None:
                 cost = Decimal(str(seconds)) * Decimal(rate) / Decimal(3600)
@@ -273,9 +291,14 @@ def read_salad_costs(path: Path) -> dict[str, Any] | None:
         "kind": "observed_salad_group_cost_not_invoice",
         "pricing_source": PRICING_URL,
         "pricing_as_of": PRICING_AS_OF,
-        "pricing_status": "partial" if incomplete else "observed_window_complete",
-        "priced_subtotal_usd": _usd(subtotal),
-        "estimated_observed_cost_usd": None if incomplete else _usd(subtotal),
+        "pricing_status": (
+            "unavailable" if not successful_samples else
+            "partial" if incomplete else "observed_window_complete"
+        ),
+        "priced_subtotal_usd": _usd(subtotal) if successful_samples else None,
+        "estimated_observed_cost_usd": (
+            None if incomplete or not successful_samples else _usd(subtotal)
+        ),
         "scope": (
             "LTX container groups during instrumented video stages, including running "
             "idle replicas; not a per-job allocation. May include other users of the "
