@@ -40,6 +40,7 @@ from ai_video_factory.inference.capacity_controller import (
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
+from ai_video_factory.providers.avatar_voice import ensure_avatar_voice
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE
 from ai_video_factory.providers.openai_batch_images import (
@@ -99,6 +100,22 @@ def parse_args() -> argparse.Namespace:
         "--qr-url",
         metavar="URL",
         help="Enlace del ebook para crear el QR de un avatar nuevo sin preguntar en la CLI.",
+    )
+    voices = parser.add_mutually_exclusive_group()
+    voices.add_argument(
+        "--voice-id",
+        metavar="ID",
+        help="Voice ID de AI33Pro para este avatar (se guarda la primera vez).",
+    )
+    voices.add_argument(
+        "--voice-audio",
+        metavar="FILENAME",
+        help="Nombre del audio de clonación situado junto al PNG del avatar.",
+    )
+    voices.add_argument(
+        "--default-voice",
+        action="store_true",
+        help="Guardar la voz predeterminada para el avatar sin preguntar.",
     )
     parser.add_argument(
         "--qr-only",
@@ -189,6 +206,7 @@ def parse_args() -> argparse.Namespace:
         or args.output is not None
         or args.list_scripts
         or args.list_avatars
+        or args.voice_id is not None or args.voice_audio is not None or args.default_voice
     ):
         parser.error("--qr-only only accepts --avatar, --avatars-dir and --qr-url.")
     if args.regenerate_audio and args.resume_audio:
@@ -202,6 +220,7 @@ def parse_args() -> argparse.Namespace:
         or args.stop_stage is not None
         or args.avatar is not None
         or args.qr_url is not None
+        or args.voice_id is not None or args.voice_audio is not None or args.default_voice
     ):
         parser.error(
             "Audio-only modes cannot be combined with images, --from, "
@@ -212,6 +231,7 @@ def parse_args() -> argparse.Namespace:
         or args.regenerate_audio or args.resume_audio
         or args.from_stage != "B1.1" or args.stop_stage is not None
         or args.avatar is not None or args.qr_url is not None
+        or args.voice_id is not None or args.voice_audio is not None or args.default_voice
     ):
         parser.error(
             "--generate-video cannot be combined with other generation flags."
@@ -222,7 +242,10 @@ def parse_args() -> argparse.Namespace:
         args.skip_images or args.from_stage != "B1.1" or args.stop_stage is not None
     ):
         parser.error("--images-only cannot be combined with --no-image, --from or --stop.")
-    if args.images_only and (args.avatar is not None or args.qr_url is not None):
+    if args.images_only and (
+        args.avatar is not None or args.qr_url is not None
+        or args.voice_id is not None or args.voice_audio is not None or args.default_voice
+    ):
         parser.error("--images-only uses the saved avatar; omit --avatar and --qr-url.")
     if args.stop_stage is not None and (
         _STAGES.index(args.stop_stage) < _STAGES.index(args.from_stage)
@@ -238,6 +261,7 @@ def parse_args() -> argparse.Namespace:
         or args.script is not None
         or args.avatar is not None
         or args.qr_url is not None
+        or args.voice_id is not None or args.voice_audio is not None or args.default_voice
         or args.from_stage != "B1.1"
         or args.stop_stage is not None
         or args.images_only
@@ -1046,6 +1070,25 @@ async def _run_videos_only(script_file: Path, output_root: Path) -> None:
     print(f"  LTX video ready: {video['file']}", flush=True)
 
 
+
+
+def _run_voice_id(output: Path) -> str:
+    """Use the immutable voice snapshot of this run, including audio-only resumes."""
+    path = output / "avatar_voice.json"
+    if path.is_symlink():
+        raise SystemExit("No se permiten enlaces simbólicos en avatar_voice.json.")
+    if path.is_file():
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            voice_id = record["voice_id"]
+            if not isinstance(voice_id, str) or not voice_id.strip():
+                raise ValueError("El Voice ID de la generación todavía no está listo.")
+            return voice_id
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            raise SystemExit(f"Configuración de voz del run inválida: {path}") from exc
+    # Older runs did not have per-avatar voice snapshots.
+    return settings.ai33_fish_voice_id
+
 async def _generate_audio(
     script: str,
     output: Path,
@@ -1063,7 +1106,7 @@ async def _generate_audio(
         director_model=settings.openai_model,
         provider=provider,
         ai33_api_key=settings.ai33_api_key,
-        voice_id=settings.ai33_fish_voice_id,
+        voice_id=_run_voice_id(output),
         speed=settings.ai33_fish_speed,
         poll_timeout_seconds=settings.ai33_fish_poll_timeout_seconds,
         poll_interval_seconds=settings.ai33_fish_poll_interval_seconds,
@@ -1518,6 +1561,16 @@ async def main() -> None:
             avatars_dir=args.avatars_dir,
             input_url=getattr(args, "qr_url", None),
         )
+        voice = ensure_avatar_voice(
+            avatar_file=avatar_file,
+            avatars_dir=args.avatars_dir,
+            input_voice_id=getattr(args, "voice_id", None),
+            input_audio_filename=getattr(args, "voice_audio", None),
+            use_default=bool(getattr(args, "default_voice", False)),
+            default_voice_id=settings.ai33_fish_voice_id,
+            api_key=settings.ai33_api_key,
+            activate=stop_stage is None and not getattr(args, "no_audio", False),
+        )
         output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
     else:
         output = _prepare_resume_output(output_root, script_file, avatar_file=avatar_file)
@@ -1549,7 +1602,37 @@ async def main() -> None:
             avatars_dir=args.avatars_dir,
             input_url=getattr(args, "qr_url", None),
         )
+        voice = ensure_avatar_voice(
+            avatar_file=avatar_file,
+            avatars_dir=args.avatars_dir,
+            input_voice_id=getattr(args, "voice_id", None),
+            input_audio_filename=getattr(args, "voice_audio", None),
+            use_default=bool(getattr(args, "default_voice", False)),
+            default_voice_id=settings.ai33_fish_voice_id,
+            api_key=settings.ai33_api_key,
+            activate=False,
+        )
         _clear_outputs_from(output, args.from_stage)
+
+    # Bind the voice to the run, not merely the mutable avatar library or .env.
+    voice_snapshot = voice.snapshot()
+    if args.from_stage != "B1.1":
+        old_path = output / "avatar_voice.json"
+        if old_path.is_symlink():
+            raise SystemExit("El snapshot de voz del run no puede ser un enlace.")
+        if old_path.is_file():
+            try:
+                saved_voice = json.loads(old_path.read_text(encoding="utf-8"))
+                if not isinstance(saved_voice, dict):
+                    raise ValueError("Voice snapshot is not an object")
+                voice_snapshot = saved_voice
+            except (OSError, ValueError) as exc:
+                raise SystemExit(f"Snapshot de voz inválido: {old_path}") from exc
+        else:
+            old_avatar = previous_report.get("run", {}).get("avatar", {})
+            if isinstance(old_avatar, dict) and isinstance(old_avatar.get("voice"), dict):
+                voice_snapshot = old_avatar["voice"]
+    _write(output / "avatar_voice.json", voice_snapshot)
 
     # Snapshot the selected PNG: later library changes cannot silently alter this run.
     (output / "avatar.png").write_bytes(avatar_bytes)
@@ -1561,6 +1644,7 @@ async def main() -> None:
         "sha256": hashlib.sha256(avatar_bytes).hexdigest(),
         "width": avatar_width,
         "height": avatar_height,
+        "voice": voice_snapshot,
         "qr": {
             "file": "qr.png",
             "url": qr.url,
