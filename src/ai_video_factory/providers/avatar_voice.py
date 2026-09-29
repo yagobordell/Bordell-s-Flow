@@ -106,7 +106,7 @@ def _load(path: Path, avatar_file: Path) -> dict[str, Any]:
             if (
                 not isinstance(filename, str)
                 or Path(filename).name != filename
-                or "/" in filename
+                or "\\" in filename
                 or "\\\\" in filename
                 or Path(filename).suffix.lower() not in _AUDIO_SUFFIXES
             ):
