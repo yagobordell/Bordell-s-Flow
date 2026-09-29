@@ -71,10 +71,16 @@ def _separator(
         if 1 <= band[1] - band[0] <= max_width
     ]
     if not plausible:
-        raise GridCropError(
-            f"No reliable white {axis}-divider near pixel {nominal}; "
-            "the original paid grid is preserved for manual inspection"
-        )
+        # A missing separator is recoverable only if there is actual image content.
+        # Do not silently convert a completely uniform failed grid into panels.
+        if all(low == high for low, high in image.getextrema()):
+            raise GridCropError(
+                "No reliable divider in a uniform grid; preserve the paid image "
+                "for manual inspection"
+            )
+        # The model may omit or soften a divider in an otherwise valid grid.
+        # Fall back to the mathematical seam while keeping the paid PNG intact.
+        return nominal, nominal + 1
     return min(
         plausible,
         key=lambda band: (

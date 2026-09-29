@@ -356,7 +356,9 @@ def build_stt_beat_timeline(
                 "block_id": block["block_id"],
                 "beat_id": beat_id,
                 "visual_type": beat.get("visual_type"),
-                "description": beat.get("description"),
+                "description": beat.get("description", beat.get("prompt")),
+                **({"prompt": beat["prompt"], "audio": beat["audio"]}
+                   if "prompt" in beat else {}),
                 "start_seconds": float(start),
                 "first_word_seconds": float(
                     starts[index] + aligned_words[first_word_index]["start"]
@@ -433,7 +435,7 @@ def _beat_frame(
 def _media_image_motion_filter(timeline: dict[str, Any]) -> str:
     """Animate media_image beats with Media Pipeline's scale+crop Ken Burns."""
 
-    intervals: list[tuple[float, float]] = []
+    intervals: list[tuple[int, int]] = []
     for beat in timeline["beats"]:
         if beat["visual_type"] != "media_image":
             continue
@@ -446,11 +448,8 @@ def _media_image_motion_filter(timeline: dict[str, Any]) -> str:
                 "frames for visible motion"
             )
 
-        start_seconds = float(beat.get("start_seconds", start_frame / _FPS))
-        end_seconds = float(beat.get("end_seconds", end_frame / _FPS))
-        duration_seconds = end_seconds - start_seconds
-        beat["motion"] = motion_metadata(duration_seconds)
-        intervals.append((start_seconds, end_seconds))
+        beat["motion"] = motion_metadata((end_frame - start_frame) / _FPS)
+        intervals.append((start_frame, end_frame))
 
     return build_timeline_ken_burns_filter(
         intervals,
@@ -522,12 +521,26 @@ def generate_static_preview(
         frame = frames / frame_name
         if frame.is_symlink():
             raise StaticPreviewError("Refusing linked preview frame")
-        _beat_frame(avatar, assets.get(key), beat["visual_type"], frame)
+        presenter_image = avatar
+        if beat["visual_type"] == "avatar" and beat.get("prompt") is not None:
+            presenter_image = assets.get(key)
+            if presenter_image is None:
+                raise StaticPreviewError(f"Regenerated avatar {beat['beat_id']} has no PNG")
+        _beat_frame(presenter_image, assets.get(key), beat["visual_type"], frame)
         entries.append(f"file 'frames/{frame_name}'")
         entries.append(f"duration {beat['duration_seconds']:.9f}")
     entries.append(entries[-2])  # Repeated last frame preserves its last duration.
     concat.write_text("\n".join(entries) + "\n", encoding="utf-8")
     video_filter = _media_image_motion_filter(timeline)
+    # On Windows an inline FFmpeg graph has a command-line size limit.
+    # A filter script supports long B2 timelines without changing the graph.
+    filter_args = ["-vf", video_filter]
+    if len(video_filter) > 16_000:
+        filter_script = preview / "ken_burns.fffilter"
+        if filter_script.is_symlink():
+            raise StaticPreviewError("Refusing linked Ken Burns filter script")
+        filter_script.write_text(video_filter + "\n", encoding="utf-8")
+        filter_args = ["-filter_script:v", str(filter_script)]
     _save_json(preview / "timeline.json", timeline)
 
     target = preview / "static_preview.mp4"
@@ -541,7 +554,7 @@ def generate_static_preview(
             "-f", "concat", "-safe", "0", "-i", str(concat),
             "-i", str(output / audio["file"]),
             "-map", "0:v:0", "-map", "1:a:0",
-            "-vf", video_filter,
+            *filter_args,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
             "-c:a", "aac", "-b:a", "192k",
             "-t", f"{timeline['duration_seconds']:.9f}",

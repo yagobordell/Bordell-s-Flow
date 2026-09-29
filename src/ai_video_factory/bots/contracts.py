@@ -171,3 +171,47 @@ class B2Output(StrictModel):
         elif any(v is not None for v in (self.pipeline_stage, self.narrative_core, self.blocks)):
             raise ValueError("B2 error must null out success fields")
         return self
+
+
+class ProfessionalVisualBeat(Beat):
+    """Professional B2 keeps its image prompt and explicit reference/speaker flags."""
+
+    visual_type: VisualType
+    prompt: str | None
+    reference: bool
+    audio: bool
+
+    @model_validator(mode="after")
+    def valid_professional_visual(self) -> "ProfessionalVisualBeat":
+        if self.prompt is None:
+            if self.visual_type != "avatar" or self.reference:
+                raise ValueError("Only a reused avatar can have a null prompt and no reference")
+        elif not self.prompt.strip():
+            raise ValueError("Professional image prompts must be nonempty")
+        if self.visual_type in {"avatar", "avatar_media"} and not self.audio:
+            raise ValueError("Presenter visuals must have audio=true")
+        if self.visual_type == "avatar" and self.prompt is not None and not self.reference:
+            raise ValueError("Regenerated presenter images require the avatar reference")
+        return self
+
+
+class ProfessionalB2Block(B2InputBlock):
+    beats: list[ProfessionalVisualBeat] = Field(min_length=1)
+
+
+class ProfessionalB2Output(StrictModel):
+    pipeline_stage: Literal["B2"] | None
+    narrative_core: NarrativeCore | None
+    blocks: list[ProfessionalB2Block] | None
+    error: B2Error | None
+
+    @model_validator(mode="after")
+    def valid_success_or_error(self) -> "ProfessionalB2Output":
+        if self.error is None:
+            if self.pipeline_stage != "B2" or self.narrative_core is None or not self.blocks:
+                raise ValueError("Professional B2 success requires a core and a block")
+            if len(self.blocks) != 1:
+                raise ValueError("Professional B2 output must contain exactly one block")
+        elif any(v is not None for v in (self.pipeline_stage, self.narrative_core, self.blocks)):
+            raise ValueError("Professional B2 error must null out success fields")
+        return self

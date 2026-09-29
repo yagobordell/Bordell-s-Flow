@@ -29,7 +29,10 @@ class GridPlanError(ValueError):
     """B2 numbering or grid descriptions cannot make a valid grid."""
 
 
-def _grid_prompt(panels: list[dict[str, Any]], columns: int, rows: int) -> str:
+def _grid_prompt(
+    panels: list[dict[str, Any]], columns: int, rows: int,
+    *, visual_style: str = "casero",
+) -> str:
     """Build the grid prompt with visual descriptions and narration context."""
     descriptions: list[str] = []
     voice_over: list[str] = []
@@ -42,14 +45,21 @@ def _grid_prompt(panels: list[dict[str, Any]], columns: int, rows: int) -> str:
         if panel.get("source") != BLACK_PANEL_SOURCE and isinstance(text, str) and text.strip():
             voice_over.append(f"{panel['beat_id']}: {text.strip()}")
     prompt = (
-        GRID_PHOTO_HEADER
+        (GRID_PHOTO_HEADER if visual_style == "casero" else "")
         + f"{columns}x{rows} grid 16:9\n\n"
         + "\n".join(descriptions)
         + "\n\nVoice over context:\n"
         + "\n".join(voice_over)
         + "\n\nUse the thinnest possible straight white separator lines between all grid cells"
-        + "\n\nDo not add text to the image."
+        + ("\n\nDo not add text to the image." if visual_style == "casero"
+           else "\n\nDo not add visible text unless a panel prompt explicitly requires it.")
     )
+    if visual_style == "profesional":
+        reference_panels = [str(i) for i, p in enumerate(panels, 1) if p.get("reference")]
+        if reference_panels:
+            prompt += ("\n\nThe attached avatar reference image may be used ONLY for panels "
+                       + ", ".join(reference_panels)
+                       + "; do not copy its person, objects, or setting into other panels.")
     if len(prompt) + 400 > 32_000:
         raise GridPlanError("Grid prompt exceeds the supported GPT Image prompt limit")
     return prompt
@@ -64,6 +74,9 @@ def plan_image_jobs(
     blocks, but only if not numbered and not already assigned to another grid.
     The output ordering remains the original script ordering.
     """
+    visual_style = plan.get("visual_style", "casero")
+    if visual_style not in {"casero", "profesional"}:
+        raise GridPlanError("Unknown B2 visual style")
     positions: dict[tuple[int, str], int] = {}
     runs: list[list[dict[str, Any]]] = []
     described_by_key = {(b["block_id"], b["beat_id"]): b for b in described}
@@ -148,6 +161,7 @@ def plan_image_jobs(
                 "visual_type": "media_image",
                 "description": BLACK_PANEL_DESCRIPTION,
                 "source": BLACK_PANEL_SOURCE,
+                "reference": False,
             }
             for index in range(black_panel_count)
         )
@@ -170,7 +184,10 @@ def plan_image_jobs(
             "block_id": anchor["block_id"],
             "beat_id": anchor["beat_id"],
             "visual_type": anchor["visual_type"],
-            "description": _grid_prompt(panels, columns, rows),
+            "description": _grid_prompt(
+                panels, columns, rows, visual_style=visual_style,
+            ),
+            **({"visual_style": visual_style} if visual_style == "profesional" else {}),
             "size": f"{columns * _PANEL_WIDTH}x{rows * _PANEL_HEIGHT}",
             "grid": {
                 "columns": columns, "rows": rows,

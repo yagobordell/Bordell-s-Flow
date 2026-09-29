@@ -11,6 +11,7 @@ import base64
 import hashlib
 import json
 import re
+import shutil
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -31,6 +32,7 @@ _MAX_IMAGE_URL = 20_971_520
 _MAX_PNG = 40 * 1024 * 1024
 _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", flags=re.ASCII)
 _IMAGE_PREFIX = "iphone 6 photo done by an elderly:  "
+_GRID_IMAGE_QUALITY = "medium"
 _AVATAR_REFERENCE_PROMPT_SUFFIX = (
     "set the reference image ONLY to preserve the avatar's general identity and appearance. "
     "Do NOT copy the reference image's lighting, camera quality, composition, background, "
@@ -73,14 +75,17 @@ class ImageOptions:
         *,
         avatar_image_url: str | None = None,
         size: str | None = None,
+        quality: str | None = None,
+        visual_style: str = "casero",
     ) -> dict[str, Any]:
         request: dict[str, Any] = {
             "model": self.model_id,
             "prompt": effective_image_prompt(
-                description, avatar_reference=avatar_image_url is not None
+                description, avatar_reference=avatar_image_url is not None,
+                visual_style=visual_style,
             ),
             "size": size or self.size,
-            "quality": self.quality,
+            "quality": self.quality if quality is None else quality,
             "output_format": "png",
             "n": 1,
         }
@@ -89,8 +94,20 @@ class ImageOptions:
         return request
 
 
-def effective_image_prompt(description: str, *, avatar_reference: bool = False) -> str:
-    """Build the outgoing prompt without changing B2's saved description."""
+def _job_quality(job: dict[str, Any], options: ImageOptions) -> str:
+    """Only composite grids use medium; individual image jobs keep the configured low."""
+    return _GRID_IMAGE_QUALITY if job.get("grid") is not None else options.quality
+
+
+def effective_image_prompt(
+    description: str, *, avatar_reference: bool = False,
+    visual_style: str = "casero",
+) -> str:
+    """Do not add legacy amateur styling or identity instructions to professional B2."""
+    if visual_style == "profesional":
+        return description
+    if visual_style != "casero":
+        raise ValueError("Unknown B2 visual style")
     prompt = (
         description
         if description.startswith("iPhone 6 photograph done by an elderly:\n\n")
@@ -114,7 +131,11 @@ def _avatar_reference(
     output: Path, plan: dict[str, Any], jobs: list[dict[str, Any]]
 ) -> tuple[str, str] | None:
     """Validate the selected avatar before any paid image request."""
-    if not any(_avatar_requested(job["description"]) for job in jobs):
+    if not any(
+        job.get("reference") if plan.get("visual_style") == "profesional"
+        else _avatar_requested(job["description"])
+        for job in jobs
+    ):
         return None
     metadata = plan.get("avatar")
     if (
@@ -151,6 +172,9 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(blocks, list):
         raise ImageGenerationError("B2 visual plan is missing its blocks")
     result: list[dict[str, Any]] = []
+    visual_style = plan.get("visual_style", "casero")
+    if visual_style not in {"casero", "profesional"}:
+        raise ImageGenerationError("Unknown B2 visual style")
     seen: set[tuple[int, str]] = set()
     for block in blocks:
         block_id = block.get("block_id")
@@ -160,9 +184,23 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(beats, list):
             raise ImageGenerationError("Invalid B2 beats")
         for beat in beats:
-            description = beat.get("description")
-            if description is None or (isinstance(description, str) and not description.strip()):
-                continue
+            if visual_style == "profesional":
+                if (not isinstance(beat.get("reference"), bool)
+                    or not isinstance(beat.get("audio"), bool)):
+                    raise ImageGenerationError("Professional B2 requires reference/audio booleans")
+                description = beat.get("prompt")
+                if description is None:
+                    if beat.get("visual_type") != "avatar" or beat["reference"]:
+                        raise ImageGenerationError("Only a reused avatar can omit its prompt")
+                    continue
+                if (beat.get("visual_type") == "avatar" and not beat["reference"]):
+                    raise ImageGenerationError("Regenerated avatar requires reference=true")
+            else:
+                description = beat.get("description")
+                if description is None or (
+                    isinstance(description, str) and not description.strip()
+                ):
+                    continue
             beat_id = beat.get("beat_id")
             if (
                 not isinstance(description, str)
@@ -181,6 +219,8 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
                 "visual_type": beat.get("visual_type"),
                 "text": beat.get("text"),
                 "description": description,
+                **({"reference": beat["reference"], "visual_style": visual_style}
+                   if visual_style == "profesional" else {}),
             })
     return result
 
@@ -189,11 +229,16 @@ def _fingerprint(job: dict[str, Any], options: ImageOptions) -> str:
     identity = {
         "beat_id": job["beat_id"],
         "block_id": job["block_id"],
-        **options.request(job["description"], size=job.get("size")),
+        **options.request(
+            job["description"], size=job.get("size"),
+            quality=_job_quality(job, options),
+            visual_style=job.get("visual_style", "casero"),
+        ),
     }
     if job.get("avatar_reference_sha256") is not None:
         identity["prompt"] = effective_image_prompt(
-            job["description"], avatar_reference=True
+            job["description"], avatar_reference=True,
+            visual_style=job.get("visual_style", "casero"),
         )
         identity["image_endpoint"] = "/v1/images/edits"
         identity["avatar_reference_sha256"] = job["avatar_reference_sha256"]
@@ -240,7 +285,7 @@ def _mark_complete(
         "provider": "openai_direct",
         "model_id": options.model_id,
         "size": generated["size"],
-        "quality": options.quality,
+        "quality": _job_quality(job, options),
         "file": image_path.relative_to(output).as_posix(),
         "sha256": generated["sha256"],
         "width": generated["width"],
@@ -290,6 +335,7 @@ def _one_image(
             "schema_version": "openai-image-v1",
             "fingerprint": fingerprint,
             "model_id": options.model_id,
+            "quality": _job_quality(job, options),
             "status": "direct_pending",
         }
         _atomic_json(state_path, state)
@@ -323,11 +369,12 @@ def _one_image(
     try:
         kwargs: dict[str, Any] = {
             "prompt": effective_image_prompt(
-                job["description"], avatar_reference=reference_url is not None
+                job["description"], avatar_reference=reference_url is not None,
+                visual_style=job.get("visual_style", "casero"),
             ),
             "model": options.model_id,
             "size": job.get("size", options.size),
-            "quality": options.quality,
+            "quality": _job_quality(job, options),
             "output_format": "png",
             "destination": image_path,
         }
@@ -359,12 +406,16 @@ def generate_b2_images(
     except GridPlanError as exc:
         raise ImageGenerationError(str(exc)) from exc
     reference = _avatar_reference(output, plan, described)
+    visual_style = plan.get("visual_style", "casero")
     if reference is not None:
         digest, _url = reference
         jobs = [
             {**job, "avatar_reference_sha256": digest}
-            if any(_avatar_requested(beat["description"])
-                   for beat in job.get("panels", [job]))
+            if any(
+                beat.get("reference") if visual_style == "profesional"
+                else _avatar_requested(beat["description"])
+                for beat in job.get("panels", [job])
+            )
             else job
             for job in jobs
         ]
@@ -417,6 +468,7 @@ def generate_b2_images(
         "model_id": options.model_id,
         "size": options.size,
         "quality": options.quality,
+        "grid_quality": _GRID_IMAGE_QUALITY,
         "max_parallel_images": min(options.max_parallel_images or len(jobs), len(jobs)),
         "status": "running",
         "total_described_beats": len(described),
@@ -540,6 +592,55 @@ def clear_previous_b2_images(output: Path, plan: dict[str, Any]) -> int:
         if image_path.is_file():
             image_path.unlink()
             removed += 1
+    return removed
+
+
+def clear_b2_images_for_rerun(output: Path) -> int:
+    """Delete the complete B2 image tree before an explicit B2 rerun.
+
+    A B2 rerun produces a new visual plan, so image states from the previous
+    plan cannot be used for fingerprint validation. Unfinished/ambiguous paid
+    requests are left in place and block the rerun rather than being silently
+    replaced.
+    """
+    image_root = output / "images"
+    if not image_root.exists():
+        return 0
+    if image_root.is_symlink() or image_root.is_junction():
+        raise ImageGenerationError("Refusing linked image directory")
+
+    for state_path in chain(
+        image_root.glob("block_*/*.json"),
+        (image_root / "grids").glob("*.json"),
+    ):
+        if state_path.is_symlink():
+            raise ImageGenerationError(f"Refusing linked image state: {state_path}")
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if state.get("status") != "completed":
+            raise ImageGenerationError(
+                f"Previous paid image task is unfinished at {state_path}; "
+                "reconcile it before rerunning B2."
+            )
+        image_path = state_path.with_suffix(".png")
+        if not image_path.is_file():
+            raise ImageGenerationError(
+                f"Completed image is missing for {state_path}; reconcile it before rerunning B2."
+            )
+
+    removed = sum(1 for _ in image_root.rglob("*.png"))
+    for child in image_root.iterdir():
+        if child.is_symlink():
+            raise ImageGenerationError(f"Refusing linked image asset: {child}")
+    for child in image_root.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+    legacy_archive = output / "images_replaced_b2"
+    if legacy_archive.exists():
+        if legacy_archive.is_symlink() or legacy_archive.is_junction():
+            raise ImageGenerationError("Refusing linked legacy B2 image archive")
+        shutil.rmtree(legacy_archive)
     return removed
 
 

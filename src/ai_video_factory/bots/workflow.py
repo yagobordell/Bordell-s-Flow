@@ -6,6 +6,7 @@ runner can be enabled; no lossy integer-shot conversion is performed.
 """
 
 import asyncio
+import base64
 import json
 import re
 import unicodedata
@@ -30,6 +31,7 @@ from .contracts import (
     Beat,
     BlockMeta,
     MaterializedBlock,
+    ProfessionalB2Output,
 )
 
 # Transport adaptation to Responses API Structured Outputs.
@@ -243,7 +245,7 @@ def _beat_character_length_errors(
     return errors
 
 
-def validate_visuals(result: B2Output, supplied: B2Input) -> None:
+def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input) -> None:
     _require_success("B2", result.error)
     if result.narrative_core != supplied.narrative_core or not result.blocks:
         raise BPipelineValidationError("B2 altered the narrative core or omitted the block")
@@ -254,7 +256,9 @@ def validate_visuals(result: B2Output, supplied: B2Input) -> None:
     if len(actual.beats) != len(expected.beats):
         raise BPipelineValidationError("B2 changed the number of beats")
     for visual, upstream in zip(actual.beats, expected.beats, strict=True):
-        restored = visual.model_dump(exclude={"visual_type", "description"})
+        restored = visual.model_dump(exclude={
+            "visual_type", "description", "prompt", "reference", "audio"
+        })
         if restored != upstream.model_dump():
             raise BPipelineValidationError("B2 changed a frozen B1.2 beat")
     if expected.type == "intro" and actual.beats[0].visual_type != "avatar":
@@ -267,7 +271,8 @@ def validate_visuals(result: B2Output, supplied: B2Input) -> None:
 class BPipelineResult:
     b11: B11Output
     b12: tuple[B12Output, ...]
-    b2: tuple[B2Output, ...]
+    b2: tuple[B2Output | ProfessionalB2Output, ...]
+    visual_style: Literal["casero", "profesional"] = "casero"
 
 
     def merged_b12_output(self) -> dict[str, object]:
@@ -294,6 +299,7 @@ class BPipelineResult:
         return {
             "schema_version": "b-pipeline-merged-v1",
             "pipeline_stage": "B2",
+            **({"visual_style": self.visual_style} if self.visual_style == "profesional" else {}),
             "narrative_core": self.b11.narrative_core.model_dump(),
             "blocks": [item.blocks[0].model_dump() for item in self.b2 if item.blocks],
         }
@@ -304,6 +310,7 @@ class BPipelineResult:
             raise BPipelineValidationError("B1.1 narrative core is missing")
         return {
             "schema_version": "b-pipeline-v1",
+            **({"visual_style": self.visual_style} if self.visual_style == "profesional" else {}),
             "narrative_core": self.b11.narrative_core.model_dump(),
             "blocks": [result.blocks[0].model_dump() for result in self.b2 if result.blocks],
         }
@@ -322,6 +329,7 @@ async def _call_stage[OutputT: BaseModel](
     on_input: Callable[[str, int | None, dict[str, object]], None] | None,
     on_api_response: Callable[[str, int | None, object], None] | None,
     on_call_duration: Callable[[str, int | None, float], None] | None,
+    input_image_url: str | None = None,
 ) -> OutputT:
     """Record exactly the submitted input and meter the returned API response."""
     if on_input is not None:
@@ -332,6 +340,8 @@ async def _call_stage[OutputT: BaseModel](
         "input_text": _payload(payload),
         "output_type": output_type,
     }
+    if input_image_url is not None:
+        kwargs["input_image_url"] = input_image_url
     started = perf_counter()
     try:
         metered = getattr(provider, "generate_structured_with_response", None)
@@ -352,6 +362,8 @@ async def run_b_pipeline(
     provider: StructuredTextProvider,
     model: str | None = None,
     max_parallel_calls: int = 8,
+    visual_style: Literal["casero", "profesional"] = "casero",
+    avatar_image: bytes | None = None,
     start_from: Literal["B1.1", "B1.2", "B2"] = "B1.1",
     stop_after: Literal["B1.1", "B1.2", "B2"] = "B2",
     previous_b11: B11Output | None = None,
@@ -381,6 +393,13 @@ async def run_b_pipeline(
         raise BPipelineValidationError("Authoritative script must not be empty")
     if max_parallel_calls < 1:
         raise ValueError("max_parallel_calls must be at least 1")
+    if visual_style not in {"casero", "profesional"}:
+        raise ValueError("Unknown B2 visual style")
+    image_url: str | None = None
+    if visual_style == "profesional" and stop_after == "B2":
+        if not avatar_image:
+            raise ValueError("Professional B2 requires the selected avatar PNG")
+        image_url = "data:image/png;base64," + base64.b64encode(avatar_image).decode("ascii")
     if retry_b2_block_ids is not None and start_from != "B2":
         raise ValueError("B2 block retries require start_from='B2'")
     if start_from not in {"B1.1", "B1.2", "B2"}:
@@ -564,7 +583,7 @@ async def run_b_pipeline(
 
     async def b2_one(
         meta: BlockMeta, block: MaterializedBlock, b12: B12Output
-    ) -> B2Output:
+    ) -> B2Output | ProfessionalB2Output:
         beats = validate_beats(b12, block)
         b2_input = B2Input(
             narrative_core=b11.narrative_core,
@@ -580,7 +599,7 @@ async def run_b_pipeline(
                 ),
             ),
         )
-        async def call_b2(instructions_suffix: str = "") -> B2Output:
+        async def call_b2(instructions_suffix: str = "") -> B2Output | ProfessionalB2Output:
             async with semaphore:
                 return await _call_stage(
                     "B2",
@@ -588,9 +607,10 @@ async def run_b_pipeline(
                     b2_input.model_dump(),
                     provider=provider,
                     model=model,
-                    prompt="b2.md",
+                    prompt="b2_professional.md" if visual_style == "profesional" else "b2.md",
                     instructions_suffix=instructions_suffix,
-                    output_type=B2Output,
+                    output_type=ProfessionalB2Output if visual_style == "profesional" else B2Output,
+                    input_image_url=image_url,
                     on_input=on_input,
                     on_api_response=on_api_response,
                     on_call_duration=on_call_duration,
@@ -609,7 +629,8 @@ async def run_b_pipeline(
                 f"failed output validation: {first_error}\n"
                 "Return a corrected complete B2 object for the same input block. Preserve "
                 "the narrative core and every upstream block and beat field exactly; "
-                "correct only the invalid B2 visual assignments or descriptions. In "
+                "correct only the invalid B2 visual assignments, prompts, reference/audio "
+                "flags or descriptions. In "
                 "particular, the first beat of an intro block must use visual_type "
                 "avatar, and the last beat of a close block must use visual_type avatar. "
                 "Follow the supplied output schema.\n"
@@ -668,6 +689,7 @@ async def run_b_pipeline(
         b11=b11,
         b12=tuple(b12_results),
         b2=tuple(b2_results),
+        visual_style=visual_style,
     )
     if on_stage_complete is not None:
         on_stage_complete("B2", len(b2_results), result.merged_b2_output())

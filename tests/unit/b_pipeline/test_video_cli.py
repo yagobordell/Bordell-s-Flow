@@ -163,7 +163,7 @@ def test_no_video_images_resume_still_builds_preview_without_ltx(
         raise AssertionError("--no-video must never submit an LTX job")
 
     monkeypatch.setattr(runner, "_preflight_stt_alignment_with_retries", fake_alignment)
-    monkeypatch.setattr(runner, "clear_previous_b2_images", lambda *_args: 0)
+    monkeypatch.setattr(runner, "clear_b2_images_for_rerun", lambda *_args: 0)
     monkeypatch.setattr(runner, "_generate_images", fake_images)
     monkeypatch.setattr(runner, "_preview_if_ready", fake_preview)
     monkeypatch.setattr(runner, "_video_if_ready", forbidden)

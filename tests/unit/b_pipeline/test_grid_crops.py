@@ -155,6 +155,30 @@ def test_missing_separator_blocks_cropping_without_destroying_paid_grid(
     assert (tmp_path / manifest["items"][0]["file"]).read_bytes() == original
 
 
+def test_missing_white_separators_keep_usable_colored_panels(
+    tmp_path: Path,
+) -> None:
+    # Genuine panel content can be cropped on nominal seams without white lines.
+    image = Image.new("RGB", (2560, 1440))
+    draw = ImageDraw.Draw(image)
+    for row in range(2):
+        for column in range(2):
+            draw.rectangle(
+                (column * 1280, row * 720,
+                 (column + 1) * 1280 - 1, (row + 1) * 720 - 1),
+                fill=_panel_color(row, column),
+            )
+    manifest, original = _source(tmp_path, 2, 2, image=image)
+    crops = crop_grid_assets(tmp_path, manifest)
+
+    assert len(crops) == 4
+    assert (tmp_path / manifest["items"][0]["file"]).read_bytes() == original
+    for index, panel in enumerate(crops):
+        row, column = divmod(index, 2)
+        with Image.open(tmp_path / panel["file"]) as generated:
+            assert generated.getpixel((640, 360)) == _panel_color(row, column)
+
+
 def test_modified_paid_grid_checksum_blocks_all_crops(tmp_path: Path) -> None:
     manifest, _original = _source(tmp_path, 2, 2)
     (tmp_path / manifest["items"][0]["file"]).write_bytes(b"modified")

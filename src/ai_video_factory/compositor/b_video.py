@@ -164,7 +164,7 @@ def render_b2_ltx_video(
             raise B2VideoCompositionError("Refusing linked LTX beat clip")
         temporary.unlink(missing_ok=True)
         try:
-            if kind == "media_image":
+            if kind == "media_image" and index not in by_index:
                 source = assets[key]
                 frame = stills / f"{index:04d}_{beat['beat_id']}.png"
                 if frame.is_symlink():
@@ -182,9 +182,11 @@ def render_b2_ltx_video(
                         f"Missing LTX output for beat {beat['beat_id']}"
                     )
                 job, record, video = item
-                if (kind == "media_video" and job.kind != "i2v") or (
-                    kind in {"avatar", "avatar_media"} and job.kind != "a2v"
-                ):
+                expected_kind = (
+                    "a2v" if kind in {"avatar", "avatar_media"} or beat.get("audio")
+                    else "i2v"
+                )
+                if job.kind != expected_kind:
                     raise B2VideoCompositionError("B2 visual does not match LTX job")
                 offset = max(0.0, beat["start_seconds"] - job.start_seconds)
                 command = ["-ss", f"{offset:.9f}", "-i", str(video)]
