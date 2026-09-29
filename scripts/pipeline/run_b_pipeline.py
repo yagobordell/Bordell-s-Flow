@@ -40,7 +40,7 @@ from ai_video_factory.inference.capacity_controller import (
 )
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
-from ai_video_factory.providers.avatar_library import organize_avatar
+from ai_video_factory.providers.avatar_library import avatar_directory, organize_avatar
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice
 from ai_video_factory.providers.grid_crops import crop_grid_assets
@@ -348,6 +348,23 @@ def select_script(
         if selection.isdecimal() and 1 <= int(selection) <= len(scripts):
             return scripts[int(selection) - 1]
         print(f"Enter a number between 1 and {len(scripts)}, or q to cancel.")
+
+
+def _recover_avatar_layout(
+    avatar_file: Path, avatars_dir: Path, *, reference_audio: str | None = None
+) -> Path:
+    """Finish an interrupted migration before QR/voice selection can prompt again."""
+    folder = avatar_directory(avatar_file, avatars_dir)
+    if (
+        avatar_file.parent.resolve() != avatars_dir.resolve()
+        or folder.is_symlink()
+        or folder.is_junction()
+        or (folder.exists() and (not folder.is_dir() or any(folder.iterdir())))
+    ):
+        return organize_avatar(
+            avatar_file, avatars_dir, reference_audio=reference_audio
+        )
+    return avatar_file
 
 
 def available_avatars(avatars_dir: Path) -> list[Path]:
@@ -1579,8 +1596,7 @@ async def main() -> None:
     if getattr(args, "qr_only", False):
         avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
         load_avatar_png(avatar_file)
-        if avatar_file.parent.resolve() != args.avatars_dir.resolve():
-            avatar_file = organize_avatar(avatar_file, args.avatars_dir)
+        avatar_file = _recover_avatar_layout(avatar_file, args.avatars_dir)
         qr = ensure_avatar_qr(
             avatar_file=avatar_file,
             avatars_dir=args.avatars_dir,
@@ -1618,8 +1634,10 @@ async def main() -> None:
 
     avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
     avatar_bytes, avatar_width, avatar_height = load_avatar_png(avatar_file)
-    if avatar_file.parent.resolve() != args.avatars_dir.resolve():
-        avatar_file = organize_avatar(avatar_file, args.avatars_dir)
+    avatar_file = _recover_avatar_layout(
+        avatar_file, args.avatars_dir,
+        reference_audio=getattr(args, "voice_audio", None),
+    )
     if not settings.openai_api_key:
         raise SystemExit("OPENAI_API_KEY is missing")
     if (
