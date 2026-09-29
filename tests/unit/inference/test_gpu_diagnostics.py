@@ -95,3 +95,34 @@ def test_r2_failure_does_not_replace_original_gpu_error(
         assert error._gpu_diagnostic_phase == "reference.gemma.prompt_encode.start"
         assert error._gpu_diagnostic_key is None
         assert "CUDA error: out of memory" in str(error)
+
+
+def test_host_pin_error_and_pageable_fallback_are_persisted_without_changing_phase(
+    tmp_path: Path, diagnostic_dependencies: None
+) -> None:
+    del diagnostic_dependencies
+    storage = LocalObjectStorage(tmp_path / "objects")
+    journal = _journal(tmp_path, storage)
+    with diagnostics.gpu_diagnostics_scope(journal):
+        diagnostics.diagnostic_checkpoint("reference.gemma.prompt_encode.start")
+        diagnostics.diagnostic_host_memory_event(
+            "ltx.host_memory.register_rejected",
+            requested_bytes=900_000_000,
+            cuda_error_code=2,
+        )
+        diagnostics.diagnostic_host_memory_event(
+            "ltx.host_memory.pageable_fallback",
+            requested_bytes=900_000_000,
+            error_type="AcceleratorError",
+        )
+        assert journal.last_phase == "reference.gemma.prompt_encode.start"
+    prefix = "diagnostics/ltx-a2v/ltx-a2v-diagnostic-test/attempt-02/"
+    register = json.loads(storage._path(
+        prefix + "002-ltx-host_memory-register_rejected.json"
+    ).read_text(encoding="utf-8"))
+    fallback = json.loads(storage._path(
+        prefix + "003-ltx-host_memory-pageable_fallback.json"
+    ).read_text(encoding="utf-8"))
+    assert register["host_memory_event"]["cuda_error_code"] == 2
+    assert register["host_memory_event"]["requested_bytes"] == 900_000_000
+    assert fallback["host_memory_event"]["error_type"] == "AcceleratorError"

@@ -78,8 +78,13 @@ LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE = (
     "ltx25-a2v-static-reference-distilled-a95ab856-model6c7e5e5-fp8disk-autotiling-eagersdpa-v3"
 )
 # Same generation recipe: this new immutable identity must not replay the v3 OOM.
-LTX_A2V_STATIC_SAFE_GENERATION_PROFILE = (
+LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE = (
     "ltx25-a2v-static-reference-distilled-a95ab856-model6c7e5e5-fp8disk-autotiling-diag-v4"
+)
+# Same generation semantics as v4; v5 patches the upstream host-pinned
+# Gemma disk-streaming allocator, so the terminal v4 job cannot be replayed.
+LTX_A2V_STATIC_SAFE_GENERATION_PROFILE = (
+    "ltx25-a2v-static-reference-distilled-a95ab856-model6c7e5e5-fp8disk-autotiling-pageable-v5"
 )
 LTX_A2V_SAFE_TILING_BUDGET_BYTES = 2 * 1024**3  # legacy v2 only
 LTX_A2V_SAFE_TILING_RESERVE_BYTES = 1 * 1024**3  # extra margin above upstream reserves
@@ -121,6 +126,7 @@ class LTXAudioToVideoParameters(BaseModel):
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
             LTX_A2V_DEV_GENERATION_PROFILE,
             LTX_A2V_GUIDED_GENERATION_PROFILE,
@@ -938,12 +944,14 @@ class DirectLTX25AudioToVideoBackend:
         memory_safe = parameters.generation_profile in (
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         static_reference = parameters.generation_profile in (
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         reference = parameters.generation_profile in (
@@ -951,6 +959,7 @@ class DirectLTX25AudioToVideoBackend:
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         guided = parameters.generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
@@ -1088,6 +1097,7 @@ class DirectLTX25AudioToVideoBackend:
                         if parameters.generation_profile
                         in (
                             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
+                            LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
                             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
                         ) else 0
                     ),
@@ -1271,6 +1281,7 @@ class DirectLTX25AudioToVideoBackend:
                 if parameters.generation_profile
                 in (
                     LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
+                    LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
                     LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
                 ) else 0
             ),
@@ -1366,6 +1377,7 @@ class DirectLTX25AudioToVideoBackend:
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         distilled = fast or reference
@@ -1407,6 +1419,7 @@ class DirectLTX25AudioToVideoBackend:
         memory_safe = generation_profile in (
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         offload_mode = (

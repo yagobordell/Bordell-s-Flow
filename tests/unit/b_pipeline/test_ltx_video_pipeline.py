@@ -17,6 +17,7 @@ from PIL import Image
 
 from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+    LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
 )
 from ai_video_factory.workers.ltx25.model import LTX_VIDEO_TASK
 from ai_video_factory.workflows import b_video
@@ -241,13 +242,13 @@ def test_new_memory_safe_a2v_requires_exact_deployed_image_digest(
     monkeypatch.setattr(runner.settings, "salad_api_key", "test-key")
     monkeypatch.setenv("SALAD_ORGANIZATION", "org")
     monkeypatch.setenv("SALAD_PROJECT", "project")
-    monkeypatch.delenv("SALAD_LTX25_DIAGNOSTIC_A2V_IMAGE", raising=False)
+    monkeypatch.delenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", raising=False)
 
-    with pytest.raises(RuntimeError, match="SALAD_LTX25_DIAGNOSTIC_A2V_IMAGE"):
+    with pytest.raises(RuntimeError, match="SALAD_LTX25_PAGEABLE_A2V_IMAGE"):
         runner._require_ltx_safe_a2v_worker()
 
     pinned = "docker.io/test/factory@sha256:" + "a" * 64
-    monkeypatch.setenv("SALAD_LTX25_DIAGNOSTIC_A2V_IMAGE", pinned)
+    monkeypatch.setenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", pinned)
     deployed = {"image": "docker.io/test/factory@sha256:" + "b" * 64}
 
     class FakeSaladClient:
@@ -480,6 +481,121 @@ def test_non_oom_terminal_failure_requires_manual_reconciliation(tmp_path: Path)
             tmp_path, new_digest="safe-v2", audio_sha256="a" * 64, queue=Queue()
         )
     assert json.loads(previous.read_text(encoding="utf-8"))["status"] == "running"
+
+
+def test_v5_recovery_preserves_completed_v4_clips_and_submits_only_failed_a2v(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.compositor import b_video as compositor
+    from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
+
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    v5 = b_video.LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
+    monkeypatch.setattr(
+        b_video, "LTX_A2V_STATIC_SAFE_GENERATION_PROFILE",
+        LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
+    )
+    timeline, old_jobs, old_run = b_video.build_b2_video_plan(
+        tmp_path, plan, audio, images
+    )
+    old_digest = b_video._fingerprint(
+        timeline, audio, b_video._source_assets(tmp_path, plan, images)[1],
+        b_video._source_assets(tmp_path, plan, images)[0],
+    )
+    previous = b_video._new_manifest(old_jobs, audio, old_digest)
+    old_run.mkdir(parents=True, exist_ok=True)
+    old_run.joinpath("clips").mkdir()
+    for job, record in zip(old_jobs[:2], previous["jobs"][:2], strict=True):
+        clip = old_run / "clips" / f"{job.request.job_id}.mp4"
+        clip.write_bytes(b"valid-completed-clip")
+        record.update(
+            status="completed", file=clip.relative_to(tmp_path).as_posix(),
+            sha256=_sha(clip), duration_seconds=job.duration_seconds,
+        )
+        if job.kind == "a2v":
+            old_metadata = old_run / "clips" / f"{job.request.job_id}.metadata.json"
+            old_metadata.write_text(json.dumps({
+                "generation_profile": LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
+                "negative_prompt_applied": True,
+                "positive_prompt_enhanced": False,
+            }), encoding="utf-8")
+    b_video._save_json(old_run / "manifest.json", previous)
+    monkeypatch.setattr(b_video, "LTX_A2V_STATIC_SAFE_GENERATION_PROFILE", v5)
+    monkeypatch.setattr(
+        b_video, "_probe_video",
+        lambda source, job: (
+            source.read_bytes() == b"valid-completed-clip"
+            or pytest.fail(f"invalid clip for {job.beats}")
+        ),
+    )
+    submitted: list[str] = []
+
+    class FakeQueue:
+        def get(self, job_id: str) -> QueueJobSnapshot:
+            assert job_id == old_jobs[2].request.job_id
+            return QueueJobSnapshot(
+                id=job_id, status=QueueJobStatus.FAILED,
+                provider_payload={"last_error": "AcceleratorError: CUDA error: out of memory"},
+            )
+
+    new_metadata = tmp_path / "new-metadata.json"
+    new_metadata.write_text(json.dumps({
+        "generation_profile": v5,
+        "negative_prompt_applied": True,
+        "positive_prompt_enhanced": False,
+    }), encoding="utf-8")
+
+    class FakeStorage:
+        def stat(self, key: str) -> SimpleNamespace:
+            del key
+            return SimpleNamespace(metadata={"artifact-sha256": _sha(new_metadata)})
+
+        def download(self, key: str, destination: Path) -> None:
+            del key
+            shutil.copyfile(new_metadata, destination)
+
+    class FakeExecutor:
+        def __init__(self, **kwargs: object) -> None:
+            del kwargs
+
+        def ensure_input(self, source: Path, **kwargs: object) -> None:
+            del source, kwargs
+
+        def execute(self, request: object, **kwargs: object) -> SimpleNamespace:
+            del kwargs
+            submitted.append(request.job_id)
+            return SimpleNamespace(replayed=False)
+
+        def download_output(self, response: object, destination: Path) -> None:
+            del response
+            destination.write_bytes(b"valid-completed-clip")
+
+    def fake_render(output: Path, *args: object) -> dict[str, object]:
+        del args
+        final = output / "video" / "final.mp4"
+        final.parent.mkdir(parents=True, exist_ok=True)
+        final.write_bytes(b"composed")
+        return {"file": "video/final.mp4", "sha256": _sha(final)}
+
+    monkeypatch.setattr(b_video, "InferenceJobExecutor", FakeExecutor)
+    monkeypatch.setattr(compositor, "render_b2_ltx_video", fake_render)
+    result = b_video.generate_b2_ltx_video(
+        tmp_path, plan, audio, images, queue=FakeQueue(), storage=FakeStorage(),
+    )
+    assert result["status"] == "completed"
+    assert len(submitted) == 1
+    assert submitted[0] != old_jobs[2].request.job_id
+    manifest_file = tmp_path / "video" / "runs" / result["fingerprint"][:20] / "manifest.json"
+    saved = json.loads(manifest_file.read_text(encoding="utf-8"))
+    for idx in (0, 1):
+        assert saved["jobs"][idx]["reused_from_job_id"] == old_jobs[idx].request.job_id
+        assert saved["jobs"][idx]["status"] == "completed"
+        assert _sha(tmp_path / saved["jobs"][idx]["file"]) == previous["jobs"][idx]["sha256"]
+    assert saved["jobs"][2]["job_id"] == submitted[0]
+    assert "reused_from_job_id" not in saved["jobs"][2]
+    older = json.loads((old_run / "manifest.json").read_text(encoding="utf-8"))
+    assert older["status"] == "superseded"
+    assert older["jobs"][0]["status"] == "completed"
 
 
 def test_pending_ltx_manifest_protects_paid_work(

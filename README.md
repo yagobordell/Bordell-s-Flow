@@ -372,7 +372,8 @@ El intento v3 de `test02` terminó con CUDA OOM en dos intentos y los logs
 de Salad no contenían su traceback completo. V4 **no cambia el modelo,
 resolución, prompt, duración, audio, samplers ni presupuesto CUDA de v3**;
 solo registra diagnósticos persistentes y utiliza un nuevo fingerprint y un
-job ID para no reanudar el v3 terminal. **No se ha ejecutado aún en GPU.**
+job ID para no reanudar el v3 terminal. El intento v4 se ejecutó y el último
+A2V (7C) falló dos veces al reservar memoria fijada de CPU para Gemma.
 
 En cada intento A2V el worker guarda JSON independientes en R2 bajo
 `diagnostics/ltx-a2v/<job_id>/attempt-XX/`. Registra fases de Gemma,
@@ -408,6 +409,52 @@ uv run --locked --extra dev python scripts/salad/inspect_ltx_a2v_diagnostics.py 
 El comando consulta Postgres y descarga todos los checkpoints y el traceback
 a `data/output/ltx-a2v-diagnostics/<ID_DEL_NUEVO_TRABAJO>/`.
 La recuperación conserva los manifiestos anteriores y no borra ningún coste.
+
+### Recuperación v5: corregir Gemma y conservar los vídeos generados
+
+Los dos `011-failed.json` del clip 7C confirmaron la misma RTX 5090, más
+de 30 GiB de VRAM libre y un OOM en
+`ltx_core.block_streaming.utils.alloc_buffer(..., pin_memory=True)`, durante
+la preparación de Gemma. No ocurrió en difusión ni DiffVAE y **no se corrige
+dividiendo el beat**.
+
+La nueva imagen v5 aplica durante el build un parche **estricto al commit
+de LTX fijado en Docker**. Si `cudaHostRegister` rechaza el registro y el
+asignador de PyTorch también devuelve OOM al reservar un buffer de RAM fijada,
+el cargador utiliza un buffer normal de CPU. Las transferencias H2D desde
+estos buffers se fuerzan a ser bloqueantes; los buffers fijados conservan la
+transferencia asíncrona. Se registra en R2 el tamaño solicitado, el código
+de rechazo de `cudaHostRegister` y el fallback, y se capturan los límites
+de memoria bloqueable (`memlock`) y cgroups Linux cuando están expuestos.
+Puede ser más lento al utilizar el fallback y **no garantiza el éxito** si
+también se agota la RAM real. No modifica prompts, vídeo, audio ni el límite
+preexistente de 12 segundos por grupo de avatar.
+
+Para recuperar **solo el A2V que falló**, comprueba primero que Postgres lo
+marca `failed` por OOM y que no quedan trabajos activos. Detén el Capacity
+Controller cuando `ltx25` esté parado, publica una imagen Docker nueva y
+prepara únicamente el grupo `ltx25` (no `ltx25_i2v`). Verifica con
+`manage_salad_worker.ps1 -Action Status -Service ltx25` el digest
+`repositorio@sha256:...` realmente desplegado y escríbelo en `.env`:
+
+```dotenv
+SALAD_LTX25_PAGEABLE_A2V_IMAGE=docker.io/yagobordell/ai-video-factory@sha256:DIGEST_REAL
+```
+
+Después vuelve a iniciar el controller y ejecuta
+`.\\run.ps1 test02 --generate-video`. El runner rechaza imágenes sin el
+digest v5. Tras verificar que el fingerprint previo corresponde al mismo
+guion, audio, avatar e imágenes, copia al nuevo run los clips locales v4
+marcados como completados, comprobando sus hashes, request fingerprints,
+metadatos A2V y geometría; **no envía esos clips a Salad otra vez**. Si
+alguna salida completada es incompatible o falta, aborta sin regenerarla
+silenciosamente. Solo el A2V pendiente 7C obtiene una identidad v5 nueva.
+Conserva los manifiestos y costes anteriores y no reinicies B1/B2 completo.
+
+Para revisar un nuevo fallo descarga sus JSON de R2 con
+`scripts/salad/inspect_ltx_a2v_diagnostics.py --job-id <ID_NUEVO>`.
+La CI prueba el fallback y la reutilización con datos simulados; no se ha
+realizado una nueva prueba GPU pagada para v5.
 
 El motivo real del CUDA OOM puede estar en VRAM o en reservas de memoria
 fijada del sistema: en anteriores smokes de este repositorio, un OOM ocurrió
