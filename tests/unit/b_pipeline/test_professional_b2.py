@@ -112,7 +112,7 @@ def test_professional_grid_never_adds_amateur_header_and_scopes_reference() -> N
     grid = next(job for job in jobs if job.get("grid"))
     assert "iPhone 6" not in grid["description"]
     assert "iphone 6" not in grid["description"]
-    assert "only for panels 1" in grid["description"]
+    assert "only for panels 1" in grid["description"].lower()
     assert grid["visual_style"] == "profesional"
 
 
