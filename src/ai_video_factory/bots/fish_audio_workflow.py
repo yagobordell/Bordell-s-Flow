@@ -762,7 +762,11 @@ async def generate_fish_audio(
     """Run each block independently, then publish a single ordered WAV narration."""
     if not isinstance(script, str) or not script.strip():
         raise FishAudioWorkflowError("The source script must not be empty")
-    if not isinstance(voice_id, str) or not voice_id.strip() or any(ch.isspace() for ch in voice_id):
+    if (
+        not isinstance(voice_id, str)
+        or not voice_id.strip()
+        or any(ch.isspace() for ch in voice_id)
+    ):
         raise FishAudioWorkflowError("AI33 voice ID is missing or invalid")
     if max_parallel_calls < 1:
         raise FishAudioWorkflowError("max_parallel_calls must be positive")
