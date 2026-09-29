@@ -16,8 +16,8 @@ from ai_video_factory.providers.inference_jobs import (
     IncompleteInferenceBundleError,
     InferenceJobExecutor,
     InferenceJobTimeoutError,
-    InferenceTransportFailedError,
     InferenceQueueAuthorityError,
+    InferenceTransportFailedError,
     RemoteInferenceRejectedError,
 )
 from ai_video_factory.providers.job_queue import (
