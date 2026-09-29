@@ -542,10 +542,12 @@ def _inherit_completed_v4_clips(
     way of reusing outputs after editing the script or changing video settings.
     """
     avatar, assets = _source_assets(output, plan, images)
+    # The run directory and manifest store the first 20 hex characters,
+    # not the full 64-character content hash returned by _fingerprint.
     old_digest = _fingerprint(
         timeline, audio, assets, avatar,
         profile=LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
-    )
+    )[:20]
     if old_digest == digest:
         return
     old_run = output / "video" / "runs" / old_digest[:20]
