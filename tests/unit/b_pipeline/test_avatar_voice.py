@@ -166,6 +166,38 @@ def test_ambiguous_paid_clone_is_not_resubmitted(
     assert submits == ["POST"]
 
 
+
+def test_recover_unknown_clone_with_confirmed_voice_id(tmp_path: Path) -> None:
+    avatar = _avatar(tmp_path)
+    reference = avatar.parent / "sample.wav"
+    reference.write_bytes(b"reference")
+
+    class FailingClient:
+        def clone_voice(self, **_kwargs: object) -> dict:
+            raise TimeoutError("unknown outcome")
+
+    with pytest.raises(SystemExit, match="No se puede confirmar"):
+        ensure_avatar_voice(
+            avatar_file=avatar,
+            avatars_dir=avatar.parent,
+            default_voice_id=DEFAULT,
+            input_audio_filename=reference.name,
+            client=FailingClient(),
+        )
+    recovered = ensure_avatar_voice(
+        avatar_file=avatar,
+        avatars_dir=avatar.parent,
+        default_voice_id=DEFAULT,
+        input_voice_id=OTHER,
+    )
+    assert recovered.mode == "clone"
+    assert recovered.voice_id == OTHER
+    assert recovered.audio_filename == "sample.wav"
+    assert ensure_avatar_voice(
+        avatar_file=avatar, avatars_dir=avatar.parent, default_voice_id=DEFAULT
+    ) == recovered
+
+
 def test_pending_clone_reuses_task_id_without_another_submission(tmp_path: Path) -> None:
     avatar = _avatar(tmp_path)
     reference = avatar.parent / "sample.wav"
