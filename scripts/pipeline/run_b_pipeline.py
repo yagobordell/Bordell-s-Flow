@@ -872,15 +872,15 @@ def _require_ltx_capacity_controller() -> None:
 
 
 def _require_ltx_safe_a2v_worker() -> None:
-    """Reject paid A2V v4 until its instrumented image is actually deployed."""
+    """Reject paid A2V v5 until its patched host-memory image is actually deployed."""
     load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
-    expected = os.getenv("SALAD_LTX25_DIAGNOSTIC_A2V_IMAGE", "").strip()
+    expected = os.getenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", "").strip()
     if not re.fullmatch(r"[^ ]+@sha256:[0-9a-fA-F]{64}", expected):
         raise RuntimeError(
-            "Diagnostic LTX A2V v4 requires SALAD_LTX25_DIAGNOSTIC_A2V_IMAGE="
+            "Pinned-host fallback LTX A2V v5 requires SALAD_LTX25_PAGEABLE_A2V_IMAGE="
             "<repository>@sha256:<64-hex-digest> in .env. "
             "Build, publish and Prepare the new LTX worker first; "
-            "do not resubmit the failed v3 job to an old uninstrumented Docker image."
+            "do not resubmit the failed v4 job to an unpatched Docker image."
         )
     document = json.loads(
         (Path(__file__).resolve().parents[2] / "deploy" / "salad" / "services.json")
