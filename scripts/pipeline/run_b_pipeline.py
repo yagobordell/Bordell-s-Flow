@@ -1221,7 +1221,6 @@ async def _run_audio_only(
         raise SystemExit("OPENAI_API_KEY is required to rerun the Fish director")
     if not settings.ai33_api_key:
         raise SystemExit("AI33_API_KEY is required for the Fish Audio voice task")
-    _activate_pending_avatar_clone(output, report)
     b11_path = output / "B1.1" / "output.json"
     if b11_path.is_symlink() or not b11_path.is_file():
         raise SystemExit("Audio-only mode requires the saved validated B1.1 output")
@@ -1232,6 +1231,8 @@ async def _run_audio_only(
         materialize_blocks(script, b11.blocks)
     except (ValueError, OSError) as exc:
         raise SystemExit(f"Invalid B1.1 audio checkpoint: {exc}") from exc
+
+    _activate_pending_avatar_clone(output, report)
 
     provider = (
         None
