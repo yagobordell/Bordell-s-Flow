@@ -435,7 +435,7 @@ def _beat_frame(
 def _media_image_motion_filter(timeline: dict[str, Any]) -> str:
     """Animate media_image beats with Media Pipeline's scale+crop Ken Burns."""
 
-    intervals: list[tuple[float, float]] = []
+    intervals: list[tuple[int, int]] = []
     for beat in timeline["beats"]:
         if beat["visual_type"] != "media_image":
             continue
@@ -448,11 +448,8 @@ def _media_image_motion_filter(timeline: dict[str, Any]) -> str:
                 "frames for visible motion"
             )
 
-        start_seconds = float(beat.get("start_seconds", start_frame / _FPS))
-        end_seconds = float(beat.get("end_seconds", end_frame / _FPS))
-        duration_seconds = end_seconds - start_seconds
-        beat["motion"] = motion_metadata(duration_seconds)
-        intervals.append((start_seconds, end_seconds))
+        beat["motion"] = motion_metadata((end_frame - start_frame) / _FPS)
+        intervals.append((start_frame, end_frame))
 
     return build_timeline_ken_burns_filter(
         intervals,
@@ -535,6 +532,15 @@ def generate_static_preview(
     entries.append(entries[-2])  # Repeated last frame preserves its last duration.
     concat.write_text("\n".join(entries) + "\n", encoding="utf-8")
     video_filter = _media_image_motion_filter(timeline)
+    # On Windows an inline FFmpeg graph has a command-line size limit.
+    # A filter script supports long B2 timelines without changing the graph.
+    filter_args = ["-vf", video_filter]
+    if len(video_filter) > 16_000:
+        filter_script = preview / "ken_burns.fffilter"
+        if filter_script.is_symlink():
+            raise StaticPreviewError("Refusing linked Ken Burns filter script")
+        filter_script.write_text(video_filter + "\n", encoding="utf-8")
+        filter_args = ["-filter_script:v", str(filter_script)]
     _save_json(preview / "timeline.json", timeline)
 
     target = preview / "static_preview.mp4"
@@ -548,7 +554,7 @@ def generate_static_preview(
             "-f", "concat", "-safe", "0", "-i", str(concat),
             "-i", str(output / audio["file"]),
             "-map", "0:v:0", "-map", "1:a:0",
-            "-vf", video_filter,
+            *filter_args,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
             "-c:a", "aac", "-b:a", "192k",
             "-t", f"{timeline['duration_seconds']:.9f}",

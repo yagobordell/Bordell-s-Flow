@@ -268,7 +268,7 @@ def test_real_ffmpeg_preview_has_audio_cuts_and_avatar_media_50_50(
     saved = json.loads((tmp_path / artifact["timeline_file"]).read_text(encoding="utf-8"))
     assert saved["beats"][2]["start_seconds"] == 1.5
     assert saved["beats"][1]["motion"] == {
-        "version": "media-image-scale-crop-v1",
+        "version": "media-image-subpixel-affine-v2",
         "mode": "ken_burns",
         "direction": "out",
         "origin": "bottom_left",
@@ -296,13 +296,13 @@ def test_media_image_motion_matches_media_pipeline_zoom_model() -> None:
     timeline = {"beats": [*beats, still]}
     video_filter = _media_image_motion_filter(timeline)
 
-    assert video_filter.startswith("fps=30,scale=w='")
+    assert video_filter.startswith("fps=30,scale=1280:720:flags=lanczos,format=yuv444p,")
     assert "zoompan=" not in video_filter
-    assert "crop=1280:720" in video_filter
+    assert ":sense=source:interpolation=linear:eval=frame" in video_filter
     assert "setsar=1" in video_filter
     assert video_filter.endswith("format=yuv420p")
     assert all(beat["motion"] == {
-        "version": "media-image-scale-crop-v1",
+        "version": "media-image-subpixel-affine-v2",
         "mode": "ken_burns",
         "direction": "out",
         "origin": "bottom_left",
@@ -384,7 +384,7 @@ def test_real_bottom_left_ken_burns_animates_second_media_image(
     )
     assert artifact["media_image_motion"]["animated_beats"] == 2
     assert timeline["beats"][2]["motion"] == {
-        "version": "media-image-scale-crop-v1",
+        "version": "media-image-subpixel-affine-v2",
         "mode": "ken_burns",
         "direction": "out",
         "origin": "bottom_left",

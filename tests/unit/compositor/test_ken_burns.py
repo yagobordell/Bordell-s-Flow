@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
+from pathlib import Path
+
 import pytest
+from PIL import Image, ImageChops, ImageDraw
 
 from ai_video_factory.compositor.ken_burns import (
     MOTION_VERSION,
@@ -27,38 +32,72 @@ def test_motion_metadata_is_bottom_left_zoom_out_to_one() -> None:
     }
 
 
-def test_clip_filter_uses_scale_crop_instead_of_zoompan() -> None:
-    filter_chain = build_clip_ken_burns_filter(
-        width=1280,
-        height=720,
-        fps=24,
-        duration_seconds=2.0,
+def test_clip_filter_uses_fractional_corners_without_dynamic_frame_sizes() -> None:
+    graph = build_clip_ken_burns_filter(
+        width=1280, height=720, fps=24, duration_seconds=2.0,
     )
-
-    assert "zoompan=" not in filter_chain
-    assert filter_chain.startswith("scale=w='")
-    assert ":eval=frame" in filter_chain
-    assert "max(1280/iw\\,720/ih)" in filter_chain
-    assert "1.040000+(1.000000-1.040000)" in filter_chain
-    assert "crop=1280:720" in filter_chain
-    assert "(in_w-out_w)*0.020000" in filter_chain
-    assert "(in_h-out_h)*0.980000" in filter_chain
-    assert "setsar=1" in filter_chain
-    assert "fps=24" in filter_chain
-    assert filter_chain.endswith("format=yuv420p")
-
-
-def test_timeline_filter_materializes_frames_before_dynamic_scale() -> None:
-    filter_chain = build_timeline_ken_burns_filter(
-        [(0.5, 1.5)],
-        width=1280,
-        height=720,
-        fps=30,
+    assert graph.startswith(
+        "fps=24,scale=1280:720:flags=lanczos,format=yuv444p,perspective="
     )
+    assert "zoompan=" not in graph
+    assert "trunc(" not in graph
+    assert "crop=" not in graph
+    assert "eval=frame" in graph
+    assert "(on-1)/47" in graph
+    assert "1.040000+(1.000000-1.040000)" in graph
+    assert "*0.020000" in graph
+    assert "*0.980000" in graph
+    assert ":sense=source:interpolation=linear:eval=frame" in graph
+    assert graph.endswith("setsar=1,format=yuv420p")
 
-    assert filter_chain.startswith("fps=30,scale=w='")
-    assert "max(1280/iw\\,720/ih)*(1+" in filter_chain
-    assert "zoompan=" not in filter_chain
-    assert "gte(t\\,0.500000000)" in filter_chain
-    assert "lt(t\\,1.500000000)" in filter_chain
-    assert "crop=1280:720" in filter_chain
+
+def test_timeline_filter_uses_exact_half_open_frame_ranges() -> None:
+    graph = build_timeline_ken_burns_filter(
+        [(15, 45)], width=1280, height=720, fps=30,
+    )
+    assert graph.startswith("fps=30,scale=1280:720:flags=lanczos,format=yuv444p,")
+    assert "gte(on\\,16)" in graph
+    assert "lt(on\\,46)" in graph
+    assert "(on-16)/29" in graph
+    assert "0.020000*(1-" in graph
+    assert ":sense=source:interpolation=linear:eval=frame" in graph
+
+
+def test_invalid_intervals_and_empty_timeline() -> None:
+    assert build_timeline_ken_burns_filter(
+        [], width=1280, height=720, fps=30,
+    ) == "fps=30,format=yuv420p"
+    with pytest.raises(ValueError, match="at least two"):
+        build_timeline_ken_burns_filter(
+            [(0, 1)], width=1280, height=720, fps=30,
+        )
+
+
+def test_ffmpeg_fractional_ken_burns_preserves_exact_frame_count(tmp_path: Path) -> None:
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("FFmpeg is required for a local, non-API motion regression")
+    source = tmp_path / "pattern.png"
+    image = Image.new("RGB", (160, 90), "white")
+    draw = ImageDraw.Draw(image)
+    for y in range(0, 90, 8):
+        for x in range(0, 160, 8):
+            draw.rectangle((x, y, x + 3, y + 3), fill=(25, 50, 160))
+    image.save(source)
+
+    graph = build_clip_ken_burns_filter(
+        width=160, height=90, fps=24, duration_seconds=1.0,
+    )
+    result = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-loop", "1", "-framerate", "24", "-i", str(source),
+            "-vf", graph, "-frames:v", "24",
+            "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+        ],
+        capture_output=True, check=True,
+    )
+    frame_bytes = 160 * 90 * 3
+    assert len(result.stdout) == 24 * frame_bytes
+    first = Image.frombytes("RGB", (160, 90), result.stdout[:frame_bytes])
+    last = Image.frombytes("RGB", (160, 90), result.stdout[-frame_bytes:])
+    assert ImageChops.difference(first, last).getbbox() is not None

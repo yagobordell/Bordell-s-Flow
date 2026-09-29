@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-MOTION_VERSION = "media-image-scale-crop-v1"
+MOTION_VERSION = "media-image-subpixel-affine-v2"
 ZOOM_SPEED_PER_SECOND = 0.02
 ZOOM_END = 1.0
 DEFAULT_ANCHOR = "bottom_left"
@@ -27,43 +27,47 @@ def motion_metadata(duration_seconds: float) -> dict[str, float | str]:
     }
 
 
-def _progress_expression(duration_seconds: float, *, start_seconds: float = 0.0) -> str:
-    if duration_seconds <= 0:
-        raise ValueError("Ken Burns duration must be positive")
-    elapsed = "t" if start_seconds == 0 else f"(t-{start_seconds:.9f})"
-    return f"min(max({elapsed}/{duration_seconds:.9f},0),1)"
+def _progress_expression(frames: int, *, start_frame: int = 0) -> str:
+    if frames <= 0 or start_frame < 0:
+        raise ValueError("Ken Burns needs a positive frame count and nonnegative start")
+    # FFmpeg perspective's 'on' counter is one-based. Reach exactly zoom=1
+    # on the LAST rendered frame, not one frame after the beat has ended.
+    elapsed = "(on-1)" if start_frame == 0 else f"(on-{start_frame + 1})"
+    return f"min(max({elapsed}/{max(1, frames - 1)}\\,0)\\,1)"
 
 
-def _scale_crop_filter(
-    zoom_expression: str,
-    *,
-    width: int,
-    height: int,
-    fps: int,
-    materialize_fps_first: bool,
+def _subpixel_filter(
+    zoom_expression: str, *, width: int, height: int, fps: int
 ) -> str:
-    cover = f"max({width}/iw\\,{height}/ih)"
-    scaled_width = f"trunc((iw*{cover}*({zoom_expression}))/2)*2"
-    scaled_height = f"trunc((ih*{cover}*({zoom_expression}))/2)*2"
-    x_expression = (
-        "max(0,min(in_w-out_w,"
-        f"(in_w-out_w)*{ANCHOR_X:.6f}))"
+    if min(width, height, fps) <= 0:
+        raise ValueError("Ken Burns geometry and fps must be positive")
+    # Map fractional SOURCE corners onto the fixed-size destination. Unlike
+    # scale(eval=frame)+crop, this never rounds a different width and height
+    # or jumps the crop origin to a different integer/chroma sample.
+    x_margin = f"(W-W/({zoom_expression}))"
+    y_margin = f"(H-H/({zoom_expression}))"
+    left = f"({x_margin}*{ANCHOR_X:.6f})"
+    right = f"(W-{x_margin}*{1 - ANCHOR_X:.6f})"
+    top = f"({y_margin}*{ANCHOR_Y:.6f})"
+    bottom = f"(H-{y_margin}*{1 - ANCHOR_Y:.6f})"
+    corners = (
+        ("x0", left), ("y0", top),
+        ("x1", right), ("y1", top),
+        ("x2", left), ("y2", bottom),
+        ("x3", right), ("y3", bottom),
     )
-    y_expression = (
-        "max(0,min(in_h-out_h,"
-        f"(in_h-out_h)*{ANCHOR_Y:.6f}))"
+    perspective = "perspective=" + ":".join(
+        [*(f"{name}='{expression}'" for name, expression in corners),
+         "sense=source", "interpolation=linear", "eval=frame"]
     )
-    filters = [
-        f"scale=w='{scaled_width}':h='{scaled_height}':eval=frame",
-        f"crop={width}:{height}:x='{x_expression}':y='{y_expression}'",
+    return ",".join((
+        f"fps={fps}",
+        f"scale={width}:{height}:flags=lanczos",
+        "format=yuv444p",
+        perspective,
         "setsar=1",
-    ]
-    if materialize_fps_first:
-        filters.insert(0, f"fps={fps}")
-    else:
-        filters.append(f"fps={fps}")
-    filters.append("format=yuv420p")
-    return ",".join(filters)
+        "format=yuv420p",
+    ))
 
 
 def build_clip_ken_burns_filter(
@@ -73,52 +77,40 @@ def build_clip_ken_burns_filter(
     fps: int,
     duration_seconds: float,
 ) -> str:
-    zoom_start = compute_zoom_start(duration_seconds)
-    progress = _progress_expression(duration_seconds)
-    zoom = (
-        f"({zoom_start:.6f}+({ZOOM_END:.6f}-{zoom_start:.6f})*{progress})"
-    )
-    return _scale_crop_filter(
-        zoom,
-        width=width,
-        height=height,
-        fps=fps,
-        materialize_fps_first=False,
-    )
+    if min(width, height, fps) <= 0 or duration_seconds <= 0:
+        raise ValueError("Ken Burns clip geometry, fps and duration must be positive")
+    frames = round(duration_seconds * fps)
+    if frames <= 0:
+        raise ValueError("Ken Burns clip must contain at least one frame")
+    zoom_start = compute_zoom_start(frames / fps)
+    progress = _progress_expression(frames)
+    zoom = f"({zoom_start:.6f}+({ZOOM_END:.6f}-{zoom_start:.6f})*{progress})"
+    return _subpixel_filter(zoom, width=width, height=height, fps=fps)
 
 
 def build_timeline_ken_burns_filter(
-    intervals: Iterable[tuple[float, float]],
+    intervals: Iterable[tuple[int, int]],
     *,
     width: int,
     height: int,
     fps: int,
 ) -> str:
+    """Animate exact half-open FRAME ranges in the preview's 30-fps clock."""
+    if min(width, height, fps) <= 0:
+        raise ValueError("Ken Burns geometry and fps must be positive")
     terms: list[str] = []
-    for start_seconds, end_seconds in intervals:
-        duration_seconds = end_seconds - start_seconds
-        zoom_start = compute_zoom_start(duration_seconds)
-        progress = _progress_expression(
-            duration_seconds,
-            start_seconds=start_seconds,
-        )
-        active = (
-            f"(gte(t\\,{start_seconds:.9f})*lt(t\\,{end_seconds:.9f}))"
-        )
-        delta = (
-            f"(({zoom_start:.6f}-1)+"
-            f"({ZOOM_END:.6f}-{zoom_start:.6f})*{progress})"
-        )
-        terms.append(f"{active}*{delta}")
+    for start_frame, end_frame in intervals:
+        frames = end_frame - start_frame
+        if start_frame < 0 or frames < 2:
+            raise ValueError("Ken Burns preview interval must contain at least two frames")
+        zoom_start = compute_zoom_start(frames / fps)
+        progress = _progress_expression(frames, start_frame=start_frame)
+        # The perspective counter 'on' starts at 1, unlike the timeline's
+        # zero-based frame indices. Non-media beats retain an identity transform.
+        active = f"(gte(on\\,{start_frame + 1})*lt(on\\,{end_frame + 1}))"
+        terms.append(f"({active}*({zoom_start - 1:.6f}*(1-{progress})))")
 
     if not terms:
         return f"fps={fps},format=yuv420p"
-
-    zoom = "1+" + "+".join(f"({term})" for term in terms)
-    return _scale_crop_filter(
-        zoom,
-        width=width,
-        height=height,
-        fps=fps,
-        materialize_fps_first=True,
-    )
+    zoom = "1+" + "+".join(terms)
+    return _subpixel_filter(zoom, width=width, height=height, fps=fps)
