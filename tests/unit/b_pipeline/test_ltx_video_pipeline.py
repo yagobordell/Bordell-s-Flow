@@ -456,6 +456,8 @@ def test_pending_ltx_manifest_protects_paid_work(
     assert b_video.has_pending_b2_video(tmp_path)
     path.write_text('{"status": "completed"}', encoding="utf-8")
     assert not b_video.has_pending_b2_video(tmp_path)
+    path.write_text('{"status": "superseded"}', encoding="utf-8")
+    assert not b_video.has_pending_b2_video(tmp_path)
 
 
 @pytest.mark.skipif(
