@@ -17,6 +17,7 @@ from ai_video_factory.providers.inference_jobs import (
     InferenceJobExecutor,
     InferenceJobTimeoutError,
     InferenceQueueAuthorityError,
+    InferenceTransportFailedError,
     RemoteInferenceRejectedError,
 )
 from ai_video_factory.providers.job_queue import (
@@ -173,6 +174,27 @@ def _success_snapshot(
             "replayed": False,
         },
     )
+
+
+def test_executor_surfaces_authoritative_failed_job_oom_and_attempts() -> None:
+    request = _request()
+    queue = FakeQueue(
+        QueueJobSnapshot(
+            id=request.job_id, status=QueueJobStatus.FAILED,
+            provider_payload={
+                "attempt_count": 5,
+                "last_error": "AcceleratorError: CUDA error: out of memory",
+            },
+        )
+    )
+    executor = InferenceJobExecutor(
+        queue=queue, storage=FakeStorage(), poll_seconds=0.01, timeout_seconds=1
+    )
+    with pytest.raises(InferenceTransportFailedError) as error:
+        executor.execute(request, metadata={})
+    assert "attempt_count=5" in str(error.value)
+    assert "AcceleratorError: CUDA error: out of memory" in str(error.value)
+    assert queue.submits == 1
 
 
 def test_executor_surfaces_terminal_worker_detail_without_pydantic_validation_error() -> None:

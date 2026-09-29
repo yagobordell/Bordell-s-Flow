@@ -22,13 +22,21 @@ from ai_video_factory.compositor.static_preview import (
     build_stt_beat_timeline,
 )
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
-from ai_video_factory.inference.gpu_failures import DEFAULT_GPU_MAX_ATTEMPTS
+from ai_video_factory.inference.gpu_failures import (
+    DEFAULT_GPU_MAX_ATTEMPTS,
+    classify_gpu_failure,
+)
 from ai_video_factory.inference.ports import ObjectStorage
 from ai_video_factory.inference.storage import sha256_file
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
-from ai_video_factory.providers.job_queue import JobQueueClient
+from ai_video_factory.providers.job_queue import (
+    JobQueueClient,
+    QueueJobNotFoundError,
+    QueueJobStatus,
+)
 from ai_video_factory.workers.ltx25.a2v import (
-    LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+    LTX_A2V_RECOMMENDED_MAX_SECONDS,
+    LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
     LTX_A2V_TASK,
 )
 from ai_video_factory.workers.ltx25.jobs import (
@@ -189,7 +197,7 @@ def _fingerprint(
             [block_id, beat_id, sha256_file(path)]
             for (block_id, beat_id), path in sorted(assets.items())
         ],
-        "profile": LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+        "profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         "positive_prompt": AVATAR_PROMPT,
         "negative_prompt": AVATAR_NEGATIVE_PROMPT,
         "fps": _FPS,
@@ -240,6 +248,14 @@ def build_b2_video_plan(
             count = round(beats[last]["end_seconds"] * _RATE) - round(
                 beats[first]["start_seconds"] * _RATE
             )
+            if count > round(LTX_A2V_RECOMMENDED_MAX_SECONDS * _RATE):
+                raise B2VideoError(
+                    "Consecutive avatar beats exceed the supported single A2V "
+                    f"speech duration ({beats[first]['beat_id']}–"
+                    f"{beats[last]['beat_id']}, {count / _RATE:.2f}s > "
+                    f"{LTX_A2V_RECOMMENDED_MAX_SECONDS:.0f}s). "
+                    "Split the avatar timeline before any paid inference."
+                )
             try:
                 reference_num_frames_for_samples(
                     count, sample_rate=_RATE, fps=_FPS,
@@ -297,7 +313,7 @@ def build_b2_video_plan(
                 segment_id=f"b2-{beat_ids[0]}-{beat_ids[-1]}",
                 prompt=AVATAR_PROMPT, image_sha256=image_sha,
                 audio_sha256=audio_sha, seed=seed, width=1280, height=720,
-                fps=_FPS, generation_profile=LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+                fps=_FPS, generation_profile=LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
             )
             request = InferenceJobRequest(
                 job_id=job_id, task=LTX_A2V_TASK, max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
@@ -320,7 +336,7 @@ def build_b2_video_plan(
                     content_type="application/json",
                 )},
                 parameters={
-                    "generation_profile": LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+                    "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
                     "prompt": AVATAR_PROMPT, "seed": seed,
                     "width": 1280, "height": 720, "fps": _FPS,
                 },
@@ -390,9 +406,83 @@ def has_pending_b2_video(output: Path) -> bool:
         if path.is_symlink():
             return True
         state = json.loads(path.read_text(encoding="utf-8"))
-        if state.get("status") != "completed":
+        if state.get("status") not in {"completed", "superseded"}:
             return True
     return False
+
+
+def _reconcile_prior_failed_video_runs(
+    output: Path,
+    *,
+    new_digest: str,
+    audio_sha256: str,
+    queue: JobQueueClient,
+) -> None:
+    """Supersede only old OOM runs proven terminal in authoritative Postgres.
+
+    Do not recreate paid jobs while an old request is pending, running,
+    succeeded-but-not-materialized, cancelled or in an unknown state.
+    """
+    runs = output / "video" / "runs"
+    if runs.is_symlink():
+        raise B2VideoError("Refusing linked LTX video runs directory")
+    for previous_path in sorted(runs.glob("*/manifest.json")):
+        if previous_path.is_symlink() or previous_path.parent.is_symlink():
+            raise B2VideoError("Refusing linked previous LTX manifest")
+        old = json.loads(previous_path.read_text(encoding="utf-8"))
+        if not isinstance(old, dict) or not isinstance(old.get("jobs"), list):
+            raise B2VideoError(f"Invalid previous LTX manifest: {previous_path}")
+        if old.get("fingerprint") == new_digest or old.get("status") in {
+            "completed", "superseded"
+        }:
+            continue
+        if old.get("master_audio_sha256") != audio_sha256:
+            raise B2VideoError(
+                "A previous incomplete LTX run has a different soundtrack; "
+                "reconcile it before generating a new video"
+            )
+        for record in old["jobs"]:
+            if not isinstance(record, dict):
+                raise B2VideoError("Invalid previous LTX job record")
+            if record.get("status") == "completed":
+                continue
+            old_id = record.get("job_id")
+            if not isinstance(old_id, str) or not old_id:
+                raise B2VideoError("Previous LTX job has no durable ID")
+            try:
+                snapshot = queue.get(old_id)
+            except QueueJobNotFoundError:
+                if record.get("status") == "pending":
+                    continue  # Manifest saved before any authoritative submission.
+                raise B2VideoError(
+                    f"Previous LTX job {old_id} is missing from Postgres; "
+                    "cannot verify whether its paid inference completed"
+                ) from None
+            if snapshot.status is not QueueJobStatus.FAILED:
+                raise B2VideoError(
+                    f"Previous LTX job {old_id} is {snapshot.status.value}; "
+                    "refusing to submit another paid video while its result is unresolved"
+                )
+            provider = snapshot.provider_payload or {}
+            last_error = provider.get("last_error")
+            if not isinstance(last_error, str) or classify_gpu_failure(
+                RuntimeError(last_error)
+            ) != "oom":
+                raise B2VideoError(
+                    f"Previous LTX job {old_id} failed for a non-OOM or unknown reason; "
+                    "manual reconciliation is required before retrying"
+                )
+        prior_status = old["status"]
+        old["status"] = "superseded"
+        old["superseded_by"] = new_digest
+        old["superseded_reason"] = "Postgres-confirmed terminal OOM"
+        old["previous_status"] = prior_status
+        _save_json(previous_path, old)
+        print(
+            f"  Previous LTX run {previous_path.parent.name} was terminally OOM; "
+            "preserving its artifacts and using new memory-safe request IDs",
+            flush=True,
+        )
 
 
 def generate_b2_ltx_video(
@@ -400,6 +490,7 @@ def generate_b2_ltx_video(
     images: dict[str, Any], *, queue: JobQueueClient, storage: ObjectStorage,
     poll_seconds: float = 15.0, timeout_seconds: float = 21600.0,
     check_capacity: Callable[[], None] | None = None,
+    check_a2v_worker: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Durably submit exactly one LTX request per video beat/avatar group, then mux.
 
@@ -432,6 +523,16 @@ def generate_b2_ltx_video(
     else:
         manifest = expected
         _save_json(manifest_path, manifest)
+    if check_a2v_worker is not None and any(
+        job.kind == "a2v" and record["status"] != "completed"
+        for job, record in zip(jobs, manifest["jobs"], strict=True)
+    ):
+        # Fail before any paid I2V/A2V submissions if the new worker image
+        # is not deployed. A repo pull never updates Salad's pinned Docker image.
+        check_a2v_worker()
+    _reconcile_prior_failed_video_runs(
+        output, new_digest=digest, audio_sha256=audio["sha256"], queue=queue
+    )
     executor = InferenceJobExecutor(
         queue=queue, storage=storage,
         poll_seconds=poll_seconds, timeout_seconds=timeout_seconds,
@@ -501,7 +602,7 @@ def generate_b2_ltx_video(
                 values = json.loads(meta.read_text(encoding="utf-8"))
                 if (
                     values.get("generation_profile") !=
-                    LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE
+                    LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
                     or values.get("negative_prompt_applied") is not True
                     or values.get("positive_prompt_enhanced") is not False
                 ):

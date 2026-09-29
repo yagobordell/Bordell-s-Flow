@@ -23,7 +23,7 @@ from .errors import (
     OutputConflictError,
     UnsupportedTaskError,
 )
-from .gpu_failures import cleanup_cuda_memory, is_retryable_gpu_failure
+from .gpu_failures import classify_gpu_failure, cleanup_cuda_memory, is_retryable_gpu_failure
 from .ports import (
     ClaimDecision,
     JobRepository,
@@ -205,8 +205,18 @@ class InferenceWorker:
             )
             raise
         except Exception as exc:
+            gpu_failure_kind = classify_gpu_failure(exc)
             retryable_gpu_failure = is_retryable_gpu_failure(exc)
-            can_retry = claim.attempt_count < request.effective_max_attempts
+            # A repeated A2V OOM with identical parameters wastes paid GPU time.
+            # Permit one clean-pipeline retry; keep the global five-attempt
+            # budget for unrelated tasks and non-memory failures.
+            budget = request.effective_max_attempts
+            if (
+                request.task == "video.ltx25.audio_to_video"
+                and gpu_failure_kind == "oom"
+            ):
+                budget = min(budget, 2)
+            can_retry = claim.attempt_count < budget
             logger.warning(
                 "INFERENCE_JOB_FAILED task=%s job_id=%s attempt=%d retryable=%s "
                 "gpu_failure=%s error_type=%s",

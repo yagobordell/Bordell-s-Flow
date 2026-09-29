@@ -16,7 +16,7 @@ import pytest
 from PIL import Image
 
 from ai_video_factory.workers.ltx25.a2v import (
-    LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+    LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
 )
 from ai_video_factory.workers.ltx25.model import LTX_VIDEO_TASK
 from ai_video_factory.workflows import b_video
@@ -105,7 +105,7 @@ def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     assert first.request.parameters["prompt"] == "A Person speaking to the camera."
     assert last.request.parameters["prompt"] == first.request.parameters["prompt"]
     assert first.request.parameters["generation_profile"] == (
-        LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE
+        LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
     )
     assert b_video.AVATAR_NEGATIVE_PROMPT == (
         "camera zoom, zoom in, push in, dolly in, camera drift, camera shake, "
@@ -233,6 +233,40 @@ def test_automatic_ltx_activation_requires_complete_audio_and_transport(
     assert closed == [True]
 
 
+
+def test_new_memory_safe_a2v_requires_exact_deployed_image_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runner.settings, "salad_api_key", "test-key")
+    monkeypatch.setenv("SALAD_ORGANIZATION", "org")
+    monkeypatch.setenv("SALAD_PROJECT", "project")
+    monkeypatch.delenv("SALAD_LTX25_SAFE_A2V_IMAGE", raising=False)
+
+    with pytest.raises(RuntimeError, match="SALAD_LTX25_SAFE_A2V_IMAGE"):
+        runner._require_ltx_safe_a2v_worker()
+
+    pinned = "docker.io/test/factory@sha256:" + "a" * 64
+    monkeypatch.setenv("SALAD_LTX25_SAFE_A2V_IMAGE", pinned)
+    deployed = {"image": "docker.io/test/factory@sha256:" + "b" * 64}
+
+    class FakeSaladClient:
+        def __init__(self, config: object) -> None:
+            assert config.container_group_name == (
+                "ai-video-factory-ltx25-worker-v3"
+            )
+
+        def describe_container_group(self) -> dict:
+            return {"container": deployed}
+
+    monkeypatch.setattr(runner, "SaladClient", FakeSaladClient)
+    with pytest.raises(RuntimeError, match="worker image mismatch"):
+        runner._require_ltx_safe_a2v_worker()
+
+    deployed["image"] = pinned
+    runner._require_ltx_safe_a2v_worker()
+
+
 def test_capacity_guard_accepts_healthy_singleton(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -304,6 +338,115 @@ def test_ltx_capacity_guard_blocks_paid_submission(
     assert list((tmp_path / "video" / "runs").glob("*/manifest.json"))
 
 
+
+def test_memory_safe_image_gate_fails_before_paid_submission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        b_video, "InferenceJobExecutor",
+        lambda **_kwargs: pytest.fail("executor must not be constructed"),
+    )
+    with pytest.raises(RuntimeError, match="safe worker image is not deployed"):
+        b_video.generate_b2_ltx_video(
+            tmp_path, plan, audio, images,
+            queue=SimpleNamespace(), storage=SimpleNamespace(),
+            check_a2v_worker=lambda: (
+                calls.append("checked"),
+                (_ for _ in ()).throw(RuntimeError(
+                    "safe worker image is not deployed"
+                )),
+            ),
+        )
+    assert calls == ["checked"]
+
+
+def test_terminal_oom_old_run_is_preserved_and_superseded(
+    tmp_path: Path,
+) -> None:
+    from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
+
+    previous = tmp_path / "video" / "runs" / "old" / "manifest.json"
+    previous.parent.mkdir(parents=True)
+    previous.write_text(json.dumps({
+        "fingerprint": "old", "master_audio_sha256": "a" * 64,
+        "status": "running",
+        "jobs": [{"job_id": "old-a2v", "status": "pending"}],
+    }), encoding="utf-8")
+
+    class Queue:
+        def get(self, job_id: str) -> QueueJobSnapshot:
+            assert job_id == "old-a2v"
+            return QueueJobSnapshot(
+                id=job_id, status=QueueJobStatus.FAILED,
+                provider_payload={
+                    "attempt_count": 5,
+                    "last_error": "AcceleratorError: CUDA error: out of memory",
+                },
+            )
+
+    b_video._reconcile_prior_failed_video_runs(
+        tmp_path, new_digest="safe-v2", audio_sha256="a" * 64, queue=Queue()
+    )
+    old = json.loads(previous.read_text(encoding="utf-8"))
+    assert old["status"] == "superseded"
+    assert old["superseded_by"] == "safe-v2"
+    assert old["previous_status"] == "running"
+    assert old["jobs"][0]["job_id"] == "old-a2v"
+    assert not b_video.has_pending_b2_video(tmp_path)
+
+
+@pytest.mark.parametrize("status", ["running", "succeeded", "cancelled"])
+def test_unresolved_old_job_never_triggers_a_second_paid_run(
+    tmp_path: Path, status: str
+) -> None:
+    from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
+
+    previous = tmp_path / "video" / "runs" / "old" / "manifest.json"
+    previous.parent.mkdir(parents=True)
+    previous.write_text(json.dumps({
+        "fingerprint": "old", "master_audio_sha256": "a" * 64,
+        "status": "running",
+        "jobs": [{"job_id": "old-a2v", "status": "pending"}],
+    }), encoding="utf-8")
+
+    class Queue:
+        def get(self, job_id: str) -> QueueJobSnapshot:
+            return QueueJobSnapshot(id=job_id, status=QueueJobStatus(status))
+
+    with pytest.raises(b_video.B2VideoError, match="refusing to submit"):
+        b_video._reconcile_prior_failed_video_runs(
+            tmp_path, new_digest="safe-v2", audio_sha256="a" * 64, queue=Queue()
+        )
+    assert json.loads(previous.read_text(encoding="utf-8"))["status"] == "running"
+
+
+def test_non_oom_terminal_failure_requires_manual_reconciliation(tmp_path: Path) -> None:
+    from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
+
+    previous = tmp_path / "video" / "runs" / "old" / "manifest.json"
+    previous.parent.mkdir(parents=True)
+    previous.write_text(json.dumps({
+        "fingerprint": "old", "master_audio_sha256": "a" * 64,
+        "status": "running",
+        "jobs": [{"job_id": "old-a2v", "status": "pending"}],
+    }), encoding="utf-8")
+
+    class Queue:
+        def get(self, job_id: str) -> QueueJobSnapshot:
+            return QueueJobSnapshot(
+                id=job_id, status=QueueJobStatus.FAILED,
+                provider_payload={"last_error": "invalid source image"},
+            )
+
+    with pytest.raises(b_video.B2VideoError, match="non-OOM"):
+        b_video._reconcile_prior_failed_video_runs(
+            tmp_path, new_digest="safe-v2", audio_sha256="a" * 64, queue=Queue()
+        )
+    assert json.loads(previous.read_text(encoding="utf-8"))["status"] == "running"
+
+
 def test_pending_ltx_manifest_protects_paid_work(
     tmp_path: Path,
 ) -> None:
@@ -312,6 +455,8 @@ def test_pending_ltx_manifest_protects_paid_work(
     path.write_text('{"status": "running"}', encoding="utf-8")
     assert b_video.has_pending_b2_video(tmp_path)
     path.write_text('{"status": "completed"}', encoding="utf-8")
+    assert not b_video.has_pending_b2_video(tmp_path)
+    path.write_text('{"status": "superseded"}', encoding="utf-8")
     assert not b_video.has_pending_b2_video(tmp_path)
 
 
@@ -333,7 +478,7 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     ], check=True, capture_output=True)
     metadata = tmp_path / "worker-metadata.json"
     metadata.write_text(json.dumps({
-        "generation_profile": LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+        "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         "negative_prompt_applied": True,
         "positive_prompt_enhanced": False,
     }), encoding="utf-8")

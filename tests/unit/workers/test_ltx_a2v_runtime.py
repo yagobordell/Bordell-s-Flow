@@ -432,10 +432,24 @@ def test_guided_a2v_uses_upstream_guidance_and_preserves_padded_speech(
         "A woman whispering to the microphone",
     ],
 )
+@pytest.mark.parametrize(
+    ("profile", "expected_offload", "expected_budget"),
+    [
+        (a2v.LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE, "cpu", 20_000_000_000),
+        (
+            a2v.LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+            "disk",
+            a2v.LTX_A2V_SAFE_TILING_BUDGET_BYTES,
+        ),
+    ],
+)
 def test_static_reference_preserves_simple_positive_prompt_with_real_negative_conditioning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     positive_prompt: str,
+    profile: str,
+    expected_offload: str,
+    expected_budget: int,
 ) -> None:
     model_root = tmp_path / "models"
     _seed_model_files(model_root)
@@ -488,14 +502,15 @@ def test_static_reference_preserves_simple_positive_prompt_with_real_negative_co
         audio_path=audio,
         output_path=tmp_path / "static.mp4",
         parameters=LTXAudioToVideoParameters(
-            generation_profile=a2v.LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+            generation_profile=profile,
             prompt=positive_prompt,
             seed=4242,
         ),
     )
     call = state["calls"][0]
     assert state["pipeline_init"]["distilled_lora"] == []
-    assert state["pipeline_init"]["offload_mode"] == "cpu"
+    assert state["pipeline_init"]["offload_mode"] == expected_offload
+    assert state["tiling_budget"] == expected_budget
     assert call["prompt"] == positive_prompt
     assert call["enhance_prompt"] is False
     assert call["negative_prompt"] == a2v.LTX_A2V_STATIC_NEGATIVE_PROMPT
@@ -505,6 +520,10 @@ def test_static_reference_preserves_simple_positive_prompt_with_real_negative_co
     assert call["stage_2_sigmas"] == bindings.stage_2_sigmas
     assert call["num_frames"] == 97
     assert metadata["generation_recipe"] == "distilled_static_reference"
+    assert metadata["offload_mode"] == expected_offload
+    assert metadata["activation_budget_cap_bytes"] == (
+        expected_budget if expected_offload == "disk" else None
+    )
     assert metadata["stage_1_steps"] == 8
     assert metadata["stage_2_steps"] == 3
     assert metadata["stage_1_image_strength"] == 0.8

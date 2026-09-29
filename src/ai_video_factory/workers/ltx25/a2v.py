@@ -64,6 +64,13 @@ LTX_A2V_DEV_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdp
 LTX_A2V_GUIDED_GENERATION_PROFILE = (
     "ltx25-a2v-guided-dev-a95ab856-model6c7e5e5-fp8disk-eagersdpa-v2"
 )
+# New immutable profile: keep the static prompt, sampling and 720p output intact,
+# but stream weights from disk and cap automatic decoder activation allocations.
+# The legacy static profile remains supported for previously submitted job IDs.
+LTX_A2V_STATIC_SAFE_GENERATION_PROFILE = (
+    "ltx25-a2v-static-reference-distilled-a95ab856-model6c7e5e5-fp8disk-tiling2g-eagersdpa-v2"
+)
+LTX_A2V_SAFE_TILING_BUDGET_BYTES = 2 * 1024**3
 LTX_A2V_RECOMMENDED_MAX_SECONDS = 12.0
 LTX_A2V_MAX_RAW_FRAMES = 1024
 LTX_A2V_DEFAULT_PROMPT = (
@@ -100,6 +107,7 @@ class LTXAudioToVideoParameters(BaseModel):
             LTX_A2V_GENERATION_PROFILE,
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
             LTX_A2V_DEV_GENERATION_PROFILE,
             LTX_A2V_GUIDED_GENERATION_PROFILE,
         ):
@@ -329,7 +337,10 @@ def _log_cuda_memory(stage: str, snapshot: Mapping[str, int | float]) -> None:
     )
 
 
-def _install_clean_tiling_budget(bindings: _A2VBindings, device: str) -> Any:
+def _install_clean_tiling_budget(
+    bindings: _A2VBindings, device: str, *, budget_cap_bytes: int | None = None
+) -> Any:
+    """Bound decoder activation tiling independently of free GPU memory."""
     original = bindings.tiling_helpers.activation_budget_bytes
 
     def activation_budget_with_cleanup(resolved_device: Any = None) -> int:
@@ -342,6 +353,8 @@ def _install_clean_tiling_budget(bindings: _A2VBindings, device: str) -> Any:
         snapshot = _cuda_memory_snapshot(bindings.torch, device)
         _log_cuda_memory("tiling_after_cleanup", snapshot)
         budget = int(original(target))
+        if budget_cap_bytes is not None:
+            budget = min(budget, budget_cap_bytes)
         logger.info(
             "LTX25_A2V_TILING_BUDGET activation_budget_bytes=%d",
             budget,
@@ -905,12 +918,17 @@ class DirectLTX25AudioToVideoBackend:
         generation_started = time.monotonic()
         audio_probe = probe_audio(audio_path)
         _validate_audio_duration(audio_probe, fps=parameters.fps)
-        static_reference = (
-            parameters.generation_profile == LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE
+        memory_safe = (
+            parameters.generation_profile == LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
+        )
+        static_reference = parameters.generation_profile in (
+            LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         reference = parameters.generation_profile in (
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         guided = parameters.generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
         reference_audio_plan: ReferenceAudioPlan | None = None
@@ -1033,6 +1051,9 @@ class DirectLTX25AudioToVideoBackend:
                 original_activation_budget = _install_clean_tiling_budget(
                     bindings,
                     self._device,
+                    budget_cap_bytes=(
+                        LTX_A2V_SAFE_TILING_BUDGET_BYTES if memory_safe else None
+                    ),
                 )
                 try:
                     if reference:
@@ -1198,7 +1219,10 @@ class DirectLTX25AudioToVideoBackend:
             "audio_frozen_stage_1": True,
             "audio_frozen_stage_2": True,
             "quantization": "fp8_cast",
-            "offload_mode": "disk" if guided else "cpu",
+            "offload_mode": "disk" if guided or memory_safe else "cpu",
+            "activation_budget_cap_bytes": (
+                LTX_A2V_SAFE_TILING_BUDGET_BYTES if memory_safe else None
+            ),
             "ltx_model_revision": os.environ.get(
                 "LTX_MODEL_REVISION", LTX25_MODEL_REVISION
             ),
@@ -1289,6 +1313,7 @@ class DirectLTX25AudioToVideoBackend:
         reference = generation_profile in (
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         distilled = fast or reference
         if not distilled:
@@ -1322,19 +1347,19 @@ class DirectLTX25AudioToVideoBackend:
         pipeline_cls = (
             bindings.reference_a2v_pipeline if reference else bindings.a2v_pipeline
         )
-        # The pinned upstream CPU strategy keeps all Gemma blocks in page-locked
-        # host buffers. Real guided smokes failed in its pinned allocator at both
-        # 40 and 60 GiB; use upstream disk streaming only for guided instead.
-        # This bounds the staging buffers without changing the checkpoint,
-        # LoRA, guidance, audio, or frame schedule. Other profiles stay on CPU.
+        # The CPU strategy pins host weights; previous guided smokes raised
+        # CUDA OOM with plenty of VRAM free. Disk streaming is the upstream
+        # bounded-host-memory path. Use it for the new static-safe profile too.
         guided = generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
+        memory_safe = generation_profile == LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
         offload_mode = (
-            bindings.offload_mode.DISK if guided else bindings.offload_mode.CPU
+            bindings.offload_mode.DISK
+            if guided or memory_safe else bindings.offload_mode.CPU
         )
         logger.info(
             "LTX25_A2V_OFFLOAD generation_profile=%s mode=%s",
             generation_profile,
-            "disk" if guided else "cpu",
+            "disk" if guided or memory_safe else "cpu",
         )
         self._pipeline = pipeline_cls(
             model_paths=model_paths,

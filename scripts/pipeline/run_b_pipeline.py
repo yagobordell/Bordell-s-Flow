@@ -41,6 +41,11 @@ from ai_video_factory.inference.capacity_controller import (
     read_capacity_controller_health,
     validate_capacity_controller_dsn,
 )
+from ai_video_factory.inference.salad import (
+    DEFAULT_SALAD_API_BASE_URL,
+    SaladClient,
+    SaladDispatchConfig,
+)
 from ai_video_factory.inference.salad_billing import SaladCostMeter, read_salad_costs
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
@@ -832,6 +837,42 @@ def _require_ltx_capacity_controller() -> None:
     )
 
 
+def _require_ltx_safe_a2v_worker() -> None:
+    """Reject a paid v2 A2V request until the reviewed image is actually deployed."""
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+    expected = os.getenv("SALAD_LTX25_SAFE_A2V_IMAGE", "").strip()
+    if not re.fullmatch(r"[^ ]+@sha256:[0-9a-fA-F]{64}", expected):
+        raise RuntimeError(
+            "Memory-safe LTX A2V requires SALAD_LTX25_SAFE_A2V_IMAGE="
+            "<repository>@sha256:<64-hex-digest> in .env. "
+            "Build, publish and Prepare the new LTX worker first; "
+            "do not re-submit the failed job to the old v11 Docker image."
+        )
+    document = json.loads(
+        (Path(__file__).resolve().parents[2] / "deploy" / "salad" / "services.json")
+        .read_text(encoding="utf-8")
+    )
+    group_name = document["services"]["ltx25"]["group_name"]
+    client = SaladClient(
+        SaladDispatchConfig(
+            api_key=settings.salad_api_key,
+            api_base_url=os.getenv("SALAD_API_BASE_URL", DEFAULT_SALAD_API_BASE_URL),
+            organization_name=os.getenv("SALAD_ORGANIZATION"),
+            project_name=os.getenv("SALAD_PROJECT"),
+            container_group_name=group_name,
+        )
+    )
+    deployed = client.describe_container_group()
+    container = deployed.get("container")
+    actual = container.get("image") if isinstance(container, dict) else None
+    if actual != expected:
+        raise RuntimeError(
+            "Salad LTX A2V worker image mismatch; no new paid inference submitted. "
+            f"Expected reviewed image {expected}, group reports {actual!r}. "
+            "Prepare the exact digest and ensure the group is updated."
+        )
+
+
 async def _video_if_ready(
     output: Path,
     report: dict[str, object],
@@ -898,6 +939,7 @@ async def _video_if_ready(
                     poll_seconds=settings.inference_client_poll_seconds,
                     timeout_seconds=max(settings.inference_client_timeout_seconds, 21600.0),
                     check_capacity=_require_ltx_capacity_controller,
+                    check_a2v_worker=_require_ltx_safe_a2v_worker,
                 )
         finally:
             queue.close()
@@ -2096,8 +2138,9 @@ async def main() -> None:
             run_metadata["video_preview"] = {"status": "incomplete"}
         if run_metadata.get("video_generation") == {"status": "running"}:
             run_metadata["video_generation"] = {"status": "incomplete"}
-        _, timing_report = save_report("failed", None)
+        costs, timing_report = save_report("failed", None)
         _print_metric("Run", timing_report["run_elapsed_seconds"], None)
+        _print_observed_salad_total(costs)
         raise
 
     costs, timing_report = save_report("completed", len(result.b12))
