@@ -16,8 +16,8 @@ from typing import Any
 
 from PIL import Image, ImageOps
 
+from ai_video_factory.compositor.ken_burns import MOTION_VERSION as _MOTION_VERSION
 from ai_video_factory.compositor.ken_burns import (
-    MOTION_VERSION as _MOTION_VERSION,
     build_timeline_ken_burns_filter,
     motion_metadata,
 )
