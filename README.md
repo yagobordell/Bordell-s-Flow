@@ -279,6 +279,10 @@ una sola generación: las imágenes de relleno no se generan aparte.
 Si no hay suficientes imágenes distintas, la validación falla antes de
 crear solicitudes de pago. Cada panel ocupa 1280×720 píxeles en el grid:
 los PNG completos miden 2560×1440, 3840×1440 o 3840×2160.
+Los grids se generan con calidad `medium` en OpenAI (Flare o Sunburst,
+B2 casero o profesional); las imágenes individuales conservan `low`.
+La calidad efectiva de cada solicitud queda registrada en su estado y
+fingerprint para evitar repetir o mezclar generaciones de pago.
 Los tamaños superiores a 2560×1440 son experimentales según OpenAI;
 se debe revisar visualmente la distribución real de paneles. El prompt
 de cada grid se compone **por código** con la cabecera
