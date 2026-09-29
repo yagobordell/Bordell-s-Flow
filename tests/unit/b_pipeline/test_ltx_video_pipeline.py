@@ -233,6 +233,40 @@ def test_automatic_ltx_activation_requires_complete_audio_and_transport(
     assert closed == [True]
 
 
+
+def test_new_memory_safe_a2v_requires_exact_deployed_image_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "load_dotenv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runner.settings, "salad_api_key", "test-key")
+    monkeypatch.setenv("SALAD_ORGANIZATION", "org")
+    monkeypatch.setenv("SALAD_PROJECT", "project")
+    monkeypatch.delenv("SALAD_LTX25_SAFE_A2V_IMAGE", raising=False)
+
+    with pytest.raises(RuntimeError, match="SALAD_LTX25_SAFE_A2V_IMAGE"):
+        runner._require_ltx_safe_a2v_worker()
+
+    pinned = "docker.io/test/factory@sha256:" + "a" * 64
+    monkeypatch.setenv("SALAD_LTX25_SAFE_A2V_IMAGE", pinned)
+    deployed = {"image": "docker.io/test/factory@sha256:" + "b" * 64}
+
+    class FakeSaladClient:
+        def __init__(self, config: object) -> None:
+            assert getattr(config, "container_group_name") == (
+                "ai-video-factory-ltx25-worker-v3"
+            )
+
+        def describe_container_group(self) -> dict:
+            return {"container": deployed}
+
+    monkeypatch.setattr(runner, "SaladClient", FakeSaladClient)
+    with pytest.raises(RuntimeError, match="worker image mismatch"):
+        runner._require_ltx_safe_a2v_worker()
+
+    deployed["image"] = pinned
+    runner._require_ltx_safe_a2v_worker()
+
+
 def test_capacity_guard_accepts_healthy_singleton(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:
