@@ -115,6 +115,20 @@ def test_missing_credentials_do_not_produce_fake_zero_cost(tmp_path, services_pa
     assert summary["estimated_observed_cost_usd"] is None
 
 
+def test_unpriced_observations_never_display_zero_cost(
+    tmp_path, services_path, monkeypatch
+):
+    monkeypatch.setenv("SALAD_LTX25_USD_PER_GPU_HOUR", "invalid")
+    monkeypatch.setenv("SALAD_LTX25_I2V_USD_PER_GPU_HOUR", "invalid")
+    with _meter(tmp_path, services_path) as meter:
+        pass
+    summary = read_salad_costs(meter.path)
+    assert summary is not None
+    assert summary["pricing_status"] == "partial"
+    assert summary["priced_subtotal_usd"] is None
+    assert summary["services"]["ltx25"]["priced_subtotal_usd"] is None
+
+
 def test_existing_running_session_is_marked_interrupted_on_resume(
     tmp_path, services_path
 ):
