@@ -153,6 +153,7 @@ class GpuJobDiagnostics:
         self.last_key: str | None = None
         self.sequence = 0
         self._checkpoint_upload_failed = False
+        self._failure_recorded = False
         self.identity = _gpu_identity()
 
     def checkpoint(self, phase: str, *, sync_cuda: bool = False) -> None:
@@ -172,6 +173,8 @@ class GpuJobDiagnostics:
         self._persist(phase, None)
 
     def failure(self, error: BaseException) -> None:
+        if self._failure_recorded:
+            return
         prior_phase = self.last_phase
         trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
         self._persist(
@@ -186,6 +189,7 @@ class GpuJobDiagnostics:
         with suppress(Exception):
             error._gpu_diagnostic_phase = prior_phase
             error._gpu_diagnostic_key = self.last_key
+        self._failure_recorded = True
         logger.exception(
             "LTX_A2V_DIAGNOSTIC_FAILURE job_id=%s attempt=%d phase=%s r2_key=%s",
             self.job_id,
@@ -275,3 +279,13 @@ def diagnostic_checkpoint(phase: str, *, sync_cuda: bool = False) -> None:
     current = _ACTIVE_DIAGNOSTICS.get()
     if current is not None:
         current.checkpoint(phase, sync_cuda=sync_cuda)
+
+
+def diagnostic_failure(error: BaseException) -> None:
+    """Persist the GPU failure before A2V pipeline invalidation clears VRAM evidence."""
+    current = _ACTIVE_DIAGNOSTICS.get()
+    if current is not None:
+        try:
+            current.failure(error)
+        except Exception:
+            logger.exception("A2V failure diagnostic capture unexpectedly failed")
