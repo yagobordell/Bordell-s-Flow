@@ -156,7 +156,7 @@ def ensure_avatar_voice(
     _valid_voice_id(default_voice_id)
     if sum((input_voice_id is not None, input_audio_filename is not None, use_default)) > 1:
         raise SystemExit("Usa solo una opción entre --voice-id, --voice-audio y --default-voice.")
-    slot, path = _safe_slot(avatar_file, avatars_dir)
+    _slot, path = _safe_slot(avatar_file, avatars_dir)
     record = _load(path, avatar_file) if path.exists() else None
 
     if input_voice_id is not None:
@@ -233,7 +233,7 @@ def ensure_avatar_voice(
             created = client.clone_voice(audio_path=audio_path, name=avatar_file.stem)
         except Exception as exc:
             raise SystemExit(
-                f"No se puede confirmar si AI33Pro aceptó la clonación. "
+                "No se puede confirmar si AI33Pro aceptó la clonación. "
                 f"Revisa {path} y la cuenta antes de repetir la operación."
             ) from exc
         record["create_response"] = created
@@ -247,7 +247,7 @@ def ensure_avatar_voice(
             if not task_id:
                 _save(path, record)
                 raise SystemExit(
-                    f"AI33Pro no devolvió ni Voice ID ni task_id. "
+                    "AI33Pro no devolvió ni Voice ID ni task_id. "
                     f"Revisa {path}; no se repetirá la petición pagada."
                 )
             record["task_id"] = task_id
