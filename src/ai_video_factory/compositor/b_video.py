@@ -13,8 +13,11 @@ import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ai_video_factory.compositor.ken_burns import (
+    build_clip_ken_burns_filter,
+    motion_metadata,
+)
 from ai_video_factory.compositor.static_preview import (
-    _MOTION_PRESETS,
     _beat_frame,
     _save_json,
     _verified_asset,
@@ -84,23 +87,18 @@ def _fit(width: int) -> str:
     )
 
 
-def _motion_filter(beat: dict[str, Any], frames: int, index: int) -> str:
-    mode, direction, origin, initial, final, x, y = (
-        _MOTION_PRESETS[index % len(_MOTION_PRESETS)]
+def _motion_filter(beat: dict[str, Any], frames: int) -> str:
+    duration_seconds = frames / _FPS
+    beat["motion"] = motion_metadata(duration_seconds)
+    filter_chain = build_clip_ken_burns_filter(
+        width=_WIDTH,
+        height=_HEIGHT,
+        fps=_FPS,
+        duration_seconds=duration_seconds,
     )
-    beat["motion"] = {
-        "version": "media-image-zoompan-v1", "mode": mode,
-        "direction": direction, "origin": origin,
-        "zoom_start": initial, "zoom_end": final,
-    }
-    # One zoompan output frame per input frame. Unlike looped static
-    # images, the origin-specific continuous zoom keeps every media_image moving.
-    z = f"{initial:.4f}{final - initial:+.4f}*on/{max(1, frames - 1)}"
     return (
-        f"zoompan=z='{z}':x='(iw-iw/zoom)*{x:.1f}':"
-        f"y='(ih-ih/zoom)*{y:.1f}':"
-        f"d=1:s={_WIDTH}x{_HEIGHT}:fps={_FPS},"
-        f"format=yuv420p,trim=end_frame={frames},setpts=PTS-STARTPTS"
+        f"{filter_chain},trim=end_frame={frames},"
+        "setpts=PTS-STARTPTS"
     )
 
 
@@ -174,7 +172,7 @@ def render_b2_ltx_video(
                 _beat_frame(avatar, source, kind, frame)
                 command = [
                     "-loop", "1", "-framerate", str(_FPS), "-i", str(frame),
-                    "-vf", _motion_filter(beat, frames, image_count),
+                    "-vf", _motion_filter(beat, frames),
                 ]
                 image_count += 1
             else:
