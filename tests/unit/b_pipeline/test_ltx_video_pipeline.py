@@ -573,7 +573,7 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     assert saved["beats"][2]["ltx_job_id"] == saved["beats"][0]["ltx_job_id"]
     assert saved["beats"][3]["ltx_job_id"] != saved["beats"][0]["ltx_job_id"]
     motion = saved["beats"][4]["motion"]
-    assert motion["version"] == "media-image-scale-crop-v1"
+    assert motion["version"] == "media-image-subpixel-affine-v2"
     assert motion["mode"] == "ken_burns"
     assert motion["direction"] == "out"
     assert motion["origin"] == "bottom_left"
