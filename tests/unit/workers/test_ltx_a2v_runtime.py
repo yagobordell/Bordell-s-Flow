@@ -442,6 +442,11 @@ def test_guided_a2v_uses_upstream_guidance_and_preserves_padded_speech(
             a2v.LTX_A2V_SAFE_TILING_BUDGET_BYTES,
         ),
         (
+            a2v.LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
+            "disk",
+            20_000_000_000 - a2v.LTX_A2V_SAFE_TILING_RESERVE_BYTES,
+        ),
+        (
             a2v.LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
             "disk",
             20_000_000_000 - a2v.LTX_A2V_SAFE_TILING_RESERVE_BYTES,
