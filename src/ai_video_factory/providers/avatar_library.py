@@ -41,6 +41,7 @@ def avatar_directory(avatar_file: Path, avatars_dir: Path) -> Path:
 
 def _recorded_audio(legacy_voice: Path) -> str | None:
     """Find a reference already bound to a legacy clone, if present."""
+    _no_link(legacy_voice)
     if not legacy_voice.is_file():
         return None
     try:
