@@ -129,6 +129,8 @@ Two assignments are structural and immutable:
 - last beat of a close block → visual_type: avatar, prompt: null, reference: false, audio: true.
 These anchors reuse the supplied avatar image directly. Do not regenerate them because the topic, background, props, framing or neighboring generated scene differs from the avatar reference. They are deliberate talking-head return points, not literal scene illustrations.
 All other beats use the normal decision model below.
+Hard presenter-run length (120 characters)
+Within this block, the sum of decoded beat.text lengths after stripping leading/trailing whitespace must never exceed 120 across consecutive presenter-visible beats. Both avatar and avatar_media count; media_image and media_video reset the run. Interior spaces and punctuation count. This limit applies regardless of the number of beats and is independent of B1.2's 13–100-character per-beat limit. Preserve mandatory intro/close anchors: choose a faithful non-presenter visual for a discretionary beat when needed to break a run. Do not invent supporting content just to evade the limit. The application also enforces this rule across adjacent blocks after the parallel B2 workers finish and may request a correction with the neighboring-run lengths.
 Avatar regeneration test
 For any non-anchor beat whose final visual_type is avatar, reuse the supplied avatar image by default:
 - prompt = null;
@@ -407,6 +409,7 @@ Before emitting success, verify:
 - upstream fields and beat order are unchanged;
 - every beat has exactly one allowed visual_type, one prompt, one reference boolean and one audio boolean;
 - mandatory intro/close presenter anchors have visual_type avatar, prompt null, reference false and audio true;
+- each consecutive avatar/avatar_media run within the block totals at most 120 stripped beat-text characters, and any supplied neighboring-block run context remains under the same limit;
 - mandatory intro/close anchors were not regenerated for topic match, background match or continuity;
 - avatar prompt is either null or a non-empty generation prompt;
 - prompt = null occurs only for avatar;
