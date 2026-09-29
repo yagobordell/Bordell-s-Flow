@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ai_video_factory.providers.avatar_library import avatar_directory
 from ai_video_factory.providers.ai33_speech import (
     AI33SpeechClient,
     task_id_of,
@@ -63,12 +64,15 @@ def _reference(avatar_file: Path, filename: str) -> tuple[str, str]:
 
 
 def _safe_slot(avatar_file: Path, avatars_dir: Path) -> tuple[Path, Path]:
-    store = avatars_dir / ".voice"
-    slot = store / avatar_file.name
+    folder = avatar_directory(avatar_file, avatars_dir)
+    if avatar_file.parent.resolve() == avatars_dir.resolve():
+        store = avatars_dir / ".voice"
+        slot = store / avatar_file.name
+    else:
+        store = folder
+        slot = folder
     record_path = slot / "voice.json"
-    if avatar_file.is_symlink() or avatar_file.parent.resolve() != avatars_dir.resolve():
-        raise SystemExit("El avatar debe ser un PNG local no enlazado de --avatars-dir.")
-    paths = (store, slot, record_path, record_path.with_suffix(".json.part"))
+    paths = (avatars_dir, avatar_file, store, slot, record_path, record_path.with_suffix(".json.part"))
     if any(path.is_symlink() for path in paths):
         raise SystemExit("No se permiten enlaces simbólicos en el almacén de voces.")
     return slot, record_path
