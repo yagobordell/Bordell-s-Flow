@@ -88,6 +88,8 @@ def test_standard_requests_generate_one_image_per_job_and_cache_results(
     assert not list((tmp_path / "images").rglob("*.batch.jsonl"))
     for call in direct.calls:
         assert call["prompt"].startswith("iphone 6 photo done by an elderly:  ")
+        assert call["quality"] == "low"
+    assert all(item["quality"] == "low" for item in result["items"])
 
     state = json.loads((tmp_path / "images/block_1/1B.json").read_text())
     assert state["schema_version"] == "openai-image-v1"
@@ -186,6 +188,15 @@ def test_numbered_sequence_uses_one_standard_request_for_grid(tmp_path: Path) ->
     assert result["openai_direct_count"] == 1
     assert len(direct.calls) == 1
     assert direct.calls[0]["size"] == "2560x1440"
+    assert direct.calls[0]["quality"] == "medium"
+    assert result["quality"] == "low"
+    assert result["grid_quality"] == "medium"
+    assert result["items"][0]["quality"] == "medium"
+    saved_grid = json.loads(
+        (tmp_path / "images/grids/block_1_1B.json").read_text(encoding="utf-8")
+    )
+    assert saved_grid["quality"] == "medium"
+    assert saved_grid["artifact"]["quality"] == "medium"
     assert result["items"][0]["provider"] == "openai_direct"
     assert result["items"][0]["grid"]["columns"] == 2
     assert (
@@ -218,3 +229,66 @@ def test_standard_image_options_reject_old_or_incomplete_model_id() -> None:
     for model in ("gpt-image-2", "gpt-image-2.5"):
         with pytest.raises(ValueError, match="Unsupported official GPT Image model"):
             _opts(model_id=model)
+
+
+@pytest.mark.parametrize("model", ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"])
+def test_mixed_grid_and_individual_jobs_use_separate_qualities(
+    tmp_path: Path, model: str,
+) -> None:
+    # A 2x2 grid consumes the two nearest fillers, leaving one standalone beat.
+    plan = _plan(
+        "1. First moment", "2. Second moment", "Filler one", "Filler two",
+        "A separate final image",
+    )
+    direct = FakeDirect()
+    options = _opts(model_id=model)
+    manifest = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=options, direct_client=direct,
+    )
+
+    assert manifest["status"] == "completed"
+    assert manifest["grid_count"] == 1
+    assert manifest["total_generation_jobs"] == 2
+    assert {(call["size"], call["quality"]) for call in direct.calls} == {
+        ("2560x1440", "medium"), ("1280x720", "low"),
+    }
+    assert {(item["size"], item["quality"]) for item in manifest["items"]} == {
+        ("2560x1440", "medium"), ("1280x720", "low"),
+    }
+    assert len(direct.calls) == 2
+
+    # Completed paid work remains cached with the exact quality in its fingerprint.
+    again = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=options, direct_client=direct,
+    )
+    assert again["items"] == manifest["items"]
+    assert len(direct.calls) == 2
+
+
+def test_saved_low_quality_grid_cannot_be_silently_resubmitted_as_medium(
+    tmp_path: Path,
+) -> None:
+    plan = _plan("1. First", "2. Second")
+    options = _opts()
+    described = images.described_beats(plan)
+    job = images.plan_image_jobs(plan, described)[0]
+    assert job["grid"] is not None
+    old_request = options.request(job["description"], size=job["size"])
+    old_fingerprint = hashlib.sha256(
+        json.dumps({
+            "beat_id": job["beat_id"], "block_id": job["block_id"],
+            **old_request,
+        }, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    state_path = tmp_path / "images/grids/block_1_1B.json"
+    images._atomic_json(state_path, {
+        "schema_version": "openai-image-v1", "fingerprint": old_fingerprint,
+        "status": "completed",
+    })
+    direct = FakeDirect()
+    with pytest.raises(images.ImageGenerationError, match="Image request differs"):
+        images.generate_b2_images(
+            tmp_path, plan, api_key=None, options=options, direct_client=direct,
+        )
+    assert direct.calls == []
+    assert not (tmp_path / "images/manifest.json").exists()
