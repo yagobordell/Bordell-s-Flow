@@ -398,8 +398,7 @@ Después, tanto si hay éxito como si hay error, recupera todos los registros
 por ID, sin el filtro de logs de Salad:
 
 ```powershell
-uv run --locked --extra dev python scripts/salad/inspect_ltx_a2v_diagnostics.py \`
-    --job-id <ID_DEL_NUEVO_TRABAJO>
+uv run --locked --extra dev python scripts/salad/inspect_ltx_a2v_diagnostics.py --job-id <ID_DEL_NUEVO_TRABAJO>
 ```
 
 El comando consulta Postgres y descarga todos los checkpoints y el traceback
