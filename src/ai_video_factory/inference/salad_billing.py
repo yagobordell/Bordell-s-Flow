@@ -264,12 +264,13 @@ def read_salad_costs(path: Path) -> dict[str, Any] | None:
     if journal.get("schema_version") != _SCHEMA:
         raise ValueError("Unknown Salad cost journal schema")
     totals = {
-        service: {"gpu_running_seconds": 0.0, "priced_usd": Decimal(0)}
+        service: {"gpu_running_seconds": 0.0, "priced_usd": Decimal(0), "priced_samples": 0}
         for service in _SERVICES
     }
     subtotal = Decimal(0)
     incomplete = False
     successful_samples = 0
+    priced_samples = 0
     for session in journal["sessions"]:
         incomplete |= session.get("status") != "completed"
         for service in _SERVICES:
@@ -283,7 +284,9 @@ def read_salad_costs(path: Path) -> dict[str, Any] | None:
                 or not entry.get("successful_samples")
             ):
                 incomplete = True
-            if rate is not None:
+            if rate is not None and entry.get("successful_samples"):
+                priced_samples += entry["successful_samples"]
+                totals[service]["priced_samples"] += entry["successful_samples"]
                 cost = Decimal(str(seconds)) * Decimal(rate) / Decimal(3600)
                 totals[service]["priced_usd"] += cost
                 subtotal += cost
@@ -298,7 +301,7 @@ def read_salad_costs(path: Path) -> dict[str, Any] | None:
             "unavailable" if not successful_samples else
             "partial" if incomplete else "observed_window_complete"
         ),
-        "priced_subtotal_usd": _usd(subtotal) if successful_samples else None,
+        "priced_subtotal_usd": _usd(subtotal) if priced_samples else None,
         "estimated_observed_cost_usd": (
             None if incomplete or not successful_samples else _usd(subtotal)
         ),
@@ -310,7 +313,9 @@ def read_salad_costs(path: Path) -> dict[str, Any] | None:
         "services": {
             service: {
                 "gpu_running_seconds": round(values["gpu_running_seconds"], 3),
-                "priced_subtotal_usd": _usd(values["priced_usd"]),
+                "priced_subtotal_usd": (
+                    _usd(values["priced_usd"]) if values["priced_samples"] else None
+                ),
             }
             for service, values in totals.items()
         },
