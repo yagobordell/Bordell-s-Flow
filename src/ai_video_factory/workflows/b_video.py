@@ -465,21 +465,25 @@ def _reconcile_prior_failed_video_runs(
                 )
             provider = snapshot.provider_payload or {}
             last_error = provider.get("last_error")
-            if not isinstance(last_error, str) or classify_gpu_failure(
-                RuntimeError(last_error)
-            ) != "oom":
+            failure_kind = (
+                classify_gpu_failure(RuntimeError(last_error))
+                if isinstance(last_error, str) else None
+            )
+            if failure_kind not in {"oom", "decoder_budget"} or (
+                failure_kind == "decoder_budget" and record.get("kind") != "a2v"
+            ):
                 raise B2VideoError(
-                    f"Previous LTX job {old_id} failed for a non-OOM or unknown reason; "
-                    "manual reconciliation is required before retrying"
+                    f"Previous LTX job {old_id} failed for a non-OOM/non-DiffVAE-budget "
+                    "or unknown reason; manual reconciliation is required before retrying"
                 )
         prior_status = old["status"]
         old["status"] = "superseded"
         old["superseded_by"] = new_digest
-        old["superseded_reason"] = "Postgres-confirmed terminal OOM"
+        old["superseded_reason"] = "Postgres-confirmed terminal OOM or A2V DiffVAE budget"
         old["previous_status"] = prior_status
         _save_json(previous_path, old)
         print(
-            f"  Previous LTX run {previous_path.parent.name} was terminally OOM; "
+            f"  Previous LTX run {previous_path.parent.name} has terminal GPU memory failure; "
             "preserving its artifacts and using new memory-safe request IDs",
             flush=True,
         )

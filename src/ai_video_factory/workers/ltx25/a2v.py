@@ -27,6 +27,7 @@ from ai_video_factory.inference.errors import (
 )
 from ai_video_factory.inference.gpu_failures import (
     DEFAULT_GPU_MAX_ATTEMPTS,
+    classify_gpu_failure,
     is_retryable_gpu_failure,
 )
 from ai_video_factory.inference.ports import LocalArtifact, LocalSidecarArtifact
@@ -64,13 +65,18 @@ LTX_A2V_DEV_GENERATION_PROFILE = "ltx25-a2v-dev-a95ab856-fp8cpu-gridpad-eagersdp
 LTX_A2V_GUIDED_GENERATION_PROFILE = (
     "ltx25-a2v-guided-dev-a95ab856-model6c7e5e5-fp8disk-eagersdpa-v2"
 )
-# New immutable profile: keep the static prompt, sampling and 720p output intact,
-# but stream weights from disk and cap automatic decoder activation allocations.
-# The legacy static profile remains supported for previously submitted job IDs.
-LTX_A2V_STATIC_SAFE_GENERATION_PROFILE = (
+# Preserve immutable v2 requests while v3 retains their prompts and 720p output,
+# streams weights from disk and sizes decoder tiles from live CUDA memory.
+# Keep v2 immutable for already-submitted requests; the 2-GiB cap is too small
+# for DiffVAE's model, safety reserve, and full-volume stage-4 features.
+LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE = (
     "ltx25-a2v-static-reference-distilled-a95ab856-model6c7e5e5-fp8disk-tiling2g-eagersdpa-v2"
 )
-LTX_A2V_SAFE_TILING_BUDGET_BYTES = 2 * 1024**3
+LTX_A2V_STATIC_SAFE_GENERATION_PROFILE = (
+    "ltx25-a2v-static-reference-distilled-a95ab856-model6c7e5e5-fp8disk-autotiling-eagersdpa-v3"
+)
+LTX_A2V_SAFE_TILING_BUDGET_BYTES = 2 * 1024**3  # legacy v2 only
+LTX_A2V_SAFE_TILING_RESERVE_BYTES = 1 * 1024**3  # extra margin above upstream reserves
 LTX_A2V_RECOMMENDED_MAX_SECONDS = 12.0
 LTX_A2V_MAX_RAW_FRAMES = 1024
 LTX_A2V_DEFAULT_PROMPT = (
@@ -107,6 +113,7 @@ class LTXAudioToVideoParameters(BaseModel):
             LTX_A2V_GENERATION_PROFILE,
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
             LTX_A2V_DEV_GENERATION_PROFILE,
             LTX_A2V_GUIDED_GENERATION_PROFILE,
@@ -338,9 +345,10 @@ def _log_cuda_memory(stage: str, snapshot: Mapping[str, int | float]) -> None:
 
 
 def _install_clean_tiling_budget(
-    bindings: _A2VBindings, device: str, *, budget_cap_bytes: int | None = None
+    bindings: _A2VBindings, device: str, *, budget_cap_bytes: int | None = None,
+    budget_reserve_bytes: int = 0,
 ) -> Any:
-    """Bound decoder activation tiling independently of free GPU memory."""
+    """Use upstream live VRAM budget with an optional extra safety margin."""
     original = bindings.tiling_helpers.activation_budget_bytes
 
     def activation_budget_with_cleanup(resolved_device: Any = None) -> int:
@@ -355,6 +363,7 @@ def _install_clean_tiling_budget(
         budget = int(original(target))
         if budget_cap_bytes is not None:
             budget = min(budget, budget_cap_bytes)
+        budget = max(0, budget - budget_reserve_bytes)
         logger.info(
             "LTX25_A2V_TILING_BUDGET activation_budget_bytes=%d",
             budget,
@@ -918,16 +927,19 @@ class DirectLTX25AudioToVideoBackend:
         generation_started = time.monotonic()
         audio_probe = probe_audio(audio_path)
         _validate_audio_duration(audio_probe, fps=parameters.fps)
-        memory_safe = (
-            parameters.generation_profile == LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
+        memory_safe = parameters.generation_profile in (
+            LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         static_reference = parameters.generation_profile in (
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         reference = parameters.generation_profile in (
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         guided = parameters.generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
@@ -1052,7 +1064,14 @@ class DirectLTX25AudioToVideoBackend:
                     bindings,
                     self._device,
                     budget_cap_bytes=(
-                        LTX_A2V_SAFE_TILING_BUDGET_BYTES if memory_safe else None
+                        LTX_A2V_SAFE_TILING_BUDGET_BYTES
+                        if parameters.generation_profile
+                        == LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE else None
+                    ),
+                    budget_reserve_bytes=(
+                        LTX_A2V_SAFE_TILING_RESERVE_BYTES
+                        if parameters.generation_profile
+                        == LTX_A2V_STATIC_SAFE_GENERATION_PROFILE else 0
                     ),
                 )
                 try:
@@ -1221,7 +1240,14 @@ class DirectLTX25AudioToVideoBackend:
             "quantization": "fp8_cast",
             "offload_mode": "disk" if guided or memory_safe else "cpu",
             "activation_budget_cap_bytes": (
-                LTX_A2V_SAFE_TILING_BUDGET_BYTES if memory_safe else None
+                LTX_A2V_SAFE_TILING_BUDGET_BYTES
+                if parameters.generation_profile
+                == LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE else None
+            ),
+            "activation_budget_reserve_bytes": (
+                LTX_A2V_SAFE_TILING_RESERVE_BYTES
+                if parameters.generation_profile
+                == LTX_A2V_STATIC_SAFE_GENERATION_PROFILE else 0
             ),
             "ltx_model_revision": os.environ.get(
                 "LTX_MODEL_REVISION", LTX25_MODEL_REVISION
@@ -1313,6 +1339,7 @@ class DirectLTX25AudioToVideoBackend:
         reference = generation_profile in (
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         distilled = fast or reference
@@ -1351,7 +1378,10 @@ class DirectLTX25AudioToVideoBackend:
         # CUDA OOM with plenty of VRAM free. Disk streaming is the upstream
         # bounded-host-memory path. Use it for the new static-safe profile too.
         guided = generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
-        memory_safe = generation_profile == LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
+        memory_safe = generation_profile in (
+            LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+        )
         offload_mode = (
             bindings.offload_mode.DISK
             if guided or memory_safe else bindings.offload_mode.CPU
@@ -1404,7 +1434,7 @@ class LTXAudioToVideoTaskRunner:
                 parameters=parameters,
             )
         except Exception as exc:
-            if is_retryable_gpu_failure(exc):
+            if is_retryable_gpu_failure(exc) or classify_gpu_failure(exc) == "decoder_budget":
                 invalidator = getattr(self._backend, "invalidate_pipeline", None)
                 if callable(invalidator):
                     try:
