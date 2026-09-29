@@ -252,7 +252,7 @@ def test_new_memory_safe_a2v_requires_exact_deployed_image_digest(
 
     class FakeSaladClient:
         def __init__(self, config: object) -> None:
-            assert getattr(config, "container_group_name") == (
+            assert config.container_group_name == (
                 "ai-video-factory-ltx25-worker-v3"
             )
 
