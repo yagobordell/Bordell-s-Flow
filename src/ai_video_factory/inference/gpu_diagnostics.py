@@ -13,11 +13,12 @@ import os
 import re
 import subprocess
 import traceback
+from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from .ports import ObjectStorage
 
@@ -182,8 +183,8 @@ class GpuJobDiagnostics:
             },
         )
         with suppress(Exception):
-            setattr(error, "_gpu_diagnostic_phase", prior_phase)
-            setattr(error, "_gpu_diagnostic_key", self.last_key)
+            error._gpu_diagnostic_phase = prior_phase
+            error._gpu_diagnostic_key = self.last_key
         logger.exception(
             "LTX_A2V_DIAGNOSTIC_FAILURE job_id=%s attempt=%d phase=%s r2_key=%s",
             self.job_id,
