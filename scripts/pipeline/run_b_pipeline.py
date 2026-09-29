@@ -979,9 +979,13 @@ async def _run_images_only(
     report["timings"]["status"] = "completed"
     _refresh_audio_costs(report, output)
     _write(report_path, report)
-    price = report["api_costs"]["stages"]["B2 images"]["estimated_cost_usd"]
-    print(f"  B2 images cost: ${price}" if price is not None
-          else "  B2 images cost: coste no disponible", flush=True)
+    image_stage = report.get("api_costs", {}).get("stages", {}).get("B2 images", {})
+    price = image_stage.get("estimated_cost_usd")
+    print(
+        f"  B2 images cost: ${price}" if price is not None
+        else "  B2 images cost: coste no disponible",
+        flush=True,
+    )
     print(
         f"  Images complete: {len(manifest['items'])} PNG "
         f"({manifest.get('openai_direct_count', 0)} standard OpenAI requests)",
