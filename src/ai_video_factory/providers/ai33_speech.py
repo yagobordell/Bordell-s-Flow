@@ -187,7 +187,7 @@ class AI33SpeechClient:
             f"{name}\r\n--{boundary}\r\n"
             "Content-Disposition: form-data; name=\"audio\"; filename=\"reference"
             f"{audio_path.suffix.lower()}\"\r\nContent-Type: {mime_type}\r\n\r\n"
-        ).encode("utf-8")
+        ).encode()
         body = fields + audio + f"\r\n--{boundary}--\r\n".encode("ascii")
         request = Request(
             self._base_url + "/v3/text-to-speech/voice-clone",
