@@ -55,6 +55,8 @@ def test_a2v_diagnostics_persist_phase_snapshots_and_full_failure(
             raise RuntimeError("CUDA error: out of memory")
         except RuntimeError as error:
             journal.failure(error)
+            journal.failure(error)  # worker catch must not duplicate the early runner capture
+            assert journal.sequence == 2
             assert error._gpu_diagnostic_phase == "reference.gemma.prompt_encode.start"
             assert error._gpu_diagnostic_key == journal.last_key
     assert diagnostics._ACTIVE_DIAGNOSTICS.get() is None
