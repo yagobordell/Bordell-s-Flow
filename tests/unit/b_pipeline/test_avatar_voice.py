@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from ai_video_factory.providers.avatar_voice import ensure_avatar_voice
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient, voice_id_of
+from ai_video_factory.providers.avatar_voice import ensure_avatar_voice
 from scripts.pipeline import run_b_pipeline as runner
 
 DEFAULT = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
