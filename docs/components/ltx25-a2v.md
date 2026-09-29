@@ -158,9 +158,10 @@ exact new deployed `ltx25` image digest. Previous image flags remain
 historical and do not permit new paid work. After Postgres confirms v4's
 terminal failure and the capacity controller is stopped, publish and
 prepare only `ltx25`, pin its digest, restart the controller, then use
-`.\\run.ps1 test02 --generate-video`. The recovery checks the **full
-original v4 fingerprint** and each completed job's original request
-fingerprint, media hash, ffprobe result and A2V metadata before copying
+`.\\run.ps1 test02 --generate-video`. The recovery checks the **original v4 run's 20-character fingerprint**
+(the exact saved manifest/directory format) and each completed job's
+full immutable request fingerprint, media hash, ffprobe result and A2V
+metadata before copying
 those clips into the v5 run. Completed v4 I2V and A2V clips are never
 resubmitted, and the old manifest is preserved as superseded. Missing
 or incompatible completed outputs block paid regeneration instead of
