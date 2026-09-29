@@ -37,14 +37,15 @@ def alloc_buffer(nbytes: int, device: object, pin_memory: bool):
             return buf
     return torch.empty(nbytes, dtype=torch.uint8, device=device, pin_memory=pin_memory)
 '''
-    provider = '''def _copy_to_gpu(self, idx, raw, gpu_weights, cpu_buffer, nbytes):
-    if not cpu_buffer.is_contiguous() or cpu_buffer.dtype != torch.uint8 or cpu_buffer.numel() < nbytes:
-        raise ValueError("invalid source buffer")
-    with self._sync.copy_scope():
-        raw[:nbytes].copy_(cpu_buffer[:nbytes], non_blocking=self._sync.is_async_copy)
-        if self._lora_sources:
-            self._fuse_block_loras(idx, gpu_weights)
-    return self._sync.commit_copy()
+    provider = '''class WeightsProvider:
+    def _copy_to_gpu(self, idx, raw, gpu_weights, cpu_buffer, nbytes):
+        if not cpu_buffer.is_contiguous() or cpu_buffer.dtype != torch.uint8 or cpu_buffer.numel() < nbytes:
+            raise ValueError("invalid source buffer")
+        with self._sync.copy_scope():
+            raw[:nbytes].copy_(cpu_buffer[:nbytes], non_blocking=self._sync.is_async_copy)
+            if self._lora_sources:
+                self._fuse_block_loras(idx, gpu_weights)
+        return self._sync.commit_copy()
 '''
     return utils, provider
 
@@ -52,7 +53,7 @@ def alloc_buffer(nbytes: int, device: object, pin_memory: bool):
 def _load_function(source: str, name: str, namespace: dict[str, Any]) -> Any:
     parsed = ast.parse(source)
     node = next(
-        node for node in parsed.body
+        node for node in ast.walk(parsed)
         if isinstance(node, ast.FunctionDef) and node.name == name
     )
     # Only execute the chosen upstream function, never import GPU dependencies.
