@@ -28,7 +28,7 @@ from ai_video_factory.inference.storage import sha256_file
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.job_queue import JobQueueClient
 from ai_video_factory.workers.ltx25.a2v import (
-    LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+    LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
     LTX_A2V_TASK,
 )
 from ai_video_factory.workers.ltx25.jobs import (
@@ -189,7 +189,7 @@ def _fingerprint(
             [block_id, beat_id, sha256_file(path)]
             for (block_id, beat_id), path in sorted(assets.items())
         ],
-        "profile": LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+        "profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         "positive_prompt": AVATAR_PROMPT,
         "negative_prompt": AVATAR_NEGATIVE_PROMPT,
         "fps": _FPS,
@@ -297,7 +297,7 @@ def build_b2_video_plan(
                 segment_id=f"b2-{beat_ids[0]}-{beat_ids[-1]}",
                 prompt=AVATAR_PROMPT, image_sha256=image_sha,
                 audio_sha256=audio_sha, seed=seed, width=1280, height=720,
-                fps=_FPS, generation_profile=LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+                fps=_FPS, generation_profile=LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
             )
             request = InferenceJobRequest(
                 job_id=job_id, task=LTX_A2V_TASK, max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
@@ -320,7 +320,7 @@ def build_b2_video_plan(
                     content_type="application/json",
                 )},
                 parameters={
-                    "generation_profile": LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+                    "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
                     "prompt": AVATAR_PROMPT, "seed": seed,
                     "width": 1280, "height": 720, "fps": _FPS,
                 },
@@ -400,6 +400,7 @@ def generate_b2_ltx_video(
     images: dict[str, Any], *, queue: JobQueueClient, storage: ObjectStorage,
     poll_seconds: float = 15.0, timeout_seconds: float = 21600.0,
     check_capacity: Callable[[], None] | None = None,
+    check_a2v_worker: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Durably submit exactly one LTX request per video beat/avatar group, then mux.
 
@@ -432,6 +433,13 @@ def generate_b2_ltx_video(
     else:
         manifest = expected
         _save_json(manifest_path, manifest)
+    if check_a2v_worker is not None and any(
+        job.kind == "a2v" and record["status"] != "completed"
+        for job, record in zip(jobs, manifest["jobs"], strict=True)
+    ):
+        # Fail before any paid I2V/A2V submissions if the new worker image
+        # is not deployed. A repo pull never updates Salad's pinned Docker image.
+        check_a2v_worker()
     executor = InferenceJobExecutor(
         queue=queue, storage=storage,
         poll_seconds=poll_seconds, timeout_seconds=timeout_seconds,
@@ -501,7 +509,7 @@ def generate_b2_ltx_video(
                 values = json.loads(meta.read_text(encoding="utf-8"))
                 if (
                     values.get("generation_profile") !=
-                    LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE
+                    LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
                     or values.get("negative_prompt_applied") is not True
                     or values.get("positive_prompt_enhanced") is not False
                 ):
