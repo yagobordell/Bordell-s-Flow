@@ -35,7 +35,7 @@ dev = [
 required-version = "==0.12.18"
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = [".", "src"]
 testpaths = ["tests"]
 filterwarnings = [
     "error::DeprecationWarning:ai_video_factory\\..*",
