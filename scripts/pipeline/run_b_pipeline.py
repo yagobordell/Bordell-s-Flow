@@ -2138,8 +2138,9 @@ async def main() -> None:
             run_metadata["video_preview"] = {"status": "incomplete"}
         if run_metadata.get("video_generation") == {"status": "running"}:
             run_metadata["video_generation"] = {"status": "incomplete"}
-        _, timing_report = save_report("failed", None)
+        costs, timing_report = save_report("failed", None)
         _print_metric("Run", timing_report["run_elapsed_seconds"], None)
+        _print_observed_salad_total(costs)
         raise
 
     costs, timing_report = save_report("completed", len(result.b12))
