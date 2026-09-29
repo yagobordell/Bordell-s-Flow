@@ -498,11 +498,16 @@ def test_v5_recovery_preserves_completed_v4_clips_and_submits_only_failed_a2v(
     timeline, old_jobs, old_run = b_video.build_b2_video_plan(
         tmp_path, plan, audio, images
     )
+    # Production saves only the 20-character directory name in manifest.fingerprint.
+    # A full 64-character synthetic fingerprint hid the original recovery bug.
     old_digest = b_video._fingerprint(
         timeline, audio, b_video._source_assets(tmp_path, plan, images)[1],
         b_video._source_assets(tmp_path, plan, images)[0],
-    )
+    )[:20]
+    assert len(old_digest) == 20
+    assert old_run.name == old_digest
     previous = b_video._new_manifest(old_jobs, audio, old_digest)
+    assert previous["fingerprint"] == old_run.name
     old_run.mkdir(parents=True, exist_ok=True)
     old_run.joinpath("clips").mkdir()
     for job, record in zip(old_jobs[:2], previous["jobs"][:2], strict=True):
