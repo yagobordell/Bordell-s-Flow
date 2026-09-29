@@ -26,6 +26,8 @@ from ltx_pipelines.utils.media_io import HDRColorSpace, decode_audio_from_file
 from ltx_pipelines.utils.samplers import euler_ancestral_denoising_loop
 from ltx_pipelines.utils.types import ModalitySpec, PipelineOutput
 
+from ai_video_factory.inference.gpu_diagnostics import diagnostic_checkpoint
+
 from .reference_recipe import LTX_A2V_REFERENCE_RECIPE
 
 
@@ -94,6 +96,7 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
         if not 0.0 < strength <= 1.0:
             raise ValueError("Stage 1 image conditioning strength must be in (0, 1]")
 
+        diagnostic_checkpoint("reference.image.resolve.start")
         images = self.image_conditioner.resolve_crf(images)
         stage_1_images = _with_strength(
             images, strength
@@ -108,6 +111,7 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
         if vae_dtype is None:
             vae_dtype = dtype
 
+        diagnostic_checkpoint("reference.audio.decode.start")
         decoded_audio = decode_audio_from_file(audio_path, self.device, 0.0, None)
         if decoded_audio is None:
             raise ValueError(
@@ -125,12 +129,14 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
         # The original reference does exactly one positive encode. Only the
         # opt-in static variant encodes a *separate* negative; positive text is
         # passed unchanged and the prompt enhancer is explicitly disabled.
+        diagnostic_checkpoint("reference.gemma.prompt_encode.start")
         contexts = self.prompt_encoder(
             [prompt] if negative_prompt is None else [prompt, negative_prompt],
             enhance_first_prompt=enhance_prompt,
             enhance_static_cache=enhance_static_cache,
             enhance_prompt_image=stage_1_images[0][0] if stage_1_images else None,
         )
+        diagnostic_checkpoint("reference.gemma.prompt_encode.done", sync_cuda=True)
         ctx_p = contexts[0]
         v_context_p = ctx_p.video_encoding
         a_context_p = ctx_p.audio_encoding
@@ -161,6 +167,7 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
             width=width,
             fps=frame_rate,
         )
+        diagnostic_checkpoint("reference.diffvae.tiling_plan.start")
         tiling_config = ensure_tiling_config(
             tiling_config,
             scale_factors=scale_factors,
@@ -170,6 +177,7 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
             device=self.device,
         )
 
+        diagnostic_checkpoint("reference.audio_vae.encode.start")
         encoded_audio_latent = self.audio_conditioner(
             lambda enc: vae_encode_audio(decoded_audio, enc, None)
         )
@@ -195,6 +203,7 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
             height=height // 2,
             fps=frame_rate,
         )
+        diagnostic_checkpoint("reference.image_conditioning.stage1.start")
         stage_1_conditionings = self.image_conditioner(
             lambda enc: combined_image_conditionings(
                 images=stage_1_images,
@@ -219,6 +228,7 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
                 model_dtype=self.dtype,
             ),
         }
+        diagnostic_checkpoint("reference.diffusion.stage1.start")
         video_state, _ = self.stage_1(
             denoiser=stage_1_denoiser,
             sigmas=stage_1_sigmas.to(dtype=torch.float32, device=self.device),
@@ -241,6 +251,8 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
             **stage_1_sampler,
         )
 
+        diagnostic_checkpoint("reference.diffusion.stage1.done", sync_cuda=True)
+        diagnostic_checkpoint("reference.latent.upsample.start")
         upscaled_video_latent = self.upsampler(video_state.latent[:1])
         stage_2_output_shape = VideoPixelShape(
             batch=1,
@@ -249,6 +261,7 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
             height=height,
             fps=frame_rate,
         )
+        diagnostic_checkpoint("reference.image_conditioning.stage2.start")
         stage_2_conditionings = self.image_conditioner(
             lambda enc: combined_image_conditionings(
                 images=stage_2_images,
@@ -261,6 +274,7 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
             )
         )
 
+        diagnostic_checkpoint("reference.diffusion.stage2.start")
         video_state, _ = self.stage_2(
             denoiser=SimpleDenoiser(v_context_p, a_context_p),
             sigmas=stage_2_sigmas.to(dtype=torch.float32, device=self.device),
@@ -283,12 +297,16 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
             ),
         )
 
+        diagnostic_checkpoint("reference.diffusion.stage2.done", sync_cuda=True)
+        diagnostic_checkpoint("reference.diffvae.decode.start")
         decoded_video = self.video_decoder(
             video_state.latent,
             tiling_config,
             generator,
             dtype=vae_dtype,
         )
+
+        diagnostic_checkpoint("reference.diffvae.decode.done", sync_cuda=True)
 
         # Conditioning was padded to cover the snapped grid before the
         # Audio VAE. Ceil here as well so floating-point representation cannot

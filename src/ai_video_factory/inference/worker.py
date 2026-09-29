@@ -23,6 +23,7 @@ from .errors import (
     OutputConflictError,
     UnsupportedTaskError,
 )
+from .gpu_diagnostics import GpuJobDiagnostics, diagnostic_checkpoint, gpu_diagnostics_scope
 from .gpu_failures import classify_gpu_failure, cleanup_cuda_memory, is_retryable_gpu_failure
 from .ports import (
     ClaimDecision,
@@ -490,7 +491,30 @@ class InferenceWorker:
                     request.job_id,
                     attempt_count,
                 )
-                artifact = runner.run(request, inputs, work_dir)
+                if request.task == "video.ltx25.audio_to_video":
+                    diagnostics = GpuJobDiagnostics(
+                        storage=self.storage,
+                        work_dir=work_dir,
+                        job_id=request.job_id,
+                        attempt_count=attempt_count,
+                        worker_id=self.worker_id,
+                        instance_id=self.salad_instance_id,
+                        generation_profile=str(request.parameters.get("generation_profile") or ""),
+                    )
+                    with gpu_diagnostics_scope(diagnostics):
+                        diagnostic_checkpoint("task.run.start")
+                        try:
+                            artifact = runner.run(request, inputs, work_dir)
+                        except BaseException as error:
+                            # Keep the original GPU exception even if diagnostic I/O fails.
+                            try:
+                                diagnostics.failure(error)
+                            except Exception:
+                                logger.exception("A2V failure diagnostics unexpectedly failed")
+                            raise
+                        diagnostic_checkpoint("task.run.done")
+                else:
+                    artifact = runner.run(request, inputs, work_dir)
                 logger.info(
                     "INFERENCE_JOB_TASK_DONE task=%s job_id=%s attempt=%d task_seconds=%.3f",
                     request.task,
@@ -705,11 +729,21 @@ class InferenceWorker:
                 request.job_id,
                 request_sha256,
                 owner=self.worker_id,
-                error=f"{type(error).__name__}: {error}",
+                error=self._failure_detail(error),
                 retryable=retryable,
             )
         except Exception:
             logger.exception("failed to persist job failure for %s", request.job_id)
+
+    @staticmethod
+    def _failure_detail(error: BaseException) -> str:
+        detail = f"{type(error).__name__}: {error}"
+        phase = getattr(error, "_gpu_diagnostic_phase", None)
+        if isinstance(phase, str) and phase:
+            key = getattr(error, "_gpu_diagnostic_key", None)
+            reference = key if isinstance(key, str) and key else "<unavailable>"
+            detail = f"{detail[:3000]}; diagnostic_phase={phase}; diagnostic_r2={reference}"
+        return detail
 
     def next_pending_request(self) -> InferenceJobRequest | None:
         if (

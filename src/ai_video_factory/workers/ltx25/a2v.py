@@ -25,6 +25,7 @@ from ai_video_factory.inference.errors import (
     ModelBootstrapPendingError,
     NonRetryableTaskError,
 )
+from ai_video_factory.inference.gpu_diagnostics import diagnostic_checkpoint, diagnostic_failure
 from ai_video_factory.inference.gpu_failures import (
     DEFAULT_GPU_MAX_ATTEMPTS,
     classify_gpu_failure,
@@ -72,8 +73,13 @@ LTX_A2V_GUIDED_GENERATION_PROFILE = (
 LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE = (
     "ltx25-a2v-static-reference-distilled-a95ab856-model6c7e5e5-fp8disk-tiling2g-eagersdpa-v2"
 )
-LTX_A2V_STATIC_SAFE_GENERATION_PROFILE = (
+# Immutable v3 is retained for previously submitted attempts.
+LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE = (
     "ltx25-a2v-static-reference-distilled-a95ab856-model6c7e5e5-fp8disk-autotiling-eagersdpa-v3"
+)
+# Same generation recipe: this new immutable identity must not replay the v3 OOM.
+LTX_A2V_STATIC_SAFE_GENERATION_PROFILE = (
+    "ltx25-a2v-static-reference-distilled-a95ab856-model6c7e5e5-fp8disk-autotiling-diag-v4"
 )
 LTX_A2V_SAFE_TILING_BUDGET_BYTES = 2 * 1024**3  # legacy v2 only
 LTX_A2V_SAFE_TILING_RESERVE_BYTES = 1 * 1024**3  # extra margin above upstream reserves
@@ -114,6 +120,7 @@ class LTXAudioToVideoParameters(BaseModel):
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
             LTX_A2V_DEV_GENERATION_PROFILE,
             LTX_A2V_GUIDED_GENERATION_PROFILE,
@@ -925,21 +932,25 @@ class DirectLTX25AudioToVideoBackend:
         parameters: LTXAudioToVideoParameters,
     ) -> dict[str, Any]:
         generation_started = time.monotonic()
+        diagnostic_checkpoint("a2v.audio.prepare.start")
         audio_probe = probe_audio(audio_path)
         _validate_audio_duration(audio_probe, fps=parameters.fps)
         memory_safe = parameters.generation_profile in (
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         static_reference = parameters.generation_profile in (
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         reference = parameters.generation_profile in (
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         guided = parameters.generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
@@ -973,7 +984,9 @@ class DirectLTX25AudioToVideoBackend:
                 probe=audio_probe,
             )
 
+        diagnostic_checkpoint("a2v.audio.prepare.done")
         with self._lock:
+            diagnostic_checkpoint("a2v.avatar.prepare.start")
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
             if parameters.generation_profile in (
@@ -1002,12 +1015,14 @@ class DirectLTX25AudioToVideoBackend:
             if reset_peak is not None:
                 reset_peak()
 
+            diagnostic_checkpoint("a2v.pipeline.build.start")
             with bindings.torch.inference_mode():
                 build_started = time.monotonic()
                 pipeline, built_now = self._get_or_build_pipeline(
                     bindings, generation_profile=parameters.generation_profile
                 )
                 model_load_seconds = time.monotonic() - build_started if built_now else 0.0
+                diagnostic_checkpoint("a2v.pipeline.build.done", sync_cuda=True)
                 _log_cuda_memory(
                     "after_pipeline_build",
                     _cuda_memory_snapshot(bindings.torch, self._device),
@@ -1071,10 +1086,14 @@ class DirectLTX25AudioToVideoBackend:
                     budget_reserve_bytes=(
                         LTX_A2V_SAFE_TILING_RESERVE_BYTES
                         if parameters.generation_profile
-                        == LTX_A2V_STATIC_SAFE_GENERATION_PROFILE else 0
+                        in (
+                            LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
+                            LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+                        ) else 0
                     ),
                 )
                 try:
+                    diagnostic_checkpoint("a2v.pipeline.inference.start")
                     if reference:
                         if reference_audio_plan is None:
                             raise RuntimeError(
@@ -1136,6 +1155,7 @@ class DirectLTX25AudioToVideoBackend:
                     bindings.tiling_helpers.activation_budget_bytes = (
                         original_activation_budget
                     )
+                diagnostic_checkpoint("a2v.pipeline.inference.done", sync_cuda=True)
                 inference_seconds = time.monotonic() - inference_started
 
                 output_video = result.video
@@ -1150,6 +1170,7 @@ class DirectLTX25AudioToVideoBackend:
                     )
 
                 output_path.parent.mkdir(parents=True, exist_ok=True)
+                diagnostic_checkpoint("a2v.video.encode.start")
                 encode_started = time.monotonic()
                 bindings.encode_video(
                     video=output_video,
@@ -1161,6 +1182,7 @@ class DirectLTX25AudioToVideoBackend:
                         result.tiling_config,
                     ),
                 )
+                diagnostic_checkpoint("a2v.video.encode.done", sync_cuda=True)
                 encode_seconds = time.monotonic() - encode_started
 
                 peak_vram_bytes = None
@@ -1247,7 +1269,10 @@ class DirectLTX25AudioToVideoBackend:
             "activation_budget_reserve_bytes": (
                 LTX_A2V_SAFE_TILING_RESERVE_BYTES
                 if parameters.generation_profile
-                == LTX_A2V_STATIC_SAFE_GENERATION_PROFILE else 0
+                in (
+                    LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
+                    LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+                ) else 0
             ),
             "ltx_model_revision": os.environ.get(
                 "LTX_MODEL_REVISION", LTX25_MODEL_REVISION
@@ -1340,6 +1365,7 @@ class DirectLTX25AudioToVideoBackend:
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         distilled = fast or reference
@@ -1380,6 +1406,7 @@ class DirectLTX25AudioToVideoBackend:
         guided = generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
         memory_safe = generation_profile in (
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
+            LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         offload_mode = (
@@ -1434,6 +1461,9 @@ class LTXAudioToVideoTaskRunner:
                 parameters=parameters,
             )
         except Exception as exc:
+            # Record the OOM with its original allocator state, before cleanup
+            # invalidates resident models and obscures the failing allocation.
+            diagnostic_failure(exc)
             if is_retryable_gpu_failure(exc) or classify_gpu_failure(exc) == "decoder_budget":
                 invalidator = getattr(self._backend, "invalidate_pipeline", None)
                 if callable(invalidator):

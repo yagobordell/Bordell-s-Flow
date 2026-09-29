@@ -241,13 +241,13 @@ def test_new_memory_safe_a2v_requires_exact_deployed_image_digest(
     monkeypatch.setattr(runner.settings, "salad_api_key", "test-key")
     monkeypatch.setenv("SALAD_ORGANIZATION", "org")
     monkeypatch.setenv("SALAD_PROJECT", "project")
-    monkeypatch.delenv("SALAD_LTX25_AUTOTILING_A2V_IMAGE", raising=False)
+    monkeypatch.delenv("SALAD_LTX25_DIAGNOSTIC_A2V_IMAGE", raising=False)
 
-    with pytest.raises(RuntimeError, match="SALAD_LTX25_AUTOTILING_A2V_IMAGE"):
+    with pytest.raises(RuntimeError, match="SALAD_LTX25_DIAGNOSTIC_A2V_IMAGE"):
         runner._require_ltx_safe_a2v_worker()
 
     pinned = "docker.io/test/factory@sha256:" + "a" * 64
-    monkeypatch.setenv("SALAD_LTX25_AUTOTILING_A2V_IMAGE", pinned)
+    monkeypatch.setenv("SALAD_LTX25_DIAGNOSTIC_A2V_IMAGE", pinned)
     deployed = {"image": "docker.io/test/factory@sha256:" + "b" * 64}
 
     class FakeSaladClient:

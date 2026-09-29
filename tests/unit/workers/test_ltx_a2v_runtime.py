@@ -442,6 +442,11 @@ def test_guided_a2v_uses_upstream_guidance_and_preserves_padded_speech(
             a2v.LTX_A2V_SAFE_TILING_BUDGET_BYTES,
         ),
         (
+            a2v.LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
+            "disk",
+            20_000_000_000 - a2v.LTX_A2V_SAFE_TILING_RESERVE_BYTES,
+        ),
+        (
             a2v.LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
             "disk",
             20_000_000_000 - a2v.LTX_A2V_SAFE_TILING_RESERVE_BYTES,
@@ -532,7 +537,10 @@ def test_static_reference_preserves_simple_positive_prompt_with_real_negative_co
     )
     assert metadata["activation_budget_reserve_bytes"] == (
         a2v.LTX_A2V_SAFE_TILING_RESERVE_BYTES
-        if profile == a2v.LTX_A2V_STATIC_SAFE_GENERATION_PROFILE else 0
+        if profile in (
+            a2v.LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
+            a2v.LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+        ) else 0
     )
     assert metadata["stage_1_steps"] == 8
     assert metadata["stage_2_steps"] == 3

@@ -51,7 +51,7 @@ identical paid decoder-budget failures. Other CUDA-device or cuDNN/SDPA
 failures retain the normal bounded retry policy. Input/contract failures
 remain non-retryable.
 
-The B2 production route now selects immutable A2V `static-safe` **v3**.
+The historical B2 v3 recovery selected immutable A2V `static-safe` **v3**.
 It retains both prompts, 1280×720 output at 24 fps, the audio, seed,
 sampler stages and FP8_CAST disk offload. It removes v2's fixed 2-GiB
 decoder activation budget, which cannot cover upstream model cost, safety
@@ -77,6 +77,54 @@ new A2V image with a unique tag, pin its digest in `.env`, restart the
 controller and run `.\\run.ps1 test02 --generate-video`. Offline tests
 cover budget calculation, classification, retry cap and recovery; **v3 has
 not been GPU validated**.
+
+### Production v4: per-attempt persistent GPU diagnostics
+
+The third paid `test02` recovery (v3) failed with CUDA OOM after two
+attempts. Salad logs exported by job ID omitted the traceback and CUDA
+phase data, so **the exact offending operation remains unknown**. Production
+now selects v4 with the same model, 1280×720/24fps, audio, prompts,
+samplers, offload and live DiffVAE tiling budget as v3. Only its immutable
+profile identity and observability differ; v2/v3 jobs remain replayable,
+but the terminal v3 run must not be resubmitted.
+
+The worker creates immutable JSON checkpoints for every claimed A2V attempt
+in R2 at `diagnostics/ltx-a2v/<job_id>/attempt-XX/NNN-phase.json`.
+Instrumentation marks model build, Gemma prompt encoding, audio VAE,
+image conditioning, each diffusion stage, latent upsampling, tiling,
+DiffVAE decode, output encoding and failure. Checkpoints include
+timestamp, job/attempt/instance, GPU UUID/PCI where nvidia-smi supports
+it, torch CUDA free/reserved/allocated/peak/num_ooms, process
+RSS/pinned memory, cgroup memory usage and generation profile.
+Synchronized checkpoints after major GPU boundaries surface delayed CUDA
+errors nearer the responsible stage. No prompt, reference image, audio
+samples or API secrets are included. The final failure JSON contains the
+full Python exception chain and traceback (up to 64 KiB); Postgres
+`last_error` includes the phase and R2 key.
+
+A killed process can lose its final traceback but leaves previously
+uploaded checkpoints. R2 failures must never replace the original GPU
+exception; in that case Postgres retains the last known phase when Python
+catches the error. This does not promise diagnosis if both the worker and
+R2 fail before the first checkpoint.
+
+The v4 runner requires an exact immutable deployed image digest in
+`SALAD_LTX25_DIAGNOSTIC_A2V_IMAGE`; v3's image setting is not accepted.
+Publish a **new** Docker tag and prepare only the stopped `ltx25` group
+after stopping the singleton Capacity Controller. Do not modify
+`ltx25_i2v`. Restart the controller and recover the saved `test02`
+with `.\\run.ps1 test02 --generate-video`. **No v4 paid GPU result is
+claimed by offline tests.**
+
+To inspect a completed or failed attempt without Salad UI filtering:
+
+```powershell
+uv run --locked --extra dev python scripts/salad/inspect_ltx_a2v_diagnostics.py --job-id <new-A2V-job-ID>
+```
+
+The local command queries Postgres and downloads all matching R2 objects,
+including the failure traceback if it was emitted. Default output:
+`data/output/ltx-a2v-diagnostics/<job_id>/`.
 
 ## Speech-driven avatar settings
 

@@ -330,7 +330,7 @@ Los wrappers GPU independientes y los servicios de Salad siguen en el
 repositorio; no están conectados automáticamente a este plan.
 Consulta [la guía del pipeline B](docs/components/b-pipeline.md).
 
-### Recuperar un vídeo LTX A2V tras OOM o presupuesto DiffVAE insuficiente
+### Historial: recuperación A2V v3 (ejecutada, terminó en CUDA OOM)
 
 El perfil de producción **v3** conserva 1280×720, 24 fps, los prompts,
 el audio, la semilla y las dos etapas. Usa FP8_CAST y disk offload y deja
@@ -365,6 +365,49 @@ Para recuperar el run guardado **sin regenerar B1, Fish TTS ni imágenes**:
    y un job ID nuevos; el reconciliador conserva ambos historiales antiguos
    y solo los supersede si Postgres confirma estados terminales recuperables.
    Nunca reinicies el run completo con `.\\run.ps1 test02 mecanico`.
+
+### Nuevo intento instrumentado A2V v4 (sin repetir bots, TTS ni imágenes)
+
+El intento v3 de `test02` terminó con CUDA OOM en dos intentos y los logs
+de Salad no contenían su traceback completo. V4 **no cambia el modelo,
+resolución, prompt, duración, audio, samplers ni presupuesto CUDA de v3**;
+solo registra diagnósticos persistentes y utiliza un nuevo fingerprint y un
+job ID para no reanudar el v3 terminal. **No se ha ejecutado aún en GPU.**
+
+En cada intento A2V el worker guarda JSON independientes en R2 bajo
+`diagnostics/ltx-a2v/<job_id>/attempt-XX/`. Registra fases de Gemma,
+audio, stage 1/2, tiling, DiffVAE y codificación, junto con VRAM libre,
+reservada, pico y contadores OOM, memoria RSS/pinned/cgroup de Linux,
+UUID/PCI de GPU si los facilita nvidia-smi, instancia y hora UTC.
+Si Python captura la excepción, el último JSON contiene la cadena completa
+del traceback y Postgres `gpu.jobs.last_error` incluye la última fase y la
+clave de R2. Los checkpoints anteriores sobreviven incluso si el contenedor
+muere sin ejecutar el manejador de excepciones. La escritura a R2 es
+best-effort: un fallo de red o una muerte antes del primer checkpoint sigue
+siendo un límite observable, no una garantía absoluta de diagnóstico.
+
+Antes de pagar otro intento, actualiza `main`, confirma que Postgres no tiene
+trabajos GPU activos, que `ltx25` está detenido y estable, y detén el único
+Capacity Controller. Construye una etiqueta Docker nueva y prepara
+**solo** `ltx25` mediante
+`manage_salad_worker.ps1 -Action Prepare -Service ltx25 -Image <imagen-v4>`.
+Copia el digest real mostrado por `-Action Status` a
+`SALAD_LTX25_DIAGNOSTIC_A2V_IMAGE=<repositorio>@sha256:<digest>` en `.env`.
+Las variables antiguas `SALAD_LTX25_SAFE_A2V_IMAGE` (v2) y
+`SALAD_LTX25_AUTOTILING_A2V_IMAGE` (v3) **no habilitan v4**.
+Reinicia y comprueba el controller y recupera el run existente con
+`.\\run.ps1 test02 --generate-video`, nunca con el comando del run completo.
+
+Después, tanto si hay éxito como si hay error, recupera todos los registros
+por ID, sin el filtro de logs de Salad:
+
+```powershell
+uv run --locked --extra dev python scripts/salad/inspect_ltx_a2v_diagnostics.py --job-id <ID_DEL_NUEVO_TRABAJO>
+```
+
+El comando consulta Postgres y descarga todos los checkpoints y el traceback
+a `data/output/ltx-a2v-diagnostics/<ID_DEL_NUEVO_TRABAJO>/`.
+La recuperación conserva los manifiestos anteriores y no borra ningún coste.
 
 El motivo real del CUDA OOM puede estar en VRAM o en reservas de memoria
 fijada del sistema: en anteriores smokes de este repositorio, un OOM ocurrió

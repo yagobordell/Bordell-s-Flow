@@ -208,6 +208,38 @@ def test_a2v_runner_invalidates_pipeline_after_retryable_gpu_failure(
     assert backend.invalidate_calls == 1
 
 
+def test_a2v_records_gpu_failure_before_invalidating_pipeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend = FakeBackend()
+    runner = LTXAudioToVideoTaskRunner(backend=backend)
+    events: list[str] = []
+
+    def fail_generation(**kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        raise RuntimeError("CUDA error: out of memory")
+
+    def record_failure(error: BaseException) -> None:
+        assert "out of memory" in str(error)
+        events.append("captured")
+
+    def invalidate() -> None:
+        events.append("invalidated")
+        backend.invalidate_calls += 1
+
+    monkeypatch.setattr(backend, "generate", fail_generation)
+    monkeypatch.setattr(backend, "invalidate_pipeline", invalidate)
+    monkeypatch.setattr(a2v, "diagnostic_failure", record_failure)
+
+    with pytest.raises(RuntimeError, match="out of memory"):
+        runner.run(
+            _request(),
+            {"image": tmp_path / "avatar.png", "audio": tmp_path / "speech.wav"},
+            tmp_path / "work",
+        )
+    assert events == ["captured", "invalidated"]
+
+
 def test_a2v_runner_keeps_pipeline_for_non_gpu_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
