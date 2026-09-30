@@ -60,11 +60,16 @@ class OpenAISttClient:
                 or not isinstance(start, (int, float))
                 or not isinstance(end, (int, float))
                 or not math.isfinite(start) or not math.isfinite(end)
-                or start < 0 or end < start or (index and start < previous_start)
+                or start < 0 or end < 0
             ):
                 raise OpenAISttError(f"Invalid OpenAI STT word timing at index {index}")
-            normalized.append({"word": word, "start": float(start), "end": float(end)})
-            previous_start = float(start)
+            # Whisper can return a slightly non-monotonic word boundary or an
+            # end before its start. Repair those local anomalies instead of
+            # discarding the complete otherwise usable transcript.
+            safe_start = max(float(start), previous_start)
+            safe_end = max(float(end), safe_start)
+            normalized.append({"word": word, "start": safe_start, "end": safe_end})
+            previous_start = safe_start
         return {
             "model": self.model,
             "text": raw.get("text"),

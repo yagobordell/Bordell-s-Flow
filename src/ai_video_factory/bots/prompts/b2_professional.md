@@ -99,8 +99,12 @@ Must be exactly one of:
 prompt
 prompt is either a generation-ready English image prompt or native JSON null.
 A non-null prompt is written to be sent directly to an image-generation model. It is not a short asset description.
-All non-null prompts must describe one photorealistic 16:9 cinematic still suitable as source imagery for a YouTube video. They should normally include the essential subject, visible state or action, environment, useful composition/framing, naturalistic lighting, continuity details when needed, and relevant exclusions. Camera and lighting instructions are now allowed because prompt is a generation prompt rather than a semantic brief.
-Add production details only when they materially improve control of the requested image. Composition, framing, environment and naturalistic lighting may be specified when useful, provided they do not contradict the beat or reference image and do not invent narrative facts.
+Every non-null prompt must use this exact canonical visual-style prefix:
+Candid direct-flash digicam photo. Early-2000s compact digital camera aesthetic, casual snapshot look, slightly imperfect framing, spontaneous and unposed moment, harsh frontal on-camera flash, flat direct lighting, subtle digital noise, realistic skin texture, natural facial imperfections, authentic everyday environment, documentary feel, not polished, not cinematic, not luxury editorial.
+For an unnumbered prompt, this canonical visual-style prefix must be the first text in the prompt. For a numbered continuity prompt, the required local sequence marker (1. , 2. , etc.) remains the first token and the canonical visual-style prefix must begin immediately after that marker. Do not paraphrase, shorten, reorder or replace the canonical visual-style prefix.
+The generated asset still targets a 16:9 frame suitable as source imagery for a YouTube video, but 16:9 is a structural generation requirement rather than part of the canonical visual-style prefix. Do not restore either deprecated opening: Photorealistic 16:9 cinematic still for a YouTube video or the former Photorealistic candid photograph... prefix.
+After the mandatory visual-style prefix, continue with only the beat-specific controls that are materially needed: essential subject, visible state or action, environment, useful composition/framing, continuity details, reference role and relevant exclusions. Do not add style or lighting language that weakens or contradicts the fixed direct-flash digicam aesthetic. Scene-specific ambient conditions may be described only when materially necessary, while the harsh frontal on-camera flash and flat direct-lighting character remain dominant.
+Add production details only when they materially improve control of the requested image. Composition, framing and environment may be specified when useful, provided they do not contradict the beat or reference image and do not invent narrative facts. Avoid polished, cinematic, luxury-editorial or soft-natural-light styling that conflicts with the fixed direct-flash digicam aesthetic.
 Do not add decorative story facts merely to make the prompt more vivid.
 For avatar, prompt may be null or non-null. A non-null avatar prompt means the avatar image must be regenerated for that beat.
 For avatar_media, media_image and media_video, prompt must be a non-empty string.
@@ -129,8 +133,6 @@ Two assignments are structural and immutable:
 - last beat of a close block → visual_type: avatar, prompt: null, reference: false, audio: true.
 These anchors reuse the supplied avatar image directly. Do not regenerate them because the topic, background, props, framing or neighboring generated scene differs from the avatar reference. They are deliberate talking-head return points, not literal scene illustrations.
 All other beats use the normal decision model below.
-Hard presenter-run length (120 characters)
-Within this block, the sum of decoded beat.text lengths after stripping leading/trailing whitespace must never exceed 120 across consecutive presenter-visible beats. Both avatar and avatar_media count; media_image and media_video reset the run. Interior spaces and punctuation count. This limit applies regardless of the number of beats and is independent of B1.2's 13–100-character per-beat limit. Preserve mandatory intro/close anchors: choose a faithful non-presenter visual for a discretionary beat when needed to break a run. Do not invent supporting content just to evade the limit. The application also enforces this rule across adjacent blocks after the parallel B2 workers finish and may request a correction with the neighboring-run lengths.
 Avatar regeneration test
 For any non-anchor beat whose final visual_type is avatar, reuse the supplied avatar image by default:
 - prompt = null;
@@ -288,7 +290,7 @@ This fallback changes the medium, not the beat's meaning.
 Prompt writing
 Every beat receives prompt, reference and audio.
 All non-null prompts must be generation-ready English image prompts.
-Write the shortest prompt that fully controls the required image. Every non-null prompt must identify the requested image, its main subject, exactly one state/action/moment, and any composition, environment, continuity or exclusion that materially affects the result. Do not pad prompts with generic cinematic language or repeated constraints that add no control.
+After the mandatory canonical visual-style prefix, write the shortest beat-specific continuation that fully controls the required image. Every non-null prompt must identify its main subject, exactly one state/action/moment, and any composition, environment, continuity or exclusion that materially affects the result. The canonical visual-style prefix is mandatory and exempt from prompt-length minimization. Outside that fixed prefix, do not pad prompts with generic photographic styling, cinematic language, extra aesthetic adjectives, or constraints already contained in the prefix.
 For reference-based generation, follow a preserve/change structure: explicitly state what visible element from the supplied reference must stay consistent, then state what the new image must change or show. If the reference contains elements that must not carry over, exclude them explicitly.
 When reference = true, the prompt must identify the exact role of the supplied reference image: presenter identity, object continuity, environment continuity, wardrobe/appearance continuity, or the specific combination required by the beat.
 When reference = false, do not mention the avatar reference image inside the prompt.
@@ -314,7 +316,7 @@ The prompt should visually prepare the later clip without depicting several stag
 Set audio from the relationship between the visible person and the beat's narration. A demonstration/action shot may be either true or false: true when the visible presenter naturally delivers the beat while demonstrating, false when the action is presented as silent visual coverage under voice-over.
 Prompt restrictions
 Prompts must remain faithful to the current beat and any allowed reference-image details.
-Prompts may specify composition, framing, natural lighting and photorealistic rendering, but must not invent unsupported narrative facts.
+Prompts may specify composition, framing and materially necessary ambient scene conditions, but must not invent unsupported narrative facts. Do not add a competing lighting or photographic style: the direct-flash compact-digicam look remains fixed. Do not redundantly restate direct flash, snapshot aesthetics, digital noise, skin realism, documentary feel, or anti-cinematic constraints already fixed by the canonical visual-style prefix unless a beat requires a genuinely specific exception.
 Do not request multiple scenes, split screens, storyboards, before/after panels or sequential action stages unless the beat itself explicitly requires one static multi-item comparison and that comparison remains one simultaneously photographable arrangement.
 Do not request subtitles, captions or decorative text.
 Do not use "same as previous image" as the only continuity instruction. Each prompt must be self-contained enough to regenerate the intended scene.
@@ -324,7 +326,7 @@ When reference = true because the presenter must appear, explicitly ask for the 
 Consecutive visual continuity
 When 2–9 consecutive beats form one physically continuous scene and each generated asset directly continues the previous asset's subject/object/environment and state, prefix each participating non-null prompt literally with the local sequence marker:
 1. , 2. , 3. ... 9.
-The numeric prefix is mandatory continuity metadata inside prompt and must not be omitted, paraphrased or moved elsewhere. A qualifying sequence may mix avatar_media, media_image, media_video and the rare regenerated non-anchor avatar prompt.
+The numeric prefix is mandatory continuity metadata inside prompt and must not be omitted, paraphrased or moved elsewhere. In a numbered prompt, the sequence marker is the only text allowed before the canonical visual-style prefix; write 1. , 2. , etc. immediately followed by the exact canonical visual-style prefix. A qualifying sequence may mix avatar_media, media_image, media_video and the rare regenerated non-anchor avatar prompt.
 Carry the same identities, objects, environment and relevant physical state forward explicitly inside every prompt. The number marks the sequence, but the prompt must remain self-contained enough that continuity does not depend on the number alone.
 If a numbered asset depicts the presenter/host as themself, reference must be true and the prompt must preserve the same presenter from the supplied avatar reference image.
 If continuity uses an object/environment originating in the avatar reference image, keep reference = true for every generated beat that still depends on that original reference element.
@@ -392,7 +394,7 @@ Example — reference object preserved while presenter is absent
 Beat context: the supplied avatar reference image shows the presenter in a garage with the older dark navy car that the beat requires as the primary visual.
 {
   "visual_type": "media_image",
-  "prompt": "Photorealistic 16:9 cinematic still for a YouTube video about older-car maintenance. Use only the supplied avatar-in-garage image as the visual reference for the vintage dark navy two-door car; preserve its visible body shape, long hood, squared roofline, horizontal chrome grille, round headlights and chrome bumpers. Show that car alone on a suburban driveway in autumn, front three-quarter view, entire car visible, with a pale garage door and house facade behind it, light dust on the body and fallen leaves around the tires, warm natural late-afternoon light. No person, text, logos or extra cars.",
+  "prompt": "Candid direct-flash digicam photo. Early-2000s compact digital camera aesthetic, casual snapshot look, slightly imperfect framing, spontaneous and unposed moment, harsh frontal on-camera flash, flat direct lighting, subtle digital noise, realistic skin texture, natural facial imperfections, authentic everyday environment, documentary feel, not polished, not cinematic, not luxury editorial. Use only the supplied avatar-in-garage image as the visual reference for the vintage dark navy two-door car; preserve its visible body shape, long hood, squared roofline, horizontal chrome grille, round headlights and chrome bumpers. Show that car alone on a suburban driveway in autumn, front three-quarter view, entire car visible, with a pale garage door and house facade behind it, light dust on the body and fallen leaves around the tires. No person, text, logos or extra cars.",
   "reference": true,
   "audio": false
 }
@@ -409,7 +411,6 @@ Before emitting success, verify:
 - upstream fields and beat order are unchanged;
 - every beat has exactly one allowed visual_type, one prompt, one reference boolean and one audio boolean;
 - mandatory intro/close presenter anchors have visual_type avatar, prompt null, reference false and audio true;
-- each consecutive avatar/avatar_media run within the block totals at most 120 stripped beat-text characters, and any supplied neighboring-block run context remains under the same limit;
 - mandatory intro/close anchors were not regenerated for topic match, background match or continuity;
 - avatar prompt is either null or a non-empty generation prompt;
 - prompt = null occurs only for avatar;
@@ -417,7 +418,9 @@ Before emitting success, verify:
 - avatar_media, media_image and media_video always have non-empty prompts;
 - every non-null prompt is written as a generation-ready English image prompt rather than a short semantic description;
 - every prompt is no longer than needed to control the requested subject, state/action, reference role, continuity, composition and necessary exclusions; redundant adjectives, repeated constraints and decorative detail were removed;
-- every non-null prompt targets a photorealistic 16:9 cinematic still suitable for a YouTube video unless the beat itself explicitly requires a different source-grounded treatment;
+- outside the mandatory canonical visual-style prefix, prompts do not redundantly repeat direct-flash, compact-digicam, casual-snapshot, digital-noise, skin-texture, documentary or anti-cinematic language already contained in that prefix;
+- every non-null prompt begins with the exact canonical visual-style prefix, except that a required continuity number (1. , 2. , etc.) may precede it; the generated asset still targets 16:9 structurally, and neither deprecated opening (Photorealistic 16:9 cinematic still for a YouTube video nor the former Photorealistic candid photograph... prefix) is used;
+- no beat-specific continuation introduces soft cinematic lighting, luxury-editorial polish, HDR-style rendering, or another photographic aesthetic that conflicts with the fixed harsh direct-flash compact-digicam look;
 - every generated image contains exactly one deliberate action, one natural continuous process represented at one instant, or one static state/object/result; no second distinct intentional act is present anywhere in the prompt;
 - every still is one photographable instant, adds distinct visual information, and was not chosen merely as generic topic filler or because one frame can identify an otherwise motion-informative action;
 - media_video prompts describe one motion-ready key image for a single later action/process rather than multiple temporal stages in one image;

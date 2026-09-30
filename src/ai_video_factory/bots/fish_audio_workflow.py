@@ -16,7 +16,7 @@ from ai_video_factory.providers.ai33_speech import (
     task_id_of,
 )
 from ai_video_factory.providers.base import StructuredTextProvider
-from ai_video_factory.providers.openai_stt import OpenAISttClient
+from ai_video_factory.providers.openai_stt import OpenAISttClient, OpenAISttError
 
 from .audio_join import join_audio_blocks
 from .contracts import B11Output, B12Input
@@ -169,7 +169,18 @@ async def _transcribe_block(
             "source_audio_sha256": item["sha256"],
             "model": model,
         })
-        transcript = await asyncio.to_thread(stt_client.transcribe, audio_path)
+        try:
+            transcript = await asyncio.to_thread(stt_client.transcribe, audio_path)
+        except OpenAISttError as exc:
+            # The STT response was received but failed local validation. This
+            # is retryable; it is not an ambiguous paid POST outcome.
+            _atomic_json(request_path, {
+                "status": "response_invalid",
+                "source_audio_sha256": item["sha256"],
+                "model": model,
+                "error": str(exc),
+            })
+            raise
         if transcript.get("model") != model:
             raise FishAudioWorkflowError("OpenAI STT returned an unexpected model")
         cached = {**transcript, "source_audio_sha256": item["sha256"]}
@@ -276,11 +287,11 @@ async def retranscribe_audio_block(
             "attempts": attempts,
         }
 
-    completed_numbers = [
+    used_numbers = [
         entry.get("attempt") for entry in attempts
-        if entry.get("status") == "completed" and isinstance(entry.get("attempt"), int)
+        if isinstance(entry.get("attempt"), int)
     ]
-    attempt_number = max(completed_numbers, default=1) + 1
+    attempt_number = max(used_numbers, default=1) + 1
     if attempt_number > 2:
         raise SttRetryLimitReached(
             f"STT block {block_id} already used both attempts for this audio"
@@ -295,7 +306,19 @@ async def retranscribe_audio_block(
     if not isinstance(audio_name, str):
         raise FishAudioWorkflowError(f"Audio block {block_id} has no file path")
     audio_path = output / audio_name
-    transcript = await asyncio.to_thread(stt_client.transcribe, audio_path)
+    try:
+        transcript = await asyncio.to_thread(stt_client.transcribe, audio_path)
+    except OpenAISttError as exc:
+        retry_state["attempts"] = [
+            *attempts,
+            {
+                "attempt": attempt_number,
+                "status": "response_invalid",
+                "error": str(exc),
+            },
+        ]
+        _atomic_json(retry_path, retry_state)
+        raise
     if transcript.get("model") != stt_client.model:
         raise FishAudioWorkflowError("OpenAI STT retry returned an unexpected model")
     retried = {**transcript, "source_audio_sha256": source_sha}
@@ -351,7 +374,16 @@ async def _transcribe_regenerated_block(
         "source_audio_sha256": source_sha,
         "model": stt_client.model,
     })
-    transcript = await asyncio.to_thread(stt_client.transcribe, audio_path)
+    try:
+        transcript = await asyncio.to_thread(stt_client.transcribe, audio_path)
+    except OpenAISttError as exc:
+        _atomic_json(request_path, {
+            "status": "response_invalid",
+            "source_audio_sha256": source_sha,
+            "model": stt_client.model,
+            "error": str(exc),
+        })
+        raise
     if transcript.get("model") != stt_client.model:
         raise FishAudioWorkflowError("OpenAI STT returned an unexpected model")
     saved = {**transcript, "source_audio_sha256": source_sha}

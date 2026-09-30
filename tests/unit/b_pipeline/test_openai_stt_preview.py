@@ -139,7 +139,9 @@ class _FakeTranscriptions:
         })
 
 
-def test_openai_stt_uses_word_timestamps_and_rejects_malformed_data(tmp_path: Path) -> None:
+def test_openai_stt_uses_word_timestamps_and_repairs_local_timing_anomalies(
+    tmp_path: Path,
+) -> None:
     audio = tmp_path / "audio.wav"
     _wav(audio, 48000)
     calls = _FakeTranscriptions()
@@ -153,8 +155,8 @@ def test_openai_stt_uses_word_timestamps_and_rejects_malformed_data(tmp_path: Pa
     assert calls.params["timestamp_granularities"] == ["word"]
     assert result["words"] == [{"word": " Hola", "start": 0.1, "end": 0.5}]
     calls.create = lambda **_kwargs: {"words": [{"word": "x", "start": 1.0, "end": 0.5}]}
-    with pytest.raises(OpenAISttError, match="Invalid"):
-        client.transcribe(audio)
+    repaired = client.transcribe(audio)
+    assert repaired["words"] == [{"word": "x", "start": 1.0, "end": 1.0}]
 
 
 def test_completed_tts_block_stt_is_cached_without_second_post(tmp_path: Path) -> None:
