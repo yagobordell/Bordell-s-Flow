@@ -1,37 +1,68 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Literal
 
-MOTION_VERSION = "media-image-subpixel-affine-v2"
+MOTION_VERSION = "media-image-subpixel-affine-v3"
 ZOOM_SPEED_PER_SECOND = 0.02
-ZOOM_END = 1.0
 DEFAULT_ANCHOR = "bottom_left"
 ANCHOR_X = 0.02
 ANCHOR_Y = 0.98
 
+MotionDirection = Literal["in", "out"]
 
-def compute_zoom_start(duration_seconds: float) -> float:
+
+def motion_direction_for_index(index: int) -> MotionDirection:
+    """Alternate still-image motion deterministically without affecting timing."""
+    if index < 0:
+        raise ValueError("Ken Burns motion index must be nonnegative")
+    return "out" if index % 2 == 0 else "in"
+
+
+def compute_zoom_bounds(
+    duration_seconds: float,
+    *,
+    direction: MotionDirection,
+) -> tuple[float, float]:
     if duration_seconds <= 0:
         raise ValueError("Ken Burns duration must be positive")
-    return 1.0 + duration_seconds * ZOOM_SPEED_PER_SECOND
+    zoom_delta = duration_seconds * ZOOM_SPEED_PER_SECOND
+    if direction == "out":
+        return 1.0 + zoom_delta, 1.0
+    if direction == "in":
+        return 1.0, 1.0 + zoom_delta
+    raise ValueError(f"Unsupported Ken Burns direction: {direction}")
 
 
-def motion_metadata(duration_seconds: float) -> dict[str, float | str]:
+def compute_zoom_start(duration_seconds: float) -> float:
+    """Backward-compatible zoom-out start used by older callers/tests."""
+    return compute_zoom_bounds(duration_seconds, direction="out")[0]
+
+
+def motion_metadata(
+    duration_seconds: float,
+    *,
+    direction: MotionDirection = "out",
+) -> dict[str, float | str]:
+    zoom_start, zoom_end = compute_zoom_bounds(
+        duration_seconds,
+        direction=direction,
+    )
     return {
         "version": MOTION_VERSION,
         "mode": "ken_burns",
-        "direction": "out",
+        "direction": direction,
         "origin": DEFAULT_ANCHOR,
-        "zoom_start": compute_zoom_start(duration_seconds),
-        "zoom_end": ZOOM_END,
+        "zoom_start": zoom_start,
+        "zoom_end": zoom_end,
     }
 
 
 def _progress_expression(frames: int, *, start_frame: int = 0) -> str:
     if frames <= 0 or start_frame < 0:
         raise ValueError("Ken Burns needs a positive frame count and nonnegative start")
-    # FFmpeg perspective's 'on' counter is one-based. Reach exactly zoom=1
-    # on the LAST rendered frame, not one frame after the beat has ended.
+    # FFmpeg perspective's 'on' counter is one-based. Reach the exact target
+    # zoom on the LAST rendered frame, not one frame after the beat has ended.
     elapsed = "(on-1)" if start_frame == 0 else f"(on-{start_frame + 1})"
     return f"min(max({elapsed}/{max(1, frames - 1)}\\,0)\\,1)"
 
@@ -76,20 +107,24 @@ def build_clip_ken_burns_filter(
     height: int,
     fps: int,
     duration_seconds: float,
+    direction: MotionDirection = "out",
 ) -> str:
     if min(width, height, fps) <= 0 or duration_seconds <= 0:
         raise ValueError("Ken Burns clip geometry, fps and duration must be positive")
     frames = round(duration_seconds * fps)
     if frames <= 0:
         raise ValueError("Ken Burns clip must contain at least one frame")
-    zoom_start = compute_zoom_start(frames / fps)
+    zoom_start, zoom_end = compute_zoom_bounds(
+        frames / fps,
+        direction=direction,
+    )
     progress = _progress_expression(frames)
-    zoom = f"({zoom_start:.6f}+({ZOOM_END:.6f}-{zoom_start:.6f})*{progress})"
+    zoom = f"({zoom_start:.6f}+({zoom_end:.6f}-{zoom_start:.6f})*{progress})"
     return _subpixel_filter(zoom, width=width, height=height, fps=fps)
 
 
 def build_timeline_ken_burns_filter(
-    intervals: Iterable[tuple[int, int]],
+    intervals: Iterable[tuple[int, int, MotionDirection]],
     *,
     width: int,
     height: int,
@@ -99,16 +134,24 @@ def build_timeline_ken_burns_filter(
     if min(width, height, fps) <= 0:
         raise ValueError("Ken Burns geometry and fps must be positive")
     terms: list[str] = []
-    for start_frame, end_frame in intervals:
+    for start_frame, end_frame, direction in intervals:
         frames = end_frame - start_frame
         if start_frame < 0 or frames < 2:
             raise ValueError("Ken Burns preview interval must contain at least two frames")
-        zoom_start = compute_zoom_start(frames / fps)
+        zoom_start, zoom_end = compute_zoom_bounds(
+            frames / fps,
+            direction=direction,
+        )
         progress = _progress_expression(frames, start_frame=start_frame)
         # The perspective counter 'on' starts at 1, unlike the timeline's
         # zero-based frame indices. Non-media beats retain an identity transform.
         active = f"(gte(on\\,{start_frame + 1})*lt(on\\,{end_frame + 1}))"
-        terms.append(f"({active}*({zoom_start - 1:.6f}*(1-{progress})))")
+        start_delta = zoom_start - 1.0
+        end_delta = zoom_end - 1.0
+        terms.append(
+            f"({active}*({start_delta:.6f}+"
+            f"({end_delta:.6f}-{start_delta:.6f})*{progress}))"
+        )
 
     if not terms:
         return f"fps={fps},format=yuv420p"

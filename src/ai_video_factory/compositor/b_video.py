@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from ai_video_factory.compositor.ken_burns import (
     build_clip_ken_burns_filter,
+    motion_direction_for_index,
     motion_metadata,
 )
 from ai_video_factory.compositor.static_preview import (
@@ -87,14 +88,19 @@ def _fit(width: int) -> str:
     )
 
 
-def _motion_filter(beat: dict[str, Any], frames: int) -> str:
+def _motion_filter(beat: dict[str, Any], frames: int, image_index: int) -> str:
     duration_seconds = frames / _FPS
-    beat["motion"] = motion_metadata(duration_seconds)
+    direction = motion_direction_for_index(image_index)
+    beat["motion"] = motion_metadata(
+        duration_seconds,
+        direction=direction,
+    )
     filter_chain = build_clip_ken_burns_filter(
         width=_WIDTH,
         height=_HEIGHT,
         fps=_FPS,
         duration_seconds=duration_seconds,
+        direction=direction,
     )
     return (
         f"{filter_chain},trim=end_frame={frames},"
@@ -172,7 +178,7 @@ def render_b2_ltx_video(
                 _beat_frame(avatar, source, kind, frame)
                 command = [
                     "-loop", "1", "-framerate", str(_FPS), "-i", str(frame),
-                    "-vf", _motion_filter(beat, frames),
+                    "-vf", _motion_filter(beat, frames, image_count),
                 ]
                 image_count += 1
             else:
