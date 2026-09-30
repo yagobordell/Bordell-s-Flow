@@ -23,7 +23,9 @@ __all__ = [
     "GeneratedSpeech",
     "ImageProvider",
     "ImageReferenceInput",
+    "ImageUpscalerError",
     "OpenAIProvider",
+    "OptiumLabsImageUpscaler",
     "ReferenceAwareImageProvider",
     "SaladBreezeSpeechProvider",
     "SaladFishSpeechProvider",
@@ -35,6 +37,7 @@ __all__ = [
     "StructuredTextProvider",
     "TranscribedWord",
     "TranscriptionProvider",
+    "create_optium_image_upscaler",
 ]
 
 
@@ -47,4 +50,16 @@ def __getattr__(name: str):
         from .salad_qwen_image import SaladQwenImage21Provider
 
         return SaladQwenImage21Provider
+    if name in {"ImageUpscalerError", "OptiumLabsImageUpscaler", "create_optium_image_upscaler"}:
+        from .optium_image_upscaler import (
+            ImageUpscalerError,
+            OptiumLabsImageUpscaler,
+            create_optium_image_upscaler,
+        )
+
+        return {
+            "ImageUpscalerError": ImageUpscalerError,
+            "OptiumLabsImageUpscaler": OptiumLabsImageUpscaler,
+            "create_optium_image_upscaler": create_optium_image_upscaler,
+        }[name]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
