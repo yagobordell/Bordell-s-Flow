@@ -46,19 +46,32 @@ function Get-Headers {
 }
 
 function Invoke-Salad {
-    param([hashtable]$Headers, [string]$Uri, [string]$Method = "Get", [object]$Body = $null)
+    param(
+        [hashtable]$Headers,
+        [string]$Uri,
+        [string]$Method = "Get",
+        [object]$Body = $null,
+        [string]$ContentType = ""
+    )
     $Request = @{ Method = $Method; Uri = $Uri; Headers = $Headers; TimeoutSec = 60 }
     if ($null -ne $Body) {
-        $Request["ContentType"] = "application/json"
+        if ([string]::IsNullOrWhiteSpace($ContentType)) { $ContentType = "application/json" }
+        $Request["ContentType"] = $ContentType
         $Request["Body"] = $Body
     }
     return Invoke-RestMethod @Request
 }
 
 function Invoke-SaladMutation {
-    param([hashtable]$Headers, [string]$Uri, [string]$Method, [object]$Body)
+    param(
+        [hashtable]$Headers,
+        [string]$Uri,
+        [string]$Method,
+        [object]$Body,
+        [string]$ContentType
+    )
     try {
-        Invoke-Salad -Headers $Headers -Uri $Uri -Method $Method -Body $Body | Out-Null
+        Invoke-Salad -Headers $Headers -Uri $Uri -Method $Method -Body $Body -ContentType $ContentType | Out-Null
     }
     catch {
         $Message = [string]$_.Exception.Message
@@ -215,10 +228,10 @@ $DeploymentJson = $Deployment | ConvertTo-Json -Depth 20
 if ($null -eq $Existing) {
     $Deployment["name"] = $GroupName
     $DeploymentJson = $Deployment | ConvertTo-Json -Depth 20
-    Invoke-SaladMutation -Headers $Headers -Uri $ContainersBase -Method "Post" -Body $DeploymentJson
+    Invoke-SaladMutation -Headers $Headers -Uri $ContainersBase -Method "Post" -Body $DeploymentJson -ContentType "application/json"
 }
 else {
-    Invoke-SaladMutation -Headers $Headers -Uri $GroupUrl -Method "Patch" -Body $DeploymentJson
+    Invoke-SaladMutation -Headers $Headers -Uri $GroupUrl -Method "Patch" -Body $DeploymentJson -ContentType "application/merge-patch+json"
 }
 
 $Verified = Invoke-Salad -Headers $Headers -Uri $GroupUrl
