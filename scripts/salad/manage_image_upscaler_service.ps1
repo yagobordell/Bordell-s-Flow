@@ -55,6 +55,23 @@ function Invoke-Salad {
     return Invoke-RestMethod @Request
 }
 
+function Invoke-SaladMutation {
+    param([hashtable]$Headers, [string]$Uri, [string]$Method, [object]$Body)
+    try {
+        Invoke-Salad -Headers $Headers -Uri $Uri -Method $Method -Body $Body | Out-Null
+    }
+    catch {
+        $Message = [string]$_.Exception.Message
+        if ($Message -notmatch "Cannot follow an insecure redirection") {
+            throw
+        }
+        Write-Warning (
+            "Salad accepted the mutation but returned an insecure redirect. " +
+            "The redirect was NOT followed; the container group will be verified over HTTPS."
+        )
+    }
+}
+
 function Resolve-PinnedImage {
     $Inspect = & docker buildx imagetools inspect $MutableImage 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Cannot inspect published image: $MutableImage" }
@@ -194,13 +211,23 @@ $Existing = $null
 try { $Existing = Invoke-Salad -Headers $Headers -Uri $GroupUrl }
 catch { if ((Get-HttpStatusCode -ErrorRecord $_) -ne 404) { throw } }
 
+$DeploymentJson = $Deployment | ConvertTo-Json -Depth 20
 if ($null -eq $Existing) {
     $Deployment["name"] = $GroupName
-    Invoke-Salad -Headers $Headers -Uri $ContainersBase -Method "Post" -Body ($Deployment | ConvertTo-Json -Depth 20) | Out-Null
+    $DeploymentJson = $Deployment | ConvertTo-Json -Depth 20
+    Invoke-SaladMutation -Headers $Headers -Uri $ContainersBase -Method "Post" -Body $DeploymentJson
 }
 else {
-    Invoke-Salad -Headers $Headers -Uri $GroupUrl -Method "Patch" -Body ($Deployment | ConvertTo-Json -Depth 20) | Out-Null
+    Invoke-SaladMutation -Headers $Headers -Uri $GroupUrl -Method "Patch" -Body $DeploymentJson
 }
 
-Write-Host "Image upscaler deployment submitted with one RTX 5090 replica." -ForegroundColor Green
+$Verified = Invoke-Salad -Headers $Headers -Uri $GroupUrl
+if ($null -eq $Verified) { throw "Salad did not expose the container group after deployment." }
+if ([string]$Verified.container.image -ne $PinnedImage) {
+    throw "Salad container group exists but does not reference the requested pinned image."
+}
+if ([int]$Verified.replicas -ne 1) {
+    throw "Salad container group exists but does not retain one replica."
+}
+Write-Host "Image upscaler deployment submitted and verified over HTTPS." -ForegroundColor Green
 Write-Host "Run this script with -Action Status to obtain IMAGE_UPSCALER_URL."
