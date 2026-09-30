@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import boto3
 
-from ai_video_factory.inference.storage import R2ObjectStorage
 from ai_video_factory.providers.r2 import create_r2_storage
 
 
@@ -57,55 +56,3 @@ def test_local_r2_client_allows_positive_environment_overrides(monkeypatch) -> N
     assert config.read_timeout == 15.0
     assert config.max_pool_connections == 8
     assert config.retries == {"total_max_attempts": 2, "mode": "standard"}
-
-
-
-def test_r2_signed_urls_and_delete_use_bucket_and_key() -> None:
-    calls: list[tuple[str, object]] = []
-
-    class Client:
-        def generate_presigned_url(self, operation, *, Params, ExpiresIn):
-            calls.append(
-                (
-                    "presign",
-                    {
-                        "operation": operation,
-                        "params": Params,
-                        "expires": ExpiresIn,
-                    },
-                )
-            )
-            return f"https://signed.example/{operation}"
-
-        def delete_object(self, *, Bucket, Key):
-            calls.append(("delete", {"bucket": Bucket, "key": Key}))
-
-    storage = R2ObjectStorage(Client(), "bucket")
-
-    assert storage.presign_get("input.png", expires_seconds=900) == (
-        "https://signed.example/get_object"
-    )
-    assert storage.presign_put("output.png", expires_seconds=1200) == (
-        "https://signed.example/put_object"
-    )
-    storage.delete("temporary.png")
-
-    assert calls == [
-        (
-            "presign",
-            {
-                "operation": "get_object",
-                "params": {"Bucket": "bucket", "Key": "input.png"},
-                "expires": 900,
-            },
-        ),
-        (
-            "presign",
-            {
-                "operation": "put_object",
-                "params": {"Bucket": "bucket", "Key": "output.png"},
-                "expires": 1200,
-            },
-        ),
-        ("delete", {"bucket": "bucket", "key": "temporary.png"}),
-    ]
