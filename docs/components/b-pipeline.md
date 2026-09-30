@@ -390,7 +390,7 @@ El pipeline utiliza **GPT Image 2.5**, con el ID `gpt-image-2.5-flare`
 por defecto o `gpt-image-2.5-sunburst` si se selecciona explícitamente.
 `gpt-image-2.5` sin variante no es un identificador válido para la API.
 La generación estándar usa el modelo, PNG, 16:9,
-calidad low y 1280×720. Actualiza también el `.env` local si todavía
+calidad low y 1280×720. Actualiza también `config/app.env` si todavía
 contiene `OPENAI_IMAGE_MODEL=gpt-image-2`; un `git pull` no edita ese
 archivo privado. Las generaciones independientes se ejecutan en paralelo según la
 cantidad de jobs; `ImageOptions.max_parallel_images` permite
@@ -529,7 +529,7 @@ uv run --locked --extra dev python scripts/salad/run_salad_capacity_controller.p
 ```
 
 Si no existe un líder saludable, arranca **una sola instancia duradera** en una
-terminal o servicio independiente, con `.env` configurado
+terminal o servicio independiente, con `config/salad.env` configurado
 (`SALAD_AUTOSCALER_ENABLED=true`, `SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS`,
 `SALAD_ORGANIZATION`, `SALAD_PROJECT`, `SALAD_API_KEY`,
 `SALAD_CAPACITY_CONTROLLER_POSTGRES_DSN` Direct/Session y Postgres/R2):

@@ -121,9 +121,11 @@ def test_deployment_manifest_does_not_pin_an_account() -> None:
     assert "project" not in document["stack"]
 
 
-def test_original_env_example_leaves_salad_values_blank_and_uses_postgres() -> None:
+def test_env_files_separate_secrets_from_salad_configuration() -> None:
     root = Path(__file__).resolve().parents[1]
     example = (root / ".env.example").read_text(encoding="utf-8")
+    app_config = (root / "config" / "app.env.example").read_text(encoding="utf-8")
+    salad_config = (root / "config" / "salad.env.example").read_text(encoding="utf-8")
     manifest = json.loads(
         (root / "deploy" / "salad" / "services.json").read_text(encoding="utf-8")
     )
@@ -132,15 +134,16 @@ def test_original_env_example_leaves_salad_values_blank_and_uses_postgres() -> N
     assert "SALAD_PROJECT=" in example
     assert "SALAD_ORGANIZATION_NAME=" not in example
     assert "SALAD_PROJECT_NAME=" not in example
-    # The versioned example is intentionally blank, not tied to anyone's account.
-    assert "SALAD_QUEUE_NAME=\n" in example
-    assert "SALAD_LOG_LEVEL=\n" in example
-    assert "SALAD_QUEUE_ENABLED=\n" in example
+    # Keep credentials/account selectors in .env and service options in config/.
+    assert "SALAD_QUEUE_NAME=" not in example
+    assert "SALAD_LOG_LEVEL=" not in example
+    assert "SALAD_QUEUE_ENABLED=" not in example
+    assert "SALAD_QUEUE_NAME=" in salad_config
+    assert "SALAD_LOG_LEVEL=" in salad_config
+    assert "SALAD_QUEUE_ENABLED=" in salad_config
     assert "SALAD_API_KEY=\n" in example
-    assert "FISH_SPEECH_REFERENCE_PROFILE=project-narrator-v1" in example
+    assert "FISH_SPEECH_REFERENCE_PROFILE=" in app_config
     assert (
-        "FISH_SPEECH_REFERENCE_AUDIO_SHA256="
-        "bc9f0cb0ba8675aadb3247f9c93de532de693189faf31e849b9af2ec69cc97ab"
-        in example
+        "FISH_SPEECH_REFERENCE_AUDIO_SHA256=" in app_config
     )
     assert manifest["stack"]["job_transport"] == "postgres"

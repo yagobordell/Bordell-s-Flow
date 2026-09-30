@@ -102,7 +102,9 @@ def _run_health_check(args: argparse.Namespace, postgres_dsn: str) -> None:
 
 
 def main() -> None:
-    # Mirror the PowerShell manager: process environment takes precedence over .env.
+    # Mirror the PowerShell manager: process environment takes precedence over local files.
+    load_dotenv(REPO_ROOT / "config" / "app.env", override=False)
+    load_dotenv(REPO_ROOT / "config" / "salad.env", override=False)
     load_dotenv(REPO_ROOT / ".env", override=False)
     args = parse_args()
     if args.poll_seconds <= 0:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -19,6 +20,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    repo_root = Path(__file__).resolve().parents[2]
+    load_dotenv(repo_root / "config" / "app.env", override=False)
+    load_dotenv(repo_root / "config" / "salad.env", override=False)
     load_dotenv(args.env_file, override=False)
     dsn = os.getenv("POSTGRES_DSN")
     if not dsn:

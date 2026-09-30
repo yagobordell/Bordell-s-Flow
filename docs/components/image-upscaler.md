@@ -37,7 +37,8 @@ not required by the Bordell runtime after the Container Group is configured.
 
 ## Runtime client
 
-Configure `IMAGE_UPSCALER_URL` and `SALAD_API_KEY` and reuse the existing R2 settings:
+Configure `IMAGE_UPSCALER_URL` in `config/salad.env`, keep `SALAD_API_KEY` in `.env`,
+and reuse the existing R2 settings:
 
 - `R2_ENDPOINT_URL`
 - `R2_BUCKET`

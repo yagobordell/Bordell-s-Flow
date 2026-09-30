@@ -12,7 +12,10 @@ from ai_video_factory.providers.optium_image_upscaler import create_optium_image
 
 def _required(name: str, value: str | None) -> str:
     if value is None or not value.strip():
-        raise SystemExit(f"{name} is missing. Add it to your local .env file.")
+        raise SystemExit(
+            f"{name} is missing. Check .env for credentials and config/app.env or "
+            "config/salad.env for settings."
+        )
     return value.strip()
 
 

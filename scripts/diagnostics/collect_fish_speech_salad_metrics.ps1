@@ -30,22 +30,29 @@ function Import-EnvFile {
     if (-not [IO.Path]::IsPathRooted($Resolved)) {
         $Resolved = Join-Path $RepoRoot $Resolved
     }
-    if (-not (Test-Path -LiteralPath $Resolved -PathType Leaf)) {
-        return
-    }
+    $ConfigFiles = @(
+        (Join-Path $RepoRoot "config\app.env"),
+        (Join-Path $RepoRoot "config\salad.env"),
+        $Resolved
+    )
 
-    foreach ($RawLine in Get-Content -LiteralPath $Resolved) {
-        $Line = $RawLine.Trim()
-        if ([string]::IsNullOrWhiteSpace($Line) -or $Line.StartsWith("#")) {
+    foreach ($ConfigFile in $ConfigFiles) {
+        if (-not (Test-Path -LiteralPath $ConfigFile -PathType Leaf)) {
             continue
         }
-        if ($Line -notmatch '^(?:export\s+)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<value>.*)$') {
-            continue
-        }
-        $Name = $Matches["name"]
-        $Value = $Matches["value"].Trim().Trim('"').Trim("'")
-        if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($Name))) {
-            [Environment]::SetEnvironmentVariable($Name, $Value)
+        foreach ($RawLine in Get-Content -LiteralPath $ConfigFile) {
+            $Line = $RawLine.Trim()
+            if ([string]::IsNullOrWhiteSpace($Line) -or $Line.StartsWith("#")) {
+                continue
+            }
+            if ($Line -notmatch '^(?:export\s+)?(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<value>.*)$') {
+                continue
+            }
+            $Name = $Matches["name"]
+            $Value = $Matches["value"].Trim().Trim('"').Trim("'")
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($Name))) {
+                [Environment]::SetEnvironmentVariable($Name, $Value)
+            }
         }
     }
 }

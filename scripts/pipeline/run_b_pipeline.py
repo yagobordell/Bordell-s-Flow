@@ -873,12 +873,15 @@ def _require_ltx_capacity_controller() -> None:
 
 def _require_ltx_safe_a2v_worker() -> None:
     """Reject paid A2V v5 until its patched host-memory image is actually deployed."""
-    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+    repo_root = Path(__file__).resolve().parents[2]
+    load_dotenv(repo_root / "config" / "app.env", override=False)
+    load_dotenv(repo_root / "config" / "salad.env", override=False)
+    load_dotenv(repo_root / ".env", override=False)
     expected = os.getenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", "").strip()
     if not re.fullmatch(r"[^ ]+@sha256:[0-9a-fA-F]{64}", expected):
         raise RuntimeError(
             "Pinned-host fallback LTX A2V v5 requires SALAD_LTX25_PAGEABLE_A2V_IMAGE="
-            "<repository>@sha256:<64-hex-digest> in .env. "
+            "<repository>@sha256:<64-hex-digest> in config/salad.env. "
             "Build, publish and Prepare the new LTX worker first; "
             "do not resubmit the failed v4 job to an unpatched Docker image."
         )
@@ -957,8 +960,11 @@ async def _video_if_ready(
                 access_key_id=settings.r2_access_key_id,
                 secret_access_key=settings.r2_secret_access_key,
             )
-            # Pydantic reads .env but does not export Salad account/rate variables.
-            load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
+            # Pydantic reads the config files but does not export Salad settings to os.environ.
+            repo_root = Path(__file__).resolve().parents[2]
+            load_dotenv(repo_root / "config" / "app.env", override=False)
+            load_dotenv(repo_root / "config" / "salad.env", override=False)
+            load_dotenv(repo_root / ".env", override=False)
             with SaladCostMeter(
                 output,
                 services_path=Path(__file__).resolve().parents[2]

@@ -4,7 +4,7 @@ Example:
     uv run --locked --extra dev python scripts/salad/inspect_ltx_a2v_diagnostics.py \\
         --job-id ltx-a2v-b2-1A-1A-XXXXXXXXXXXX
 
-Reads the operator's .env, queries the canonical Postgres job and downloads all
+Reads the operator's local environment files, queries the canonical Postgres job and downloads all
 immutable diagnostic checkpoints (including full exception tracebacks, if emitted).
 """
 
@@ -31,6 +31,8 @@ def main() -> int:
     args = parser.parse_args()
     if not JOB_ID_PATTERN.fullmatch(args.job_id):
         parser.error("--job-id must be a valid immutable inference job ID")
+    load_dotenv(REPO_ROOT / "config" / "app.env", override=False)
+    load_dotenv(REPO_ROOT / "config" / "salad.env", override=False)
     load_dotenv(REPO_ROOT / ".env", override=False)
 
     output = args.output_dir or (

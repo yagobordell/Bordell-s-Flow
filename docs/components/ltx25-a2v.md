@@ -63,7 +63,7 @@ GPU. v2 remains supported only for already submitted requests.
 
 Because v3 has a new generation profile and fingerprint, `test02` must
 use a **new Docker image** and a **new job ID**. The host runner requires
-`SALAD_LTX25_AUTOTILING_A2V_IMAGE=<repository>@sha256:<digest>` to match
+`SALAD_LTX25_AUTOTILING_A2V_IMAGE=<repository>@sha256:<digest>` in `config/salad.env` to match
 the deployed A2V group. The old `SALAD_LTX25_SAFE_A2V_IMAGE` variable
 cannot certify a v3 image. Before submitting new paid work, B2 checks all
 previous incomplete runs: a failed job is recoverable only when Postgres
@@ -73,7 +73,7 @@ block replacement. Historical manifests, job IDs and costs are preserved.
 
 Do not rerun the full script or resubmit the failed v2 job. First verify
 Postgres and idle Salad groups, stop the Capacity Controller, prepare the
-new A2V image with a unique tag, pin its digest in `.env`, restart the
+new A2V image with a unique tag, pin its digest in `config/salad.env`, restart the
 controller and run `.\\run.ps1 test02 --generate-video`. Offline tests
 cover budget calculation, classification, retry cap and recovery; **v3 has
 not been GPU validated**.
@@ -109,7 +109,7 @@ catches the error. This does not promise diagnosis if both the worker and
 R2 fail before the first checkpoint.
 
 The v4 runner requires an exact immutable deployed image digest in
-`SALAD_LTX25_DIAGNOSTIC_A2V_IMAGE`; v3's image setting is not accepted.
+`SALAD_LTX25_DIAGNOSTIC_A2V_IMAGE` in `config/salad.env`; v3's image setting is not accepted.
 Publish a **new** Docker tag and prepare only the stopped `ltx25` group
 after stopping the singleton Capacity Controller. Do not modify
 `ltx25_i2v`. Restart the controller and recover the saved `test02`
@@ -157,7 +157,7 @@ The host runner requires `SALAD_LTX25_PAGEABLE_A2V_IMAGE` to equal the
 exact new deployed `ltx25` image digest. Previous image flags remain
 historical and do not permit new paid work. After Postgres confirms v4's
 terminal failure and the capacity controller is stopped, publish and
-prepare only `ltx25`, pin its digest, restart the controller, then use
+prepare only `ltx25`, pin its digest in `config/salad.env`, restart the controller, then use
 `.\\run.ps1 test02 --generate-video`. The recovery checks the **original v4 run's 20-character fingerprint**
 (the exact saved manifest/directory format) and each completed job's
 full immutable request fingerprint, media hash, ffprobe result and A2V

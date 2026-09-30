@@ -34,7 +34,9 @@ def parse_args() -> argparse.Namespace:
 
 def _required_setting(name: str, value: str | None) -> str:
     if value is None or not value.strip():
-        raise SystemExit(f"{name} is missing. Add it to your local .env file.")
+        raise SystemExit(
+            f"{name} is missing. Check .env for credentials and config/app.env for settings."
+        )
     return value.strip()
 
 

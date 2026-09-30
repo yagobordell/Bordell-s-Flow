@@ -92,14 +92,19 @@ Use the printed Gateway URL as `IMAGE_UPSCALER_URL`.
 
 ## Bordell runtime configuration
 
-Bordell reuses its existing R2 credentials and adds only the upscaler URL. The relevant settings
-are:
+Bordell keeps credentials and account selectors in `.env`. Put the upscaler URL in
+`config/salad.env`, and the R2 endpoint and bucket in `config/app.env`:
 
 ```text
 IMAGE_UPSCALER_URL=https://<salad-container-gateway-host>
-SALAD_API_KEY=<salad-api-key>
 R2_ENDPOINT_URL=<existing-r2-endpoint>
 R2_BUCKET=<existing-r2-bucket>
+```
+
+Keep the access credentials in `.env`:
+
+```text
+SALAD_API_KEY=<salad-api-key>
 R2_ACCESS_KEY_ID=<existing-r2-key>
 R2_SECRET_ACCESS_KEY=<existing-r2-secret>
 ```

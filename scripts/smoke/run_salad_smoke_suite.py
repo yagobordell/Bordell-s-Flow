@@ -86,7 +86,10 @@ def parse_args() -> argparse.Namespace:
 
 def _required(name: str, value: str | None) -> str:
     if value is None or not value.strip():
-        raise SystemExit(f"{name} is missing. Add it to .env before real deployment validation.")
+        raise SystemExit(
+            f"{name} is missing. Check .env for credentials and config/app.env or "
+            "config/salad.env for settings before real deployment validation."
+        )
     return value.strip()
 
 

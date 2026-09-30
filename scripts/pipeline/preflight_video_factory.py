@@ -55,7 +55,10 @@ def parse_args() -> argparse.Namespace:
 
 def _required(name: str, value: str | None) -> str:
     if value is None or not value.strip():
-        raise RuntimeError(f"{name} is missing. Add it to .env before any GPU allocation.")
+        raise RuntimeError(
+            f"{name} is missing. Check .env for credentials and config/app.env or "
+            "config/salad.env for settings before any GPU allocation."
+        )
     return value.strip()
 
 

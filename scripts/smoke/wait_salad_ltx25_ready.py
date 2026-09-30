@@ -231,6 +231,8 @@ def main() -> int:
         env_file = _REPO_ROOT / env_file
     if not env_file.is_file():
         raise SystemExit(f"Salad environment file not found: {env_file}")
+    load_dotenv(_REPO_ROOT / "config" / "app.env", override=False)
+    load_dotenv(_REPO_ROOT / "config" / "salad.env", override=False)
     load_dotenv(env_file, override=False)
 
     manifest = json.loads(
