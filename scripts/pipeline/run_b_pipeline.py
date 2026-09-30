@@ -2083,14 +2083,31 @@ async def main() -> None:
             # This binding is intentionally absent from audited B2 payloads.
             visual_plan["avatar"] = avatar_metadata
             _write(output / "visual_plan.json", visual_plan)
+        audio_for_alignment: dict[str, object] | None = None
         if audio_task is not None:
             if visual_plan is None:
                 raise RuntimeError("Audio alignment requires a completed B2 plan")
             run_metadata["audio_generation"] = await audio_task
             audio_joined = True
+            audio_for_alignment = run_metadata["audio_generation"]
+        elif stop_stage is None:
+            # --from B2 reuses the saved completed Fish/STT artifact. It must be
+            # revalidated against the newly generated B2 plan just like fresh audio;
+            # otherwise an old STT mismatch can surface only after paid images.
+            saved_audio = run_metadata.get("audio_generation")
+            if (
+                isinstance(saved_audio, dict)
+                and saved_audio.get("status") == "completed"
+                and saved_audio.get("stt_complete") is True
+            ):
+                audio_for_alignment = saved_audio
+
+        if audio_for_alignment is not None:
+            if visual_plan is None:
+                raise RuntimeError("Audio alignment requires a completed B2 plan")
             try:
                 run_metadata["stt_alignment"] = await _preflight_stt_alignment_with_retries(
-                    output, visual_plan, run_metadata["audio_generation"]
+                    output, visual_plan, audio_for_alignment
                 )
             except Exception as exc:
                 run_metadata["stt_alignment"] = {
