@@ -734,7 +734,6 @@ def generate_b2_ltx_video(
     )
 
     pending_jobs: list[tuple[B2VideoJob, dict[str, Any], Path]] = []
-    uncached_jobs: list[B2VideoJob] = []
     for job, record in zip(jobs, manifest["jobs"], strict=True):
         clip = run_dir / "clips" / f"{job.request.job_id}.mp4"
         if record["status"] == "completed":
@@ -744,6 +743,18 @@ def generate_b2_ltx_video(
         if clip.is_symlink() or clip.parent.is_symlink():
             raise B2VideoError("Refusing linked LTX output path")
         clip.parent.mkdir(parents=True, exist_ok=True)
+        pending_jobs.append((job, record, clip))
+
+    # Preserve the existing fail-closed guard: no new input upload or paid job
+    # publication happens while the singleton Capacity Controller is unhealthy.
+    if pending_jobs and check_capacity is not None:
+        check_capacity()
+
+    uncached_jobs: list[B2VideoJob] = []
+    for job, _record, _clip in pending_jobs:
+        if cached_inference_response(storage, job.request) is not None:
+            continue
+        uncached_jobs.append(job)
         print(
             f"  LTX {job.kind.upper()} beats={','.join(job.beats)}: "
             f"preparing Postgres job {job.request.job_id}",
@@ -758,27 +769,21 @@ def generate_b2_ltx_video(
                 content_type=item.content_type,
                 metadata={"purpose": f"b2-ltx-{job.kind}"},
             )
-        pending_jobs.append((job, record, clip))
-        if cached_inference_response(storage, job.request) is None:
-            uncached_jobs.append(job)
 
     # Publish the full uncached backlog before waiting for any single clip.
     # This lets the singleton Capacity Controller observe true LTX demand and
     # scale horizontal Salad capacity. Postgres submission is idempotent by
     # deterministic job_id/request fingerprint; cached R2 bundles are never
     # re-queued here, so resume/recovery cannot create duplicate paid inference.
-    if uncached_jobs:
-        if check_capacity is not None:
-            check_capacity()
-        for job in uncached_jobs:
-            snapshot = queue.submit(
-                job.request, metadata={"capability": f"b2-ltx-{job.kind}"},
-            )
-            print(
-                f"  LTX {job.kind.upper()} job={job.request.job_id}: "
-                f"published to shared Postgres queue status={snapshot.status.value}",
-                flush=True,
-            )
+    for job in uncached_jobs:
+        snapshot = queue.submit(
+            job.request, metadata={"capability": f"b2-ltx-{job.kind}"},
+        )
+        print(
+            f"  LTX {job.kind.upper()} job={job.request.job_id}: "
+            f"published to shared Postgres queue status={snapshot.status.value}",
+            flush=True,
+        )
 
     for job, record, clip in pending_jobs:
         # execute() deliberately remains the authoritative wait/recovery path.
