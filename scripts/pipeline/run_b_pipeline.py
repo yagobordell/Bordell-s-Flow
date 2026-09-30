@@ -2061,8 +2061,8 @@ async def main() -> None:
             provider=provider,
             model=settings.openai_model,
             max_parallel_calls=args.max_parallel_calls,
-            **({"visual_style": visual_style, "avatar_image": avatar_bytes}
-               if visual_style == "profesional" else {}),
+            visual_style=visual_style,
+            avatar_image=avatar_bytes,
             start_from=args.from_stage,
             stop_after=stop_stage or "B2",
             previous_b11=previous_b11,
@@ -2130,8 +2130,8 @@ async def main() -> None:
                     provider=provider,
                     model=settings.openai_model,
                     max_parallel_calls=args.max_parallel_calls,
-                    **({"visual_style": visual_style, "avatar_image": avatar_bytes}
-                       if visual_style == "profesional" else {}),
+                    visual_style=visual_style,
+                    avatar_image=avatar_bytes,
                     start_from="B2",
                     stop_after="B2",
                     previous_b11=result.b11,
