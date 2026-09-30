@@ -39,9 +39,19 @@ from ltx_pipelines.utils.types import (
 # Independently pinned recipe: changes to the A2V experiment must not silently
 # alter existing I2V job identities or replay a different R2 generation.
 LTX_I2V_STATIC_CAMERA_VIDEO_CFG_SCALE = 1.25
+LTX_I2V_DIRECT_TO_CAMERA_NEGATIVE_PROMPT = (
+    "speaking directly to camera, talking directly to camera, addressing the viewer, "
+    "direct-to-camera speech, presenter-style delivery, host-style delivery, "
+    "vlog-style talking, monologue to camera, speaking into the lens, "
+    "breaking the fourth wall, sustained eye contact with the lens while speaking"
+)
 LTX_I2V_STATIC_CAMERA_NEGATIVE_PROMPT = (
     "camera zoom, zoom in, push in, dolly in, camera drift, camera shake, "
-    "reframing, crop change, handheld camera, unintended camera movement"
+    "reframing, crop change, handheld camera, unintended camera movement, "
+    "speaking directly to camera, talking directly to camera, addressing the viewer, "
+    "direct-to-camera speech, presenter-style delivery, host-style delivery, "
+    "vlog-style talking, monologue to camera, speaking into the lens, "
+    "breaking the fourth wall, sustained eye contact with the lens while speaking"
 )
 
 
@@ -53,6 +63,7 @@ def generate_static_camera(  # noqa: PLR0913
     width: int,
     frame_rate: float,
     images: list[ImageConditioningInput],
+    negative_prompt: str = LTX_I2V_STATIC_CAMERA_NEGATIVE_PROMPT,
     num_frames: int | AutoDuration = DEFAULT_AUTO_DURATION,
     vae_dtype: torch.dtype | None = None,
     tiling_config: TilingConfig | AutoTiling | None = AUTO_TILING,
@@ -84,7 +95,7 @@ def generate_static_camera(  # noqa: PLR0913
         vae_dtype = dtype
 
     ctx_p, ctx_n = self.prompt_encoder(
-        [prompt, LTX_I2V_STATIC_CAMERA_NEGATIVE_PROMPT],
+        [prompt, negative_prompt],
         enhance_first_prompt=enhance_prompt,
         enhance_static_cache=enhance_static_cache,
         enhance_prompt_image=images[0][0] if len(images) > 0 else None,
