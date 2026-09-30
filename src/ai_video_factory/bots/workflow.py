@@ -16,7 +16,7 @@ from importlib.resources import files
 from time import perf_counter
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from ai_video_factory.config import settings
 from ai_video_factory.providers.base import StructuredTextProvider
@@ -681,42 +681,115 @@ async def run_b_pipeline(
                     on_call_duration=on_call_duration,
                 )
 
-        output = await call_b2(correction_suffix)
-        try:
-            validate_visuals(output, b2_input)
-        except BPipelineValidationError as first_error:
+        def schema_error_payload(error: ValidationError) -> dict[str, object]:
+            return {
+                "unparsed_response": True,
+                "schema_errors": json.loads(error.json(include_url=False)),
+            }
+
+        async def retry_after_schema_error(
+            first_error: ValidationError,
+        ) -> B2Output | ProfessionalB2Output:
             if on_rejected_b2_output is not None:
                 on_rejected_b2_output(
-                    block.block_id, rejection_attempt_offset + 1,
-                    str(first_error), output.model_dump()
+                    block.block_id,
+                    rejection_attempt_offset + 1,
+                    str(first_error),
+                    schema_error_payload(first_error),
                 )
             retry_suffix = (
-                "\n\nB2 automatic correction attempt. Your previous structured response "
-                f"failed output validation: {first_error}\n"
-                "Return a corrected complete B2 object for the same input block. Preserve "
-                "the narrative core and every upstream block and beat field exactly; "
-                "correct only the invalid B2 visual assignments, prompts, reference/audio "
-                "flags or descriptions. In "
-                "particular, the first beat of an intro block must use visual_type "
-                "avatar, and the last beat of a close block must use visual_type avatar. "
-                "Follow the supplied output schema.\n"
-                "Previous B2 response:\n"
-                f"{_payload(output.model_dump())}"
+                "\n\nB2 automatic schema correction attempt. Your previous structured "
+                "response could not be parsed because it violated the required output "
+                f"schema: {first_error}\n"
+                "Return one complete corrected B2 object for the same input block. "
+                "Preserve the narrative core and every upstream block and beat field "
+                "exactly. Follow the supplied output schema. For every beat, "
+                "visual_type='avatar' requires description=null; every other visual_type "
+                "requires a non-empty description. Do not omit required fields."
             )
-            retry_output = await call_b2(correction_suffix + retry_suffix)
+            try:
+                retry_output = await call_b2(correction_suffix + retry_suffix)
+            except ValidationError as retry_error:
+                if on_rejected_b2_output is not None:
+                    on_rejected_b2_output(
+                        block.block_id,
+                        rejection_attempt_offset + 2,
+                        str(retry_error),
+                        schema_error_payload(retry_error),
+                    )
+                raise BPipelineValidationError(
+                    f"B2 block {block.block_id} failed schema validation after one retry: "
+                    f"{retry_error}"
+                ) from retry_error
             try:
                 validate_visuals(retry_output, b2_input)
             except BPipelineValidationError as retry_error:
                 if on_rejected_b2_output is not None:
                     on_rejected_b2_output(
-                        block.block_id, rejection_attempt_offset + 2,
-                        str(retry_error), retry_output.model_dump()
+                        block.block_id,
+                        rejection_attempt_offset + 2,
+                        str(retry_error),
+                        retry_output.model_dump(),
                     )
                 raise BPipelineValidationError(
-                    f"B2 block {block.block_id} failed validation after one retry: "
+                    f"B2 block {block.block_id} failed validation after schema retry: "
                     f"{retry_error}"
                 ) from retry_error
-            output = retry_output
+            return retry_output
+
+        try:
+            output = await call_b2(correction_suffix)
+        except ValidationError as first_schema_error:
+            output = await retry_after_schema_error(first_schema_error)
+        else:
+            try:
+                validate_visuals(output, b2_input)
+            except BPipelineValidationError as first_error:
+                if on_rejected_b2_output is not None:
+                    on_rejected_b2_output(
+                        block.block_id, rejection_attempt_offset + 1,
+                        str(first_error), output.model_dump()
+                    )
+                retry_suffix = (
+                    "\n\nB2 automatic correction attempt. Your previous structured response "
+                    f"failed output validation: {first_error}\n"
+                    "Return a corrected complete B2 object for the same input block. Preserve "
+                    "the narrative core and every upstream block and beat field exactly; "
+                    "correct only the invalid B2 visual assignments, prompts, reference/audio "
+                    "flags or descriptions. In "
+                    "particular, the first beat of an intro block must use visual_type "
+                    "avatar, and the last beat of a close block must use visual_type avatar. "
+                    "Follow the supplied output schema.\n"
+                    "Previous B2 response:\n"
+                    f"{_payload(output.model_dump())}"
+                )
+                try:
+                    retry_output = await call_b2(correction_suffix + retry_suffix)
+                except ValidationError as retry_schema_error:
+                    if on_rejected_b2_output is not None:
+                        on_rejected_b2_output(
+                            block.block_id,
+                            rejection_attempt_offset + 2,
+                            str(retry_schema_error),
+                            schema_error_payload(retry_schema_error),
+                        )
+                    raise BPipelineValidationError(
+                        f"B2 block {block.block_id} failed schema validation on retry: "
+                        f"{retry_schema_error}"
+                    ) from retry_schema_error
+                try:
+                    validate_visuals(retry_output, b2_input)
+                except BPipelineValidationError as retry_error:
+                    if on_rejected_b2_output is not None:
+                        on_rejected_b2_output(
+                            block.block_id, rejection_attempt_offset + 2,
+                            str(retry_error), retry_output.model_dump()
+                        )
+                    raise BPipelineValidationError(
+                        f"B2 block {block.block_id} failed validation after one retry: "
+                        f"{retry_error}"
+                    ) from retry_error
+                output = retry_output
         if on_output is not None:
             on_output("B2", block.block_id, output.model_dump())
         return output
