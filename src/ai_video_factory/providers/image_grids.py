@@ -166,17 +166,17 @@ def plan_image_jobs(
             if avatar_media_grid else (_PANEL_WIDTH, _PANEL_HEIGHT)
         )
 
-        def compatible_filler(key: tuple[int, str]) -> bool:
-            return (
-                available[key]["visual_type"] == "avatar_media"
-            ) == avatar_media_grid
-
         first = positions[run[0]["block_id"], run[0]["beat_id"]]
         last = positions[run[-1]["block_id"], run[-1]["beat_id"]]
         forward = sorted(
             (
                 key for key in available
-                if positions[key] > last and compatible_filler(key)
+                if (
+                    positions[key] > last
+                    and (
+                        available[key]["visual_type"] == "avatar_media"
+                    ) == avatar_media_grid
+                )
             ),
             key=positions.__getitem__,
         )[:count - len(run)]
@@ -184,7 +184,12 @@ def plan_image_jobs(
         backward = sorted(
             (
                 key for key in available
-                if positions[key] < first and compatible_filler(key)
+                if (
+                    positions[key] < first
+                    and (
+                        available[key]["visual_type"] == "avatar_media"
+                    ) == avatar_media_grid
+                )
             ),
             key=positions.__getitem__,
             reverse=True,
