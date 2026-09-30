@@ -270,7 +270,7 @@ def test_real_ffmpeg_preview_has_audio_cuts_and_avatar_media_50_50(
     saved = json.loads((tmp_path / artifact["timeline_file"]).read_text(encoding="utf-8"))
     assert saved["beats"][2]["start_seconds"] == 1.5
     assert saved["beats"][1]["motion"] == {
-        "version": "media-image-subpixel-affine-v2",
+        "version": "media-image-subpixel-affine-v3",
         "mode": "ken_burns",
         "direction": "out",
         "origin": "bottom_left",
@@ -303,14 +303,21 @@ def test_media_image_motion_matches_media_pipeline_zoom_model() -> None:
     assert ":sense=source:interpolation=linear:eval=frame" in video_filter
     assert "setsar=1" in video_filter
     assert video_filter.endswith("format=yuv420p")
-    assert all(beat["motion"] == {
-        "version": "media-image-subpixel-affine-v2",
-        "mode": "ken_burns",
-        "direction": "out",
-        "origin": "bottom_left",
-        "zoom_start": 1.02,
-        "zoom_end": 1.0,
-    } for beat in beats)
+    assert [beat["motion"]["direction"] for beat in beats] == [
+        "out", "in", "out", "in", "out", "in", "out", "in", "out", "in",
+    ]
+    for index, beat in enumerate(beats):
+        expected_start, expected_end = (
+            (1.02, 1.0) if index % 2 == 0 else (1.0, 1.02)
+        )
+        assert beat["motion"] == {
+            "version": "media-image-subpixel-affine-v3",
+            "mode": "ken_burns",
+            "direction": "out" if index % 2 == 0 else "in",
+            "origin": "bottom_left",
+            "zoom_start": expected_start,
+            "zoom_end": expected_end,
+        }
     assert "motion" not in still
 
     second = {"beats": [{k: v for k, v in beat.items() if k != "motion"}
@@ -365,7 +372,7 @@ def test_real_media_image_preview_frames_change_during_one_beat(
 
 
 
-def test_real_bottom_left_ken_burns_animates_second_media_image(
+def test_real_bottom_left_ken_burns_alternates_second_media_image(
     tmp_path: Path,
 ) -> None:
     if shutil.which("ffprobe") is None:
@@ -386,12 +393,12 @@ def test_real_bottom_left_ken_burns_animates_second_media_image(
     )
     assert artifact["media_image_motion"]["animated_beats"] == 2
     assert timeline["beats"][2]["motion"] == {
-        "version": "media-image-subpixel-affine-v2",
+        "version": "media-image-subpixel-affine-v3",
         "mode": "ken_burns",
-        "direction": "out",
+        "direction": "in",
         "origin": "bottom_left",
-        "zoom_start": 1.008,
-        "zoom_end": 1.0,
+        "zoom_start": 1.0,
+        "zoom_end": 1.008,
     }
 
     def frame_at(seconds: float) -> Image.Image:
