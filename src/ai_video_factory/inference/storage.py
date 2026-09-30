@@ -125,6 +125,31 @@ class R2ObjectStorage:
             metadata={str(k).lower(): str(v) for k, v in response.get("Metadata", {}).items()},
         )
 
+    def presign_get(self, key: str, *, expires_seconds: int = 7200) -> str:
+        if expires_seconds <= 0:
+            raise ValueError("expires_seconds must be positive")
+        return str(
+            self._client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": self.bucket, "Key": key},
+                ExpiresIn=expires_seconds,
+            )
+        )
+
+    def presign_put(self, key: str, *, expires_seconds: int = 7200) -> str:
+        if expires_seconds <= 0:
+            raise ValueError("expires_seconds must be positive")
+        return str(
+            self._client.generate_presigned_url(
+                "put_object",
+                Params={"Bucket": self.bucket, "Key": key},
+                ExpiresIn=expires_seconds,
+            )
+        )
+
+    def delete(self, key: str) -> None:
+        self._client.delete_object(Bucket=self.bucket, Key=key)
+
     def ping(self) -> None:
         self._client.head_bucket(Bucket=self.bucket)
 
@@ -196,7 +221,7 @@ class LocalObjectStorage:
         created = False
         try:
             with destination.open("xb") as target, source.open("rb") as stream:
-                shutil.copyfileobj(stream, target)
+                shutil.copyfileobj(source=source, fdst=target)
             created = True
         except FileExistsError:
             pass
