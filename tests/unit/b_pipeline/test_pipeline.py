@@ -65,9 +65,11 @@ class FakeProvider:
         self.b12_both_started = asyncio.Event()
         self.calls = []
 
-    async def generate_structured(self, *, model, instructions, input_text, output_type):
+    async def generate_structured(
+        self, *, model, instructions, input_text, output_type, input_image_url=None
+    ):
         payload = json.loads(input_text)
-        self.calls.append((model, instructions, payload, output_type))
+        self.calls.append((model, instructions, payload, output_type, input_image_url))
         if output_type is B11Output:
             assert payload == {"plain_script_for_recording": SCRIPT}
             return b11()
@@ -147,6 +149,26 @@ def test_pipeline_parallel_calls_exact_source_and_medium_model_routing(
         "avatar",
     ]
     assert merged_beats["narrative_core"] == merged_visuals["narrative_core"]
+
+
+def test_casero_b2_attaches_selected_avatar_reference() -> None:
+    fake = FakeProvider()
+
+    asyncio.run(
+        run_b_pipeline(
+            SCRIPT,
+            provider=fake,
+            visual_style="casero",
+            avatar_image=b"avatar-png-bytes",
+        )
+    )
+
+    b2_calls = [call for call in fake.calls if call[3] is B2Output]
+    assert len(b2_calls) == 2
+    assert all(
+        call[4] == "data:image/png;base64,YXZhdGFyLXBuZy1ieXRlcw=="
+        for call in b2_calls
+    )
 
 
 @pytest.mark.parametrize(
