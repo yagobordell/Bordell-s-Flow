@@ -221,7 +221,7 @@ class LocalObjectStorage:
         created = False
         try:
             with destination.open("xb") as target, source.open("rb") as stream:
-                shutil.copyfileobj(source=source, fdst=target)
+                shutil.copyfileobj(source, target)
             created = True
         except FileExistsError:
             pass
