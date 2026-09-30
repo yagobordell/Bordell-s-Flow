@@ -398,6 +398,82 @@ def test_terminal_oom_old_run_is_preserved_and_superseded(
     assert not b_video.has_pending_b2_video(tmp_path)
 
 
+def test_all_ltx_jobs_are_published_before_first_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.compositor import b_video as compositor
+    from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
+
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    events: list[tuple[str, str]] = []
+    metadata_file = tmp_path / "worker-metadata.json"
+    metadata_file.write_text(json.dumps({
+        "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+        "negative_prompt_applied": True,
+        "positive_prompt_enhanced": False,
+    }), encoding="utf-8")
+
+    class FakeQueue:
+        def submit(self, request: object, *, metadata: object) -> QueueJobSnapshot:
+            del metadata
+            events.append(("submit", request.job_id))
+            return QueueJobSnapshot(
+                id=request.job_id,
+                status=QueueJobStatus.PENDING,
+            )
+
+    class FakeStorage:
+        def stat(self, _key: str) -> SimpleNamespace:
+            return SimpleNamespace(
+                metadata={"artifact-sha256": _sha(metadata_file)}
+            )
+
+        def download(self, _key: str, destination: Path) -> None:
+            shutil.copyfile(metadata_file, destination)
+
+    class FakeExecutor:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def ensure_input(self, _source: Path, **_kwargs: object) -> None:
+            pass
+
+        def execute(self, request: object, **_kwargs: object) -> SimpleNamespace:
+            events.append(("execute", request.job_id))
+            return SimpleNamespace(replayed=False)
+
+        def download_output(self, _response: object, destination: Path) -> None:
+            destination.write_bytes(b"generated-clip")
+
+    def fake_render(output: Path, *args: object) -> dict[str, object]:
+        del args
+        final = output / "video" / "final.mp4"
+        final.parent.mkdir(parents=True, exist_ok=True)
+        final.write_bytes(b"composed")
+        return {"file": "video/final.mp4", "sha256": _sha(final)}
+
+    monkeypatch.setattr(b_video, "InferenceJobExecutor", FakeExecutor)
+    monkeypatch.setattr(b_video, "cached_inference_response", lambda *_args: None)
+    monkeypatch.setattr(b_video, "_probe_video", lambda *_args: None)
+    monkeypatch.setattr(compositor, "render_b2_ltx_video", fake_render)
+
+    result = b_video.generate_b2_ltx_video(
+        tmp_path,
+        plan,
+        audio,
+        images,
+        queue=FakeQueue(),
+        storage=FakeStorage(),
+    )
+
+    assert result["status"] == "completed"
+    assert [kind for kind, _job_id in events[:3]] == ["submit", "submit", "submit"]
+    assert [kind for kind, _job_id in events[3:]] == ["execute", "execute", "execute"]
+    assert {job_id for kind, job_id in events if kind == "submit"} == {
+        job_id for kind, job_id in events if kind == "execute"
+    }
+
+
 def test_terminal_a2v_diffvae_budget_old_run_can_be_superseded(tmp_path: Path) -> None:
     from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
 
@@ -543,6 +619,12 @@ def test_v5_recovery_preserves_completed_v4_clips_and_submits_only_failed_a2v(
                 provider_payload={"last_error": "AcceleratorError: CUDA error: out of memory"},
             )
 
+        def submit(self, request: object, *, metadata: object) -> QueueJobSnapshot:
+            del metadata
+            return QueueJobSnapshot(
+                id=request.job_id, status=QueueJobStatus.PENDING,
+            )
+
     new_metadata = tmp_path / "new-metadata.json"
     new_metadata.write_text(json.dumps({
         "generation_profile": v5,
@@ -583,6 +665,7 @@ def test_v5_recovery_preserves_completed_v4_clips_and_submits_only_failed_a2v(
         return {"file": "video/final.mp4", "sha256": _sha(final)}
 
     monkeypatch.setattr(b_video, "InferenceJobExecutor", FakeExecutor)
+    monkeypatch.setattr(b_video, "cached_inference_response", lambda *_args: None)
     monkeypatch.setattr(compositor, "render_b2_ltx_video", fake_render)
     result = b_video.generate_b2_ltx_video(
         tmp_path, plan, audio, images, queue=FakeQueue(), storage=FakeStorage(),
@@ -648,6 +731,15 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
         def download(self, _key: str, destination: Path) -> None:
             shutil.copyfile(metadata, destination)
 
+    class FakeQueue:
+        def submit(self, request: object, *, metadata: object):
+            del metadata
+            from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
+            return QueueJobSnapshot(
+                id=request.job_id,
+                status=QueueJobStatus.PENDING,
+            )
+
     class FakeExecutor:
         def __init__(self, **_kwargs: object) -> None:
             pass
@@ -664,8 +756,9 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
             shutil.copyfile(source, destination)
 
     monkeypatch.setattr(b_video, "InferenceJobExecutor", FakeExecutor)
+    monkeypatch.setattr(b_video, "cached_inference_response", lambda *_args: None)
     result = b_video.generate_b2_ltx_video(
-        tmp_path, plan, audio, images, queue=SimpleNamespace(),
+        tmp_path, plan, audio, images, queue=FakeQueue(),
         storage=FakeStorage(),
     )
     assert result["status"] == "completed"
@@ -701,7 +794,7 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     assert motion["zoom_start"] == pytest.approx(1 + (14 / 24) * 0.02)
     assert motion["zoom_end"] == 1.0
     again = b_video.generate_b2_ltx_video(
-        tmp_path, plan, audio, images, queue=SimpleNamespace(),
+        tmp_path, plan, audio, images, queue=FakeQueue(),
         storage=FakeStorage(),
     )
     assert again["sha256"] == result["sha256"]

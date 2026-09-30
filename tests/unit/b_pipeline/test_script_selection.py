@@ -269,6 +269,8 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         on_rejected_output,
         on_rejected_b12_output,
         on_rejected_b2_output,
+        visual_style,
+        avatar_image,
         start_from,
         stop_after,
         previous_b11,
@@ -280,6 +282,8 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         assert callable(on_rejected_output)
         assert callable(on_rejected_b12_output)
         assert callable(on_rejected_b2_output)
+        assert visual_style == "casero"
+        assert avatar_image.startswith(b"\x89PNG\r\n\x1a\n")
         assert provider.reasoning_effort == "medium"
         assert model == "gpt-6-luna"
         assert max_parallel_calls == 3

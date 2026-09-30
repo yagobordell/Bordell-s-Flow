@@ -141,6 +141,68 @@ def test_generate_video_rejects_invalid_preview_without_starting_ltx(
     assert report["run"]["video_generation"] == {"status": "skipped"}
 
 
+
+def test_saved_completed_audio_is_preflighted_against_resumed_b2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[Path, dict, dict]] = []
+    audio = {"status": "completed", "stt_complete": True, "blocks": []}
+    run_metadata: dict[str, object] = {"audio_generation": audio}
+    plan = {"blocks": [{"block_id": 5, "beats": []}]}
+
+    async def fake_preflight(
+        output: Path,
+        visual_plan: dict,
+        saved_audio: dict,
+        *,
+        allow_audio_regeneration: bool = True,
+    ) -> dict:
+        assert allow_audio_regeneration is True
+        calls.append((output, visual_plan, saved_audio))
+        return {"status": "completed", "block_count": 1, "beat_count": 0}
+
+    monkeypatch.setattr(
+        runner,
+        "_preflight_stt_alignment_with_retries",
+        fake_preflight,
+    )
+
+    aligned = asyncio.run(
+        runner._preflight_saved_run_audio(tmp_path, plan, run_metadata)
+    )
+
+    assert aligned is True
+    assert calls == [(tmp_path, plan, audio)]
+    assert run_metadata["stt_alignment"] == {
+        "status": "completed",
+        "block_count": 1,
+        "beat_count": 0,
+    }
+
+
+def test_incomplete_saved_audio_does_not_start_stt_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def forbidden(*_args: object, **_kwargs: object) -> dict:
+        raise AssertionError("Incomplete audio must not start paid STT recovery")
+
+    monkeypatch.setattr(
+        runner,
+        "_preflight_stt_alignment_with_retries",
+        forbidden,
+    )
+    run_metadata: dict[str, object] = {
+        "audio_generation": {"status": "completed", "stt_complete": False}
+    }
+
+    aligned = asyncio.run(
+        runner._preflight_saved_run_audio(tmp_path, {"blocks": []}, run_metadata)
+    )
+
+    assert aligned is False
+    assert "stt_alignment" not in run_metadata
+
+
 def test_no_video_images_resume_still_builds_preview_without_ltx(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

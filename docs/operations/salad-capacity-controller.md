@@ -121,7 +121,24 @@ SALAD_AUTOSCALER_LTX25_I2V_COLD_START_SECONDS=...
 SALAD_AUTOSCALER_LTX25_COLD_START_SECONDS=...
 SALAD_AUTOSCALER_LTX25_I2V_RUNTIME_SECONDS=...
 SALAD_AUTOSCALER_LTX25_RUNTIME_SECONDS=...
+SALAD_AUTOSCALER_LTX25_I2V_JOBS_PER_REPLICA=30
+SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA=30
 ```
+
+LTX I2V y A2V usan una política de backlog por número de clips: por defecto el
+target es `ceil(active_jobs / 30)` de forma independiente para cada pool. Los
+otros servicios mantienen el cálculo predictivo por runtime y ventana de
+drenaje. El target LTX sigue limitado por el máximo de réplicas declarado en
+`deploy/salad/services.json` (actualmente 4 por pool) y por el presupuesto
+global del proyecto.
+
+Los workers LTX consumen una cola Postgres compartida; el controlador no asigna
+bloques de clips a instancias concretas. Durante un downscale puede marcar una
+instancia ocupada como `draining`: esa GPU termina el clip que ya está
+ejecutando, el fence de `gpu.capacity_drains` impide que reclame otro, y solo
+una reconciliación posterior solicita el resize cuando la instancia ya está
+idle. Si la demanda rebota antes de que exista un cambio de proveedor pendiente,
+el drain se cancela y la instancia vuelve a ser elegible.
 
 The controlled `i2v-static-camera-001` run recorded 3089.8 seconds of bootstrap, which demonstrates
 why the generic 180-second cold-start default is not a safe production estimate for LTX I2V. Treat

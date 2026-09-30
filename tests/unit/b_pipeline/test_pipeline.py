@@ -65,9 +65,11 @@ class FakeProvider:
         self.b12_both_started = asyncio.Event()
         self.calls = []
 
-    async def generate_structured(self, *, model, instructions, input_text, output_type):
+    async def generate_structured(
+        self, *, model, instructions, input_text, output_type, input_image_url=None
+    ):
         payload = json.loads(input_text)
-        self.calls.append((model, instructions, payload, output_type))
+        self.calls.append((model, instructions, payload, output_type, input_image_url))
         if output_type is B11Output:
             assert payload == {"plain_script_for_recording": SCRIPT}
             return b11()
@@ -147,6 +149,87 @@ def test_pipeline_parallel_calls_exact_source_and_medium_model_routing(
         "avatar",
     ]
     assert merged_beats["narrative_core"] == merged_visuals["narrative_core"]
+
+
+def test_casero_b2_attaches_selected_avatar_reference() -> None:
+    fake = FakeProvider()
+
+    asyncio.run(
+        run_b_pipeline(
+            SCRIPT,
+            provider=fake,
+            visual_style="casero",
+            avatar_image=b"avatar-png-bytes",
+        )
+    )
+
+    b2_calls = [call for call in fake.calls if call[3] is B2Output]
+    assert len(b2_calls) == 2
+    assert all(
+        call[4] == "data:image/png;base64,YXZhdGFyLXBuZy1ieXRlcw=="
+        for call in b2_calls
+    )
+
+
+def test_b2_schema_validation_error_is_retried_once() -> None:
+    class SchemaRetryProvider(FakeProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.injected_schema_error = False
+
+        async def generate_structured(
+            self, *, model, instructions, input_text, output_type, input_image_url=None
+        ):
+            payload = json.loads(input_text)
+            if (
+                output_type is B2Output
+                and payload["current_block_id"] == 1
+                and not self.injected_schema_error
+            ):
+                self.injected_schema_error = True
+                block = payload["blocks"][0]
+                block["beats"][0].update(
+                    visual_type="media_image",
+                    description=None,
+                )
+                return B2Output.model_validate(
+                    {
+                        "pipeline_stage": "B2",
+                        "narrative_core": payload["narrative_core"],
+                        "blocks": [block],
+                        "error": None,
+                    }
+                )
+            return await super().generate_structured(
+                model=model,
+                instructions=instructions,
+                input_text=input_text,
+                output_type=output_type,
+                input_image_url=input_image_url,
+            )
+
+    rejected: list[tuple[int, int, str, dict[str, object]]] = []
+    provider = SchemaRetryProvider()
+    result = asyncio.run(
+        run_b_pipeline(
+            SCRIPT,
+            provider=provider,
+            avatar_image=b"avatar-png-bytes",
+            on_rejected_b2_output=lambda block_id, attempt, error, payload: rejected.append(
+                (block_id, attempt, error, payload)
+            ),
+        )
+    )
+
+    assert provider.injected_schema_error
+    assert len(rejected) == 1
+    block_id, attempt, error, payload = rejected[0]
+    assert block_id == 1
+    assert attempt == 1
+    assert "non-avatar visual requires a nonempty description" in error
+    assert payload["unparsed_response"] is True
+    assert payload["schema_errors"]
+    assert [item.blocks[0].block_id for item in result.b2] == [1, 2]
 
 
 @pytest.mark.parametrize(

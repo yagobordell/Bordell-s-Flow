@@ -505,11 +505,22 @@ La antigua opción `--videos-only` continúa funcionando como alias.
 
 **Salad no arranca directamente desde `run.ps1`.** El Capacity Controller
 único es el responsable de arrancar y detener los contenedores I2V/A2V según
-la demanda en Postgres, incluso cuando se reanuda un vídeo. Antes de enviar
-cada trabajo nuevo, el runner comprueba que este controlador tenga heartbeat y
-reconciliación recientes; si no está operativo, falla con instrucciones en vez
-de mantener silenciosamente un trabajo en `pending` durante horas. Los clips
-LTX ya terminados y verificados pueden reutilizarse sin enviar trabajos GPU.
+la demanda en Postgres, incluso cuando se reanuda un vídeo. Antes de publicar
+trabajo nuevo, el runner comprueba que este controlador tenga heartbeat y
+reconciliación recientes; si no está operativo, falla con instrucciones antes
+de subir inputs o crear nuevos jobs.
+
+Cuando el controlador está sano, el runner prepara los inputs y publica **todo
+el backlog LTX no cacheado en Postgres antes de esperar el primer resultado**.
+Los workers de cada Container Group consumen esa cola compartida dinámicamente:
+no existen bloques estáticos de clips asignados a una GPU. Esto permite que dos
+réplicas se repartan 31 clips aproximadamente 16/15 y que una GPU que termine
+antes tome el siguiente trabajo disponible.
+
+I2V y A2V continúan siendo pools separados. Cada pool LTX solicita por defecto
+una réplica por cada 30 jobs activos (`ceil(jobs/30)`), limitado por su
+`max_replicas` y por `SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS`. Los clips LTX
+ya terminados y verificados pueden reutilizarse sin enviar trabajos GPU.
 
 Comprueba el controlador desde la raíz del repositorio (sin solicitar GPU):
 
