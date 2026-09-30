@@ -32,8 +32,8 @@ _OUTPUT_MEDIA_TYPE = "image/png"
 _OUTPUT_CONTAINER = "png"
 _DEFAULT_REQUEST_TIMEOUT_SECONDS = 3600.0
 _DEFAULT_SIGNED_URL_EXPIRY_SECONDS = 7200
-_DEFAULT_524_RECOVERY_TIMEOUT_SECONDS = 900.0
-_DEFAULT_524_RECOVERY_POLL_SECONDS = 10.0
+_DEFAULT_GATEWAY_RECOVERY_TIMEOUT_SECONDS = 900.0
+_DEFAULT_GATEWAY_RECOVERY_POLL_SECONDS = 10.0
 
 
 class ImageUpscalerError(RuntimeError):
@@ -268,8 +268,8 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
         temp_dir: Path,
         request_timeout_seconds: float = _DEFAULT_REQUEST_TIMEOUT_SECONDS,
         signed_url_expiry_seconds: int = _DEFAULT_SIGNED_URL_EXPIRY_SECONDS,
-        recovery_524_timeout_seconds: float = _DEFAULT_524_RECOVERY_TIMEOUT_SECONDS,
-        recovery_524_poll_seconds: float = _DEFAULT_524_RECOVERY_POLL_SECONDS,
+        gateway_recovery_timeout_seconds: float = _DEFAULT_524_RECOVERY_TIMEOUT_SECONDS,
+        gateway_recovery_poll_seconds: float = _DEFAULT_524_RECOVERY_POLL_SECONDS,
         http_client: _RuntimeHttpClient | None = None,
     ) -> None:
         normalized_url = base_url.strip().rstrip("/")
@@ -282,10 +282,10 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
             raise ValueError("request_timeout_seconds must be positive")
         if signed_url_expiry_seconds <= 0:
             raise ValueError("signed_url_expiry_seconds must be positive")
-        if recovery_524_timeout_seconds <= 0:
-            raise ValueError("recovery_524_timeout_seconds must be positive")
-        if recovery_524_poll_seconds <= 0:
-            raise ValueError("recovery_524_poll_seconds must be positive")
+        if gateway_recovery_timeout_seconds <= 0:
+            raise ValueError("gateway_recovery_timeout_seconds must be positive")
+        if gateway_recovery_poll_seconds <= 0:
+            raise ValueError("gateway_recovery_poll_seconds must be positive")
 
         self._base_url = normalized_url
         self._salad_api_key = salad_api_key.strip()
@@ -293,8 +293,8 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
         self._temp_dir = temp_dir
         self._request_timeout_seconds = request_timeout_seconds
         self._signed_url_expiry_seconds = signed_url_expiry_seconds
-        self._recovery_524_timeout_seconds = recovery_524_timeout_seconds
-        self._recovery_524_poll_seconds = recovery_524_poll_seconds
+        self._gateway_recovery_timeout_seconds = gateway_recovery_timeout_seconds
+        self._gateway_recovery_poll_seconds = gateway_recovery_poll_seconds
         self._http_client = http_client or _UrllibRuntimeHttpClient()
 
     def upscale(
@@ -376,7 +376,7 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
                     "request": request_payload,
                 }
                 request_sent = True
-                response = self._post_runtime_with_524_recovery(
+                response = self._post_runtime_with_gateway_recovery(
                     envelope=envelope,
                     output_key=output_key,
                 )
@@ -417,7 +417,7 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
                         self._best_effort_delete(input_key)
                     self._best_effort_delete(output_key)
 
-    def _post_runtime_with_524_recovery(
+    def _post_runtime_with_gateway_recovery(
         self,
         *,
         envelope: Mapping[str, object],
@@ -425,36 +425,45 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
     ) -> Mapping[str, object]:
         url = f"{self._base_url}/v1/execute"
         headers = {"Salad-Api-Key": self._salad_api_key}
-        try:
-            return self._http_client.post_json(
-                url,
-                envelope,
-                headers=headers,
-                timeout_seconds=self._request_timeout_seconds,
-            )
-        except ImageUpscalerError as exc:
-            if exc.status_code != 524:
-                raise
-            logger.warning(
-                "Image upscaler gateway timed out with HTTP 524; waiting for "
-                "request-scoped output in R2 before retrying the same runtime request."
-            )
-            deadline = time.monotonic() + self._recovery_524_timeout_seconds
-            while time.monotonic() < deadline:
-                time.sleep(self._recovery_524_poll_seconds)
-                if self._storage.stat(output_key) is None:
+        deadline = time.monotonic() + self._gateway_recovery_timeout_seconds
+        last_error: ImageUpscalerError | None = None
+        wait_for_output = False
+
+        while True:
+            if last_error is not None:
+                if time.monotonic() >= deadline:
+                    raise last_error
+                time.sleep(self._gateway_recovery_poll_seconds)
+                if wait_for_output and self._storage.stat(output_key) is None:
                     continue
-                logger.info(
-                    "Image upscaler output appeared in R2 after HTTP 524; "
-                    "retrying the same runtime request for result evidence."
-                )
+
+            try:
                 return self._http_client.post_json(
                     url,
                     envelope,
                     headers=headers,
                     timeout_seconds=self._request_timeout_seconds,
                 )
-            raise
+            except ImageUpscalerError as exc:
+                if exc.status_code == 524:
+                    if last_error is None or not wait_for_output:
+                        logger.warning(
+                            "Image upscaler gateway returned HTTP 524; waiting for "
+                            "request-scoped output in R2 before retrying the same request."
+                        )
+                    wait_for_output = True
+                    last_error = exc
+                    continue
+                if exc.status_code == 503:
+                    if last_error is None:
+                        logger.warning(
+                            "Image upscaler gateway returned HTTP 503; the single-threaded "
+                            "runtime may still be serving an earlier inference. Retrying "
+                            "the same request until the gateway becomes available."
+                        )
+                    last_error = exc
+                    continue
+                raise
 
     def _build_capability_request(
         self,
