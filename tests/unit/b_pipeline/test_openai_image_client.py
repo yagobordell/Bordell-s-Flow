@@ -125,6 +125,60 @@ def test_direct_edit_uses_the_selected_avatar_without_changing_model_or_size(
     assert result["sha256"] == hashlib.sha256(_png()).hexdigest()
 
 
+@pytest.mark.parametrize(
+    ("size", "quality"),
+    [
+        ("768x864", "low"),
+        ("1536x1728", "medium"),
+        ("2304x1728", "medium"),
+        ("2304x2592", "medium"),
+    ],
+)
+def test_avatar_media_sizes_reach_the_official_image_endpoint(
+    size: str,
+    quality: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    width, height = map(int, size.split("x"))
+    client = official.OpenAIImageClient("fake-key")
+    payloads = []
+    response = {
+        "data": [{"b64_json": base64.b64encode(_png(width, height)).decode()}],
+    }
+    monkeypatch.setattr(
+        client,
+        "request_json",
+        lambda payload: payloads.append(payload) or response,
+    )
+
+    result = client.generate_png(
+        prompt="Avatar media support image",
+        model="gpt-image-2.5-sunburst",
+        size=size,
+        quality=quality,
+        destination=tmp_path / f"{width}x{height}.png",
+    )
+
+    assert len(payloads) == 1
+    assert payloads[0]["size"] == size
+    assert payloads[0]["quality"] == quality
+    assert result["size"] == size
+    assert (result["width"], result["height"]) == (width, height)
+
+
+def test_direct_client_rejects_unplanned_image_size(tmp_path: Path) -> None:
+    client = official.OpenAIImageClient("fake-key")
+
+    with pytest.raises(ValueError, match="supported image or grid size"):
+        client.generate_png(
+            prompt="Image",
+            model="gpt-image-2.5-sunburst",
+            size="1024x1024",
+            destination=tmp_path / "bad-size.png",
+        )
+
+
 @pytest.mark.parametrize("model", ["gpt-image-2.5-flare", "gpt-image-2.5-sunburst"])
 @pytest.mark.parametrize("with_reference", [False, True])
 def test_medium_quality_grid_reaches_the_official_generation_or_edit_endpoint(
