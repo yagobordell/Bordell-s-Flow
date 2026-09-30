@@ -349,7 +349,7 @@ def test_upscaler_recovers_524_after_output_appears_in_r2(
         salad_api_key="salad-secret",
         storage=storage,
         temp_dir=tmp_path,
-        recovery_524_poll_seconds=0.01,
+        gateway_recovery_poll_seconds=0.01,
         http_client=runtime,
     )
 
@@ -384,8 +384,8 @@ def test_upscaler_524_without_output_preserves_r2_objects(
         salad_api_key="salad-secret",
         storage=storage,
         temp_dir=tmp_path,
-        recovery_524_timeout_seconds=0.5,
-        recovery_524_poll_seconds=0.01,
+        gateway_recovery_timeout_seconds=0.5,
+        gateway_recovery_poll_seconds=0.01,
         http_client=FailingRuntimeClient(),
     )
 
@@ -394,3 +394,80 @@ def test_upscaler_524_without_output_preserves_r2_objects(
 
     assert storage.objects
     assert storage.deleted == []
+
+
+
+def test_upscaler_retries_transient_503_with_same_request(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage = FakeStorage()
+    output_bytes = _png(192, 108)
+
+    class RecoveringRuntimeClient:
+        def __init__(self) -> None:
+            self.calls: list[Mapping[str, object]] = []
+
+        def post_json(
+            self,
+            url: str,
+            payload: Mapping[str, object],
+            *,
+            headers: Mapping[str, str],
+            timeout_seconds: float,
+        ) -> Mapping[str, object]:
+            del url, headers, timeout_seconds
+            self.calls.append(payload)
+            if len(self.calls) == 1:
+                raise ImageUpscalerError("HTTP 503", status_code=503)
+            request = payload["request"]
+            assert isinstance(request, Mapping)
+            output = request["output"]
+            requirements = request["requirements"]
+            assert isinstance(output, Mapping)
+            assert isinstance(requirements, Mapping)
+            output_key = _key_from_signed_url(str(output["put_url"]))
+            storage.objects[output_key] = output_bytes
+            return {
+                "schema_version": "runtime-http-response/v1",
+                "execution_id": payload["execution_id"],
+                "request_sha256": payload["request_sha256"],
+                "capability_contract": CAPABILITY_CONTRACT,
+                "result": {
+                    "schema_version": "optiumlabs-image-upscale-result/v1",
+                    "job_id": request["job_id"],
+                    "request_id": request["request_id"],
+                    "output": {
+                        "artifact_id": output["artifact_id"],
+                        "sha256": hashlib.sha256(output_bytes).hexdigest(),
+                        "size_bytes": len(output_bytes),
+                        "width": int(requirements["width"]),
+                        "height": int(requirements["height"]),
+                        "media_type": "image/png",
+                        "container": "png",
+                    },
+                    "inputs": [],
+                    "runtime_identity": {},
+                },
+            }
+
+    runtime = RecoveringRuntimeClient()
+    monkeypatch.setattr(
+        "ai_video_factory.providers.optium_image_upscaler.time.sleep",
+        lambda _: None,
+    )
+    provider = OptiumLabsImageUpscaler(
+        base_url="https://upscaler.salad.cloud",
+        salad_api_key="salad-secret",
+        storage=storage,
+        temp_dir=tmp_path,
+        gateway_recovery_poll_seconds=0.01,
+        http_client=runtime,
+    )
+
+    result = provider.upscale(_png(64, 36), target_width=192, target_height=108)
+
+    assert result == output_bytes
+    assert len(runtime.calls) == 2
+    assert runtime.calls[0] == runtime.calls[1]
+    assert storage.objects == {}
