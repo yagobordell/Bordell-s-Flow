@@ -250,3 +250,25 @@ def test_upscaler_rejects_invalid_input_before_remote_calls(tmp_path: Path) -> N
 
     assert runtime.calls == []
     assert storage.objects == {}
+
+
+
+def test_upscaler_preserves_r2_on_ambiguous_post_failure(tmp_path: Path) -> None:
+    class FailingRuntimeClient:
+        def post_json(self, *args, **kwargs):
+            raise ImageUpscalerError("transport timeout")
+
+    storage = FakeStorage()
+    provider = OptiumLabsImageUpscaler(
+        base_url="https://upscaler.salad.cloud",
+        salad_api_key="salad-secret",
+        storage=storage,
+        temp_dir=tmp_path,
+        http_client=FailingRuntimeClient(),
+    )
+
+    with pytest.raises(ImageUpscalerError, match="transport timeout"):
+        provider.upscale(_png(64, 36), target_width=192, target_height=108)
+
+    assert storage.objects
+    assert storage.deleted == []
