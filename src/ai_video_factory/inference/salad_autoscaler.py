@@ -1056,7 +1056,15 @@ def build_global_demands(
                 if active_job_count > 0
                 else 0
             )
-            ideal = max(len(running_rows), job_count_target)
+            # Clip-count targets may intentionally fall below the number of
+            # currently running workers. Safe active draining prevents those
+            # workers from claiming another clip and waits for them to finish
+            # before the provider resize is issued.
+            ideal = min(
+                job_count_target,
+                active_job_count,
+                config.stage_max_replicas[stage],
+            )
         else:
             ideal = (
                 max(
@@ -1069,10 +1077,10 @@ def build_global_demands(
                 if work_seconds > 0
                 else 0
             )
-        ideal = max(
-            len(running_rows),
-            min(ideal, active_job_count, config.stage_max_replicas[stage]),
-        )
+            ideal = max(
+                len(running_rows),
+                min(ideal, active_job_count, config.stage_max_replicas[stage]),
+            )
         demands[stage] = StageDemand(
             stage=stage,
             rows=tuple(dict(row) for row in rows),
