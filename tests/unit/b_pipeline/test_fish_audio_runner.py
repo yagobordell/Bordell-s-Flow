@@ -258,7 +258,12 @@ def test_images_wait_for_b2_and_validated_stt_before_paid_requests(
         audio_started.set()
         await audio_released.wait()
         order.append("audio_completed")
-        return {"status": "completed", "voice_id": VOICE, "file": "audio/ready.mp3"}
+        return {
+            "status": "completed",
+            "stt_complete": True,
+            "voice_id": VOICE,
+            "file": "audio/ready.mp3",
+        }
 
     async def fake_b(_source, **kwargs):
         kwargs["on_output"]("B1.1", None, _b11_payload())
