@@ -46,6 +46,10 @@ def test_image_upscaler_has_independent_salad_group_contract() -> None:
     assert service["probes"]["liveness"]["path"] == "/health"
     assert all(probe["port"] == 8080 for probe in service["probes"].values())
     assert all(1 <= probe["failure_threshold"] <= 20 for probe in service["probes"].values())
+    assert service["probes"]["readiness"]["period_seconds"] == 30
+    assert service["probes"]["readiness"]["failure_threshold"] == 20
+    assert service["probes"]["liveness"]["period_seconds"] == 60
+    assert service["probes"]["liveness"]["failure_threshold"] == 20
 
     worker_manifest = json.loads(WORKER_MANIFEST.read_text(encoding="utf-8"))
     assert "image_upscaler" not in worker_manifest["services"]
