@@ -1059,6 +1059,27 @@ async def _preflight_stt_alignment_with_retries(
             )
 
 
+async def _preflight_saved_run_audio(
+    output: Path,
+    plan: dict[str, object],
+    run_metadata: dict[str, object],
+) -> bool:
+    """Validate/recover a completed audio artifact already bound to this run."""
+    saved_audio = run_metadata.get("audio_generation")
+    if (
+        not isinstance(saved_audio, dict)
+        or saved_audio.get("status") != "completed"
+        or saved_audio.get("stt_complete") is not True
+    ):
+        return False
+    run_metadata["stt_alignment"] = await _preflight_stt_alignment_with_retries(
+        output,
+        plan,
+        saved_audio,
+    )
+    return True
+
+
 async def _run_images_only(
     script_file: Path, output_root: Path, *, no_video: bool = False
 ) -> None:
@@ -2061,8 +2082,8 @@ async def main() -> None:
             provider=provider,
             model=settings.openai_model,
             max_parallel_calls=args.max_parallel_calls,
-            **({"visual_style": visual_style, "avatar_image": avatar_bytes}
-               if visual_style == "profesional" else {}),
+            visual_style=visual_style,
+            avatar_image=avatar_bytes,
             start_from=args.from_stage,
             stop_after=stop_stage or "B2",
             previous_b11=previous_b11,
@@ -2088,9 +2109,16 @@ async def main() -> None:
                 raise RuntimeError("Audio alignment requires a completed B2 plan")
             run_metadata["audio_generation"] = await audio_task
             audio_joined = True
+
+        if stop_stage is None and visual_plan is not None:
+            # Fresh runs and --from B2 resumes go through the exact same recovery
+            # path. Resumed B2 plans must be revalidated against saved Fish/STT
+            # before any paid image requests are started.
             try:
-                run_metadata["stt_alignment"] = await _preflight_stt_alignment_with_retries(
-                    output, visual_plan, run_metadata["audio_generation"]
+                aligned = await _preflight_saved_run_audio(
+                    output,
+                    visual_plan,
+                    run_metadata,
                 )
             except Exception as exc:
                 run_metadata["stt_alignment"] = {
@@ -2099,7 +2127,8 @@ async def main() -> None:
                 }
                 save_report("failed", len(result.b12))
                 raise
-            save_report("running", len(result.b12))
+            if aligned:
+                save_report("running", len(result.b12))
         # Wait for valid audio/STT alignment before starting paid image work.
         if stop_stage is None and not getattr(args, "skip_images", False):
             if visual_plan is None:
@@ -2130,8 +2159,8 @@ async def main() -> None:
                     provider=provider,
                     model=settings.openai_model,
                     max_parallel_calls=args.max_parallel_calls,
-                    **({"visual_style": visual_style, "avatar_image": avatar_bytes}
-                       if visual_style == "profesional" else {}),
+                    visual_style=visual_style,
+                    avatar_image=avatar_bytes,
                     start_from="B2",
                     stop_after="B2",
                     previous_b11=result.b11,

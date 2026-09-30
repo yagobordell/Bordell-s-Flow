@@ -28,7 +28,10 @@ from ai_video_factory.inference.gpu_failures import (
 )
 from ai_video_factory.inference.ports import ObjectStorage
 from ai_video_factory.inference.storage import sha256_file
-from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
+from ai_video_factory.providers.inference_jobs import (
+    InferenceJobExecutor,
+    cached_inference_response,
+)
 from ai_video_factory.providers.job_queue import (
     JobQueueClient,
     QueueJobNotFoundError,
@@ -730,6 +733,7 @@ def generate_b2_ltx_video(
         pending_timeout_seconds=timeout_seconds,
     )
 
+    pending_jobs: list[tuple[B2VideoJob, dict[str, Any], Path]] = []
     for job, record in zip(jobs, manifest["jobs"], strict=True):
         clip = run_dir / "clips" / f"{job.request.job_id}.mp4"
         if record["status"] == "completed":
@@ -739,19 +743,25 @@ def generate_b2_ltx_video(
         if clip.is_symlink() or clip.parent.is_symlink():
             raise B2VideoError("Refusing linked LTX output path")
         clip.parent.mkdir(parents=True, exist_ok=True)
-        # The singleton controller, not this client, owns Salad replica changes.
-        # Check before any new inference submission, including resumed runs.
-        if check_capacity is not None:
-            check_capacity()
+        pending_jobs.append((job, record, clip))
+
+    # Preserve the existing fail-closed guard: no new input upload or paid job
+    # publication happens while the singleton Capacity Controller is unhealthy.
+    if pending_jobs and check_capacity is not None:
+        check_capacity()
+
+    uncached_jobs: list[B2VideoJob] = []
+    for job, _record, _clip in pending_jobs:
+        if cached_inference_response(storage, job.request) is not None:
+            continue
+        uncached_jobs.append(job)
         print(
             f"  LTX {job.kind.upper()} beats={','.join(job.beats)}: "
             f"preparing Postgres job {job.request.job_id}",
             flush=True,
         )
         for item in job.request.inputs:
-            source = (
-                job.audio if item.name == "audio" else job.image
-            )
+            source = job.audio if item.name == "audio" else job.image
             if source is None:
                 raise B2VideoError("Missing LTX source input")
             executor.ensure_input(
@@ -759,11 +769,29 @@ def generate_b2_ltx_video(
                 content_type=item.content_type,
                 metadata={"purpose": f"b2-ltx-{job.kind}"},
             )
-        # Postgres job_id and immutable request fingerprint provide replay safety
-        # if the client exits after submission but before writing its manifest.
+
+    # Publish the full uncached backlog before waiting for any single clip.
+    # This lets the singleton Capacity Controller observe true LTX demand and
+    # scale horizontal Salad capacity. Postgres submission is idempotent by
+    # deterministic job_id/request fingerprint; cached R2 bundles are never
+    # re-queued here, so resume/recovery cannot create duplicate paid inference.
+    for job in uncached_jobs:
+        snapshot = queue.submit(
+            job.request, metadata={"capability": f"b2-ltx-{job.kind}"},
+        )
         print(
             f"  LTX {job.kind.upper()} job={job.request.job_id}: "
-            "submitting/resuming; waiting for a Salad worker",
+            f"published to shared Postgres queue status={snapshot.status.value}",
+            flush=True,
+        )
+
+    for job, record, clip in pending_jobs:
+        # execute() deliberately remains the authoritative wait/recovery path.
+        # The preceding submit is idempotent, so this second submit cannot
+        # duplicate work and preserves all existing terminal-bundle recovery.
+        print(
+            f"  LTX {job.kind.upper()} job={job.request.job_id}: "
+            "waiting for a Salad worker/result",
             flush=True,
         )
         response = executor.execute(
