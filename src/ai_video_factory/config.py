@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     whisper_model: str = "openai/whisper-large-v3-turbo"
 
     salad_api_key: str | None = None
+    image_upscaler_url: str | None = None
     hf_token: str | None = None
     postgres_dsn: str | None = None
     # The capacity leader may require a session DSN distinct from the worker pool.
