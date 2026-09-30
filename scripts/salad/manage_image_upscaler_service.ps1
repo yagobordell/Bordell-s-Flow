@@ -206,6 +206,26 @@ if ($Action -eq "Status") {
         throw
     }
     Write-Output "group=$GroupName replicas=$($Group.replicas) pending=$($Group.pending_change)"
+    $CurrentStateProperty = $Group.PSObject.Properties["current_state"]
+    if ($null -ne $CurrentStateProperty -and $null -ne $CurrentStateProperty.Value) {
+        $CurrentState = $CurrentStateProperty.Value
+        $StatusProperty = $CurrentState.PSObject.Properties["status"]
+        if ($null -ne $StatusProperty) {
+            Write-Output "current_state=$([string]$StatusProperty.Value)"
+        }
+        Write-Output "current_state_json=$($CurrentState | ConvertTo-Json -Depth 8 -Compress)"
+    }
+    try {
+        $InstanceResponse = Invoke-Salad -Headers $Headers -Uri "$GroupUrl/instances"
+        $Instances = @($InstanceResponse.instances)
+        Write-Output "instances=$($Instances.Count)"
+        foreach ($Instance in $Instances) {
+            Write-Output "instance_json=$($Instance | ConvertTo-Json -Depth 8 -Compress)"
+        }
+    }
+    catch {
+        Write-Warning "Could not list Salad container-group instances: $($_.Exception.Message)"
+    }
     if ($null -ne $Group.networking -and $null -ne $Group.networking.dns) {
         Write-Output "IMAGE_UPSCALER_URL=https://$($Group.networking.dns)"
     }
