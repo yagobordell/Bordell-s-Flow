@@ -270,7 +270,9 @@ def test_mixed_numbered_sequence_avoids_wrong_aspect_grid(tmp_path: Path) -> Non
 
     assert result["grid_count"] == 0
     assert result["total_generation_jobs"] == 2
-    assert [call["size"] for call in direct.calls] == ["768x864", "1280x720"]
+    assert {
+        call["destination"].stem: call["size"] for call in direct.calls
+    } == {"1B": "768x864", "1C": "1280x720"}
     assert [item["beat_id"] for item in result["items"]] == ["1B", "1C"]
 
 
