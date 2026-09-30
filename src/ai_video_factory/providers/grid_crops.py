@@ -289,7 +289,7 @@ def crop_grid_assets(
                 raise GridCropError(f"Duplicate crop panel: {beat_id}")
             seen.add(key)
             # Preserve the full photographic interior even if GPT's panel
-            # ratio differs slightly from the requested 16:9 geometry.
+            # ratio differs slightly from the requested geometry.
             result = image.crop(box).resize(
                 target_size, resample=Image.Resampling.LANCZOS
             )
