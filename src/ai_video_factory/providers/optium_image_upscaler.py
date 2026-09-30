@@ -308,11 +308,12 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
             output_path = work_dir / "output.png"
             input_path.write_bytes(image_bytes)
 
-            execution_seed = uuid.uuid4().hex
-            object_prefix = f"image-upscaler/runtime/{execution_seed}"
+            object_prefix = f"image-upscaler/runtime/{semantic_id}"
             input_key = f"{object_prefix}/input.{extension}"
             output_key = f"{object_prefix}/output.png"
             uploaded = False
+            request_sent = False
+            succeeded = False
             try:
                 self._storage.upload(
                     input_path,
@@ -355,6 +356,7 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
                     "capability_contract": CAPABILITY_CONTRACT,
                     "request": request_payload,
                 }
+                request_sent = True
                 response = self._http_client.post_json(
                     f"{self._base_url}/v1/execute",
                     envelope,
@@ -386,11 +388,16 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
                     raise ImageUpscalerError(
                         "Downloaded output size does not match runtime evidence"
                     )
+                succeeded = True
                 return output_bytes
             finally:
-                if uploaded:
-                    self._best_effort_delete(input_key)
-                self._best_effort_delete(output_key)
+                # A transport failure after POST is ambiguous: Salad may still be writing
+                # through the signed URLs. Preserve those objects so a retry with the same
+                # semantic request can reuse/reconcile the request-scoped output safely.
+                if succeeded or not request_sent:
+                    if uploaded:
+                        self._best_effort_delete(input_key)
+                    self._best_effort_delete(output_key)
 
     def _build_capability_request(
         self,
