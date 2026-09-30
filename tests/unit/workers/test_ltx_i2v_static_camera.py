@@ -102,7 +102,7 @@ def test_static_camera_uses_real_guided_stage_one_and_unchanged_stage_two() -> N
     assert invoked.count("GuidedDenoiser") == 1
     assert invoked.count("SimpleDenoiser") == 1
     assert "negative_context=negative_video_context" in source
-    assert "[prompt, LTX_I2V_STATIC_CAMERA_NEGATIVE_PROMPT]" in source
+    assert "[prompt, negative_prompt]" in source
     assert "cfg_scale=LTX_I2V_STATIC_CAMERA_VIDEO_CFG_SCALE" in source
     assert "if enhance_prompt:" in source
     assert source.index("denoiser=GuidedDenoiser") < source.index("denoiser=SimpleDenoiser")
@@ -117,7 +117,11 @@ def test_static_camera_uses_real_guided_stage_one_and_unchanged_stage_two() -> N
     assert constants["LTX_I2V_STATIC_CAMERA_VIDEO_CFG_SCALE"] == 1.25
     assert constants["LTX_I2V_STATIC_CAMERA_NEGATIVE_PROMPT"] == (
         "camera zoom, zoom in, push in, dolly in, camera drift, camera shake, "
-        "reframing, crop change, handheld camera, unintended camera movement"
+        "reframing, crop change, handheld camera, unintended camera movement, "
+        "speaking directly to camera, talking directly to camera, addressing the viewer, "
+        "direct-to-camera speech, presenter-style delivery, host-style delivery, "
+        "vlog-style talking, monologue to camera, speaking into the lens, "
+        "breaking the fourth wall, sustained eye contact with the lens while speaking"
     )
     assert "self._stage_1_sampler_kwargs(seed)" in source
     assert "self.video_decoder(" in source

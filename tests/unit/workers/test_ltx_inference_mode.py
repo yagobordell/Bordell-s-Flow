@@ -102,6 +102,17 @@ def test_direct_backend_runs_pipeline_and_encode_in_inference_mode(
     )
     monkeypatch.setattr(ltx_video, "_load_ltx_bindings", lambda: bindings)
 
+    def fake_negative_guidance(pipeline: Any, **kwargs: Any) -> Any:
+        assert state["depth"] > 0
+        kwargs.pop("negative_prompt")
+        return pipeline(**kwargs)
+
+    monkeypatch.setattr(
+        ltx_video,
+        "_load_default_i2v_negative_guidance",
+        lambda: (fake_negative_guidance, "speaking directly to camera"),
+    )
+
     backend = DirectLTX25Backend(model_root=model_root)
     backend.prepare()
     backend.generate(

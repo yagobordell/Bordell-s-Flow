@@ -116,7 +116,7 @@ def test_ltx_num_frames_rejects_invalid_duration_or_fps() -> None:
 def test_ltx_parameters_enforce_generation_profile_and_shape() -> None:
     validated = LTXVideoParameters.model_validate(parameters())
     assert validated.generation_profile == LTX_GENERATION_PROFILE
-    assert LTX_GENERATION_PROFILE.endswith("gridpad-eagersdpa-v4")
+    assert LTX_GENERATION_PROFILE.endswith("gridpad-eagersdpa-directcamneg-v5")
     assert validated.width == 1280
     assert validated.height == 720
     assert validated.num_frames == 121
@@ -355,6 +355,22 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     backend.ready()
     backend.prepare()
 
+    negative_guidance_calls: list[dict[str, Any]] = []
+
+    def fake_negative_guidance(pipeline: Any, **kwargs: Any) -> Any:
+        negative_guidance_calls.append(dict(kwargs))
+        kwargs.pop("negative_prompt")
+        return pipeline(**kwargs)
+
+    monkeypatch.setattr(
+        ltx_video,
+        "_load_default_i2v_negative_guidance",
+        lambda: (
+            fake_negative_guidance,
+            "speaking directly to camera, addressing the viewer",
+        ),
+    )
+
     validated = LTXVideoParameters.model_validate(parameters())
     for index in range(5):
         backend.generate(
@@ -373,6 +389,11 @@ def test_direct_backend_prepare_caches_pipeline_and_discards_generated_audio(
     assert FakeDiffvaeApply.triton_na_available() is False
     assert state["conditionings"][0]["frame_idx"] == 0
     assert state["conditionings"][0]["strength"] == 1.0
+    assert len(negative_guidance_calls) == 5
+    assert all(
+        call["negative_prompt"] == "speaking directly to camera, addressing the viewer"
+        for call in negative_guidance_calls
+    )
     assert state["pipeline_calls"][0]["width"] == 1280
     assert state["pipeline_calls"][0]["height"] == 768
     cropped_video = state["encodes"][0]["video"]

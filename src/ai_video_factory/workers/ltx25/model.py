@@ -28,7 +28,7 @@ from .bootstrap import require_runtime_bootstrap_complete
 logger = logging.getLogger(__name__)
 
 LTX_VIDEO_TASK = "video.ltx25.generate"
-LTX_GENERATION_PROFILE = "ltx25-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v4"
+LTX_GENERATION_PROFILE = "ltx25-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-directcamneg-v5"
 LTX_STATIC_CAMERA_GENERATION_PROFILE = (
     "ltx25-distilled-static-camera-a95ab856-fp8cpu-gridpad-eagersdpa-v1"
 )
@@ -353,6 +353,17 @@ def _load_static_camera_generator() -> Any:
     return generate_static_camera
 
 
+def _load_default_i2v_negative_guidance() -> tuple[Any, str]:
+    # The production I2V profile uses the same resident weights and sampler recipe,
+    # adding only fixed negative CFG guidance against direct-to-camera speech.
+    from .static_i2v import (
+        LTX_I2V_DIRECT_TO_CAMERA_NEGATIVE_PROMPT,
+        generate_static_camera,
+    )
+
+    return generate_static_camera, LTX_I2V_DIRECT_TO_CAMERA_NEGATIVE_PROMPT
+
+
 def _torch_inference_context(torch_module: Any) -> Any:
     inference_mode = getattr(torch_module, "inference_mode", None)
     if inference_mode is None:
@@ -517,7 +528,12 @@ class DirectLTX25Backend:
                     # Reuse the resident distilled pipeline; do not rebuild model weights.
                     result = _load_static_camera_generator()(pipeline, **pipeline_kwargs)
                 else:
-                    result = pipeline(**pipeline_kwargs)
+                    generator, negative_prompt = _load_default_i2v_negative_guidance()
+                    result = generator(
+                        pipeline,
+                        negative_prompt=negative_prompt,
+                        **pipeline_kwargs,
+                    )
                 output_video = result.video
                 if (pipeline_width, pipeline_height) != (
                     parameters.width,
