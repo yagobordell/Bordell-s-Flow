@@ -268,8 +268,8 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
         temp_dir: Path,
         request_timeout_seconds: float = _DEFAULT_REQUEST_TIMEOUT_SECONDS,
         signed_url_expiry_seconds: int = _DEFAULT_SIGNED_URL_EXPIRY_SECONDS,
-        gateway_recovery_timeout_seconds: float = _DEFAULT_524_RECOVERY_TIMEOUT_SECONDS,
-        gateway_recovery_poll_seconds: float = _DEFAULT_524_RECOVERY_POLL_SECONDS,
+        gateway_recovery_timeout_seconds: float = _DEFAULT_GATEWAY_RECOVERY_TIMEOUT_SECONDS,
+        gateway_recovery_poll_seconds: float = _DEFAULT_GATEWAY_RECOVERY_POLL_SECONDS,
         http_client: _RuntimeHttpClient | None = None,
     ) -> None:
         normalized_url = base_url.strip().rstrip("/")
