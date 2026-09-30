@@ -62,5 +62,7 @@ def test_image_upscaler_deploy_uses_private_ghcr_basic_auth_without_committed_pa
     assert 'username = "yagobordell"' in script
     assert "networking =" in script
     assert "auth = $true" in script
+    assert 'ContentType "application/json"' in script
+    assert 'ContentType "application/merge-patch+json"' in script
     assert "personal_access_token" not in script
     assert "ghp_" not in script
