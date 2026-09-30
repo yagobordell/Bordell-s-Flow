@@ -313,6 +313,7 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
             output_key = f"{object_prefix}/output.png"
             uploaded = False
             request_sent = False
+            request_completed = False
             succeeded = False
             try:
                 self._storage.upload(
@@ -363,6 +364,7 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
                     headers={"Salad-Api-Key": self._salad_api_key},
                     timeout_seconds=self._request_timeout_seconds,
                 )
+                request_completed = True
                 expected_output = self._validate_response(
                     response,
                     execution_id=execution_id,
@@ -394,7 +396,7 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
                 # A transport failure after POST is ambiguous: Salad may still be writing
                 # through the signed URLs. Preserve those objects so a retry with the same
                 # semantic request can reuse/reconcile the request-scoped output safely.
-                if succeeded or not request_sent:
+                if succeeded or request_completed or not request_sent:
                     if uploaded:
                         self._best_effort_delete(input_key)
                     self._best_effort_delete(output_key)
