@@ -191,6 +191,7 @@ def _config(
     nonconvergence_failure_polls: int = 4,
     provider_pending_max_seconds: float = 7200.0,
     stage_cold_start_seconds: dict[str, float] | None = None,
+    jobs_per_replica: dict[str, int] | None = None,
 ) -> PredictiveAutoscalerConfig:
     return PredictiveAutoscalerConfig(
         enabled=True,
@@ -210,6 +211,7 @@ def _config(
         stage_max_replicas={stage: stage_max_replicas for stage in stages},
         fallback_runtime_seconds={stage: 60.0 for stage in stages},
         stage_cold_start_seconds=stage_cold_start_seconds,
+        stage_jobs_per_replica=jobs_per_replica,
         drain_grace_seconds=0.0,
         drain_ttl_seconds=120.0,
         provider_pending_max_seconds=provider_pending_max_seconds,
@@ -278,6 +280,107 @@ def test_project_quota_is_shared_across_global_stage_demands() -> None:
 
     assert sum(allocation.values()) == 3
     assert all(value <= demands[stage].ideal_replicas for stage, value in allocation.items())
+
+
+
+@pytest.mark.parametrize(
+    ("clip_count", "expected_replicas"),
+    [
+        (0, 0),
+        (1, 1),
+        (30, 1),
+        (31, 2),
+        (60, 2),
+        (61, 3),
+        (90, 3),
+        (91, 4),
+        (120, 4),
+        (121, 4),
+    ],
+)
+def test_ltx_clip_backlog_scales_one_replica_per_thirty_jobs(
+    clip_count: int,
+    expected_replicas: int,
+) -> None:
+    stage = "ltx25_i2v"
+    config = _config(
+        (stage,),
+        stage_max_replicas=4,
+        jobs_per_replica={stage: 30},
+    )
+    demand = build_global_demands(
+        rows_by_stage={stage: _pending_rows(clip_count)},
+        runtime_by_stage={stage: 999.0},
+        config=config,
+        now=datetime(2026, 9, 30, tzinfo=UTC),
+    )[stage]
+
+    assert demand.ideal_replicas == expected_replicas
+    assert demand.jobs_per_replica == 30
+    assert demand.job_count_target == (
+        (clip_count + 29) // 30 if clip_count else 0
+    )
+
+
+def test_ltx_active_worker_drains_before_partial_downscale() -> None:
+    stage = "ltx25_i2v"
+    now = datetime.now(UTC)
+    rows = {
+        stage: [
+            {
+                "job_id": "job-running-a",
+                "run_id": "run-a",
+                "status": "running",
+                "worker_id": "worker-instance-a",
+                "started_at": now,
+            },
+            {
+                "job_id": "job-running-b",
+                "run_id": "run-a",
+                "status": "running",
+                "worker_id": "worker-instance-b",
+                "started_at": now,
+            },
+        ]
+    }
+    store = FakeStore(rows=rows, runtimes={stage: [60.0]})
+    client = FakeSaladClient(
+        replicas=2,
+        instances=[
+            {"id": "instance-a", "deletion_cost": 100_000},
+            {"id": "instance-b", "deletion_cost": 100_000},
+        ],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config(
+            (stage,),
+            jobs_per_replica={stage: 30},
+        ),
+        store=store,
+        clients={stage: client},
+        bindings={stage: _binding(stage)},
+        logger=lambda _message: None,
+    )
+
+    draining = autoscaler.reconcile()[stage]
+
+    assert draining.target_replicas == 1
+    assert draining.applied_replicas == 2
+    assert draining.reason == "draining_active_instances"
+    assert client.replica_updates == []
+    assert len(store.drains[stage]) == 1
+    drained_instance = next(iter(store.drains[stage]))
+
+    store.rows[stage] = [
+        row
+        for row in store.rows[stage]
+        if drained_instance not in str(row["worker_id"])
+    ]
+    requested = autoscaler.reconcile()[stage]
+
+    assert requested.target_replicas == 1
+    assert requested.reason == "resize_requested_pending_confirmation"
+    assert client.replica_updates == [1]
 
 
 def test_stopped_group_starts_without_rewriting_matching_configured_replicas() -> None:
@@ -1061,6 +1164,7 @@ def test_ltx_groups_have_independent_runtime_and_cold_start_calibration(
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_COLD_START_SECONDS", "1200")
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_I2V_RUNTIME_SECONDS", "240")
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_RUNTIME_SECONDS", "320")
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_I2V_JOBS_PER_REPLICA", "25")
     monkeypatch.setenv("SALAD_AUTOSCALER_ZERO_DEMAND_STABLE_POLLS", "1")
 
     config = load_predictive_autoscaler_config(
@@ -1077,6 +1181,10 @@ def test_ltx_groups_have_independent_runtime_and_cold_start_calibration(
     assert config.fallback_runtime_seconds == {
         "ltx25_i2v": 240.0,
         "ltx25": 320.0,
+    }
+    assert config.stage_jobs_per_replica == {
+        "ltx25_i2v": 25,
+        "ltx25": 30,
     }
     assert config.zero_demand_stable_polls == 1
 
@@ -1190,7 +1298,7 @@ def test_drain_protection_failure_marks_reconcile_as_failed() -> None:
         ),
         (
             [{"id": "instance-active", "deletion_cost": 100_000}],
-            "insufficient_idle_instances",
+            "instance_inventory_incomplete",
         ),
     ],
 )
@@ -1261,9 +1369,9 @@ def test_nonconvergence_counter_resets_when_deferral_reason_changes() -> None:
         == "active_instance_mapping_incomplete"
     )
     client.instances = [{"id": "instance-active", "deletion_cost": 100_000}]
-    assert autoscaler.reconcile()[stage].reason == "insufficient_idle_instances"
+    assert autoscaler.reconcile()[stage].reason == "instance_inventory_incomplete"
     with pytest.raises(
-        AutoscalerReconciliationError, match="insufficient_idle_instances",
+        AutoscalerReconciliationError, match="instance_inventory_incomplete",
     ):
         autoscaler.reconcile()
     assert client.stop_calls == 0
