@@ -28,7 +28,7 @@ from ai_video_factory.compositor.static_preview import (
     build_stt_beat_timeline,
     generate_static_preview,
 )
-from ai_video_factory.providers.openai_stt import OpenAISttClient, OpenAISttError
+from ai_video_factory.providers.openai_stt import OpenAISttClient
 from scripts.pipeline import run_b_pipeline as runner
 
 
