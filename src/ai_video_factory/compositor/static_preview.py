@@ -19,6 +19,7 @@ from PIL import Image, ImageOps
 from ai_video_factory.compositor.ken_burns import MOTION_VERSION as _MOTION_VERSION
 from ai_video_factory.compositor.ken_burns import (
     build_timeline_ken_burns_filter,
+    motion_direction_for_index,
     motion_metadata,
 )
 from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE
@@ -433,9 +434,10 @@ def _beat_frame(
 
 
 def _media_image_motion_filter(timeline: dict[str, Any]) -> str:
-    """Animate media_image beats with Media Pipeline's scale+crop Ken Burns."""
+    """Animate media_image beats with deterministic bidirectional Ken Burns."""
 
-    intervals: list[tuple[int, int]] = []
+    intervals: list[tuple[int, int, str]] = []
+    image_index = 0
     for beat in timeline["beats"]:
         if beat["visual_type"] != "media_image":
             continue
@@ -448,8 +450,13 @@ def _media_image_motion_filter(timeline: dict[str, Any]) -> str:
                 "frames for visible motion"
             )
 
-        beat["motion"] = motion_metadata((end_frame - start_frame) / _FPS)
-        intervals.append((start_frame, end_frame))
+        direction = motion_direction_for_index(image_index)
+        image_index += 1
+        beat["motion"] = motion_metadata(
+            (end_frame - start_frame) / _FPS,
+            direction=direction,
+        )
+        intervals.append((start_frame, end_frame, direction))
 
     return build_timeline_ken_burns_filter(
         intervals,
