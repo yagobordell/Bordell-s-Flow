@@ -455,10 +455,14 @@ async def run_b_pipeline(
     if visual_style not in {"casero", "profesional"}:
         raise ValueError("Unknown B2 visual style")
     image_url: str | None = None
-    if visual_style == "profesional" and stop_after == "B2":
-        if not avatar_image:
+    if stop_after == "B2":
+        if visual_style == "profesional" and not avatar_image:
             raise ValueError("Professional B2 requires the selected avatar PNG")
-        image_url = "data:image/png;base64," + base64.b64encode(avatar_image).decode("ascii")
+        if avatar_image:
+            image_url = (
+                "data:image/png;base64,"
+                + base64.b64encode(avatar_image).decode("ascii")
+            )
     if retry_b2_block_ids is not None and start_from != "B2":
         raise ValueError("B2 block retries require start_from='B2'")
     if start_from not in {"B1.1", "B1.2", "B2"}:
