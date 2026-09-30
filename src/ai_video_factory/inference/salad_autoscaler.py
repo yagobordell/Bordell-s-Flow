@@ -16,6 +16,13 @@ ACTIVE_STATUSES = (
     "running",
 )
 
+# LTX scales by backlog count rather than the generic drain-time forecast.
+# Each replica still consumes the shared Postgres queue dynamically.
+_DEFAULT_JOBS_PER_REPLICA = {
+    "ltx25_i2v": 30,
+    "ltx25": 30,
+}
+
 _PROVIDER_STABLE_STATUSES = {"running", "stopped"}
 _PROVIDER_TRANSITION_STATUSES = {"pending", "deploying"}
 _PROVIDER_BOOTSTRAP_STATE_RANK = {
@@ -59,6 +66,7 @@ class PredictiveAutoscalerConfig:
     stage_max_replicas: dict[str, int]
     fallback_runtime_seconds: dict[str, float]
     stage_cold_start_seconds: dict[str, float] | None = None
+    stage_jobs_per_replica: dict[str, int] | None = None
     zero_demand_stable_polls: int = 1
     drain_grace_seconds: float = 5.0
     drain_ttl_seconds: float = 120.0
@@ -77,6 +85,8 @@ class StageDemand:
     running_count: int
     forecast_blocked_count: int
     ideal_replicas: int
+    jobs_per_replica: int | None = None
+    job_count_target: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,6 +329,7 @@ def load_predictive_autoscaler_config(
     stage_max: dict[str, int] = {}
     fallback_runtime: dict[str, float] = {}
     stage_cold_start: dict[str, float] = {}
+    stage_jobs_per_replica: dict[str, int] = {}
     for binding in stage_bindings:
         configured_max = _int_env(
             f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_MAX_REPLICAS",
@@ -336,6 +347,13 @@ def load_predictive_autoscaler_config(
             cold_start_seconds,
             minimum=0.0,
         )
+        default_jobs_per_replica = _DEFAULT_JOBS_PER_REPLICA.get(binding.workload)
+        if default_jobs_per_replica is not None:
+            stage_jobs_per_replica[binding.workload] = _int_env(
+                f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_JOBS_PER_REPLICA",
+                default_jobs_per_replica,
+                minimum=1,
+            )
     return PredictiveAutoscalerConfig(
         enabled=_bool_env("SALAD_AUTOSCALER_ENABLED", default=False),
         project_max_replicas=project_max,
@@ -401,6 +419,7 @@ def load_predictive_autoscaler_config(
         stage_max_replicas=stage_max,
         fallback_runtime_seconds=fallback_runtime,
         stage_cold_start_seconds=stage_cold_start,
+        stage_jobs_per_replica=stage_jobs_per_replica,
         drain_grace_seconds=_float_env(
             "SALAD_AUTOSCALER_DRAIN_GRACE_SECONDS",
             5.0,
@@ -608,6 +627,8 @@ class PredictiveSaladAutoscaler:
                 stage=stage,
                 rows=list(demands[stage].rows),
                 remove_count=current[stage] - applied_target,
+                current_replicas=current[stage],
+                expected_runtime_seconds=demands[stage].expected_runtime_seconds,
             )
             if not protected:
                 results[stage] = AutoscaleResult(
@@ -624,7 +645,7 @@ class PredictiveSaladAutoscaler:
                     self._nonconvergence_candidates.pop(stage, None)
                 elif reason in {
                     "active_instance_mapping_incomplete",
-                    "insufficient_idle_instances",
+                    "instance_inventory_incomplete",
                 }:
                     count = self._record_nonconvergence(stage, target, reason)
                     if count >= self.config.nonconvergence_failure_polls:
@@ -829,54 +850,81 @@ class PredictiveSaladAutoscaler:
         stage: str,
         rows: list[dict[str, object]],
         remove_count: int,
+        current_replicas: int,
+        expected_runtime_seconds: float,
     ) -> tuple[bool, str]:
         if remove_count <= 0:
             return True, "no_downscale_required"
 
+        running_rows = [
+            row for row in rows if str(row.get("status") or "").strip() == "running"
+        ]
         running_worker_ids = {
             str(row.get("worker_id") or "").strip()
-            for row in rows
-            if str(row.get("status") or "").strip() == "running"
-            and str(row.get("worker_id") or "").strip()
+            for row in running_rows
+            if str(row.get("worker_id") or "").strip()
         }
         try:
             instances = self.clients[stage].list_container_group_instances()
             matched_worker_ids: set[str] = set()
             active_instance_ids: set[str] = set()
             instance_by_id: dict[str, dict[str, object]] = {}
+            running_rows_by_instance: dict[str, list[dict[str, object]]] = {}
             for instance in instances:
                 instance_id = str(instance.get("id") or "").strip()
                 if not instance_id:
                     continue
                 instance_by_id[instance_id] = instance
-                instance_worker_ids = {
-                    worker_id for worker_id in running_worker_ids if instance_id in worker_id
-                }
-                if instance_worker_ids:
+                matched_rows = [
+                    row
+                    for row in running_rows
+                    if instance_id in str(row.get("worker_id") or "").strip()
+                ]
+                if matched_rows:
                     active_instance_ids.add(instance_id)
-                    matched_worker_ids.update(instance_worker_ids)
+                    running_rows_by_instance[instance_id] = matched_rows
+                    matched_worker_ids.update(
+                        str(row.get("worker_id") or "").strip() for row in matched_rows
+                    )
 
             if matched_worker_ids != running_worker_ids:
                 return False, "active_instance_mapping_incomplete"
-
-            idle_instance_ids = [
-                instance_id
-                for instance_id in instance_by_id
-                if instance_id not in active_instance_ids
-            ]
-            if len(idle_instance_ids) < remove_count:
-                return False, "insufficient_idle_instances"
+            if len(instance_by_id) < current_replicas:
+                return False, "instance_inventory_incomplete"
 
             existing_drains = self.store.list_draining_instances(stage=stage)
-            idle_instance_ids.sort(
-                key=lambda instance_id: (
+            observed_at = datetime.now(UTC)
+
+            def candidate_key(instance_id: str) -> tuple[object, ...]:
+                active = instance_id in active_instance_ids
+                remaining = (
+                    sum(
+                        _remaining_running_seconds(
+                            row=row,
+                            expected_runtime_seconds=expected_runtime_seconds,
+                            now=observed_at,
+                        )
+                        for row in running_rows_by_instance.get(instance_id, [])
+                    )
+                    if active
+                    else 0.0
+                )
+                return (
                     instance_id not in existing_drains,
-                    _optional_int(instance_by_id[instance_id].get("deletion_cost"))
-                    or 0,
+                    active,
+                    remaining,
+                    _optional_int(instance_by_id[instance_id].get("deletion_cost")) or 0,
                     instance_id,
                 )
-            )
-            draining_ids = tuple(idle_instance_ids[:remove_count])
+
+            candidate_ids = sorted(instance_by_id, key=candidate_key)
+            if len(candidate_ids) < remove_count:
+                return False, "instance_inventory_incomplete"
+            draining_ids = tuple(candidate_ids[:remove_count])
+
+            # Publishing a drain fences the selected worker from claiming another
+            # shared-queue job. If it is currently active, it finishes that clip;
+            # a later reconciliation observes it idle before requesting Salad resize.
             self.store.mark_draining_instances(
                 stage=stage,
                 instance_ids=draining_ids,
@@ -900,7 +948,9 @@ class PredictiveSaladAutoscaler:
                         desired_cost,
                     )
 
-            observed_at = datetime.now(UTC)
+            if any(instance_id in active_instance_ids for instance_id in draining_ids):
+                return False, "draining_active_instances"
+
             drain_ready = all(
                 instance_id in existing_drains
                 and (
@@ -919,6 +969,7 @@ class PredictiveSaladAutoscaler:
             return False, "drain_protection_failed"
         return True, "drained_instances_ready"
 
+
     def _log_result(self, result: AutoscaleResult) -> None:
         demand = result.demand
         snapshot = (
@@ -928,6 +979,8 @@ class PredictiveSaladAutoscaler:
             tuple(sorted(demand.status_counts.items())),
             tuple(sorted(demand.run_counts.items())),
             round(demand.expected_runtime_seconds, 1),
+            demand.jobs_per_replica,
+            demand.job_count_target,
             result.reason,
         )
         if self._last_log_snapshot.get(result.stage) == snapshot:
@@ -945,7 +998,14 @@ class PredictiveSaladAutoscaler:
             f"(target={result.target_replicas}), jobs [{statuses}], "
             f"runs={len(demand.run_counts)}, runtime_p="
             f"{demand.expected_runtime_seconds:.1f}s, remaining_work="
-            f"{demand.remaining_work_seconds:.1f}s, reason={result.reason}."
+            f"{demand.remaining_work_seconds:.1f}s"
+            + (
+                f", jobs_per_replica={demand.jobs_per_replica}, "
+                f"job_target={demand.job_count_target}"
+                if demand.jobs_per_replica is not None
+                else ""
+            )
+            + f", reason={result.reason}."
         )
 
 
@@ -958,6 +1018,7 @@ def build_global_demands(
 ) -> dict[str, StageDemand]:
     observed_at = now or datetime.now(UTC)
     demands: dict[str, StageDemand] = {}
+    jobs_per_replica_by_stage = config.stage_jobs_per_replica or {}
     for stage, rows in rows_by_stage.items():
         cold_start_seconds = config.cold_start_seconds
         if config.stage_cold_start_seconds is not None:
@@ -986,17 +1047,28 @@ def build_global_demands(
         )
         forecast_blocked = 0
         work_seconds = queued_count * expected_runtime + running_work
-        ideal = (
-            max(
-                len(running_rows),
-                math.ceil(
-                    work_seconds / (available_drain_seconds * config.target_utilization)
-                ),
-            )
-            if work_seconds > 0
-            else 0
-        )
         active_job_count = queued_count + len(running_rows)
+        jobs_per_replica = jobs_per_replica_by_stage.get(stage)
+        job_count_target: int | None = None
+        if jobs_per_replica is not None:
+            job_count_target = (
+                math.ceil(active_job_count / jobs_per_replica)
+                if active_job_count > 0
+                else 0
+            )
+            ideal = max(len(running_rows), job_count_target)
+        else:
+            ideal = (
+                max(
+                    len(running_rows),
+                    math.ceil(
+                        work_seconds
+                        / (available_drain_seconds * config.target_utilization)
+                    ),
+                )
+                if work_seconds > 0
+                else 0
+            )
         ideal = max(
             len(running_rows),
             min(ideal, active_job_count, config.stage_max_replicas[stage]),
@@ -1011,6 +1083,8 @@ def build_global_demands(
             running_count=len(running_rows),
             forecast_blocked_count=forecast_blocked,
             ideal_replicas=ideal,
+            jobs_per_replica=jobs_per_replica,
+            job_count_target=job_count_target,
         )
     return demands
 
