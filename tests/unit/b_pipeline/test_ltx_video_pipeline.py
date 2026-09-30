@@ -90,6 +90,34 @@ def _case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict, dict, 
     return plan, audio, images
 
 
+def test_final_compositor_alternates_media_image_zoom_direction() -> None:
+    from ai_video_factory.compositor import b_video as compositor
+
+    first: dict[str, object] = {}
+    second: dict[str, object] = {}
+    first_filter = compositor._motion_filter(first, 24, 0)
+    second_filter = compositor._motion_filter(second, 24, 1)
+
+    assert first["motion"] == {
+        "version": "media-image-subpixel-affine-v3",
+        "mode": "ken_burns",
+        "direction": "out",
+        "origin": "bottom_left",
+        "zoom_start": 1.02,
+        "zoom_end": 1.0,
+    }
+    assert second["motion"] == {
+        "version": "media-image-subpixel-affine-v3",
+        "mode": "ken_burns",
+        "direction": "in",
+        "origin": "bottom_left",
+        "zoom_start": 1.0,
+        "zoom_end": 1.02,
+    }
+    assert "1.020000+(1.000000-1.020000)" in first_filter
+    assert "1.000000+(1.020000-1.000000)" in second_filter
+
+
 def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -787,7 +815,7 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     assert saved["beats"][2]["ltx_job_id"] == saved["beats"][0]["ltx_job_id"]
     assert saved["beats"][3]["ltx_job_id"] != saved["beats"][0]["ltx_job_id"]
     motion = saved["beats"][4]["motion"]
-    assert motion["version"] == "media-image-subpixel-affine-v2"
+    assert motion["version"] == "media-image-subpixel-affine-v3"
     assert motion["mode"] == "ken_burns"
     assert motion["direction"] == "out"
     assert motion["origin"] == "bottom_left"
