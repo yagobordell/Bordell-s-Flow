@@ -21,7 +21,15 @@ _OPENAI_IMAGES_URL = "https://api.openai.com/v1/images/generations"
 _OPENAI_EDITS_URL = "https://api.openai.com/v1/images/edits"
 _MAX_PNG_BYTES = 40 * 1024 * 1024
 _DEFAULT_SIZE = "1280x720"
+_AVATAR_MEDIA_SIZE = "768x864"
 _GRID_SIZES = {"2560x1440", "3840x1440", "3840x2160"}
+_AVATAR_MEDIA_GRID_SIZES = {"1536x1728", "2304x1728", "2304x2592"}
+_SUPPORTED_SIZES = {
+    _DEFAULT_SIZE,
+    _AVATAR_MEDIA_SIZE,
+    *_GRID_SIZES,
+    *_AVATAR_MEDIA_GRID_SIZES,
+}
 
 
 class OpenAIImageError(RuntimeError):
@@ -77,7 +85,7 @@ class OpenAIImageClient:
             "gpt-image-2.5-sunburst",
         }:
             raise ValueError("Official image generation must use a supported GPT Image model")
-        if size not in {_DEFAULT_SIZE, *_GRID_SIZES}:
+        if size not in _SUPPORTED_SIZES:
             raise ValueError("Official image generation requires a supported image or grid size")
         if quality not in {"low", "medium"} or output_format != "png":
             raise ValueError("Official image generation requires low/medium quality and PNG")
