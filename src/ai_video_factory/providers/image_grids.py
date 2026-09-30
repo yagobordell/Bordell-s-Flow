@@ -20,6 +20,9 @@ _SHAPES = {
 }
 _PANEL_WIDTH = 1280
 _PANEL_HEIGHT = 720
+# avatar_media occupies half of a 1280x720 frame: 640x720 = 8:9.
+# GPT Image 2.5 requires at least 655,360 pixels, so 768x864 is the
+# smallest exact 8:9 output with both edges divisible by 16.
 _AVATAR_MEDIA_PANEL_WIDTH = 768
 _AVATAR_MEDIA_PANEL_HEIGHT = 864
 GRID_PHOTO_HEADER = "iPhone 6 photograph done by an elderly:\n\n"
