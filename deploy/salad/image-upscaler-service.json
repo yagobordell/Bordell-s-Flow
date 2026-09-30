@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "service": {
+    "display_name": "Bordell OptiumLabs Image Upscaler",
+    "group_name": "bordell-image-upscaler",
+    "dockerfile": "docker/services/image-upscaler-salad/Dockerfile",
+    "image": "ghcr.io/yagobordell/image-upscaler-salad:salad-v1",
+    "source_image": "ghcr.io/yagobordell/image-upscaler@sha256:00e046a7ba6dd00d406609f2f5c007b176b96578b1baac612ea8e97940c35aba",
+    "capacity": {
+      "replicas": 1
+    },
+    "resources": {
+      "cpu": 4,
+      "memory": 16384,
+      "gpu_class_names": [
+        "RTX 5090 (32 GB)"
+      ]
+    },
+    "networking": {
+      "protocol": "http",
+      "port": 8080,
+      "auth": true
+    },
+    "probes": {
+      "startup": {
+        "path": "/health",
+        "port": 8080,
+        "period_seconds": 10,
+        "timeout_seconds": 5,
+        "failure_threshold": 20
+      },
+      "readiness": {
+        "path": "/ready",
+        "port": 8080,
+        "period_seconds": 30,
+        "timeout_seconds": 5,
+        "failure_threshold": 20
+      },
+      "liveness": {
+        "path": "/health",
+        "port": 8080,
+        "period_seconds": 60,
+        "timeout_seconds": 10,
+        "failure_threshold": 20
+      }
+    }
+  }
+}
