@@ -103,6 +103,13 @@ if ([string]$Definition.resources.gpu_class_names[0] -ne "RTX 5090 (32 GB)") {
 if ([int]$Definition.networking.port -ne 8080 -or -not [bool]$Definition.networking.auth) {
     throw "Container Gateway must use authenticated port 8080."
 }
+foreach ($ProbeName in @("startup", "readiness", "liveness")) {
+    $Probe = $Definition.probes.PSObject.Properties[$ProbeName].Value
+    $FailureThreshold = [int]$Probe.failure_threshold
+    if ($FailureThreshold -lt 1 -or $FailureThreshold -gt 20) {
+        throw "$ProbeName probe failure_threshold must be between 1 and 20 for Salad."
+    }
+}
 
 Set-Location $RepoRoot
 if ($Action -eq "Validate") {
