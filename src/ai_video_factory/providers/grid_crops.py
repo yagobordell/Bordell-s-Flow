@@ -1,4 +1,4 @@
-"""Recover individual 1280x720 beat PNGs from white-divided B2 image grids.
+"""Recover individual beat PNGs from white-divided B2 image grids.
 
 GPT may shift or widen its white separators. Identify the real separators near
 their expected positions before cropping, rather than dividing the canvas at
@@ -20,7 +20,7 @@ from .image_grids import BLACK_PANEL_SOURCE
 
 _SHA256 = re.compile(r"[0-9a-f]{64}", flags=re.ASCII)
 _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", flags=re.ASCII)
-_IMAGE_SIZE = (1280, 720)
+_DEFAULT_IMAGE_SIZE = (1280, 720)
 _CROP_VERSION = "b2-white-divider-crop-v1"
 
 
@@ -252,6 +252,15 @@ def crop_grid_assets(
     for grid in grids:
         geometry = grid["grid"]
         columns, rows = geometry["columns"], geometry["rows"]
+        panel_width = geometry.get("panel_width", _DEFAULT_IMAGE_SIZE[0])
+        panel_height = geometry.get("panel_height", _DEFAULT_IMAGE_SIZE[1])
+        if (
+            not isinstance(panel_width, int) or isinstance(panel_width, bool)
+            or not isinstance(panel_height, int) or isinstance(panel_height, bool)
+            or panel_width < 1 or panel_height < 1
+        ):
+            raise GridCropError("Invalid grid panel dimensions")
+        target_size = (panel_width, panel_height)
         panels = grid["panels"]
         if len(panels) != columns * rows:
             raise GridCropError("Grid panel map does not match its cell count")
@@ -280,9 +289,9 @@ def crop_grid_assets(
                 raise GridCropError(f"Duplicate crop panel: {beat_id}")
             seen.add(key)
             # Preserve the full photographic interior even if GPT's panel
-            # ratio differs slightly from the requested 16:9 geometry.
+            # ratio differs slightly from the requested geometry.
             result = image.crop(box).resize(
-                _IMAGE_SIZE, resample=Image.Resampling.LANCZOS
+                target_size, resample=Image.Resampling.LANCZOS
             )
             buffer = BytesIO()
             result.save(buffer, format="PNG")
@@ -301,8 +310,8 @@ def crop_grid_assets(
                 "column": panel["column"],
                 "crop_box": list(box),
                 "crop_version": _CROP_VERSION,
-                "width": _IMAGE_SIZE[0],
-                "height": _IMAGE_SIZE[1],
+                "width": target_size[0],
+                "height": target_size[1],
             }
             _write_panel(output, metadata, data)
             derived.append(metadata)

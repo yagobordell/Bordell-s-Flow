@@ -130,6 +130,23 @@ def test_thick_shifted_white_dividers_produce_clean_720p_panels(
     assert crop_grid_assets(tmp_path, manifest) == cropped
 
 
+def test_grid_crop_uses_declared_avatar_media_panel_size(tmp_path: Path) -> None:
+    manifest, _original = _source(tmp_path, 2, 2)
+    grid = manifest["items"][0]
+    grid["grid"]["panel_width"] = 768
+    grid["grid"]["panel_height"] = 864
+    for panel in grid["panels"]:
+        panel["visual_type"] = "avatar_media"
+
+    cropped = crop_grid_assets(tmp_path, manifest)
+
+    assert len(cropped) == 4
+    for asset in cropped:
+        assert (asset["width"], asset["height"]) == (768, 864)
+        with Image.open(tmp_path / asset["file"]) as generated:
+            assert generated.size == (768, 864)
+
+
 def test_dividers_are_found_at_their_actual_positions_not_exact_thirds() -> None:
     image = _sample_grid(3, 2, divider=30, offset_x=22, offset_y=-15)
     boxes = panel_boxes(image, columns=3, rows=2)

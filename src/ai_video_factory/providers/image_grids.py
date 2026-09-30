@@ -20,6 +20,11 @@ _SHAPES = {
 }
 _PANEL_WIDTH = 1280
 _PANEL_HEIGHT = 720
+# avatar_media occupies half of a 1280x720 frame: 640x720 = 8:9.
+# GPT Image 2.5 requires at least 655,360 pixels, so 768x864 is the
+# smallest exact 8:9 output with both edges divisible by 16.
+_AVATAR_MEDIA_PANEL_WIDTH = 768
+_AVATAR_MEDIA_PANEL_HEIGHT = 864
 GRID_PHOTO_HEADER = "iPhone 6 photograph done by an elderly:\n\n"
 BLACK_PANEL_SOURCE = "black_panel"
 BLACK_PANEL_DESCRIPTION = "black panel"
@@ -31,7 +36,7 @@ class GridPlanError(ValueError):
 
 def _grid_prompt(
     panels: list[dict[str, Any]], columns: int, rows: int,
-    *, visual_style: str = "casero",
+    *, visual_style: str = "casero", panel_aspect: str = "16:9",
 ) -> str:
     """Build the grid prompt with visual descriptions and narration context."""
     descriptions: list[str] = []
@@ -46,7 +51,7 @@ def _grid_prompt(
             voice_over.append(f"{panel['beat_id']}: {text.strip()}")
     prompt = (
         (GRID_PHOTO_HEADER if visual_style == "casero" else "")
-        + f"{columns}x{rows} grid 16:9\n\n"
+        + f"{columns}x{rows} grid {panel_aspect}\n\n"
         + "\n".join(descriptions)
         + "\n\nVoice over context:\n"
         + "\n".join(voice_over)
@@ -121,28 +126,71 @@ def plan_image_jobs(
                 finish()
         finish()
 
+    grid_runs: list[list[dict[str, Any]]] = []
+    standalone_numbered: set[tuple[int, str]] = set()
+    for run in runs:
+        avatar_media_count = sum(
+            beat["visual_type"] == "avatar_media" for beat in run
+        )
+        if 0 < avatar_media_count < len(run):
+            standalone_numbered.update(
+                (beat["block_id"], beat["beat_id"]) for beat in run
+            )
+        else:
+            grid_runs.append(run)
+
     numbered = {
         (beat["block_id"], beat["beat_id"])
-        for run in runs for beat in run
+        for run in grid_runs for beat in run
+    }
+    standalone = {
+        key: described_by_key[key] for key in standalone_numbered
     }
     available = {
         (beat["block_id"], beat["beat_id"]): beat
         for beat in described
-        if (beat["block_id"], beat["beat_id"]) not in numbered
+        if (
+            (beat["block_id"], beat["beat_id"]) not in numbered
+            and (beat["block_id"], beat["beat_id"]) not in standalone_numbered
+        )
     }
     grids: list[dict[str, Any]] = []
-    for run in runs:
+    for run in grid_runs:
         columns, rows = _SHAPES[len(run)]
         count = columns * rows
+        avatar_media_grid = all(
+            beat["visual_type"] == "avatar_media" for beat in run
+        )
+        panel_width, panel_height = (
+            (_AVATAR_MEDIA_PANEL_WIDTH, _AVATAR_MEDIA_PANEL_HEIGHT)
+            if avatar_media_grid else (_PANEL_WIDTH, _PANEL_HEIGHT)
+        )
+
         first = positions[run[0]["block_id"], run[0]["beat_id"]]
         last = positions[run[-1]["block_id"], run[-1]["beat_id"]]
         forward = sorted(
-            (key for key in available if positions[key] > last),
+            (
+                key for key in available
+                if (
+                    positions[key] > last
+                    and (
+                        available[key]["visual_type"] == "avatar_media"
+                    ) == avatar_media_grid
+                )
+            ),
             key=positions.__getitem__,
         )[:count - len(run)]
         missing = count - len(run) - len(forward)
         backward = sorted(
-            (key for key in available if positions[key] < first),
+            (
+                key for key in available
+                if (
+                    positions[key] < first
+                    and (
+                        available[key]["visual_type"] == "avatar_media"
+                    ) == avatar_media_grid
+                )
+            ),
             key=positions.__getitem__,
             reverse=True,
         )[:missing]
@@ -186,19 +234,30 @@ def plan_image_jobs(
             "visual_type": anchor["visual_type"],
             "description": _grid_prompt(
                 panels, columns, rows, visual_style=visual_style,
+                panel_aspect="8:9" if avatar_media_grid else "16:9",
             ),
             **({"visual_style": visual_style} if visual_style == "profesional" else {}),
-            "size": f"{columns * _PANEL_WIDTH}x{rows * _PANEL_HEIGHT}",
+            "size": f"{columns * panel_width}x{rows * panel_height}",
             "grid": {
                 "columns": columns, "rows": rows,
-                "panel_width": _PANEL_WIDTH, "panel_height": _PANEL_HEIGHT,
-                "width": columns * _PANEL_WIDTH,
-                "height": rows * _PANEL_HEIGHT,
+                "panel_width": panel_width, "panel_height": panel_height,
+                "width": columns * panel_width,
+                "height": rows * panel_height,
                 "numbered_beat_ids": [beat["beat_id"] for beat in run],
             },
             "panels": panels,
         })
-    jobs = list(available.values()) + grids
+    individuals = [*available.values(), *standalone.values()]
+    jobs = [
+        {
+            **beat,
+            **(
+                {"size": f"{_AVATAR_MEDIA_PANEL_WIDTH}x{_AVATAR_MEDIA_PANEL_HEIGHT}"}
+                if beat["visual_type"] == "avatar_media" else {}
+            ),
+        }
+        for beat in individuals
+    ] + grids
 
     def job_position(job: dict[str, Any]) -> int:
         if job.get("grid") is None:

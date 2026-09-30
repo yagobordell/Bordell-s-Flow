@@ -101,6 +101,25 @@ def test_standard_requests_generate_one_image_per_job_and_cache_results(
     assert len(direct.calls) == 3
 
 
+def test_avatar_media_uses_exact_split_aspect_without_crop(tmp_path: Path) -> None:
+    plan = {"blocks": [{"block_id": 1, "beats": [
+        {"beat_id": "1A", "visual_type": "avatar", "description": None},
+        {
+            "beat_id": "1B", "visual_type": "avatar_media",
+            "description": "A closed red book on a wooden table",
+        },
+    ]}]}
+    direct = FakeDirect()
+    result = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), direct_client=direct,
+    )
+
+    assert len(direct.calls) == 1
+    assert direct.calls[0]["size"] == "768x864"
+    assert result["items"][0]["size"] == "768x864"
+    assert (result["items"][0]["width"], result["items"][0]["height"]) == (768, 864)
+
+
 def test_avatar_reference_uses_standard_edit_request_and_exact_prompt_suffix(
     tmp_path: Path,
 ) -> None:
@@ -205,6 +224,56 @@ def test_numbered_sequence_uses_one_standard_request_for_grid(tmp_path: Path) ->
     )
     assert direct.calls[0]["prompt"].endswith("Do not add text to the image.")
     assert not list((tmp_path / "images").rglob("*.batch.jsonl"))
+
+
+def test_numbered_avatar_media_sequence_uses_8_9_grid_cells(tmp_path: Path) -> None:
+    plan = {"blocks": [{"block_id": 1, "beats": [
+        {"beat_id": "1A", "visual_type": "avatar", "description": None},
+        {
+            "beat_id": "1B", "text": "First support image.",
+            "visual_type": "avatar_media", "description": "1. Red notebook on desk",
+        },
+        {
+            "beat_id": "1C", "text": "Second support image.",
+            "visual_type": "avatar_media", "description": "2. Same notebook opened",
+        },
+    ]}]}
+    direct = FakeDirect()
+    result = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), direct_client=direct,
+    )
+
+    assert result["total_generation_jobs"] == 1
+    assert len(direct.calls) == 1
+    assert direct.calls[0]["size"] == "1536x1728"
+    assert "2x2 grid 8:9" in direct.calls[0]["prompt"]
+    grid = result["items"][0]["grid"]
+    assert (grid["panel_width"], grid["panel_height"]) == (768, 864)
+
+
+def test_mixed_numbered_sequence_avoids_wrong_aspect_grid(tmp_path: Path) -> None:
+    plan = {"blocks": [{"block_id": 1, "beats": [
+        {"beat_id": "1A", "visual_type": "avatar", "description": None},
+        {
+            "beat_id": "1B", "text": "Presenter support.",
+            "visual_type": "avatar_media", "description": "1. Red notebook on desk",
+        },
+        {
+            "beat_id": "1C", "text": "Full-screen continuation.",
+            "visual_type": "media_image", "description": "2. Same notebook opened",
+        },
+    ]}]}
+    direct = FakeDirect()
+    result = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), direct_client=direct,
+    )
+
+    assert result["grid_count"] == 0
+    assert result["total_generation_jobs"] == 2
+    assert {
+        call["destination"].stem: call["size"] for call in direct.calls
+    } == {"1B": "768x864", "1C": "1280x720"}
+    assert [item["beat_id"] for item in result["items"]] == ["1B", "1C"]
 
 
 def test_standard_generation_requires_key_when_no_client_is_injected(tmp_path: Path) -> None:
