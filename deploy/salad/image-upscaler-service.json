@@ -27,7 +27,7 @@
         "port": 8080,
         "period_seconds": 10,
         "timeout_seconds": 5,
-        "failure_threshold": 30
+        "failure_threshold": 20
       },
       "readiness": {
         "path": "/ready",
