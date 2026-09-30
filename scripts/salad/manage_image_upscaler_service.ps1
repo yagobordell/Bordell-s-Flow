@@ -85,6 +85,41 @@ function Invoke-SaladMutation {
     }
 }
 
+function Wait-SaladGroupSettled {
+    param(
+        [hashtable]$Headers,
+        [string]$Uri,
+        [int]$TimeoutSeconds = 900,
+        [switch]$AllowInitialNotFound
+    )
+    $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $Seen = $false
+    do {
+        try {
+            $Group = Invoke-Salad -Headers $Headers -Uri $Uri
+            $Seen = $true
+            if (-not [bool]$Group.pending_change) {
+                return $Group
+            }
+            Write-Host "Waiting for Salad pending_change=false..."
+        }
+        catch {
+            if (
+                $AllowInitialNotFound -and
+                -not $Seen -and
+                (Get-HttpStatusCode -ErrorRecord $_) -eq 404
+            ) {
+                Write-Host "Waiting for Salad container group to become visible..."
+            }
+            else {
+                throw
+            }
+        }
+        Start-Sleep -Seconds 10
+    } while ((Get-Date) -lt $Deadline)
+    throw "Salad container group did not settle within $TimeoutSeconds seconds."
+}
+
 function Resolve-PinnedImage {
     $Inspect = & docker buildx imagetools inspect $MutableImage 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Cannot inspect published image: $MutableImage" }
@@ -224,8 +259,15 @@ $Existing = $null
 try { $Existing = Invoke-Salad -Headers $Headers -Uri $GroupUrl }
 catch { if ((Get-HttpStatusCode -ErrorRecord $_) -ne 404) { throw } }
 
+if ($null -ne $Existing -and [bool]$Existing.pending_change) {
+    Write-Host "Salad has a pending container-group update; waiting before deployment..."
+    $Existing = Wait-SaladGroupSettled -Headers $Headers -Uri $GroupUrl
+}
+
 $DeploymentJson = $Deployment | ConvertTo-Json -Depth 20
+$Created = $false
 if ($null -eq $Existing) {
+    $Created = $true
     $Deployment["name"] = $GroupName
     $DeploymentJson = $Deployment | ConvertTo-Json -Depth 20
     Invoke-SaladMutation -Headers $Headers -Uri $ContainersBase -Method "Post" -Body $DeploymentJson -ContentType "application/json"
@@ -234,7 +276,12 @@ else {
     Invoke-SaladMutation -Headers $Headers -Uri $GroupUrl -Method "Patch" -Body $DeploymentJson -ContentType "application/merge-patch+json"
 }
 
-$Verified = Invoke-Salad -Headers $Headers -Uri $GroupUrl
+$Verified = if ($Created) {
+    Wait-SaladGroupSettled -Headers $Headers -Uri $GroupUrl -AllowInitialNotFound
+}
+else {
+    Wait-SaladGroupSettled -Headers $Headers -Uri $GroupUrl
+}
 if ($null -eq $Verified) { throw "Salad did not expose the container group after deployment." }
 if ([string]$Verified.container.image -ne $PinnedImage) {
     throw "Salad container group exists but does not reference the requested pinned image."
