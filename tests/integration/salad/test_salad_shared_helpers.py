@@ -90,19 +90,19 @@ def test_try_get_group_preserves_original_transport_exception() -> None:
         "function Try-Get-Group {", maxsplit=1
     )[1].split("function Get-Group {", maxsplit=1)[0]
     _run_powershell(
-        "$ErrorActionPreference = 'Stop'\\n"
-        "Set-StrictMode -Version Latest\\n"
-        f". {_quote(SALAD_SCRIPTS / '_http_status.ps1')}\\n"
-        "$ContainersBase = 'https://example.invalid'\\n"
-        "$GroupName = 'ltx25-i2v-test'\\n"
+        "$ErrorActionPreference = 'Stop'\n"
+        "Set-StrictMode -Version Latest\n"
+        f". {_quote(SALAD_SCRIPTS / '_http_status.ps1')}\n"
+        "$ContainersBase = 'https://example.invalid'\n"
+        "$GroupName = 'ltx25-i2v-test'\n"
         "function Invoke-SaladRequest { "
         "param([hashtable]$Headers, [string]$Uri, [string]$Operation) "
-        "throw 'actual-salad-transport-failure' }\\n"
+        "throw 'actual-salad-transport-failure' }\n"
         + group_reader
-        + "\\n"
+        + "\n"
         + "try { Try-Get-Group -Headers @{}; throw 'must have failed' } "
         + "catch { if ($_.Exception.Message -ne 'actual-salad-transport-failure') "
-        + "{ throw \"Original failure was masked: $($_.Exception.Message)\" } }\\n"
+        + "{ throw \"Original failure was masked: $($_.Exception.Message)\" } }\n"
     )
 
 
