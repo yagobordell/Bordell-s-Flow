@@ -687,15 +687,21 @@ data/
         visual_plan.json
         run_report.json
         avatar_voice.json
-      media/                       # Aparece al terminar correctamente el LTX
+      media/                       # Cada etapa aparece AL TERMINAR, sin esperar a LTX
         images/
           avatar.png
           qr.png
           block_1/1B.png
+          manifest.json           # Hashes y estado de las imágenes
         audio/
-          narracion.wav
+          narracion.wav            # Audio activo, incluso tras --regenerate-audio
           bloques/bloque_1.wav
-      test01.mp4                   # Vídeo final, DIRECTAMENTE en esta carpeta
+          manifest.json           # Solo 'completed' tras verificar WAV y bloques
+        preview/
+          preview.mp4              # Vídeo estático de imágenes cuando esté listo
+          timeline.json
+          manifest.json
+      test01.mp4                   # LTX verificado, sin esperar a copia global                   # Vídeo final, DIRECTAMENTE en esta carpeta
       manifest.json               # Solo presente tras una publicación completa
 ```
 
@@ -712,9 +718,17 @@ Después del primer guion, añade los siguientes TXT pendientes **sueltos
 dentro de `data/Jorge/`**. El programa distingue automáticamente entre
 TXT sueltos (pendientes) y carpetas con el mismo nombre (iniciados). Al
 arrancar un guion pendiente lo mueve a `data/Jorge/<guion>/<guion>.txt`;
-**no** mueve ni modifica los otros TXT pendientes. Los archivos `outputs/`
-pueden aparecer durante una ejecución parcial; el archivo `manifest.json`
-indica que ya se ha publicado un vídeo LTX completamente verificado.
+**no** mueve ni modifica los otros TXT pendientes. Las carpetas `outputs/` y `media/` se publican **etapa por etapa**:
+el audio y sus bloques se hacen visibles al terminar Fish, las imágenes
+se copian conforme aparecen en sus manifiestos, la vista previa estática
+se publica al completarse y el MP4 LTX se guarda en la raíz del guion.
+No hay que esperar al vídeo final para ver el audio generado. Cada
+subcarpeta de `media/` incorpora su propio `manifest.json`, con estado
+y hashes. El `outputs/run_report.json` visible contiene rutas relativas a
+la carpeta del guion (por ejemplo `media/audio/narracion.wav`), **nunca
+rutas internas presentadas como si estuvieran en `outputs/`**.
+El `manifest.json` de la raíz solo aparece cuando se publica y se verifica
+el resultado completo.
 Una ejecución interrumpida se reanuda desde su carpeta, no vuelve a tratarse
 como un guion pendiente. Los nuevos nombres de guion no reemplazan resultados
 anteriores; se rechaza una generación nueva con un nombre que ya tenga carpeta.
@@ -729,14 +743,30 @@ anteriores; se rechaza una generación nueva con un nombre que ya tenga carpeta.
 # Reanudar test02 desde un vídeo previo validado:
 .\run.ps1 test02 Jorge --generate-video
 
-# Publicar un LTX YA terminado, sin llamadas de generación:
+# Recuperar SOLO los archivos ya generados (audio, imágenes, preview o vídeo).
+# Sin llamadas a OpenAI, Fish o Salad:
+.\run.ps1 test01 Jorge --sync-only
+
+# Publicar y verificar el resultado LTX completo, si ya existe:
 .\run.ps1 test01 Jorge --publish-only
 ```
 
 El sistema conserva **todos** los checkpoints, registros de trabajos pagados
 y manifiestos originales en la carpeta interna
 `.video_factory_work/<avatar>/<guion>/`, independiente del árbol visible.
-No borres esa carpeta si necesitas reanudar una ejecución. El publicador
+Por ejemplo, una narración regenerada de Corea podría conservarse en
+`.video_factory_work/corea/corea/audio/runs/<ID>/narration_audio_regen_1.wav`,
+pero su ubicación **visible** es
+`data/corea/corea/media/audio/narracion.wav`.
+Los audios de bloques aparecen en `media/audio/bloques/` y cada etapa
+publicada tiene su propio manifiesto de integridad.
+
+No borres `.video_factory_work` si necesitas reanudar una ejecución. Si
+un trabajo anterior generó medios internos pero no llegó a copiarlos a
+`data/`, utiliza `--sync-only`: solo publica los archivos que
+**efectivamente existen y superan SHA-256**. Si faltan los originales
+internos, informa del error; un informe JSON, por sí solo, no puede
+restaurar archivos que ya no existen. El publicador
 comprueba el guion, los hashes de imágenes y audio y el MP4 antes de crear el
 `manifest.json` final. La estructura publicada contiene solo los recursos
 elegidos por los manifiestos actuales, no generaciones descartadas. Publicar
