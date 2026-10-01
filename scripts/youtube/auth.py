@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from ai_video_factory.config import settings
 from ai_video_factory.integrations.youtube.auth import authorize_channel, load_credentials
