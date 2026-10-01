@@ -231,6 +231,33 @@ class ProfessionalVisualBeat(Beat):
 class ProfessionalB2Block(B2InputBlock):
     beats: list[ProfessionalVisualBeat] = Field(min_length=1)
 
+    @model_validator(mode="after")
+    def mandatory_presenter_anchors(self) -> "ProfessionalB2Block":
+        """Opening/closing anchor beats must reuse the original avatar image."""
+
+        def is_base_avatar(beat: ProfessionalVisualBeat) -> bool:
+            return (
+                beat.visual_type == "avatar"
+                and beat.prompt is None
+                and beat.video_prompt is None
+                and not beat.reference
+                and beat.audio
+            )
+
+        if self.type == "intro" and not is_base_avatar(self.beats[0]):
+            raise ValueError(
+                "Professional intro first beat must reuse the original avatar: "
+                "visual_type=avatar, prompt=null, video_prompt=null, "
+                "reference=false, audio=true"
+            )
+        if self.type == "close" and not is_base_avatar(self.beats[-1]):
+            raise ValueError(
+                "Professional close last beat must reuse the original avatar: "
+                "visual_type=avatar, prompt=null, video_prompt=null, "
+                "reference=false, audio=true"
+            )
+        return self
+
 
 class ProfessionalB2Output(StrictModel):
     pipeline_stage: Literal["B2"] | None
