@@ -14,6 +14,7 @@ from collections.abc import Sequence
 
 from ai_video_factory.integrations.youtube.errors import YouTubeValidationError
 from ai_video_factory.integrations.youtube.metadata import validate_video
+
 try:
     from scripts.youtube.upload import main as upload_main
 except ModuleNotFoundError as exc:
