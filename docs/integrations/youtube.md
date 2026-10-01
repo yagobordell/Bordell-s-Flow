@@ -267,3 +267,25 @@ acceptance step using your external keystore and existing authorized alias.
 - Phase 5 will implement full durable publisher state and more complete
   idempotency across multiple runs and locations.
 - Phase 6 will opt-in to an automatic post-validation pipeline hook.
+
+### Diagnosing a rejected upload
+
+The CLI reports only sanitized HTTP status and an allowlisted, documented
+Google error reason. It NEVER logs provider HTTP bodies, access tokens, refresh
+tokens or client secrets. New unsuccessful uploads also preserve these safe
+fields as `last_http_status` and `last_api_reason` in the attempt sidecar,
+while retaining its ambiguous status and blocking duplicate uploads.
+
+For an existing attempt, first inspect the intended channel in YouTube Studio.
+Then view non-secret fields locally in PowerShell:
+
+```powershell
+$attempt = 'C:\Users\User\Desktop\video.mp4.youtube-upload-attempt.json'
+Get-Content $attempt | ConvertFrom-Json |
+  Select-Object status, channel, video_id, privacy, last_http_status, last_api_reason
+```
+
+Attempts created **before** safe diagnostics were added cannot reveal their
+previous Google response: absent fields are expected. Never delete or rename
+an ambiguous attempt to bypass the protection. Reconcile it manually before
+making another upload.
