@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import io
+import json
 from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,7 +12,7 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-from ai_video_factory.bots.contracts import ProfessionalB2Output
+from ai_video_factory.bots.contracts import B11Output, B12Output, ProfessionalB2Output
 from ai_video_factory.providers.image_grids import plan_image_jobs
 from ai_video_factory.providers.openai import OpenAIProvider
 from ai_video_factory.providers.openai_batch_images import (
@@ -19,6 +20,7 @@ from ai_video_factory.providers.openai_batch_images import (
     effective_image_prompt,
     generate_b2_images,
 )
+from ai_video_factory.bots.workflow import run_b_pipeline
 from ai_video_factory.workflows.b_video import _group_beats
 from scripts.pipeline.run_b_pipeline import select_visual_style
 
@@ -261,6 +263,65 @@ def test_speaking_presenter_media_video_uses_a2v_not_unsynced_i2v() -> None:
     assert _group_beats(beats) == [
         ("a2v", 0, 0), ("i2v", 1, 1)
     ]
+
+
+def test_professional_schema_retry_recovers_from_speaking_still() -> None:
+    script = "Apply a small amount of foundation with a gentle hand."
+    attempts = []
+    rejected = []
+
+    class InvalidThenFixed:
+        async def generate_structured(
+            self, *, model, instructions, input_text, output_type, input_image_url=None
+        ):
+            payload = json.loads(input_text)
+            if output_type is B11Output:
+                return B11Output.model_validate({
+                    "pipeline_stage": "B1.1",
+                    "narrative_core": {
+                        "central_question": "How?", "final_answer": "Apply gently."
+                    },
+                    "blocks": [{
+                        "block_id": 1, "type": "development",
+                        "emotional_entry": "Curious", "emotional_exit": "Informed",
+                        "span": {"first_words": script, "last_words": script},
+                    }],
+                    "error": None,
+                })
+            if output_type is B12Output:
+                return B12Output.model_validate({
+                    "pipeline_stage": "B1.2", "block_id": 1,
+                    "beats": [{
+                        "beat_id": "1A", "text": script, "beat_type": "action"
+                    }],
+                    "error": None,
+                })
+            assert output_type is ProfessionalB2Output
+            attempts.append(instructions)
+            if len(attempts) == 2:
+                assert "media_image ALWAYS requires audio=false" in instructions
+                assert "nonempty prompt" in instructions
+            block = payload["blocks"][0]
+            block["beats"][0].update(
+                visual_type="media_image" if len(attempts) == 1 else "media_video",
+                prompt="Referenced speaker with visible mouth.",
+                reference=True,
+                audio=True,
+            )
+            return ProfessionalB2Output.model_validate({
+                "pipeline_stage": "B2", "narrative_core": payload["narrative_core"],
+                "blocks": [block], "error": None,
+            })
+
+    result = asyncio.run(run_b_pipeline(
+        script, provider=InvalidThenFixed(), visual_style="profesional",
+        avatar_image=_avatar_png(),
+        on_rejected_b2_output=lambda *args: rejected.append(args),
+    ))
+    assert len(attempts) == 2
+    assert len(rejected) == 1
+    assert rejected[0][3]["unparsed_response"] is True
+    assert result.b2[0].blocks[0].beats[0].visual_type == "media_video"
 
 
 def test_style_selector_defaults_to_legacy_for_unattended_execution() -> None:
