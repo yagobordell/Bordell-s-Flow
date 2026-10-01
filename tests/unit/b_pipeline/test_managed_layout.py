@@ -541,3 +541,66 @@ def test_visible_audio_tampering_fails_instead_of_overwriting(
         sync_managed_outputs(work, target)
     assert published.read_bytes() == b"tampered"
     assert not (target / "manifest.json").exists()
+
+
+
+def test_offline_sync_only_recovers_audio_without_paid_calls(
+    managed_complete: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    work, _script, target = managed_complete
+    _set_run(
+        work,
+        image_generation={"status": "skipped"},
+        video_generation={"status": "deferred"},
+    )
+    (work / "images" / "manifest.json").unlink()
+    monkeypatch.setattr(run_managed, "WORK_ROOT", work.parent.parent)
+    monkeypatch.setattr(
+        run_managed.subprocess, "call",
+        lambda _command: pytest.fail("--sync-only must not invoke any provider"),
+    )
+    assert run_managed.main([
+        "test01", "Jorge", "--data-root", str(target.parent.parent), "--sync-only",
+    ]) == 0
+    assert (target / "media" / "audio" / "narracion.wav").is_file()
+    assert (target / "outputs" / "run_report.json").is_file()
+
+
+def test_offline_sync_only_rejects_absent_internal_data(
+    managed_complete: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _work, _script, target = managed_complete
+    monkeypatch.setattr(run_managed, "WORK_ROOT", tmp_path / "missing")
+    monkeypatch.setattr(
+        run_managed.subprocess, "call",
+        lambda _command: pytest.fail("Do not regenerate paid files"),
+    )
+    with pytest.raises(SystemExit, match="Missing files cannot be recovered"):
+        run_managed.main([
+            "test01", "Jorge", "--data-root", str(target.parent.parent), "--sync-only",
+        ])
+
+
+def test_audio_resume_requires_every_original_paid_block_file(
+    managed_complete: tuple[Path, Path, Path],
+) -> None:
+    from scripts.pipeline.run_b_pipeline import _latest_completed_audio
+
+    work, script, _target = managed_complete
+    artifact = json.loads((work / "run_report.json").read_text())[
+        "run"
+    ]["audio_generation"]
+    artifact["run_id"] = "a"
+    _json(work, "audio/latest.json", artifact)
+    _json(work, "audio/runs/a/task.json", {
+        "status": "completed",
+        "run_id": "a",
+        "source_sha256": _sha(script.read_bytes()),
+        "audio": artifact,
+    })
+    assert _latest_completed_audio(work, _sha(script.read_bytes())) == artifact
+    (work / "audio" / "runs" / "a" / "blocks" / "block_1.wav").unlink()
+    assert _latest_completed_audio(work, _sha(script.read_bytes())) is None
