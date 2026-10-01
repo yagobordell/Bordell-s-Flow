@@ -7,10 +7,10 @@ from unittest.mock import patch
 
 import pytest
 
-google_credentials = pytest.importorskip("google.oauth2.credentials")
-
 from ai_video_factory.integrations.youtube import auth
 from ai_video_factory.integrations.youtube.store import YouTubeStore
+
+google_credentials = pytest.importorskip("google.oauth2.credentials")
 
 SCOPE = auth.YOUTUBE_UPLOAD_SCOPE
 
