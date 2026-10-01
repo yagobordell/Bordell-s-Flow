@@ -32,6 +32,14 @@ _MAX_IMAGE_URL = 20_971_520
 _MAX_PNG = 40 * 1024 * 1024
 _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", flags=re.ASCII)
 _IMAGE_PREFIX = "iphone 6 photo done by an elderly:  "
+_PROFESSIONAL_IMAGE_PREFIX = (
+    "Render the following scene as authentic high-end iPhone 16/17 Pro Max photography, "
+    "not DSLR or cinematic photography. Preserve the described scene, composition, "
+    "relationships, lighting, and mood, realistic skin texture, natural facial imperfections, "
+    "authentic everyday environment, documentary feel, not polished, not cinematic, "
+    "not luxury editorial."
+)
+_NUMBERED_PROFESSIONAL_PROMPT = re.compile(r"^([1-9]\.\s+)(.+)$", flags=re.DOTALL)
 _GRID_IMAGE_QUALITY = "medium"
 _AVATAR_REFERENCE_PROMPT_SUFFIX = (
     "set the reference image ONLY to preserve the avatar's general identity and appearance. "
@@ -103,9 +111,18 @@ def effective_image_prompt(
     description: str, *, avatar_reference: bool = False,
     visual_style: str = "casero",
 ) -> str:
-    """Do not add legacy amateur styling or identity instructions to professional B2."""
+    """Apply application-owned image styling after B2 has described the scene."""
     if visual_style == "profesional":
-        return description
+        scene = description.strip()
+        numbered = _NUMBERED_PROFESSIONAL_PROMPT.match(scene)
+        if numbered is not None:
+            return (
+                numbered.group(1)
+                + _PROFESSIONAL_IMAGE_PREFIX
+                + " "
+                + numbered.group(2).strip()
+            )
+        return _PROFESSIONAL_IMAGE_PREFIX + " " + scene
     if visual_style != "casero":
         raise ValueError("Unknown B2 visual style")
     prompt = (

@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import io
+from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -41,6 +42,16 @@ def _plan(avatar: bytes) -> dict:
              "reference": False, "audio": False},
         ]}],
     }
+
+
+def test_professional_b2_keeps_global_image_style_out_of_bot_prompt() -> None:
+    instructions = (
+        files("ai_video_factory.bots.prompts")
+        .joinpath("b2_professional.md")
+        .read_text(encoding="utf-8")
+    )
+    assert "iPhone 16/17 Pro Max" not in instructions
+    assert "application injects the canonical image style" in instructions.lower()
 
 
 def test_professional_contract_accepts_regenerated_avatar() -> None:
@@ -88,13 +99,23 @@ def test_professional_image_requests_send_exact_prompts_and_explicit_reference(
     )
     assert manifest["status"] == "completed"
     assert len(calls) == 2
+    style = (
+        "Render the following scene as authentic high-end iPhone 16/17 Pro Max photography, "
+        "not DSLR or cinematic photography. Preserve the described scene, composition, "
+        "relationships, lighting, and mood, realistic skin texture, natural facial imperfections, "
+        "authentic everyday environment, documentary feel, not polished, not cinematic, "
+        "not luxury editorial."
+    )
     assert {call["prompt"] for call in calls} == {
-        "The same navy car.", "A scenic mountain."
+        f"{style} The same navy car.", f"{style} A scenic mountain."
     }
     assert sum("reference_image_url" in call for call in calls) == 1
     assert effective_image_prompt(
-        "Full cinematic prompt", avatar_reference=True, visual_style="profesional"
-    ) == "Full cinematic prompt"
+        "Full scene prompt", avatar_reference=True, visual_style="profesional"
+    ) == f"{style} Full scene prompt"
+    assert effective_image_prompt(
+        "2. Same person in the same locker room.", visual_style="profesional"
+    ) == f"2. {style} Same person in the same locker room."
 
 
 def test_professional_grid_never_adds_amateur_header_and_scopes_reference() -> None:
@@ -112,8 +133,12 @@ def test_professional_grid_never_adds_amateur_header_and_scopes_reference() -> N
     grid = next(job for job in jobs if job.get("grid"))
     assert "iPhone 6" not in grid["description"]
     assert "iphone 6" not in grid["description"]
+    assert "iPhone 16/17 Pro Max" not in grid["description"]
     assert "only for panels 1" in grid["description"].lower()
     assert grid["visual_style"] == "profesional"
+    assert effective_image_prompt(
+        grid["description"], visual_style="profesional"
+    ).startswith("Render the following scene as authentic high-end iPhone 16/17 Pro Max")
 
 
 def test_audio_ownership_and_regenerated_avatar_split_ltx_jobs() -> None:

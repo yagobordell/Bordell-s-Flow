@@ -370,13 +370,22 @@ https://developers.openai.com/api/docs/guides/speech-to-text
 
 ## GPT Image oficial: una solicitud estándar por imagen de B2
 
-Al finalizar B2, por cada beat con `description` no vacía se prepara una
+Al finalizar B2, por cada beat que requiere una imagen se prepara una
 solicitud estándar `POST /v1/images/generations`, `n=1`. Para una imagen
-con avatar se usa `POST /v1/images/edits` con la referencia verificada. No se
-crean archivos JSONL ni trabajos en Batch API. El prompt
-conserva exactamente el prefijo `iphone 6 photo done by an elderly:  `
-más la descripción original de B2, sin modificar su JSON. Los beats
-`avatar` con `description: null` no generan nada. Esto genera PNG
+con referencia de avatar se usa `POST /v1/images/edits` con la referencia
+verificada. No se crean archivos JSONL ni trabajos en Batch API.
+
+El estilo se añade **en código al construir la solicitud de imagen**, no dentro
+del prompt de B2. El modo `casero` conserva el prefijo histórico
+`iphone 6 photo done by an elderly:  `. El modo `profesional` recibe de B2
+solo la descripción documental de la escena y `effective_image_prompt()`
+antepone:
+
+`Render the following scene as authentic high-end iPhone 16/17 Pro Max photography, not DSLR or cinematic photography. Preserve the described scene, composition, relationships, lighting, and mood, realistic skin texture, natural facial imperfections, authentic everyday environment, documentary feel, not polished, not cinematic, not luxury editorial.`
+
+Cuando B2 marca continuidad con `1. `, `2. `, etc., el número permanece como
+primer token y el prefijo se inserta inmediatamente después. Los beats
+`avatar` reutilizados con prompt nulo no generan imagen. Esto genera PNG
 estáticos, no lip-sync ni vídeo animado.
 
 ```dotenv

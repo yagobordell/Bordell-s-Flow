@@ -254,7 +254,6 @@ class _AvatarRunBeat:
     block_id: int
     beat_id: str
     characters: int
-    mandatory_anchor: bool
 
 
 def _overlong_avatar_run(
@@ -267,7 +266,7 @@ def _overlong_avatar_run(
         if not output.blocks:
             raise BPipelineValidationError("B2 output is missing its block")
         block = output.blocks[0]
-        for index, beat in enumerate(block.beats):
+        for beat in block.beats:
             if beat.visual_type not in _PRESENTER_VISUAL_TYPES:
                 if characters > _MAX_CONSECUTIVE_AVATAR_CHARACTERS:
                     return run, characters
@@ -280,10 +279,6 @@ def _overlong_avatar_run(
                     block_id=block.block_id,
                     beat_id=beat.beat_id,
                     characters=length,
-                    mandatory_anchor=(
-                        (block.type == "intro" and index == 0)
-                        or (block.type == "close" and index == len(block.beats) - 1)
-                    ),
                 )
             )
             characters += length
@@ -317,10 +312,6 @@ def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input)
         })
         if restored != upstream.model_dump():
             raise BPipelineValidationError("B2 changed a frozen B1.2 beat")
-    if expected.type == "intro" and actual.beats[0].visual_type != "avatar":
-        raise BPipelineValidationError("B2 must anchor intro opening with avatar")
-    if expected.type == "close" and actual.beats[-1].visual_type != "avatar":
-        raise BPipelineValidationError("B2 must anchor close ending with avatar")
     overflow = _overlong_avatar_run((result,))
     if overflow is not None:
         raise BPipelineValidationError(_avatar_run_error(*overflow))
@@ -756,10 +747,7 @@ async def run_b_pipeline(
                     "Return a corrected complete B2 object for the same input block. Preserve "
                     "the narrative core and every upstream block and beat field exactly; "
                     "correct only the invalid B2 visual assignments, prompts, reference/audio "
-                    "flags or descriptions. In "
-                    "particular, the first beat of an intro block must use visual_type "
-                    "avatar, and the last beat of a close block must use visual_type avatar. "
-                    "Follow the supplied output schema.\n"
+                    "flags or descriptions. Follow the supplied output schema.\n"
                     "Previous B2 response:\n"
                     f"{_payload(output.model_dump())}"
                 )
@@ -834,7 +822,7 @@ async def run_b_pipeline(
                 left = offset
                 right = total - left - beat.characters
                 offset += beat.characters
-                if not beat.mandatory_anchor and global_corrections.get(beat.block_id, 0) < 2:
+                if global_corrections.get(beat.block_id, 0) < 2:
                     candidates.append(
                         (
                             max(left, right),
@@ -866,8 +854,8 @@ async def run_b_pipeline(
                 f"{error}. Change the visual assignment of beat {target_beat_id} "
                 "in YOUR block to a faithful media_image or media_video visual "
                 "(not avatar_media), or break this run with another discretionary "
-                "beat in your block. Keep every frozen beat text and mandatory "
-                "intro/close anchor unchanged. Preserve every other valid visual "
+                "beat in your block. Keep every frozen beat text unchanged. "
+                "Preserve every other valid visual "
                 "decision where possible. Return only the corrected complete "
                 "B2 block. Previous response for this block:\n"
                 f"{_payload(previous.model_dump())}"

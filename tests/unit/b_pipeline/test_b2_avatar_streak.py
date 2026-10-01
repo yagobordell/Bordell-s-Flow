@@ -216,15 +216,18 @@ def test_whole_video_retries_only_discretionary_beat_in_adjacent_block() -> None
     assert completed == ["B2"]
 
 
-def test_cross_block_mandatory_anchors_cannot_be_silently_changed() -> None:
+def test_cross_block_intro_close_beats_can_be_reassigned_to_break_avatar_run() -> None:
     script, b11, b12 = _checkpoint("A" * 61, ["B" * 60])
-    with pytest.raises(BPipelineValidationError, match="no correctable discretionary"):
-        asyncio.run(
-            run_b_pipeline(
-                script,
-                provider=_B2Provider(),
-                start_from="B2",
-                previous_b11=b11,
-                previous_b12=b12,
-            )
+    provider = _B2Provider()
+    result = asyncio.run(
+        run_b_pipeline(
+            script,
+            provider=provider,
+            start_from="B2",
+            previous_b11=b11,
+            previous_b12=b12,
         )
+    )
+    assert result.b2[0].blocks[0].beats[0].visual_type == "avatar"
+    assert result.b2[1].blocks[0].beats[0].visual_type == "media_image"
+    assert _overlong_avatar_run(result.b2) is None
