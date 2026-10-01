@@ -41,6 +41,14 @@ def validate_channel_name(name: str) -> str:
     return value
 
 
+def _source_checkout_root() -> Path | None:
+    """Find the checkout if running from source; wheels may have no checkout."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "pyproject.toml").is_file() and (parent / ".gitignore").is_file():
+            return parent
+    return None
+
+
 class YouTubeStore:
     """Operate only on direct children of an external, flat keystore directory."""
 
@@ -51,9 +59,13 @@ class YouTubeStore:
         if original.is_symlink():
             raise YouTubeConfigurationError("YouTube keystore must not be a symbolic link")
         resolved = original.resolve(strict=False)
-        repository = (repo_root or Path(__file__).resolve().parents[4]).resolve()
-        if resolved == repository or resolved.is_relative_to(repository):
-            raise YouTubeConfigurationError("YouTube keystore must be outside the repository")
+        checkout = repo_root if repo_root is not None else _source_checkout_root()
+        if checkout is not None:
+            repository = checkout.resolve()
+            if resolved == repository or resolved.is_relative_to(repository):
+                raise YouTubeConfigurationError(
+                    "YouTube keystore must be outside the repository"
+                )
         self.directory = resolved
 
     def ensure_directory(self) -> Path:
