@@ -23,7 +23,7 @@ def _info() -> dict[str, object]:
         "token_uri": "https://oauth2.googleapis.com/token",
         "token": "DUMMY_GOOGLE_ACCESS_TOKEN_FOR_TESTS",
         "scopes": [SCOPE],
-        "expiry": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        "expiry": (datetime.now(UTC) + timedelta(hours=1)).replace(tzinfo=None).isoformat() + "Z",
     }
 
 
@@ -42,7 +42,7 @@ def test_real_google_credentials_roundtrip_without_network(tmp_path: Path) -> No
 def test_real_google_credentials_refresh_is_persisted_without_network(tmp_path: Path) -> None:
     store = YouTubeStore(tmp_path / "external")
     info = _info()
-    info["expiry"] = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+    info["expiry"] = (datetime.now(UTC) - timedelta(hours=2)).replace(tzinfo=None).isoformat() + "Z"
     store.save_token("Canal", info)
 
     def fake_refresh(credentials, request):
