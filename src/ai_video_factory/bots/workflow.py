@@ -308,7 +308,7 @@ def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input)
         raise BPipelineValidationError("B2 changed the number of beats")
     for visual, upstream in zip(actual.beats, expected.beats, strict=True):
         restored = visual.model_dump(exclude={
-            "visual_type", "description", "prompt", "reference", "audio"
+            "visual_type", "description", "prompt", "video_prompt", "reference", "audio"
         })
         if restored != upstream.model_dump():
             raise BPipelineValidationError("B2 changed a frozen B1.2 beat")
@@ -691,7 +691,9 @@ async def run_b_pipeline(
             visual_rules = (
                 "For professional B2, prompt=null is permitted only for a reused "
                 "avatar with reference=false; all other visuals require a "
-                "nonempty prompt. avatar/avatar_media require audio=true; "
+                "nonempty prompt. media_video requires a nonempty video_prompt; "
+                "all other visual types require video_prompt=null. "
+                "avatar/avatar_media require audio=true; "
                 "media_image ALWAYS requires audio=false. Generated "
                 "synchronized visible speech must use media_video with audio=true. "
                 "Do not omit reference or audio booleans."
@@ -758,8 +760,9 @@ async def run_b_pipeline(
                     f"failed output validation: {first_error}\n"
                     "Return a corrected complete B2 object for the same input block. Preserve "
                     "the narrative core and every upstream block and beat field exactly; "
-                    "correct only the invalid B2 visual assignments, prompts, reference/audio "
-                    "flags or descriptions. Follow the supplied output schema.\n"
+                    "correct only the invalid B2 visual assignments, scene prompts, "
+                    "video_prompt values, reference/audio flags or descriptions. "
+                    "Follow the supplied output schema.\n"
                     "Previous B2 response:\n"
                     f"{_payload(output.model_dump())}"
                 )
