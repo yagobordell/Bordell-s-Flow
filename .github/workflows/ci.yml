@@ -55,6 +55,9 @@ jobs:
       - name: Dependency consistency
         run: uv pip check
 
+      - name: Ruff
+        run: uv run --no-sync ruff check .
+
       - name: Initialize test Postgres
         shell: bash
         run: |
@@ -79,9 +82,6 @@ jobs:
           fi
           command -v ffmpeg
           command -v zbarimg
-
-      - name: Ruff
-        run: uv run --no-sync ruff check .
 
       - name: Scan tracked files for OAuth secrets
         run: uv run --no-sync python scripts/security/check_youtube_secrets.py
@@ -160,7 +160,7 @@ jobs:
       - name: Install project and test dependencies
         run: uv sync --locked --extra dev
       - name: Check experimental benchmark Ruff
-        run: uv run --no-sync ruff check scripts/smoke/ltx25_i2v_benchmark_metrics.py tests/unit/workers/test_ltx_i2v_batch_metrics.py
+        run: uv run --no-sync ruff check .
       - name: Test experimental benchmark without external services
         run: uv run --no-sync python -m pytest -q tests/unit/workers/test_ltx_i2v_batch_metrics.py tests/unit/workers/test_ltx_i2v_optimization.py tests/unit/workers/test_ltx_i2v_static_camera.py tests/integration/salad/test_ltx_i2v_lifecycle.py tests/integration/salad/test_salad_shared_helpers.py
       - name: Parse controlled batch PowerShell
