@@ -26,7 +26,7 @@ def test_human_channel_names(name: str, expected: str) -> None:
     "", "  ", ".", "..", "../other", r"..\\other", "a/b", "a\\b",
     "A.json", "CON", "con.txt", "PRN", "LPT9", "COM1",
     "bad:name", "bad?name", "bad*name", "bad<name", "bad>name",
-    "bad|name", 'bad"name', "trailing.", "client_secret", "a\x00b", "a\x85b",
+    "bad|name", 'bad"name', "trailing.", "client_secret", "CON .other", "a\x00b", "a\x85b",
 ])
 def test_unsafe_channel_names(name: str) -> None:
     with pytest.raises(YouTubeConfigurationError):
@@ -126,7 +126,6 @@ def test_store_rejects_symlink_tokens_and_keystore(tmp_path: Path) -> None:
         store.load_token("Canal")
     with pytest.raises(YouTubeConfigurationError):
         store.save_token("Canal", {"token": "FAKE_EXAMPLE_ONLY"})
+    (tmp_path / "link").symlink_to(store.directory)
     with pytest.raises(YouTubeConfigurationError):
-        YouTubeStore(tmp_path / "link", repo_root=tmp_path / "notrepo") if (
-            (tmp_path / "link").symlink_to(store.directory)
-        ) else None
+        YouTubeStore(tmp_path / "link", repo_root=tmp_path / "notrepo")
