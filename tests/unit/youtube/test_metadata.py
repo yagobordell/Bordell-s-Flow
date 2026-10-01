@@ -1,5 +1,6 @@
 """Strict, offline metadata validation and API body coverage for phase 3."""
 
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -185,3 +186,27 @@ def test_localizations_without_language_are_rejected(tmp_path: Path) -> None:
             video_path=video, metadata_path=document, config=config(tmp_path),
             overrides={"default_language": None},
         )
+
+
+def test_verified_video_factory_manifest_is_checked(tmp_path: Path) -> None:
+    video = video_file(tmp_path)
+    digest = hashlib.sha256(video.read_bytes()).hexdigest()
+    marker = tmp_path / "manifest.json"
+    marker.write_text(json.dumps({
+        "schema_version": "managed-b-pipeline-v1",
+        "files": {video.name: digest},
+    }))
+    assert validate_video(video)[0] == video
+    video.write_bytes(video.read_bytes() + b"modification")
+    with pytest.raises(YouTubeValidationError, match="manifest"):
+        validate_video(video)
+
+
+def test_manifest_missing_expected_video_hash_is_rejected(tmp_path: Path) -> None:
+    video = video_file(tmp_path)
+    (tmp_path / "manifest.json").write_text(json.dumps({
+        "schema_version": "managed-b-pipeline-v1",
+        "files": {"unrelated.mp4": "a" * 64},
+    }))
+    with pytest.raises(YouTubeValidationError, match="manifest"):
+        validate_video(video)
