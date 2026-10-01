@@ -12,7 +12,12 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-from ai_video_factory.bots.contracts import B11Output, B12Output, ProfessionalB2Output
+from ai_video_factory.bots.contracts import (
+    B11Output,
+    B12Output,
+    ProfessionalB2Output,
+    ProfessionalVisualBeat,
+)
 from ai_video_factory.bots.workflow import run_b_pipeline
 from ai_video_factory.providers.image_grids import plan_image_jobs
 from ai_video_factory.providers.openai import OpenAIProvider
@@ -74,9 +79,12 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     assert "Visible-presenter speech preference" in prompt
     assert "A2V does not guarantee detailed" in prompt
     assert "use audio=false and observational media_video" in prompt
-    # Scene-native packaging and signs are no longer banned indiscriminately.
-    assert "Do not systematically end prompts with" in prompt
-    assert "do not invent product claims" in prompt
+    # Natural packaging is allowed without qualifiers leaking into scene prompts.
+    assert "product packaging" in prompt
+    assert "Never append editorial disclaimers" in prompt
+    assert "Do not insert boilerplate qualifications" in prompt
+    assert "do not invent product claims" not in prompt.lower()
+    assert "no specified brands or product claims" not in prompt.lower()
 
 
 def test_professional_b2_global_framing_sequence_progression_and_still_audio() -> None:
@@ -128,6 +136,35 @@ def test_professional_contract_requires_speaking_generated_shots_to_be_video(
     else:
         with pytest.raises(ValidationError, match="media_image must have audio=false"):
             ProfessionalB2Output.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    "disclaimer",
+    [
+        "No specified brands or product claims.",
+        "No specified brands.",
+        "Without specific branding.",
+        "No product claims.",
+        "No readable brand names.",
+    ],
+)
+def test_professional_contract_rejects_stock_brand_disclaimers(
+    disclaimer: str,
+) -> None:
+    payload = {
+        "beat_id": "1A",
+        "text": "Show a simple routine.",
+        "beat_type": "action",
+        "visual_type": "media_image",
+        "prompt": f"Natural cleanser bottle on bathroom counter. {disclaimer}",
+        "reference": False,
+        "audio": False,
+    }
+    with pytest.raises(ValidationError, match="stock branding"):
+        ProfessionalVisualBeat.model_validate(payload)
+
+    payload["prompt"] = "Natural cleanser bottle with ordinary printed packaging."
+    assert ProfessionalVisualBeat.model_validate(payload).prompt == payload["prompt"]
 
 
 def test_professional_contract_accepts_regenerated_avatar() -> None:
@@ -212,7 +249,10 @@ def test_professional_grid_never_adds_amateur_header_and_scopes_reference() -> N
     assert "iPhone 16/17 Pro Max" not in grid["description"]
     assert "only for panels 1" in grid["description"].lower()
     assert grid["visual_style"] == "profesional"
-    assert "Allow natural scene-native labels, packaging and signage" in grid["description"]
+    assert "Allow natural scene-native labels, realistic product packaging" in grid["description"]
+    assert "let other incidental packaging look naturally printed" in grid["description"]
+    assert "do not invent brands or claims" not in grid["description"].lower()
+    assert "no specified brands or product claims" not in grid["description"].lower()
     assert "Do not add visible text unless" not in grid["description"]
     assert "Do not add artificial captions, overlays or watermarks" in grid["description"]
     assert "Respect EACH panel's own requested shot scale" in grid["description"]

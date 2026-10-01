@@ -49,10 +49,13 @@ do not invent facial-expression details. Wardrobe and setting are preserved
 within a continuous occasion only when continuity calls for them.
 
 Naturally occurring packaging labels, signage and logos are allowed when they
-add authenticity or information. B2 does not ban all text, invent brands,
-claim unsupported product properties or automatically add editorial overlays.
-The professional **grid request builder** uses the same policy; the legacy
-`casero` grid's existing no-text behavior is unchanged.
+add authenticity or information. Product prompts describe normal printed
+containers directly: B2 must not append stock qualifiers about unspecified
+brands, absent packaging text or product claims. When the script requests
+specific readable wording, that wording can be depicted on the packaging;
+incidental print can remain organic. The professional **grid request builder**
+follows the same approach and no longer adds a blanket brand/claim restriction.
+The legacy `casero` grid's existing no-text behavior is unchanged.
 
 A clearly visible presenter making a simple, speaking-compatible
 demonstration can use `audio: true`, including on a `media_video` beat;
