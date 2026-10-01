@@ -64,6 +64,33 @@ must be shown accurately, the mouth is obstructed, or the face is cropped
 out. These are editorial prompt instructions, not a deterministic
 computer-vision validator of generated facial expressions.
 
+The professional bot also has **global shot-framing freedom** for every
+generated beat, not only numbered sequences: it deliberately chooses useful
+shot distance, angle, crop and focus (including tighter close-ups and a
+slightly zoomed-in still composition). This changes the generated starting
+image's composition, not A2V camera animation; downstream Ken Burns still
+governs actual zoom movement for static `media_image` shots. For contiguous
+numbered steps, B2 applies a stronger shot-progression check so the same
+person and setting stay continuous while neighboring images emphasize
+different framing/details instead of duplicating nearly identical views.
+The professional image-grid prompt explicitly preserves each panel's
+distinct shot composition rather than normalizing all panels to one angle.
+Because B2 workers operate one block at a time, it uses the global framing
+rule everywhere but can directly compare adjacent prompts only within
+each block, not across unseen neighboring blocks.
+
+**Strict professional audio/type contract:** `media_image` MUST have
+`audio: false` (ordinary master narration may still play as voice-over).
+Generated full-screen synchronized speech must use `media_video` with
+`audio: true` and is routed through A2V; `media_video` with
+`audio: false` uses observational I2V. The professional Pydantic model
+rejects invalid speaking stills, allowing the existing automatic B2
+schema-correction retry to request a corrected result. Video planning
+also rejects legacy saved plans containing `media_image + audio:true`
+instead of accidentally treating those stills as speaking videos.
+`avatar` and `avatar_media` continue to require `audio: true`.
+The `casero` bot's output contract and grid prompt are unchanged.
+
 The code-owned high-end phone-photography style remains separate from B2:
 `effective_image_prompt()` injects it during generation, after any
 numeric continuity marker.

@@ -68,6 +68,16 @@ def _grid_prompt(
         )
     )
     if visual_style == "profesional":
+        prompt += (
+            "\n\nRespect EACH panel's own requested shot scale, camera viewpoint, "
+            "crop and visual focus. For continuous numbered steps, preserve "
+            "the same subject and setting while maintaining deliberate "
+            "shot-to-shot framing differences (e.g. medium, close-up, "
+            "tight detail, alternate angle) from their individual prompts. "
+            "Do not normalize multiple panels into essentially identical "
+            "face-centered compositions. Avoid invented camera moves or "
+            "details not requested by a panel."
+        )
         reference_panels = [str(i) for i, p in enumerate(panels, 1) if p.get("reference")]
         if reference_panels:
             prompt += ("\n\nThe attached avatar reference image may be used ONLY for panels "

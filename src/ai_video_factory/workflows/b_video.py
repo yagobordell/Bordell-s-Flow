@@ -134,6 +134,11 @@ def _group_beats(beats: list[dict[str, Any]]) -> list[tuple[str, int, int]]:
     avatar_source: tuple[object, ...] | None = None
     for index, beat in enumerate(beats):
         kind = beat["visual_type"]
+        if kind == "media_image" and beat.get("audio") is True:
+            raise B2VideoError(
+                f"Speaking media_image beat {beat['beat_id']} is invalid; "
+                "use media_video for synchronized speech"
+            )
         speaks = kind in {"avatar", "avatar_media"} or beat.get("audio") is True
         if speaks:
             if kind in {"media_image", "media_video"} or (
