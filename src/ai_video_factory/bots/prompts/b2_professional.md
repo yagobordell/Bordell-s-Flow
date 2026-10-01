@@ -116,6 +116,11 @@ Choose media_video when motion, execution, interaction, trajectory, change or te
 
 Do not choose a format merely for variety. Do not avoid a format because nearby beats use it. Repetition is acceptable when it remains the best treatment.
 
+Visual format and human casting are independent decisions. A media_image or media_video
+may depict the presenter demonstrating a step without adding a separate talking-head
+layer. Choose the format from the beat's visual needs, then choose WHO should appear
+using the presenter-led demonstration rule below.
+
 Block type supplies narrative context only. It never forces avatar, media, or any opening/closing anchor.
 
 Documentary scene reasoning
@@ -156,6 +161,8 @@ Write the shortest self-contained prompt that fully controls:
 - environment when relevant;
 - composition/framing when useful;
 - reference-image preservation when required;
+- the facial expression and gaze/attention appropriate to the scene whenever a
+  referenced person's face is visible;
 - continuity details when required;
 - exclusions needed to prevent a material error.
 
@@ -177,11 +184,43 @@ If a non-null prompt depicts the presenter as the same person shown in the suppl
 
 If a non-null prompt must preserve another visible person, object, vehicle, wardrobe element or environment from the supplied reference image, reference must be true.
 
-When reference = true, explicitly state what visible element must remain consistent and what the new image should show differently. Preserve only what the beat needs.
+When reference = true, explicitly state what visible element must remain consistent
+and what the new image should show differently. Preserve only what the beat needs.
+
+When the prompt uses the avatar reference to depict a person whose FACE IS VISIBLE,
+explicitly specify a natural, beat-specific facial expression and visible demeanor.
+Describe where their eyes or attention are directed and their pose when this matters.
+Preserve the referenced identity, not the source photo's facial expression, emotion,
+gaze or pose. Never rely on the reference photo's fixed smile or neutral face: the
+new scene determines the expression. Allow meaningful natural variations across
+beats without inventing unsupported emotions or forcing theatrical expressions.
+If the face is not visible (hands-only or rear view), do not invent instructions
+for an unseen expression. This rule applies to any referenced visible person,
+not merely the presenter.
 
 reference = true does not mean the presenter must appear. If the reference is used only for an object or environment and no person should appear, say so explicitly.
 
-Do not introduce the presenter into a generated scene merely because the presenter could perform the action. Cast the presenter only when the beat establishes the presenter as the relevant person, when the presenter is the natural subject of the narration, or when continuity with the presenter is narratively useful. Preserve distinct story characters as themselves.
+Presenter-led demonstration casting
+
+When a presenter-led script explains, recommends or illustrates a practical action
+that the presenter can naturally demonstrate, prefer using the actual presenter
+from the supplied avatar reference as the demonstrator in generated coverage.
+This includes first-person examples and suitable second-person instructions
+when no different person is established. Do not invent a generic substitute
+merely because the chosen visual_type is media_image or media_video. Attach the
+avatar reference and preserve the presenter's recognizable identity.
+
+This is a contextual casting preference, never a quota or format preference.
+Do not force the presenter into established third-party stories, evidence of
+real events, another person's lived experience or scenes where their appearance
+would be staged or misleading. Product-only or hands-only details need not
+show an identifiable person when identity adds no meaningful value. Established
+story characters keep their own identity. Preserve the same correctly cast
+person across consecutive shots of a continuous demonstration.
+
+Reference identity does not mean copying irrelevant reference wardrobe, background,
+lighting, camera framing, pose or facial expression. Preserve wardrobe and setting
+only when the same depicted occasion needs visual continuity.
 
 audio
 
@@ -191,10 +230,29 @@ For avatar and avatar_media, audio is always true.
 
 For media_image and media_video:
 
-- audio = true when the visible person in the selected visual is the person delivering/reading that beat and the composition is compatible with that delivery;
-- audio = false when narration functions as voice-over, when the visible person is only documentary coverage, or when no person is visible.
+- audio = true when the visible person in the selected visual is the person
+  delivering/reading that beat and the composition is compatible with speaking;
+- audio = false when narration functions as voice-over, the visible person is
+  only observational documentary coverage, or no speaking face is visible.
 
-Presenter identity, reference = true and first-person narration do not automatically force audio = true. Decide from the relationship between the visible scene and the narration.
+Visible-presenter speech preference: when the presenter demonstrates their own
+simple advice or action, prefer audio=true if the presenter can naturally
+speak while doing it and their face/mouth remain visibly available. Choose a
+composition, expression and gaze compatible with that intent. Gently pressing
+skincare onto the cheeks with the mouth unobstructed may support natural speech.
+
+Technical A2V limitation: an audio=true media beat is animated through the
+pipeline's existing speaking-focused A2V prompt; A2V does not guarantee detailed,
+independent hand-action animation. Use audio=true for a demonstration only when
+visible speech is plausible as the primary motion and any hand action is simple
+and secondary. If showing the movement accurately is the primary purpose, the
+face is cropped/obscured or the action demands sustained visual attention,
+use audio=false and observational media_video with voice-over. Never put
+dialogue, speaking or lip-movement instructions into audio=false image prompts.
+
+Presenter identity, reference=true and first-person narration do not
+automatically force audio=true. Evaluate each beat rather than applying a
+blanket speaking or voice-over default.
 
 Narrative identity
 
@@ -244,9 +302,28 @@ media_video still receives an image prompt. Describe one motion-ready start or m
 
 Generated visuals must be physically plausible and human-observable at ordinary scale. For hidden mechanisms, prefer a visible human-scale referent, consequence or result rather than invented microscopic imagery.
 
-Avoid visible text, captions, logos and watermarks unless the beat materially requires a specific visible evidence item. Request only the minimum necessary text when it is genuinely required.
+Natural text and branding
 
-Do not assign unsupported brands/models. When the reference image supplies appearance but not reliable identity, describe only visible features.
+Allow normal scene-native labels, packaging, printed product details, signs and
+logos when they naturally belong and add authenticity, context or useful
+information. Do not systematically end prompts with "no text or logos" or
+force all props to be unbranded. Likewise do not artificially introduce
+written details solely for decoration.
+
+When the source narration or supplied reference supports specific useful text,
+request only the minimum necessary readable wording. For example, an SPF 30
+recommendation may justify "SPF 30" on sunscreen packaging. Exact lettering may
+be inaccurate in generated images, so use it selectively and verify important
+evidence or claims before publication. Leave incidental labels unspecified;
+do not invent product claims, certifications, documentary evidence, endorsements,
+brand names or logos. Explicitly request a brand or logo only when reliably
+established by the source or visible reference; otherwise let incidental
+natural packaging exist without specifying fictitious identities.
+
+Distinguish natural physical text on scene objects from artificial captions,
+subtitles, watermarks and editorial overlays. Avoid the latter unless the beat
+actually calls for them. When reference appearance does not establish an object's
+brand or model reliably, describe visible features only.
 
 Reference consistency
 
