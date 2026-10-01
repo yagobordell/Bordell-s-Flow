@@ -334,7 +334,10 @@ Use the supplied image when continuity materially depends on:
 3. an established environment;
 4. wardrobe/appearance within the same event.
 
-Do not preserve wardrobe automatically across unrelated times or events. Preserve it when the sequence is meant to be the same occasion.
+Do not preserve wardrobe automatically across unrelated times or events. Preserve
+it when the sequence is meant to be the same occasion. A consistent identity
+does not require repeating the expression, gaze or pose of the reference photo
+or the previous beat; adapt visible expressions to the current scene.
 
 Do not copy unrelated background, lighting, objects or composition merely because they appear in the reference.
 
@@ -389,26 +392,41 @@ For each beat:
 3. resolve the relevant person/character/object/place and narration ownership;
 4. decide whether presenter presence, presenter plus support, a documentary still or a documentary video is the most natural carrier;
 5. choose visual_type without format quotas or tie-breaking bias;
-6. if generated media contains a person, preserve the correct narrative identity;
-7. decide reference from actual continuity dependency;
-8. decide audio from the visible person's relationship to narration;
-9. write one concise beat-specific scene prompt when generation is required;
-10. after the block is stable, apply continuity numbering to genuine continuous events;
-11. validate the 120-character presenter-run constraint as far as this block can know;
-12. validate the final output contract.
+6. cast generated human demonstrators with the contextual presenter preference
+   while preserving distinct story-character identities;
+7. decide reference from actual visual/identity continuity dependency;
+8. for every visible face depicted from the reference, describe a scene-specific
+   facial expression, demeanor and useful gaze/attention without copying the
+   source image's expression;
+9. decide audio from the visible person's speaking role AND whether the actual
+   A2V speaking-focused route can plausibly support the shot;
+10. write concise scene prompts that permit useful natural text and logos without
+    inventing unsupported brands, written claims or editorial overlays;
+11. after the block is stable, apply continuity numbering to genuine continuous events;
+12. validate the 120-character presenter-run constraint as far as this block can know;
+13. validate the final output contract.
 
 Block-level review
 
 Before output, review the block for:
 
 - format bias: no visual_type was chosen because it is generally preferred;
-- forced presenter casting: the avatar was not inserted merely because they could perform an action;
+- demonstrator casting: presenter-led examples use the referenced presenter when
+  naturally demonstrable, while distinct third-party subjects and identity-free
+  close-ups are not forcibly recast;
 - story-character integrity: established people remain themselves;
 - documentary usefulness: generated visuals feel like plausible coverage of the narrated event, not decorative illustration;
 - image/video fit: movement is used only when it adds material value;
 - redundancy: repeated visuals remain only when repetition is narratively useful;
-- reference correctness: every dependency on the supplied image is explicit and unrelated elements are not copied;
-- audio correctness: voice-over versus visible-speaker intent is coherent;
+- reference correctness: every dependency on the supplied image is explicit and
+  unrelated source-image style, expression, background or pose are not copied;
+- referenced visible faces: a natural beat-specific expression and relevant
+  gaze/attention are explicit rather than inherited from the input photo;
+- natural writing and branding: useful real-world labels remain possible, but
+  unsupported names/claims and decorative overlays have not been invented;
+- audio correctness: a clearly visible presenter performing a simple compatible
+  action was considered for audio=true; if detailed movement or face occlusion
+  makes the speaking-focused A2V route unsuitable, choose voice-over;
 - continuity: numbering is used for actual continuous events and omitted otherwise;
 - presenter-run limit: no avoidable >120-character avatar/avatar_media run is created.
 
@@ -420,12 +438,28 @@ If the supplied reference shows a distinctive dark navy two-door car needed by t
 
 {
   "visual_type": "media_image",
-  "prompt": "Use the supplied reference only to preserve the visible dark navy two-door car and its recognizable body shape. Show that car alone on a residential driveway, front three-quarter view, entire car visible. No person, text, logos or extra cars.",
+  "prompt": "Use the supplied reference only to preserve the visible dark navy two-door car and its recognizable body shape. Show that car alone on a residential driveway, front three-quarter view, entire car visible. No person or extra cars.",
   "reference": true,
   "audio": false
 }
 
-The application adds the global image-style prefix later. B2 must not include it here.
+The application adds the global image-style prefix later. B2 must not include
+it here. This object-only scene has no facial-expression requirement.
+
+Presenter-led demonstration calibration
+
+When a presenter explains their own simple skincare demonstration, a suitable
+media_video prompt could describe the SAME presenter from the reference lightly
+pressing toner onto the cheeks with a relaxed, attentive expression, eyes
+naturally engaged with the camera and mouth unobstructed. In that specific
+speaking-compatible composition, reference=true and audio=true are appropriate.
+Allow a genuine printed label on the skincare bottle if it naturally belongs.
+
+This is an example of casting and audio intent, not a requirement to use
+media_video for tutorials or to make every presenter demonstration audio=true.
+If precise hand motion is the main point, use audio=false with voice-over instead.
+Every pictured referenced face needs its own expression appropriate to that
+beat, not a repeated stock expression.
 
 Final self-check
 
@@ -441,14 +475,28 @@ Before emitting success, verify:
 - every generated image contains one deliberate action/process/state at one photographable instant;
 - media_video prompts describe one motion-ready key image for one later coherent action/process;
 - visual_type was chosen from beat needs, not beat_type or format preference;
-- generated humans preserve narrative identity;
-- the presenter was not used merely because they could substitute for another or generic actor;
+- generated humans preserve narrative identity and presenter-led practical
+  examples preferentially use the actual presenter when narratively natural,
+  independent of visual_type;
+- distinct third-party subjects were not replaced just because the presenter
+  could physically perform the same action;
 - every prompt depicting the presenter uses reference = true;
 - every prompt depending on a visible reference object/environment/person uses reference = true;
 - reference = true prompts state exactly what to preserve;
+- every reference=true prompt depicting a visible referenced person's face
+  explicitly describes scene-specific expression/demeanor and useful gaze;
+  the reference photo's original facial expression is not copied by default;
+- reference=true prompts without a visible face are exempt from facial-expression
+  instructions (for example, objects or hands-only details);
 - prompts that use reference only for object/environment continuity exclude the presenter when appropriate;
+- natural labels, product printing or logos are allowed when useful, and no
+  blanket "no text/logos" instruction was added;
+- artificial captions, unsupported brand names, documentary claims or fake
+  endorsements were not invented;
 - avatar and avatar_media have audio = true;
-- media_image/media_video audio was decided per beat;
+- media_image/media_video audio was decided per beat, preferring natural
+  visible presenter speech when simple action and facial visibility are
+  compatible with the actual speaking-focused A2V route;
 - numbered continuity is current and represents one continuous event;
 - numbered prompts begin with the exact local sequence marker and contain no style prefix;
 - no avoidable consecutive avatar/avatar_media run exceeds 120 narration characters;
