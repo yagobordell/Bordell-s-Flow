@@ -47,6 +47,7 @@ from ai_video_factory.inference.salad import (
     SaladDispatchConfig,
 )
 from ai_video_factory.inference.salad_billing import SaladCostMeter, read_salad_costs
+from ai_video_factory.managed_layout import publish_managed_run
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
 from ai_video_factory.providers.avatar_library import avatar_directory, organize_avatar
@@ -64,7 +65,6 @@ from ai_video_factory.providers.openai_stt import OpenAISttClient
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.publishing import publish_completed_run
-from ai_video_factory.managed_layout import publish_managed_run
 from ai_video_factory.workflows.b_video import (
     generate_b2_ltx_video,
     has_pending_b2_video,
