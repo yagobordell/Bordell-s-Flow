@@ -146,7 +146,23 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         # Manual snapshots are per source MP4, not a shared youtube.json in
         # directories containing several unrelated videos.
-        snapshot = video.with_name(video.name + ".youtube_publish.json")
+        snapshot: Path | None = video.with_name(video.name + ".youtube_publish.json")
+        publication_manifest = video.parent / "manifest.json"
+        if publication_manifest.is_file() and not publication_manifest.is_symlink():
+            try:
+                marker = json.loads(publication_manifest.read_text(encoding="utf-8"))
+            except (OSError, ValueError, UnicodeError):
+                marker = {}
+            if isinstance(marker, dict) and marker.get("schema_version") == (
+                "b-pipeline-publication-v1"
+            ):
+                # Immutable results libraries remain immutable. Their state
+                # lives exclusively in the shared external registry.
+                snapshot = None
+            elif isinstance(marker, dict) and marker.get("schema_version") == (
+                "managed-b-pipeline-v1"
+            ):
+                snapshot = video.parent / "youtube_publish.json"
         result = publish_to_youtube(
             request,
             keystore_dir=settings.youtube_keystore_dir,
@@ -161,7 +177,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("YouTube publication complete or safely reused. ID: " + result.video_id)
         print("URL: " + result.url)
         print("Thumbnail uploaded: " + ("yes" if result.thumbnail_uploaded else "no"))
-        print("Durable state: " + snapshot.name)
+        print(
+            "Durable state: " + (
+                str(snapshot) if snapshot else "shared external publication registry"
+            )
+        )
         return 0
     except YouTubeError as exc:
         print("YouTube: " + str(exc), file=sys.stderr)
