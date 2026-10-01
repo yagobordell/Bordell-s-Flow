@@ -183,7 +183,7 @@ uv run --locked --extra youtube python scripts/youtube/upload.py `
 ```
 
 Dry-run validates the local MP4 extension, size and ftyp header, metadata
-schema and constraints, keystore, and presence of an upload-authorized local
+schema and constraints, an existing recognized Video Factory publication\nmanifest (SHA-256) when present, keystore, and an upload-authorized local
 token. It displays resolved API-writable request metadata. It does NOT
 open a browser, refresh tokens, contact YouTube, upload media or write an
 upload attempt record. Only YouTube can perform definitive codec/container
