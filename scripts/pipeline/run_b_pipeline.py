@@ -47,7 +47,7 @@ from ai_video_factory.inference.salad import (
     SaladDispatchConfig,
 )
 from ai_video_factory.inference.salad_billing import SaladCostMeter, read_salad_costs
-from ai_video_factory.managed_layout import publish_managed_run
+from ai_video_factory.managed_layout import publish_managed_run, sync_managed_outputs
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
 from ai_video_factory.providers.avatar_library import (
@@ -1188,6 +1188,8 @@ async def _run_images_only(
         _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
+    report["run"]["video_preview"] = {"status": "stale_image_regeneration"}
+    report["run"]["video_generation"] = {"status": "stale_image_regeneration"}
     report["run"]["image_generation"] = {"status": "running"}
     report["run"]["status"] = "running"
     report.setdefault("timings", {})["status"] = "running"
@@ -1208,6 +1210,9 @@ async def _run_images_only(
     report["run"]["image_generation"] = _image_summary(manifest)
     _refresh_audio_costs(report, output)
     _write(report_path, report)
+    if managed_target is not None:
+        await asyncio.to_thread(sync_managed_outputs, output, managed_target)
+        print(f"  Images published: {managed_target / 'media' / 'images'}", flush=True)
     try:
         preview = await _preview_if_ready(output, report, plan=plan, images=manifest)
     except Exception:
@@ -1218,6 +1223,9 @@ async def _run_images_only(
         raise
     if preview is not None:
         report["run"]["video_preview"] = preview
+        _write(report_path, report)
+        if managed_target is not None:
+            await asyncio.to_thread(sync_managed_outputs, output, managed_target)
     if no_video:
         report["run"]["video_generation"] = {"status": "skipped"}
     else:
@@ -1526,6 +1534,11 @@ async def _run_audio_only(
     except (ValueError, OSError) as exc:
         raise SystemExit(f"Invalid B1.1 audio checkpoint: {exc}") from exc
 
+    # A new narration invalidates the old preview and LTX mux until regenerated.
+    # Keep their source files for recovery, but do not claim they match new audio.
+    report["run"]["video_preview"] = {"status": "stale_audio_regeneration"}
+    report["run"]["video_generation"] = {"status": "stale_audio_regeneration"}
+    _write(report_path, report)
     _activate_pending_avatar_clone(output, report)
 
     provider = (
@@ -1555,6 +1568,12 @@ async def _run_audio_only(
     report["run"]["audio_generation"] = artifact
     _refresh_audio_costs(report, output)
     _write(report_path, report)
+    if managed_target is not None:
+        await asyncio.to_thread(sync_managed_outputs, output, managed_target)
+        print(
+            f"  Narration and block audio published: {managed_target / 'media' / 'audio'}",
+            flush=True,
+        )
     plan_path = output / "visual_plan.json"
     if plan_path.is_file() and not plan_path.is_symlink():
         try:
@@ -2230,6 +2249,11 @@ async def main() -> None:
                 raise RuntimeError("Audio alignment requires a completed B2 plan")
             run_metadata["audio_generation"] = await audio_task
             audio_joined = True
+            if getattr(args, "managed_target", None) is not None:
+                save_report("running", len(result.b12))
+                await asyncio.to_thread(
+                    sync_managed_outputs, output, args.managed_target
+                )
 
         if stop_stage is None and visual_plan is not None:
             # Fresh runs and --from B2 resumes go through the exact same recovery
@@ -2302,6 +2326,10 @@ async def main() -> None:
                 image_manifest = await _generate_images(output, visual_plan)
             run_metadata["image_generation"] = _image_summary(image_manifest)
             image_costs, _ = save_report("running", len(result.b12))
+            if getattr(args, "managed_target", None) is not None:
+                await asyncio.to_thread(
+                    sync_managed_outputs, output, args.managed_target
+                )
             _print_metric(
                 "B2 images",
                 perf_counter() - image_started,
@@ -2317,6 +2345,11 @@ async def main() -> None:
             if preview is not None:
                 run_metadata["video_preview"] = preview
                 print(f"  Static video ready: {preview['file']}", flush=True)
+                if getattr(args, "managed_target", None) is not None:
+                    save_report("running", len(result.b12))
+                    await asyncio.to_thread(
+                        sync_managed_outputs, output, args.managed_target
+                    )
             if getattr(args, "no_video", False):
                 run_metadata["video_generation"] = {"status": "skipped"}
             else:
