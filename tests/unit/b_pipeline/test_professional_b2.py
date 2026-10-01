@@ -190,6 +190,24 @@ def test_professional_boundary_cannot_be_replaced_by_media(
         ProfessionalB2Output.model_validate(_professional_anchor_output(kind, beats))
 
 
+@pytest.mark.parametrize(
+    ("kind", "visuals"),
+    [
+        ("intro", ("media_image", "avatar", "media_video")),
+        ("close", ("media_image", "avatar", "media_video")),
+    ],
+)
+def test_professional_anchor_cannot_be_moved_to_an_adjacent_beat(
+    kind: str, visuals: tuple[str, ...],
+) -> None:
+    beats = [
+        _professional_beat(f"1{chr(ord('A') + index)}", visual_type=visual)
+        for index, visual in enumerate(visuals)
+    ]
+    with pytest.raises(ValidationError, match=f"Professional {kind} .* beat"):
+        ProfessionalB2Output.model_validate(_professional_anchor_output(kind, beats))
+
+
 @pytest.mark.parametrize("kind", ["intro", "close"])
 def test_professional_boundary_cannot_regenerate_avatar(kind: str) -> None:
     beat = _professional_beat("1A")
