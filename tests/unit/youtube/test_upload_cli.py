@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -119,7 +120,7 @@ def test_bad_metadata_fails_before_google_or_sidecar(tmp_path: Path, monkeypatch
 
 def test_manual_confirmation_required_before_any_network(tmp_path: Path, monkeypatch):
     video, metadata = setup(tmp_path, monkeypatch)
-    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(cli.sys, "stdin", SimpleNamespace(isatty=lambda: False))
     no_network = Mock(side_effect=AssertionError("No network before confirmation"))
     monkeypatch.setattr(cli, "load_credentials", no_network)
     with pytest.raises(SystemExit) as exc:
