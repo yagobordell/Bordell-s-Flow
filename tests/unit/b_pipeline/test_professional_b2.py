@@ -12,7 +12,12 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-from ai_video_factory.bots.contracts import B11Output, B12Output, ProfessionalB2Output
+from ai_video_factory.bots.contracts import (
+    B11Output,
+    B12Output,
+    ProfessionalB2Output,
+    ProfessionalVisualBeat,
+)
 from ai_video_factory.bots.workflow import run_b_pipeline
 from ai_video_factory.providers.image_grids import plan_image_jobs
 from ai_video_factory.providers.openai import OpenAIProvider
@@ -131,6 +136,35 @@ def test_professional_contract_requires_speaking_generated_shots_to_be_video(
     else:
         with pytest.raises(ValidationError, match="media_image must have audio=false"):
             ProfessionalB2Output.model_validate(data)
+
+
+@pytest.mark.parametrize(
+    "disclaimer",
+    [
+        "No specified brands or product claims.",
+        "No specified brands.",
+        "Without specific branding.",
+        "No product claims.",
+        "No readable brand names.",
+    ],
+)
+def test_professional_contract_rejects_stock_brand_disclaimers(
+    disclaimer: str,
+) -> None:
+    payload = {
+        "beat_id": "1A",
+        "text": "Show a simple routine.",
+        "beat_type": "action",
+        "visual_type": "media_image",
+        "prompt": f"Natural cleanser bottle on bathroom counter. {disclaimer}",
+        "reference": False,
+        "audio": False,
+    }
+    with pytest.raises(ValidationError, match="stock branding"):
+        ProfessionalVisualBeat.model_validate(payload)
+
+    payload["prompt"] = "Natural cleanser bottle with ordinary printed packaging."
+    assert ProfessionalVisualBeat.model_validate(payload).prompt == payload["prompt"]
 
 
 def test_professional_contract_accepts_regenerated_avatar() -> None:
