@@ -21,7 +21,8 @@ def test_youtube_client_uses_minimal_v3_factory() -> None:
     discovery = ModuleType("googleapiclient.discovery")
     builder = Mock(return_value=object())
     discovery.build = builder  # type: ignore[attr-defined]
-    with patch.dict(sys.modules, {"googleapiclient": package, "googleapiclient.discovery": discovery}):
+    modules = {"googleapiclient": package, "googleapiclient.discovery": discovery}
+    with patch.dict(sys.modules, modules):
         credentials = object()
         client = build_youtube_client(credentials)
     assert client is builder.return_value
