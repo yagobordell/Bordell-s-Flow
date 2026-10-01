@@ -159,6 +159,11 @@ def upload_video(
                     delay = max(delay, retry_after)
                 sleep(delay)
                 continue
+            if reason in PERMANENT_REASONS:
+                raise YouTubeUploadError(
+                    "YouTube rejected the upload due to quota or upload limits. "
+                    "Do not retry this attempt without inspecting the channel."
+                ) from None
             if http == 401 or (http == 403 and reason not in TRANSIENT_REASONS):
                 raise YouTubeAuthenticationError(
                     "YouTube refused this request; verify authorization and upload permissions. "
