@@ -5,7 +5,7 @@ param(
     [Parameter(Mandatory)][string]$ExpectedPinnedImage,
     [ValidateRange(0.5, 12)][double]$DurationSeconds = 2,
     [ValidateRange(0, 2147483646)][int]$SeedBase = 4242,
-    [ValidateSet("default", "static-camera")][string]$I2VProfile = "default",
+    [ValidateSet("default", "static-camera", "cfg-b2", "cfg-b2-silent", "cfg-b2-triton")][string]$I2VProfile = "default",
     [string]$CompareWithRunId = "",
     [string]$RunId = ([Guid]::NewGuid().ToString("N")),
     [string]$OutputDir = "data/output/deployment-validation/ltx25-i2v",
@@ -35,8 +35,8 @@ if (-not [string]::IsNullOrWhiteSpace($CompareWithRunId) -and
     ($CompareWithRunId -notmatch "^[A-Za-z0-9_-]{1,80}$" -or $CompareWithRunId -eq $RunId)) {
     throw "-CompareWithRunId must be a different, existing safe baseline RunId."
 }
-if (-not [string]::IsNullOrWhiteSpace($CompareWithRunId) -and $I2VProfile -ne "static-camera") {
-    throw "-CompareWithRunId is only supported for the experimental static-camera profile."
+if (-not [string]::IsNullOrWhiteSpace($CompareWithRunId) -and $I2VProfile -eq "default") {
+    throw "-CompareWithRunId requires an experimental I2V profile."
 }
 if ($ExpectedPinnedImage -notmatch "^[^\s@]+@sha256:[0-9a-fA-F]{64}$") {
     throw "-ExpectedPinnedImage must be an immutable repo@sha256:digest reference."
@@ -48,7 +48,7 @@ $ImageRepository = [string]$I2V.image -replace ":[^/:]+$", ""
 if (-not $ExpectedPinnedImage.StartsWith("${ImageRepository}@sha256:")) {
     throw "The expected image digest must refer to the reviewed I2V Docker repository."
 }
-if ($I2VProfile -eq "static-camera" -and
+if ($I2VProfile -ne "default" -and
     $ExpectedPinnedImage -eq "docker.io/yagobordell/ai-video-factory@sha256:bffdca9cfaf5e6e19cd9f20b7f88a562c3af8cf2854d7bad56e1f66700a87564") {
     throw "The v11 image from i2v-smoke-003 does not contain static-camera inference; publish a NEW image first."
 }
@@ -144,7 +144,7 @@ try {
         "--timeout-seconds", $TimeoutSeconds,
         "--poll-seconds", 15
     )
-    if ($I2VProfile -eq "static-camera") { $RunnerArgs += @("--i2v-profile", "static-camera") }
+    if ($I2VProfile -ne "default") { $RunnerArgs += @("--i2v-profile", $I2VProfile) }
     & $Python $Runner @RunnerArgs
     if ($LASTEXITCODE -ne 0) { throw "I2V Postgres/R2 generation failed." }
     & $Python $Smoke validate --video (Join-Path $Output "video_clips\shot_001.mp4") --duration-seconds $DurationSeconds --output-dir $RunPath
