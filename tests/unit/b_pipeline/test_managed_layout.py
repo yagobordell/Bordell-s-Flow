@@ -48,6 +48,7 @@ def test_first_raw_png_and_txt_are_organized_and_other_scripts_untouched(
     )
     assert png == root / "Jorge" / "Jorge.png"
     assert png.is_file()
+    assert (root / "Jorge" / "meta").is_dir()
     assert script == root / "Jorge" / "test01" / "test01.txt"
     assert script.read_bytes() == original
     assert not (root / "test01.txt").exists()
@@ -80,7 +81,10 @@ def test_first_run_moves_a_custom_voice_reference_with_the_new_avatar(
         root, "Jorge", "first", resume=False, reference_audio="reference.wav"
     )
     assert avatar == root / "Jorge" / "Jorge.png"
-    assert (root / "Jorge" / "reference.wav").read_bytes() == b"voice reference"
+    assert (root / "Jorge" / "meta" / "reference.wav").read_bytes() == (
+        b"voice reference"
+    )
+    assert not (root / "Jorge" / "reference.wav").exists()
     assert not (root / "reference.wav").exists()
 
 
@@ -101,6 +105,7 @@ def test_qr_only_does_not_consume_pending_script(
     assert "--qr-only" in called[0]
     assert "--avatar" in called[0]
     assert (root / "first.txt").is_file()
+    assert (root / "Jorge" / "meta").is_dir()
     assert not (root / "Jorge" / "first").exists()
 
 
@@ -286,3 +291,78 @@ def test_tampered_published_file_is_rejected(
     (target / "test01.mp4").write_bytes(b"tampered")
     with pytest.raises(PublicationError, match="changed or missing"):
         publish_managed_run(work, script, target)
+
+
+
+def test_first_run_meta_migrates_existing_qr_voice_and_custom_audio(
+    tmp_path: Path,
+) -> None:
+    from ai_video_factory.providers.avatar_library import (
+        ensure_avatar_meta,
+        organize_avatar,
+    )
+
+    root = tmp_path / "data"
+    root.mkdir()
+    avatar = root / "Jorge.png"
+    _png(avatar)
+    (root / "sample.wav").write_bytes(b"reference")
+    (root / ".qr" / avatar.name).mkdir(parents=True)
+    (root / ".voice" / avatar.name).mkdir(parents=True)
+    (root / ".qr" / avatar.name / "qr.png").write_bytes(b"qr")
+    (root / ".qr" / avatar.name / "qr.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    (root / ".voice" / avatar.name / "voice.json").write_text(
+        json.dumps({"mode": "clone", "audio_filename": "sample.wav"}),
+        encoding="utf-8",
+    )
+    migrated = organize_avatar(avatar, root, reference_audio="sample.wav")
+    meta = ensure_avatar_meta(migrated, root, reference_audio="sample.wav")
+    assert (meta / "qr.png").read_bytes() == b"qr"
+    assert (meta / "qr.json").is_file()
+    assert (meta / "voice.json").is_file()
+    assert (meta / "sample.wav").read_bytes() == b"reference"
+    assert not (migrated.parent / "qr.png").exists()
+    assert not (migrated.parent / "voice.json").exists()
+    assert not (migrated.parent / "sample.wav").exists()
+    assert ensure_avatar_meta(migrated, root) == meta
+
+
+def test_managed_qr_and_voice_persist_inside_meta_without_paid_calls(
+    tmp_path: Path,
+) -> None:
+    from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
+    from ai_video_factory.providers.avatar_voice import ensure_avatar_voice
+
+    root = tmp_path / "data"
+    root.mkdir()
+    _png(root / "Jorge.png")
+    (root / "first.txt").write_text("First pending.", encoding="utf-8")
+    avatar, _ = run_managed.prepare_managed_script(
+        root, "Jorge", "first", resume=False
+    )
+    meta = avatar.parent / "meta"
+    qr = ensure_avatar_qr(
+        avatar_file=avatar, avatars_dir=root,
+        input_url="https://example.com/ebook", interactive=False,
+    )
+    voice = ensure_avatar_voice(
+        avatar_file=avatar, avatars_dir=root,
+        default_voice_id="fishaudio_80e34d5e0b2b4577a486f3a77e357261",
+        use_default=True, activate=False,
+    )
+    assert (meta / "qr.png").read_bytes() == qr.png
+    assert (meta / "qr.json").is_file()
+    assert voice.mode == "default"
+    assert (meta / "voice.json").is_file()
+    assert not (avatar.parent / "qr.png").exists()
+    assert not (avatar.parent / "voice.json").exists()
+    assert ensure_avatar_qr(
+        avatar_file=avatar, avatars_dir=root, interactive=False,
+    ) == qr
+    assert ensure_avatar_voice(
+        avatar_file=avatar, avatars_dir=root,
+        default_voice_id="fishaudio_80e34d5e0b2b4577a486f3a77e357261",
+        interactive=False, activate=False,
+    ) == voice
