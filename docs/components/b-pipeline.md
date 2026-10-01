@@ -32,6 +32,42 @@ Structured Outputs is appended at runtime.
   order. B1.2 workers finish as a parallel wave before any B2 worker begins; B2 workers
   then run as a parallel wave. Both waves have the same bounded concurrency limit.
 
+## Professional B2: demonstrator identity, natural labels and speaking intent
+
+The opt-in `profesional` bot chooses `visual_type` independently from casting:
+a still or video can show the selected avatar demonstrating a presenter-led
+example instead of an unrelated generic person. The preference applies
+where participation feels natural, including suitable second-person advice,
+but established third-party characters and genuinely identity-free product
+details are not recast as the avatar.
+
+For `reference: true` prompts showing a referenced person's **visible face**,
+B2 describes the intended expression and relevant gaze/attention for that
+specific scene. Identity is preserved without copying the source photo's fixed
+expression, pose, background or lighting. Object-only and hands-only prompts
+do not invent facial-expression details. Wardrobe and setting are preserved
+within a continuous occasion only when continuity calls for them.
+
+Naturally occurring packaging labels, signage and logos are allowed when they
+add authenticity or information. B2 does not ban all text, invent brands,
+claim unsupported product properties or automatically add editorial overlays.
+The professional **grid request builder** uses the same policy; the legacy
+`casero` grid's existing no-text behavior is unchanged.
+
+A clearly visible presenter making a simple, speaking-compatible
+demonstration can use `audio: true`, including on a `media_video` beat;
+the current LTX grouping routes that beat to A2V with the narration audio.
+A2V currently has a fixed speaking-to-camera prompt, so its suitability
+for detailed independent hand/action animation is limited. Choose
+`audio: false` with observational I2V/voice-over when the movement itself
+must be shown accurately, the mouth is obstructed, or the face is cropped
+out. These are editorial prompt instructions, not a deterministic
+computer-vision validator of generated facial expressions.
+
+The code-owned high-end phone-photography style remains separate from B2:
+`effective_image_prompt()` injects it during generation, after any
+numeric continuity marker.
+
 ## Script library, avatar selection and snapshot
 
 Keep any number of authoritative UTF-8 plain-text scripts directly in
