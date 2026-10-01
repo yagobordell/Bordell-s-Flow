@@ -54,6 +54,29 @@ def test_professional_b2_keeps_global_image_style_out_of_bot_prompt() -> None:
     assert "application injects the canonical image style" in instructions.lower()
 
 
+def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
+    prompt = (
+        files("ai_video_factory.bots.prompts")
+        .joinpath("b2_professional.md")
+        .read_text(encoding="utf-8")
+    )
+    # Casting preference must not become a media/presenter visual_type quota.
+    assert "Visual format and human casting are independent decisions" in prompt
+    assert "prefer using the actual presenter" in prompt
+    assert "Established story characters keep their own" in prompt
+    # The same photo can preserve identity without freezing expression and gaze.
+    assert "Never rely on the reference photo's fixed smile" in prompt
+    assert "If the face is not visible" in prompt
+    # Voice sync is allowed for simple speaking-compatible demonstrations, not
+    # misrepresented as complex action animation from the A2V model.
+    assert "Visible-presenter speech preference" in prompt
+    assert "A2V does not guarantee detailed" in prompt
+    assert "use audio=false and observational media_video" in prompt
+    # Scene-native packaging and signs are no longer banned indiscriminately.
+    assert "Do not systematically end prompts with" in prompt
+    assert "do not invent product claims" in prompt
+
+
 def test_professional_contract_accepts_regenerated_avatar() -> None:
     data = {
         "pipeline_stage": "B2",
@@ -136,6 +159,9 @@ def test_professional_grid_never_adds_amateur_header_and_scopes_reference() -> N
     assert "iPhone 16/17 Pro Max" not in grid["description"]
     assert "only for panels 1" in grid["description"].lower()
     assert grid["visual_style"] == "profesional"
+    assert "Allow natural scene-native labels, packaging and signage" in grid["description"]
+    assert "Do not add visible text unless" not in grid["description"]
+    assert "Do not add artificial captions, overlays or watermarks" in grid["description"]
     assert effective_image_prompt(
         grid["description"], visual_style="profesional"
     ).startswith("Render the following scene as authentic high-end iPhone 16/17 Pro Max")
@@ -156,6 +182,20 @@ def test_audio_ownership_and_regenerated_avatar_split_ltx_jobs() -> None:
     ]
     assert _group_beats(beats) == [
         ("a2v", 0, 1), ("a2v", 2, 2), ("a2v", 3, 3), ("i2v", 4, 4)
+    ]
+
+
+def test_speaking_presenter_media_video_uses_a2v_not_unsynced_i2v() -> None:
+    beats = [
+        {"block_id": 3, "beat_id": "3D", "visual_type": "media_video",
+         "prompt": "Presenter with visible mouth lightly pressing toner on cheeks.",
+         "reference": True, "audio": True},
+        {"block_id": 3, "beat_id": "3E", "visual_type": "media_video",
+         "prompt": "Hands-only close view of toner being spread.",
+         "reference": False, "audio": False},
+    ]
+    assert _group_beats(beats) == [
+        ("a2v", 0, 0), ("i2v", 1, 1)
     ]
 
 
