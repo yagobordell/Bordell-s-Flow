@@ -10,10 +10,10 @@ import hashlib
 import json
 import re
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
 from typing import Any
+from uuid import uuid4
 
 
 class PublicationError(RuntimeError):
@@ -219,7 +219,7 @@ def publish_completed_run(
         _verify_existing(target, expected)
         return target
 
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8]
+    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid4().hex[:8]
     target = parent / run_id
     staging = parent / ("." + run_id + ".partial")
     if target.exists() or target.is_symlink() or staging.exists() or staging.is_symlink():
