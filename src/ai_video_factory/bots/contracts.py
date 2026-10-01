@@ -190,9 +190,9 @@ class ProfessionalVisualBeat(Beat):
         elif not self.prompt.strip():
             raise ValueError("Professional image prompts must be nonempty")
         if self.prompt is not None and re.search(
-            r"\\b(?:no|without)\\s+(?:specified|specific)\\s+brand(?:s|ing)?\\b"
-            r"|\\bno\\s+(?:specified\\s+)?product\\s+claims?\\b"
-            r"|\\bno\\s+readable\\s+brand\\s+names?\\b",
+            r"\b(?:no|without)\s+(?:specified|specific)\s+brand(?:s|ing)?\b"
+            r"|\bno\s+(?:specified\s+)?product\s+claims?\b"
+            r"|\bno\s+readable\s+brand\s+names?\b",
             self.prompt,
             flags=re.IGNORECASE,
         ):
