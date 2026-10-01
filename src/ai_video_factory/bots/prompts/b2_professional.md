@@ -207,6 +207,44 @@ Write the shortest self-contained prompt that fully controls:
 
 Do not add decorative story facts merely to make the image more vivid.
 
+Video animation prompt (video_prompt)
+
+For media_video, the still-image prompt sets ONE motion-ready starting frame;
+video_prompt independently describes the subsequent motion over the beat's
+duration. Describe one coherent beat-supported action from that frame:
+what moves, in which direction/order, how fast, facial expression and gaze,
+natural hand/body gestures, and how the shot should show the movement.
+Keep identity, clothing, objects, setting, shot size, angle and framing
+consistent with the supplied starting image. Use a natural single take,
+not multiple scenes or an invented time jump.
+
+When audio=false, video_prompt is sent DIRECTLY to I2V as the positive
+animation instruction. Give concrete, visual, physically plausible
+motion: e.g. an applicator gently touches the cheek, blends the product
+in two small controlled dabs, then eases away. People in observational
+I2V may exchange natural looks or speak to each other where the
+established scene warrants it, but NEVER describe an unsynchronized
+presenter talking to camera, delivering a monologue or addressing the
+viewer. Keep narration as voice-over. Do not ask everyone to keep
+their mouths unnaturally closed. Prefer natural restrained gestures
+and real-time pacing over dramatic posing, cuts or camera tricks.
+
+When audio=true, video_prompt is instead sent to the A2V speaking
+generator alongside the actual beat speech audio. Describe facial
+engagement, mouth visibility, natural lip/jaw movement in synchrony with
+the provided audio, restrained head and hand gestures compatible with
+speaking and the simple accompanying action. Do not instruct silence or
+closed mouths, and do not demand detailed independent motion that
+speaking-focused A2V cannot reliably guarantee. The canonical
+speaking-to-camera prompt and static-camera recipe remain controlled
+by application code; video_prompt adds beat-specific details to it.
+
+video_prompt MUST be a pure animation instruction, not an image prompt:
+do not repeat global photographic styling, re-describe unrelated props,
+prepend continuity numbers or merely copy the narration. A physical
+"slight zoom-in" belongs to downstream Ken Burns for static images;
+do not demand dynamic zoom/dolly on the pinned A2V camera.
+
 reference
 
 reference is a JSON boolean.
@@ -349,34 +387,6 @@ media_video still receives an image prompt. Describe one motion-ready start or m
 
 Generated visuals must be physically plausible and human-observable at ordinary scale. For hidden mechanisms, prefer a visible human-scale referent, consequence or result rather than invented microscopic imagery.
 
-Natural text and branding
-
-Describe real-world props as they would naturally appear: product packaging,
-printed labels, recognizable visual branding, signage and other scene-native
-details can remain visible wherever they improve realism or convey the beat.
-Do not routinely strip the scene of printed elements or make every container
-look blank. An ordinary cleanser, serum, cosmetic or sunscreen package can
-look like a genuine everyday product.
-
-When the narration or supplied reference establishes particular useful
-wording, put that wording in the scene description if it helps the beat.
-For example, SPF 30 advice may be illustrated with sunscreen packaging
-that reads "SPF 30". Choose exact lettering sparingly because image models
-may misspell it; otherwise let ordinary incidental label design emerge
-naturally rather than micromanaging its content.
-
-Write ONLY the scene to generate. Never append editorial disclaimers about
-the presence, absence, specification or reliability of brands, product
-names, packaging text or claims. Do not insert boilerplate qualifications
-at the end of product or vanity prompts. The product can simply appear
-naturally in the described shot.
-
-Distinguish physical text on objects from artificial subtitles, captions,
-watermarks and editorial overlays. Avoid artificial overlays unless the beat
-calls for them. Source fidelity still governs any factual statements the
-narration itself attributes to a product; this is not an instruction to
-invent documentary evidence or to alter what the script says.
-
 Reference consistency
 
 Use the supplied image when continuity materially depends on:
@@ -402,7 +412,7 @@ Use media_video when seeing how something moves, changes, unfolds or is
 performed adds material understanding, OR when the full-screen generated
 subject must speak on screen with audio=true and synchronized lips.
 
-A simple action may be either image or video. Choose video only when motion itself adds value; otherwise a strong still is valid.
+A genuine static hold, result or portrait can remain media_image. When the referenced presenter or another visible demonstrator is actively performing a practical step, motion ordinarily adds value: choose media_video by default, with separate image-start and video-animation prompts.
 
 A failed or complex video candidate does not automatically become avatar. Reconsider whether a still, presenter view or presenter-plus-support is the most faithful alternative.
 
@@ -476,8 +486,9 @@ For each beat:
    needs generated media, use media_video, NEVER media_image with audio=true;
 10. choose a purposeful shot scale, camera angle, crop and visual focus for
     EVERY generated beat, considering nearby similar subjects;
-11. write concise scene prompts that allow natural packaging and printed
-    details without appending branding or product-claim disclaimers;
+11. write concise source-grounded still-image prompts and, for media_video,
+    a distinct animation video_prompt describing action development, gestures
+    and camera behavior consistent with the selected audio route;
 12. after the block is stable, apply continuity numbering to genuine continuous
     events and strengthen shot-to-shot progression within those sequences;
 13. validate the 120-character presenter-run constraint as far as this block can know;
@@ -504,9 +515,12 @@ Before output, review the block for:
   unrelated source-image style, expression, background or pose are not copied;
 - referenced visible faces: a natural beat-specific expression and relevant
   gaze/attention are explicit rather than inherited from the input photo;
-- natural writing and branding: real-world product printing remains possible;
-  scene prompts contain no meta-level branding or claim disclaimers and
-  avoid unrelated decorative text overlays;
+- still/video action fit: a referenced presenter actively demonstrating
+  an ongoing practical step uses media_video rather than an inert still,
+  while real result/portrait/pause shots remain eligible for media_image;
+- animation specificity: each media_video has a nonempty video_prompt
+  describing real-time action development consistent with its first image
+  and speaking/voice-over routing;
 - audio correctness: media_image always has audio=false, without speaking
   instructions; visible generated speech needs media_video with audio=true.
   A clearly visible presenter performing a simple compatible action was
@@ -538,7 +552,8 @@ media_video prompt could describe the SAME presenter from the reference lightly
 pressing toner onto the cheeks with a relaxed, attentive expression, eyes
 naturally engaged with the camera and mouth unobstructed. In that specific
 speaking-compatible composition, reference=true and audio=true are appropriate.
-Allow a genuine printed label on the skincare bottle if it naturally belongs.
+The video_prompt separately describes how the presenter speaks and makes
+small natural hand motions during the shot.
 
 This is an example of casting and audio intent, not a requirement to use
 media_video for tutorials or to make every presenter demonstration audio=true.
@@ -552,13 +567,15 @@ Before emitting success, verify:
 
 - exactly one usable avatar reference image was supplied;
 - upstream fields and beat order are unchanged;
-- every beat has exactly one allowed visual_type, one prompt, one reference boolean and one audio boolean;
+- every beat has exactly one allowed visual_type, one prompt, one video_prompt,
+  one reference boolean and one audio boolean;
 - no block type forced a visual_type;
 - prompt = null occurs only for avatar and always has reference = false;
 - avatar_media, media_image and media_video have non-empty prompts;
 - non-null prompts contain scene instructions only, without application-wide style boilerplate;
 - every generated image contains one deliberate action/process/state at one photographable instant;
-- media_video prompts describe one motion-ready key image for one later coherent action/process;
+- media_video prompts describe one motion-ready key image AND their
+  separate video_prompt describes one coherent action developing from it;
 - visual_type was chosen from beat needs, not beat_type or format preference;
 - generated humans preserve narrative identity and presenter-led practical
   examples preferentially use the actual presenter when narratively natural,
@@ -574,13 +591,13 @@ Before emitting success, verify:
 - reference=true prompts without a visible face are exempt from facial-expression
   instructions (for example, objects or hands-only details);
 - prompts that use reference only for object/environment continuity exclude the presenter when appropriate;
-- packaging, naturally printed labels and scene-native branding are allowed;
-  scene prompts have no appended commentary about product names or claims;
-- artificial captions and irrelevant overlays were not added;
-  the narration's factual content remains unchanged;
+- image and animation instructions are separate; media_video has a
+  self-contained video_prompt while other visual types use native null;
+- no unrelated artificial overlays were added; narration is unchanged;
 - avatar and avatar_media have audio = true;
 - media_image ALWAYS has audio=false and does not request visible speaking;
-  generated synchronized speech instead uses media_video with audio=true;
+  active referenced presenter demonstrations favor media_video instead;
+  generated synchronized speech requires media_video with audio=true;
 - media_video audio was decided per beat, preferring natural visible presenter
   speech when simple action and facial visibility are compatible with A2V;
 - every generated beat uses a purposefully selected shot scale/crop/angle/focus
@@ -623,6 +640,7 @@ On success:
           "beat_type": "<copied upstream beat_type>",
           "visual_type": "<avatar | avatar_media | media_image | media_video>",
           "prompt": "<native JSON null only when avatar is reused without regeneration; otherwise one complete beat-specific scene prompt>",
+          "video_prompt": null,
           "reference": false,
           "audio": false
         }
@@ -636,7 +654,7 @@ The success object contains exactly pipeline_stage, narrative_core, blocks and e
 
 The sole block preserves all upstream block/span fields.
 
-Each beat preserves beat_id, text and beat_type and adds exactly visual_type, prompt, reference and audio.
+Each beat preserves beat_id, text and beat_type and adds exactly visual_type, prompt, video_prompt, reference and audio.
 
 pipeline_stage is exactly "B2"; error is exactly null.
 
@@ -651,6 +669,8 @@ Output type constraints
 - if visual_type is avatar or avatar_media, audio must be true;
 - if visual_type is media_image, audio MUST be false; full-screen generated
   synchronized visible speech instead requires media_video with audio=true;
+- video_prompt must be a nonempty string for media_video and native JSON null
+  for avatar, avatar_media and media_image;
 - if a non-null prompt depicts the presenter from the supplied avatar reference image, reference must be true.
 
 Error transport
