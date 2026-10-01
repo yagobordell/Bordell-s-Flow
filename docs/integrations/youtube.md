@@ -214,7 +214,9 @@ Supported CLI overrides include --channel, --title, --description, repeated
 --publish-at, --recording-date, and optional Boolean flags such as
 --made-for-kids or --no-made-for-kids. Localizations remain expressible
 through youtube.json. Precedence is explicit CLI > JSON > Settings >
-internal defaults. The thumbnail_path field may be null or absent;
+internal defaults. Language codes are checked for a BCP-47 shape locally;
+YouTube remains responsible for accepting specific languages. The
+thumbnail_path field may be null or absent;
 non-null thumbnails are rejected until phase 4. The request model is
 strict and rejects unknown metadata keys.
 
