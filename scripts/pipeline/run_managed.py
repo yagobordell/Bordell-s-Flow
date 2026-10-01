@@ -15,7 +15,16 @@ from typing import Sequence
 
 from ai_video_factory.managed_layout import sync_managed_outputs
 from ai_video_factory.providers.avatar_library import organize_avatar
-from scripts.pipeline.run_b_pipeline import available_avatars, load_avatar_png
+
+try:
+    # Imported as a package by tests.
+    from scripts.pipeline.run_b_pipeline import available_avatars, load_avatar_png
+except ModuleNotFoundError as exc:
+    if exc.name not in {"scripts", "scripts.pipeline"}:
+        raise
+    # Called directly by run.ps1: Python puts scripts/pipeline, not the
+    # repository root, on sys.path[0].
+    from run_b_pipeline import available_avatars, load_avatar_png
 
 CORE = Path(__file__).with_name("run_b_pipeline.py")
 WORK_ROOT = Path(".video_factory_work")
@@ -215,6 +224,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("\n".join(avatar_names) if avatar_names else "No PNG avatars found in data/")
         return 0
     if "--qr-only" in flags:
+        flags.remove("--qr-only")
         # QR setup needs only the PNG; it must not consume or move a pending TXT.
         if "--avatar" in flags:
             index = flags.index("--avatar")
