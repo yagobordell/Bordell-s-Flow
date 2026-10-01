@@ -53,3 +53,12 @@ models/
 *.mp4
 *.mov
 *.webm
+
+# YouTube: OAuth client and tokens must live OUTSIDE this repository.
+# These rules are defense in depth; arbitrary channel token filenames cannot be
+# reliably ignored by pattern alone.
+**/client_secret.json
+/youtube-keystore/
+/keystores/
+/config/youtube/
+**/.youtube-token-*.tmp

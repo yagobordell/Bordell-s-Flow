@@ -1,5 +1,7 @@
 from pathlib import Path
+from typing import Literal
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -64,6 +66,34 @@ class Settings(BaseSettings):
 
     inference_client_poll_seconds: float = 5.0
     inference_client_timeout_seconds: float = 3600.0
+
+    # YouTube publishing is optional and never loads credentials at application startup.
+    youtube_enabled: bool = False
+    youtube_keystore_dir: Path | None = None
+    youtube_channel: str | None = None
+    youtube_default_privacy: Literal["private", "unlisted", "public"] = "private"
+    youtube_default_category_id: str = Field(default="22", pattern=r"^[0-9]+$")
+    youtube_default_language: str | None = None
+    youtube_made_for_kids: bool = False
+    youtube_contains_synthetic_media: bool = True
+    youtube_notify_subscribers: bool = False
+    youtube_embeddable: bool = True
+    youtube_public_stats_viewable: bool = True
+    youtube_license: Literal["youtube", "creativeCommon"] = "youtube"
+
+    @field_validator("youtube_channel")
+    @classmethod
+    def validate_youtube_channel(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        from ai_video_factory.integrations.youtube.store import validate_channel_name
+
+        try:
+            return validate_channel_name(value)
+        except ValueError as exc:
+            raise ValueError("Invalid YOUTUBE_CHANNEL") from exc
+        except RuntimeError as exc:
+            raise ValueError("Invalid YOUTUBE_CHANNEL") from exc
 
     output_dir: Path = Path("data/output")
     temp_dir: Path = Path("data/tmp")
