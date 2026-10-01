@@ -227,6 +227,10 @@ def _import_csv(path: Path) -> list[dict[str, Any]]:
             {"time": row.get("Time", ""), "text_log": row["Text Log"]}
             for row in reader
             if row.get("Text Log")
+            and (
+                "LTX25_I2V_" in row["Text Log"]
+                or "INFERENCE_JOB_TASK_DONE" in row["Text Log"]
+            )
         ]
 
 
