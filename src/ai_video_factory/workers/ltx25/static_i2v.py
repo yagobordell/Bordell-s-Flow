@@ -12,8 +12,6 @@ from collections.abc import Sequence
 from contextlib import nullcontext
 
 import torch
-
-from .i2v_metrics import I2VPhaseMetrics
 from ltx_core.components.guiders import MultiModalGuider, MultiModalGuiderParams
 from ltx_core.components.noisers import GaussianNoiser
 from ltx_core.model.video_vae import AUTO_TILING, AutoTiling, TilingConfig
@@ -38,6 +36,8 @@ from ltx_pipelines.utils.types import (
     ModalitySpec,
     PipelineOutput,
 )
+
+from .i2v_metrics import I2VPhaseMetrics
 
 # Independently pinned recipe: changes to the A2V experiment must not silently
 # alter existing I2V job identities or replay a different R2 generation.
@@ -136,7 +136,9 @@ def generate_static_camera(  # noqa: PLR0913
     # Stage 1: Initial low resolution video generation.
     stage_1_sigmas = stage_1_sigmas.to(dtype=torch.float32, device=self.device)
     stage_1_w, stage_1_h = width // 2, height // 2
-    conditioning_phase = metrics.phase("image_conditioning_stage1_seconds") if metrics else nullcontext()
+    conditioning_phase = (
+        metrics.phase("image_conditioning_stage1_seconds") if metrics else nullcontext()
+    )
     with conditioning_phase:
         stage_1_conditionings = self.image_conditioner(
             lambda enc: combined_image_conditionings(
@@ -187,7 +189,9 @@ def generate_static_camera(  # noqa: PLR0913
         upscaled_video_latent = self.upsampler(video_state.latent[:1])
 
     stage_2_sigmas = stage_2_sigmas.to(dtype=torch.float32, device=self.device)
-    conditioning_phase = metrics.phase("image_conditioning_stage2_seconds") if metrics else nullcontext()
+    conditioning_phase = (
+        metrics.phase("image_conditioning_stage2_seconds") if metrics else nullcontext()
+    )
     with conditioning_phase:
         stage_2_conditionings = self.image_conditioner(
             lambda enc: combined_image_conditionings(
