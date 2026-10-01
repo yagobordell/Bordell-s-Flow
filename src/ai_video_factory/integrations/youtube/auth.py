@@ -33,7 +33,8 @@ def _oauth_client_file(store: YouTubeStore) -> Path:
         data = json.loads(path.read_text(encoding="utf-8"))
         installed = data["installed"]
         if not isinstance(installed, dict) or not all(
-            isinstance(installed.get(key), str) and installed[key] for key in _REQUIRED_CLIENT_FIELDS
+            isinstance(installed.get(key), str) and installed[key]
+            for key in _REQUIRED_CLIENT_FIELDS
         ):
             raise ValueError("incomplete")
     except (OSError, ValueError, TypeError, KeyError, UnicodeError):
@@ -67,7 +68,9 @@ def _google_credentials(info: dict[str, Any]) -> Any:
     try:
         return Credentials.from_authorized_user_info(info, scopes=[YOUTUBE_UPLOAD_SCOPE])
     except (ValueError, TypeError, KeyError):
-        raise YouTubeCredentialsError("Invalid YouTube credentials; reauthorize the channel") from None
+        raise YouTubeCredentialsError(
+            "Invalid YouTube credentials; reauthorize the channel"
+        ) from None
 
 
 def _serialize(credentials: Any) -> dict[str, Any]:
@@ -77,7 +80,9 @@ def _serialize(credentials: Any) -> dict[str, Any]:
         _check_stored_info(data)
         return data
     except (TypeError, ValueError, KeyError, AttributeError, YouTubeCredentialsError):
-        raise YouTubeCredentialsError("Incomplete YouTube credentials; reauthorize the channel") from None
+        raise YouTubeCredentialsError(
+            "Incomplete YouTube credentials; reauthorize the channel"
+        ) from None
 
 
 def _request() -> Any:
