@@ -660,73 +660,78 @@ mitad de artefactos está disponible. Las comprobaciones automáticas son
 técnicas y no acreditan visualmente la sincronización de labios o la
 inmovilidad de cámara; se requiere revisión de una generación real en Salad.
 
-## Immutable human-facing results (separate from the recovery workspace)
+## Organización automática de guiones por avatar (nuevo `run.ps1`)
 
-The pipeline continues to work under `data/output/<script>/` with its original
-B1.1/B1.2/B2 checkpoints, paid image request states, Fish/STT attempts, R2/Postgres
-job manifests, preview, and LTX clip files. **Never move or delete this working
-directory during an unfinished run.** In particular, the `--from`,
-`--images-only`, `--resume-audio`, and `--generate-video` recovery commands
-still read it.
-
-After the **actual LTX final video** completes, the runner automatically
-copies verified results into an independent, immutable publication:
+El acceso directo `run.ps1` usa ahora **data/ como punto de entrada**.
+Para estrenar un avatar, coloca únicamente su PNG y el primer guion TXT
+directamente dentro de `data/`. Al iniciar una ejecución, el programa
+organiza los archivos automáticamente:
 
 ```text
 data/
-  avatar/                          # New avatar PNG goes here before first use
-  input/scripts/                   # Original UTF-8 script library
-  output/<script>/                 # Original resumable working directory
-  results/<avatar>/<script>/<UTC timestamp>-<unique ID>/
-    Guion/<script>.txt             # Exact original script bytes
-    Bots/
-      B1.1/                        # Original bot inputs, outputs and checkpoints
-      B1.2/
-      B2/
-      visual_plan.json
-      avatar_voice.json
-      run_report.json              # Snapshot, without the mutable publication pointer
-    Media/
-      imagenes/
-        avatar.png
-        qr.png
-        block_1/1B.png             # Generated images from the completed manifest
-        grids/                     # If the image manifest has grid assets
-      audios/
-        narracion.wav              # Actual selected final Fish narration
-        bloques/bloque_1.mp3       # Actual selected TTS block audio, format preserved
-    <script>.mp4                   # Final LTX video at the publication root
-    manifest.json                  # Relative paths and SHA-256 for the snapshot
+  Jorge/
+    Jorge.png                      # Avatar persistente; qr/voice junto al PNG
+    test02.txt                     # Guion nuevo PENDIENTE, todavía no ejecutado
+    test01/                        # Guion ya INICIADO
+      test01.txt                   # Guion original, byte por byte
+      outputs/
+        B1.1/                      # Inputs, outputs y checkpoints de cada bot
+        B1.2/
+        B2/
+        visual_plan.json
+        run_report.json
+        avatar_voice.json
+      media/                       # Aparece al terminar correctamente el LTX
+        images/
+          avatar.png
+          qr.png
+          block_1/1B.png
+        audio/
+          narracion.wav
+          bloques/bloque_1.wav
+      test01.mp4                   # Vídeo final, DIRECTAMENTE en esta carpeta
+      manifest.json               # Solo presente tras una publicación completa
 ```
 
-The snapshot contains **only the image and audio assets selected by the saved
-manifests**, not superseded paid tasks or temporary inference files. The
-publication is verified before an atomic directory rename exposes it as
-finished. An identical publishing retry checks every published file and reuses
-the same folder. If the saved completed run changes (for example after a B2
-rerun), publishing creates a **new ID** and never changes an older result. A
-missing or modified original or published asset causes a safe failure rather
-than silently accepting incomplete files.
-
-A stopped planning run, `--no-image`, a static-preview-only `--no-video`
-run, or a run where LTX remains deferred **does not publish a final result**;
-the working directory stays available for later completion. The normal
-`--generate-video`, `--images-only` and audio resume flows publish after
-they successfully finish LTX. To publish a previously completed run again,
-without starting any provider or GPU requests:
+Después del primer guion, añade los siguientes TXT pendientes **sueltos
+dentro de `data/Jorge/`**. El programa distingue automáticamente entre
+TXT sueltos (pendientes) y carpetas con el mismo nombre (iniciados). Al
+arrancar un guion pendiente lo mueve a `data/Jorge/<guion>/<guion>.txt`;
+**no** mueve ni modifica los otros TXT pendientes. Los archivos `outputs/`
+pueden aparecer durante una ejecución parcial; el archivo `manifest.json`
+indica que ya se ha publicado un vídeo LTX completamente verificado.
+Una ejecución interrumpida se reanuda desde su carpeta, no vuelve a tratarse
+como un guion pendiente. Los nuevos nombres de guion no reemplazan resultados
+anteriores; se rechaza una generación nueva con un nombre que ya tenga carpeta.
 
 ```powershell
-.\run.ps1 mi_guion --publish-only
+# Primera vez: data/Jorge.png y data/test01.txt.
+.\run.ps1 test01 Jorge
+
+# Después, añade data/Jorge/test02.txt.
+.\run.ps1 test02 Jorge --no-video
+
+# Reanudar test02 desde un vídeo previo validado:
+.\run.ps1 test02 Jorge --generate-video
+
+# Publicar un LTX YA terminado, sin llamadas de generación:
+.\run.ps1 test01 Jorge --publish-only
 ```
 
-The default publication root is `data/results/`. Use
-`--results-root D:\VideoResults` to choose a different independent directory.
-The existing `--output` option still controls the **working** output root
-and can also be used with `--publish-only` to find a custom working directory.
+El sistema conserva **todos** los checkpoints, registros de trabajos pagados
+y manifiestos originales en la carpeta interna
+`.video_factory_work/<avatar>/<guion>/`, independiente del árbol visible.
+No borres esa carpeta si necesitas reanudar una ejecución. El publicador
+comprueba el guion, los hashes de imágenes y audio y el MP4 antes de crear el
+`manifest.json` final. La estructura publicada contiene solo los recursos
+elegidos por los manifiestos actuales, no generaciones descartadas. Publicar
+dos veces el mismo resultado verifica y reutiliza los archivos ya presentes;
+si un archivo publicado fue modificado o falta, falla sin regenerar ni
+sobrescribirlo. Se conserva `--legacy-layout` para ejecutar directamente
+el runner previo con `data/avatar`, `data/input/scripts`, `data/output`
+y `data/results` como antes.
 
-**Important distinction:** new full generations of the same script still
-replace `data/output/<script>/` as before (subject to the existing paid-job
-safety checks), but they cannot overwrite any previously published result.
-Keep the working directory if you need to resume or re-edit that specific run;
-a publication is a human-facing deliverable, not a substitute for its
-recoverable checkpoint tree.
+Los ejemplos anteriores de este documento que citan `data/input/scripts` o
+`data/output/<script>` corresponden al runner **histórico**:
+usa `uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py`
+o `.\run.ps1 --legacy-layout ...` para reproducir exactamente esos comandos.
