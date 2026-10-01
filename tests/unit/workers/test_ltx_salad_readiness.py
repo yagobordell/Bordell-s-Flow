@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Callable
-from copy import deepcopy
 import json
 import sys
+from collections.abc import Callable
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -249,9 +249,9 @@ def _local_ready_configuration(
         encoding="utf-8",
     )
     (tmp_path / ".env").write_text(
-        "SALAD_ORGANIZATION=correct-organization\\n"
-        "SALAD_PROJECT=correct-project\\n"
-        "SALAD_API_KEY=dummy-test-only\\n",
+        "SALAD_ORGANIZATION=correct-organization\n"
+        "SALAD_PROJECT=correct-project\n"
+        "SALAD_API_KEY=dummy-test-only\n",
         encoding="utf-8",
     )
     for name in ("SALAD_ORGANIZATION", "SALAD_PROJECT", "SALAD_API_KEY"):
@@ -335,11 +335,11 @@ def test_readiness_fails_closed_for_missing_or_unsafe_account(
     if not replacement:
         env_file = tmp_path / ".env"
         env_file.write_text(
-            "\\n".join(
+            "\n".join(
                 line
                 for line in env_file.read_text(encoding="utf-8").splitlines()
                 if not line.startswith(env_name + "=")
-            ) + "\\n",
+            ) + "\n",
             encoding="utf-8",
         )
     else:
