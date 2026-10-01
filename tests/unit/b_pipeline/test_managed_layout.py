@@ -633,3 +633,71 @@ def test_sync_never_claims_old_mp4_matches_regenerated_audio(
     with pytest.raises(PublicationError, match="internal narration has changed"):
         sync_managed_outputs(work, target)
     assert (target / "test01.mp4").read_bytes() == b"final MP4 bytes"
+
+
+
+def test_completed_audio_remains_visible_when_later_pipeline_stage_fails(
+    managed_complete: tuple[Path, Path, Path],
+) -> None:
+    work, _script, target = managed_complete
+    _set_run(
+        work,
+        status="failed",
+        image_generation={"status": "incomplete"},
+        video_preview={"status": "incomplete"},
+        video_generation={"status": "incomplete"},
+    )
+    (work / "images" / "manifest.json").unlink()
+    sync_managed_outputs(work, target)
+    assert (target / "media" / "audio" / "narracion.wav").read_bytes() == (
+        b"master audio"
+    )
+    assert (target / "media" / "audio" / "bloques" / "bloque_1.wav").is_file()
+    public = json.loads((target / "outputs" / "run_report.json").read_text())
+    assert public["run"]["internal_status"] == "failed"
+    assert public["run"]["status"] == "partial"
+    assert public["run"]["published_media"]["audio"] == "completed"
+
+
+def test_claimed_completed_preview_with_missing_video_is_rejected(
+    managed_complete: tuple[Path, Path, Path],
+) -> None:
+    work, _script, target = managed_complete
+    preview_sha = _put(work, "preview/preview.mp4", b"static preview")
+    _put(work, "preview/timeline.json", b"{}")
+    _json(work, "preview/manifest.json", {
+        "status": "completed",
+        "file": "preview/preview.mp4",
+        "sha256": preview_sha,
+        "timeline_file": "preview/timeline.json",
+        "audio_file": "audio/runs/a/narration.wav",
+    })
+    _set_run(
+        work,
+        video_generation={"status": "deferred"},
+        video_preview={
+            "status": "completed",
+            "file": "preview/preview.mp4",
+            "sha256": preview_sha,
+        },
+    )
+    (work / "preview" / "preview.mp4").unlink()
+    with pytest.raises(PublicationError, match="Missing|escaping"):
+        sync_managed_outputs(work, target)
+    assert not (target / "outputs" / "run_report.json").exists()
+    assert not (target / "media" / "preview" / "manifest.json").exists()
+
+
+def test_saved_ltx_video_is_rejected_if_it_uses_other_narration(
+    managed_complete: tuple[Path, Path, Path],
+) -> None:
+    work, _script, target = managed_complete
+    manifest = json.loads(
+        (work / "video" / "runs" / "v" / "manifest.json").read_text()
+    )
+    manifest["master_audio_sha256"] = _sha(b"stale old narration")
+    _json(work, "video/runs/v/manifest.json", manifest)
+    with pytest.raises(PublicationError, match="does not match its LTX/audio"):
+        sync_managed_outputs(work, target)
+    assert not (target / "test01.mp4").exists()
+    assert not (target / "outputs" / "run_report.json").exists()
