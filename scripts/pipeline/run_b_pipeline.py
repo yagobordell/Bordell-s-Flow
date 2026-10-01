@@ -1632,8 +1632,12 @@ async def _run_audio_only(
     await asyncio.to_thread(
         _publish_if_ready, output, script_file, results_root, managed_target
     )
+    display_path = (
+        managed_target / "media" / "audio" / "narracion.wav"
+        if managed_target is not None else output / artifact["file"]
+    )
     print(
-        f"  {'Reused' if reused_audio else 'Fish Audio ready'}: {artifact['file']} "
+        f"  {'Reused' if reused_audio else 'Fish Audio ready'}: {display_path} "
         f"(voice {artifact['voice_id']})",
         flush=True,
     )
