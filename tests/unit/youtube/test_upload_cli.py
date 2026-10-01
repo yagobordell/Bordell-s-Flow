@@ -55,7 +55,8 @@ def test_dry_run_is_offline_and_does_not_write_attempt(tmp_path: Path, monkeypat
     assert '"channel_alias_unverified": "test01"' in report
     assert "DUMMY_SECRET" not in report
     assert "Dry run successful" in report
-    assert not list(tmp_path.glob("*.youtube-upload-attempt.json"))
+    assert not list(tmp_path.glob("*.youtube_publish.json"))
+    assert not (tmp_path / "youtube-publications").exists()
     no_network.assert_not_called()
 
 
@@ -83,12 +84,12 @@ def test_real_upload_writes_receipt_then_second_run_never_reuploads(
     cmd = argv(video, metadata, "--yes")
     assert cli.main(cmd) == 0
     assert upload_mock.call_count == 1
-    record = json.loads(next(tmp_path.glob("*.youtube-upload-attempt.json")).read_text())
+    record = json.loads(next(tmp_path.glob("*.youtube_publish.json")).read_text())
     assert record["video_id"] == "video_ABC_123"
     assert record["status"] == "completed"
     assert cli.main(cmd) == 0
     assert upload_mock.call_count == 1
-    assert "Reusing previous completed upload" in capsys.readouterr().out
+    assert "YouTube publication complete or safely reused" in capsys.readouterr().out
 
 
 def test_altered_metadata_blocks_duplicate_attempt(tmp_path: Path, monkeypatch):
