@@ -117,7 +117,10 @@ def _image_sources(
         qr = avatar.get("qr")
         if isinstance(qr, dict):
             entries["qr.png"] = _source(work, qr.get("file"), qr.get("sha256"))
-    return status, entries
+    published_status = (
+        "completed" if status == "completed" and claim is not None else "incomplete"
+    )
+    return published_status, entries
 
 
 def _preview_sources(
@@ -276,6 +279,14 @@ def public_report(
     if not isinstance(run, dict):
         raise PublicationError("Invalid run report")
     run.pop("publication", None)
+    # A planning/audio-only execution may say completed internally without
+    # having created a video. The visible report describes delivery status.
+    run["internal_status"] = run.get("status")
+    run["status"] = (
+        "completed"
+        if all(stages.get(key) == "completed" for key in ("audio", "images", "video"))
+        else "partial"
+    )
     run["asset_path_base"] = "script_folder"
     run["published_media"] = dict(stages)
     audio = run.get("audio_generation")
@@ -328,6 +339,8 @@ def sync_managed_media(
         statuses["images"] = status
     preview = _preview_sources(work, run)
     if preview is not None:
+        if statuses.get("audio") != "completed" or statuses.get("images") != "completed":
+            raise PublicationError("Completed preview requires verified current audio and images")
         _publish_stage(target, "preview", preview, "completed")
         statuses["preview"] = "completed"
     video = _final_video(work, run, statuses)
