@@ -88,9 +88,8 @@ def test_bad_images_fail_before_google_request(tmp_path: Path, bad: str) -> None
 
 def test_real_oversized_thumbnail_is_rejected(tmp_path: Path) -> None:
     target = image_file(tmp_path)
-    with target.open("ab") as stream:
-        stream.seek(MAX_THUMBNAIL_BYTES)
-        stream.write(b"x")
+    with target.open("r+b") as stream:
+        stream.truncate(MAX_THUMBNAIL_BYTES + 1)
     with pytest.raises(YouTubeValidationError):
         validate_thumbnail(target)
 
