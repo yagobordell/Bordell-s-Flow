@@ -20,7 +20,7 @@ class PublicationError(RuntimeError):
     """A source or published snapshot is unsafe, incomplete or inconsistent."""
 
 
-_ID = re.compile(r"\\d{8}T\\d{6}Z-[0-9a-f]{8}\\Z")
+_ID = re.compile(r"\d{8}T\d{6}Z-[0-9a-f]{8}\Z")
 
 
 def _digest(path: Path) -> str:
@@ -73,7 +73,7 @@ def _publication_root(root: Path, work: Path, script: Path) -> Path:
 
 def _collect(
     work: Path, script: Path, report: dict[str, Any]
-) -> tuple[str, dict[str, tuple[Path, str]]]:
+) -> tuple[str, dict[str, tuple[Path | bytes, str]]]:
     run = report.get("run")
     if not isinstance(run, dict) or run.get("status") != "completed":
         raise PublicationError("The B-pipeline run has not completed")
@@ -103,7 +103,7 @@ def _collect(
     ):
         raise PublicationError("The visual plan has an invalid avatar name")
 
-    entries: dict[str, tuple[Path, str]] = {}
+    entries: dict[str, tuple[Path | bytes, str]] = {}
 
     def add(destination: str, name: str, sha: object | None = None) -> None:
         if destination in entries:
@@ -123,8 +123,17 @@ def _collect(
             if item.is_file():
                 rel = item.relative_to(work).as_posix()
                 add("Bots/" + rel, rel)
-    for name in ("visual_plan.json", "run_report.json", "avatar_voice.json"):
+    for name in ("visual_plan.json", "avatar_voice.json"):
         add("Bots/" + name, name)
+    # Strip the mutable publication pointer: snapshots stay identical on safe retries.
+    snapshot = json.loads(json.dumps(report, ensure_ascii=False))
+    snapshot["run"].pop("publication", None)
+    snapshot_bytes = (
+        json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n"
+    ).encode("utf-8")
+    entries["Bots/run_report.json"] = (
+        snapshot_bytes, hashlib.sha256(snapshot_bytes).hexdigest()
+    )
     add("Media/imagenes/avatar.png", avatar.get("file"), avatar.get("sha256"))
     qr = avatar.get("qr")
     if isinstance(qr, dict):
@@ -228,11 +237,14 @@ def publish_completed_run(
         for name, (original, sha) in sorted(entries.items()):
             dest = staging / name
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(original, dest, follow_symlinks=False)
+            if isinstance(original, bytes):
+                dest.write_bytes(original)
+            else:
+                shutil.copyfile(original, dest, follow_symlinks=False)
             if _digest(dest) != sha:
                 raise PublicationError(f"Copy changed during publication: {original}")
         (staging / "manifest.json").write_text(
-            json.dumps(expected, ensure_ascii=False, indent=2) + "\\n",
+            json.dumps(expected, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         _verify_existing(staging, expected)
@@ -256,7 +268,7 @@ def publish_completed_run(
     if temporary.is_symlink():
         raise PublicationError("Linked temporary run report")
     temporary.write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\\n",
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
     temporary.replace(report_path)
