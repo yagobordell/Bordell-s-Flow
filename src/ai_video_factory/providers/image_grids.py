@@ -56,8 +56,16 @@ def _grid_prompt(
         + "\n\nVoice over context:\n"
         + "\n".join(voice_over)
         + "\n\nUse the thinnest possible straight white separator lines between all grid cells"
-        + ("\n\nDo not add text to the image." if visual_style == "casero"
-           else "\n\nDo not add visible text unless a panel prompt explicitly requires it.")
+        + (
+            "\n\nDo not add text to the image."
+            if visual_style == "casero"
+            else (
+                "\n\nAllow natural scene-native labels, packaging and signage when "
+                "appropriate to a panel. Preserve exact readable text only when its "
+                "wording is supported by that panel; do not invent brands or claims. "
+                "Do not add artificial captions, overlays or watermarks."
+            )
+        )
     )
     if visual_style == "profesional":
         reference_panels = [str(i) for i, p in enumerate(panels, 1) if p.get("reference")]
