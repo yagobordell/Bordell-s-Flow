@@ -190,6 +190,10 @@ class ProfessionalVisualBeat(Beat):
             raise ValueError("Professional image prompts must be nonempty")
         if self.visual_type in {"avatar", "avatar_media"} and not self.audio:
             raise ValueError("Presenter visuals must have audio=true")
+        if self.visual_type == "media_image" and self.audio:
+            raise ValueError(
+                "media_image must have audio=false; use media_video for synchronized speech"
+            )
         if self.visual_type == "avatar" and self.prompt is not None and not self.reference:
             raise ValueError("Regenerated presenter images require the avatar reference")
         return self
