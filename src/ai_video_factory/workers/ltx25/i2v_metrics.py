@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 class I2VPhaseMetrics:
     def __init__(self, torch_module: Any, device: Any) -> None:
         self._cuda = getattr(torch_module, "cuda", None)
+        self._device = device
         self._is_cuda = str(device).startswith("cuda") and bool(
             self._cuda is not None and self._cuda.is_available()
         )
