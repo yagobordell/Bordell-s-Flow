@@ -33,7 +33,19 @@ TRANSIENT_REASONS = frozenset({
 PERMANENT_REASONS = frozenset({
     "dailyLimitExceeded", "quotaExceeded", "uploadLimitExceeded",
 })
-KNOWN_REASONS = TRANSIENT_REASONS | PERMANENT_REASONS
+# Fixed Google-defined reasons only. Never echo arbitrary reason, response or URI.
+AUTH_REASONS = frozenset({
+    "insufficientPermissions", "youtubeSignupRequired", "authenticatedUserNotChannel",
+    "accountDelegationForbidden", "authenticatedUserAccountClosed",
+    "authenticatedUserAccountSuspended", "channelClosed", "channelNotFound",
+    "channelSuspended",
+})
+POLICY_REASONS = frozenset({"forbiddenPrivacySetting", "forbiddenLicenseSetting"})
+CONFIG_REASONS = frozenset({"accessNotConfigured", "SERVICE_DISABLED", "serviceDisabled"})
+KNOWN_REASONS = (
+    TRANSIENT_REASONS | PERMANENT_REASONS | AUTH_REASONS
+    | POLICY_REASONS | CONFIG_REASONS | {"forbidden"}
+)
 
 
 def _safe_http_error(exc: Exception) -> tuple[int | None, str | None, float | None]:
@@ -102,6 +114,7 @@ def upload_video(
     progress: Callable[[int], None] | None = None,
     on_started: Callable[[], None] | None = None,
     on_completed: Callable[[str], None] | None = None,
+    on_failure: Callable[[int | None, str | None], None] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     jitter: Callable[[], float] = random.random,
     max_failures: int = MAX_CONSECUTIVE_FAILURES,
@@ -159,24 +172,45 @@ def upload_video(
                     delay = max(delay, retry_after)
                 sleep(delay)
                 continue
+            # Persist only a sanitized HTTP code and an explicitly allowlisted reason.
+            # Even errors that appear definitive retain the ambiguous attempt guard:
+            # a previous chunk might have reached YouTube before the rejection.
+            if on_failure is not None:
+                on_failure(http, reason)
+            detail = "HTTP " + str(http) if http is not None else "unknown transport error"
+            if reason is not None:
+                detail += "; reason=" + reason
             if reason in PERMANENT_REASONS:
                 raise YouTubeUploadError(
-                    "YouTube rejected the upload due to quota or upload limits. "
-                    "Do not retry this attempt without inspecting the channel."
+                    "YouTube upload limit or quota rejected this attempt (" + detail + "). "
+                    "Inspect YouTube Studio and the relevant quota before another attempt."
                 ) from None
-            if http == 401 or (http == 403 and reason not in TRANSIENT_REASONS):
+            if http == 401 or reason in AUTH_REASONS:
                 raise YouTubeAuthenticationError(
-                    "YouTube refused this request; verify authorization and upload permissions. "
-                    "The result could be ambiguous: inspect the channel before retrying."
+                    "YouTube denied the channel or token (" + detail + "). "
+                    "Check the authorized Google account/channel and scopes. "
+                    "Inspect YouTube Studio before another attempt."
+                ) from None
+            if reason in CONFIG_REASONS:
+                raise YouTubeUploadError(
+                    "YouTube API project configuration denied this upload (" + detail + "). "
+                    "Check YouTube Data API v3 in the matching Google Cloud project. "
+                    "Inspect YouTube Studio before another attempt."
+                ) from None
+            if reason in POLICY_REASONS:
+                raise YouTubeUploadError(
+                    "YouTube rejected the requested privacy or license (" + detail + "). "
+                    "Inspect YouTube Studio before another attempt."
                 ) from None
             if http is not None and not retryable:
                 raise YouTubeUploadError(
-                    "YouTube rejected the upload (HTTP " + str(http) + "). "
-                    "Check metadata/quota; the attempt is locked against automatic retry."
+                    "YouTube rejected the upload (" + detail + "). "
+                    "Cause may be API access, channel restrictions or request metadata. "
+                    "Inspect YouTube Studio before another attempt."
                 ) from None
             raise YouTubeAmbiguousUploadError(
-                "Resumable upload interrupted or exhausted retries. It may have completed "
-                "on YouTube: inspect the channel before starting another upload."
+                "Resumable upload interrupted or exhausted retries (" + detail + "). "
+                "It may have completed on YouTube: inspect the channel before another attempt."
             ) from None
 
         if response is not None:
