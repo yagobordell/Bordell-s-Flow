@@ -1,15 +1,10 @@
 """Use real optional Google classes offline, without authenticating or uploading."""
 
-import io
 import json
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-
-google_http = pytest.importorskip("googleapiclient.http")
-google_errors = pytest.importorskip("googleapiclient.errors")
-httplib2 = pytest.importorskip("httplib2")
 
 from ai_video_factory.integrations.youtube.models import YouTubePublishRequest
 from ai_video_factory.integrations.youtube.uploader import (
@@ -17,6 +12,10 @@ from ai_video_factory.integrations.youtube.uploader import (
     _safe_http_error,
     upload_video,
 )
+
+google_http = pytest.importorskip("googleapiclient.http")
+google_errors = pytest.importorskip("googleapiclient.errors")
+httplib2 = pytest.importorskip("httplib2")
 
 
 def test_real_mediafileupload_has_exact_chunk_size(tmp_path: Path) -> None:
