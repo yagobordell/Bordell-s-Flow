@@ -8,11 +8,13 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from PIL import Image
 
 from ai_video_factory.config import Settings
 from ai_video_factory.integrations.youtube.errors import YouTubeValidationError
 from ai_video_factory.integrations.youtube.hook import publish_verified_result
 from ai_video_factory.integrations.youtube.models import YouTubePublishResult
+from ai_video_factory.integrations.youtube.publisher import publish_to_youtube
 from scripts.pipeline import run_b_pipeline as pipeline
 
 
@@ -190,3 +192,68 @@ def test_disabled_pipeline_preserves_existing_behavior(tmp_path: Path, monkeypat
     ) == published
     local.assert_called_once()
     hook.assert_not_called()
+
+
+def test_real_stateful_publisher_is_exercised_from_verified_managed_result(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    output, published, config = fixture_result(tmp_path)
+    from ai_video_factory.integrations.youtube import hook as youtube_hook
+
+    thumbnail_path = published / "thumbnail.png"
+    Image.new("RGB", (160, 90)).save(thumbnail_path)
+    metadata = published / "youtube.json"
+    document = json.loads(metadata.read_text())
+    document["thumbnail_path"] = "thumbnail.png"
+    metadata.write_text(json.dumps(document))
+    original_manifest = (published / "manifest.json").read_bytes()
+    events = []
+
+    def video_upload(youtube, request, **kwargs):
+        kwargs["on_started"]()
+        events.append("videos.insert")
+        kwargs["on_completed"]("hook_video_ABC")
+        return YouTubePublishResult(
+            video_id="hook_video_ABC",
+            url="https://www.youtube.com/watch?v=hook_video_ABC",
+            privacy=request.privacy, channel=request.channel,
+            thumbnail_uploaded=False,
+        )
+
+    def thumb_upload(youtube, video_id, image):
+        snapshot = json.loads((output / "youtube_publish.json").read_text())
+        assert snapshot["video_id"] == video_id
+        assert snapshot["status"] == "uploaded"
+        events.append("thumbnails.set")
+
+    def injected_publisher(request, **kwargs):
+        return publish_to_youtube(
+            request, **kwargs, youtube=object(), upload_fn=video_upload,
+            thumbnail_fn=thumb_upload,
+        )
+
+    monkeypatch.setattr(youtube_hook, "publish_to_youtube", injected_publisher)
+    first = publish_verified_result(
+        output=output, published=published,
+        script_name="guion", managed_target=published, config=config,
+    )
+    assert first["status"] == "completed"
+    assert first["thumbnail_uploaded"] is True
+    assert events == ["videos.insert", "thumbnails.set"]
+    assert (published / "manifest.json").read_bytes() == original_manifest
+    assert json.loads((published / "youtube_publish.json").read_text())["status"] == (
+        "completed"
+    )
+    second = publish_verified_result(
+        output=output, published=published,
+        script_name="guion", managed_target=published, config=config,
+    )
+    assert second == first
+    assert events == ["videos.insert", "thumbnails.set"]
+    Image.new("RGB", (120, 60)).save(thumbnail_path)
+    third = publish_verified_result(
+        output=output, published=published,
+        script_name="guion", managed_target=published, config=config,
+    )
+    assert third["video_id"] == first["video_id"]
+    assert events == ["videos.insert", "thumbnails.set", "thumbnails.set"]
