@@ -72,8 +72,16 @@ def _safe_http_error(exc: Exception) -> tuple[int | None, str | None, float | No
         errors = details.get("errors", []) if isinstance(details, dict) else []
         if errors and isinstance(errors[0], dict):
             candidate = errors[0].get("reason")
-            if candidate in KNOWN_REASONS:
+            if isinstance(candidate, str) and candidate in KNOWN_REASONS:
                 reason = candidate
+        if reason is None and isinstance(details, dict):
+            # Some Google APIs expose machine-readable reasons in ErrorInfo.
+            for item in details.get("details", [])[:8]:
+                if isinstance(item, dict):
+                    candidate = item.get("reason")
+                    if isinstance(candidate, str) and candidate in KNOWN_REASONS:
+                        reason = candidate
+                        break
     except (ValueError, TypeError, AttributeError, IndexError):
         pass
     retry_after = None
