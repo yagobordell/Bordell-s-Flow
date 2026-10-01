@@ -32,7 +32,7 @@ Structured Outputs is appended at runtime.
   order. B1.2 workers finish as a parallel wave before any B2 worker begins; B2 workers
   then run as a parallel wave. Both waves have the same bounded concurrency limit.
 
-## Professional B2: demonstrator identity, natural labels and speaking intent
+## Professional B2: demonstrator identity, animation prompts and speaking intent
 
 The opt-in `profesional` bot chooses `visual_type` independently from casting:
 a still or video can show the selected avatar demonstrating a presenter-led
@@ -48,14 +48,10 @@ expression, pose, background or lighting. Object-only and hands-only prompts
 do not invent facial-expression details. Wardrobe and setting are preserved
 within a continuous occasion only when continuity calls for them.
 
-Naturally occurring packaging labels, signage and logos are allowed when they
-add authenticity or information. Product prompts describe normal printed
-containers directly: B2 must not append stock qualifiers about unspecified
-brands, absent packaging text or product claims. When the script requests
-specific readable wording, that wording can be depicted on the packaging;
-incidental print can remain organic. The professional **grid request builder**
-follows the same approach and no longer adds a blanket brand/claim restriction.
-The legacy `casero` grid's existing no-text behavior is unchanged.
+Professional B2 makes no special branding or packaging choices: the scene
+description is driven by the beat, not by brand-specific positive or negative
+instructions. The professional grid adds no such rules. The legacy `casero`
+prompt and grid are unchanged.
 
 A clearly visible presenter making a simple, speaking-compatible
 demonstration can use `audio: true`, including on a `media_video` beat;
@@ -66,6 +62,34 @@ for detailed independent hand/action animation is limited. Choose
 must be shown accurately, the mouth is obstructed, or the face is cropped
 out. These are editorial prompt instructions, not a deterministic
 computer-vision validator of generated facial expressions.
+
+A professional beat now adds a dedicated `video_prompt` field alongside
+`prompt`, `reference`, `audio` and `visual_type`. For `media_video`,
+`prompt` describes one motion-ready starting **image**, while the required
+`video_prompt` describes how the action develops during the resulting video:
+natural gestures, hand/object interaction, gaze, framing and realistic pacing.
+For `avatar`, `avatar_media` and `media_image`, `video_prompt` is exactly
+`null`. Referenced presenter demonstrations with visible practical action
+default to `media_video`; static portraits, pauses and completed results can
+still use `media_image`. A narrow schema guard rejects clearly active
+referenced-presenter still prompts and triggers the existing correction retry.
+
+For `media_video + audio:false`, the planner sends `video_prompt` verbatim
+as LTX I2V's animation prompt, independently of the image-generation prompt.
+This voice-over route should show the action naturally, not a presenter
+addressing the camera without synchronized speech. For
+`media_video + audio:true`, the planner retains the code-owned canonical
+speaking-to-camera prompt and augments it with `video_prompt`, submitting
+the beat's real speech audio to A2V. A2V remains speaking-focused and
+does not guarantee elaborate secondary actions. New plans keep the motion
+field in the aligned timeline and video run fingerprint, so changing it
+generates a different paid request and never silently reuses a clip created
+with an older prompt. Historical saved plans without the field retain the
+old generic I2V/A2V behavior when resumed.
+
+The professional image grid uses only `prompt` to create its still key
+images; it never feeds `video_prompt` to the image model. The legacy
+`casero` grid remains unchanged.
 
 The professional bot also has **global shot-framing freedom** for every
 generated beat, not only numbered sequences: it deliberately chooses useful
