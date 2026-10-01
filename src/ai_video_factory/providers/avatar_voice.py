@@ -52,7 +52,8 @@ def _reference(avatar_file: Path, filename: str) -> tuple[str, str]:
         raise ValueError("Indica solo el nombre del audio situado junto al PNG del avatar.")
     if "/" in filename or "\\" in filename or Path(filename).suffix.lower() not in _AUDIO_SUFFIXES:
         raise ValueError("Audio no admitido; utiliza MP3, WAV, M4A, AAC, OGG, WebM, FLAC u Opus.")
-    path = avatar_file.parent / filename
+    meta = avatar_file.parent / "meta"
+    path = (meta / filename) if meta.is_dir() else (avatar_file.parent / filename)
     if path.is_symlink() or not path.is_file():
         raise ValueError(f"El audio {filename} no existe junto al avatar {avatar_file.name}.")
     size = path.stat().st_size
@@ -69,8 +70,8 @@ def _safe_slot(avatar_file: Path, avatars_dir: Path) -> tuple[Path, Path]:
         store = avatars_dir / ".voice"
         slot = store / avatar_file.name
     else:
-        store = folder
-        slot = folder
+        store = folder / "meta" if (folder / "meta").is_dir() else folder
+        slot = store
     record_path = slot / "voice.json"
     paths = (
         avatars_dir, avatar_file, store, slot, record_path,
@@ -268,7 +269,11 @@ def ensure_avatar_voice(
         # Save BEFORE the paid POST: a network timeout must not create duplicate clones.
         record["status"] = "clone_submitting_unknown"
         _save(path, record)
-        audio_path = avatar_file.parent / record["audio_filename"]
+        audio_path = (
+            avatar_file.parent / "meta" / record["audio_filename"]
+            if (avatar_file.parent / "meta").is_dir()
+            else avatar_file.parent / record["audio_filename"]
+        )
         try:
             created = client.clone_voice(audio_path=audio_path, name=avatar_file.stem)
         except Exception as exc:
