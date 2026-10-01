@@ -55,6 +55,10 @@ def _b2_pair(
         if professional:
             beat.update(
                 prompt=None if visual == "avatar" else "Faithful source-grounded image.",
+                video_prompt=(
+                    "One natural continuous motion from the reference frame."
+                    if visual == "media_video" else None
+                ),
                 reference=False,
                 audio=visual in {"avatar", "avatar_media"},
             )
