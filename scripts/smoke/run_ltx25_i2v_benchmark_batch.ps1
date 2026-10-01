@@ -86,7 +86,7 @@ $Collector = Join-Path $PSScriptRoot "ltx25_i2v_benchmark_metrics.py"
 function Save-BatchJson {
     param([string]$Path, $Value)
     $Json = ConvertTo-Json -InputObject $Value -Depth 16
-    [IO.File]::WriteAllText([IO.Path]::GetFullPath($Path), $Json + "\n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText([IO.Path]::GetFullPath($Path), $Json + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
 }
 function Require-Python {
     param([string]$Step)
@@ -277,7 +277,7 @@ try {
                 $Result.client_wall_seconds = $Timer.Elapsed.TotalSeconds
             }
             if ($Result.status -eq "running") { $Result.status = "failed" }
-            $Result.error = $_.Exception.Message
+            $Result["error"] = $_.Exception.Message
             Save-BatchJson (Join-Path $ProfilePath "run-result.json") $Result
             & $Python $Collector summarize --batch-dir $BatchPath
             throw
