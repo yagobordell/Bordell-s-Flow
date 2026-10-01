@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -104,7 +104,7 @@ def test_salad_log_collection_uses_bounded_windows_and_deduplicates(
         return [_task_event()]
 
     monkeypatch.setattr(benchmark, "_log_query", fake_query)
-    start = datetime(2026, 10, 1, 19, tzinfo=timezone.utc)
+    start = datetime(2026, 10, 1, 19, tzinfo=UTC)
     events = benchmark._download_log_events(
         start=start,
         end=start + timedelta(minutes=11),
