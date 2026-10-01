@@ -242,15 +242,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if qr_avatar not in avatar_names:
             raise SystemExit(f"No PNG avatar found for {qr_avatar}")
-        status = subprocess.call([
+        loose = data / (qr_avatar + ".png")
+        stored = (
+            organize_avatar(loose, data)
+            if loose.is_file() else data / qr_avatar / (qr_avatar + ".png")
+        )
+        ensure_avatar_meta(stored, data)
+        return subprocess.call([
             sys.executable, str(CORE), "--qr-only",
             "--avatars-dir", str(data), "--avatar", qr_avatar, *flags,
         ])
-        if status == 0:
-            stored = data / qr_avatar / (qr_avatar + ".png")
-            if stored.is_file():
-                ensure_avatar_meta(stored, data)
-        return status
     avatar = _name(avatar_arg, ".png") if avatar_arg else _choose(avatar_names, "avatars")
     if avatar not in avatar_names:
         raise SystemExit(f"No PNG avatar found for {avatar}")
