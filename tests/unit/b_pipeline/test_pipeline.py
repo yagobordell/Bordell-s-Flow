@@ -375,7 +375,7 @@ def test_invalid_b2_upstream_mutation_is_rejected() -> None:
         validate_visuals(returned, supplied)
 
 
-def test_invalid_intro_anchor_is_rejected() -> None:
+def test_intro_first_beat_is_not_forced_to_avatar() -> None:
     upstream = b11()
     assert upstream.narrative_core is not None and upstream.blocks is not None
     block = upstream.blocks[0]
@@ -388,16 +388,17 @@ def test_invalid_intro_anchor_is_rejected() -> None:
             ]}],
         }
     )
-    bad = supplied.blocks[0].model_dump()
-    bad["beats"][0].update(visual_type="media_image", description="Una imagen realista.")
+    visual = supplied.blocks[0].model_dump()
+    visual["beats"][0].update(
+        visual_type="media_image", description="Una imagen documental realista."
+    )
     response = B2Output.model_validate(
         {
             "pipeline_stage": "B2", "narrative_core": supplied.narrative_core.model_dump(),
-            "blocks": [bad], "error": None,
+            "blocks": [visual], "error": None,
         }
     )
-    with pytest.raises(BPipelineValidationError, match="intro opening"):
-        validate_visuals(response, supplied)
+    validate_visuals(response, supplied)
 
 
 def test_strict_b12_and_b2_schemas_reject_unknown_fields() -> None:
