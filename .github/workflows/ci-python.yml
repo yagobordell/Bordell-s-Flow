@@ -9,16 +9,20 @@ on:
       - ready_for_review
     paths:
       - "src/**"
-      - "tests/**"
+      - "tests/**/*.py"
+      - "tests/fixtures/**"
       - "infra/**"
       - "config/**"
       - "deploy/**"
       - "docker/**"
-      - "scripts/**"
+      - "scripts/**/*.py"
+      - "scripts/**/*.ps1"
+      - "scripts/**/*.sh"
       - "run.ps1"
       - "pyproject.toml"
       - "uv.lock"
       - ".env.example"
+      - ".dockerignore"
       - ".github/workflows/ci-python.yml"
   workflow_dispatch:
 
