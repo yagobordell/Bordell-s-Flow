@@ -13,6 +13,7 @@ from PIL import Image
 from pydantic import ValidationError
 
 from ai_video_factory.bots.contracts import B11Output, B12Output, ProfessionalB2Output
+from ai_video_factory.bots.workflow import run_b_pipeline
 from ai_video_factory.providers.image_grids import plan_image_jobs
 from ai_video_factory.providers.openai import OpenAIProvider
 from ai_video_factory.providers.openai_batch_images import (
@@ -20,7 +21,6 @@ from ai_video_factory.providers.openai_batch_images import (
     effective_image_prompt,
     generate_b2_images,
 )
-from ai_video_factory.bots.workflow import run_b_pipeline
 from ai_video_factory.workflows.b_video import _group_beats
 from scripts.pipeline.run_b_pipeline import select_visual_style
 
