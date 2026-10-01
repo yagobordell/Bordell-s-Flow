@@ -38,6 +38,11 @@ LTX_STATIC_CAMERA_GENERATION_PROFILE = (
 LTX_CFG_BATCH2_PROFILE = "ltx25-directcamneg-cfgb2-a95ab856-fp8cpu-eager-v1"
 LTX_CFG_BATCH2_SILENT_PROFILE = "ltx25-directcamneg-cfgb2-silent-a95ab856-fp8cpu-eager-v1"
 LTX_CFG_BATCH2_TRITON_PROFILE = "ltx25-directcamneg-cfgb2-silent-a95ab856-fp8cpu-triton-v1"
+# Forced-fresh quality check: identical default visual recipe and seed, but
+# distinct Postgres/R2 identity prevents replay of the historical cached MP4.
+LTX_DEFAULT_SILENT_VERIFY_PROFILE = (
+    "ltx25-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-directcamneg-silent-verify-v1"
+)
 LTX_EXPERIMENTAL_PROFILES = (
     LTX_CFG_BATCH2_PROFILE,
     LTX_CFG_BATCH2_SILENT_PROFILE,
@@ -46,6 +51,7 @@ LTX_EXPERIMENTAL_PROFILES = (
 LTX_SUPPORTED_I2V_PROFILES = (
     LTX_GENERATION_PROFILE,
     LTX_STATIC_CAMERA_GENERATION_PROFILE,
+    LTX_DEFAULT_SILENT_VERIFY_PROFILE,
     *LTX_EXPERIMENTAL_PROFILES,
 )
 _CANONICAL_LANDSCAPE_SIZE = (1280, 720)
