@@ -8,8 +8,13 @@ ejecuta `.\\run.ps1 test01 Jorge`. El programa mueve automáticamente
 el PNG a `data/Jorge/Jorge.png` y el TXT a
 `data/Jorge/test01/test01.txt`. Las carpetas del guion contienen
 `outputs/B1.1`, `outputs/B1.2`, `outputs/B2`,
-`media/images`, `media/audio` y, al terminar LTX, `test01.mp4`
-en la raíz de su carpeta. Durante la primera ejecución se crea
+`media/images`, `media/audio`, `media/preview` (vídeo de solo
+imágenes) y, al terminar LTX, `test01.mp4` en la raíz de su carpeta.
+Cada etapa se copia cuando está terminada y se comprueba con SHA-256,
+sin esperar a que concluya el vídeo completo. Si hay archivos generados
+solo en el espacio interno, utiliza
+`.\\run.ps1 test01 Jorge --sync-only` para publicarlos sin nuevas llamadas
+de generación. Durante la primera ejecución se crea
 `data/Jorge/meta/`: ahí se guardan el QR (`qr.png` y `qr.json`),
 la configuración de voz (`voice.json`), el audio original de clonación
 si lo hay y **`style.json`**. El estilo B2 se elige una sola vez por avatar;
