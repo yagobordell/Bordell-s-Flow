@@ -7,15 +7,21 @@ The external content registry is authoritative; per-run snapshots are informatio
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from ai_video_factory.config import Settings
 
-from .errors import YouTubeConfigurationError, YouTubeValidationError
+from .errors import (
+    YouTubeAmbiguousUploadError,
+    YouTubeConfigurationError,
+    YouTubeThumbnailError,
+    YouTubeValidationError,
+)
 from .metadata import resolve_request
 from .publisher import default_state_dir, publish_to_youtube
-from .state import PublicationStateStore, sha256_file
+from .state import PublicationStateStore, _write_json, sha256_file
 from .store import YouTubeStore
 
 
@@ -120,3 +126,26 @@ def publish_verified_result(
         "privacy": result.privacy,
         "thumbnail_uploaded": result.thumbnail_uploaded,
     }
+
+
+def record_distribution_error(output: Path, error: Exception) -> None:
+    """Persist safe trigger failures separately from authoritative upload state.
+
+    Preflight errors have no metadata fingerprint or video creation, so they
+    cannot safely be represented as a content-indexed upload attempt.
+    """
+    if isinstance(error, YouTubeAmbiguousUploadError):
+        status = "ambiguous"
+    elif isinstance(error, YouTubeThumbnailError):
+        status = "failed_after_upload"
+    elif isinstance(error, (YouTubeValidationError, YouTubeConfigurationError)):
+        status = "failed_safe"
+    else:
+        status = "failed_unknown"
+    _write_json(output / "youtube_publish_error.json", {
+        "schema_version": "youtube-publish-trigger/v1",
+        "status": status,
+        "error_type": type(error).__name__ if status != "failed_unknown" else "UnknownError",
+        "occurred_at": datetime.now(UTC).isoformat(),
+        "details": "Review youtube_publish.json and the external registry before a retry.",
+    })
