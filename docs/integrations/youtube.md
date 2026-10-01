@@ -1,8 +1,9 @@
-# YouTube integration: core (phase 1)
+# YouTube integration: manual publishing (phases 1–3)
 
-The publisher is a separate distribution stage. This first phase provides settings,
-metadata contracts, a flat external credential store, typed errors and a lazy API
-client factory. It **does not** authorize a channel or upload videos.
+YouTube is an independent distribution stage. Phase 1 established the settings,
+external keystore and metadata contracts; phase 2 added desktop OAuth and token
+refresh; phase 3 adds guarded, manual MP4 uploads and offline dry-run.
+Automatic pipeline publication, thumbnails and full publisher state come later.
 
 ## Installation and settings
 
@@ -177,13 +178,14 @@ the destination channel after the first private upload.
 ```powershell
 uv run --locked --extra youtube python scripts/youtube/upload.py `
   --channel "test01" `
-  --video "C:\\Videos\\test.mp4" `
-  --metadata "C:\\Videos\\youtube.json" `
+  --video "C:\Videos\test.mp4" `
+  --metadata "C:\Videos\youtube.json" `
   --dry-run
 ```
 
 Dry-run validates the local MP4 extension, size and ftyp header, metadata
-schema and constraints, an existing recognized Video Factory publication\nmanifest (SHA-256) when present, keystore, and an upload-authorized local
+schema and constraints, an existing recognized Video Factory publication
+manifest (SHA-256) when present, keystore, and an upload-authorized local
 token. It displays resolved API-writable request metadata. It does NOT
 open a browser, refresh tokens, contact YouTube, upload media or write an
 upload attempt record. Only YouTube can perform definitive codec/container
@@ -195,8 +197,8 @@ complete MP4 decoder.
 ```powershell
 uv run --locked --extra youtube python scripts/youtube/upload.py `
   --channel "test01" `
-  --video "C:\\Videos\\test.mp4" `
-  --metadata "C:\\Videos\\youtube.json"
+  --video "C:\Videos\test.mp4" `
+  --metadata "C:\Videos\youtube.json"
 ```
 
 Inspect the preview; type SUBIR to authorize the actual upload.
