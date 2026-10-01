@@ -556,19 +556,25 @@ Para generar **únicamente el preview tradicional** (`preview/static_preview.mp4
 sin enviar trabajos I2V/A2V a Salad, usa `--no-video`. El runner conserva
 la generación habitual de imágenes, Fish Audio y STT.
 
-- Cada `media_video` genera **un I2V independiente**: PNG de B2 como start
-  image, descripción original como prompt y duración del beat en la timeline STT.
+- Cada `media_video` con `audio:false` genera **un I2V independiente**:
+  PNG de B2 como start image y el campo `video_prompt` profesional como
+  instrucción de movimiento, con la duración del beat en la timeline STT.
   El generador ajusta la petición al grid temporal `8k+1` requerido por LTX.
+  Los planes históricos sin `video_prompt` conservan la descripción genérica
+  utilizada anteriormente. Un `media_video + audio:true` sigue la ruta A2V
+  con WAV real de ese beat, no I2V.
 - Los beats `avatar` y `avatar_media` consecutivos, también a través de
   límites entre bloques, forman **un solo A2V**. El runner recorta un único
   WAV del `narration.wav` original para todo el grupo. El recorte incluye
   los silencios de 500 ms entre bloques si están dentro del mismo grupo.
   Un beat `media_video` o `media_image` termina el grupo de avatar.
-- El prompt positivo de todo A2V es exactamente
-  `A Person speaking to the camera.`. El perfil static-reference utiliza
-  el negativo fijo
+- El prompt positivo para `avatar` y `avatar_media` continúa siendo
+  exactamente `A Person speaking to the camera.`. En los beats profesionales
+  `media_video + audio:true`, A2V mantiene ese prefijo y concatena
+  `video_prompt` para describir los gestos específicos compatibles con el
+  habla. El perfil static-reference conserva el negativo fijo
   `camera zoom, zoom in, push in, dolly in, camera drift, camera shake, reframing, crop change, handheld camera, unintended camera movement`.
-  No se usa ninguna descripción B2 como prompt del avatar.
+  El campo de imagen `prompt` no sustituye al prompt positivo de A2V.
 - `avatar_media` conserva la imagen del beat en la mitad derecha y el avatar
   **animado** en la izquierda. `media_image` mantiene zoom/Ken Burns.
 - El worker A2V admite un máximo de 1024 fotogramas crudos. Si un grupo
