@@ -1,7 +1,6 @@
 """Offline session, retry, error redaction and request-body tests."""
 
 import json
-import socket
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -96,7 +95,6 @@ def test_successful_resumable_upload_has_correct_parts_and_single_session(tmp_pa
     FakeHttpError(503, "backendError"),
     FakeHttpError(429, "rateLimitExceeded", "3"),
     TimeoutError("DUMMY_SECRET"),
-    socket.timeout("DUMMY_SECRET"),
     ConnectionError("DUMMY_SECRET"),
 ])
 def test_transient_errors_retry_in_same_session_without_leaking(tmp_path: Path, error):
