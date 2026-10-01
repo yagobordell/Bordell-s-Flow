@@ -39,6 +39,84 @@ def avatar_directory(avatar_file: Path, avatars_dir: Path) -> Path:
     )
 
 
+def ensure_avatar_meta(
+    avatar_file: Path, avatars_dir: Path, *, reference_audio: str | None = None
+) -> Path:
+    """Create managed meta/ and migrate previously persisted avatar assets safely.
+
+    The original organize_avatar layout remains the default for legacy runners.
+    In managed mode this function is idempotent and moves metadata before use,
+    including a saved recording for a pending or completed AI33 clone.
+    """
+    folder = avatar_directory(avatar_file, avatars_dir)
+    if avatar_file.parent.resolve() == avatars_dir.resolve():
+        raise SystemExit("Organiza primero el PNG antes de crear meta/.")
+    meta = folder / "meta"
+    _no_link(meta)
+    if meta.exists() and not meta.is_dir():
+        raise SystemExit(f"meta no es una carpeta: {meta}")
+
+    moves: list[tuple[Path, Path]] = []
+    for name in ("qr.png", "qr.json", "request_pending.json", "voice.json"):
+        source, destination = folder / name, meta / name
+        _no_link(source)
+        _no_link(destination)
+        if source.is_file():
+            if destination.exists():
+                raise SystemExit(f"Conflicto entre metadatos: {source} y {destination}")
+            moves.append((source, destination))
+        elif source.exists():
+            raise SystemExit(f"Metadatos no válidos: {source}")
+
+    for record in (folder / "voice.json", meta / "voice.json"):
+        audio = _recorded_audio(record)
+        if audio is not None:
+            source, destination = folder / audio, meta / audio
+            _no_link(source)
+            _no_link(destination)
+            if source.is_file():
+                if destination.exists():
+                    raise SystemExit(f"Audio duplicado: {source} y {destination}")
+                moves.append((source, destination))
+    if reference_audio is not None:
+        if (
+            Path(reference_audio).name != reference_audio
+            or "/" in reference_audio or chr(92) in reference_audio
+            or Path(reference_audio).suffix.lower() not in _AUDIO_SUFFIXES
+        ):
+            raise SystemExit("El audio de referencia debe ser un nombre local válido.")
+        candidate = folder / reference_audio
+        target = meta / reference_audio
+        _no_link(candidate)
+        _no_link(target)
+        if candidate.is_file() and not any(candidate == old for old, _ in moves):
+            if target.exists():
+                raise SystemExit(f"Audio duplicado: {candidate} y {target}")
+            moves.append((candidate, target))
+        elif not candidate.is_file() and not target.is_file():
+            raise SystemExit(f"Falta el audio de referencia: {reference_audio}")
+    # Onboard same-name audio or a custom audio provided for the first run.
+    # Other loose WAVs in the avatar folder are not moved indiscriminately.
+    for source in folder.iterdir():
+        if (
+            source.is_file() and not source.is_symlink()
+            and source.stem.casefold() == avatar_file.stem.casefold()
+            and source.suffix.lower() in _AUDIO_SUFFIXES
+            and not any(source == old for old, _ in moves)
+        ):
+            destination = meta / source.name
+            _no_link(destination)
+            if destination.exists():
+                raise SystemExit(f"Audio duplicado: {destination}")
+            moves.append((source, destination))
+    meta.mkdir(exist_ok=True)
+    for source, destination in moves:
+        if destination.exists() or destination.is_symlink():
+            raise SystemExit(f"Conflicto durante migración: {destination}")
+        source.rename(destination)
+    return meta
+
+
 def _recorded_audio(legacy_voice: Path) -> str | None:
     """Find a reference already bound to a legacy clone, if present."""
     _no_link(legacy_voice)
@@ -114,6 +192,7 @@ def organize_avatar(
     for voice_record in (
         avatars_dir / ".voice" / avatar_file.name / "voice.json",
         folder / "voice.json",
+        folder / "meta" / "voice.json",
     ):
         recorded = _recorded_audio(voice_record)
         if recorded is not None:

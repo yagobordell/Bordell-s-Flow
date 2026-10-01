@@ -34,6 +34,14 @@ Structured Outputs is appended at runtime.
 
 ## Professional B2: demonstrator identity, animation prompts and speaking intent
 
+The professional bot has two mandatory presenter-return points:
+the **first** beat of an `intro` block and the **last** beat of a `close`
+block reuse the original avatar image with `visual_type: "avatar"`,
+`prompt: null`, `video_prompt: null`, `reference: false` and
+`audio: true`. The professional output schema validates both assignments
+and its automatic correction retry can repair a noncompliant output.
+All other beats retain neutral visual choice.
+
 The opt-in `profesional` bot chooses `visual_type` independently from casting:
 a still or video can show the selected avatar demonstrating a presenter-led
 example instead of an unrelated generic person. The preference applies
@@ -50,8 +58,12 @@ within a continuous occasion only when continuity calls for them.
 
 Professional B2 makes no special branding or packaging choices: the scene
 description is driven by the beat, not by brand-specific positive or negative
-instructions. The professional grid adds no such rules. The legacy `casero`
-prompt and grid are unchanged.
+instructions. The professional grid adds no such rules. The professional bot's
+general scene-prompt instructions now discourage generic negative lists
+and stock disclaimers about irrelevant scene details: exclusions should
+prevent only a concrete mistake specific to that beat, not introduce
+new content restrictions. This does not prescribe whether ordinary scene
+details may appear. The legacy `casero` prompt and grid are unchanged.
 
 A clearly visible presenter making a simple, speaking-compatible
 demonstration can use `audio: true`, including on a `media_video` beat;
@@ -659,3 +671,124 @@ uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script t
 mitad de artefactos está disponible. Las comprobaciones automáticas son
 técnicas y no acreditan visualmente la sincronización de labios o la
 inmovilidad de cámara; se requiere revisión de una generación real en Salad.
+
+## Organización automática de guiones por avatar (nuevo `run.ps1`)
+
+El acceso directo `run.ps1` usa ahora **data/ como punto de entrada**.
+Para estrenar un avatar, coloca únicamente su PNG y el primer guion TXT
+directamente dentro de `data/`. Al iniciar una ejecución, el programa
+organiza los archivos automáticamente:
+
+```text
+data/
+  Jorge/
+    Jorge.png                      # Identidad visual del avatar
+    meta/
+      qr.png                       # QR persistente para todos los guiones
+      qr.json
+      voice.json                   # Configuración/Voice ID
+      referencia.wav               # Si existe una grabación de clonación
+      style.json                   # Estilo fijo: casero o profesional
+    test02.txt                     # Guion nuevo PENDIENTE, todavía no ejecutado
+    test01/                        # Guion ya INICIADO
+      test01.txt                   # Guion original, byte por byte
+      outputs/
+        B1.1/                      # Inputs, outputs y checkpoints de cada bot
+        B1.2/
+        B2/
+        visual_plan.json
+        run_report.json
+        avatar_voice.json
+      media/                       # Cada etapa aparece AL TERMINAR, sin esperar a LTX
+        images/
+          avatar.png
+          qr.png
+          block_1/1B.png
+          manifest.json           # Hashes y estado de las imágenes
+        audio/
+          narracion.wav            # Audio activo, incluso tras --regenerate-audio
+          bloques/bloque_1.wav
+          manifest.json           # Solo 'completed' tras verificar WAV y bloques
+        preview/
+          preview.mp4              # Vídeo estático de imágenes cuando esté listo
+          timeline.json
+          manifest.json
+      test01.mp4                   # LTX verificado, sin esperar a copia global                   # Vídeo final, DIRECTAMENTE en esta carpeta
+      manifest.json               # Solo presente tras una publicación completa
+```
+
+La carpeta `meta/` se crea automáticamente durante la incorporación del
+avatar, antes de generar contenido. Guarda los metadatos persistentes del
+QR y de la voz, junto con el audio de referencia si hay clonación.
+En el primer guion se guarda además `meta/style.json` con el estilo visual
+B2 seleccionado (`casero` o `profesional`). Los siguientes guiones de
+ese avatar usan exactamente ese estilo sin volver a preguntarlo. Pasar
+`--style` con otro valor produce un error explícito; los archivos
+`meta/` no se sustituyen silenciosamente.
+
+Después del primer guion, añade los siguientes TXT pendientes **sueltos
+dentro de `data/Jorge/`**. El programa distingue automáticamente entre
+TXT sueltos (pendientes) y carpetas con el mismo nombre (iniciados). Al
+arrancar un guion pendiente lo mueve a `data/Jorge/<guion>/<guion>.txt`;
+**no** mueve ni modifica los otros TXT pendientes. Las carpetas `outputs/` y `media/` se publican **etapa por etapa**:
+el audio y sus bloques se hacen visibles al terminar Fish, las imágenes
+se copian conforme aparecen en sus manifiestos, la vista previa estática
+se publica al completarse y el MP4 LTX se guarda en la raíz del guion.
+No hay que esperar al vídeo final para ver el audio generado. Cada
+subcarpeta de `media/` incorpora su propio `manifest.json`, con estado
+y hashes. El `outputs/run_report.json` visible contiene rutas relativas a
+la carpeta del guion (por ejemplo `media/audio/narracion.wav`), **nunca
+rutas internas presentadas como si estuvieran en `outputs/`**.
+El `manifest.json` de la raíz solo aparece cuando se publica y se verifica
+el resultado completo.
+Una ejecución interrumpida se reanuda desde su carpeta, no vuelve a tratarse
+como un guion pendiente. Los nuevos nombres de guion no reemplazan resultados
+anteriores; se rechaza una generación nueva con un nombre que ya tenga carpeta.
+
+```powershell
+# Primera vez: data/Jorge.png y data/test01.txt.
+.\run.ps1 test01 Jorge
+
+# Después, añade data/Jorge/test02.txt.
+.\run.ps1 test02 Jorge --no-video
+
+# Reanudar test02 desde un vídeo previo validado:
+.\run.ps1 test02 Jorge --generate-video
+
+# Recuperar SOLO los archivos ya generados (audio, imágenes, preview o vídeo).
+# Sin llamadas a OpenAI, Fish o Salad:
+.\run.ps1 test01 Jorge --sync-only
+
+# Publicar y verificar el resultado LTX completo, si ya existe:
+.\run.ps1 test01 Jorge --publish-only
+```
+
+El sistema conserva **todos** los checkpoints, registros de trabajos pagados
+y manifiestos originales en la carpeta interna
+`.video_factory_work/<avatar>/<guion>/`, independiente del árbol visible.
+Por ejemplo, una narración regenerada de Corea podría conservarse en
+`.video_factory_work/corea/corea/audio/runs/<ID>/narration_audio_regen_1.wav`,
+pero su ubicación **visible** es
+`data/corea/corea/media/audio/narracion.wav`.
+Los audios de bloques aparecen en `media/audio/bloques/` y cada etapa
+publicada tiene su propio manifiesto de integridad.
+
+No borres `.video_factory_work` si necesitas reanudar una ejecución. Si
+un trabajo anterior generó medios internos pero no llegó a copiarlos a
+`data/`, utiliza `--sync-only`: solo publica los archivos que
+**efectivamente existen y superan SHA-256**. Si faltan los originales
+internos, informa del error; un informe JSON, por sí solo, no puede
+restaurar archivos que ya no existen. El publicador
+comprueba el guion, los hashes de imágenes y audio y el MP4 antes de crear el
+`manifest.json` final. La estructura publicada contiene solo los recursos
+elegidos por los manifiestos actuales, no generaciones descartadas. Publicar
+dos veces el mismo resultado verifica y reutiliza los archivos ya presentes;
+si un archivo publicado fue modificado o falta, falla sin regenerar ni
+sobrescribirlo. Se conserva `--legacy-layout` para ejecutar directamente
+el runner previo con `data/avatar`, `data/input/scripts`, `data/output`
+y `data/results` como antes.
+
+Los ejemplos anteriores de este documento que citan `data/input/scripts` o
+`data/output/<script>` corresponden al runner **histórico**:
+usa `uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py`
+o `.\run.ps1 --legacy-layout ...` para reproducir exactamente esos comandos.

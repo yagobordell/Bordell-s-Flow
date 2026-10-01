@@ -124,8 +124,8 @@ def ensure_avatar_qr(
         store = avatars_dir / ".qr"
         slot = store / avatar_file.name
     else:
-        store = folder
-        slot = folder
+        store = folder / "meta" if (folder / "meta").is_dir() else folder
+        slot = store
     png_path = slot / "qr.png"
     metadata_path = slot / "qr.json"
     legacy_pending = slot / "request_pending.json"

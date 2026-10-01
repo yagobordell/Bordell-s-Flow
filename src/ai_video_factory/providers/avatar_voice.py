@@ -49,12 +49,16 @@ def _valid_voice_id(value: str) -> str:
 
 def _reference(avatar_file: Path, filename: str) -> tuple[str, str]:
     if not filename or Path(filename).name != filename or filename in {".", ".."}:
-        raise ValueError("Indica solo el nombre del audio situado junto al PNG del avatar.")
+        raise ValueError("Indica solo el nombre del archivo de audio de referencia.")
     if "/" in filename or "\\" in filename or Path(filename).suffix.lower() not in _AUDIO_SUFFIXES:
         raise ValueError("Audio no admitido; utiliza MP3, WAV, M4A, AAC, OGG, WebM, FLAC u Opus.")
-    path = avatar_file.parent / filename
+    meta = avatar_file.parent / "meta"
+    path = (meta / filename) if meta.is_dir() else (avatar_file.parent / filename)
     if path.is_symlink() or not path.is_file():
-        raise ValueError(f"El audio {filename} no existe junto al avatar {avatar_file.name}.")
+        location = "dentro de meta/" if meta.is_dir() else "junto al avatar"
+        raise ValueError(
+            f"El audio {filename} no existe {location} de {avatar_file.name}."
+        )
     size = path.stat().st_size
     if size < 1 or size > _MAX_AUDIO_BYTES:
         raise ValueError("El audio de referencia debe ocupar entre 1 byte y 10 MiB.")
@@ -69,8 +73,8 @@ def _safe_slot(avatar_file: Path, avatars_dir: Path) -> tuple[Path, Path]:
         store = avatars_dir / ".voice"
         slot = store / avatar_file.name
     else:
-        store = folder
-        slot = folder
+        store = folder / "meta" if (folder / "meta").is_dir() else folder
+        slot = store
     record_path = slot / "voice.json"
     paths = (
         avatars_dir, avatar_file, store, slot, record_path,
@@ -132,9 +136,15 @@ def _load(path: Path, avatar_file: Path) -> dict[str, Any]:
 def _choose(avatar_file: Path, *, interactive: bool) -> tuple[str, str | None]:
     if not interactive:
         return "default", None
+    location = (
+        "dentro de su carpeta meta/"
+        if (avatar_file.parent / "meta").is_dir()
+        else "junto al PNG"
+    )
     print(
         f"Voz para {avatar_file.name}: introduce un Voice ID de AI33Pro, "
-        "el nombre de un audio de referencia junto al PNG, o q para usar la voz predeterminada.",
+        f"el nombre de un audio de referencia {location}, "
+        "o q para usar la voz predeterminada.",
         flush=True,
     )
     while True:
@@ -268,7 +278,11 @@ def ensure_avatar_voice(
         # Save BEFORE the paid POST: a network timeout must not create duplicate clones.
         record["status"] = "clone_submitting_unknown"
         _save(path, record)
-        audio_path = avatar_file.parent / record["audio_filename"]
+        audio_path = (
+            avatar_file.parent / "meta" / record["audio_filename"]
+            if (avatar_file.parent / "meta").is_dir()
+            else avatar_file.parent / record["audio_filename"]
+        )
         try:
             created = client.clone_voice(audio_path=audio_path, name=avatar_file.stem)
         except Exception as exc:

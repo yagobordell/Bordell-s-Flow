@@ -126,10 +126,10 @@ jobs:
           if ($HelpExit -ne 0 -or $HelpText -notmatch '--no-image') {
               throw "run.ps1 did not forward --help to the B pipeline"
           }
-          if ($NoScriptExit -eq 0 -or $NoScript -notmatch 'data/input/scripts') {
-              throw "run.ps1 did not forward the positional names and script library"
+          if ($NoScriptExit -eq 0 -or $NoScript -notmatch 'Jorge') {
+              throw "run.ps1 did not reach managed avatar/script discovery"
           }
-          if ($NoScript -notmatch 'No \.txt scripts found') {
+          if ($NoScript -notmatch 'No PNG avatar found') {
               throw "run.ps1 did not reach script selection without paid API calls"
           }
           # The expected negative smoke left LASTEXITCODE=1; explicitly mark

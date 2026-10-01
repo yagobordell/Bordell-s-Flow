@@ -1,5 +1,45 @@
 # AI Video Factory
 
+## Nuevo flujo de archivos: un TXT suelto es un guion pendiente
+
+`run.ps1` usa ahora la estructura **`data/<avatar>/`**. Para el primer
+uso, coloca `Jorge.png` y `test01.txt` directamente en `data/` y
+ejecuta `.\\run.ps1 test01 Jorge`. El programa mueve automáticamente
+el PNG a `data/Jorge/Jorge.png` y el TXT a
+`data/Jorge/test01/test01.txt`. Las carpetas del guion contienen
+`outputs/B1.1`, `outputs/B1.2`, `outputs/B2`,
+`media/images`, `media/audio`, `media/preview` (vídeo de solo
+imágenes) y, al terminar LTX, `test01.mp4` en la raíz de su carpeta.
+Cada etapa se copia cuando está terminada y se comprueba con SHA-256,
+sin esperar a que concluya el vídeo completo. Si hay archivos generados
+solo en el espacio interno, utiliza
+`.\\run.ps1 test01 Jorge --sync-only` para publicarlos sin nuevas llamadas
+de generación. Durante la primera ejecución se crea
+`data/Jorge/meta/`: ahí se guardan el QR (`qr.png` y `qr.json`),
+la configuración de voz (`voice.json`), el audio original de clonación
+si lo hay y **`style.json`**. El estilo B2 se elige una sola vez por avatar;
+los siguientes guiones reutilizan el estilo guardado sin volver a preguntar.
+Un `--style` incompatible se rechaza para evitar cambios accidentales.
+
+Después, guarda cada nuevo TXT **suelto en `data/Jorge/`**. Los TXT sueltos
+indican trabajo pendiente; las carpetas indican ejecuciones iniciadas y el
+archivo `manifest.json` confirma que el vídeo final se ha publicado.
+Los checkpoints internos permanecen fuera de esa estructura,
+en `.video_factory_work/<avatar>/<guion>/`, para permitir reanudación.
+
+```powershell
+.\\run.ps1 test01 Jorge
+.\\run.ps1 test02 Jorge --no-video
+.\\run.ps1 test02 Jorge --generate-video
+```
+
+Los apartados antiguos del README que muestran `data/input`,
+`data/avatar` o `data/output` corresponden al **runner heredado**.
+Puedes seguir esos ejemplos con `.\\run.ps1 --legacy-layout ...`.
+El flujo nuevo está detallado en
+[la documentación de B-pipeline](docs/components/b-pipeline.md).
+
+
 Pipeline modular para generar vídeos cinematográficos 16:9 a partir de un guion terminado. La
 orquestación combina planificación estructurada, generación de audio e imagen, vídeo en GPU remota,
 upscale y composición final reproducible.

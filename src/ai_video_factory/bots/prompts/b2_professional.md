@@ -105,7 +105,7 @@ Use narrative_core, emotional_entry and emotional_exit as context only. The beat
 
 Neutral visual selection
 
-Choose the visual carrier from the beat's communicative need, not from beat_type and not from a format preference.
+For every NON-ANCHOR beat, choose the visual carrier from its communicative need, not from beat_type and not from a format preference.
 
 Choose avatar when seeing the presenter deliver the beat is itself the most natural and useful visual treatment: direct explanation, reaction, personal testimony, interpersonal delivery, a presenter-owned transition, or another moment where the speaker's visible presence carries the beat better than illustrative media.
 
@@ -124,7 +124,25 @@ may depict the presenter demonstrating a step without adding a separate talking-
 layer. Choose the format from the beat's visual needs, then choose WHO should appear
 using the presenter-led demonstration rule below.
 
-Block type supplies narrative context only. It never forces avatar, media, or any opening/closing anchor.
+Mandatory intro/close presenter anchors
+
+Two block-boundary assignments are structural, immutable exceptions to neutral
+visual selection. Apply them BEFORE choosing visuals for other beats:
+
+- The FIRST beat of every type=intro block MUST be visual_type="avatar",
+  prompt=null, video_prompt=null, reference=false, audio=true.
+- The LAST beat of every type=close block MUST be visual_type="avatar",
+  prompt=null, video_prompt=null, reference=false, audio=true.
+
+Both mandatory beats reuse the original supplied avatar PNG. Do not regenerate
+either anchor to match surrounding scenes, wardrobe or continuity, and do not
+replace them with avatar_media or a generated image/video even if generated
+coverage seems more illustrative. The introduction starts with the actual
+talking-head presenter and the close ends by returning to that same presenter.
+If a block has only one beat, its boundary beat still uses the entire anchor
+assignment. All OTHER beats retain full neutral visual-selection freedom.
+
+Block type supplies narrative context only outside these two immutable anchors.
 
 Documentary scene reasoning
 
@@ -203,7 +221,10 @@ Write the shortest self-contained prompt that fully controls:
 - the facial expression and gaze/attention appropriate to the scene whenever a
   referenced person's face is visible;
 - continuity details when required;
-- exclusions needed to prevent a material error.
+- a narrowly targeted exclusion ONLY if a concrete, beat-specific mistake
+  would materially misrepresent the scene. Do not add generic negative lists
+  or stock disclaimers about incidental scene details. Describe what should
+  appear instead of inventing default restrictions on what may appear.
 
 Do not add decorative story facts merely to make the image more vivid.
 
@@ -471,34 +492,39 @@ Decision procedure
 For each beat:
 
 1. freeze upstream fields;
-2. identify the beat's primary communicative function;
-3. resolve the relevant person/character/object/place and narration ownership;
-4. decide whether presenter presence, presenter plus support, a documentary still or a documentary video is the most natural carrier;
-5. choose visual_type without format quotas or tie-breaking bias;
-6. cast generated human demonstrators with the contextual presenter preference
+2. apply the immutable intro/close full-field anchor if this beat is a required
+   boundary beat; keep it unchanged and skip discretionary steps 3-12;
+3. for every other beat, identify its primary communicative function;
+4. resolve the relevant person/character/object/place and narration ownership;
+5. decide whether presenter presence, presenter plus support, a documentary still or a documentary video is the most natural carrier;
+6. choose visual_type without format quotas or tie-breaking bias;
+7. cast generated human demonstrators with the contextual presenter preference
    while preserving distinct story-character identities;
-7. decide reference from actual visual/identity continuity dependency;
-8. for every visible face depicted from the reference, describe a scene-specific
+8. decide reference from actual visual/identity continuity dependency;
+9. for every visible face depicted from the reference, describe a scene-specific
    facial expression, demeanor and useful gaze/attention without copying the
    source image's expression;
-9. decide audio from the visible person's speaking role AND whether the actual
+10. decide audio from the visible person's speaking role AND whether the actual
    A2V speaking-focused route can plausibly support the shot; if visible speech
    needs generated media, use media_video, NEVER media_image with audio=true;
-10. choose a purposeful shot scale, camera angle, crop and visual focus for
+11. choose a purposeful shot scale, camera angle, crop and visual focus for
     EVERY generated beat, considering nearby similar subjects;
-11. write concise source-grounded still-image prompts and, for media_video,
+12. write concise source-grounded still-image prompts and, for media_video,
     a distinct animation video_prompt describing action development, gestures
     and camera behavior consistent with the selected audio route;
-12. after the block is stable, apply continuity numbering to genuine continuous
+13. after the block is stable, apply continuity numbering to genuine continuous
     events and strengthen shot-to-shot progression within those sequences;
-13. validate the 120-character presenter-run constraint as far as this block can know;
-14. validate the final output contract.
+14. validate the 120-character presenter-run constraint as far as this block can know;
+15. validate the final output contract.
 
 Block-level review
 
 Before output, review the block for:
 
-- format bias: no visual_type was chosen because it is generally preferred;
+- mandatory intro/close anchors: the first beat of intro and last beat of
+  close use the unchanged base-avatar assignment in full, including null
+  prompt/video_prompt, reference=false and audio=true;
+- format bias: no discretionary visual_type was chosen because it is generally preferred;
 - demonstrator casting: presenter-led examples use the referenced presenter when
   naturally demonstrable, while distinct third-party subjects and identity-free
   close-ups are not forcibly recast;
@@ -511,6 +537,9 @@ Before output, review the block for:
 - sequence shot progression: adjoining numbered prompts preserve continuity
   while avoiding near-duplicate framing and emphasizing distinct steps;
 - redundancy: repeated visuals remain only when repetition is narratively useful;
+- prompt discipline: do not add generic prohibitions or routine disclaimers
+  about incidental scene details; any negative constraint must prevent a
+  concrete, beat-specific material error;
 - reference correctness: every dependency on the supplied image is explicit and
   unrelated source-image style, expression, background or pose are not copied;
 - referenced visible faces: a natural beat-specific expression and relevant
@@ -580,7 +609,10 @@ Before emitting success, verify:
 - upstream fields and beat order are unchanged;
 - every beat has exactly one allowed visual_type, one prompt, one video_prompt,
   one reference boolean and one audio boolean;
-- no block type forced a visual_type;
+- the first intro beat and the last close beat use exactly
+  visual_type="avatar", prompt=null, video_prompt=null,
+  reference=false and audio=true, without regeneration;
+- all other beats were chosen without block-type format bias;
 - prompt = null occurs only for avatar and always has reference = false;
 - avatar_media, media_image and media_video have non-empty prompts;
 - non-null prompts contain scene instructions only, without application-wide style boilerplate;
