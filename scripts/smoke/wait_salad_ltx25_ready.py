@@ -30,6 +30,19 @@ _PINNED_IMAGE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 _TRANSIENT_API_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 
 
+def _required_salad_account_env(name: str) -> str:
+    """Select the same explicit account as the Salad manager, never manifest defaults."""
+    value = (os.getenv(name) or "").strip()
+    if not value:
+        raise SystemExit(f"Missing {name} in the environment or .env")
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", value) is None:
+        raise SystemExit(
+            f"{name} must be a Salad organization/project slug "
+            "(letters, digits, hyphens or underscores)"
+        )
+    return value
+
+
 def _readiness_observation(
     group: Mapping[str, Any],
     instances: list[dict[str, object]],
@@ -238,13 +251,14 @@ def main() -> int:
     manifest = json.loads(
         (_REPO_ROOT / "deploy" / "salad" / "services.json").read_text(encoding="utf-8")
     )
-    stack = manifest["stack"]
     ltx = manifest["services"][args.service]
     task_mode = ltx["environment"]["LTX_WORKER_TASK_MODE"]
     if task_mode not in {"i2v", "a2v"}:
         raise SystemExit("LTX worker must be dedicated to i2v or a2v")
     image = ltx["image"]
     image_repository = image.rsplit(":", maxsplit=1)[0]
+    organization = _required_salad_account_env("SALAD_ORGANIZATION")
+    project = _required_salad_account_env("SALAD_PROJECT")
     api_key = os.getenv("SALAD_API_KEY", "").strip()
     if not api_key:
         raise SystemExit("SALAD_API_KEY is required to check worker readiness")
@@ -255,8 +269,8 @@ def main() -> int:
             api_base_url=os.getenv(
                 "SALAD_API_BASE_URL", DEFAULT_SALAD_API_BASE_URL
             ).strip(),
-            organization_name=stack["organization"],
-            project_name=stack["project"],
+            organization_name=organization,
+            project_name=project,
             container_group_name=ltx["group_name"],
         )
     )
