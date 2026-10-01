@@ -273,7 +273,10 @@ def main() -> int:
     if not api_key:
         raise SystemExit("SALAD_API_KEY is required to check worker readiness")
     if args.check_config_only:
-        print(f"LTX readiness configuration OK service={args.service} account selected from environment")
+        print(
+            f"LTX readiness configuration OK service={args.service} "
+            "account selected from environment"
+        )
         return 0
 
     client = SaladClient(
