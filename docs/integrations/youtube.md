@@ -69,3 +69,67 @@ the publisher will not make `channels.list` calls to verify its identity.
 - Phase 6: opt-in hook after an actual verified final MP4.
 
 No generation job, runner, API call or OAuth flow is activated by phase 1.
+
+## Phase 2: per-channel desktop authorization (Windows)
+
+This phase does not upload videos, query channel identities or publish anything.
+Keep Google OAuth credentials on the machine that runs the publisher.
+Do not mount the keystore into GPU/Salad workers or copy its files into Docker.
+
+1. In Google Cloud Console, enable YouTube Data API v3, configure the OAuth
+   consent screen (test users if still in Testing), and create an OAuth client
+   of type Desktop app. Download the JSON file.
+2. Outside the checkout, create an owner-only directory such as a dedicated
+   keystores/youtube folder under your Windows user profile. Move the downloaded
+   JSON there and rename it to client_secret.json.
+3. In PowerShell, configure the persistent Windows user environment variable:
+
+   ```powershell
+   [Environment]::SetEnvironmentVariable(
+       "YOUTUBE_KEYSTORE_DIR",
+       (Join-Path $env:USERPROFILE "keystores\\youtube"),
+       "User"
+   )
+   ```
+
+   Open a NEW PowerShell window. The path must resolve to an absolute external
+   location. Symbolic links and Windows junctions are refused.
+4. From the checkout, authorize a channel:
+
+   ```powershell
+   uv sync --locked --extra youtube
+   uv run --locked --extra youtube python scripts/youtube/auth.py --channel "Canal Principal"
+   ```
+
+   Confirm the local alias and choose the intended YouTube channel carefully
+   in your browser. The OAuth flow uses a temporary local HTTP listener and
+   requests only youtube.upload with offline refresh. The result is the
+   external file Canal Principal.json. All channels share client_secret.json.
+5. Diagnostics and recovery:
+
+   ```powershell
+   uv run --locked --extra youtube python scripts/youtube/auth.py --list
+   uv run --locked --extra youtube python scripts/youtube/auth.py --check --channel "Canal Principal"
+   uv run --locked --extra youtube python scripts/youtube/auth.py --reauthorize --channel "Canal Principal"
+   ```
+
+The CLI works independently of YOUTUBE_ENABLED. The --check operation only
+checks stored OAuth data and refreshes expired tokens; it never queries the
+YouTube channel identity or proves upload rights. A PRIVATE test upload in
+phase 3 must be inspected by the operator before any unattended publishing.
+
+Existing Google authorized-user files from a shared external keystore can
+be reused if they contain a refresh token and the explicit youtube.upload
+scope. Files with missing scopes or invalid data are never silently
+overwritten. An unsuccessful reauthorization preserves existing credentials.
+
+The publisher can refresh existing tokens without the OAuth client file or
+a browser. Permanently expired or revoked refresh tokens need an explicit
+reauthorization. Google external apps still in Testing may issue refresh
+tokens that expire after seven days.
+
+Protect external folders with appropriate user ACLs on Windows. POSIX
+directories require owner-only permissions. Never commit, upload, log, or
+copy the OAuth client or per-channel token files to R2, Postgres, GitHub CI,
+or GPU Docker image layers. Concurrent refresh/reauthorization is serialized
+using OS-level per-channel locks released when the process exits.

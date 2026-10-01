@@ -34,3 +34,8 @@ def test_settings_reject_invalid_youtube_values() -> None:
     ):
         with pytest.raises(ValidationError):
             Settings(_env_file=None, **override)
+
+
+def test_system_environment_keystore_dir(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("YOUTUBE_KEYSTORE_DIR", str(tmp_path / "external"))
+    assert Settings(_env_file=None).youtube_keystore_dir == tmp_path / "external"
