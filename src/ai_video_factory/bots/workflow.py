@@ -696,6 +696,10 @@ async def run_b_pipeline(
                 "avatar/avatar_media require audio=true; "
                 "media_image ALWAYS requires audio=false. Generated "
                 "synchronized visible speech must use media_video with audio=true. "
+                "The FIRST beat of an intro block and LAST beat of a close block "
+                "MUST use the unchanged original avatar: visual_type=avatar, "
+                "prompt=null, video_prompt=null, reference=false, audio=true. "
+                "These boundary beats cannot be regenerated or replaced by media. "
                 "Do not omit reference or audio booleans."
                 if visual_style == "profesional"
                 else (
