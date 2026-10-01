@@ -36,7 +36,7 @@ from ai_video_factory.providers.job_queue import (
 from ai_video_factory.workers.ltx25.jobs import ltx_video_application_job_id
 from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
-    LTX_STATIC_CAMERA_GENERATION_PROFILE,
+    LTX_SUPPORTED_I2V_PROFILES,
     LTX_VIDEO_TASK,
     ltx_num_frames_for_duration,
 )
@@ -106,7 +106,7 @@ def build_video_generation_plan(
     _validate_inputs(keyframes, prompts, timings)
     if (width, height, fps) != (1280, 720, 24):
         raise ValueError("Production LTX output must be exactly 1280x720 at 24 fps")
-    if generation_profile not in (LTX_GENERATION_PROFILE, LTX_STATIC_CAMERA_GENERATION_PROFILE):
+    if generation_profile not in LTX_SUPPORTED_I2V_PROFILES:
         raise ValueError("Unsupported I2V generation profile")
 
     base_dir = keyframe_base_dir.resolve()
