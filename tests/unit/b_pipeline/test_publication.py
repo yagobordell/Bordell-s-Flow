@@ -1,13 +1,15 @@
 """Immutable, validated human-facing results without touching resumable work files."""
 
+import asyncio
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
 from ai_video_factory.publishing import PublicationError, publish_completed_run
-from scripts.pipeline.run_b_pipeline import _publish_if_ready
+from scripts.pipeline.run_b_pipeline import _publish_if_ready, main
 
 
 def _sha(data: bytes) -> str:
@@ -198,3 +200,24 @@ def test_publisher_rejects_deferred_video(
     with pytest.raises(PublicationError, match="actual finished LTX video"):
         publish_completed_run(work, script, root)
     assert not root.exists()
+
+
+def test_publish_only_cli_uses_saved_run_without_provider_calls(
+    completed: tuple[Path, Path, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    work, script, root = completed
+
+    def no_api(*args: object, **kwargs: object) -> None:
+        raise AssertionError("Publishing must never construct a paid provider")
+
+    monkeypatch.setattr("scripts.pipeline.run_b_pipeline.OpenAIProvider", no_api)
+    monkeypatch.setattr("scripts.pipeline.run_b_pipeline.AI33SpeechClient", no_api)
+    monkeypatch.setattr(sys, "argv", [
+        "run_b_pipeline.py", str(script), "--publish-only",
+        "--output", str(work.parent),
+        "--results-root", str(root),
+        "--avatars-dir", str(tmp_path / "avatars"),
+    ])
+    asyncio.run(main())
+    assert len(list((root / "Jorge" / "tutorial").iterdir())) == 1
+    assert len(list((root / "Jorge" / "tutorial").glob("*/tutorial.mp4"))) == 1
