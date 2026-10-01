@@ -103,7 +103,11 @@ def prepare_managed_script(
     source = destination / (script_name + ".txt")
     if destination.is_symlink() or destination.is_junction() or source.is_symlink():
         raise SystemExit("Linked script run folder is not allowed")
-    pending = [avatar_dir / (script_name + ".txt"), data / (script_name + ".txt")]
+    pending = [avatar_dir / (script_name + ".txt")]
+    # Only a NEW, still-loose avatar may claim a loose TXT from data/.
+    # After the avatar is organized, new scripts belong inside its folder.
+    if raw_avatar.is_file():
+        pending.append(data / (script_name + ".txt"))
     for item in pending:
         if item.is_symlink():
             raise SystemExit(f"Linked pending script: {item}")
@@ -161,7 +165,10 @@ def _script_options(data: Path, avatar_name: str, resume: bool) -> list[str]:
                 ):
                     names.add(folder.name)
     else:
-        for folder in (avatar_dir, data):
+        search_roots = [avatar_dir]
+        if (data / (avatar_name + ".png")).is_file():
+            search_roots.append(data)
+        for folder in search_roots:
             if folder.is_dir():
                 for item in folder.iterdir():
                     if item.is_symlink():
