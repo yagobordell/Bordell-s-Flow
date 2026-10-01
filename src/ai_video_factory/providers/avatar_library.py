@@ -81,7 +81,7 @@ def ensure_avatar_meta(
     if reference_audio is not None:
         if (
             Path(reference_audio).name != reference_audio
-            or "/" in reference_audio or "\\\\" in reference_audio
+            or "/" in reference_audio or chr(92) in reference_audio
             or Path(reference_audio).suffix.lower() not in _AUDIO_SUFFIXES
         ):
             raise SystemExit("El audio de referencia debe ser un nombre local válido.")
