@@ -103,6 +103,7 @@ def test_try_get_group_preserves_original_transport_exception() -> None:
         + "try { Try-Get-Group -Headers @{}; throw 'must have failed' } "
         + "catch { if ($_.Exception.Message -ne 'actual-salad-transport-failure') "
         + "{ throw \"Original failure was masked: $($_.Exception.Message)\" } }\n"
+        + "exit 0\n"
     )
 
 
