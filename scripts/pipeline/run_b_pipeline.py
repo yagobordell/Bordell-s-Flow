@@ -1534,11 +1534,10 @@ async def _run_audio_only(
     except (ValueError, OSError) as exc:
         raise SystemExit(f"Invalid B1.1 audio checkpoint: {exc}") from exc
 
-    # A new narration invalidates the old preview and LTX mux until regenerated.
-    # Keep their source files for recovery, but do not claim they match new audio.
-    report["run"]["video_preview"] = {"status": "stale_audio_regeneration"}
-    report["run"]["video_generation"] = {"status": "stale_audio_regeneration"}
-    _write(report_path, report)
+    previous_audio = report["run"].get("audio_generation")
+    previous_sha = (
+        previous_audio.get("sha256") if isinstance(previous_audio, dict) else None
+    )
     _activate_pending_avatar_clone(output, report)
 
     provider = (
@@ -1565,6 +1564,10 @@ async def _run_audio_only(
         _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
+    if artifact["sha256"] != previous_sha:
+        # Only a changed narration invalidates previous previews and LTX exports.
+        report["run"]["video_preview"] = {"status": "stale_audio_regeneration"}
+        report["run"]["video_generation"] = {"status": "stale_audio_regeneration"}
     report["run"]["audio_generation"] = artifact
     _refresh_audio_costs(report, output)
     _write(report_path, report)
