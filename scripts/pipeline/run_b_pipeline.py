@@ -1842,11 +1842,11 @@ async def main() -> None:
         output = output_root / script_file.stem
         if not output.is_dir() or output.is_symlink() or output.is_junction():
             raise SystemExit(f"No saved pipeline output for publishing: {output}")
+        managed_target = getattr(args, "managed_target", None)
         target = await asyncio.to_thread(
-            publish_managed_run if getattr(args, "managed_target", None) is not None
-            else publish_completed_run,
+            publish_managed_run if managed_target is not None else publish_completed_run,
             output, script_file,
-            getattr(args, "managed_target", None) if getattr(args, "managed_target", None) is not None else results_root,
+            managed_target if managed_target is not None else results_root,
         )
         print(f"  Published result: {target}", flush=True)
         return
