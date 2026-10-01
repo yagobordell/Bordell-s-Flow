@@ -1843,10 +1843,10 @@ async def main() -> None:
         if not output.is_dir() or output.is_symlink() or output.is_junction():
             raise SystemExit(f"No saved pipeline output for publishing: {output}")
         target = await asyncio.to_thread(
-            publish_managed_run if args.managed_target is not None
+            publish_managed_run if getattr(args, "managed_target", None) is not None
             else publish_completed_run,
             output, script_file,
-            args.managed_target if args.managed_target is not None else results_root,
+            getattr(args, "managed_target", None) if getattr(args, "managed_target", None) is not None else results_root,
         )
         print(f"  Published result: {target}", flush=True)
         return
@@ -1854,7 +1854,7 @@ async def main() -> None:
         output_root = args.output if args.output is not None else settings.output_dir
         await _run_videos_only(
             script_file, output_root, results_root=results_root,
-            managed_target=args.managed_target,
+            managed_target=getattr(args, "managed_target", None),
         )
         return
     if getattr(args, "images_only", False):
@@ -1862,7 +1862,7 @@ async def main() -> None:
         await _run_images_only(
             script_file, output_root, no_video=bool(getattr(args, "no_video", False)),
             results_root=results_root,
-            managed_target=args.managed_target,
+            managed_target=getattr(args, "managed_target", None),
         )
         return
     if getattr(args, "regenerate_audio", False) or getattr(args, "resume_audio", False):
@@ -1873,7 +1873,7 @@ async def main() -> None:
             resume=bool(getattr(args, "resume_audio", False)),
             no_video=bool(getattr(args, "no_video", False)),
             results_root=results_root,
-            managed_target=args.managed_target,
+            managed_target=getattr(args, "managed_target", None),
         )
         return
 
@@ -2332,7 +2332,7 @@ async def main() -> None:
 
     costs, timing_report = save_report("completed", len(result.b12))
     await asyncio.to_thread(
-        _publish_if_ready, output, script_file, results_root, args.managed_target
+        _publish_if_ready, output, script_file, results_root, getattr(args, "managed_target", None)
     )
     _print_metric(
         "Run",
