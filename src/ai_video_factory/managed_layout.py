@@ -42,7 +42,29 @@ def sync_managed_outputs(work: Path, target: Path) -> None:
     A finished, published result is never mutated by partial recovery sync.
     """
     _check_dir(target)
-    if (target / "manifest.json").exists():
+    marker = target / "manifest.json"
+    if marker.is_symlink():
+        raise PublicationError("Linked final publication manifest")
+    if marker.exists():
+        if not marker.is_file():
+            raise PublicationError("Invalid final publication manifest")
+        saved = json.loads(marker.read_text(encoding="utf-8"))
+        if not isinstance(saved, dict) or not isinstance(saved.get("files"), dict):
+            raise PublicationError("Invalid final publication file records")
+        _verify(target, saved)
+        current_report = work / "run_report.json"
+        if current_report.is_file() and not current_report.is_symlink():
+            report = _json(work, "run_report.json")
+            run = report.get("run")
+            audio = run.get("audio_generation") if isinstance(run, dict) else None
+            if isinstance(audio, dict) and audio.get("status") == "completed" and (
+                saved["files"].get("media/audio/narracion.wav") != audio.get("sha256")
+            ):
+                raise PublicationError(
+                    "The internal narration has changed since the immutable full "
+                    "publication. Start a separate script version; never silently "
+                    "show an outdated finished MP4."
+                )
         return
     script = target / (target.name + ".txt")
     if not script.is_file() or script.is_symlink():
