@@ -146,6 +146,7 @@ def upload_video(
     consecutive_failures = 0
     stalled_chunks = 0
     last_progress = -1
+    last_fraction = -1.0
     while True:
         try:
             status, response = operation.next_chunk(num_retries=0)
@@ -195,18 +196,22 @@ def upload_video(
                 thumbnail_uploaded=False,
             )
 
-        percentage = last_progress
+        fraction = last_fraction
         if status is not None:
             try:
-                percentage = min(99, max(0, int(float(status.progress()) * 100)))
+                fraction = max(0.0, min(1.0, float(status.progress())))
             except (TypeError, ValueError, AttributeError, OverflowError):
-                percentage = last_progress
-        if percentage > last_progress:
-            last_progress = percentage
+                fraction = last_fraction
+        # For multi-GB videos several chunks can share the same integer percent.
+        if fraction > last_fraction:
+            last_fraction = fraction
             consecutive_failures = 0
             stalled_chunks = 0
-            if progress is not None:
-                progress(percentage)
+            percentage = min(99, int(fraction * 100))
+            if percentage > last_progress:
+                last_progress = percentage
+                if progress is not None:
+                    progress(percentage)
         else:
             stalled_chunks += 1
             if stalled_chunks >= 20:
