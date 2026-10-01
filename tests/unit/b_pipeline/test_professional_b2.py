@@ -467,6 +467,81 @@ def test_speaking_presenter_media_video_uses_a2v_not_unsynced_i2v() -> None:
     ]
 
 
+@pytest.mark.parametrize("block_type", ["intro", "close"])
+def test_professional_schema_retry_restores_mandatory_boundary(
+    block_type: str,
+) -> None:
+    script = "A clear introduction and conclusion for our video."
+    attempts: list[str] = []
+    rejected: list[tuple] = []
+
+    class InvalidBoundaryThenFixed:
+        async def generate_structured(
+            self, *, model, instructions, input_text, output_type,
+            input_image_url=None,
+        ):
+            if output_type is B11Output:
+                return B11Output.model_validate({
+                    "pipeline_stage": "B1.1",
+                    "narrative_core": {
+                        "central_question": "What?", "final_answer": "Answer."
+                    },
+                    "blocks": [{
+                        "block_id": 1, "type": block_type,
+                        "emotional_entry": "Ready", "emotional_exit": "Informed",
+                        "span": {"first_words": script, "last_words": script},
+                    }],
+                    "error": None,
+                })
+            if output_type is B12Output:
+                return B12Output.model_validate({
+                    "pipeline_stage": "B1.2",
+                    "block_id": 1,
+                    "beats": [{
+                        "beat_id": "1A",
+                        "text": script,
+                        "beat_type": "setup",
+                    }],
+                    "error": None,
+                })
+            assert output_type is ProfessionalB2Output
+            attempts.append(instructions)
+            if len(attempts) == 2:
+                assert "FIRST beat of an intro" in instructions
+                assert "LAST beat of a close" in instructions
+            block = json.loads(input_text)["blocks"][0]
+            if len(attempts) == 1:
+                block["beats"][0].update(
+                    visual_type="media_image",
+                    prompt="A quiet still-life photograph",
+                    video_prompt=None, reference=False, audio=False,
+                )
+            else:
+                block["beats"][0].update(
+                    visual_type="avatar",
+                    prompt=None, video_prompt=None, reference=False, audio=True,
+                )
+            return ProfessionalB2Output.model_validate({
+                "pipeline_stage": "B2",
+                "narrative_core": {
+                    "central_question": "What?", "final_answer": "Answer."
+                },
+                "blocks": [block], "error": None,
+            })
+
+    result = asyncio.run(run_b_pipeline(
+        script, provider=InvalidBoundaryThenFixed(),
+        visual_style="profesional", avatar_image=_avatar_png(),
+        on_rejected_b2_output=lambda *args: rejected.append(args),
+    ))
+    assert len(attempts) == 2
+    assert len(rejected) == 1
+    beat = result.b2[0].blocks[0].beats[0]
+    assert (beat.visual_type, beat.prompt, beat.video_prompt, beat.reference, beat.audio) == (
+        "avatar", None, None, False, True
+    )
+
+
 def test_professional_schema_retry_recovers_from_speaking_still() -> None:
     script = "Apply a small amount of foundation with a gentle hand."
     attempts = []
