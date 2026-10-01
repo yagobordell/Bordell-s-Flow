@@ -360,6 +360,8 @@ def build_stt_beat_timeline(
                 "description": beat.get("description", beat.get("prompt")),
                 **({"prompt": beat["prompt"], "audio": beat["audio"]}
                    if "prompt" in beat else {}),
+                **({"video_prompt": beat["video_prompt"]}
+                   if "video_prompt" in beat else {}),
                 "start_seconds": float(start),
                 "first_word_seconds": float(
                     starts[index] + aligned_words[first_word_index]["start"]
