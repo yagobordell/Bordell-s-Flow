@@ -241,3 +241,22 @@ def test_specific_403_reasons_are_safely_reported(
     if allowed:
         assert "reason=" + reason in str(caught.value)
     assert caught.value.__cause__ is None
+
+
+def test_google_errorinfo_service_disabled_is_safe_and_diagnostic(tmp_path: Path) -> None:
+    denied = FakeHttpError(403, "unrecognized")
+    denied.content = json.dumps({
+        "error": {
+            "details": [
+                {"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                 "reason": "SERVICE_DISABLED", "metadata": {"private": "DUMMY_SECRET"}}
+            ]
+        }
+    }).encode("utf-8")
+    youtube, _, _ = fake_youtube([denied])
+    with pytest.raises(YouTubeUploadError) as caught:
+        upload_video(
+            youtube, request(tmp_path), media_factory=Mock(return_value=object()),
+        )
+    assert "reason=SERVICE_DISABLED" in str(caught.value)
+    assert "DUMMY_SECRET" not in str(caught.value)
