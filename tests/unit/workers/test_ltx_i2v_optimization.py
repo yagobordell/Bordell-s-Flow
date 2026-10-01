@@ -80,7 +80,8 @@ def test_triton_unavailable_falls_back_to_eager() -> None:
 
 
 def test_lazy_video_decode_timing_is_measured_on_iteration_not_construction() -> None:
-    metrics = I2VPhaseMetrics(SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False)), "cpu")
+    fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
+    metrics = I2VPhaseMetrics(fake_torch, "cpu")
     produced = []
 
     def chunks():
