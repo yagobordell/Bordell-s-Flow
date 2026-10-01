@@ -1,9 +1,10 @@
-# YouTube integration: manual publishing (phases 1–3)
+# YouTube integration: manual and opt-in automatic publishing (phases 1–6)
 
 YouTube is an independent distribution stage. Phase 1 established the settings,
 external keystore and metadata contracts; phase 2 added desktop OAuth and token
 refresh; phase 3 adds guarded, manual MP4 uploads and offline dry-run.
-Automatic pipeline publication, thumbnails and full publisher state come later.
+Phases 4–6 add optional thumbnails, a durable idempotent publisher and a
+post-validation hook into the existing pipeline (disabled by default).
 
 ## Installation and settings
 
@@ -289,3 +290,170 @@ Attempts created **before** safe diagnostics were added cannot reveal their
 previous Google response: absent fields are expected. Never delete or rename
 an ambiguous attempt to bypass the protection. Reconcile it manually before
 making another upload.
+
+## Phases 4–6: custom thumbnails, durable state and automatic publication
+
+YouTube remains a distribution stage, completely independent of GPU/Salad,
+LTX, STT, audio and the compositor. `YOUTUBE_ENABLED=false` is the safe
+default. Real YouTube uploads NEVER occur in CI.
+
+### Settings and the shared publisher registry
+
+Configure the existing external `YOUTUBE_KEYSTORE_DIR` and local channel alias
+normally. New optional `YOUTUBE_STATE_DIR` can point to a shared, persistent
+directory accessible to **every** publisher instance. By default the registry
+is the external sibling of the keystore folder, e.g.:
+
+```text
+C:/Users/User/keystores/
+  youtube/
+    client_secret.json
+    test01.json
+  youtube-publications/
+    <hashed-channel-and-video>.json
+    .oauth-<lock-key>.lock
+```
+
+The registry is **not** a credential store: it contains no OAuth tokens,
+secrets or Google API response bodies. Its filenames are hashes derived from
+normalized channel aliases and MP4 SHA-256. Every process using this keystore
+should use the SAME state directory (including worktrees). If different
+computers have independent registries, they cannot prevent cross-computer
+duplicate uploads; use a shared publisher and storage instead.
+
+Publication writes are atomic, with crash-released interprocess locks around
+the entire publication operation. A second concurrent process cannot start a
+duplicate `videos.insert` for the same channel and identical MP4 content.
+
+State values in `youtube_publish.json` are `pending`, `uploading`,
+`uploaded`, `completed`, `failed_safe` or `ambiguous`.
+A video ID is persisted as `uploaded` **before** attempting the thumbnail.
+Once the ID exists, subsequent retries only attempt the thumbnail. Unknown
+`uploading` or `ambiguous` results fail closed; never delete or manipulate
+the registry or phase-3 receipt merely to bypass this protection.
+`failed_safe` can only be retried with an explicit `--retry-failed-safe`.
+Changing video metadata after an upload does not create a new video; resolve
+the mismatch manually (videos.update is intentionally out of V1).
+
+For manual standalone MP4s, an informational per-video snapshot is written
+next to the file (`video.mp4.youtube_publish.json`). Managed published runs
+add `youtube_publish.json` under the visible script folder. The original
+immutable results library is never modified; its authoritative state stays
+in the external registry. Generated work directories also receive a
+`youtube_publish.json` snapshot. These snapshots are not the registry.
+
+Completed phase-3 local attempt receipts for the same MP4 path and exact
+metadata can be imported without uploading again. Ambiguous phase-3 receipts
+still prevent a new upload. A phase-3 video subsequently DELETED manually
+from YouTube may still have a successful receipt: do not reuse that old MP4
+for a new acceptance test. Use different video bytes and verify manually;
+upload-only scope cannot detect deleted remote videos.
+
+### Custom thumbnails
+
+Add an optional `thumbnail_path` to the usual per-run `youtube.json`.
+Relative paths resolve against the directory of that JSON file; absolute
+paths are also supported. The file must be a genuine JPEG or PNG verified
+using Pillow, at most 50 MB. Invalid or corrupt images fail BEFORE any
+attempt to create a new YouTube video.
+
+```json
+{
+  "schema_version": "youtube-publish/v1",
+  "channel": "test01",
+  "title": "Finished video with a custom thumbnail",
+  "privacy": "private",
+  "contains_synthetic_media": true,
+  "thumbnail_path": "thumbnail.png"
+}
+```
+
+After the video ID has been saved, `thumbnails.set` submits the custom
+thumbnail using the existing upload-only OAuth scope. This has its OWN
+bounded retry policy. If it fails, the video remains `uploaded` and
+`thumbnail_status=failed`; repeating the command retries only the thumbnail,
+never the video. Changing the thumbnail after a completed publication likewise
+updates only that image.
+
+The API may reject custom thumbnails for channels without this feature
+enabled. Resolve the restriction in YouTube Studio; do not regenerate the MP4.
+
+### Manual publishing
+
+```powershell
+uv sync --locked --extra youtube
+
+# Offline simulation. No Google requests, no token refresh or state changes.
+uv run --locked --extra youtube python scripts/youtube/upload.py `
+  --channel test01 `
+  --video "C:\\Videos\\new-test.mp4" `
+  --metadata "C:\\Videos\\youtube.json" `
+  --dry-run
+
+# Upload or safely reuse; confirmation SUBIR is required.
+uv run --locked --extra youtube python scripts/youtube/upload.py `
+  --channel test01 `
+  --video "C:\\Videos\\new-test.mp4" `
+  --metadata "C:\\Videos\\youtube.json"
+```
+
+Optional flags include `--thumbnail`, `--state-dir`, `--yes` and
+`--retry-failed-safe`. The existing metadata overrides remain available.
+When a completed state exists, the publisher returns its saved ID and URL
+without requesting a fresh videos.insert. If only the thumbnail remains
+pending or has changed, it performs exclusively thumbnails.set.
+
+### Publishing an already generated Video Factory result
+
+```powershell
+uv run --locked --extra youtube python scripts/youtube/publish_run.py `
+  --result-dir "data\\Jorge\\mi_guion" `
+  --metadata "data\\Jorge\\mi_guion\\youtube.json" `
+  --dry-run
+
+uv run --locked --extra youtube python scripts/youtube/publish_run.py `
+  --result-dir "data\\Jorge\\mi_guion" `
+  --metadata "data\\Jorge\\mi_guion\\youtube.json"
+```
+
+The command checks the finished publication manifest and the exact
+published MP4 SHA-256; it never starts any generation, compositing, inference
+or GPU job. It also accepts an immutable
+`data/results/<avatar>/<script>/<run-id>` result directory if accompanied
+by an explicit `--metadata` outside that immutable snapshot.
+
+### Optional automatic publishing
+
+Set `YOUTUBE_ENABLED=true` in `config/app.env`, select `YOUTUBE_CHANNEL`,
+and prepare `youtube.json` **before** finishing the video. For the managed
+layout put it at `data/<avatar>/<script>/youtube.json` alongside an optional
+`thumbnail.png`; standalone runs can use their dedicated working run
+directory. The title is mandatory. No titles, descriptions or thumbnails
+are automatically generated by the YouTube integration.
+
+`run.ps1` includes the optional Google libraries only when automatic YouTube
+publishing is enabled. The B pipeline calls the publisher only **after** the
+actual final LTX MP4 was validated, published locally and verified against its
+publication manifest. An incomplete run, images-only run or video preview
+NEVER triggers YouTube.
+
+Publishing errors cannot invalidate the finished audiovisual run, do not
+start any generation stages and are reported separately. If metadata is
+missing or another preflight error happens before a canonical state exists,
+the trigger writes a safe `youtube_publish_error.json` under its work
+directory. Uploaded videos and failed thumbnails keep their authoritative
+state in the shared registry. Recover independently using publish_run.py.
+
+`--publish-only` retains its existing meaning of LOCAL verified publication;
+the distinct `scripts/youtube/publish_run.py` command controls YouTube
+distribution explicitly.
+
+### Acceptance gates before merging
+
+All GitHub CI jobs must pass: general Python pytest/Ruff, YouTube tests using
+mocked Google calls and real installed optional libraries, Remotion and tracked
+secret scanning. The manual private acceptance test must verify: a genuinely
+new MP4 appears in the correct channel, its custom thumbnail is accepted,
+rerunning returns the existing ID, updating only the thumbnail never creates
+another video, and the automatic hook succeeds after a saved verified final
+result without rerunning generation. Until then keep `YOUTUBE_ENABLED=false`.
