@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -14,7 +14,7 @@ from .store import validate_channel_name
 
 Privacy = Literal["private", "unlisted", "public"]
 License = Literal["youtube", "creativeCommon"]
-_BCP47 = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*\\Z")
+_BCP47 = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*")
 
 
 def _validate_title(value: str) -> str:
