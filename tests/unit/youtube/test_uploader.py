@@ -212,3 +212,32 @@ def test_status_progress_on_huge_video_does_not_stall_on_integer_percent(tmp_pat
         youtube, request(tmp_path), media_factory=Mock(return_value=object())
     )
     assert result.video_id == "ok123"
+
+
+@pytest.mark.parametrize(("reason", "error_type"), [
+    ("insufficientPermissions", YouTubeAuthenticationError),
+    ("authenticatedUserNotChannel", YouTubeAuthenticationError),
+    ("forbiddenPrivacySetting", YouTubeUploadError),
+    ("forbiddenLicenseSetting", YouTubeUploadError),
+    ("SERVICE_DISABLED", YouTubeUploadError),
+    ("forbidden", YouTubeUploadError),
+    ("UNRECOGNIZED_SECRET_REASON", YouTubeUploadError),
+])
+def test_specific_403_reasons_are_safely_reported(
+    tmp_path: Path, reason: str, error_type: type[Exception]
+) -> None:
+    youtube, _, _ = fake_youtube([FakeHttpError(403, reason)])
+    diagnostics: list[tuple[int | None, str | None]] = []
+    with pytest.raises(error_type) as caught:
+        upload_video(
+            youtube, request(tmp_path), media_factory=Mock(return_value=object()),
+            on_failure=lambda code, label: diagnostics.append((code, label)),
+        )
+    allowed = reason if reason != "UNRECOGNIZED_SECRET_REASON" else None
+    assert diagnostics == [(403, allowed)]
+    assert "HTTP 403" in str(caught.value)
+    assert "DUMMY_SECRET" not in str(caught.value)
+    assert "UNRECOGNIZED_SECRET_REASON" not in str(caught.value)
+    if allowed:
+        assert "reason=" + reason in str(caught.value)
+    assert caught.value.__cause__ is None
