@@ -90,6 +90,11 @@ def _image_sources(
             and run["image_generation"].get("status") == "completed"
             and run["image_generation"].get("count") != len(items)
         )
+        or (
+            isinstance(run.get("image_generation"), dict)
+            and "cropped_panel_count" in run["image_generation"]
+            and run["image_generation"]["cropped_panel_count"] != len(panels)
+        )
     ):
         raise PublicationError("Completed image manifest does not match its generated items")
     entries: dict[str, tuple[Path, str]] = {}
