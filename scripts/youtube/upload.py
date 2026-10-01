@@ -145,6 +145,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             request,
             on_started=attempt.reserve,
             on_completed=attempt.complete,
+            on_failure=attempt.record_failure,
             progress=_progress,
         )
         print("YouTube upload complete. ID: " + result.video_id)
