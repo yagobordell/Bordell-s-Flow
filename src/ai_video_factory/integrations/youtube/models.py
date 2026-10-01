@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .errors import YouTubeConfigurationError
 from .store import validate_channel_name
 
 Privacy = Literal["private", "unlisted", "public"]
@@ -70,7 +71,10 @@ class YouTubePublishRequest(BaseModel):
     @field_validator("channel")
     @classmethod
     def check_channel(cls, value: str) -> str:
-        return validate_channel_name(value)
+        try:
+            return validate_channel_name(value)
+        except YouTubeConfigurationError as exc:
+            raise ValueError("Invalid YouTube channel") from exc
 
     @field_validator("title")
     @classmethod
@@ -114,7 +118,7 @@ class YouTubePublishRequest(BaseModel):
                 raise ValueError("Scheduled YouTube videos must use private privacy")
             if self.publish_at.tzinfo is None or self.publish_at.utcoffset() is None:
                 raise ValueError("YouTube publish_at must include a timezone")
-            if self.publish_at <= datetime.now(timezone.utc):
+            if self.publish_at <= datetime.now(UTC):
                 raise ValueError("YouTube publish_at must be in the future")
         if self.recording_date is not None and (
             self.recording_date.tzinfo is None or self.recording_date.utcoffset() is None
