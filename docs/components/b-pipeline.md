@@ -34,6 +34,14 @@ Structured Outputs is appended at runtime.
 
 ## Professional B2: demonstrator identity, animation prompts and speaking intent
 
+The professional bot has two mandatory presenter-return points:
+the **first** beat of an `intro` block and the **last** beat of a `close`
+block reuse the original avatar image with `visual_type: "avatar"`,
+`prompt: null`, `video_prompt: null`, `reference: false` and
+`audio: true`. The professional output schema validates both assignments
+and its automatic correction retry can repair a noncompliant output.
+All other beats retain neutral visual choice.
+
 The opt-in `profesional` bot chooses `visual_type` independently from casting:
 a still or video can show the selected avatar demonstrating a presenter-led
 example instead of an unrelated generic person. The preference applies
@@ -50,8 +58,12 @@ within a continuous occasion only when continuity calls for them.
 
 Professional B2 makes no special branding or packaging choices: the scene
 description is driven by the beat, not by brand-specific positive or negative
-instructions. The professional grid adds no such rules. The legacy `casero`
-prompt and grid are unchanged.
+instructions. The professional grid adds no such rules. The professional bot's
+general scene-prompt instructions now discourage generic negative lists
+and stock disclaimers about irrelevant scene details: exclusions should
+prevent only a concrete mistake specific to that beat, not introduce
+new content restrictions. This does not prescribe whether ordinary scene
+details may appear. The legacy `casero` prompt and grid are unchanged.
 
 A clearly visible presenter making a simple, speaking-compatible
 demonstration can use `audio: true`, including on a `media_video` beat;
