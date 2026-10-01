@@ -50,8 +50,13 @@ from ai_video_factory.inference.salad_billing import SaladCostMeter, read_salad_
 from ai_video_factory.managed_layout import publish_managed_run
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
-from ai_video_factory.providers.avatar_library import avatar_directory, organize_avatar
+from ai_video_factory.providers.avatar_library import (
+    avatar_directory,
+    ensure_avatar_meta,
+    organize_avatar,
+)
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
+from ai_video_factory.providers.avatar_style import ensure_avatar_style
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE, GridPlanError
@@ -1880,18 +1885,36 @@ async def main() -> None:
     avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
     avatar_bytes, avatar_width, avatar_height = load_avatar_png(avatar_file)
     output_root_for_style = args.output if args.output is not None else settings.output_dir
-    if getattr(args, "from_stage", "B1.1") == "B2" and getattr(args, "visual_style", None) is None:
+    managed_target = getattr(args, "managed_target", None)
+    if (
+        managed_target is None
+        and getattr(args, "from_stage", "B1.1") == "B2"
+        and getattr(args, "visual_style", None) is None
+    ):
         report_path = output_root_for_style / script_file.stem / "run_report.json"
         if report_path.is_file() and not report_path.is_symlink():
             previous_style = json.loads(
                 report_path.read_text(encoding="utf-8")
             ).get("run", {}).get("visual_style", "casero")
             args.visual_style = previous_style
-    visual_style = select_visual_style(getattr(args, "visual_style", None))
     avatar_file = _recover_avatar_layout(
         avatar_file, args.avatars_dir,
         reference_audio=getattr(args, "voice_audio", None),
     )
+    if managed_target is not None:
+        avatar_file = organize_avatar(
+            avatar_file, args.avatars_dir,
+            reference_audio=getattr(args, "voice_audio", None),
+        )
+        ensure_avatar_meta(
+            avatar_file, args.avatars_dir,
+            reference_audio=getattr(args, "voice_audio", None),
+        )
+        visual_style = ensure_avatar_style(
+            avatar_file, getattr(args, "visual_style", None), select_visual_style
+        )
+    else:
+        visual_style = select_visual_style(getattr(args, "visual_style", None))
     if not settings.openai_api_key:
         raise SystemExit("OPENAI_API_KEY is missing")
     if (
