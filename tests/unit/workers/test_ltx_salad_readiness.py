@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from copy import deepcopy
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from ai_video_factory.inference.salad import SaladRequestError
+from scripts.smoke import wait_salad_ltx25_ready as readiness
 from scripts.smoke.wait_salad_ltx25_ready import _readiness_observation, wait_for_ready
 
 GROUP_NAME = "ai-video-factory-ltx25-worker-v3"
@@ -212,3 +217,138 @@ def test_nontransient_salad_error_is_not_masked() -> None:
     with pytest.raises(SaladRequestError, match="unauthorized"):
         _wait(_Salad([], error=error), clock=timer)
     assert timer.elapsed == 0
+
+
+def _local_ready_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    include_legacy_manifest_account: bool = False,
+) -> None:
+    """A standalone read-only CLI fixture, independent of any real Salad connection."""
+    deploy = tmp_path / "deploy" / "salad"
+    deploy.mkdir(parents=True)
+    stack = (
+        {"organization": "wrong-organization", "project": "wrong-project"}
+        if include_legacy_manifest_account
+        else {}
+    )
+    (deploy / "services.json").write_text(
+        json.dumps(
+            {
+                "stack": stack,
+                "services": {
+                    "ltx25_i2v": {
+                        "group_name": "i2v-test-group",
+                        "image": "docker.io/yagobordell/ai-video-factory:historic-tag",
+                        "environment": {"LTX_WORKER_TASK_MODE": "i2v"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "SALAD_ORGANIZATION=correct-organization\\n"
+        "SALAD_PROJECT=correct-project\\n"
+        "SALAD_API_KEY=dummy-test-only\\n",
+        encoding="utf-8",
+    )
+    for name in ("SALAD_ORGANIZATION", "SALAD_PROJECT", "SALAD_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(readiness, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "wait_salad_ltx25_ready.py",
+            "--service",
+            "ltx25_i2v",
+            "--expected-image",
+            PINNED_IMAGE,
+        ],
+    )
+
+
+@pytest.mark.parametrize("legacy_manifest_account", [False, True])
+def test_readiness_cli_selects_explicit_account_from_env_not_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    legacy_manifest_account: bool,
+) -> None:
+    _local_ready_configuration(
+        tmp_path,
+        monkeypatch,
+        include_legacy_manifest_account=legacy_manifest_account,
+    )
+    captured: list[object] = []
+
+    def make_client(config: object) -> SimpleNamespace:
+        captured.append(config)
+        return SimpleNamespace(config=config)
+
+    def accept_ready(client: object, **kwargs: object) -> str:
+        captured.append((client, kwargs))
+        return "fake-instance"
+
+    monkeypatch.setattr(readiness, "SaladClient", make_client)
+    monkeypatch.setattr(readiness, "wait_for_ready", accept_ready)
+    assert readiness.main() == 0
+    selected = captured[0]
+    assert selected.organization_name == "correct-organization"
+    assert selected.project_name == "correct-project"
+    assert selected.container_group_name == "i2v-test-group"
+    assert len(captured) == 2
+
+
+def test_readiness_local_configuration_preflight_never_contacts_salad(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _local_ready_configuration(tmp_path, monkeypatch)
+    monkeypatch.setattr(sys, "argv", [*sys.argv, "--check-config-only"])
+    monkeypatch.setattr(
+        readiness,
+        "SaladClient",
+        lambda _: pytest.fail("Config preflight must not contact Salad"),
+    )
+    assert readiness.main() == 0
+
+
+@pytest.mark.parametrize(
+    ("env_name", "replacement"),
+    [
+        ("SALAD_ORGANIZATION", ""),
+        ("SALAD_PROJECT", ""),
+        ("SALAD_ORGANIZATION", "invalid/name"),
+        ("SALAD_PROJECT", "invalid name"),
+    ],
+)
+def test_readiness_fails_closed_for_missing_or_unsafe_account(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    env_name: str,
+    replacement: str,
+) -> None:
+    _local_ready_configuration(tmp_path, monkeypatch)
+    # Non-empty process environment wins over .env, as in the PowerShell manager.
+    if not replacement:
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "\\n".join(
+                line
+                for line in env_file.read_text(encoding="utf-8").splitlines()
+                if not line.startswith(env_name + "=")
+            ) + "\\n",
+            encoding="utf-8",
+        )
+    else:
+        monkeypatch.setenv(env_name, replacement)
+    monkeypatch.setattr(sys, "argv", [*sys.argv, "--check-config-only"])
+    monkeypatch.setattr(
+        readiness,
+        "SaladClient",
+        lambda _: pytest.fail("Invalid account must fail before a Salad client exists"),
+    )
+    with pytest.raises(SystemExit, match=env_name):
+        readiness.main()
