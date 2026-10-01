@@ -24,6 +24,7 @@ venv/
 .DS_Store
 
 # Local runtime data; keep only the avatar folder's instructions in Git
+.video_factory_work/
 data/*
 !data/input/
 data/input/*
