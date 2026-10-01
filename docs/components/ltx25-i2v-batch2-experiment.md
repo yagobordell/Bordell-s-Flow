@@ -74,3 +74,78 @@ pytest and CI does **not** validate visual quality or live Triton kernels.
 
 Do not merge, change the production `generation_profile` or update Salad
 manifests until controlled GPU/visual sign-off.
+
+
+## One-GPU consecutive benchmark (recommended)
+
+Do not repeat the old one-profile controlled smoke three times. The batch
+wrapper scripts/smoke/run_ltx25_i2v_benchmark_batch.ps1 starts exactly one
+pinned I2V Salad group, waits for readiness once, executes all profiles
+sequentially with the same PNG, prompt, duration and effective seed, and stops
+the group once in a finally block. The A2V group and the singleton Capacity
+Controller must remain stopped during this manual experiment.
+
+To reuse an already successful 2-second baseline without paying to generate
+it a second time, retain its input files, validated MP4, technical receipt
+and Postgres manifest. Export the FULL Salad log CSV containing the original
+LTX25_I2V_PHASE_METRICS and INFERENCE_JOB_TASK_DONE messages. Use the exact
+positive prompt and exact PNG from the successful original run.
+
+~~~powershell
+git pull --ff-only
+uv sync --locked --extra dev --python 3.12
+
+# Keep the real reviewed digest saved from the previous experimental Docker image.
+$PinnedImage = "REPLACE_WITH_THE_PREVIOUS_REVIEWED_REPO_AT_SHA256_DIGEST"
+$Image = ".\data\input\keyframe_i2v_1280x720.png"
+$Prompt = "REPLACE_WITH_THE_EXACT_ORIGINAL_BASELINE_PROMPT"
+$BaselineCsv = "C:\Users\User\Downloads\FULL_SALAD_LOG_EXPORT.csv"
+
+$Options = @{
+    Image = $Image
+    Prompt = $Prompt
+    ExpectedPinnedImage = $PinnedImage
+    BaselineRunId = "ltx-base2-20261001203930"
+    BaselineLogsCsv = $BaselineCsv
+    DurationSeconds = 2
+    SeedBase = 4242
+    EnvFile = ".env"
+    NonInteractive = $true
+}
+.\scripts\smoke\run_ltx25_i2v_benchmark_batch.ps1 @Options
+~~~
+
+Before starting billable capacity the wrapper validates: account and R2
+configuration, immutable I2V image, the existing original MP4 hash and
+Postgres receipt, SHA256 equality of all three input files, avatar group
+isolation, and a stopped I2V group. It imports the original complete
+per-phase record from CSV and then runs cfg-b2, cfg-b2-silent and
+cfg-b2-triton consecutively on one GPU. The original baseline is NOT
+regenerated. To test a new duration without a verified existing baseline,
+omit BaselineRunId and BaselineLogsCsv: the wrapper runs all four profiles,
+including the new default baseline, in one capacity session.
+
+Results are saved under
+data/output/deployment-validation/ltx25-i2v-batches/<batch-id>.
+batch-manifest.json records the one-time bootstrap time and immutable image.
+Every new profile subdirectory contains original inputs, the separate MP4,
+i2v-smoke-report.json, run-result.json (UTC start/end and client wall time)
+and phase-metrics.json (full CUDA-synchronized phase record, memory peaks,
+backend, worker task time and raw matching Salad log events).
+summary.csv and summary.json are rewritten after EACH finished profile:
+earlier results survive later failures. The imported baseline also receives
+a metrics record and summary row.
+
+The log collector uses SALAD_ORGANIZATION and SALAD_PROJECT from the operator
+environment and requires one genuine phase metric and the completed job
+event for each profile. Missing or ambiguous metrics fail the run rather
+than silently substituting a guess. Baseline wall time can be null because
+the historical CSV records worker timings, not the local client's wait.
+Compare bootstrap, client wall time, per-phase time, and pipeline_reused
+separately. Switching to Triton may rebuild the decoder pipeline, so
+cold-build time is not a fair proxy for warmed kernel speed.
+
+On controlled errors the wrapper stops the dedicated group in finally.
+An abrupt terminal kill or machine shutdown still requires a manual
+Salad status check and possibly a manual stop. Keep the PR in draft and
+do not merge until real GPU and visual comparison have passed.
