@@ -457,3 +457,32 @@ new MP4 appears in the correct channel, its custom thumbnail is accepted,
 rerunning returns the existing ID, updating only the thumbnail never creates
 another video, and the automatic hook succeeds after a saved verified final
 result without rerunning generation. Until then keep `YOUTUBE_ENABLED=false`.
+
+### Explicit reconciliation after uncertain uploads
+
+For an `uploading` or `ambiguous` state, check the actual channel in
+YouTube Studio first. If the video **exists**, provide its exact YouTube ID:
+
+```powershell
+uv run --locked --extra youtube python scripts/youtube/reconcile.py `
+  --video "C:\\Videos\\new-test.mp4" --channel test01 `
+  --found-video-id "ACTUAL_VIDEO_ID" --acknowledge-studio-check
+```
+
+If the video **definitely does not exist** in any applicable channel:
+
+```powershell
+uv run --locked --extra youtube python scripts/youtube/reconcile.py `
+  --video "C:\\Videos\\new-test.mp4" --channel test01 `
+  --verified-not-created --acknowledge-studio-check
+```
+
+Both require an explicit confirmation phrase. They record the operator's
+manual decision and timestamp in the external registry; neither contacts
+Google or starts a new upload. A confirmed existing ID allows the publisher
+to complete post-upload steps without videos.insert. A verified absence
+changes the state to `failed_safe`, requiring a SECOND explicit
+`--retry-failed-safe` on the next publish command. Never use these controls
+when uncertain: the API's upload-only scope cannot independently verify
+the remote channel or the absence of a video. Old phase-3 sidecars are NOT
+overridden by the new reconciliation command.
