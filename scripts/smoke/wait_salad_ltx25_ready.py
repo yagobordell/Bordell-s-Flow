@@ -236,6 +236,11 @@ def main() -> int:
     parser.add_argument("--timeout-seconds", type=float, default=7200.0)
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument("--expected-image", default="")
+    parser.add_argument(
+        "--check-config-only",
+        action="store_true",
+        help="Validate local account, service and image configuration without contacting Salad.",
+    )
     parser.add_argument("--service", choices=("ltx25", "ltx25_i2v"), default="ltx25")
     args = parser.parse_args()
 
@@ -257,11 +262,19 @@ def main() -> int:
         raise SystemExit("LTX worker must be dedicated to i2v or a2v")
     image = ltx["image"]
     image_repository = image.rsplit(":", maxsplit=1)[0]
+    if args.expected_image:
+        if _PINNED_IMAGE.fullmatch(args.expected_image) is None:
+            raise SystemExit("Expected image must be pinned to repo@sha256:digest")
+        if args.expected_image.split("@sha256:", maxsplit=1)[0] != image_repository:
+            raise SystemExit("Expected image repository differs from the tracked I2V manifest")
     organization = _required_salad_account_env("SALAD_ORGANIZATION")
     project = _required_salad_account_env("SALAD_PROJECT")
     api_key = os.getenv("SALAD_API_KEY", "").strip()
     if not api_key:
         raise SystemExit("SALAD_API_KEY is required to check worker readiness")
+    if args.check_config_only:
+        print(f"LTX readiness configuration OK service={args.service} account selected from environment")
+        return 0
 
     client = SaladClient(
         SaladDispatchConfig(
