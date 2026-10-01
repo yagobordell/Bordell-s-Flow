@@ -5,7 +5,6 @@ stage-level verified snapshots as soon as their files are available.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import shutil
@@ -145,8 +144,7 @@ def _preview_sources(
 
 
 def _final_video(
-    work: Path, run: dict[str, Any], script_name: str,
-    stages: dict[str, str],
+    work: Path, run: dict[str, Any], stages: dict[str, str],
 ) -> tuple[Path, str] | None:
     video = _artifact(run.get("video_generation"))
     if video is None:
@@ -332,7 +330,7 @@ def sync_managed_media(
     if preview is not None:
         _publish_stage(target, "preview", preview, "completed")
         statuses["preview"] = "completed"
-    video = _final_video(work, run, script_name, statuses)
+    video = _final_video(work, run, statuses)
     if video is not None:
         _publish_final_file(target, script_name, video)
         statuses["video"] = "completed"
