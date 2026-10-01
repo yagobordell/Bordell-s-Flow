@@ -11,7 +11,8 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from ai_video_factory.publishing import PublicationError, _collect, _digest
+from ai_video_factory.managed_media import public_report, sync_managed_media
+from ai_video_factory.publishing import PublicationError, _collect, _digest, _json
 
 
 def _check_dir(path: Path) -> None:
@@ -48,6 +49,14 @@ def sync_managed_outputs(work: Path, target: Path) -> None:
         raise PublicationError(f"Managed script missing: {script}")
     if not work.is_dir() or work.is_symlink():
         return
+    report_file = work / "run_report.json"
+    if report_file.is_symlink():
+        raise PublicationError("Linked internal run report")
+    report = _json(work, "run_report.json") if report_file.is_file() else None
+    stages = (
+        sync_managed_media(work, target, script.stem, report)
+        if report is not None else {}
+    )
     staging = target / (".outputs-" + uuid4().hex + ".partial")
     staging.mkdir()
     try:
@@ -55,12 +64,16 @@ def sync_managed_outputs(work: Path, target: Path) -> None:
             folder = work / stage
             if folder.exists():
                 _copy_tree(folder, staging / stage)
-        for name in ("run_report.json", "visual_plan.json", "avatar_voice.json"):
+        for name in ("visual_plan.json", "avatar_voice.json"):
             source = work / name
             if source.is_symlink():
                 raise PublicationError(f"Linked checkpoint: {source}")
             if source.is_file():
                 shutil.copyfile(source, staging / name, follow_symlinks=False)
+        if report is not None:
+            (staging / "run_report.json").write_bytes(
+                public_report(report, stages, script.stem)
+            )
         if not any(staging.iterdir()):
             staging.rmdir()
             return
@@ -78,8 +91,6 @@ def sync_managed_outputs(work: Path, target: Path) -> None:
 def _expected_managed(
     work: Path, script: Path, target: Path
 ) -> tuple[dict[str, object], dict[str, tuple[Path | bytes, str]]]:
-    from ai_video_factory.publishing import _json
-
     if target.resolve() != script.parent.resolve() or target.name != script.stem:
         raise PublicationError("The source script must live directly inside its run folder")
     report = _json(work, "run_report.json")
@@ -98,6 +109,16 @@ def _expected_managed(
             mapped["media/audio/" + name[len("Media/audios/"):]] = value
         else:
             mapped[name] = value
+    # The human report uses paths relative to the visible script folder.
+    stages = {"audio": "completed", "images": "completed", "video": "completed"}
+    if isinstance(report["run"].get("video_preview"), dict) and (
+        report["run"]["video_preview"].get("status") == "completed"
+    ):
+        stages["preview"] = "completed"
+    visible = public_report(report, stages, script.stem)
+    mapped["outputs/run_report.json"] = (
+        visible, hashlib.sha256(visible).hexdigest()
+    )
     # The original script is part of the verified snapshot, even when already moved.
     mapped[script.name] = (script, _digest(script))
     files = {name: sha for name, (_source, sha) in sorted(mapped.items())}
@@ -147,44 +168,52 @@ def publish_managed_run(work: Path, script: Path, target: Path) -> Path:
         _verify(target, expected)
         return target
 
+    # Media can already exist from independent successful stage exports.
+    # Verify existing assets; never discard audio or regenerate paid work.
+    sync_managed_outputs(work, target)
+    expected, entries = _expected_managed(work, script, target)
     staging = target / (".publish-" + uuid4().hex + ".partial")
     staging.mkdir()
     try:
         for name, (source, sha) in sorted(entries.items()):
-            if name == script.name:
+            destination = target / name
+            if destination.is_symlink() or destination.is_junction():
+                raise PublicationError(f"Linked managed destination: {destination}")
+            if destination.exists():
+                if not destination.is_file() or _digest(destination) != sha:
+                    raise PublicationError(
+                        f"Existing managed asset differs from source: {destination}"
+                    )
                 continue
-            destination = staging / name
-            destination.parent.mkdir(parents=True, exist_ok=True)
+            staged = staging / name
+            staged.parent.mkdir(parents=True, exist_ok=True)
             if isinstance(source, bytes):
-                destination.write_bytes(source)
+                staged.write_bytes(source)
             else:
-                shutil.copyfile(source, destination, follow_symlinks=False)
-            if _digest(destination) != sha:
-                raise PublicationError(f"Publication copy is corrupted: {source}")
-        # Verify the complete staged snapshot before replacing partial checkpoint copies.
-        for name, sha in expected["files"].items():
-            file = script if name == script.name else staging / name
-            if _digest(file) != sha:
-                raise PublicationError(f"Publication integrity failed: {name}")
-        for name in ("outputs", "media", script.stem + ".mp4"):
-            dest = target / name
-            temp = staging / name
-            if not temp.exists():
-                raise PublicationError(f"Missing staged publication component: {name}")
-            if dest.is_symlink() or dest.is_junction():
-                raise PublicationError(f"Linked managed destination: {dest}")
-            if dest.is_dir():
-                if name != "outputs":
-                    raise PublicationError(f"Refusing to replace existing media: {dest}")
-                shutil.rmtree(dest)  # Only previously synced, incomplete bot checkpoints.
-            elif dest.exists():
-                raise PublicationError(f"Refusing to overwrite file: {dest}")
-            temp.rename(dest)
-        marker_temp = target / (".manifest-" + uuid4().hex + ".partial")
-        marker_temp.write_text(json.dumps(expected, indent=2, ensure_ascii=False) + "\n",
-                               encoding="utf-8")
-        marker_temp.rename(published)
+                shutil.copyfile(source, staged, follow_symlinks=False)
+            if _digest(staged) != sha:
+                raise PublicationError(f"Corrupt full publication copy: {source}")
+        for name in expected["files"]:
+            staged = staging / name
+            if not staged.exists():
+                continue
+            destination = target / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if destination.exists() or destination.is_symlink():
+                raise PublicationError(f"Concurrent publication conflict: {destination}")
+            staged.rename(destination)
         _verify(target, expected)
+        marker_temp = target / (".manifest-" + uuid4().hex + ".partial")
+        try:
+            marker_temp.write_text(
+                json.dumps(expected, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            if published.exists() or published.is_symlink():
+                raise PublicationError("Concurrent completed publication conflict")
+            marker_temp.rename(published)
+        finally:
+            marker_temp.unlink(missing_ok=True)
     finally:
         if staging.is_dir() and not staging.is_symlink():
             shutil.rmtree(staging)
