@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import argparse
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Sequence
 
 from ai_video_factory.config import settings
 from ai_video_factory.integrations.youtube.errors import YouTubeError
