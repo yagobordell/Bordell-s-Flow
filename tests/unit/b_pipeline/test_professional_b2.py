@@ -63,7 +63,7 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     # Casting preference must not become a media/presenter visual_type quota.
     assert "Visual format and human casting are independent decisions" in prompt
     assert "prefer using the actual presenter" in prompt
-    assert "Established story characters keep their own" in prompt
+    assert "story characters keep their own identity" in prompt
     # The same photo can preserve identity without freezing expression and gaze.
     assert "Never rely on the reference photo's fixed smile" in prompt
     assert "If the face is not visible" in prompt
