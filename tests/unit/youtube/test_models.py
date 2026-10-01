@@ -1,6 +1,6 @@
 """Strict publication metadata without any external YouTube calls."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from pydantic import ValidationError
@@ -48,12 +48,12 @@ def test_keyword_quoted_spaces_and_comma_count() -> None:
 
 
 def test_schedule_requires_private_future_timezone() -> None:
-    future = datetime.now(timezone.utc) + timedelta(days=2)
+    future = datetime.now(UTC) + timedelta(days=2)
     assert request(publish_at=future).publish_at == future
     for changes in (
         {"publish_at": future, "privacy": "public"},
         {"publish_at": future.replace(tzinfo=None)},
-        {"publish_at": datetime.now(timezone.utc) - timedelta(days=1)},
+        {"publish_at": datetime.now(UTC) - timedelta(days=1)},
     ):
         with pytest.raises(ValidationError):
             request(**changes)
@@ -71,7 +71,7 @@ def test_localizations_require_default_language() -> None:
 def test_recording_date_needs_timezone() -> None:
     with pytest.raises(ValidationError):
         request(recording_date=datetime(2026, 9, 1))
-    assert request(recording_date=datetime(2026, 9, 1, tzinfo=timezone.utc))
+    assert request(recording_date=datetime(2026, 9, 1, tzinfo=UTC))
 
 
 @pytest.mark.parametrize("changes", [
