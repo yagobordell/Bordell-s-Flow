@@ -63,6 +63,7 @@ from ai_video_factory.providers.openai_batch_images import (
 from ai_video_factory.providers.openai_stt import OpenAISttClient
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.r2 import create_r2_storage
+from ai_video_factory.publishing import publish_completed_run
 from ai_video_factory.workflows.b_video import (
     generate_b2_ltx_video,
     has_pending_b2_video,
@@ -140,6 +141,17 @@ def parse_args() -> argparse.Namespace:
         help="List available PNG avatars without starting inference or requiring an API key.",
     )
     parser.add_argument(
+        "--publish-only",
+        action="store_true",
+        help="Publish an existing finished LTX run, without API or GPU requests.",
+    )
+    parser.add_argument(
+        "--results-root",
+        type=Path,
+        default=Path("data/results"),
+        help="Independent immutable results library (default: data/results).",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -208,6 +220,16 @@ def parse_args() -> argparse.Namespace:
         help="Resume a saved Fish TTS task without rerunning its director or B bots.",
     )
     args = parser.parse_args()
+    if args.publish_only and (
+        args.qr_only or args.list_scripts or args.list_avatars
+        or args.avatar is not None or args.qr_url is not None
+        or args.voice_id is not None or args.voice_audio is not None or args.default_voice
+        or args.visual_style is not None or args.from_stage != "B1.1"
+        or args.stop_stage is not None or args.images_only or args.videos_only
+        or args.skip_images or args.no_video or args.no_audio
+        or args.regenerate_audio or args.resume_audio
+    ):
+        parser.error("--publish-only accepts only a script, --output and --results-root.")
     if args.qr_only and (
         args.script_file is not None
         or args.script is not None
@@ -512,6 +534,23 @@ def _write(path: Path, payload: object) -> None:
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+
+
+def _publish_if_ready(
+    output: Path, script_file: Path, results_root: Path
+) -> Path | None:
+    """Publish only a finished LTX export, never a deferred run or static preview."""
+    report_path = output / "run_report.json"
+    if report_path.is_symlink() or not report_path.is_file():
+        return None
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    run = report.get("run", {})
+    video = run.get("video_generation", {}) if isinstance(run, dict) else {}
+    if not isinstance(video, dict) or video.get("status") != "completed":
+        return None
+    result = publish_completed_run(output, script_file, results_root)
+    print(f"  Published result: {result}", flush=True)
+    return result
 
 
 def _prepare_output(
@@ -1087,7 +1126,8 @@ async def _preflight_saved_run_audio(
 
 
 async def _run_images_only(
-    script_file: Path, output_root: Path, *, no_video: bool = False
+    script_file: Path, output_root: Path, *, no_video: bool = False,
+    results_root: Path = Path("data/results"),
 ) -> None:
     """Resume image tasks using B2 artifacts without repeating any planning calls."""
     root = output_root.resolve()
@@ -1177,6 +1217,7 @@ async def _run_images_only(
     report["timings"]["status"] = "completed"
     _refresh_audio_costs(report, output)
     _write(report_path, report)
+    await asyncio.to_thread(_publish_if_ready, output, script_file, results_root)
     image_stage = report.get("api_costs", {}).get("stages", {}).get("B2 images", {})
     price = image_stage.get("estimated_cost_usd")
     print(
@@ -1193,7 +1234,10 @@ async def _run_images_only(
 
 
 
-async def _run_videos_only(script_file: Path, output_root: Path) -> None:
+async def _run_videos_only(
+    script_file: Path, output_root: Path,
+    *, results_root: Path = Path("data/results"),
+) -> None:
     """Resume durable LTX jobs without repeating OpenAI images, bots or Fish TTS."""
     root = output_root.resolve()
     source = script_file.resolve()
@@ -1242,6 +1286,7 @@ async def _run_videos_only(script_file: Path, output_root: Path) -> None:
     report["timings"]["status"] = "completed"
     _refresh_audio_costs(report, output)
     _write(report_path, report)
+    await asyncio.to_thread(_publish_if_ready, output, script_file, results_root)
     print(f"  LTX video ready: {video['file']}", flush=True)
     _print_observed_salad_total(report["api_costs"])
 
@@ -1422,6 +1467,7 @@ async def _run_audio_only(
     *,
     resume: bool,
     no_video: bool = False,
+    results_root: Path = Path("data/results"),
 ) -> None:
     """An independent audio-only run: no avatar, B bots, B2 images or GPUs."""
     root = output_root.resolve()
@@ -1537,6 +1583,7 @@ async def _run_audio_only(
             report["run"]["video_generation"] = video
     _refresh_audio_costs(report, output)
     _write(report_path, report)
+    await asyncio.to_thread(_publish_if_ready, output, script_file, results_root)
     print(
         f"  {'Reused' if reused_audio else 'Fish Audio ready'}: {artifact['file']} "
         f"(voice {artifact['voice_id']})",
@@ -1768,14 +1815,25 @@ async def main() -> None:
         script_name=args.script,
         script_file=args.script_file,
     )
+    if args.publish_only:
+        output_root = args.output if args.output is not None else settings.output_dir
+        output = output_root / script_file.stem
+        if not output.is_dir() or output.is_symlink() or output.is_junction():
+            raise SystemExit(f"No saved pipeline output for publishing: {output}")
+        target = await asyncio.to_thread(
+            publish_completed_run, output, script_file, args.results_root
+        )
+        print(f"  Published result: {target}", flush=True)
+        return
     if getattr(args, "videos_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
-        await _run_videos_only(script_file, output_root)
+        await _run_videos_only(script_file, output_root, results_root=args.results_root)
         return
     if getattr(args, "images_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
         await _run_images_only(
-            script_file, output_root, no_video=bool(getattr(args, "no_video", False))
+            script_file, output_root, no_video=bool(getattr(args, "no_video", False)),
+            results_root=args.results_root,
         )
         return
     if getattr(args, "regenerate_audio", False) or getattr(args, "resume_audio", False):
@@ -1785,6 +1843,7 @@ async def main() -> None:
             output_root,
             resume=bool(getattr(args, "resume_audio", False)),
             no_video=bool(getattr(args, "no_video", False)),
+            results_root=args.results_root,
         )
         return
 
@@ -1964,6 +2023,9 @@ async def main() -> None:
     if stop_stage is not None:
         run_metadata["stopped_after"] = stop_stage
     if args.from_stage != "B1.1":
+        old_publication = previous_report.get("run", {}).get("publication")
+        if isinstance(old_publication, dict):
+            run_metadata["publication"] = old_publication
         run_metadata["resumed_from"] = args.from_stage
         if previous_report.get("run", {}).get("audio_generation"):
             run_metadata["audio_generation"] = previous_report["run"]["audio_generation"]
@@ -2239,6 +2301,7 @@ async def main() -> None:
         raise
 
     costs, timing_report = save_report("completed", len(result.b12))
+    await asyncio.to_thread(_publish_if_ready, output, script_file, args.results_root)
     _print_metric(
         "Run",
         timing_report["run_elapsed_seconds"],
