@@ -221,3 +221,15 @@ def test_publish_only_cli_uses_saved_run_without_provider_calls(
     asyncio.run(main())
     assert len(list((root / "Jorge" / "tutorial").iterdir())) == 1
     assert len(list((root / "Jorge" / "tutorial").glob("*/tutorial.mp4"))) == 1
+
+
+def test_manifest_missing_authoritative_media_sha_is_rejected(
+    completed: tuple[Path, Path, Path],
+) -> None:
+    work, script, root = completed
+    report = json.loads((work / "run_report.json").read_text(encoding="utf-8"))
+    report["run"]["video_generation"].pop("sha256")
+    _json(work, "run_report.json", report)
+    with pytest.raises(PublicationError, match="Missing verified SHA-256"):
+        publish_completed_run(work, script, root)
+    assert not root.exists()
