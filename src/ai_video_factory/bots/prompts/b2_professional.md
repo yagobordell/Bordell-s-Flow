@@ -493,9 +493,9 @@ For each beat:
 
 1. freeze upstream fields;
 2. apply the immutable intro/close full-field anchor if this beat is a required
-   boundary beat; leave that assignment unchanged during the remaining steps;
-4. for every other beat, identify its primary communicative function;
-3. resolve the relevant person/character/object/place and narration ownership;
+   boundary beat; keep it unchanged and skip discretionary steps 3-12;
+3. for every other beat, identify its primary communicative function;
+4. resolve the relevant person/character/object/place and narration ownership;
 5. decide whether presenter presence, presenter plus support, a documentary still or a documentary video is the most natural carrier;
 6. choose visual_type without format quotas or tie-breaking bias;
 7. cast generated human demonstrators with the contextual presenter preference
