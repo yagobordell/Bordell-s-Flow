@@ -567,6 +567,40 @@ def _publish_if_ready(
         publish_completed_run(output, script_file, results_root)
     )
     print(f"  Published result: {result}", flush=True)
+    # Independent post-publication distribution. Never let YouTube failure
+    # invalidate a verified local result or re-run costly generation stages.
+    if settings.youtube_enabled:
+        try:
+            from ai_video_factory.integrations.youtube.hook import publish_verified_result
+
+            outcome = publish_verified_result(
+                output=output,
+                published=result,
+                script_name=script_file.stem,
+                config=settings,
+                managed_target=managed_target,
+            )
+            print(f"  YouTube publication: {outcome['status']}", flush=True)
+            if outcome.get("url"):
+                print(f"  YouTube URL: {outcome['url']}", flush=True)
+        except Exception as exc:
+            from ai_video_factory.integrations.youtube.errors import YouTubeError
+
+            # YouTubeError strings are known-safe; arbitrary provider errors
+            # can contain credentials and must never be printed.
+            detail = (
+                type(exc).__name__ + ": " + str(exc)
+                if isinstance(exc, YouTubeError) else "unexpected distribution failure"
+            )
+            print(
+                "  YouTube publication failed separately from video generation: " + detail,
+                flush=True,
+            )
+            print(
+                "  Verified MP4 is retained. Resolve publication using "
+                "scripts/youtube/publish_run.py without regenerating.",
+                flush=True,
+            )
     return result
 
 
