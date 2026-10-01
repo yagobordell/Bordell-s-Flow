@@ -60,11 +60,7 @@ def _grid_prompt(
             "\n\nDo not add text to the image."
             if visual_style == "casero"
             else (
-                "\n\nAllow natural scene-native labels, realistic product packaging, "
-                "branding and signage when appropriate to a panel. Include specific "
-                "readable text where a panel actually requests it; let other "
-                "incidental packaging look naturally printed. Do not append "
-                "editorial branding or product-claim disclaimers to the scene. "
+                "\n\nKeep each panel faithful to its own scene description. "
                 "Do not add artificial captions, overlays or watermarks."
             )
         )
