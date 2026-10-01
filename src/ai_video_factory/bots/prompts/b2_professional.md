@@ -419,6 +419,24 @@ The sequence marker must be the first token in the B2 prompt. The application wi
 
 Each numbered prompt must still be self-contained. Explicitly carry forward the relevant identities, environment, wardrobe, objects and physical state. Do not rely on the number alone.
 
+Shot progression is ESPECIALLY important within continuous sequences.
+Preserve the SAME person, setting, wardrobe, event and physical continuity
+while deliberately evolving shot scale, viewpoint, crop or visual focus
+across adjacent generated assets when useful. A multi-step demonstration
+might establish the presenter in a medium shot, move to a close-up of
+product meeting skin, use a tighter side/detail crop for blending, then
+show a slightly wider angle or mirror view for localized touch-up or
+the result. This is an example, not a compulsory shot-size sequence.
+
+Do not write adjacent numbered prompts whose only substantive difference
+is a slight change in the same gesture while camera distance, viewpoint
+and composition remain identical: they produce near-duplicate images,
+especially when panels share one generated grid. Make EACH step visually
+distinguishable by emphasizing different useful information while keeping
+the event continuous. If a fixed shot is genuinely necessary, describe
+the meaningful changed state or detail rather than inventing an
+irrelevant angle solely for variety.
+
 A qualifying sequence may mix avatar_media, media_image, media_video and a regenerated avatar.
 
 Do not number merely because generated beats are adjacent. Number only when visual continuity between them materially matters.
@@ -443,12 +461,16 @@ For each beat:
    facial expression, demeanor and useful gaze/attention without copying the
    source image's expression;
 9. decide audio from the visible person's speaking role AND whether the actual
-   A2V speaking-focused route can plausibly support the shot;
-10. write concise scene prompts that permit useful natural text and logos without
+   A2V speaking-focused route can plausibly support the shot; if visible speech
+   needs generated media, use media_video, NEVER media_image with audio=true;
+10. choose a purposeful shot scale, camera angle, crop and visual focus for
+    EVERY generated beat, considering nearby similar subjects;
+11. write concise scene prompts that permit useful natural text and logos without
     inventing unsupported brands, written claims or editorial overlays;
-11. after the block is stable, apply continuity numbering to genuine continuous events;
-12. validate the 120-character presenter-run constraint as far as this block can know;
-13. validate the final output contract.
+12. after the block is stable, apply continuity numbering to genuine continuous
+    events and strengthen shot-to-shot progression within those sequences;
+13. validate the 120-character presenter-run constraint as far as this block can know;
+14. validate the final output contract.
 
 Block-level review
 
@@ -461,6 +483,11 @@ Before output, review the block for:
 - story-character integrity: established people remain themselves;
 - documentary usefulness: generated visuals feel like plausible coverage of the narrated event, not decorative illustration;
 - image/video fit: movement is used only when it adds material value;
+- global shot variety: each generated beat uses its most informative natural
+  shot scale, camera angle, crop and visual focus; recurring subjects are not
+  automatically shown in the reference's face-centered medium shot;
+- sequence shot progression: adjoining numbered prompts preserve continuity
+  while avoiding near-duplicate framing and emphasizing distinct steps;
 - redundancy: repeated visuals remain only when repetition is narratively useful;
 - reference correctness: every dependency on the supplied image is explicit and
   unrelated source-image style, expression, background or pose are not copied;
@@ -468,9 +495,11 @@ Before output, review the block for:
   gaze/attention are explicit rather than inherited from the input photo;
 - natural writing and branding: useful real-world labels remain possible, but
   unsupported names/claims and decorative overlays have not been invented;
-- audio correctness: a clearly visible presenter performing a simple compatible
-  action was considered for audio=true; if detailed movement or face occlusion
-  makes the speaking-focused A2V route unsuitable, choose voice-over;
+- audio correctness: media_image always has audio=false, without speaking
+  instructions; visible generated speech needs media_video with audio=true.
+  A clearly visible presenter performing a simple compatible action was
+  considered for audio=true; if detailed movement or face occlusion
+  makes speaking-focused A2V unsuitable, choose voice-over;
 - continuity: numbering is used for actual continuous events and omitted otherwise;
 - presenter-run limit: no avoidable >120-character avatar/avatar_media run is created.
 
@@ -538,9 +567,14 @@ Before emitting success, verify:
 - artificial captions, unsupported brand names, documentary claims or fake
   endorsements were not invented;
 - avatar and avatar_media have audio = true;
-- media_image/media_video audio was decided per beat, preferring natural
-  visible presenter speech when simple action and facial visibility are
-  compatible with the actual speaking-focused A2V route;
+- media_image ALWAYS has audio=false and does not request visible speaking;
+  generated synchronized speech instead uses media_video with audio=true;
+- media_video audio was decided per beat, preferring natural visible presenter
+  speech when simple action and facial visibility are compatible with A2V;
+- every generated beat uses a purposefully selected shot scale/crop/angle/focus
+  without copying the reference photo's framing or demanding animated zoom;
+- numbered sequences preserve identity and setting but also progress through
+  meaningful, visually distinct framing/emphasis where appropriate;
 - numbered continuity is current and represents one continuous event;
 - numbered prompts begin with the exact local sequence marker and contain no style prefix;
 - no avoidable consecutive avatar/avatar_media run exceeds 120 narration characters;
@@ -603,6 +637,8 @@ Output type constraints
 - audio is native JSON true or false, never a string;
 - if prompt is null, reference must be false;
 - if visual_type is avatar or avatar_media, audio must be true;
+- if visual_type is media_image, audio MUST be false; full-screen generated
+  synchronized visible speech instead requires media_video with audio=true;
 - if a non-null prompt depicts the presenter from the supplied avatar reference image, reference must be true.
 
 Error transport
