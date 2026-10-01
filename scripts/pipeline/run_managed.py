@@ -15,7 +15,7 @@ from typing import Sequence
 
 from ai_video_factory.managed_layout import sync_managed_outputs
 from ai_video_factory.providers.avatar_library import organize_avatar
-from scripts.pipeline.run_b_pipeline import available_avatars
+from scripts.pipeline.run_b_pipeline import available_avatars, load_avatar_png
 
 CORE = Path(__file__).with_name("run_b_pipeline.py")
 WORK_ROOT = Path(".video_factory_work")
@@ -33,7 +33,7 @@ Use --legacy-layout to call the previous B-pipeline interface unchanged.
 
 def _name(value: str, suffix: str) -> str:
     if (
-        not value or "/" in value or "\\\\" in value
+        not value or "/" in value or chr(92) in value
         or value in {".", ".."} or Path(value).name != value
     ):
         raise SystemExit(f"Invalid input name: {value!r}")
@@ -127,6 +127,14 @@ def prepare_managed_script(
         raise SystemExit(
             f"No pending .txt for {avatar_name}: place {script_name}.txt in {avatar_dir}."
         )
+    # Validate inputs before moving any user file.
+    load_avatar_png(avatar)
+    try:
+        raw = available[0].read_bytes().decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SystemExit("The pending TXT must be valid UTF-8") from exc
+    if not raw.strip():
+        raise SystemExit("The pending TXT is empty")
     # Migrate the PNG into its canonical avatar folder. QR and voice then live beside it.
     if raw_avatar.is_file():
         avatar = organize_avatar(raw_avatar, data)
