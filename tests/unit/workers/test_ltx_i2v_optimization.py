@@ -21,8 +21,8 @@ from ai_video_factory.workers.ltx25.model import (
     LTX_DEFAULT_SILENT_VERIFY_PROFILE,
     LTX_GENERATION_PROFILE,
     LTX_SUPPORTED_I2V_PROFILES,
-    LTXVideoParameters,
     DirectLTX25Backend,
+    LTXVideoParameters,
     _select_diffvae_backend,
 )
 
