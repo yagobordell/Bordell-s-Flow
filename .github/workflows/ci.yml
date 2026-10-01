@@ -189,5 +189,6 @@ jobs:
         run: |
           uv run --no-sync python scripts/youtube/upload.py --help
           uv run --no-sync python scripts/youtube/publish_run.py --help
+          uv run --no-sync python scripts/youtube/reconcile.py --help
       - name: Scan tracked credential safety
         run: uv run --no-sync python scripts/security/check_youtube_secrets.py
