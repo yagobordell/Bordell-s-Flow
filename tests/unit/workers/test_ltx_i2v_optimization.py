@@ -334,9 +334,10 @@ def test_production_and_a2v_profiles_are_not_batch2_or_triton() -> None:
     model_source = Path("src/ai_video_factory/workers/ltx25/model.py").read_text(
         encoding="utf-8"
     )
-    assert "stage_1_batch = 2 if parameters.generation_profile in LTX_EXPERIMENTAL_PROFILES else 1" in (
-        model_source
-    )
+    assert (
+        "stage_1_batch = 2 if parameters.generation_profile "
+        "in LTX_EXPERIMENTAL_PROFILES else 1"
+    ) in model_source
     assert "decode_audio = parameters.generation_profile == LTX_CFG_BATCH2_PROFILE" in (
         model_source
     )
