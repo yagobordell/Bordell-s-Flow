@@ -15,7 +15,6 @@ from typing import Any
 from PIL import Image, UnidentifiedImageError
 
 from .errors import YouTubeConfigurationError, YouTubeThumbnailError, YouTubeValidationError
-from .uploader import _error_policy
 
 MAX_THUMBNAIL_BYTES = 50_000_000
 MAX_THUMBNAIL_PIXELS = 100_000_000
@@ -80,6 +79,8 @@ def set_thumbnail(
         raise YouTubeThumbnailError(
             "Could not prepare thumbnail media; the video remains uploaded"
         ) from None
+
+    from .uploader import _error_policy
 
     failures = 0
     while True:
