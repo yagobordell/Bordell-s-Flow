@@ -2,7 +2,6 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, field_validator
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -89,7 +88,12 @@ class Settings(BaseSettings):
             return None
         from ai_video_factory.integrations.youtube.store import validate_channel_name
 
-        return validate_channel_name(value)
+        try:
+            return validate_channel_name(value)
+        except ValueError as exc:
+            raise ValueError("Invalid YOUTUBE_CHANNEL") from exc
+        except RuntimeError as exc:
+            raise ValueError("Invalid YOUTUBE_CHANNEL") from exc
 
     output_dir: Path = Path("data/output")
     temp_dir: Path = Path("data/tmp")
