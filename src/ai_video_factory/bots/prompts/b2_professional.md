@@ -136,7 +136,7 @@ Prefer observable, source-grounded moments, people, locations, objects, evidence
 
 For emotional or reflective narration, it is valid to show a restrained contextual moment, environment, person or detail that belongs to the established event instead of literalizing the abstract wording.
 
-Prompts should describe the scene, subject, moment, composition and materially relevant lighting/mood. Do not add global camera-brand, lens, photographic-style, cinematic, editorial or quality boilerplate. The application injects the canonical image style later in code immediately before image generation.
+Prompts should describe the scene, subject, moment, composition and materially relevant lighting/mood. Do not add global device-specific, lens, photographic-style, cinematic, editorial or quality boilerplate. The application injects the canonical image style later in code immediately before image generation.
 
 Global shot composition and camera-angle freedom
 
@@ -554,6 +554,17 @@ naturally engaged with the camera and mouth unobstructed. In that specific
 speaking-compatible composition, reference=true and audio=true are appropriate.
 The video_prompt separately describes how the presenter speaks and makes
 small natural hand motions during the shot.
+
+Conversely, if the narrator explains an actual skincare application as
+voice-over, an appropriate media_video output could use:
+
+{
+  "visual_type": "media_video",
+  "prompt": "2. Use the reference to preserve the presenter's identity. At the same vanity and in the same outfit, frame a tight cheek-and-hand close-up just as her fingertip touches a thin layer of moisturizer. She looks toward the mirror with a focused, relaxed expression.",
+  "video_prompt": "From the supplied starting frame, the presenter uses two slow fingertip passes to smooth the thin moisturizer layer over the cheek, then gently lifts her hand away. Natural wrist motion and subtle blinking; eyes remain on the mirror. One steady close-up take, continuous action without cuts or addressing the viewer.",
+  "reference": true,
+  "audio": false
+}
 
 This is an example of casting and audio intent, not a requirement to use
 media_video for tutorials or to make every presenter demonstration audio=true.
