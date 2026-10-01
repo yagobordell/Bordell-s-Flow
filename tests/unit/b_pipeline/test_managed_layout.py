@@ -94,12 +94,25 @@ def test_bad_png_or_script_does_not_move_pending_input(tmp_path: Path) -> None:
 
 def test_cannot_overwrite_or_ambiguously_pick_pending_scripts(tmp_path: Path) -> None:
     root = tmp_path / "data"
-    _png(root / "Jorge" / "Jorge.png")
+    _png(root / "Jorge.png")
+    (root / "Jorge").mkdir()
     (root / "test01.txt").write_text("first", encoding="utf-8")
     (root / "Jorge" / "test01.txt").write_text("different", encoding="utf-8")
     with pytest.raises(SystemExit, match="Ambiguous duplicate"):
         run_managed.prepare_managed_script(root, "Jorge", "test01", resume=False)
     assert (root / "test01.txt").exists()
+
+
+def test_existing_avatar_does_not_claim_txt_left_in_data_root(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "data"
+    _png(root / "Jorge" / "Jorge.png")
+    (root / "orphan.txt").write_text("unassigned", encoding="utf-8")
+    assert run_managed._script_options(root, "Jorge", resume=False) == []
+    with pytest.raises(SystemExit, match="place orphan.txt"):
+        run_managed.prepare_managed_script(root, "Jorge", "orphan", resume=False)
+    assert (root / "orphan.txt").is_file()
 
 
 def test_launcher_passes_managed_target_and_resume_without_paid_calls(
