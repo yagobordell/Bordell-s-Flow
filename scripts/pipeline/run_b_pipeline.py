@@ -585,7 +585,12 @@ def _publish_if_ready(
                 print(f"  YouTube URL: {outcome['url']}", flush=True)
         except Exception as exc:
             from ai_video_factory.integrations.youtube.errors import YouTubeError
+            from ai_video_factory.integrations.youtube.hook import record_distribution_error
 
+            try:
+                record_distribution_error(output, exc)
+            except Exception:
+                print("  YouTube error report could not be saved.", flush=True)
             # YouTubeError strings are known-safe; arbitrary provider errors
             # can contain credentials and must never be printed.
             detail = (
