@@ -110,9 +110,8 @@ def test_transient_errors_retry_in_same_session_without_leaking(tmp_path: Path, 
     assert operation.next_chunk.call_count == 2
     assert len(sleeps) == 1
     assert sleeps[0] >= 1.25
-    assert sleeps[0] >= 3 if getattr(error, "resp", None) and (
-        error.resp.status == 429
-    ) else True
+    if getattr(error, "resp", None) and error.resp.status == 429:
+        assert sleeps[0] >= 3
 
 
 @pytest.mark.parametrize("error", [
