@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import time
+import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -22,7 +23,7 @@ def channel_lock(directory: Path, channel: str, *, timeout: float = 10.0) -> Ite
     outside the checkout and a hash avoids Windows path/casing/length problems.
     """
     name = validate_channel_name(channel)
-    key = hashlib.sha256(name.casefold().encode("utf-8")).hexdigest()[:32]
+    key = hashlib.sha256(unicodedata.normalize("NFC", name).casefold().encode("utf-8")).hexdigest()[:32]
     path = directory / (".oauth-" + key + ".lock")
     descriptor: int | None = None
     locked = False
