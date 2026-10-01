@@ -108,6 +108,10 @@ def _collect(
     def add(destination: str, name: str, sha: object | None = None) -> None:
         if destination in entries:
             raise PublicationError(f"Duplicate published asset: {destination}")
+        if (destination.startswith("Media/") or destination.endswith(".mp4")) and (
+            not isinstance(sha, str) or re.fullmatch("[0-9a-f]{64}", sha) is None
+        ):
+            raise PublicationError(f"Missing verified SHA-256 for {destination}")
         original = _safe_file(work, name, sha)
         entries[destination] = (original, _digest(original))
 
