@@ -194,3 +194,8 @@ def authorize_channel(
         # Persist only after every OAuth check. On failed re-authorization the
         # previous file stays untouched, including its original refresh token.
         store.save_token(name, data)
+
+
+def inspect_local_credentials(channel: str, store: YouTubeStore) -> None:
+    """Offline token preflight for --dry-run: never refresh or contact Google."""
+    _check_stored_info(store.load_token(validate_channel_name(channel)))

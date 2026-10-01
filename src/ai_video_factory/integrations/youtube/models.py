@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -13,6 +14,7 @@ from .store import validate_channel_name
 
 Privacy = Literal["private", "unlisted", "public"]
 License = Literal["youtube", "creativeCommon"]
+_BCP47 = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*")
 
 
 def _validate_title(value: str) -> str:
@@ -107,8 +109,17 @@ class YouTubePublishRequest(BaseModel):
     @field_validator("default_language")
     @classmethod
     def check_language(cls, value: str | None) -> str | None:
-        if value is not None and not value.strip():
-            raise ValueError("YouTube default language must not be blank")
+        if value is not None and _BCP47.fullmatch(value) is None:
+            raise ValueError("YouTube default_language must have a BCP-47 language tag")
+        return value
+
+    @field_validator("localizations")
+    @classmethod
+    def check_localization_languages(
+        cls, value: dict[str, YouTubeLocalization]
+    ) -> dict[str, YouTubeLocalization]:
+        if any(_BCP47.fullmatch(language) is None for language in value):
+            raise ValueError("YouTube localizations must use BCP-47 language tags")
         return value
 
     @model_validator(mode="after")

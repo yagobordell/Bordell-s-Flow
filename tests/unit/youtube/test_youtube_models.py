@@ -100,3 +100,20 @@ def test_result_contract() -> None:
         channel="Canal", thumbnail_uploaded=False,
     )
     assert item.video_id == "ID"
+
+
+def test_bcp47_language_tags_are_validated_before_upload() -> None:
+    assert request(default_language="es").default_language == "es"
+    assert request(default_language="zh-Hans-CN").default_language == "zh-Hans-CN"
+    for bad in ("not a language", "en_", "-es", "english-verylongsubtag"):
+        with pytest.raises(ValidationError):
+            request(default_language=bad)
+    with pytest.raises(ValidationError):
+        request(
+            default_language="es",
+            localizations={"bad language": {"title": "Invalid"}},
+        )
+    assert request(
+        default_language="es",
+        localizations={"en-US": {"title": "English"}},
+    ).localizations["en-US"].title == "English"

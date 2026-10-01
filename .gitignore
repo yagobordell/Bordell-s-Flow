@@ -62,3 +62,7 @@ models/
 /keystores/
 /config/youtube/
 **/.youtube-token-*.tmp
+
+# Local-only YouTube upload attempt receipts and temporary atomic state.
+**/*.youtube-upload-attempt.json
+**/.youtube-attempt-*.tmp
