@@ -128,7 +128,6 @@ def test_empty_tags_and_synthetic_none_are_omitted(tmp_path: Path) -> None:
     {"keywords": ["a" * 501]},
     {"privacy": "friends"},
     {"publish_at": "2020-01-01T00:00:00Z"},
-    {"localizations": {"en": {"title": "English"}}},
     {"thumbnail_path": "thumbnail.png"},
 ])
 def test_bad_metadata_is_rejected_before_api(tmp_path: Path, bad: dict) -> None:
@@ -174,3 +173,15 @@ def test_wrong_extension_and_link_rejected(tmp_path: Path) -> None:
 
 def test_video_limit_uses_decimal_gigabytes() -> None:
     assert MAX_VIDEO_BYTES == 256_000_000_000
+
+
+def test_localizations_without_language_are_rejected(tmp_path: Path) -> None:
+    video = video_file(tmp_path)
+    document = metadata_file(
+        tmp_path, localizations={"en": {"title": "English"}}
+    )
+    with pytest.raises(YouTubeValidationError, match="default_language"):
+        resolve_request(
+            video_path=video, metadata_path=document, config=config(tmp_path),
+            overrides={"default_language": None},
+        )
