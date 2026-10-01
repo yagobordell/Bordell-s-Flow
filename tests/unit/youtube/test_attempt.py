@@ -128,3 +128,29 @@ def test_missing_or_malformed_attempt_record_fails_closed(tmp_path: Path) -> Non
     attempt.path.write_text("not json")
     with pytest.raises(YouTubeAmbiguousUploadError):
         attempt.existing_success()
+
+
+def test_safe_error_diagnostics_preserve_ambiguous_attempt(tmp_path: Path) -> None:
+    attempt = UploadAttempt(make_request(tmp_path))
+    attempt.fingerprint()
+    attempt.reserve()
+    attempt.record_failure(403, "forbiddenPrivacySetting")
+    record = json.loads(attempt.path.read_text())
+    assert record["status"] == "ambiguous"
+    assert record["last_http_status"] == 403
+    assert record["last_api_reason"] == "forbiddenPrivacySetting"
+    with pytest.raises(YouTubeAmbiguousUploadError):
+        UploadAttempt(attempt.request).existing_success()
+    assert "client_secret" not in attempt.path.read_text()
+    assert "refresh_token" not in attempt.path.read_text()
+
+
+def test_arbitrary_api_reason_is_never_persisted(tmp_path: Path) -> None:
+    attempt = UploadAttempt(make_request(tmp_path))
+    attempt.fingerprint()
+    attempt.reserve()
+    attempt.record_failure(403, "DUMMY_SECRET_CUSTOM_REASON")
+    record = json.loads(attempt.path.read_text())
+    assert record["last_http_status"] == 403
+    assert record["last_api_reason"] is None
+    assert "DUMMY_SECRET" not in attempt.path.read_text()
