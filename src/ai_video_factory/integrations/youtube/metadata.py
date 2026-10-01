@@ -20,7 +20,7 @@ from .models import YouTubePublishRequest
 
 METADATA_SCHEMA = "youtube-publish/v1"
 MAX_METADATA_BYTES = 1024 * 1024
-MAX_VIDEO_BYTES = 256 * 1024**3
+MAX_VIDEO_BYTES = 256 * 1000**3
 
 
 def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -62,7 +62,7 @@ def validate_video(path: Path) -> tuple[Path, int]:
     try:
         stat = file.stat()
         if stat.st_size < 12 or stat.st_size > MAX_VIDEO_BYTES:
-            raise YouTubeValidationError("MP4 size must be greater than zero and at most 256 GiB")
+            raise YouTubeValidationError("MP4 size must be greater than zero and at most 256 GB")
         with file.open("rb") as stream:
             header = stream.read(12)
         if header[4:8] != b"ftyp":
