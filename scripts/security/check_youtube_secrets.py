@@ -54,10 +54,11 @@ def scan(root: Path) -> list[str]:
         ):
             errors.append(name)
             continue
-        if path.suffix == ".env" and not path.name.endswith(".example"):
+        if (path.suffix == ".env" or path.name == ".env") and not path.name.endswith(".example"):
             errors.append(name)
             continue
-        if path.is_symlink() or not path.is_file():
+        file = root / path
+        if file.is_symlink() or not file.is_file():
             continue
         # Binary/media can be large; credential files should never be committed.
         if path.suffix.lower() not in {
@@ -65,7 +66,7 @@ def scan(root: Path) -> list[str]:
             ".md", ".rst", ".env", ".example", ".ps1", ".sh",
         }:
             continue
-        data = (root / path).read_bytes()
+        data = file.read_bytes()
         if any(pattern.search(data) for pattern in SECRET_PATTERNS):
             errors.append(name)
             continue
