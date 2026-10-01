@@ -266,7 +266,7 @@ def _overlong_avatar_run(
         if not output.blocks:
             raise BPipelineValidationError("B2 output is missing its block")
         block = output.blocks[0]
-        for index, beat in enumerate(block.beats):
+        for beat in block.beats:
             if beat.visual_type not in _PRESENTER_VISUAL_TYPES:
                 if characters > _MAX_CONSECUTIVE_AVATAR_CHARACTERS:
                     return run, characters
