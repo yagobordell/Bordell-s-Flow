@@ -99,6 +99,9 @@ def test_generate_video_uses_existing_preview_without_repeating_paid_stages(
         raise AssertionError("Video resume must not repeat B, image, Fish or preview work")
 
     monkeypatch.setattr(runner, "_video_if_ready", fake_video)
+    # The fake returns no MP4 bytes, digest or image manifest: publication
+    # is covered separately with actual saved-file fixtures.
+    monkeypatch.setattr(runner, "_publish_if_ready", lambda *_args: None)
     monkeypatch.setattr(runner, "_generate_images", forbidden)
     monkeypatch.setattr(runner, "_generate_audio", forbidden)
     monkeypatch.setattr(runner, "run_b_pipeline", forbidden)
