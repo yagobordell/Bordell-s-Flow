@@ -37,7 +37,7 @@ are saved in data/<avatar>/meta/. A conflicting --style is refused.
 
 Options include --no-image, --no-video, --style, --from B2,
 --images-only, --generate-video, --resume-audio, --regenerate-audio,
---publish-only, --sync-only, --list-avatars, --list-scripts, --data-root PATH.
+--publish-only, --youtube-only, --sync-only, --list-avatars, --list-scripts, --data-root PATH.
 --sync-only exports existing verified media without API or GPU calls.
 For opted-in YouTube publication set YOUTUBE_ENABLED=true and provide per-run youtube.json.
 Use scripts/youtube/publish_run.py to retry distribution without regenerating.
@@ -197,7 +197,8 @@ def _script_options(data: Path, avatar_name: str, resume: bool) -> list[str]:
 def _is_resume(flags: list[str]) -> bool:
     if any(flag in flags for flag in (
         "--images-only", "--generate-video", "--videos-only",
-        "--regenerate-audio", "--resume-audio", "--publish-only", "--sync-only",
+        "--regenerate-audio", "--resume-audio", "--publish-only",
+        "--youtube-only", "--sync-only",
     )):
         return True
     return "--from" in flags and (
@@ -304,7 +305,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ]
     if not any(flag in flags for flag in (
         "--images-only", "--generate-video", "--videos-only",
-        "--regenerate-audio", "--resume-audio", "--publish-only",
+        "--regenerate-audio", "--resume-audio", "--publish-only", "--youtube-only",
     )):
         command.extend(["--avatar", avatar])
     print(f"  Avatar: {avatar} | Script: {source} | Work: {work_root}")
