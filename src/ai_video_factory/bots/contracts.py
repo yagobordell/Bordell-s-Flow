@@ -5,6 +5,7 @@ provide JSON transport, so the Markdown code fences requested by the human-reada
 prompt files are intentionally not part of the parsed response.
 """
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -188,6 +189,17 @@ class ProfessionalVisualBeat(Beat):
                 raise ValueError("Only a reused avatar can have a null prompt and no reference")
         elif not self.prompt.strip():
             raise ValueError("Professional image prompts must be nonempty")
+        if self.prompt is not None and re.search(
+            r"\\b(?:no|without)\\s+(?:specified|specific)\\s+brand(?:s|ing)?\\b"
+            r"|\\bno\\s+(?:specified\\s+)?product\\s+claims?\\b"
+            r"|\\bno\\s+readable\\s+brand\\s+names?\\b",
+            self.prompt,
+            flags=re.IGNORECASE,
+        ):
+            raise ValueError(
+                "Professional scene prompts must describe natural packaging "
+                "without stock branding or product-claim disclaimers"
+            )
         if self.visual_type in {"avatar", "avatar_media"} and not self.audio:
             raise ValueError("Presenter visuals must have audio=true")
         if self.visual_type == "media_image" and self.audio:
