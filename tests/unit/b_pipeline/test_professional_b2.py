@@ -42,11 +42,11 @@ def _plan(avatar: bytes) -> dict:
         "avatar": {"file": "avatar.png", "sha256": hashlib.sha256(avatar).hexdigest()},
         "blocks": [{"block_id": 1, "beats": [
             {"beat_id": "1A", "visual_type": "avatar", "prompt": None,
-             "reference": False, "audio": True},
+             "video_prompt": None, "reference": False, "audio": True},
             {"beat_id": "1B", "visual_type": "media_image", "prompt": "The same navy car.",
-             "reference": True, "audio": False},
+             "video_prompt": None, "reference": True, "audio": False},
             {"beat_id": "1C", "visual_type": "media_image", "prompt": "A scenic mountain.",
-             "reference": False, "audio": False},
+             "video_prompt": None, "reference": False, "audio": False},
         ]}],
     }
 
@@ -79,12 +79,13 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     assert "Visible-presenter speech preference" in prompt
     assert "A2V does not guarantee detailed" in prompt
     assert "use audio=false and observational media_video" in prompt
-    # Natural packaging is allowed without qualifiers leaking into scene prompts.
-    assert "product packaging" in prompt
-    assert "Never append editorial disclaimers" in prompt
-    assert "Do not insert boilerplate qualifications" in prompt
-    assert "do not invent product claims" not in prompt.lower()
-    assert "no specified brands or product claims" not in prompt.lower()
+    # Branding choices are deliberately outside the B2 policy.
+    for token in ("branding", "brands", "logos", "packaging"):
+        assert token not in prompt.lower()
+    assert "STRONG PRESENTER ACTION DEFAULT" in prompt
+    assert "Video animation prompt (video_prompt)" in prompt
+    assert "When audio=false, video_prompt is sent DIRECTLY to I2V" in prompt
+    assert "When audio=true, video_prompt is instead sent to the A2V" in prompt
 
 
 def test_professional_b2_global_framing_sequence_progression_and_still_audio() -> None:
@@ -126,6 +127,10 @@ def test_professional_contract_requires_speaking_generated_shots_to_be_video(
             "beats": [{
                 "beat_id": "1A", "text": "First beat", "beat_type": "setup",
                 "visual_type": visual_type, "prompt": "Relevant scene",
+                "video_prompt": (
+                    "One beat-specific motion from the first frame."
+                    if visual_type == "media_video" else None
+                ),
                 "reference": False, "audio": audio,
             }],
         }],
@@ -139,32 +144,78 @@ def test_professional_contract_requires_speaking_generated_shots_to_be_video(
 
 
 @pytest.mark.parametrize(
-    "disclaimer",
+    "wording",
     [
         "No specified brands or product claims.",
-        "No specified brands.",
+        "A product with a natural recognizable logo and packaging.",
+        "Show the real brand printed on the container.",
         "Without specific branding.",
-        "No product claims.",
         "No readable brand names.",
     ],
 )
-def test_professional_contract_rejects_stock_brand_disclaimers(
-    disclaimer: str,
-) -> None:
-    payload = {
-        "beat_id": "1A",
-        "text": "Show a simple routine.",
-        "beat_type": "action",
-        "visual_type": "media_image",
-        "prompt": f"Natural cleanser bottle on bathroom counter. {disclaimer}",
-        "reference": False,
-        "audio": False,
+def test_professional_contract_leaves_branding_unrestricted(wording: str) -> None:
+    beat = {
+        "beat_id": "1A", "text": "Show a simple routine.",
+        "beat_type": "setup", "visual_type": "media_image",
+        "prompt": f"Cleanser bottle on the bathroom counter. {wording}",
+        "video_prompt": None, "reference": False, "audio": False,
     }
-    with pytest.raises(ValidationError, match="stock branding"):
-        ProfessionalVisualBeat.model_validate(payload)
+    assert ProfessionalVisualBeat.model_validate(beat).prompt == beat["prompt"]
 
-    payload["prompt"] = "Natural cleanser bottle with ordinary printed packaging."
-    assert ProfessionalVisualBeat.model_validate(payload).prompt == payload["prompt"]
+
+@pytest.mark.parametrize(
+    ("visual_type", "video_prompt", "accepted"),
+    [
+        ("media_image", None, True),
+        ("media_image", "Animate face", False),
+        ("avatar", None, True),
+        ("avatar", "Animate face", False),
+        ("media_video", "A hand smoothly moves toward the cheek.", True),
+        ("media_video", None, False),
+        ("media_video", "  ", False),
+    ],
+)
+def test_professional_video_prompt_is_only_for_video(
+    visual_type: str, video_prompt: str | None, accepted: bool,
+) -> None:
+    beat = {
+        "beat_id": "1A", "text": "Apply moisturizer.",
+        "beat_type": "setup", "visual_type": visual_type,
+        "prompt": "Suitable image", "video_prompt": video_prompt,
+        "reference": True, "audio": True if visual_type == "avatar" else False,
+    }
+    if accepted:
+        assert ProfessionalVisualBeat.model_validate(beat).video_prompt == video_prompt
+    else:
+        with pytest.raises(ValidationError, match="video_prompt"):
+            ProfessionalVisualBeat.model_validate(beat)
+
+
+def test_referenced_presenter_active_application_is_video_not_still() -> None:
+    beat = {
+        "beat_id": "6B", "text": "I apply a thin layer.",
+        "beat_type": "action", "visual_type": "media_image",
+        "prompt": (
+            "Continue with the referenced presenter, show her applying "
+            "a thin layer of moisturizer to one cheek."
+        ),
+        "video_prompt": None, "reference": True, "audio": False,
+    }
+    with pytest.raises(ValidationError, match="active practical step"):
+        ProfessionalVisualBeat.model_validate(beat)
+    beat.update(
+        visual_type="media_video",
+        video_prompt=(
+            "She gently smooths moisturizer over her cheek using two "
+            "restrained fingertip motions, then lowers her hand."
+        ),
+    )
+    assert ProfessionalVisualBeat.model_validate(beat).visual_type == "media_video"
+    beat.update(
+        visual_type="media_image", video_prompt=None,
+        prompt="A relaxed portrait of the presenter after applying moisturizer.",
+    )
+    assert ProfessionalVisualBeat.model_validate(beat).visual_type == "media_image"
 
 
 def test_professional_contract_accepts_regenerated_avatar() -> None:
@@ -176,7 +227,7 @@ def test_professional_contract_accepts_regenerated_avatar() -> None:
                     "span": {"first_words": "First", "last_words": "last"},
                     "beats": [{"beat_id": "1A", "text": "First beat", "beat_type": "setup",
                                "visual_type": "avatar", "prompt": "Same speaker at desk",
-                               "reference": True, "audio": True}]}],
+                               "video_prompt": None, "reference": True, "audio": True}]}],
         "error": None,
     }
     assert ProfessionalB2Output.model_validate(data).blocks[0].beats[0].reference
@@ -249,10 +300,9 @@ def test_professional_grid_never_adds_amateur_header_and_scopes_reference() -> N
     assert "iPhone 16/17 Pro Max" not in grid["description"]
     assert "only for panels 1" in grid["description"].lower()
     assert grid["visual_style"] == "profesional"
-    assert "Allow natural scene-native labels, realistic product packaging" in grid["description"]
-    assert "let other incidental packaging look naturally printed" in grid["description"]
-    assert "do not invent brands or claims" not in grid["description"].lower()
-    assert "no specified brands or product claims" not in grid["description"].lower()
+    assert "Keep each panel faithful to its own scene description" in grid["description"]
+    for token in ("brand", "logo", "packaging", "claim"):
+        assert token not in grid["description"].lower()
     assert "Do not add visible text unless" not in grid["description"]
     assert "Do not add artificial captions, overlays or watermarks" in grid["description"]
     assert "Respect EACH panel's own requested shot scale" in grid["description"]
@@ -345,6 +395,10 @@ def test_professional_schema_retry_recovers_from_speaking_still() -> None:
             block["beats"][0].update(
                 visual_type="media_image" if len(attempts) == 1 else "media_video",
                 prompt="Referenced speaker with visible mouth.",
+                video_prompt=(
+                    "Speaking presenter makes a gentle gesture in sync with speech."
+                    if len(attempts) == 2 else None
+                ),
                 reference=True,
                 audio=True,
             )
