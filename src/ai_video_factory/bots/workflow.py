@@ -688,15 +688,27 @@ async def run_b_pipeline(
                     str(first_error),
                     schema_error_payload(first_error),
                 )
+            visual_rules = (
+                "For professional B2, prompt=null is permitted only for a reused "
+                "avatar with reference=false; all other visuals require a "
+                "nonempty prompt. avatar/avatar_media require audio=true; "
+                "media_image ALWAYS requires audio=false. Generated "
+                "synchronized visible speech must use media_video with audio=true. "
+                "Do not omit reference or audio booleans."
+                if visual_style == "profesional"
+                else (
+                    "visual_type='avatar' requires description=null; every other "
+                    "visual_type requires a nonempty description."
+                )
+            )
             retry_suffix = (
                 "\n\nB2 automatic schema correction attempt. Your previous structured "
                 "response could not be parsed because it violated the required output "
                 f"schema: {first_error}\n"
                 "Return one complete corrected B2 object for the same input block. "
                 "Preserve the narrative core and every upstream block and beat field "
-                "exactly. Follow the supplied output schema. For every beat, "
-                "visual_type='avatar' requires description=null; every other visual_type "
-                "requires a non-empty description. Do not omit required fields."
+                "exactly. Follow the supplied output schema. "
+                f"{visual_rules} Do not omit required fields."
             )
             try:
                 retry_output = await call_b2(correction_suffix + retry_suffix)
