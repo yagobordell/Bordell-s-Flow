@@ -96,7 +96,10 @@ def test_store_writes_atomically_and_cleans_tempfiles(tmp_path: Path) -> None:
 def test_failed_save_removes_tempfile_without_leaking_token(tmp_path: Path) -> None:
     store = YouTubeStore(tmp_path / "keys")
     secret = "FAKE_SENSITIVE_TOKEN_FOR_TEST_ONLY"
-    with patch("ai_video_factory.integrations.youtube.store.os.replace", side_effect=OSError(secret)):
+    with patch(
+        "ai_video_factory.integrations.youtube.store.os.replace",
+        side_effect=OSError(secret),
+    ):
         with pytest.raises(YouTubeCredentialsError) as error:
             store.save_token("Canal", {"refresh_token": secret})
     assert secret not in str(error.value)
