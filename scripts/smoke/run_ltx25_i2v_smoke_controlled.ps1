@@ -64,6 +64,9 @@ if (-not (Test-Path -LiteralPath $Image -PathType Leaf)) {
 Import-EnvFile -Path $EnvFile
 & $Python $SourceCheck (Join-Path $RepoRoot "src\ai_video_factory\workers\ltx25\__init__.py")
 if ($LASTEXITCODE -ne 0) { throw "LTX Python source mismatch; run uv sync --locked --extra dev --python 3.12." }
+# Fail locally before allocating Salad if readiness credentials or account selection drift.
+& $Python $Ready --service ltx25_i2v --env-file $EnvFile --expected-image $ExpectedPinnedImage --check-config-only
+if ($LASTEXITCODE -ne 0) { throw "Local I2V readiness configuration preflight failed; no GPU allocated." }
 & $Python $R2Preflight
 if ($LASTEXITCODE -ne 0) { throw "R2 preflight failed; refusing paid Salad capacity." }
 
