@@ -61,7 +61,8 @@ def test_diffvae_uses_triton_only_with_probe_and_never_enables_natten() -> None:
         natten_available=lambda: True,
         triton_na_available=lambda: True,
     )
-    probe = lambda: True
+    def probe() -> bool:
+        return True
     bindings = SimpleNamespace(diffvae_apply=apply, triton_probe=probe)
     assert _select_diffvae_backend(bindings, "eager") == "eager"
     assert not apply.natten_available()
