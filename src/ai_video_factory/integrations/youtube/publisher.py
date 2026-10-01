@@ -58,6 +58,7 @@ def publish_to_youtube(
     state_dir: Path,
     state_path: Path | None = None,
     youtube: Any | None = None,
+    client_factory: Callable[[], Any] | None = None,
     upload_fn: Uploader = upload_video,
     thumbnail_fn: ThumbnailSetter = set_thumbnail,
     progress: Callable[[int], None] | None = None,
@@ -82,9 +83,12 @@ def publish_to_youtube(
     def get_client() -> Any:
         nonlocal client
         if client is None:
-            store = YouTubeStore(keystore_dir)
-            credentials = load_credentials(request.channel, store)
-            client = build_youtube_client(credentials)
+            if client_factory is not None:
+                client = client_factory()
+            else:
+                store = YouTubeStore(keystore_dir)
+                credentials = load_credentials(request.channel, store)
+                client = build_youtube_client(credentials)
         return client
 
     with registry.locked(request.channel, video_sha):
