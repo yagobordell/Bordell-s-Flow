@@ -90,6 +90,116 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     assert "When audio=true, video_prompt is instead sent to the A2V" in prompt
 
 
+def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions() -> None:
+    prompt = (
+        files("ai_video_factory.bots.prompts")
+        .joinpath("b2_professional.md")
+        .read_text(encoding="utf-8")
+    )
+    assert "The FIRST beat of every type=intro block MUST" in prompt
+    assert "The LAST beat of every type=close block MUST" in prompt
+    assert "prompt=null, video_prompt=null, reference=false, audio=true" in prompt
+    assert "skip discretionary steps 3-12" in prompt
+    assert "Do not add generic negative lists" in prompt
+    assert "do not add generic prohibitions or routine disclaimers" in prompt
+    assert "It never forces avatar, media, or any opening/closing anchor" not in prompt
+    # Avoid replacing one brand rule with another, including in this correction.
+    for word in ("brands", "branding", "logos", "packaging"):
+        assert word not in prompt.lower()
+
+
+def _professional_anchor_output(
+    kind: str, beats: list[dict],
+) -> dict:
+    return {
+        "pipeline_stage": "B2",
+        "narrative_core": {"central_question": "Q", "final_answer": "A"},
+        "blocks": [{
+            "block_id": 1,
+            "type": kind,
+            "emotional_entry": "Starts here",
+            "emotional_exit": "Ends here",
+            "span": {"first_words": "First", "last_words": "Last"},
+            "beats": beats,
+        }],
+        "error": None,
+    }
+
+
+def _professional_beat(
+    beat_id: str, *, visual_type: str = "avatar",
+) -> dict:
+    fields = {
+        "avatar": (None, None, False, True),
+        "avatar_media": ("Support photo", None, False, True),
+        "media_image": ("A still image", None, False, False),
+        "media_video": ("Motion-ready frame", "One controlled action", False, False),
+    }
+    image_prompt, video_prompt, reference, audio = fields[visual_type]
+    return {
+        "beat_id": beat_id,
+        "text": "Preserve the narration exactly.",
+        "beat_type": "setup",
+        "visual_type": visual_type,
+        "prompt": image_prompt,
+        "video_prompt": video_prompt,
+        "reference": reference,
+        "audio": audio,
+    }
+
+
+@pytest.mark.parametrize(
+    ("kind", "visuals"),
+    [
+        ("intro", ("avatar", "media_image", "media_video")),
+        ("close", ("media_image", "media_video", "avatar")),
+        ("intro", ("avatar",)),
+        ("close", ("avatar",)),
+    ],
+)
+def test_professional_intro_close_require_exact_base_avatar(
+    kind: str, visuals: tuple[str, ...],
+) -> None:
+    beats = [
+        _professional_beat(f"1{chr(ord('A') + index)}", visual_type=visual)
+        for index, visual in enumerate(visuals)
+    ]
+    assert ProfessionalB2Output.model_validate(
+        _professional_anchor_output(kind, beats)
+    ).blocks[0].beats[-1].visual_type == visuals[-1]
+
+
+@pytest.mark.parametrize(
+    ("kind", "replacement"),
+    [
+        ("intro", "media_image"),
+        ("intro", "avatar_media"),
+        ("intro", "media_video"),
+        ("close", "media_image"),
+        ("close", "avatar_media"),
+        ("close", "media_video"),
+    ],
+)
+def test_professional_boundary_cannot_be_replaced_by_media(
+    kind: str, replacement: str,
+) -> None:
+    beats = [_professional_beat("1A", visual_type=replacement)]
+    with pytest.raises(
+        ValidationError, match=f"Professional {kind} .* beat must reuse"
+    ):
+        ProfessionalB2Output.model_validate(_professional_anchor_output(kind, beats))
+
+
+@pytest.mark.parametrize("kind", ["intro", "close"])
+def test_professional_boundary_cannot_regenerate_avatar(kind: str) -> None:
+    beat = _professional_beat("1A")
+    beat.update(prompt="Generate a new presenter image", reference=True)
+    with pytest.raises(
+        ValidationError, match=f"Professional {kind} .* beat must reuse"
+    ):
+        ProfessionalB2Output.model_validate(_professional_anchor_output(kind, [beat]))
+
+
 def test_professional_b2_global_framing_sequence_progression_and_still_audio() -> None:
     instructions = (
         files("ai_video_factory.bots.prompts")
@@ -224,7 +334,7 @@ def test_professional_contract_accepts_regenerated_avatar() -> None:
     data = {
         "pipeline_stage": "B2",
         "narrative_core": {"central_question": "Q", "final_answer": "A"},
-        "blocks": [{"block_id": 1, "type": "intro",
+        "blocks": [{"block_id": 1, "type": "development",
                     "emotional_entry": "A", "emotional_exit": "B",
                     "span": {"first_words": "First", "last_words": "last"},
                     "beats": [{"beat_id": "1A", "text": "First beat", "beat_type": "setup",
