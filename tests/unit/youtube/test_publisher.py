@@ -21,7 +21,10 @@ from ai_video_factory.integrations.youtube.models import (
     YouTubePublishRequest,
     YouTubePublishResult,
 )
-from ai_video_factory.integrations.youtube.publisher import publish_to_youtube
+from ai_video_factory.integrations.youtube.publisher import (
+    default_state_dir,
+    publish_to_youtube,
+)
 from ai_video_factory.integrations.youtube.state import (
     PublicationStateStore,
     metadata_digest,
@@ -262,3 +265,14 @@ def test_no_thumbnail_marks_completed_without_google_if_reused(tmp_path: Path):
     result2 = publish(req, tmp_path, upload_fn=fake)
     assert result2 == result
     assert fake.call_count == 1
+
+
+def test_state_root_defaults_to_external_sibling_and_override_must_be_absolute(
+    tmp_path: Path,
+) -> None:
+    keystore = tmp_path / "keystores" / "youtube"
+    assert default_state_dir(keystore) == keystore.parent / "youtube-publications"
+    custom = tmp_path / "shared-publisher"
+    assert default_state_dir(keystore, custom) == custom
+    with pytest.raises(Exception, match="absolute"):
+        default_state_dir(keystore, Path("relative-state"))
