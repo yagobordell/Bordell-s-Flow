@@ -74,9 +74,12 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     assert "Visible-presenter speech preference" in prompt
     assert "A2V does not guarantee detailed" in prompt
     assert "use audio=false and observational media_video" in prompt
-    # Scene-native packaging and signs are no longer banned indiscriminately.
-    assert "Do not systematically end prompts with" in prompt
-    assert "do not invent product claims" in prompt
+    # Natural packaging is allowed without qualifiers leaking into scene prompts.
+    assert "product packaging" in prompt
+    assert "Never append editorial disclaimers" in prompt
+    assert "Do not insert boilerplate qualifications" in prompt
+    assert "do not invent product claims" not in prompt.lower()
+    assert "no specified brands or product claims" not in prompt.lower()
 
 
 def test_professional_b2_global_framing_sequence_progression_and_still_audio() -> None:
@@ -212,7 +215,10 @@ def test_professional_grid_never_adds_amateur_header_and_scopes_reference() -> N
     assert "iPhone 16/17 Pro Max" not in grid["description"]
     assert "only for panels 1" in grid["description"].lower()
     assert grid["visual_style"] == "profesional"
-    assert "Allow natural scene-native labels, packaging and signage" in grid["description"]
+    assert "Allow natural scene-native labels, realistic product packaging" in grid["description"]
+    assert "let other incidental packaging look naturally printed" in grid["description"]
+    assert "do not invent brands or claims" not in grid["description"].lower()
+    assert "no specified brands or product claims" not in grid["description"].lower()
     assert "Do not add visible text unless" not in grid["description"]
     assert "Do not add artificial captions, overlays or watermarks" in grid["description"]
     assert "Respect EACH panel's own requested shot scale" in grid["description"]
