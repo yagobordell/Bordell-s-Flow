@@ -18,7 +18,7 @@ from typing import Any
 from ai_video_factory.config import settings
 from ai_video_factory.integrations.youtube.attempt import UploadAttempt
 from ai_video_factory.integrations.youtube.auth import (
-    _check_stored_info,
+    inspect_local_credentials,
     load_credentials,
 )
 from ai_video_factory.integrations.youtube.client import build_youtube_client
@@ -97,7 +97,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             settings.youtube_keystore_dir, repo_root=Path(__file__).resolve().parents[2]
         )
         # Offline preflight: no refresh, Google API call or OAuth interactive flow.
-        _check_stored_info(store.load_token(request.channel))
+        inspect_local_credentials(request.channel, store)
         print(json.dumps(safe_summary(request, size), ensure_ascii=False, indent=2))
         if args.dry_run:
             attempt = UploadAttempt(request)
