@@ -670,7 +670,13 @@ organiza los archivos automáticamente:
 ```text
 data/
   Jorge/
-    Jorge.png                      # Avatar persistente; qr/voice junto al PNG
+    Jorge.png                      # Identidad visual del avatar
+    meta/
+      qr.png                       # QR persistente para todos los guiones
+      qr.json
+      voice.json                   # Configuración/Voice ID
+      referencia.wav               # Si existe una grabación de clonación
+      style.json                   # Estilo fijo: casero o profesional
     test02.txt                     # Guion nuevo PENDIENTE, todavía no ejecutado
     test01/                        # Guion ya INICIADO
       test01.txt                   # Guion original, byte por byte
@@ -692,6 +698,15 @@ data/
       test01.mp4                   # Vídeo final, DIRECTAMENTE en esta carpeta
       manifest.json               # Solo presente tras una publicación completa
 ```
+
+La carpeta `meta/` se crea automáticamente durante la incorporación del
+avatar, antes de generar contenido. Guarda los metadatos persistentes del
+QR y de la voz, junto con el audio de referencia si hay clonación.
+En el primer guion se guarda además `meta/style.json` con el estilo visual
+B2 seleccionado (`casero` o `profesional`). Los siguientes guiones de
+ese avatar usan exactamente ese estilo sin volver a preguntarlo. Pasar
+`--style` con otro valor produce un error explícito; los archivos
+`meta/` no se sustituyen silenciosamente.
 
 Después del primer guion, añade los siguientes TXT pendientes **sueltos
 dentro de `data/Jorge/`**. El programa distingue automáticamente entre
