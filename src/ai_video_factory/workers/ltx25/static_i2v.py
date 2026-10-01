@@ -9,8 +9,11 @@ unchanged. Experimental: camera stability requires real video validation.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import nullcontext
 
 import torch
+
+from .i2v_metrics import I2VPhaseMetrics
 from ltx_core.components.guiders import MultiModalGuider, MultiModalGuiderParams
 from ltx_core.components.noisers import GaussianNoiser
 from ltx_core.model.video_vae import AUTO_TILING, AutoTiling, TilingConfig
@@ -73,6 +76,9 @@ def generate_static_camera(  # noqa: PLR0913
     stage_2_sigmas: torch.Tensor = STAGE_2_DISTILLED_SIGMAS,
     color_space: HDRColorSpace | None = None,
     generated_keyframes: int | Sequence[int] = 0,
+    stage_1_max_batch_size: int = 1,
+    decode_audio: bool = True,
+    metrics: I2VPhaseMetrics | None = None,
 ) -> PipelineOutput:
     """Generate a video.
     Stage 1 samples with the ancestral (SDE) Euler sampler or the deterministic one according
@@ -80,6 +86,8 @@ def generate_static_camera(  # noqa: PLR0913
     always deterministic -- its 3-step refinement schedule is too short to remove freshly
     injected noise.
     """
+    if stage_1_max_batch_size not in (1, 2):
+        raise ValueError("Stage 1 CFG max batch size must be 1 or 2")
     if enhance_prompt:
         raise ValueError("static-camera I2V must preserve the original positive prompt")
     require_num_frames_source(num_frames, self.duration_predictor)
@@ -94,12 +102,14 @@ def generate_static_camera(  # noqa: PLR0913
     if vae_dtype is None:
         vae_dtype = dtype
 
-    ctx_p, ctx_n = self.prompt_encoder(
-        [prompt, negative_prompt],
-        enhance_first_prompt=enhance_prompt,
-        enhance_static_cache=enhance_static_cache,
-        enhance_prompt_image=images[0][0] if len(images) > 0 else None,
-    )
+    prompt_phase = metrics.phase("prompt_encode_seconds") if metrics else nullcontext()
+    with prompt_phase:
+        ctx_p, ctx_n = self.prompt_encoder(
+            [prompt, negative_prompt],
+            enhance_first_prompt=enhance_prompt,
+            enhance_static_cache=enhance_static_cache,
+            enhance_prompt_image=images[0][0] if len(images) > 0 else None,
+        )
     video_context, audio_context = ctx_p.video_encoding, ctx_p.audio_encoding
     negative_video_context = ctx_n.video_encoding
 
@@ -126,21 +136,25 @@ def generate_static_camera(  # noqa: PLR0913
     # Stage 1: Initial low resolution video generation.
     stage_1_sigmas = stage_1_sigmas.to(dtype=torch.float32, device=self.device)
     stage_1_w, stage_1_h = width // 2, height // 2
-    stage_1_conditionings = self.image_conditioner(
-        lambda enc: combined_image_conditionings(
-            images=images,
-            height=stage_1_h,
-            width=stage_1_w,
-            video_encoder=enc,
-            dtype=dtype,
-            device=self.device,
-            color_space=color_space,
+    conditioning_phase = metrics.phase("image_conditioning_stage1_seconds") if metrics else nullcontext()
+    with conditioning_phase:
+        stage_1_conditionings = self.image_conditioner(
+            lambda enc: combined_image_conditionings(
+                images=images,
+                height=stage_1_h,
+                width=stage_1_w,
+                video_encoder=enc,
+                dtype=dtype,
+                device=self.device,
+                color_space=color_space,
+            )
         )
-    )
     stage_1_conditionings.extend(generated_keyframe_conditionings(generated_keyframes, num_frames))
 
-    video_state, audio_state = self.stage(
-        denoiser=GuidedDenoiser(
+    stage_1_phase = metrics.phase("stage1_total_seconds") if metrics else nullcontext()
+    with stage_1_phase:
+        video_state, audio_state = self.stage(
+            denoiser=GuidedDenoiser(
             v_context=video_context,
             a_context=audio_context,
             video_guider=MultiModalGuider(
@@ -163,27 +177,34 @@ def generate_static_camera(  # noqa: PLR0913
         fps=frame_rate,
         video=ModalitySpec(context=video_context, conditionings=stage_1_conditionings),
         audio=ModalitySpec(context=audio_context),
-        **self._stage_1_sampler_kwargs(seed),
-    )
+            **self._stage_1_sampler_kwargs(seed),
+            **({"max_batch_size": 2} if stage_1_max_batch_size == 2 else {}),
+        )
 
     # Stage 2: Upsample and refine the video at higher resolution with distilled LORA.
-    upscaled_video_latent = self.upsampler(video_state.latent[:1])
+    upsample_phase = metrics.phase("spatial_upsample_seconds") if metrics else nullcontext()
+    with upsample_phase:
+        upscaled_video_latent = self.upsampler(video_state.latent[:1])
 
     stage_2_sigmas = stage_2_sigmas.to(dtype=torch.float32, device=self.device)
-    stage_2_conditionings = self.image_conditioner(
-        lambda enc: combined_image_conditionings(
-            images=images,
-            height=height,
-            width=width,
-            video_encoder=enc,
-            dtype=dtype,
-            device=self.device,
-            color_space=color_space,
+    conditioning_phase = metrics.phase("image_conditioning_stage2_seconds") if metrics else nullcontext()
+    with conditioning_phase:
+        stage_2_conditionings = self.image_conditioner(
+            lambda enc: combined_image_conditionings(
+                images=images,
+                height=height,
+                width=width,
+                video_encoder=enc,
+                dtype=dtype,
+                device=self.device,
+                color_space=color_space,
+            )
         )
-    )
 
-    video_state, audio_state = self.stage(
-        denoiser=SimpleDenoiser(video_context, audio_context),
+    stage_2_phase = metrics.phase("stage2_total_seconds") if metrics else nullcontext()
+    with stage_2_phase:
+        video_state, audio_state = self.stage(
+            denoiser=SimpleDenoiser(video_context, audio_context),
         sigmas=stage_2_sigmas,
         noiser=noiser,
         width=width,
@@ -201,12 +222,20 @@ def generate_static_camera(  # noqa: PLR0913
             noise_scale=stage_2_sigmas[0].item(),
             initial_latent=audio_state.latent,
         ),
-    )
+        )
 
+    # VideoDecoder returns a lazy iterator. The worker times chunk consumption
+    # during encode, where GPU decoding actually happens.
     decoded_video = self.video_decoder(
         video_state.latent, tiling_config, generator, dtype=vae_dtype
     )
-    decoded_audio = self.audio_decoder(audio_state.latent)
+    decoded_audio = None
+    if decode_audio:
+        audio_phase = metrics.phase("audio_decode_seconds") if metrics else nullcontext()
+        with audio_phase:
+            decoded_audio = self.audio_decoder(audio_state.latent)
+    elif metrics is not None:
+        metrics.timings["audio_decode_seconds"] = 0.0
     return PipelineOutput(
         decoded_video, decoded_audio, num_frames, tiling_config, None, video_state.latent
     )
