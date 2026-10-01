@@ -44,7 +44,7 @@ def youtube_client(sequence):
     api.set.return_value = request
     youtube = Mock()
     youtube.thumbnails.return_value = api
-    return youtube, api, request
+    return youtube, api, request.execute
 
 
 @pytest.mark.parametrize(("suffix", "mimetype"), [
