@@ -108,10 +108,21 @@ def publish_to_youtube(
             registry.write(state, mirror=state_path)
         else:
             if state["metadata_sha256"] != metadata_sha:
-                raise YouTubeValidationError(
-                    "This video is already registered for the channel with different "
-                    "metadata. Never re-upload it: reconcile the existing publication."
-                )
+                if state["status"] == "pending" and state.get("video_id") is None:
+                    # pending is written before on_started; it proves no
+                    # videos.insert chunk could yet have left this process.
+                    state["metadata_sha256"] = metadata_sha
+                    state["privacy"] = request.privacy
+                    state["thumbnail_status"] = (
+                        "pending" if thumbnail_sha else "not_requested"
+                    )
+                    state["thumbnail_sha256"] = thumbnail_sha
+                    registry.write(state, mirror=state_path)
+                else:
+                    raise YouTubeValidationError(
+                        "This video is already registered for the channel with different "
+                        "metadata. Never re-upload it: reconcile the existing publication."
+                    )
             if state["status"] in ("uploading", "ambiguous"):
                 raise YouTubeAmbiguousUploadError(
                     "Previous upload is uncertain; inspect YouTube Studio and reconcile "
