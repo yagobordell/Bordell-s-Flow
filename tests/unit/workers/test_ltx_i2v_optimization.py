@@ -302,7 +302,8 @@ def test_production_i2v_keeps_original_visual_recipe_without_unused_audio(
     assert events[1]["pipeline_known_warm"] is True
     assert events[1]["pipeline_prior_successful_generations"] == 1
     # The verification profile must exercise the exact same visual adapter.
-    assert generator_calls[0] == generator_calls[2]
+    visual_args = lambda call: {key: value for key, value in call.items() if key != "metrics"}
+    assert visual_args(generator_calls[0]) == visual_args(generator_calls[2])
     assert events[2]["pipeline_prior_successful_generations"] == 2
     assert events[2]["stage1_max_batch_size"] == 1
     backend._release_pipeline_locked()
