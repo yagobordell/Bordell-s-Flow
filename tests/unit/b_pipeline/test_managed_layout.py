@@ -604,3 +604,32 @@ def test_audio_resume_requires_every_original_paid_block_file(
     assert _latest_completed_audio(work, _sha(script.read_bytes())) == artifact
     (work / "audio" / "runs" / "a" / "blocks" / "block_1.wav").unlink()
     assert _latest_completed_audio(work, _sha(script.read_bytes())) is None
+
+
+
+def test_sync_detects_tampered_finished_publication(
+    managed_complete: tuple[Path, Path, Path],
+) -> None:
+    work, script, target = managed_complete
+    publish_managed_run(work, script, target)
+    (target / "media" / "audio" / "narracion.wav").unlink()
+    with pytest.raises(PublicationError, match="changed or missing"):
+        sync_managed_outputs(work, target)
+
+
+def test_sync_never_claims_old_mp4_matches_regenerated_audio(
+    managed_complete: tuple[Path, Path, Path],
+) -> None:
+    work, script, target = managed_complete
+    publish_managed_run(work, script, target)
+    new_sha = _put(
+        work, "audio/runs/a/narration_audio_regen_1.wav", b"new narration"
+    )
+    report = json.loads((work / "run_report.json").read_text(encoding="utf-8"))
+    report["run"]["audio_generation"].update(
+        file="audio/runs/a/narration_audio_regen_1.wav", sha256=new_sha
+    )
+    _json(work, "run_report.json", report)
+    with pytest.raises(PublicationError, match="internal narration has changed"):
+        sync_managed_outputs(work, target)
+    assert (target / "test01.mp4").read_bytes() == b"final MP4 bytes"
