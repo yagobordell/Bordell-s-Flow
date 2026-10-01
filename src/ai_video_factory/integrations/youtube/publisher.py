@@ -208,8 +208,13 @@ def publish_to_youtube(
 def default_state_dir(keystore_dir: Path, override: Path | None = None) -> Path:
     """One shared external registry by default, across local git worktrees."""
     if override is not None:
-        return Path(override).expanduser().absolute()
-    keystore = Path(keystore_dir).expanduser().absolute()
+        selected = Path(override).expanduser()
+        if not selected.is_absolute():
+            raise YouTubeConfigurationError(
+                "YOUTUBE_STATE_DIR must be an absolute shared path across worktrees"
+            )
+        return selected
+    keystore = Path(keystore_dir).expanduser()
     if not keystore.is_absolute():
         raise YouTubeConfigurationError("Absolute YOUTUBE_KEYSTORE_DIR required")
     return keystore.parent / "youtube-publications"
