@@ -5,8 +5,9 @@ param(
     [Parameter(Mandatory)][string]$ExpectedPinnedImage,
     [ValidateRange(0.5, 12)][double]$DurationSeconds = 2,
     [ValidateRange(0, 2147483646)][int]$SeedBase = 4242,
-    [ValidateSet("default", "static-camera", "cfg-b2", "cfg-b2-silent", "cfg-b2-triton")][string]$I2VProfile = "default",
+    [ValidateSet("default", "default-silent-verify", "static-camera", "cfg-b2", "cfg-b2-silent", "cfg-b2-triton")][string]$I2VProfile = "default",
     [string]$CompareWithRunId = "",
+    [switch]$RequireExactBaselineVideoSha,
     [string]$RunId = ([Guid]::NewGuid().ToString("N")),
     [string]$OutputDir = "data/output/deployment-validation/ltx25-i2v",
     [string]$EnvFile = ".env",
@@ -37,6 +38,11 @@ if (-not [string]::IsNullOrWhiteSpace($CompareWithRunId) -and
 }
 if (-not [string]::IsNullOrWhiteSpace($CompareWithRunId) -and $I2VProfile -eq "default") {
     throw "-CompareWithRunId requires an experimental I2V profile."
+}
+if ($RequireExactBaselineVideoSha -and
+    ($I2VProfile -ne "default-silent-verify" -or
+     [string]::IsNullOrWhiteSpace($CompareWithRunId))) {
+    throw "-RequireExactBaselineVideoSha requires -I2VProfile default-silent-verify and an existing -CompareWithRunId."
 }
 if ($ExpectedPinnedImage -notmatch "^[^\s@]+@sha256:[0-9a-fA-F]{64}$") {
     throw "-ExpectedPinnedImage must be an immutable repo@sha256:digest reference."
@@ -152,6 +158,28 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "I2V Postgres/R2 generation failed." }
     & $Python $Smoke validate --video (Join-Path $Output "video_clips\shot_001.mp4") --duration-seconds $DurationSeconds --output-dir $RunPath
     if ($LASTEXITCODE -ne 0) { throw "I2V output technical verification failed." }
+    if ($RequireExactBaselineVideoSha) {
+        $NewReportFile = Join-Path $RunPath "i2v-smoke-report.json"
+        $NewReport = Get-Content -LiteralPath $NewReportFile -Raw | ConvertFrom-Json
+        $NewSha = [string]$NewReport.video_sha256
+        $BaselineSha = [string]$BaselineCheck.video_sha256
+        $Matches = $NewSha -ceq $BaselineSha
+        $Receipt = [ordered]@{
+            verification_profile = $I2VProfile
+            reference_run_id = $CompareWithRunId
+            reference_video_sha256 = $BaselineSha
+            fresh_run_id = $RunId
+            fresh_video_sha256 = $NewSha
+            exact_mp4_sha256_match = $Matches
+            technical_status = [string]$NewReport.status
+        }
+        $Receipt | ConvertTo-Json -Depth 5 |
+            Set-Content -LiteralPath (Join-Path $RunPath "quality-equivalence.json") -Encoding utf8
+        if (-not $Matches) {
+            throw "VISUAL QUALITY GATE FAILED: fresh default-silent MP4 differs from the original. Do not promote the changed worker image."
+        }
+        Write-Host "QUALITY GATE PASSED: fresh default-silent MP4 exactly matches original SHA256=$NewSha" -ForegroundColor Green
+    }
 }
 finally {
     if ($StartRequested) {
