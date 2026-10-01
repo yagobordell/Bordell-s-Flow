@@ -104,6 +104,8 @@ def resolve_request(
     merged["video_path"], _ = validate_video(video_path)
     if "title" not in merged or not isinstance(merged["title"], str):
         raise YouTubeValidationError("YouTube title is required in youtube.json or --title")
+    if merged.get("localizations") and not merged.get("default_language"):
+        raise YouTubeValidationError("YouTube localizations require default_language")
     if not isinstance(merged.get("channel"), str) or not merged["channel"]:
         raise YouTubeValidationError("YouTube channel is required in metadata, Settings or CLI")
     try:
