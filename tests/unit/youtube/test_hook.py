@@ -170,6 +170,10 @@ def test_distribution_failure_does_not_change_generation_outcome(
     output_text = capsys.readouterr().out
     assert "failed separately" in output_text
     assert "Metadata missing" in output_text
+    failure = json.loads((output / "youtube_publish_error.json").read_text())
+    assert failure["schema_version"] == "youtube-publish-trigger/v1"
+    assert failure["status"] == "failed_safe"
+    assert "refresh_token" not in str(failure)
 
 
 def test_disabled_pipeline_preserves_existing_behavior(tmp_path: Path, monkeypatch):
