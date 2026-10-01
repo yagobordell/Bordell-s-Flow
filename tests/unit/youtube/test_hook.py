@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -261,3 +263,60 @@ def test_real_stateful_publisher_is_exercised_from_verified_managed_result(
     )
     assert third["video_id"] == first["video_id"]
     assert events == ["videos.insert", "thumbnails.set", "thumbnails.set"]
+
+
+def test_explicit_youtube_only_uses_saved_result_without_any_gpu_jobs(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    output, published, config = fixture_result(tmp_path)
+    script = tmp_path / "guion.txt"
+    script.write_text("script")
+    monkeypatch.setattr(pipeline, "settings", config)
+    monkeypatch.setattr(pipeline, "parse_args", lambda: SimpleNamespace(
+        script_file=script,
+        scripts_dir=tmp_path / "scripts",
+        avatars_dir=tmp_path / "avatars",
+        list_scripts=False,
+        list_avatars=False,
+        qr_only=False,
+        script=None,
+        youtube_only=True,
+        output=output.parent,
+        managed_target=published,
+        results_root=tmp_path / "results",
+    ))
+    monkeypatch.setattr(pipeline, "select_script", lambda **kwargs: script)
+    hook = Mock(return_value=published)
+    monkeypatch.setattr(pipeline, "_publish_if_ready", hook)
+    asyncio.run(pipeline.main())
+    hook.assert_called_once()
+    assert hook.call_args.kwargs["fail_on_youtube_error"] is True
+    assert hook.call_args.args[0] == output
+
+
+def test_explicit_distribution_error_sets_nonzero_failure_mode(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    output, published, config = fixture_result(tmp_path)
+    (output / "run_report.json").write_text(json.dumps({
+        "run": {"video_generation": {"status": "completed"}},
+    }))
+    script = tmp_path / "guion.txt"
+    script.write_text("script")
+    monkeypatch.setattr(pipeline, "settings", config)
+    monkeypatch.setattr(
+        pipeline, "publish_managed_run", Mock(return_value=published),
+    )
+    def denied(**kwargs):
+        raise YouTubeValidationError("Metadata denied")
+
+    monkeypatch.setattr(
+        "ai_video_factory.integrations.youtube.hook.publish_verified_result", denied,
+    )
+    with pytest.raises(RuntimeError, match="verified local MP4 is unchanged"):
+        pipeline._publish_if_ready(
+            output, script, tmp_path / "results", published,
+            fail_on_youtube_error=True,
+        )
+    assert (output / "youtube_publish_error.json").is_file()
+    assert (published / "guion.mp4").is_file()
