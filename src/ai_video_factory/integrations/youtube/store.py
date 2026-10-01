@@ -6,6 +6,7 @@ import json
 import os
 import re
 import tempfile
+import unicodedata
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -32,7 +33,8 @@ def validate_channel_name(name: str) -> str:
         or value.endswith(".")
         or value.casefold().endswith(".json")
         or _UNSAFE.search(value)
-        or value.upper().split(".", 1)[0] in _WINDOWS_RESERVED
+        or any(unicodedata.category(char) == "Cc" for char in value)
+        or value.upper().split(".", 1)[0].rstrip(" .") in _WINDOWS_RESERVED
         or value.casefold() == "client_secret"
     ):
         raise YouTubeConfigurationError("Invalid YouTube channel name")
