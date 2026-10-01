@@ -6,9 +6,9 @@ import hashlib
 import os
 import time
 import unicodedata
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 from .errors import YouTubeCredentialsError
 from .store import validate_channel_name
