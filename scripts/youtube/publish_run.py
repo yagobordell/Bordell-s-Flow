@@ -13,7 +13,13 @@ from pathlib import Path
 from typing import Sequence
 
 from ai_video_factory.integrations.youtube.metadata import validate_video
-from scripts.youtube.upload import main as upload_main
+try:
+    from scripts.youtube.upload import main as upload_main
+except ModuleNotFoundError as exc:
+    if exc.name not in {"scripts", "scripts.youtube"}:
+        raise
+    # Direct script execution starts with scripts/youtube on sys.path.
+    from upload import main as upload_main
 
 
 def _final_video(result: Path) -> Path:
