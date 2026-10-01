@@ -68,19 +68,17 @@ jobs:
             psql "$TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f "$migration"
           done
 
-      - name: FFmpeg for exact Fish Audio gap test
+      - name: Install required FFmpeg and QR test tools
         run: |
-          if ! command -v ffmpeg >/dev/null 2>&1; then
+          packages=()
+          if ! command -v ffmpeg >/dev/null 2>&1; then packages+=(ffmpeg); fi
+          if ! command -v zbarimg >/dev/null 2>&1; then packages+=(zbar-tools); fi
+          if (("${#packages[@]}" > 0)); then
             sudo apt-get update -qq
-            sudo apt-get install -y ffmpeg
+            sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
           fi
-
-      - name: Install independent QR decoder
-        run: |
-          if ! command -v zbarimg >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y zbar-tools
-          fi
+          command -v ffmpeg
+          command -v zbarimg
 
       - name: Ruff
         run: uv run --no-sync ruff check .
