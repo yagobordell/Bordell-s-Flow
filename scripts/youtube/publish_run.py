@@ -10,8 +10,9 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Sequence
+from collections.abc import Sequence
 
+from ai_video_factory.integrations.youtube.errors import YouTubeValidationError
 from ai_video_factory.integrations.youtube.metadata import validate_video
 try:
     from scripts.youtube.upload import main as upload_main
@@ -50,7 +51,7 @@ def _final_video(result: Path) -> Path:
         video = result / candidates[0]
         validate_video(video)  # Also checks published SHA-256 in this manifest.
         return video
-    except (OSError, ValueError, UnicodeError) as exc:
+    except (OSError, ValueError, UnicodeError, YouTubeValidationError):
         raise ValueError("No verified final MP4 in the chosen result directory") from None
 
 
