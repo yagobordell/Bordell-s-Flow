@@ -6,7 +6,9 @@ No Google imports, credentials refresh, upload or filesystem writes.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -69,6 +71,31 @@ def validate_video(path: Path) -> tuple[Path, int]:
             raise YouTubeValidationError("MP4 is missing its expected ftyp container header")
     except OSError:
         raise YouTubeValidationError("Cannot access the selected MP4") from None
+    # When the media came from Video Factory's immutable published layout,
+    # verify its existing manifest instead of trusting the filename alone.
+    manifest = file.parent / "manifest.json"
+    if manifest.is_symlink() or manifest.is_junction():
+        raise YouTubeValidationError("Linked Video Factory publication manifest")
+    if manifest.is_file():
+        try:
+            if manifest.stat().st_size > MAX_METADATA_BYTES:
+                raise ValueError("oversized")
+            record = json.loads(manifest.read_text(encoding="utf-8"))
+            if isinstance(record, dict) and record.get("schema_version") in {
+                "managed-b-pipeline-v1", "b-pipeline-publication-v1",
+            }:
+                files = record.get("files", {})
+                expected = files.get(file.name) if isinstance(files, dict) else None
+                if not isinstance(expected, str) or not re.fullmatch("[0-9a-f]{64}", expected):
+                    raise ValueError("missing signed file")
+                with file.open("rb") as stream:
+                    actual = hashlib.file_digest(stream, "sha256").hexdigest()
+                if actual != expected:
+                    raise ValueError("modified")
+        except (OSError, UnicodeError, ValueError):
+            raise YouTubeValidationError(
+                "MP4 does not match its Video Factory publication manifest"
+            ) from None
     return file, stat.st_size
 
 
