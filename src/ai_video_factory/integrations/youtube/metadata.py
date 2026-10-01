@@ -204,4 +204,5 @@ def safe_summary(request: YouTubePublishRequest, size: int) -> dict[str, Any]:
         "api_body": body,
         "notify_subscribers": request.notify_subscribers,
         "identity_verified": False,
+        "thumbnail": request.thumbnail_path.name if request.thumbnail_path else None,
     }
