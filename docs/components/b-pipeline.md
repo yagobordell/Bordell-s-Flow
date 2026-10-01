@@ -659,3 +659,74 @@ uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script t
 mitad de artefactos está disponible. Las comprobaciones automáticas son
 técnicas y no acreditan visualmente la sincronización de labios o la
 inmovilidad de cámara; se requiere revisión de una generación real en Salad.
+
+## Immutable human-facing results (separate from the recovery workspace)
+
+The pipeline continues to work under `data/output/<script>/` with its original
+B1.1/B1.2/B2 checkpoints, paid image request states, Fish/STT attempts, R2/Postgres
+job manifests, preview, and LTX clip files. **Never move or delete this working
+directory during an unfinished run.** In particular, the `--from`,
+`--images-only`, `--resume-audio`, and `--generate-video` recovery commands
+still read it.
+
+After the **actual LTX final video** completes, the runner automatically
+copies verified results into an independent, immutable publication:
+
+```text
+data/
+  avatar/                          # New avatar PNG goes here before first use
+  input/scripts/                   # Original UTF-8 script library
+  output/<script>/                 # Original resumable working directory
+  results/<avatar>/<script>/<UTC timestamp>-<unique ID>/
+    Guion/<script>.txt             # Exact original script bytes
+    Bots/
+      B1.1/                        # Original bot inputs, outputs and checkpoints
+      B1.2/
+      B2/
+      visual_plan.json
+      avatar_voice.json
+      run_report.json              # Snapshot, without the mutable publication pointer
+    Media/
+      imagenes/
+        avatar.png
+        qr.png
+        block_1/1B.png             # Generated images from the completed manifest
+        grids/                     # If the image manifest has grid assets
+      audios/
+        narracion.wav              # Actual selected final Fish narration
+        bloques/bloque_1.mp3       # Actual selected TTS block audio, format preserved
+    <script>.mp4                   # Final LTX video at the publication root
+    manifest.json                  # Relative paths and SHA-256 for the snapshot
+```
+
+The snapshot contains **only the image and audio assets selected by the saved
+manifests**, not superseded paid tasks or temporary inference files. The
+publication is verified before an atomic directory rename exposes it as
+finished. An identical publishing retry checks every published file and reuses
+the same folder. If the saved completed run changes (for example after a B2
+rerun), publishing creates a **new ID** and never changes an older result. A
+missing or modified original or published asset causes a safe failure rather
+than silently accepting incomplete files.
+
+A stopped planning run, `--no-image`, a static-preview-only `--no-video`
+run, or a run where LTX remains deferred **does not publish a final result**;
+the working directory stays available for later completion. The normal
+`--generate-video`, `--images-only` and audio resume flows publish after
+they successfully finish LTX. To publish a previously completed run again,
+without starting any provider or GPU requests:
+
+```powershell
+.\run.ps1 mi_guion --publish-only
+```
+
+The default publication root is `data/results/`. Use
+`--results-root D:\VideoResults` to choose a different independent directory.
+The existing `--output` option still controls the **working** output root
+and can also be used with `--publish-only` to find a custom working directory.
+
+**Important distinction:** new full generations of the same script still
+replace `data/output/<script>/` as before (subject to the existing paid-job
+safety checks), but they cannot overwrite any previously published result.
+Keep the working directory if you need to resume or re-edit that specific run;
+a publication is a human-facing deliverable, not a substitute for its
+recoverable checkpoint tree.
