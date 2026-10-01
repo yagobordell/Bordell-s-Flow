@@ -39,7 +39,9 @@ def avatar_directory(avatar_file: Path, avatars_dir: Path) -> Path:
     )
 
 
-def ensure_avatar_meta(avatar_file: Path, avatars_dir: Path) -> Path:
+def ensure_avatar_meta(
+    avatar_file: Path, avatars_dir: Path, *, reference_audio: str | None = None
+) -> Path:
     """Create managed meta/ and migrate previously persisted avatar assets safely.
 
     The original organize_avatar layout remains the default for legacy runners.
@@ -76,6 +78,23 @@ def ensure_avatar_meta(avatar_file: Path, avatars_dir: Path) -> Path:
                 if destination.exists():
                     raise SystemExit(f"Audio duplicado: {source} y {destination}")
                 moves.append((source, destination))
+    if reference_audio is not None:
+        if (
+            Path(reference_audio).name != reference_audio
+            or "/" in reference_audio or "\\\\" in reference_audio
+            or Path(reference_audio).suffix.lower() not in _AUDIO_SUFFIXES
+        ):
+            raise SystemExit("El audio de referencia debe ser un nombre local válido.")
+        candidate = folder / reference_audio
+        target = meta / reference_audio
+        _no_link(candidate)
+        _no_link(target)
+        if candidate.is_file() and not any(candidate == old for old, _ in moves):
+            if target.exists():
+                raise SystemExit(f"Audio duplicado: {candidate} y {target}")
+            moves.append((candidate, target))
+        elif not candidate.is_file() and not target.is_file():
+            raise SystemExit(f"Falta el audio de referencia: {reference_audio}")
     # Onboard same-name audio or a custom audio provided for the first run.
     # Other loose WAVs in the avatar folder are not moved indiscriminately.
     for source in folder.iterdir():
