@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ai_video_factory.managed_layout import sync_managed_outputs
-from ai_video_factory.providers.avatar_library import organize_avatar
+from ai_video_factory.providers.avatar_library import ensure_avatar_meta, organize_avatar
 
 try:
     # Imported as a package by tests.
@@ -152,6 +152,7 @@ def prepare_managed_script(
     # Migrate the PNG into its canonical avatar folder. QR and voice then live beside it.
     if raw_avatar.is_file():
         avatar = organize_avatar(raw_avatar, data, reference_audio=reference_audio)
+    ensure_avatar_meta(avatar, data, reference_audio=reference_audio)
     destination.mkdir()
     try:
         available[0].rename(source)
@@ -239,10 +240,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if qr_avatar not in avatar_names:
             raise SystemExit(f"No PNG avatar found for {qr_avatar}")
-        return subprocess.call([
+        status = subprocess.call([
             sys.executable, str(CORE), "--qr-only",
             "--avatars-dir", str(data), "--avatar", qr_avatar, *flags,
         ])
+        if status == 0:
+            stored = data / qr_avatar / (qr_avatar + ".png")
+            if stored.is_file():
+                ensure_avatar_meta(stored, data)
+        return status
     avatar = _name(avatar_arg, ".png") if avatar_arg else _choose(avatar_names, "avatars")
     if avatar not in avatar_names:
         raise SystemExit(f"No PNG avatar found for {avatar}")
