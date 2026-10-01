@@ -1681,6 +1681,30 @@ def _latest_completed_audio(output: Path, source_sha256: str) -> dict[str, objec
     with audio_path.open("rb") as stream:
         if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
             return None
+    # Never resume a supposedly completed narration if any paid block file
+    # referenced by the saved artifact was lost. Keep its task state intact
+    # for explicit recovery; do not submit duplicate paid work.
+    blocks = artifact.get("blocks")
+    if not isinstance(blocks, list) or not blocks:
+        return None
+    for block in blocks:
+        if not isinstance(block, dict):
+            return None
+        name, sha = block.get("file"), block.get("sha256")
+        if not isinstance(name, str) or not isinstance(sha, str):
+            return None
+        relative_block = Path(name)
+        if relative_block.is_absolute() or ".." in relative_block.parts:
+            return None
+        source = output / relative_block
+        if (
+            source.is_symlink() or not source.is_file()
+            or not source.resolve().is_relative_to(output.resolve())
+        ):
+            return None
+        with source.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != sha:
+                return None
     return artifact
 
 
