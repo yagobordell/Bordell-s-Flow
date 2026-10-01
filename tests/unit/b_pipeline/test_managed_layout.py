@@ -219,9 +219,16 @@ def managed_complete(tmp_path: Path) -> tuple[Path, Path, Path]:
     block_sha = _put(work, "audio/runs/a/blocks/block_1.wav", b"tts block")
     audio_sha = _put(work, "audio/runs/a/narration.wav", b"master audio")
     video_sha = _put(work, "video/runs/v/final.mp4", b"final MP4 bytes")
+    _json(work, "video/runs/v/manifest.json", {
+        "status": "completed",
+        "file": "video/runs/v/final.mp4",
+        "sha256": video_sha,
+        "master_audio_sha256": audio_sha,
+    })
     _json(work, "run_report.json", {
         "run": {
             "status": "completed", "script_sha256": _sha(script.read_bytes()),
+            "image_generation": {"status": "completed", "count": 1},
             "audio_generation": {
                 "status": "completed", "file": "audio/runs/a/narration.wav",
                 "sha256": audio_sha, "blocks": [{
@@ -366,3 +373,171 @@ def test_managed_qr_and_voice_persist_inside_meta_without_paid_calls(
         default_voice_id="fishaudio_80e34d5e0b2b4577a486f3a77e357261",
         interactive=False, activate=False,
     ) == voice
+
+
+
+def _set_run(work: Path, **stages: object) -> None:
+    report_path = work / "run_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["run"].update(stages)
+    _json(work, "run_report.json", report)
+
+
+def test_audio_only_exposes_real_audio_and_valid_report_paths(
+    managed_complete: tuple[Path, Path, Path],
+) -> None:
+    work, _script, target = managed_complete
+    (work / "images" / "manifest.json").unlink()
+    _set_run(
+        work,
+        image_generation={"status": "skipped"},
+        video_generation={"status": "deferred"},
+        status="completed",
+    )
+    sync_managed_outputs(work, target)
+    assert (target / "media" / "audio" / "narracion.wav").read_bytes() == b"master audio"
+    assert (
+        target / "media" / "audio" / "bloques" / "bloque_1.wav"
+    ).read_bytes() == b"tts block"
+    assert not (target / "test01.mp4").exists()
+    assert not (target / "manifest.json").exists()
+    report = json.loads(
+        (target / "outputs" / "run_report.json").read_text(encoding="utf-8")
+    )
+    assert report["run"]["internal_status"] == "completed"
+    assert report["run"]["status"] == "partial"
+    assert report["run"]["published_media"] == {"audio": "completed"}
+    assert report["run"]["audio_generation"]["file"] == "media/audio/narracion.wav"
+    for block in report["run"]["audio_generation"]["blocks"]:
+        assert (target / block["file"]).is_file()
+    assert (work / "audio" / "runs" / "a" / "narration.wav").is_file()
+
+
+def test_regenerated_audio_replaces_only_verified_visible_audio(
+    managed_complete: tuple[Path, Path, Path],
+) -> None:
+    work, _script, target = managed_complete
+    _set_run(work, video_generation={"status": "deferred"})
+    sync_managed_outputs(work, target)
+    first = target / "media" / "audio" / "narracion.wav"
+    assert first.read_bytes() == b"master audio"
+    latest_sha = _put(
+        work, "audio/runs/a/narration_audio_regen_1.wav", b"regenerated narration"
+    )
+    latest_block = _put(
+        work, "audio/runs/a/blocks/regenerated.wav", b"regenerated block"
+    )
+    report_path = work / "run_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    audio = report["run"]["audio_generation"]
+    audio.update(
+        file="audio/runs/a/narration_audio_regen_1.wav", sha256=latest_sha
+    )
+    audio["blocks"][0].update(
+        file="audio/runs/a/blocks/regenerated.wav", sha256=latest_block
+    )
+    report["run"]["video_preview"] = {"status": "stale_audio_regeneration"}
+    _json(work, "run_report.json", report)
+    sync_managed_outputs(work, target)
+    assert first.read_bytes() == b"regenerated narration"
+    assert (
+        target / "media" / "audio" / "bloques" / "bloque_1.wav"
+    ).read_bytes() == b"regenerated block"
+    assert (work / "audio" / "runs" / "a" / "narration.wav").read_bytes() == (
+        b"master audio"
+    )
+    assert (target / "media" / "audio" / "manifest.json").is_file()
+    public = json.loads((target / "outputs" / "run_report.json").read_text())
+    assert public["run"]["audio_generation"]["file"] == "media/audio/narracion.wav"
+    assert public["run"]["published_media"]["audio"] == "completed"
+    assert public["run"]["published_media"].get("preview") is None
+
+
+def test_images_are_visible_without_audio_or_full_video(
+    managed_complete: tuple[Path, Path, Path],
+) -> None:
+    work, _script, target = managed_complete
+    _set_run(
+        work,
+        audio_generation={"status": "skipped"},
+        video_generation={"status": "deferred"},
+    )
+    sync_managed_outputs(work, target)
+    assert (target / "media" / "images" / "block_1" / "1A.png").read_bytes() == (
+        b"generated image bytes"
+    )
+    stage = json.loads(
+        (target / "media" / "images" / "manifest.json").read_text()
+    )
+    assert stage["status"] == "completed"
+    assert stage["files"]["block_1/1A.png"] == _sha(b"generated image bytes")
+    assert (target / "outputs" / "run_report.json").is_file()
+    assert not (target / "test01.mp4").exists()
+
+
+def test_static_image_video_is_visible_before_ltx(
+    managed_complete: tuple[Path, Path, Path],
+) -> None:
+    work, _script, target = managed_complete
+    preview_sha = _put(work, "preview/static_preview.mp4", b"verified static preview")
+    _put(work, "preview/timeline.json", b'{"beats":[]}')
+    preview = {
+        "status": "completed",
+        "file": "preview/static_preview.mp4",
+        "sha256": preview_sha,
+    }
+    _json(work, "preview/manifest.json", {
+        **preview,
+        "timeline_file": "preview/timeline.json",
+        "audio_file": "audio/runs/a/narration.wav",
+    })
+    _set_run(
+        work,
+        video_generation={"status": "deferred"},
+        video_preview=preview,
+    )
+    sync_managed_outputs(work, target)
+    assert (target / "media" / "preview" / "preview.mp4").read_bytes() == (
+        b"verified static preview"
+    )
+    assert (target / "media" / "preview" / "timeline.json").is_file()
+    report = json.loads((target / "outputs" / "run_report.json").read_text())
+    assert report["run"]["video_preview"]["file"] == "media/preview/preview.mp4"
+    assert report["run"]["video_generation"]["status"] == "deferred"
+    assert not (target / "test01.mp4").exists()
+
+
+@pytest.mark.parametrize(
+    ("relative", "expected"),
+    [
+        ("audio/runs/a/narration.wav", "audio"),
+        ("audio/runs/a/blocks/block_1.wav", "audio"),
+        ("images/block_1/1A.png", "image"),
+        ("video/runs/v/final.mp4", "video"),
+    ],
+)
+def test_missing_completed_artifacts_do_not_publish_successful_report(
+    managed_complete: tuple[Path, Path, Path], relative: str, expected: str,
+) -> None:
+    work, _script, target = managed_complete
+    (work / relative).unlink()
+    with pytest.raises(PublicationError, match="Missing|escaping"):
+        sync_managed_outputs(work, target)
+    assert not (target / "outputs" / "run_report.json").exists()
+    assert not (target / "manifest.json").exists()
+    if expected == "audio":
+        assert not (target / "media" / "audio" / "manifest.json").exists()
+
+
+def test_visible_audio_tampering_fails_instead_of_overwriting(
+    managed_complete: tuple[Path, Path, Path],
+) -> None:
+    work, _script, target = managed_complete
+    _set_run(work, video_generation={"status": "deferred"})
+    sync_managed_outputs(work, target)
+    published = target / "media" / "audio" / "narracion.wav"
+    published.write_bytes(b"tampered")
+    with pytest.raises(PublicationError, match="missing or modified"):
+        sync_managed_outputs(work, target)
+    assert published.read_bytes() == b"tampered"
+    assert not (target / "manifest.json").exists()
