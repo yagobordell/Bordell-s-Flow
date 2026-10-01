@@ -1564,8 +1564,8 @@ async def _run_audio_only(
         _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
-    if artifact["sha256"] != previous_sha:
-        # Only a changed narration invalidates previous previews and LTX exports.
+    if artifact.get("sha256") is not None and artifact["sha256"] != previous_sha:
+        # Only a verified changed narration invalidates prior preview/LTX state.
         report["run"]["video_preview"] = {"status": "stale_audio_regeneration"}
         report["run"]["video_generation"] = {"status": "stale_audio_regeneration"}
     report["run"]["audio_generation"] = artifact
