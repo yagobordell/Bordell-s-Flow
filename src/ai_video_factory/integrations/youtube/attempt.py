@@ -18,6 +18,7 @@ from typing import Any
 from .errors import YouTubeAmbiguousUploadError, YouTubeValidationError
 from .metadata import build_insert_payload
 from .models import YouTubePublishRequest, YouTubePublishResult
+from .uploader import KNOWN_REASONS
 
 SCHEMA = "youtube-upload-attempt/v1"
 
@@ -145,6 +146,43 @@ class UploadAttempt:
             # Nothing has been sent yet, so a partial reservation can be discarded.
             self.path.unlink(missing_ok=True)
             raise YouTubeValidationError("Failed to reserve local upload attempt") from None
+
+    def record_failure(self, status: int | None, reason: str | None) -> None:
+        """Preserve allowlisted API diagnostics while preventing an automatic re-upload."""
+        if not self.reserved:
+            return
+        record = self._read()
+        if record is None or record.get("status") != "uploading":
+            raise YouTubeAmbiguousUploadError("Upload attempt changed unexpectedly")
+        record["status"] = "ambiguous"
+        record["last_http_status"] = (
+            status if isinstance(status, int) and 400 <= status <= 599 else None
+        )
+        record["last_api_reason"] = reason if reason in KNOWN_REASONS else None
+        temporary: Path | None = None
+        try:
+            descriptor, name = tempfile.mkstemp(
+                prefix=".youtube-attempt-", suffix=".tmp", dir=self.path.parent
+            )
+            temporary = Path(name)
+            if os.name == "posix":
+                os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                json.dump(record, stream, indent=2, ensure_ascii=False)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            if self.path.is_symlink() or self.path.is_junction():
+                raise OSError("Unsafe replacement")
+            os.replace(temporary, self.path)
+        except OSError:
+            raise YouTubeAmbiguousUploadError(
+                "Could not persist safe API diagnostics. Keep the ambiguous upload "
+                "record and inspect YouTube Studio before another attempt."
+            ) from None
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def complete(self, video_id: str) -> None:
         """Write the successful ID immediately; never erase on persistence failure."""
