@@ -84,6 +84,9 @@ jobs:
       - name: Ruff
         run: uv run --no-sync ruff check .
 
+      - name: Scan tracked files for OAuth secrets
+        run: uv run --no-sync python scripts/security/check_youtube_secrets.py
+
       - name: Pytest
         run: uv run --no-sync python -m pytest
 
@@ -158,3 +161,29 @@ jobs:
 
       - name: TypeScript
         run: npm --prefix remotion run typecheck
+
+  youtube:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - name: Install optional YouTube dependencies
+        run: uv sync --locked --extra dev --extra youtube
+      - name: Check dependency compatibility
+        run: uv pip check
+      - name: Test OAuth with real Google auth libraries, no network
+        run: uv run --no-sync python -m pytest tests/unit/youtube
+      - name: Check OAuth command help without any credentials
+        run: uv run --no-sync python scripts/youtube/auth.py --help
+      - name: Scan tracked credential safety
+        run: uv run --no-sync python scripts/security/check_youtube_secrets.py
