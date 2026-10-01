@@ -80,7 +80,8 @@ def _flags(argv: Sequence[str]) -> tuple[str | None, str | None, Path, list[str]
 
 
 def prepare_managed_script(
-    data: Path, avatar_name: str, script_name: str, *, resume: bool
+    data: Path, avatar_name: str, script_name: str, *, resume: bool,
+    reference_audio: str | None = None,
 ) -> tuple[Path, Path]:
     """Only move ONE pending TXT; never alter other pending or completed scripts."""
     if data.is_symlink() or data.is_junction():
@@ -141,7 +142,7 @@ def prepare_managed_script(
         raise SystemExit("The pending TXT is empty")
     # Migrate the PNG into its canonical avatar folder. QR and voice then live beside it.
     if raw_avatar.is_file():
-        avatar = organize_avatar(raw_avatar, data)
+        avatar = organize_avatar(raw_avatar, data, reference_audio=reference_audio)
     destination.mkdir()
     try:
         available[0].rename(source)
@@ -213,6 +214,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     if "--list-avatars" in flags:
         print("\n".join(avatar_names) if avatar_names else "No PNG avatars found in data/")
         return 0
+    if "--qr-only" in flags:
+        # QR setup needs only the PNG; it must not consume or move a pending TXT.
+        if "--avatar" in flags:
+            index = flags.index("--avatar")
+            if index + 1 == len(flags):
+                raise SystemExit("--avatar requires a PNG name")
+            qr_avatar = _name(flags[index + 1], ".png")
+            del flags[index:index + 2]
+        else:
+            qr_avatar = (
+                _name(avatar_arg or script_arg, ".png")
+                if avatar_arg or script_arg else _choose(avatar_names, "avatars")
+            )
+        if qr_avatar not in avatar_names:
+            raise SystemExit(f"No PNG avatar found for {qr_avatar}")
+        return subprocess.call([
+            sys.executable, str(CORE), "--qr-only",
+            "--avatars-dir", str(data), "--avatar", qr_avatar, *flags,
+        ])
     avatar = _name(avatar_arg, ".png") if avatar_arg else _choose(avatar_names, "avatars")
     if avatar not in avatar_names:
         raise SystemExit(f"No PNG avatar found for {avatar}")
@@ -223,7 +243,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     script = _name(script_arg, ".txt") if script_arg else _choose(
         _script_options(data, avatar, resume), "scripts"
     )
-    _, source = prepare_managed_script(data, avatar, script, resume=resume)
+    reference_audio = None
+    if "--voice-audio" in flags:
+        index = flags.index("--voice-audio")
+        if index + 1 == len(flags):
+            raise SystemExit("--voice-audio requires a file name")
+        reference_audio = flags[index + 1]
+    _, source = prepare_managed_script(
+        data, avatar, script, resume=resume, reference_audio=reference_audio
+    )
     destination = data / avatar / script
     work_root = WORK_ROOT / avatar
     command = [
