@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import json
 import logging
 import math
 import threading
@@ -24,6 +25,7 @@ from ai_video_factory.inference.gpu_failures import is_retryable_gpu_failure
 from ai_video_factory.inference.ports import LocalArtifact
 
 from .bootstrap import require_runtime_bootstrap_complete
+from .i2v_metrics import I2VPhaseMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,20 @@ LTX_VIDEO_TASK = "video.ltx25.generate"
 LTX_GENERATION_PROFILE = "ltx25-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-directcamneg-v5"
 LTX_STATIC_CAMERA_GENERATION_PROFILE = (
     "ltx25-distilled-static-camera-a95ab856-fp8cpu-gridpad-eagersdpa-v1"
+)
+# Each material recipe change has a distinct job identity and R2 output key.
+LTX_CFG_BATCH2_PROFILE = "ltx25-directcamneg-cfgb2-a95ab856-fp8cpu-eager-v1"
+LTX_CFG_BATCH2_SILENT_PROFILE = "ltx25-directcamneg-cfgb2-silent-a95ab856-fp8cpu-eager-v1"
+LTX_CFG_BATCH2_TRITON_PROFILE = "ltx25-directcamneg-cfgb2-silent-a95ab856-fp8cpu-triton-v1"
+LTX_EXPERIMENTAL_PROFILES = (
+    LTX_CFG_BATCH2_PROFILE,
+    LTX_CFG_BATCH2_SILENT_PROFILE,
+    LTX_CFG_BATCH2_TRITON_PROFILE,
+)
+LTX_SUPPORTED_I2V_PROFILES = (
+    LTX_GENERATION_PROFILE,
+    LTX_STATIC_CAMERA_GENERATION_PROFILE,
+    *LTX_EXPERIMENTAL_PROFILES,
 )
 _CANONICAL_LANDSCAPE_SIZE = (1280, 720)
 _LTX_TWO_STAGE_SPATIAL_GRID = 64
@@ -60,9 +76,9 @@ class LTXVideoParameters(BaseModel):
     @field_validator("generation_profile")
     @classmethod
     def validate_generation_profile(cls, value: str) -> str:
-        if value not in (LTX_GENERATION_PROFILE, LTX_STATIC_CAMERA_GENERATION_PROFILE):
+        if value not in LTX_SUPPORTED_I2V_PROFILES:
             raise ValueError(
-                "generation_profile must be a supported default or static-camera I2V profile"
+                "generation_profile must be a supported I2V profile"
             )
         return value
 
@@ -315,6 +331,7 @@ class _LTXBindings:
     encode_video: Any
     get_video_chunks_number: Any
     diffvae_apply: Any
+    triton_probe: Any = None
 
 
 def _load_ltx_bindings() -> _LTXBindings:
@@ -322,6 +339,7 @@ def _load_ltx_bindings() -> _LTXBindings:
         import torch
         from ltx_core.model.video_vae import get_video_chunks_number
         from ltx_core.model.video_vae.transformer import apply as diffvae_apply
+        from ltx_core.model.video_vae.transformer.fallback_na import triton_na_available
         from ltx_pipelines.distilled import DistilledPipeline
         from ltx_pipelines.utils.args import ImageConditioningInput
         from ltx_pipelines.utils.media_io import encode_video
@@ -343,6 +361,7 @@ def _load_ltx_bindings() -> _LTXBindings:
         encode_video=encode_video,
         get_video_chunks_number=get_video_chunks_number,
         diffvae_apply=diffvae_apply,
+        triton_probe=triton_na_available,
     )
 
 
@@ -383,6 +402,17 @@ def _force_diffvae_eager_sdpa(diffvae_apply: Any) -> None:
 
     diffvae_apply.natten_available = lambda: False
     diffvae_apply.triton_na_available = lambda: False
+
+
+def _select_diffvae_backend(bindings: _LTXBindings, requested: str) -> str:
+    """Never enable crash-prone NATTEN on the RTX 5090 pinned runtime."""
+    _force_diffvae_eager_sdpa(bindings.diffvae_apply)
+    if requested == "triton":
+        if callable(bindings.triton_probe) and bindings.triton_probe():
+            bindings.diffvae_apply.triton_na_available = bindings.triton_probe
+            return "triton"
+        logger.warning("LTX25_DIFFVAE_TRITON_UNAVAILABLE using=eager")
+    return "eager"
 
 
 class LTXPipelineModeController:
@@ -428,6 +458,8 @@ class DirectLTX25Backend:
         self._pipeline: Any | None = None
         self._bindings: _LTXBindings | None = None
         self._prepared = False
+        self._pipeline_requested_diffvae_backend: str | None = None
+        self._pipeline_effective_diffvae_backend: str | None = None
         self._mode_controller = mode_controller or LTXPipelineModeController()
         self._lock = self._mode_controller.lock
         self._mode_controller.register("image_to_video", self._release_pipeline_locked)
@@ -489,12 +521,29 @@ class DirectLTX25Backend:
             raise FileNotFoundError(f"LTX keyframe input does not exist: {keyframe_path}")
 
         generation_started = time.monotonic()
-        pipeline_reused = self._pipeline is not None
+        requested_backend = (
+            "triton" if parameters.generation_profile == LTX_CFG_BATCH2_TRITON_PROFILE
+            else "eager"
+        )
+        stage_1_batch = 2 if parameters.generation_profile in LTX_EXPERIMENTAL_PROFILES else 1
+        decode_audio = parameters.generation_profile not in (
+            LTX_CFG_BATCH2_SILENT_PROFILE,
+            LTX_CFG_BATCH2_TRITON_PROFILE,
+        )
         with self._lock:
+            pipeline_reused = (
+                self._pipeline is not None
+                and self._pipeline_requested_diffvae_backend == requested_backend
+            )
+
             bindings = self._get_bindings()
             self._validate_runtime(bindings)
             with _torch_inference_context(bindings.torch):
-                pipeline = self._get_or_build_pipeline(bindings)
+                metrics = I2VPhaseMetrics(bindings.torch, self._device)
+                with metrics.phase("pipeline_acquire_seconds"):
+                    pipeline = self._get_or_build_pipeline(
+                        bindings, requested_diffvae_backend=requested_backend
+                    )
                 pipeline_width, pipeline_height = _pipeline_dimensions(parameters)
                 conditioning_path = keyframe_path
                 if (pipeline_width, pipeline_height) != (
@@ -525,16 +574,22 @@ class DirectLTX25Backend:
                     "num_frames": parameters.num_frames,
                 }
                 if parameters.generation_profile == LTX_STATIC_CAMERA_GENERATION_PROFILE:
-                    # Reuse the resident distilled pipeline; do not rebuild model weights.
-                    result = _load_static_camera_generator()(pipeline, **pipeline_kwargs)
+                    # Opt-in static-camera uses a distinct negative prompt.
+                    generator = _load_static_camera_generator()
+                    with metrics.phase("pipeline_call_seconds"):
+                        result = generator(pipeline, metrics=metrics, **pipeline_kwargs)
                 else:
                     generator, negative_prompt = _load_default_i2v_negative_guidance()
-                    result = generator(
-                        pipeline,
-                        negative_prompt=negative_prompt,
-                        **pipeline_kwargs,
-                    )
-                output_video = result.video
+                    with metrics.phase("pipeline_call_seconds"):
+                        result = generator(
+                            pipeline,
+                            negative_prompt=negative_prompt,
+                            stage_1_max_batch_size=stage_1_batch,
+                            decode_audio=decode_audio,
+                            metrics=metrics,
+                            **pipeline_kwargs,
+                        )
+                output_video = metrics.video_chunks(result.video)
                 if (pipeline_width, pipeline_height) != (
                     parameters.width,
                     parameters.height,
@@ -546,14 +601,47 @@ class DirectLTX25Backend:
                     )
 
                 output_path.parent.mkdir(parents=True, exist_ok=True)
-                bindings.encode_video(
-                    video=output_video,
-                    fps=parameters.fps,
-                    audio=None,
-                    output_path=str(output_path),
-                    video_chunks_number=bindings.get_video_chunks_number(
-                        result.num_frames,
-                        result.tiling_config,
+                with metrics.phase("encode_including_decode_seconds"):
+                    bindings.encode_video(
+                        video=output_video,
+                        fps=parameters.fps,
+                        audio=None,
+                        output_path=str(output_path),
+                        video_chunks_number=bindings.get_video_chunks_number(
+                            result.num_frames,
+                            result.tiling_config,
+                        ),
+                    )
+                metrics.timings["encode_excluding_video_decode_seconds"] = max(
+                    0.0,
+                    metrics.timings["encode_including_decode_seconds"]
+                    - metrics.timings.get("video_decode_seconds", 0.0),
+                )
+                metrics.timings["total_generation_seconds"] = (
+                    time.monotonic() - generation_started
+                )
+                logger.info(
+                    "LTX25_I2V_PHASE_METRICS %s",
+                    json.dumps(
+                        {
+                            "generation_profile": parameters.generation_profile,
+                            "diffvae_backend_requested": requested_backend,
+                            "diffvae_backend_effective": self._pipeline_effective_diffvae_backend,
+                            "stage1_max_batch_size": stage_1_batch,
+                            "stage1_expected_forward_calls": 8 if stage_1_batch == 2 else 16,
+                            "stage2_expected_forward_calls": 3,
+                            "audio_decode_enabled": decode_audio,
+                            "internal_width": pipeline_width,
+                            "internal_height": pipeline_height,
+                            "delivery_width": parameters.width,
+                            "delivery_height": parameters.height,
+                            "frames": parameters.num_frames,
+                            "fps": parameters.fps,
+                            "pipeline_reused": pipeline_reused,
+                            **metrics.timings,
+                            **metrics.cuda_peak(),
+                        },
+                        sort_keys=True,
                     ),
                 )
         logger.info(
@@ -580,6 +668,8 @@ class DirectLTX25Backend:
         if self._pipeline is None:
             return
         self._pipeline = None
+        self._pipeline_requested_diffvae_backend = None
+        self._pipeline_effective_diffvae_backend = None
         gc.collect()
         if self._bindings is not None:
             cuda = getattr(self._bindings.torch, "cuda", None)
@@ -587,9 +677,13 @@ class DirectLTX25Backend:
             if empty_cache is not None:
                 empty_cache()
 
-    def _get_or_build_pipeline(self, bindings: _LTXBindings) -> Any:
+    def _get_or_build_pipeline(
+        self, bindings: _LTXBindings, *, requested_diffvae_backend: str = "eager"
+    ) -> Any:
         if self._pipeline is not None:
-            return self._pipeline
+            if self._pipeline_requested_diffvae_backend == requested_diffvae_backend:
+                return self._pipeline
+            self._release_pipeline_locked()
 
         load_started = time.monotonic()
         logger.info("LTX25_I2V_PIPELINE_LOAD_START device=%s", self._device)
@@ -603,7 +697,9 @@ class DirectLTX25Backend:
         quantization = bindings.quantization_kind.FP8_CAST.to_policy(
             checkpoint_path=str(self._model_files.transformer)
         )
-        _force_diffvae_eager_sdpa(bindings.diffvae_apply)
+        effective_backend = _select_diffvae_backend(
+            bindings, requested_diffvae_backend
+        )
         self._pipeline = bindings.distilled_pipeline(
             model_paths=model_paths,
             spatial_upsampler_path=str(self._model_files.spatial_upsampler),
@@ -612,9 +708,12 @@ class DirectLTX25Backend:
             quantization=quantization,
             offload_mode=bindings.offload_mode.CPU,
         )
+        self._pipeline_requested_diffvae_backend = requested_diffvae_backend
+        self._pipeline_effective_diffvae_backend = effective_backend
         logger.info(
-            "LTX25_I2V_PIPELINE_LOAD_DONE seconds=%.3f",
+            "LTX25_I2V_PIPELINE_LOAD_DONE seconds=%.3f diffvae_backend=%s",
             time.monotonic() - load_started,
+            effective_backend,
         )
         return self._pipeline
 
