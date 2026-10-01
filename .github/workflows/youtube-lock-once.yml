@@ -1,0 +1,33 @@
+# Temporary branch-only workflow: regenerate the checked-in lockfile using
+# the exact uv version required by the repository. Remove after completion.
+name: YouTube dependency lock (temporary)
+on:
+  push:
+    branches:
+      - feature/youtube-integration-core
+    paths:
+      - .github/workflows/youtube-lock-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  lock:
+    if: github.repository == 'yagobordell/Bordell-s-Flow'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.18"
+      - name: Regenerate uv.lock
+        run: uv lock
+      - name: Commit only the lockfile (no secret files)
+        shell: bash
+        run: |
+          git add -- uv.lock
+          if ! git diff --cached --quiet; then
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'build(youtube): lock optional Google dependencies'
+            git push origin HEAD:feature/youtube-integration-core
+          fi
