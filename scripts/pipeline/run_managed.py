@@ -37,7 +37,8 @@ are saved in data/<avatar>/meta/. A conflicting --style is refused.
 
 Options include --no-image, --no-video, --style, --from B2,
 --images-only, --generate-video, --resume-audio, --regenerate-audio,
---publish-only, --list-avatars, --list-scripts, --data-root PATH.
+--publish-only, --sync-only, --list-avatars, --list-scripts, --data-root PATH.
+--sync-only exports existing verified media without API or GPU calls.
 Use --legacy-layout to call the previous B-pipeline interface unchanged.
 """
 
@@ -194,7 +195,7 @@ def _script_options(data: Path, avatar_name: str, resume: bool) -> list[str]:
 def _is_resume(flags: list[str]) -> bool:
     if any(flag in flags for flag in (
         "--images-only", "--generate-video", "--videos-only",
-        "--regenerate-audio", "--resume-audio", "--publish-only",
+        "--regenerate-audio", "--resume-audio", "--publish-only", "--sync-only",
     )):
         return True
     return "--from" in flags and (
@@ -273,6 +274,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     destination = data / avatar / script
     work_root = WORK_ROOT / avatar
+    if "--sync-only" in flags:
+        if flags != ["--sync-only"]:
+            raise SystemExit("--sync-only cannot be combined with generation options")
+        sync_managed_outputs(work_root / script, destination)
+        print(f"  Verified available media: {destination / 'media'}")
+        print(f"  Human-facing report: {destination / 'outputs' / 'run_report.json'}")
+        return 0
     command = [
         sys.executable, str(CORE), str(source),
         "--avatars-dir", str(data),
