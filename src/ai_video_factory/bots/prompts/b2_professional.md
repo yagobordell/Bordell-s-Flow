@@ -110,9 +110,9 @@ Choose avatar when seeing the presenter deliver the beat is itself the most natu
 
 Choose avatar_media when the presenter should remain visibly present and one supporting still adds distinct information at the same time.
 
-Choose media_image when one stable documentary image can communicate the beat's most useful visual information: a person, place, object, condition, result, relationship, evidence item, environment or meaningful frozen moment.
+Choose media_image when one stable documentary image can communicate the beat's most useful visual information: a person, place, object, condition, result, relationship, evidence item, environment or meaningful frozen moment. media_image is always a STILL with audio=false, even when the soundtrack contains narration as voice-over; it cannot depict synchronized speaking.
 
-Choose media_video when motion, execution, interaction, trajectory, change or temporal development materially improves the beat and can be represented as one coherent real-time action/process.
+Choose media_video when motion, execution, interaction, trajectory, change or temporal development materially improves the beat and can be represented as one coherent real-time action/process. Also choose media_video whenever a generated full-screen shot must show synchronized visible speech (audio=true), even if the best starting frame is photograph-like. The pipeline animates that image as an A2V video.
 
 Do not choose a format merely for variety. Do not avoid a format because nearby beats use it. Repetition is acceptable when it remains the best treatment.
 
@@ -134,6 +134,38 @@ Prefer observable, source-grounded moments, people, locations, objects, evidence
 For emotional or reflective narration, it is valid to show a restrained contextual moment, environment, person or detail that belongs to the established event instead of literalizing the abstract wording.
 
 Prompts should describe the scene, subject, moment, composition and materially relevant lighting/mood. Do not add global camera-brand, lens, photographic-style, cinematic, editorial or quality boilerplate. The application injects the canonical image style later in code immediately before image generation.
+
+Global shot composition and camera-angle freedom
+
+For EVERY generated beat throughout the video, deliberately choose the shot
+size, camera viewpoint, crop and focal emphasis that best communicates the
+current beat. You have editorial freedom to use an establishing/wide view,
+medium shot, medium close-up, close-up, tight close-up, detail insert,
+hands-focused crop, three-quarter angle, profile, over-the-shoulder view,
+mirror-side view or a slightly zoomed-in COMPOSITION when genuinely helpful.
+A closer crop may reveal a meaningful product amount, fingertip motion,
+skin texture or emotional detail that a repeated medium face shot would hide.
+
+Use this toolkit across ALL blocks and unrelated beats, not only in numbered
+sequences. For each new scene, ask which distance, viewpoint and subject
+detail best supports the narration. Vary recurring subjects and actions
+when a different framing reveals new information or improves pacing.
+Do not automatically inherit the avatar reference photo's head-on angle
+or crop. Reference identity is independent of camera angle, shot size,
+pose and scene-specific expression.
+
+Framing variation is purposeful, not a prescribed wide/medium/close quota:
+do not force an angle change when the same view is necessary, sacrifice
+an important expression or action, crop away required evidence, or invent
+a physically impossible perspective. When a face must visibly speak with
+audio=true, retain sufficient clear mouth/face visibility for lip sync;
+a hands-only close-up must use audio=false.
+
+A requested "slight zoom-in" in an IMAGE prompt means a tighter still-image
+composition or crop, not an instruction to animate camera movement. Downstream
+Ken Burns handles still-image motion; the existing A2V route has fixed
+camera-stability requirements. For media_video, choose a motion-ready starting
+framing without requiring unsupported zoom/dolly camera animation.
 
 Field semantics
 
@@ -159,7 +191,8 @@ Write the shortest self-contained prompt that fully controls:
 - essential subject or subjects;
 - exactly one state/action/moment;
 - environment when relevant;
-- composition/framing when useful;
+- purposeful shot size, camera angle, crop and focal emphasis, especially
+  when similar subjects appear nearby;
 - reference-image preservation when required;
 - the facial expression and gaze/attention appropriate to the scene whenever a
   referenced person's face is visible;
@@ -228,7 +261,13 @@ audio is a JSON boolean.
 
 For avatar and avatar_media, audio is always true.
 
-For media_image and media_video:
+For media_image, audio MUST always be false. It remains a still visual,
+whether ordinary voice-over is heard on the soundtrack or not. Never
+write a media_image prompt showing someone speaking, moving their lips
+or delivering dialogue. For a visibly speaking generated subject, use
+media_video with audio=true instead.
+
+For media_video:
 
 - audio = true when the visible person in the selected visual is the person
   delivering/reading that beat and the composition is compatible with speaking;
@@ -238,8 +277,10 @@ For media_image and media_video:
 Visible-presenter speech preference: when the presenter demonstrates their own
 simple advice or action, prefer audio=true if the presenter can naturally
 speak while doing it and their face/mouth remain visibly available. Choose a
-composition, expression and gaze compatible with that intent. Gently pressing
-skincare onto the cheeks with the mouth unobstructed may support natural speech.
+composition, expression and gaze compatible with that intent. This
+audio=true preference applies to avatar, avatar_media or media_video,
+never media_image. Gently pressing skincare onto the cheeks with the
+mouth unobstructed may support natural speech.
 
 Technical A2V limitation: an audio=true media beat is animated through the
 pipeline's existing speaking-focused A2V prompt; A2V does not guarantee detailed,
@@ -343,9 +384,12 @@ Do not copy unrelated background, lighting, objects or composition merely becaus
 
 Static versus temporal choice
 
-Use media_image when one still communicates essentially all useful visual information.
+Use media_image when one still communicates essentially all useful visual
+information and no generated on-screen person needs synchronized speech.
 
-Use media_video when seeing how something moves, changes, unfolds or is performed adds material understanding.
+Use media_video when seeing how something moves, changes, unfolds or is
+performed adds material understanding, OR when the full-screen generated
+subject must speak on screen with audio=true and synchronized lips.
 
 A simple action may be either image or video. Choose video only when motion itself adds value; otherwise a strong still is valid.
 
