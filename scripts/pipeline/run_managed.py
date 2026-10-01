@@ -277,8 +277,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     if "--sync-only" in flags:
         if flags != ["--sync-only"]:
             raise SystemExit("--sync-only cannot be combined with generation options")
-        sync_managed_outputs(work_root / script, destination)
-        print(f"  Verified available media: {destination / 'media'}")
+        work = work_root / script
+        if (
+            not work.is_dir() or work.is_symlink()
+            or not (work / "run_report.json").is_file()
+        ):
+            raise SystemExit(
+                f"No internal saved run to synchronize: {work}. "
+                "Missing files cannot be recovered from a report alone."
+            )
+        sync_managed_outputs(work, destination)
+        media = destination / "media"
+        if not media.is_dir() or not any(media.iterdir()):
+            raise SystemExit(f"No completed or partial verified media found in {work}")
+        print(f"  Verified available media: {media}")
         print(f"  Human-facing report: {destination / 'outputs' / 'run_report.json'}")
         return 0
     command = [
