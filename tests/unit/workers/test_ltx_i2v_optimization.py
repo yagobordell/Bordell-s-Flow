@@ -18,6 +18,7 @@ from ai_video_factory.workers.ltx25.model import (
     LTX_CFG_BATCH2_PROFILE,
     LTX_CFG_BATCH2_SILENT_PROFILE,
     LTX_CFG_BATCH2_TRITON_PROFILE,
+    LTX_DEFAULT_SILENT_VERIFY_PROFILE,
     LTX_GENERATION_PROFILE,
     LTX_SUPPORTED_I2V_PROFILES,
     LTXVideoParameters,
@@ -39,6 +40,7 @@ def test_experimental_profiles_are_distinct_and_keep_default_fingerprint() -> No
     )
     profiles = (
         LTX_GENERATION_PROFILE,
+        LTX_DEFAULT_SILENT_VERIFY_PROFILE,
         LTX_CFG_BATCH2_PROFILE,
         LTX_CFG_BATCH2_SILENT_PROFILE,
         LTX_CFG_BATCH2_TRITON_PROFILE,
@@ -251,13 +253,24 @@ def test_production_i2v_keeps_original_visual_recipe_without_unused_audio(
         fps=24,
         num_frames=49,
     )
-    first, second = tmp_path / "first.mp4", tmp_path / "second.mp4"
+    first, second, verify = (
+        tmp_path / "first.mp4", tmp_path / "second.mp4", tmp_path / "verify.mp4"
+    )
     with caplog.at_level(logging.INFO):
         backend.generate(keyframe_path=keyframe, output_path=first, parameters=parameters)
         backend.generate(keyframe_path=keyframe, output_path=second, parameters=parameters)
+        backend.generate(
+            keyframe_path=keyframe,
+            output_path=verify,
+            parameters=parameters.model_copy(
+                update={"generation_profile": LTX_DEFAULT_SILENT_VERIFY_PROFILE}
+            ),
+        )
 
-    assert first.read_bytes() == second.read_bytes() == b"same-deterministic-visual-output"
-    assert len(generator_calls) == len(output_inputs) == 2
+    assert first.read_bytes() == second.read_bytes() == verify.read_bytes() == (
+        b"same-deterministic-visual-output"
+    )
+    assert len(generator_calls) == len(output_inputs) == 3
     for call in generator_calls:
         assert call["prompt"] == parameters.prompt
         assert call["negative_prompt"] == "the original direct-to-camera negative guidance"
@@ -274,8 +287,11 @@ def test_production_i2v_keeps_original_visual_recipe_without_unused_audio(
         for rec in caplog.records
         if event_marker in rec.getMessage()
     ]
-    assert len(events) == 2
-    assert all(event["generation_profile"] == LTX_GENERATION_PROFILE for event in events)
+    assert len(events) == 3
+    assert [event["generation_profile"] for event in events] == [
+        LTX_GENERATION_PROFILE, LTX_GENERATION_PROFILE,
+        LTX_DEFAULT_SILENT_VERIFY_PROFILE,
+    ]
     assert all(event["diffvae_backend_effective"] == "eager" for event in events)
     assert all(event["audio_decode_enabled"] is False for event in events)
     assert all(event["stage1_max_batch_size"] == 1 for event in events)
@@ -285,6 +301,10 @@ def test_production_i2v_keeps_original_visual_recipe_without_unused_audio(
     assert events[0]["pipeline_prior_successful_generations"] == 0
     assert events[1]["pipeline_known_warm"] is True
     assert events[1]["pipeline_prior_successful_generations"] == 1
+    # The verification profile must exercise the exact same visual adapter.
+    assert generator_calls[0] == generator_calls[2]
+    assert events[2]["pipeline_prior_successful_generations"] == 2
+    assert events[2]["stage1_max_batch_size"] == 1
     backend._release_pipeline_locked()
     assert backend._pipeline_successful_generations == 0
 
