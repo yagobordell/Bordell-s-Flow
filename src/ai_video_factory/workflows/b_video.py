@@ -255,10 +255,16 @@ def build_b2_video_plan(
             beat["visual_type"] != "avatar" or beat.get("prompt") is not None
         ) and key not in assets:
             raise B2VideoError(f"Missing generated B2 PNG for {beat['beat_id']}")
-        if beat["visual_type"] == "media_video" and (
-            not isinstance(beat["description"], str) or not beat["description"].strip()
-        ):
-            raise B2VideoError(f"Missing media_video description for {beat['beat_id']}")
+        if beat["visual_type"] == "media_video":
+            if not isinstance(beat["description"], str) or not beat["description"].strip():
+                raise B2VideoError(f"Missing media_video description for {beat['beat_id']}")
+            if "video_prompt" in beat and (
+                not isinstance(beat["video_prompt"], str)
+                or not beat["video_prompt"].strip()
+            ):
+                raise B2VideoError(
+                    f"Missing media_video video_prompt for {beat['beat_id']}"
+                )
     digest = _fingerprint(timeline, audio, assets, avatar)
     run_dir = output / "video" / "runs" / digest[:20]
     if run_dir.is_symlink() or run_dir.parent.is_symlink():
@@ -305,7 +311,13 @@ def build_b2_video_plan(
             image_sha = sha256_file(image)
             num_frames = ltx_num_frames_for_duration(end - start, fps=_FPS)
             prompt = beat["description"]
-            if beat.get("prompt") is not None:
+            if isinstance(beat.get("video_prompt"), str):
+                # New professional B2: the separately authored motion prompt
+                # controls LTX I2V instead of reusing the still-image text.
+                prompt = beat["video_prompt"]
+            elif beat.get("prompt") is not None:
+                # Historical professional plans predate video_prompt; do not
+                # silently reinterpret their cached paid requests.
                 prompt = (
                     "Animate the supplied start image in one continuous realistic take. "
                     "Show the single beat-supported action or natural process described "
@@ -346,11 +358,19 @@ def build_b2_video_plan(
             else:
                 image = avatar
             image_sha = sha256_file(image)
+            a2v_prompt = AVATAR_PROMPT
+            if (
+                first_beat["visual_type"] == "media_video"
+                and isinstance(first_beat.get("video_prompt"), str)
+            ):
+                # Preserve the pinned speaking instruction and augment only
+                # generated speaking media with its beat-specific motion.
+                a2v_prompt += " " + first_beat["video_prompt"]
             audio_path = run_dir / "audio" / f"{beat_ids[0]}-{beat_ids[-1]}.wav"
             audio_sha = _extract_pcm(master, audio_path, start, end)
             job_id = ltx_a2v_application_job_id(
                 segment_id=f"b2-{beat_ids[0]}-{beat_ids[-1]}",
-                prompt=AVATAR_PROMPT, image_sha256=image_sha,
+                prompt=a2v_prompt, image_sha256=image_sha,
                 audio_sha256=audio_sha, seed=seed, width=1280, height=720,
                 fps=_FPS, generation_profile=LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
             )
@@ -376,7 +396,7 @@ def build_b2_video_plan(
                 )},
                 parameters={
                     "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
-                    "prompt": AVATAR_PROMPT, "seed": seed,
+                    "prompt": a2v_prompt, "seed": seed,
                     "width": 1280, "height": 720, "fps": _FPS,
                 },
             )

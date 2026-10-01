@@ -175,10 +175,11 @@ class B2Output(StrictModel):
 
 
 class ProfessionalVisualBeat(Beat):
-    """Professional B2 keeps its image prompt and explicit reference/speaker flags."""
+    """Professional B2 has separate image/video prompts and speaker flags."""
 
     visual_type: VisualType
     prompt: str | None
+    video_prompt: str | None
     reference: bool
     audio: bool
 
@@ -189,16 +190,32 @@ class ProfessionalVisualBeat(Beat):
                 raise ValueError("Only a reused avatar can have a null prompt and no reference")
         elif not self.prompt.strip():
             raise ValueError("Professional image prompts must be nonempty")
-        if self.prompt is not None and re.search(
-            r"\b(?:no|without)\s+(?:specified|specific)\s+brand(?:s|ing)?\b"
-            r"|\bno\s+(?:specified\s+)?product\s+claims?\b"
-            r"|\bno\s+readable\s+brand\s+names?\b",
-            self.prompt,
-            flags=re.IGNORECASE,
+        if self.visual_type == "media_video":
+            if not isinstance(self.video_prompt, str) or not self.video_prompt.strip():
+                raise ValueError("media_video requires a nonempty video_prompt")
+        elif self.video_prompt is not None:
+            raise ValueError("video_prompt must be null unless visual_type is media_video")
+        if (
+            self.visual_type == "media_image"
+            and self.reference
+            and self.beat_type == "action"
+            and self.prompt is not None
+            and re.search(
+                r"\b(?:presenter|avatar|woman|man|person|she|her|he|his)\b",
+                self.prompt,
+                flags=re.IGNORECASE,
+            )
+            and re.search(
+                r"\b(?:applying|massaging|pressing|smoothing|dabbing|blending|"
+                r"rubbing|rinsing|washing|brushing|spreading)\b",
+                self.prompt,
+                flags=re.IGNORECASE,
+            )
+            and not re.search(r"\b(?:after|finished|result)\b", self.prompt, re.IGNORECASE)
         ):
             raise ValueError(
-                "Professional scene prompts must describe natural packaging "
-                "without stock branding or product-claim disclaimers"
+                "Referenced presenter performing an active practical step "
+                "should use media_video, not media_image"
             )
         if self.visual_type in {"avatar", "avatar_media"} and not self.audio:
             raise ValueError("Presenter visuals must have audio=true")
