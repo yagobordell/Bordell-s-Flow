@@ -460,6 +460,8 @@ class DirectLTX25Backend:
         self._prepared = False
         self._pipeline_requested_diffvae_backend: str | None = None
         self._pipeline_effective_diffvae_backend: str | None = None
+        # A prepared pipeline object can still defer heavy weight loading until its first run.
+        self._pipeline_successful_generations = 0
         self._mode_controller = mode_controller or LTXPipelineModeController()
         self._lock = self._mode_controller.lock
         self._mode_controller.register("image_to_video", self._release_pipeline_locked)
@@ -526,10 +528,10 @@ class DirectLTX25Backend:
             else "eager"
         )
         stage_1_batch = 2 if parameters.generation_profile in LTX_EXPERIMENTAL_PROFILES else 1
-        decode_audio = parameters.generation_profile not in (
-            LTX_CFG_BATCH2_SILENT_PROFILE,
-            LTX_CFG_BATCH2_TRITON_PROFILE,
-        )
+        # I2V never writes an audio stream: the final audio decoder runs only
+        # after both visual diffusion stages and its output is discarded.
+        # Preserve the old audio-enabled CFG-b2 profile as an explicit control.
+        decode_audio = parameters.generation_profile == LTX_CFG_BATCH2_PROFILE
         with self._lock:
             pipeline_reused = (
                 self._pipeline is not None
@@ -540,10 +542,12 @@ class DirectLTX25Backend:
             self._validate_runtime(bindings)
             with _torch_inference_context(bindings.torch):
                 metrics = I2VPhaseMetrics(bindings.torch, self._device)
+                metrics.begin_generation()
                 with metrics.phase("pipeline_acquire_seconds"):
                     pipeline = self._get_or_build_pipeline(
                         bindings, requested_diffvae_backend=requested_backend
                     )
+                pipeline_prior_successful_generations = self._pipeline_successful_generations
                 pipeline_width, pipeline_height = _pipeline_dimensions(parameters)
                 conditioning_path = keyframe_path
                 if (pipeline_width, pipeline_height) != (
@@ -577,7 +581,9 @@ class DirectLTX25Backend:
                     # Opt-in static-camera uses a distinct negative prompt.
                     generator = _load_static_camera_generator()
                     with metrics.phase("pipeline_call_seconds"):
-                        result = generator(pipeline, metrics=metrics, **pipeline_kwargs)
+                        result = generator(
+                            pipeline, decode_audio=False, metrics=metrics, **pipeline_kwargs
+                        )
                 else:
                     generator, negative_prompt = _load_default_i2v_negative_guidance()
                     with metrics.phase("pipeline_call_seconds"):
@@ -620,6 +626,7 @@ class DirectLTX25Backend:
                 metrics.timings["total_generation_seconds"] = (
                     time.monotonic() - generation_started
                 )
+                self._pipeline_successful_generations += 1
                 logger.info(
                     "LTX25_I2V_PHASE_METRICS %s",
                     json.dumps(
@@ -638,6 +645,13 @@ class DirectLTX25Backend:
                             "frames": parameters.num_frames,
                             "fps": parameters.fps,
                             "pipeline_reused": pipeline_reused,
+                            # Unlike pipeline_reused, a positive count proves that
+                            # this exact pipeline already completed real inference.
+                            "pipeline_prior_successful_generations": (
+                                pipeline_prior_successful_generations
+                            ),
+                            "pipeline_known_warm": pipeline_prior_successful_generations > 0,
+                            "cuda_peak_reset": metrics.cuda_peak_reset,
                             **metrics.timings,
                             **metrics.cuda_peak(),
                         },
@@ -670,6 +684,7 @@ class DirectLTX25Backend:
         self._pipeline = None
         self._pipeline_requested_diffvae_backend = None
         self._pipeline_effective_diffvae_backend = None
+        self._pipeline_successful_generations = 0
         gc.collect()
         if self._bindings is not None:
             cuda = getattr(self._bindings.torch, "cuda", None)
