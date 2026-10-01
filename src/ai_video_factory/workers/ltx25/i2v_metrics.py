@@ -7,10 +7,13 @@ requested and does not mutate tensors, RNG or pipeline components.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class I2VPhaseMetrics:
@@ -20,6 +23,26 @@ class I2VPhaseMetrics:
             self._cuda is not None and self._cuda.is_available()
         )
         self.timings: dict[str, float] = {}
+        self.cuda_peak_reset = False
+
+    def begin_generation(self) -> None:
+        """Reset allocator peaks before this request, without changing tensors or RNG.
+
+        Do not fail a video job if the installed torch backend lacks this
+        instrumentation. The metric explicitly reports whether reset worked.
+        """
+        if not self._is_cuda:
+            return
+        reset = getattr(self._cuda, "reset_peak_memory_stats", None)
+        if not callable(reset):
+            return
+        try:
+            self._synchronize()
+            reset(self._device)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("LTX25_I2V_CUDA_PEAK_RESET_UNAVAILABLE error=%s", exc)
+        else:
+            self.cuda_peak_reset = True
 
     def _synchronize(self) -> None:
         if self._is_cuda:
