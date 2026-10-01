@@ -1771,6 +1771,7 @@ def _print_metric(name: str, seconds: float, cost: object) -> None:
 
 async def main() -> None:
     args = parse_args()
+    results_root = getattr(args, "results_root", Path("data/results"))
     # Git does not track empty runtime directories: restore the local libraries.
     if args.script_file is None:
         args.scripts_dir.mkdir(parents=True, exist_ok=True)
@@ -1815,25 +1816,25 @@ async def main() -> None:
         script_name=args.script,
         script_file=args.script_file,
     )
-    if args.publish_only:
+    if getattr(args, "publish_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
         output = output_root / script_file.stem
         if not output.is_dir() or output.is_symlink() or output.is_junction():
             raise SystemExit(f"No saved pipeline output for publishing: {output}")
         target = await asyncio.to_thread(
-            publish_completed_run, output, script_file, args.results_root
+            publish_completed_run, output, script_file, results_root
         )
         print(f"  Published result: {target}", flush=True)
         return
     if getattr(args, "videos_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
-        await _run_videos_only(script_file, output_root, results_root=args.results_root)
+        await _run_videos_only(script_file, output_root, results_root=results_root)
         return
     if getattr(args, "images_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
         await _run_images_only(
             script_file, output_root, no_video=bool(getattr(args, "no_video", False)),
-            results_root=args.results_root,
+            results_root=results_root,
         )
         return
     if getattr(args, "regenerate_audio", False) or getattr(args, "resume_audio", False):
@@ -1843,7 +1844,7 @@ async def main() -> None:
             output_root,
             resume=bool(getattr(args, "resume_audio", False)),
             no_video=bool(getattr(args, "no_video", False)),
-            results_root=args.results_root,
+            results_root=results_root,
         )
         return
 
@@ -2301,7 +2302,7 @@ async def main() -> None:
         raise
 
     costs, timing_report = save_report("completed", len(result.b12))
-    await asyncio.to_thread(_publish_if_ready, output, script_file, args.results_root)
+    await asyncio.to_thread(_publish_if_ready, output, script_file, results_root)
     _print_metric(
         "Run",
         timing_report["run_elapsed_seconds"],
