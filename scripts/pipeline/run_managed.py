@@ -39,7 +39,9 @@ Options include --no-image, --no-video, --style, --from B2,
 --images-only, --generate-video, --resume-audio, --regenerate-audio,
 --publish-only, --sync-only, --list-avatars, --list-scripts, --data-root PATH.
 --sync-only exports existing verified media without API or GPU calls.
-For opted-in YouTube publication set YOUTUBE_ENABLED=true and provide per-run youtube.json.\nUse scripts/youtube/publish_run.py to retry distribution without regenerating.\nUse --legacy-layout to call the previous B-pipeline interface unchanged.
+For opted-in YouTube publication set YOUTUBE_ENABLED=true and provide per-run youtube.json.
+Use scripts/youtube/publish_run.py to retry distribution without regenerating.
+Use --legacy-layout to call the previous B-pipeline interface unchanged.
 """
 
 
