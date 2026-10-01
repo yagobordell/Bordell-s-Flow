@@ -32,7 +32,7 @@ from .state import (
 )
 from .store import YouTubeStore
 from .thumbnail import set_thumbnail, validate_thumbnail
-from .uploader import upload_video
+from .uploader import KNOWN_REASONS, upload_video
 
 Uploader = Callable[..., YouTubePublishResult]
 ThumbnailSetter = Callable[..., None]
@@ -161,8 +161,10 @@ def publish_to_youtube(
 
             def failed(code: int | None, reason: str | None) -> None:
                 state["status"] = "ambiguous"
-                state["last_http_status"] = code
-                state["last_api_reason"] = reason
+                state["last_http_status"] = (
+                    code if isinstance(code, int) and 400 <= code <= 599 else None
+                )
+                state["last_api_reason"] = reason if reason in KNOWN_REASONS else None
                 registry.write(state, mirror=state_path)
 
             upload_fn(
@@ -218,14 +220,18 @@ def publish_to_youtube(
 
 def default_state_dir(keystore_dir: Path, override: Path | None = None) -> Path:
     """One shared external registry by default, across local git worktrees."""
+    keystore = Path(keystore_dir).expanduser()
+    if not keystore.is_absolute():
+        raise YouTubeConfigurationError("Absolute YOUTUBE_KEYSTORE_DIR required")
     if override is not None:
         selected = Path(override).expanduser()
         if not selected.is_absolute():
             raise YouTubeConfigurationError(
                 "YOUTUBE_STATE_DIR must be an absolute shared path across worktrees"
             )
+        if selected == keystore or selected.is_relative_to(keystore):
+            raise YouTubeConfigurationError(
+                "Publication registry must be outside the flat credential keystore"
+            )
         return selected
-    keystore = Path(keystore_dir).expanduser()
-    if not keystore.is_absolute():
-        raise YouTubeConfigurationError("Absolute YOUTUBE_KEYSTORE_DIR required")
     return keystore.parent / "youtube-publications"
