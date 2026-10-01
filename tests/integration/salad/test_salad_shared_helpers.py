@@ -64,6 +64,22 @@ def test_shared_http_status_supports_missing_and_numeric_status() -> None:
         "$unknown = [pscustomobject]@{Exception = [pscustomobject]@{Response = $null}}\n"
         "if ($null -ne (Get-HttpStatusCode -ErrorRecord $unknown)) "
         "{ throw 'missing status' }\n"
+        "$absent = [pscustomobject]@{Exception = [pscustomobject]@{Message = 'network unavailable'}}\n"
+        "if ($null -ne (Get-HttpStatusCode -ErrorRecord $absent)) "
+        "{ throw 'missing HTTP Response property' }\n"
+        "$missing_exception = [pscustomobject]@{Message = 'unexpected local error'}\n"
+        "if ($null -ne (Get-HttpStatusCode -ErrorRecord $missing_exception)) "
+        "{ throw 'missing Exception property' }\n"
+        "$missing_code = [pscustomobject]@{Exception = [pscustomobject]@{"
+        "Response = [pscustomobject]@{Message = 'proxy error'}}}\n"
+        "if ($null -ne (Get-HttpStatusCode -ErrorRecord $missing_code)) "
+        "{ throw 'missing StatusCode property' }\n"
+        "Set-StrictMode -Version Latest\n"
+        "try { throw 'original-transport-failure' } catch { "
+        "if ($null -ne (Get-HttpStatusCode -ErrorRecord $_)) "
+        "{ throw 'non-HTTP exception must return null' }; "
+        "if ($_.Exception.Message -ne 'original-transport-failure') "
+        "{ throw 'original error was obscured' } }\n"
     )
 
 
