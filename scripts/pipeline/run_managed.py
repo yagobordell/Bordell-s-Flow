@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from ai_video_factory.managed_layout import sync_managed_outputs
 from ai_video_factory.providers.avatar_library import organize_avatar
