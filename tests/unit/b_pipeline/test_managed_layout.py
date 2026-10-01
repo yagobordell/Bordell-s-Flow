@@ -68,6 +68,42 @@ def test_subsequent_loose_txt_in_avatar_is_moved_on_start(tmp_path: Path) -> Non
     assert not pending.exists()
 
 
+def test_first_run_moves_a_custom_voice_reference_with_the_new_avatar(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "data"
+    root.mkdir()
+    _png(root / "Jorge.png")
+    (root / "reference.wav").write_bytes(b"voice reference")
+    (root / "first.txt").write_text("Script.", encoding="utf-8")
+    avatar, _ = run_managed.prepare_managed_script(
+        root, "Jorge", "first", resume=False, reference_audio="reference.wav"
+    )
+    assert avatar == root / "Jorge" / "Jorge.png"
+    assert (root / "Jorge" / "reference.wav").read_bytes() == b"voice reference"
+    assert not (root / "reference.wav").exists()
+
+
+def test_qr_only_does_not_consume_pending_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "data"
+    _png(root / "Jorge.png")
+    (root / "first.txt").write_text("Pending.", encoding="utf-8")
+    called: list[list[str]] = []
+    monkeypatch.setattr(
+        run_managed.subprocess, "call",
+        lambda command: called.append(command) or 0,
+    )
+    assert run_managed.main([
+        "--qr-only", "--avatar", "Jorge", "--data-root", str(root),
+    ]) == 0
+    assert "--qr-only" in called[0]
+    assert "--avatar" in called[0]
+    assert (root / "first.txt").is_file()
+    assert not (root / "Jorge" / "first").exists()
+
+
 def test_existing_script_folder_requires_explicit_resume(tmp_path: Path) -> None:
     root = tmp_path / "data"
     _png(root / "Jorge" / "Jorge.png")
