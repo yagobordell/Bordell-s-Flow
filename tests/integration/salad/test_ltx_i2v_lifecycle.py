@@ -65,9 +65,14 @@ def _fake_checkout(tmp_path: Path, fail_at: str | None) -> tuple[Path, Path, Pat
     (pipeline / "check_r2_ready.py").write_text("print('fake R2')\n", encoding="utf-8")
     (smoke / "ltx25_i2v_smoke.py").write_text("print('fake smoke')\n", encoding="utf-8")
     (smoke / "wait_salad_ltx25_ready.py").write_text(
-        "import sys\nprint('fake ready')\nsys.exit("
-        + ("1" if fail_at == "ready" else "0")
-        + ")\n",
+        "import sys\n"
+        "config_only = '--check-config-only' in sys.argv\n"
+        "print('fake ready')\n"
+        "sys.exit(int((config_only and "
+        + ("True" if fail_at == "config" else "False")
+        + ") or (not config_only and "
+        + ("True" if fail_at == "ready" else "False")
+        + ")))\n",
         encoding="utf-8",
     )
     (pipeline / "run_phase8_videos.py").write_text(
@@ -86,6 +91,7 @@ def _fake_checkout(tmp_path: Path, fail_at: str | None) -> tuple[Path, Path, Pat
     [
         (None, True, ["ltx25_i2v Start", "ltx25_i2v Stop"]),
         ("ready", False, ["ltx25_i2v Start", "ltx25_i2v Stop"]),
+        ("config", False, []),
         ("runner", False, ["ltx25_i2v Start", "ltx25_i2v Stop"]),
         ("avatar", False, []),
         ("status_host", False, []),
