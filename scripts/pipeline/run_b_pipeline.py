@@ -152,6 +152,11 @@ def parse_args() -> argparse.Namespace:
         help="Publish an existing finished LTX run, without API or GPU requests.",
     )
     parser.add_argument(
+        "--youtube-only",
+        action="store_true",
+        help="Distribute an already finished VERIFIED local run to YouTube, no GPU jobs.",
+    )
+    parser.add_argument(
         "--managed-target",
         type=Path,
         default=None,
@@ -232,6 +237,18 @@ def parse_args() -> argparse.Namespace:
         help="Resume a saved Fish TTS task without rerunning its director or B bots.",
     )
     args = parser.parse_args()
+    if args.youtube_only and not settings.youtube_enabled:
+        parser.error("--youtube-only requires YOUTUBE_ENABLED=true")
+    if args.youtube_only and (
+        args.publish_only or args.qr_only or args.list_scripts or args.list_avatars
+        or args.avatar is not None or args.qr_url is not None
+        or args.voice_id is not None or args.voice_audio is not None or args.default_voice
+        or args.visual_style is not None or args.from_stage != "B1.1"
+        or args.stop_stage is not None or args.images_only or args.videos_only
+        or args.skip_images or args.no_video or args.no_audio
+        or args.regenerate_audio or args.resume_audio
+    ):
+        parser.error("--youtube-only cannot be combined with generation options")
     if args.publish_only and (
         args.qr_only or args.list_scripts or args.list_avatars
         or args.avatar is not None or args.qr_url is not None
@@ -551,6 +568,8 @@ def _write(path: Path, payload: object) -> None:
 def _publish_if_ready(
     output: Path, script_file: Path, results_root: Path,
     managed_target: Path | None = None,
+    *,
+    fail_on_youtube_error: bool = False,
 ) -> Path | None:
     """Publish only a finished LTX export, never a deferred run or static preview."""
     report_path = output / "run_report.json"
@@ -606,6 +625,10 @@ def _publish_if_ready(
                 "scripts/youtube/publish_run.py without regenerating.",
                 flush=True,
             )
+            if fail_on_youtube_error:
+                raise RuntimeError(
+                    "YouTube distribution failed; the verified local MP4 is unchanged"
+                ) from None
     return result
 
 
@@ -1931,6 +1954,25 @@ async def main() -> None:
         script_name=args.script,
         script_file=args.script_file,
     )
+    if getattr(args, "youtube_only", False):
+        output_root = args.output if args.output is not None else settings.output_dir
+        output = output_root / script_file.stem
+        if not output.is_dir() or output.is_symlink() or output.is_junction():
+            raise SystemExit("No saved completed run for YouTube-only distribution")
+        try:
+            published = await asyncio.to_thread(
+                _publish_if_ready,
+                output, script_file, results_root,
+                getattr(args, "managed_target", None),
+                fail_on_youtube_error=True,
+            )
+        except RuntimeError as exc:
+            raise SystemExit(str(exc)) from None
+        if published is None:
+            raise SystemExit(
+                "YouTube-only requires a completed, previously verified final MP4"
+            )
+        return
     if getattr(args, "publish_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
         output = output_root / script_file.stem
