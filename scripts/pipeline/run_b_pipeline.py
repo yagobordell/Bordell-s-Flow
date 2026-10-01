@@ -64,6 +64,7 @@ from ai_video_factory.providers.openai_stt import OpenAISttClient
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.publishing import publish_completed_run
+from ai_video_factory.managed_layout import publish_managed_run
 from ai_video_factory.workflows.b_video import (
     generate_b2_ltx_video,
     has_pending_b2_video,
@@ -144,6 +145,12 @@ def parse_args() -> argparse.Namespace:
         "--publish-only",
         action="store_true",
         help="Publish an existing finished LTX run, without API or GPU requests.",
+    )
+    parser.add_argument(
+        "--managed-target",
+        type=Path,
+        default=None,
+        help="Optional exact data/<avatar>/<script> folder managed by run_managed.py.",
     )
     parser.add_argument(
         "--results-root",
@@ -537,7 +544,8 @@ def _write(path: Path, payload: object) -> None:
 
 
 def _publish_if_ready(
-    output: Path, script_file: Path, results_root: Path
+    output: Path, script_file: Path, results_root: Path,
+    managed_target: Path | None = None,
 ) -> Path | None:
     """Publish only a finished LTX export, never a deferred run or static preview."""
     report_path = output / "run_report.json"
@@ -548,7 +556,11 @@ def _publish_if_ready(
     video = run.get("video_generation", {}) if isinstance(run, dict) else {}
     if not isinstance(video, dict) or video.get("status") != "completed":
         return None
-    result = publish_completed_run(output, script_file, results_root)
+    result = (
+        publish_managed_run(output, script_file, managed_target)
+        if managed_target is not None else
+        publish_completed_run(output, script_file, results_root)
+    )
     print(f"  Published result: {result}", flush=True)
     return result
 
@@ -1128,6 +1140,7 @@ async def _preflight_saved_run_audio(
 async def _run_images_only(
     script_file: Path, output_root: Path, *, no_video: bool = False,
     results_root: Path = Path("data/results"),
+    managed_target: Path | None = None,
 ) -> None:
     """Resume image tasks using B2 artifacts without repeating any planning calls."""
     root = output_root.resolve()
@@ -1217,7 +1230,9 @@ async def _run_images_only(
     report["timings"]["status"] = "completed"
     _refresh_audio_costs(report, output)
     _write(report_path, report)
-    await asyncio.to_thread(_publish_if_ready, output, script_file, results_root)
+    await asyncio.to_thread(
+        _publish_if_ready, output, script_file, results_root, managed_target
+    )
     image_stage = report.get("api_costs", {}).get("stages", {}).get("B2 images", {})
     price = image_stage.get("estimated_cost_usd")
     print(
@@ -1237,6 +1252,7 @@ async def _run_images_only(
 async def _run_videos_only(
     script_file: Path, output_root: Path,
     *, results_root: Path = Path("data/results"),
+    managed_target: Path | None = None,
 ) -> None:
     """Resume durable LTX jobs without repeating OpenAI images, bots or Fish TTS."""
     root = output_root.resolve()
@@ -1286,7 +1302,9 @@ async def _run_videos_only(
     report["timings"]["status"] = "completed"
     _refresh_audio_costs(report, output)
     _write(report_path, report)
-    await asyncio.to_thread(_publish_if_ready, output, script_file, results_root)
+    await asyncio.to_thread(
+        _publish_if_ready, output, script_file, results_root, managed_target
+    )
     print(f"  LTX video ready: {video['file']}", flush=True)
     _print_observed_salad_total(report["api_costs"])
 
@@ -1468,6 +1486,7 @@ async def _run_audio_only(
     resume: bool,
     no_video: bool = False,
     results_root: Path = Path("data/results"),
+    managed_target: Path | None = None,
 ) -> None:
     """An independent audio-only run: no avatar, B bots, B2 images or GPUs."""
     root = output_root.resolve()
@@ -1583,7 +1602,9 @@ async def _run_audio_only(
             report["run"]["video_generation"] = video
     _refresh_audio_costs(report, output)
     _write(report_path, report)
-    await asyncio.to_thread(_publish_if_ready, output, script_file, results_root)
+    await asyncio.to_thread(
+        _publish_if_ready, output, script_file, results_root, managed_target
+    )
     print(
         f"  {'Reused' if reused_audio else 'Fish Audio ready'}: {artifact['file']} "
         f"(voice {artifact['voice_id']})",
@@ -1822,19 +1843,26 @@ async def main() -> None:
         if not output.is_dir() or output.is_symlink() or output.is_junction():
             raise SystemExit(f"No saved pipeline output for publishing: {output}")
         target = await asyncio.to_thread(
-            publish_completed_run, output, script_file, results_root
+            publish_managed_run if args.managed_target is not None
+            else publish_completed_run,
+            output, script_file,
+            args.managed_target if args.managed_target is not None else results_root,
         )
         print(f"  Published result: {target}", flush=True)
         return
     if getattr(args, "videos_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
-        await _run_videos_only(script_file, output_root, results_root=results_root)
+        await _run_videos_only(
+            script_file, output_root, results_root=results_root,
+            managed_target=args.managed_target,
+        )
         return
     if getattr(args, "images_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
         await _run_images_only(
             script_file, output_root, no_video=bool(getattr(args, "no_video", False)),
             results_root=results_root,
+            managed_target=args.managed_target,
         )
         return
     if getattr(args, "regenerate_audio", False) or getattr(args, "resume_audio", False):
@@ -1845,6 +1873,7 @@ async def main() -> None:
             resume=bool(getattr(args, "resume_audio", False)),
             no_video=bool(getattr(args, "no_video", False)),
             results_root=results_root,
+            managed_target=args.managed_target,
         )
         return
 
@@ -2302,7 +2331,9 @@ async def main() -> None:
         raise
 
     costs, timing_report = save_report("completed", len(result.b12))
-    await asyncio.to_thread(_publish_if_ready, output, script_file, results_root)
+    await asyncio.to_thread(
+        _publish_if_ready, output, script_file, results_root, args.managed_target
+    )
     _print_metric(
         "Run",
         timing_report["run_elapsed_seconds"],
