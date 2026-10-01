@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import io
 import json
+import wave
 from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +27,7 @@ from ai_video_factory.providers.openai_batch_images import (
     effective_image_prompt,
     generate_b2_images,
 )
+from ai_video_factory.workflows import b_video
 from ai_video_factory.workflows.b_video import _group_beats
 from scripts.pipeline.run_b_pipeline import select_visual_style
 
@@ -416,6 +418,98 @@ def test_professional_schema_retry_recovers_from_speaking_still() -> None:
     assert len(rejected) == 1
     assert rejected[0][3]["unparsed_response"] is True
     assert result.b2[0].blocks[0].beats[0].visual_type == "media_video"
+
+
+def test_professional_video_prompt_reaches_i2v_and_owns_paid_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    avatar = tmp_path / "avatar.png"
+    keyframe = tmp_path / "1A.png"
+    avatar.write_bytes(_avatar_png())
+    keyframe.write_bytes(_avatar_png())
+    master = tmp_path / "master.wav"
+    master.write_bytes(b"dummy only for voice-over I2V")
+    monkeypatch.setattr(
+        b_video, "_source_assets",
+        lambda *_: (avatar, {(1, "1A"): keyframe}),
+    )
+    monkeypatch.setattr(b_video, "_verified_asset", lambda *_: master)
+    video_prompt = (
+        "She gently applies cream in two slow fingertip passes, "
+        "blinks naturally, then lowers her hand; steady close view."
+    )
+    beat = {
+        "block_id": 1, "beat_id": "1A", "visual_type": "media_video",
+        "text": "Apply the cream.", "prompt": "A hand touches the cheek.",
+        "description": "A hand touches the cheek.", "audio": False,
+        "video_prompt": video_prompt,
+        "start_seconds": 0.0, "end_seconds": 1.0,
+    }
+    timeline = {"beats": [beat], "duration_seconds": 1.0}
+    monkeypatch.setattr(b_video, "build_stt_beat_timeline", lambda *_: timeline)
+    plan = {"visual_style": "profesional"}
+    audio = {"sha256": "a" * 64, "file": "master.wav"}
+    _, jobs, first_dir = b_video.build_b2_video_plan(
+        tmp_path, plan, audio, {},
+    )
+    assert len(jobs) == 1
+    assert jobs[0].kind == "i2v"
+    assert jobs[0].request.parameters["prompt"] == video_prompt
+    first_id = jobs[0].request.job_id
+
+    beat["video_prompt"] = video_prompt + " She pauses with her hand down."
+    _, jobs, second_dir = b_video.build_b2_video_plan(tmp_path, plan, audio, {})
+    assert jobs[0].request.parameters["prompt"] == beat["video_prompt"]
+    assert jobs[0].request.job_id != first_id
+    assert second_dir != first_dir
+
+    del beat["video_prompt"]
+    _, legacy_jobs, _ = b_video.build_b2_video_plan(tmp_path, plan, audio, {})
+    assert legacy_jobs[0].request.parameters["prompt"].startswith(
+        "Animate the supplied start image"
+    )
+
+
+def test_speaking_media_video_adds_video_prompt_to_a2v_without_rewriting_avatar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    avatar = tmp_path / "avatar.png"
+    avatar.write_bytes(_avatar_png())
+    master = tmp_path / "master.wav"
+    with wave.open(str(master), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(48000)
+        wav.writeframes(bytes(48000 * 2))
+    monkeypatch.setattr(
+        b_video, "_source_assets",
+        lambda *_: (avatar, {(1, "1A"): avatar}),
+    )
+    monkeypatch.setattr(b_video, "_verified_asset", lambda *_: master)
+    monkeypatch.setattr(
+        b_video, "reference_num_frames_for_samples", lambda *_, **__: 25,
+    )
+    motion = (
+        "She speaks naturally in sync with the supplied speech, "
+        "blinks, and makes one small, relaxed hand gesture."
+    )
+    beat = {
+        "block_id": 1, "beat_id": "1A", "visual_type": "media_video",
+        "text": "Here is how I use it.", "description": "Face visible.",
+        "prompt": "Face visible.", "video_prompt": motion,
+        "audio": True, "start_seconds": 0.0, "end_seconds": 1.0,
+    }
+    timeline = {"beats": [beat], "duration_seconds": 1.0}
+    monkeypatch.setattr(b_video, "build_stt_beat_timeline", lambda *_: timeline)
+    plan = {"visual_style": "profesional"}
+    audio = {"sha256": "b" * 64, "file": "master.wav"}
+    _, jobs, _ = b_video.build_b2_video_plan(tmp_path, plan, audio, {})
+    assert len(jobs) == 1
+    assert jobs[0].kind == "a2v"
+    assert jobs[0].request.parameters["prompt"] == (
+        b_video.AVATAR_PROMPT + " " + motion
+    )
+    assert jobs[0].request.parameters["prompt"].startswith(b_video.AVATAR_PROMPT)
 
 
 def test_style_selector_defaults_to_legacy_for_unattended_execution() -> None:
