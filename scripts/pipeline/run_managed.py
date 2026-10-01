@@ -187,7 +187,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if "--legacy-layout" in args:
         args.remove("--legacy-layout")
-        return subprocess.call([sys.executable, str(CORE), *args])
+        # Preserve the previous run.ps1 positional shortcut, not only the
+        # Python runner's legacy flag interface.
+        legacy: list[str] = ["--scripts-dir", "data/input/scripts"]
+        while args and not args[0].startswith("-") and len(legacy) < 6:
+            key = "--script" if "--script" not in legacy else "--avatar"
+            legacy.extend([key, args.pop(0)])
+        return subprocess.call([sys.executable, str(CORE), *legacy, *args])
     if "-h" in args or "--help" in args:
         print(_HELP)
         return 0
