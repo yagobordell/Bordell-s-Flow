@@ -276,3 +276,36 @@ def test_state_root_defaults_to_external_sibling_and_override_must_be_absolute(
     assert default_state_dir(keystore, custom) == custom
     with pytest.raises(Exception, match="absolute"):
         default_state_dir(keystore, Path("relative-state"))
+    with pytest.raises(Exception, match="outside"):
+        default_state_dir(keystore, keystore)
+
+
+def test_pending_preupload_metadata_can_be_corrected_safely(tmp_path: Path) -> None:
+    initial = request(tmp_path)
+    state = new_state(initial, sha256_file(initial.video_path), metadata_digest(initial), None)
+    store = PublicationStateStore(tmp_path / "registry")
+    store.ensure()
+    store.write(state)
+    updated = request(tmp_path, title="Fixed before first network request")
+    uploader = Mock(side_effect=complete_upload)
+    result = publish(updated, tmp_path, upload_fn=uploader)
+    assert result.video_id == "Video_ID123"
+    assert saved(updated, tmp_path)["metadata_sha256"] == metadata_digest(updated)
+    assert uploader.call_count == 1
+
+
+def test_unsafe_provider_diagnostic_is_not_serialized_to_registry(tmp_path: Path) -> None:
+    req = request(tmp_path)
+
+    def denied(youtube, request, **kwargs):
+        kwargs["on_started"]()
+        kwargs["on_failure"](999, "Bearer DUMMY_SECRET")
+        raise YouTubeAmbiguousUploadError("unknown result")
+
+    with pytest.raises(YouTubeAmbiguousUploadError):
+        publish(req, tmp_path, upload_fn=denied)
+    state = saved(req, tmp_path)
+    assert state["status"] == "ambiguous"
+    assert state["last_http_status"] is None
+    assert state["last_api_reason"] is None
+    assert "DUMMY_SECRET" not in (tmp_path / "youtube_publish.json").read_text()
