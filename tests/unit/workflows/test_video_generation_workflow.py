@@ -115,3 +115,14 @@ def test_fanout_submits_all_jobs_before_polling_and_resume_skips_successes(
     )
     assert sum(queue.submit_counts.values()) == 2
     assert queue.operations == []
+
+
+
+def test_controlled_phase8_refuses_unreviewed_i2v_image_before_paid_capacity() -> None:
+    source = Path("scripts/pipeline/run_phase8_videos_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "SALAD_LTX25_FP8_I2V_IMAGE" in source
+    assert "Import-EnvFile" in source
+    assert "image=$ExpectedFP8Image" in source
+    assert source.index("image=$ExpectedFP8Image") < source.index("$WorkerManager @Start")
