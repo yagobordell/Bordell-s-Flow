@@ -20,6 +20,11 @@ def profile_prompt_encoder(
 ) -> Iterator[None]:
     original_ctx = encoder._text_encoder_ctx
     original_embeddings_build = encoder._build_embeddings_processor
+    # Avoid leaving shadowing bound methods on the instance: the exact original
+    # descriptor/instance state must survive even when prompt encoding fails.
+    missing = object()
+    stored_ctx = vars(encoder).get("_text_encoder_ctx", missing)
+    stored_build = vars(encoder).get("_build_embeddings_processor", missing)
 
     def timed_text_ctx() -> Any:
         @contextmanager
@@ -39,5 +44,11 @@ def profile_prompt_encoder(
     try:
         yield
     finally:
-        encoder._text_encoder_ctx = original_ctx
-        encoder._build_embeddings_processor = original_embeddings_build
+        if stored_ctx is missing:
+            vars(encoder).pop("_text_encoder_ctx", None)
+        else:
+            encoder._text_encoder_ctx = stored_ctx
+        if stored_build is missing:
+            vars(encoder).pop("_build_embeddings_processor", None)
+        else:
+            encoder._build_embeddings_processor = stored_build
