@@ -26,7 +26,7 @@ _IMAGE_PRICING = {
     "image_input": Decimal("8.00"),
     "image_output": Decimal("30.00"),
 }
-_STAGES = ("B1.1", "B1.2", "B2", "Fish director", _IMAGE_STAGE)
+_STAGES = ("B1.1", "CTA", "CTA Ebook", "B1.2", "B2", "Fish director", _IMAGE_STAGE, "CTA image")
 
 
 def _field(value: object, name: str, default: Any = None) -> Any:
@@ -56,7 +56,7 @@ class ApiCostLedger:
         return tuple(self._records)
 
     def record(self, stage: str, block_id: int | None, response: object) -> None:
-        if stage not in _STAGES or stage == _IMAGE_STAGE:
+        if stage not in _STAGES or stage in {_IMAGE_STAGE, "CTA image"}:
             raise ValueError(f"Unknown text billing stage: {stage}")
 
         usage = _field(response, "usage")
@@ -269,6 +269,35 @@ class ApiCostLedger:
             planned if planned is not None else active_count, active_count
         )
 
+    def record_cta_image(self, usage: dict[str, object] | None, model: str) -> None:
+        """Account only for the first actually generated CTA image."""
+        if any(entry["stage"] == "CTA image" for entry in self._records):
+            return
+        details = _field(usage, "input_tokens_details")
+        text_tokens = _tokens(_field(details, "text_tokens"))
+        image_tokens = _tokens(_field(details, "image_tokens"))
+        input_tokens = _tokens(_field(usage, "input_tokens"))
+        output_tokens = _tokens(_field(usage, "output_tokens"))
+        known = (
+            model in _IMAGE_MODELS and input_tokens is not None
+            and text_tokens is not None and image_tokens is not None
+            and output_tokens is not None and input_tokens == text_tokens + image_tokens
+        )
+        amount = (
+            (Decimal(text_tokens) * _IMAGE_PRICING["text_input"]
+             + Decimal(image_tokens) * _IMAGE_PRICING["image_input"]
+             + Decimal(output_tokens) * _IMAGE_PRICING["image_output"]) / _PER_MILLION
+            if known else None
+        )
+        self._records.append({
+            "stage": "CTA image", "block_id": None, "model": model,
+            "service_tier": "standard", "input_tokens": input_tokens,
+            "text_input_tokens": text_tokens, "image_input_tokens": image_tokens,
+            "output_tokens": output_tokens,
+            "estimated_cost_usd": _usd(amount) if amount is not None else None,
+            "pricing_note": None if known else "Unavailable CTA image token usage",
+        })
+
     def report(
         self,
         *,
@@ -282,9 +311,10 @@ class ApiCostLedger:
             key=lambda item: (_STAGES.index(str(item["stage"])), item["block_id"] or 0),
         )
         expected = (
-            {"B1.1": max(1, expected_b11_calls), "B1.2": blocks, "B2": blocks}
+            {"B1.1": max(1, expected_b11_calls), "CTA": 0, "CTA Ebook": 0,
+             "B1.2": blocks, "B2": blocks, "CTA image": 0}
             if expected_calls is None
-            else {stage: expected_calls.get(stage) for stage in _STAGES}
+            else {stage: expected_calls.get(stage, 0 if stage in {"CTA", "CTA Ebook", "CTA image"} else None) for stage in _STAGES}
         )
         previous_image_count = expected.get(_IMAGE_STAGE)
         expected[_IMAGE_STAGE] = max(
@@ -293,6 +323,7 @@ class ApiCostLedger:
             if type(previous_image_count) is int and previous_image_count >= 0
             else 0,
         )
+        expected["CTA image"] = sum(item["stage"] == "CTA image" for item in ordered)
         fish_count = sum(item["stage"] == "Fish director" for item in ordered)
         expected["Fish director"] = (
             fish_count if expected_calls is None
