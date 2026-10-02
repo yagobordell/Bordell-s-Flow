@@ -49,6 +49,7 @@ from ai_video_factory.workers.ltx25.jobs import (
 )
 from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
+    LTX_PRODUCTION_I2V_PROFILE,
     LTX_VIDEO_TASK,
     ltx_num_frames_for_duration,
 )
@@ -327,7 +328,7 @@ def build_b2_video_plan(
             job_id = f"b2-{beat_ids[0]}-" + ltx_video_application_job_id(
                 shot_id=ordinal, prompt=prompt, keyframe_sha256=image_sha,
                 seed=seed, width=1280, height=720, fps=_FPS,
-                num_frames=num_frames, generation_profile=LTX_GENERATION_PROFILE,
+                num_frames=num_frames, generation_profile=LTX_PRODUCTION_I2V_PROFILE,
             )
             key = f"b2-ltx/inputs/images/{image_sha}.png"
             request = InferenceJobRequest(
@@ -341,7 +342,7 @@ def build_b2_video_plan(
                     content_type="video/mp4",
                 ),
                 parameters={
-                    "generation_profile": LTX_GENERATION_PROFILE,
+                    "generation_profile": LTX_PRODUCTION_I2V_PROFILE,
                     "prompt": prompt, "seed": seed,
                     "width": 1280, "height": 720, "fps": _FPS,
                     "num_frames": num_frames,
