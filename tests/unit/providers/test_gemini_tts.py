@@ -22,7 +22,7 @@ def make_wav(
         wav_file.setnchannels(channels)
         wav_file.setsampwidth(sample_width)
         wav_file.setframerate(sample_rate)
-        wav_file.writeframes(b"\\x00" * frames * channels * sample_width)
+        wav_file.writeframes(b"\x00" * frames * channels * sample_width)
     return buffer.getvalue()
 
 
