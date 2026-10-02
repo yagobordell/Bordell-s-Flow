@@ -896,7 +896,9 @@ def generate_b2_ltx_video(
     if manifest.get("status") == "completed":
         _verified_asset(output, manifest.get("file"), manifest.get("sha256"))
         if casero_cta_dir is not None and "cta_insertion" not in manifest:
-            raise B2VideoError("Completed video predates CTA insertion; reconcile prior publication")
+            raise B2VideoError(
+                "Completed video predates CTA insertion; reconcile prior publication"
+            )
         return manifest
     result = render_b2_ltx_video(output, run_dir, timeline, jobs, manifest, images, audio)
     if casero_cta_dir is not None:
