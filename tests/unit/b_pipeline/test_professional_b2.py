@@ -20,7 +20,7 @@ from ai_video_factory.bots.contracts import (
     ProfessionalVisualBeat,
 )
 from ai_video_factory.bots.workflow import run_b_pipeline
-from ai_video_factory.providers.image_grids import plan_image_jobs
+from ai_video_factory.providers.image_grids import _grid_prompt, plan_image_jobs
 from ai_video_factory.providers.openai import OpenAIProvider
 from ai_video_factory.providers.openai_batch_images import (
     ImageOptions,
@@ -452,6 +452,42 @@ def test_professional_grid_never_adds_amateur_header_and_scopes_reference() -> N
     ).startswith(
         "Render the following scene as authentic high-end iPhone 16/17 Pro Max "
         "photography, not DSLR or cinematic photography.  instagram rhode style."
+    )
+
+
+def test_professional_grid_keeps_original_voice_over_as_context() -> None:
+    panels = [
+        {
+            "beat_id": "1B",
+            "description": (
+                "1. A person casually holding a smartphone while looking at it, "
+                "viewed from across the room. "
+                "(For context: the person is scrolling through Instagram.)"
+            ),
+            "text": "The person is scrolling through Instagram.",
+            "reference": False,
+        },
+        {
+            "beat_id": "1C",
+            "description": (
+                "2. A woman reading a printed sheet held in her own hands. "
+                "(For context: the page contains a quarterly financial report.)"
+            ),
+            "text": "She reads a quarterly financial report.",
+            "reference": False,
+        },
+    ]
+    grid_prompt = _grid_prompt(panels, 2, 1, visual_style="profesional")
+    assert (
+        "Voice over context:\\n1B: The person is scrolling through Instagram."
+        "\\n1C: She reads a quarterly financial report."
+    ) in grid_prompt
+    assert "panel descriptions determine the visible scenes" in grid_prompt
+    assert "natural device and document orientation" in grid_prompt
+    assert "Do not add artificial captions" not in grid_prompt
+    assert (
+        "photography, not DSLR or cinematic photography.  instagram rhode style."
+        in effective_image_prompt(grid_prompt, visual_style="profesional")
     )
 
 
