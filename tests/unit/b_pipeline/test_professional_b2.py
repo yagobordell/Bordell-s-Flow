@@ -661,6 +661,11 @@ def test_professional_video_prompt_reaches_i2v_and_owns_paid_identity(
     assert jobs[0].request.parameters["generation_profile"] == b_video.LTX_PRODUCTION_I2V_PROFILE
     assert "fp8none" in jobs[0].request.parameters["generation_profile"]
     first_id = jobs[0].request.job_id
+    # A production recipe change must not reuse an old completed guided I2V run.
+    legacy_digest = b_video._fingerprint(
+        timeline, audio, {(1, "1A"): keyframe}, avatar, i2v_profile=None
+    )[:20]
+    assert first_dir.name != legacy_digest
 
     beat["video_prompt"] = video_prompt + " She pauses with her hand down."
     _, jobs, second_dir = b_video.build_b2_video_plan(tmp_path, plan, audio, {})
