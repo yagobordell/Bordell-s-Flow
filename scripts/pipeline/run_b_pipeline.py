@@ -2095,6 +2095,14 @@ async def main() -> None:
         )
     else:
         visual_style = select_visual_style(getattr(args, "visual_style", None))
+    if visual_style != "casero" and args.ebook_cover:
+        raise SystemExit("--ebook-cover solo se admite en modo casero.")
+    covers = None
+    if visual_style == "casero" and args.from_stage == "B1.1":
+        data_root = args.avatars_dir if managed_target is not None else args.avatars_dir.parent
+        covers = ensure_ebook_covers(
+            avatar_file, data_dir=data_root, names=args.ebook_cover,
+        )
     if not settings.openai_api_key:
         raise SystemExit("OPENAI_API_KEY is missing")
     if (
@@ -2253,6 +2261,8 @@ async def main() -> None:
         "reasoning_effort": settings.openai_reasoning_effort,
         "visual_style": visual_style,
     }
+    if visual_style == "casero":
+        run_metadata["casero_cta_enabled"] = True
     if stop_stage is not None:
         run_metadata["stopped_after"] = stop_stage
     if args.from_stage != "B1.1":
@@ -2272,6 +2282,9 @@ async def main() -> None:
         if resume_expected_calls is None:
             expected_calls: dict[str, int | None] = {
                 "B1.1": max(1, timings.call_count("B1.1")),
+                "CTA": max(1, timings.call_count("CTA")) if visual_style == "casero" else 0,
+                "CTA Ebook": timings.call_count("CTA Ebook"),
+                "CTA image": sum(r["stage"] == "CTA image" for r in ledger.records),
                 "B1.2": (
                     max(report_blocks, timings.call_count("B1.2"))
                     if report_blocks is not None else None
@@ -2283,6 +2296,11 @@ async def main() -> None:
             }
         else:
             expected_calls = dict(resume_expected_calls)
+            expected_calls["CTA"] = timings.call_count("CTA")
+            expected_calls["CTA Ebook"] = timings.call_count("CTA Ebook")
+            expected_calls["CTA image"] = sum(
+                r["stage"] == "CTA image" for r in ledger.records
+            )
             if report_blocks is not None:
                 expected_calls["B1.2"] = max(
                     expected_calls["B1.2"] or 0, timings.call_count("B1.2")
@@ -2331,6 +2349,7 @@ async def main() -> None:
 
     save_report("running", None)
     audio_task: asyncio.Task[dict[str, object]] | None = None
+    cta_task: asyncio.Task[dict[str, object]] | None = None
     audio_joined = False
     image_manifest: dict[str, object] | None = None
     audio_enabled = (
@@ -2384,6 +2403,7 @@ async def main() -> None:
             model=settings.openai_model,
             max_parallel_calls=args.max_parallel_calls,
             visual_style=visual_style,
+            enable_casero_cta=visual_style == "casero",
             avatar_image=avatar_bytes,
             start_from=args.from_stage,
             stop_after=stop_stage or "B2",
