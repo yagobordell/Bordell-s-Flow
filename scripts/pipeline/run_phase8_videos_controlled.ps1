@@ -58,7 +58,60 @@ if ($Misses -eq 0) {
     exit 0
 }
 
+# A source merge does not update a running Salad container. Before any paid
+# I2V work, verify the same immutable FP8 resident image as the managed B2 flow.
+. (Join-Path $RepoRoot "scripts\salad\_env_file.ps1")
+Import-EnvFile -Path ".env"
+$ExpectedFP8Image = [Environment]::GetEnvironmentVariable(
+    "SALAD_LTX25_FP8_I2V_IMAGE", [EnvironmentVariableTarget]::Process
+)
+if ($ExpectedFP8Image -notmatch '^[^\s@]+@sha256:[0-9a-fA-F]{64}
+$ReplicaCount = [Math]::Max(1, [Math]::Min($Misses, $MaxReplicas))
+$Start = @{ Action = "Start"; Service = "ltx25_i2v"; Replicas = $ReplicaCount }
+$Stop = @{ Action = "Stop"; Service = "ltx25_i2v" }
+if ($NonInteractive) { $Start["NonInteractive"] = $true; $Stop["NonInteractive"] = $true }
+
+try {
+    Write-Host "=== LTX I2V capacity: explicit replicas=$ReplicaCount for misses=$Misses ===" -ForegroundColor Cyan
+    & $WorkerManager @Start
+    if (-not $?) { throw "LTX worker start failed." }
+
+    & python $Runner @RunnerArguments
+    if ($LASTEXITCODE -ne 0) { throw "Phase 8 video generation failed with exit code $LASTEXITCODE." }
+}
+finally {
+    & $WorkerManager @Stop
+}
+) {
+    throw "Set SALAD_LTX25_FP8_I2V_IMAGE to the reviewed immutable FP8 worker digest before Phase 8."
+}
 $Services = Get-Content -LiteralPath $ServicesPath -Raw | ConvertFrom-Json
+$ImageRepo = [string]$Services.services.ltx25_i2v.image -replace ':[^/:]+
+$ReplicaCount = [Math]::Max(1, [Math]::Min($Misses, $MaxReplicas))
+$Start = @{ Action = "Start"; Service = "ltx25_i2v"; Replicas = $ReplicaCount }
+$Stop = @{ Action = "Stop"; Service = "ltx25_i2v" }
+if ($NonInteractive) { $Start["NonInteractive"] = $true; $Stop["NonInteractive"] = $true }
+
+try {
+    Write-Host "=== LTX I2V capacity: explicit replicas=$ReplicaCount for misses=$Misses ===" -ForegroundColor Cyan
+    & $WorkerManager @Start
+    if (-not $?) { throw "LTX worker start failed." }
+
+    & python $Runner @RunnerArguments
+    if ($LASTEXITCODE -ne 0) { throw "Phase 8 video generation failed with exit code $LASTEXITCODE." }
+}
+finally {
+    & $WorkerManager @Stop
+}
+, ''
+if (-not $ExpectedFP8Image.StartsWith("${ImageRepo}@sha256:")) {
+    throw "Pinned FP8 digest is not from the configured I2V worker repository."
+}
+$I2VStatus = (& $WorkerManager -Action Status -Service ltx25_i2v -NonInteractive | Out-String)
+if ($LASTEXITCODE -ne 0 -or
+    $I2VStatus -notmatch [regex]::Escape("image=$ExpectedFP8Image")) {
+    throw "Salad I2V image mismatch. Prepare ltx25_i2v with $ExpectedFP8Image before allocating GPU. $I2VStatus"
+}
 $MaxReplicas = [int]$Services.services.ltx25_i2v.capacity.max_replicas
 $ReplicaCount = [Math]::Max(1, [Math]::Min($Misses, $MaxReplicas))
 $Start = @{ Action = "Start"; Service = "ltx25_i2v"; Replicas = $ReplicaCount }
