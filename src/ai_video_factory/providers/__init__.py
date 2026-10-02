@@ -2,6 +2,7 @@
 
 from .base import StructuredTextProvider
 from .fallback_speech import BreezeThenFishSpeechProvider, SpeechFallbackFailedError
+from .gemini_tts import GeminiTtsSpeechProvider
 from .images import (
     GeneratedImage,
     ImageProvider,
@@ -21,6 +22,7 @@ __all__ = [
     "FishSpeechReference",
     "GeneratedImage",
     "GeneratedSpeech",
+    "GeminiTtsSpeechProvider",
     "ImageProvider",
     "ImageReferenceInput",
     "ImageUpscalerError",
