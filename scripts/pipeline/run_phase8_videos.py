@@ -14,6 +14,9 @@ from ai_video_factory.workers.ltx25.model import (
     LTX_CFG_BATCH2_SILENT_PROFILE,
     LTX_CFG_BATCH2_TRITON_PROFILE,
     LTX_DEFAULT_SILENT_VERIFY_PROFILE,
+    LTX_FAST_FULLRES_NO_OFFLOAD_PROFILE,
+    LTX_FAST_FULLRES_NVFP4_PROFILE,
+    LTX_FAST_FULLRES_TRITON_PROFILE,
     LTX_FAST_LOWRES_NO_OFFLOAD_PROFILE,
     LTX_FAST_LOWRES_PROFILE,
     LTX_FAST_LOWRES_TRITON_PROFILE,
@@ -137,6 +140,7 @@ def parse_args() -> argparse.Namespace:
             "cfg-b2", "cfg-b2-silent", "cfg-b2-triton",
             "fast-vanilla-reference", "fast-vanilla", "fast-lowres",
             "fast-lowres-triton", "fast-lowres-none",
+            "fast-vanilla-none", "fast-vanilla-triton", "fast-vanilla-nvfp4",
         ),
         default="default",
         help="Opt-in I2V experiment; normal Phase 8 remains unchanged.",
@@ -202,6 +206,9 @@ def main() -> None:
             "fast-lowres": LTX_FAST_LOWRES_PROFILE,
             "fast-lowres-triton": LTX_FAST_LOWRES_TRITON_PROFILE,
             "fast-lowres-none": LTX_FAST_LOWRES_NO_OFFLOAD_PROFILE,
+            "fast-vanilla-none": LTX_FAST_FULLRES_NO_OFFLOAD_PROFILE,
+            "fast-vanilla-triton": LTX_FAST_FULLRES_TRITON_PROFILE,
+            "fast-vanilla-nvfp4": LTX_FAST_FULLRES_NVFP4_PROFILE,
         }[args.i2v_profile],
     )
 
