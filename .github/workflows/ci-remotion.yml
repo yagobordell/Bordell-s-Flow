@@ -9,6 +9,7 @@ on:
       - ready_for_review
     paths:
       - "remotion/**"
+      - "scripts/pipeline/run_b_pipeline.py"
       - ".github/workflows/ci-remotion.yml"
   workflow_dispatch:
 

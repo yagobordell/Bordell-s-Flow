@@ -66,3 +66,10 @@ models/
 # Local-only YouTube upload attempt receipts and temporary atomic state.
 **/*.youtube-upload-attempt.json
 **/.youtube-attempt-*.tmp
+
+# Secret-free but operationally sensitive YouTube publishing state.
+**/youtube_publish.json
+**/*.youtube_publish.json
+**/youtube_publish_error.json
+**/.youtube-state-*.tmp
+/youtube-publications/

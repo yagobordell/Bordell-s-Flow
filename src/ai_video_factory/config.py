@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     youtube_enabled: bool = False
     youtube_keystore_dir: Path | None = None
     youtube_channel: str | None = None
+    # Share this directory across every publisher using the same channel/MP4.
+    # Default is the external sibling of YOUTUBE_KEYSTORE_DIR.
+    youtube_state_dir: Path | None = None
     youtube_default_privacy: Literal["private", "unlisted", "public"] = "private"
     youtube_default_category_id: str = Field(default="22", pattern=r"^[0-9]+$")
     youtube_default_language: str | None = None

@@ -19,6 +19,7 @@ from ai_video_factory.config import Settings
 
 from .errors import YouTubeValidationError
 from .models import YouTubePublishRequest
+from .thumbnail import validate_thumbnail
 
 METADATA_SCHEMA = "youtube-publish/v1"
 MAX_METADATA_BYTES = 1024 * 1024
@@ -123,11 +124,14 @@ def resolve_request(
         defaults["default_language"] = config.youtube_default_language
     source = load_metadata(metadata_path)
     merged = {**defaults, **source, **(overrides or {})}
-    if merged.get("thumbnail_path") is not None:
-        raise YouTubeValidationError(
-            "Thumbnail upload belongs to phase 4; remove thumbnail_path for this phase"
-        )
-    merged.pop("thumbnail_path", None)
+    thumbnail = merged.get("thumbnail_path")
+    if thumbnail is not None:
+        if not isinstance(thumbnail, (str, Path)) or not str(thumbnail).strip():
+            raise YouTubeValidationError("Invalid thumbnail_path in YouTube metadata")
+        candidate = Path(thumbnail).expanduser()
+        if not candidate.is_absolute():
+            candidate = metadata_path.absolute().parent / candidate
+        merged["thumbnail_path"] = validate_thumbnail(candidate)[0]
     merged["video_path"], _ = validate_video(video_path)
     if "title" not in merged or not isinstance(merged["title"], str):
         raise YouTubeValidationError("YouTube title is required in youtube.json or --title")
@@ -200,4 +204,5 @@ def safe_summary(request: YouTubePublishRequest, size: int) -> dict[str, Any]:
         "api_body": body,
         "notify_subscribers": request.notify_subscribers,
         "identity_verified": False,
+        "thumbnail": request.thumbnail_path.name if request.thumbnail_path else None,
     }

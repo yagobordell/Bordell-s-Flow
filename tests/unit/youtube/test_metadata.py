@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from ai_video_factory.config import Settings
 from ai_video_factory.integrations.youtube.errors import YouTubeValidationError
@@ -210,3 +211,24 @@ def test_manifest_missing_expected_video_hash_is_rejected(tmp_path: Path) -> Non
     }))
     with pytest.raises(YouTubeValidationError, match="manifest"):
         validate_video(video)
+
+
+def test_relative_thumbnail_resolves_from_metadata_directory(
+    tmp_path: Path,
+) -> None:
+    video = video_file(tmp_path)
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    image = assets / "thumbnail.png"
+    Image.new("RGB", (128, 72)).save(image)
+    document = metadata_file(tmp_path, thumbnail_path="assets/thumbnail.png")
+    result = resolve_request(
+        video_path=video, metadata_path=document, config=config(tmp_path)
+    )
+    assert result.thumbnail_path == image
+    assert safe_summary(result, video.stat().st_size)["thumbnail"] == "thumbnail.png"
+    with pytest.raises(YouTubeValidationError):
+        resolve_request(
+            video_path=video, metadata_path=document, config=config(tmp_path),
+            overrides={"thumbnail_path": str(tmp_path / "missing.png")},
+        )
