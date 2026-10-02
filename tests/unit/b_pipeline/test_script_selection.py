@@ -232,6 +232,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     _make_script(folder, "roma.txt", b"  Uno.\r\n\r\nDos.  ")
     _make_script(folder, "japon.txt", b"Tres.\nCuatro.")
     args = Namespace(
+        visual_style="profesional",
         script_file=None,
         scripts_dir=folder,
         script="roma.txt",
@@ -270,6 +271,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         on_rejected_b12_output,
         on_rejected_b2_output,
         visual_style,
+        enable_casero_cta,
         avatar_image,
         start_from,
         stop_after,
@@ -282,7 +284,8 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         assert callable(on_rejected_output)
         assert callable(on_rejected_b12_output)
         assert callable(on_rejected_b2_output)
-        assert visual_style == "casero"
+        assert visual_style == "profesional"
+        assert enable_casero_cta is False
         assert avatar_image.startswith(b"\x89PNG\r\n\x1a\n")
         assert provider.reasoning_effort == "medium"
         assert model == "gpt-6-luna"
