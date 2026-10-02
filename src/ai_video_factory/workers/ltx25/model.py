@@ -38,6 +38,25 @@ LTX_STATIC_CAMERA_GENERATION_PROFILE = (
 LTX_CFG_BATCH2_PROFILE = "ltx25-directcamneg-cfgb2-a95ab856-fp8cpu-eager-v1"
 LTX_CFG_BATCH2_SILENT_PROFILE = "ltx25-directcamneg-cfgb2-silent-a95ab856-fp8cpu-eager-v1"
 LTX_CFG_BATCH2_TRITON_PROFILE = "ltx25-directcamneg-cfgb2-silent-a95ab856-fp8cpu-triton-v1"
+# Fast recipes never replace the default guided identity without a full
+# paid RTX 5090 5-second performance + visual-quality promotion gate.
+LTX_FAST_VANILLA_REFERENCE_PROFILE = "ltx25-fast-vanilla-upstream-native-fp8cpu-a95ab-v1"
+LTX_FAST_VANILLA_PROFILE = "ltx25-fast-vanilla-silent-native-fp8cpu-a95ab-v1"
+LTX_FAST_LOWRES_PROFILE = "ltx25-fast-vanilla-silent-1024x576-fp8cpu-eager-a95ab-v1"
+LTX_FAST_LOWRES_TRITON_PROFILE = "ltx25-fast-vanilla-silent-1024x576-fp8cpu-triton-a95ab-v1"
+LTX_FAST_LOWRES_NO_OFFLOAD_PROFILE = "ltx25-fast-vanilla-silent-1024x576-fp8none-eager-a95ab-v1"
+LTX_FAST_PROFILES = (
+    LTX_FAST_VANILLA_REFERENCE_PROFILE,
+    LTX_FAST_VANILLA_PROFILE,
+    LTX_FAST_LOWRES_PROFILE,
+    LTX_FAST_LOWRES_TRITON_PROFILE,
+    LTX_FAST_LOWRES_NO_OFFLOAD_PROFILE,
+)
+LTX_FAST_LOWRES_PROFILES = (
+    LTX_FAST_LOWRES_PROFILE,
+    LTX_FAST_LOWRES_TRITON_PROFILE,
+    LTX_FAST_LOWRES_NO_OFFLOAD_PROFILE,
+)
 # Forced-fresh quality check: identical default visual recipe and seed, but
 # distinct Postgres/R2 identity prevents replay of the historical cached MP4.
 LTX_DEFAULT_SILENT_VERIFY_PROFILE = (
@@ -53,6 +72,7 @@ LTX_SUPPORTED_I2V_PROFILES = (
     LTX_STATIC_CAMERA_GENERATION_PROFILE,
     LTX_DEFAULT_SILENT_VERIFY_PROFILE,
     *LTX_EXPERIMENTAL_PROFILES,
+    *LTX_FAST_PROFILES,
 )
 _CANONICAL_LANDSCAPE_SIZE = (1280, 720)
 _LTX_TWO_STAGE_SPATIAL_GRID = 64
@@ -466,6 +486,7 @@ class DirectLTX25Backend:
         self._prepared = False
         self._pipeline_requested_diffvae_backend: str | None = None
         self._pipeline_effective_diffvae_backend: str | None = None
+        self._pipeline_requested_offload_mode: str = "cpu"
         # A prepared pipeline object can still defer heavy weight loading until its first run.
         self._pipeline_successful_generations = 0
         self._mode_controller = mode_controller or LTXPipelineModeController()
@@ -530,9 +551,17 @@ class DirectLTX25Backend:
 
         generation_started = time.monotonic()
         requested_backend = (
-            "triton" if parameters.generation_profile == LTX_CFG_BATCH2_TRITON_PROFILE
+            "triton"
+            if parameters.generation_profile
+            in (LTX_CFG_BATCH2_TRITON_PROFILE, LTX_FAST_LOWRES_TRITON_PROFILE)
             else "eager"
         )
+        requested_offload = (
+            "none" if parameters.generation_profile == LTX_FAST_LOWRES_NO_OFFLOAD_PROFILE
+            else "cpu"
+        )
+        fast_recipe = parameters.generation_profile in LTX_FAST_PROFILES
+        lowres_recipe = parameters.generation_profile in LTX_FAST_LOWRES_PROFILES
         stage_1_batch = 2 if parameters.generation_profile in LTX_EXPERIMENTAL_PROFILES else 1
         # I2V never writes an audio stream: the final audio decoder runs only
         # after both visual diffusion stages and its output is discarded.
@@ -542,6 +571,7 @@ class DirectLTX25Backend:
             pipeline_reused = (
                 self._pipeline is not None
                 and self._pipeline_requested_diffvae_backend == requested_backend
+                and self._pipeline_requested_offload_mode == requested_offload
             )
 
             bindings = self._get_bindings()
@@ -550,15 +580,27 @@ class DirectLTX25Backend:
                 metrics = I2VPhaseMetrics(bindings.torch, self._device)
                 metrics.begin_generation()
                 with metrics.phase("pipeline_acquire_seconds"):
+                    pipeline_kwargs_for_load = {"requested_diffvae_backend": requested_backend}
+                    if requested_offload != "cpu":
+                        pipeline_kwargs_for_load["requested_offload_mode"] = requested_offload
                     pipeline = self._get_or_build_pipeline(
-                        bindings, requested_diffvae_backend=requested_backend
+                        bindings, **pipeline_kwargs_for_load
                     )
                 pipeline_prior_successful_generations = self._pipeline_successful_generations
-                pipeline_width, pipeline_height = _pipeline_dimensions(parameters)
+                pipeline_width, pipeline_height = (
+                    (1024, 576) if lowres_recipe else _pipeline_dimensions(parameters)
+                )
                 conditioning_path = keyframe_path
-                if (pipeline_width, pipeline_height) != (
-                    parameters.width,
-                    parameters.height,
+                if lowres_recipe:
+                    from .fast_delivery import prepare_fast_keyframe
+
+                    if (parameters.width, parameters.height) != (1280, 720):
+                        raise ValueError("Fast 576p profiles require public 1280x720 delivery")
+                    conditioning_path = prepare_fast_keyframe(
+                        keyframe_path, output_path.parent / "keyframe_fast_1024x576.png"
+                    )
+                elif (pipeline_width, pipeline_height) != (
+                    parameters.width, parameters.height
                 ):
                     conditioning_path = _prepare_grid_keyframe(
                         keyframe_path,
@@ -583,7 +625,23 @@ class DirectLTX25Backend:
                     "images": [conditioning],
                     "num_frames": parameters.num_frames,
                 }
-                if parameters.generation_profile == LTX_STATIC_CAMERA_GENERATION_PROFILE:
+                if fast_recipe:
+                    if parameters.generation_profile == LTX_FAST_VANILLA_REFERENCE_PROFILE:
+                        # Pinned upstream reference, including its discarded final
+                        # audio decode; only used to verify custom vanilla equivalence.
+                        with metrics.phase("pipeline_call_seconds"):
+                            result = pipeline(**pipeline_kwargs)
+                    else:
+                        # The pinned upstream 8+3 vanilla recipe, instrumented and
+                        # skipping ONLY its unused final audio waveform decode.
+                        from .fast_i2v import generate_fast_distilled
+
+                        with metrics.phase("pipeline_call_seconds"):
+                            result = generate_fast_distilled(
+                                pipeline, decode_audio=False, metrics=metrics,
+                                **pipeline_kwargs,
+                            )
+                elif parameters.generation_profile == LTX_STATIC_CAMERA_GENERATION_PROFILE:
                     # Opt-in static-camera uses a distinct negative prompt.
                     generator = _load_static_camera_generator()
                     with metrics.phase("pipeline_call_seconds"):
@@ -602,9 +660,8 @@ class DirectLTX25Backend:
                             **pipeline_kwargs,
                         )
                 output_video = metrics.video_chunks(result.video)
-                if (pipeline_width, pipeline_height) != (
-                    parameters.width,
-                    parameters.height,
+                if not lowres_recipe and (pipeline_width, pipeline_height) != (
+                    parameters.width, parameters.height
                 ):
                     output_video = _crop_video_to_requested(
                         output_video,
@@ -613,17 +670,27 @@ class DirectLTX25Backend:
                     )
 
                 output_path.parent.mkdir(parents=True, exist_ok=True)
+                raw_path = (
+                    output_path.with_name(output_path.stem + ".raw-576p.mp4")
+                    if lowres_recipe else output_path
+                )
                 with metrics.phase("encode_including_decode_seconds"):
                     bindings.encode_video(
                         video=output_video,
                         fps=parameters.fps,
                         audio=None,
-                        output_path=str(output_path),
+                        output_path=str(raw_path),
                         video_chunks_number=bindings.get_video_chunks_number(
                             result.num_frames,
                             result.tiling_config,
                         ),
                     )
+                if lowres_recipe:
+                    from .fast_delivery import deliver_fast_video
+
+                    with metrics.phase("delivery_postprocess_seconds"):
+                        deliver_fast_video(raw_path, output_path)
+                    raw_path.unlink(missing_ok=True)
                 metrics.timings["encode_excluding_video_decode_seconds"] = max(
                     0.0,
                     metrics.timings["encode_including_decode_seconds"]
@@ -641,9 +708,18 @@ class DirectLTX25Backend:
                             "diffvae_backend_requested": requested_backend,
                             "diffvae_backend_effective": self._pipeline_effective_diffvae_backend,
                             "stage1_max_batch_size": stage_1_batch,
-                            "stage1_expected_forward_calls": 8 if stage_1_batch == 2 else 16,
+                            "stage1_expected_forward_calls": (
+                                8 if fast_recipe or stage_1_batch == 2 else 16
+                            ),
                             "stage2_expected_forward_calls": 3,
-                            "audio_decode_enabled": decode_audio,
+                            "audio_decode_enabled": (
+                                True if parameters.generation_profile
+                                == LTX_FAST_VANILLA_REFERENCE_PROFILE
+                                else False if fast_recipe else decode_audio
+                            ),
+                            "vanilla_simple_denoiser": fast_recipe,
+                            "quantization": "FP8_CAST",
+                            "offload_mode": requested_offload,
                             "internal_width": pipeline_width,
                             "internal_height": pipeline_height,
                             "delivery_width": parameters.width,
@@ -690,6 +766,7 @@ class DirectLTX25Backend:
         self._pipeline = None
         self._pipeline_requested_diffvae_backend = None
         self._pipeline_effective_diffvae_backend = None
+        self._pipeline_requested_offload_mode = "cpu"
         self._pipeline_successful_generations = 0
         gc.collect()
         if self._bindings is not None:
@@ -699,10 +776,14 @@ class DirectLTX25Backend:
                 empty_cache()
 
     def _get_or_build_pipeline(
-        self, bindings: _LTXBindings, *, requested_diffvae_backend: str = "eager"
+        self, bindings: _LTXBindings, *, requested_diffvae_backend: str = "eager",
+        requested_offload_mode: str = "cpu",
     ) -> Any:
+        if requested_offload_mode not in ("cpu", "none"):
+            raise ValueError("Unsupported LTX I2V offload mode")
         if self._pipeline is not None:
-            if self._pipeline_requested_diffvae_backend == requested_diffvae_backend:
+            if (self._pipeline_requested_diffvae_backend == requested_diffvae_backend
+                    and self._pipeline_requested_offload_mode == requested_offload_mode):
                 return self._pipeline
             self._release_pipeline_locked()
 
@@ -727,8 +808,12 @@ class DirectLTX25Backend:
             loras=(),
             device=bindings.torch.device(self._device),
             quantization=quantization,
-            offload_mode=bindings.offload_mode.CPU,
+            offload_mode=(
+                bindings.offload_mode.NONE if requested_offload_mode == "none"
+                else bindings.offload_mode.CPU
+            ),
         )
+        self._pipeline_requested_offload_mode = requested_offload_mode
         self._pipeline_requested_diffvae_backend = requested_diffvae_backend
         self._pipeline_effective_diffvae_backend = effective_backend
         logger.info(
