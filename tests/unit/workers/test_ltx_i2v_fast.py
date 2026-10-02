@@ -300,3 +300,65 @@ def test_fast_benchmark_requires_explicit_opt_in_for_no_offload() -> None:
         )
         assert result.returncode != 0
         assert "pass -AllowNoOffload" in result.stdout + result.stderr
+
+
+
+@pytest.mark.parametrize("same_sha", [True, False])
+def test_fast_batch_fails_closed_on_real_vanilla_sha_gate(
+    tmp_path: Path, same_sha: bool
+) -> None:
+    """Run the actual guard fragment with local receipts; never invoke Salad."""
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell not installed")
+    source = Path("scripts/smoke/run_ltx25_i2v_fast_benchmark.ps1").read_text(
+        encoding="utf-8"
+    )
+    guard = '            if ($Profile -eq "fast-vanilla" -and'
+    assert source.count(guard) == 1
+    block = guard + source.split(guard, maxsplit=1)[1].split(
+        '            $Result.status = "video_valid_metrics_pending"', maxsplit=1
+    )[0]
+    reference = tmp_path / "r1-fast-vanilla-reference"
+    reference.mkdir()
+    sha = "a" * 64
+    (reference / "i2v-smoke-report.json").write_text(
+        json.dumps({"video_sha256": sha}), encoding="utf-8"
+    )
+    current = tmp_path / "r1-fast-vanilla"
+    current.mkdir()
+    actual = sha if same_sha else "b" * 64
+    root = str(tmp_path).replace("'", "''")
+    ps = (
+        "$ErrorActionPreference = 'Stop'\\n"
+        f"$BatchPath = '{root}'\\n"
+        "$Profile = 'fast-vanilla'\\n"
+        "$Profiles = @('fast-vanilla-reference', 'fast-vanilla')\\n"
+        "$Round = 1\\n"
+        "$RoundSeedBase = 4242\\n"
+        "$ProfilePath = Join-Path $BatchPath 'r1-fast-vanilla'\\n"
+        f"$Result = [ordered]@{{video_sha256 = '{actual}'}}\\n"
+        "function Save-BatchJson { param([string]$Path, $Value) "
+        "$Value | ConvertTo-Json -Depth 6 | "
+        "Set-Content -LiteralPath $Path -Encoding utf8 }\\n"
+        "try {\\n"
+        + block + "\\n"
+        + "} catch { Write-Output $_.Exception.Message; exit 23 }\\n"
+        + "exit 0\\n"
+    )
+    # Use actual line breaks: the fixture above stays obvious in Python.
+    ps = ps.replace("\\n", "\n")
+    completed = subprocess.run(
+        [pwsh, "-NoProfile", "-NonInteractive", "-Command", ps],
+        capture_output=True, text=True, check=False,
+    )
+    assert (completed.returncode == 0) is same_sha, (
+        completed.stdout + completed.stderr
+    )
+    receipt = json.loads(
+        (current / "vanilla-equivalence.json").read_text(encoding="utf-8-sig")
+    )
+    assert receipt["exact_mp4_sha256_match"] is same_sha
+    assert receipt["round"] == 1
+    if not same_sha:
+        assert "VANILLA QUALITY GATE FAILED" in completed.stdout
