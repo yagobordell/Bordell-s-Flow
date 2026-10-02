@@ -81,7 +81,7 @@ def test_casero_prompts_provider_before_voice(
         default_voice_id=DEFAULT, interactive=True, allow_sources=True,
     ) == selected
     if provider != "fishaudio":
-        with pytest.raises(SystemExit, match="solo están disponibles en Casero"):
+        with pytest.raises(SystemExit, match="solo para Casero"):
             ensure_avatar_voice(
                 avatar_file=avatar, avatars_dir=avatar.parent,
                 default_voice_id=DEFAULT, interactive=False, allow_sources=False,
