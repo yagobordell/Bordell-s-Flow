@@ -58,6 +58,7 @@ from ai_video_factory.providers.avatar_library import (
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.avatar_style import ensure_avatar_style
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice
+from ai_video_factory.providers.ebook_covers import ensure_ebook_covers
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE, GridPlanError
 from ai_video_factory.providers.openai_batch_images import (
@@ -74,10 +75,12 @@ from ai_video_factory.workflows.b_video import (
     generate_b2_ltx_video,
     has_pending_b2_video,
 )
+from ai_video_factory.workflows.casero_cta import prepare_casero_cta
 
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
 _STAGES = ("B1.1", "B1.2", "B2")
+_METRIC_STAGES = ("B1.1", "CTA", "CTA Ebook", "B1.2", "B2")
 
 
 def parse_args() -> argparse.Namespace:
@@ -114,6 +117,10 @@ def parse_args() -> argparse.Namespace:
         "--avatar",
         metavar="NAME",
         help="Select a PNG avatar from --avatars-dir, with or without its .png suffix.",
+    )
+    parser.add_argument(
+        "--ebook-cover", action="append", metavar="NOMBRE",
+        help="Modo casero: portada PNG en data/ sin extension; repetir para portada secundaria.",
     )
     parser.add_argument(
         "--qr-url",
@@ -1132,8 +1139,34 @@ async def _video_if_ready(
                 organization=os.getenv("SALAD_ORGANIZATION"),
                 project=os.getenv("SALAD_PROJECT"),
             ):
+                cta_dir = (
+                    Path(run["cta_cache_dir"])
+                    if isinstance(run, dict) and isinstance(run.get("cta_cache_dir"), str)
+                    and (output / "CTA" / "output.json").is_file()
+                    else None
+                )
+                if isinstance(run, dict) and run.get("casero_cta_enabled") is True:
+                    if cta_dir is None:
+                        raise RuntimeError(
+                            "Casero CTA assets or placement missing; reconcile before LTX"
+                        )
+                    from ai_video_factory.workflows.casero_cta_video import cta_assets
+
+                    cached = cta_assets(cta_dir)
+                    if (
+                        cached["avatar_sha256"] != hashlib.sha256(
+                            (output / "avatar.png").read_bytes()
+                        ).hexdigest()
+                        or cached["qr_sha256"] != hashlib.sha256(
+                            (output / "qr.png").read_bytes()
+                        ).hexdigest()
+                        or cached["voice_id"] != _run_voice_id(output)
+                    ):
+                        raise RuntimeError(
+                            "Cached casero CTA identity differs from this run's avatar, QR or voice"
+                        )
                 return generate_b2_ltx_video(
-                    output, plan, audio, images,
+                    output, plan, audio, images, casero_cta_dir=cta_dir,
                     queue=queue, storage=storage,
                     poll_seconds=settings.inference_client_poll_seconds,
                     timeout_seconds=max(settings.inference_client_timeout_seconds, 21600.0),
@@ -1823,11 +1856,11 @@ class BotArtifacts:
         self._output = output
 
     def _folder(self, stage: str, block_id: int | None) -> Path:
-        if stage not in _STAGES:
+        if stage not in (*_STAGES, "CTA"):
             raise ValueError(f"Unknown B pipeline stage: {stage}")
-        if stage == "B1.1":
+        if stage in {"B1.1", "CTA"}:
             if block_id is not None:
-                raise ValueError("B1.1 must not have a block ID")
+                raise ValueError(f"{stage} must not have a block ID")
             return self._output / stage
         if block_id is None or block_id < 1:
             raise ValueError(f"{stage} requires a positive block ID")
@@ -1872,12 +1905,12 @@ class TimingLedger:
         self._calls: list[dict[str, object]] = []
 
     def record_stage(self, stage: str, elapsed_seconds: float) -> None:
-        if stage not in _STAGES:
+        if stage not in _METRIC_STAGES:
             raise ValueError(f"Unknown stage: {stage}")
         self._stages[stage] = self._stages.get(stage, 0.0) + elapsed_seconds
 
     def record_call(self, stage: str, block_id: int | None, elapsed_seconds: float) -> None:
-        if stage not in _STAGES:
+        if stage not in _METRIC_STAGES:
             raise ValueError(f"Unknown stage: {stage}")
         self._calls.append(
             {
@@ -1896,14 +1929,14 @@ class TimingLedger:
         calls = report.get("calls")
         if not isinstance(stages, dict) or not isinstance(calls, list):
             raise ValueError("Cannot restore malformed timing history")
-        for stage in _STAGES:
+        for stage in _METRIC_STAGES:
             entry = stages.get(stage)
             if isinstance(entry, dict) and isinstance(entry.get("elapsed_seconds"), (int, float)):
                 self._stages[stage] = float(entry["elapsed_seconds"])
         for call in calls:
             if (
                 not isinstance(call, dict)
-                or call.get("stage") not in _STAGES
+                or call.get("stage") not in _METRIC_STAGES
                 or not isinstance(call.get("elapsed_seconds"), (int, float))
             ):
                 raise ValueError("Cannot restore malformed timing call history")
@@ -1916,7 +1949,7 @@ class TimingLedger:
     def report(self, *, run_seconds: float, status: str) -> dict[str, object]:
         calls = sorted(
             self._calls,
-            key=lambda item: (_STAGES.index(str(item["stage"])), item["block_id"] or 0),
+            key=lambda item: (_METRIC_STAGES.index(str(item["stage"])), item["block_id"] or 0),
         )
         return {
             "unit": "seconds",
@@ -1937,7 +1970,7 @@ class TimingLedger:
                         3,
                     ),
                 }
-                for stage in _STAGES
+                for stage in _METRIC_STAGES
             },
             "calls": calls,
         }
@@ -2088,6 +2121,9 @@ async def main() -> None:
         )
     else:
         visual_style = select_visual_style(getattr(args, "visual_style", None))
+    if visual_style != "casero" and getattr(args, "ebook_cover", None):
+        raise SystemExit("--ebook-cover solo se admite en modo casero.")
+    covers = None
     if not settings.openai_api_key:
         raise SystemExit("OPENAI_API_KEY is missing")
     if (
@@ -2148,6 +2184,12 @@ async def main() -> None:
         avatar_file = organize_avatar(
             avatar_file, args.avatars_dir, reference_audio=voice.audio_filename
         )
+        if visual_style == "casero":
+            ensure_avatar_meta(avatar_file, args.avatars_dir)
+            data_root = args.avatars_dir if managed_target is not None else args.avatars_dir.parent
+            covers = ensure_ebook_covers(
+                avatar_file, data_dir=data_root, names=getattr(args, "ebook_cover", None),
+            )
         output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
     else:
         output = _prepare_resume_output(output_root, script_file, avatar_file=avatar_file)
@@ -2246,6 +2288,8 @@ async def main() -> None:
         "reasoning_effort": settings.openai_reasoning_effort,
         "visual_style": visual_style,
     }
+    if visual_style == "casero":
+        run_metadata["casero_cta_enabled"] = True
     if stop_stage is not None:
         run_metadata["stopped_after"] = stop_stage
     if args.from_stage != "B1.1":
@@ -2265,6 +2309,9 @@ async def main() -> None:
         if resume_expected_calls is None:
             expected_calls: dict[str, int | None] = {
                 "B1.1": max(1, timings.call_count("B1.1")),
+                "CTA": max(1, timings.call_count("CTA")) if visual_style == "casero" else 0,
+                "CTA Ebook": timings.call_count("CTA Ebook"),
+                "CTA image": sum(r["stage"] == "CTA image" for r in ledger.records),
                 "B1.2": (
                     max(report_blocks, timings.call_count("B1.2"))
                     if report_blocks is not None else None
@@ -2276,6 +2323,11 @@ async def main() -> None:
             }
         else:
             expected_calls = dict(resume_expected_calls)
+            expected_calls["CTA"] = timings.call_count("CTA")
+            expected_calls["CTA Ebook"] = timings.call_count("CTA Ebook")
+            expected_calls["CTA image"] = sum(
+                r["stage"] == "CTA image" for r in ledger.records
+            )
             if report_blocks is not None:
                 expected_calls["B1.2"] = max(
                     expected_calls["B1.2"] or 0, timings.call_count("B1.2")
@@ -2324,6 +2376,7 @@ async def main() -> None:
 
     save_report("running", None)
     audio_task: asyncio.Task[dict[str, object]] | None = None
+    cta_task: asyncio.Task[dict[str, object]] | None = None
     audio_joined = False
     image_manifest: dict[str, object] | None = None
     audio_enabled = (
@@ -2365,6 +2418,41 @@ async def main() -> None:
             reasoning_effort=settings.openai_reasoning_effort,
             service_tier="default",
         )
+        if (
+            visual_style == "casero" and stop_stage is None
+            and not getattr(args, "no_audio", False)
+            and not args.skip_images
+        ):
+            if args.from_stage != "B1.1":
+                if not (output / "CTA" / "output.json").is_file():
+                    raise RuntimeError(
+                        "Saved casero run lacks CTA placement. Rerun planning from B1.1."
+                    )
+                if covers is None:
+                    data_root = (
+                        args.avatars_dir
+                        if managed_target is not None else args.avatars_dir.parent
+                    )
+                    covers = ensure_ebook_covers(
+                        avatar_file, data_dir=data_root, names=getattr(args, "ebook_cover", None),
+                    )
+            if covers is None:
+                raise RuntimeError("Casero CTA covers were not prepared")
+            qr_path = avatar_file.parent / "meta" / "qr.png"
+            if not qr_path.is_file():
+                qr_path = avatar_file.parent / "qr.png"
+            if qr_path.is_symlink() or not qr_path.is_file() or (
+                hashlib.sha256(qr_path.read_bytes()).hexdigest() != qr.sha256
+            ):
+                raise RuntimeError("The avatar CTA QR does not match its persisted PNG")
+            cta_task = asyncio.create_task(prepare_casero_cta(
+                avatar=avatar_file, covers=covers, qr_path=qr_path, qr_url=qr.url,
+                script=script, voice_id=_run_voice_id(output), provider=provider,
+                model=settings.openai_model,
+                on_api_response=ledger.record,
+                on_call_duration=timings.record_call,
+                on_image_usage=ledger.record_cta_image,
+            ))
         if audio_enabled:
             run_metadata["audio_generation"] = {"status": "running"}
             save_report("running", None)
@@ -2377,6 +2465,7 @@ async def main() -> None:
             model=settings.openai_model,
             max_parallel_calls=args.max_parallel_calls,
             visual_style=visual_style,
+            enable_casero_cta=visual_style == "casero",
             avatar_image=avatar_bytes,
             start_from=args.from_stage,
             stop_after=stop_stage or "B2",
@@ -2392,6 +2481,15 @@ async def main() -> None:
             on_stage_duration=timings.record_stage,
             on_stage_complete=stage_complete,
         )
+        if cta_task is not None:
+            prepared_cta = await asyncio.shield(cta_task)
+            run_metadata["cta_cache_dir"] = prepared_cta["directory"]
+            run_metadata["casero_cta"] = {"status": prepared_cta["status"]}
+            save_report("running", len(result.b12))
+        elif visual_style == "casero" and args.from_stage != "B1.1":
+            cache = avatar_file.parent / "meta" / "cta"
+            if (cache / "identity.json").is_file() and (output / "CTA" / "output.json").is_file():
+                run_metadata["cta_cache_dir"] = str(cache)
         visual_plan = None
         if stop_index >= 2:
             visual_plan = result.visual_plan()
@@ -2522,6 +2620,12 @@ async def main() -> None:
                         "status": "deferred", "reason": "audio_or_images_incomplete",
                     }
     except Exception:
+        if cta_task is not None and not cta_task.done():
+            # Never abandon an in-flight paid CTA TTS or GPT Image POST.
+            try:
+                await asyncio.shield(cta_task)
+            except Exception as exc:
+                run_metadata["casero_cta"] = {"status": "incomplete", "error": str(exc)}
         if audio_task is not None and not audio_joined:
             # Never abandon an in-flight paid TTS submission by cancelling
             # its task when a separate B stage fails.

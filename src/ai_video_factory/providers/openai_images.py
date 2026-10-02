@@ -79,6 +79,7 @@ class OpenAIImageClient:
         quality: str = "low",
         output_format: str = "png",
         reference_image_url: str | None = None,
+        reference_image_urls: list[str] | None = None,
     ) -> dict[str, Any]:
         if model not in {
             "gpt-image-2.5-flare",
@@ -97,7 +98,17 @@ class OpenAIImageClient:
             "output_format": output_format,
             "n": 1,
         }
-        if reference_image_url is not None:
+        if reference_image_url is not None and reference_image_urls is not None:
+            raise ValueError("Choose either one or several ordered image references")
+        if reference_image_urls is not None:
+            if not reference_image_urls or not all(
+                isinstance(url, str) and url.startswith("data:image/png;base64,")
+                for url in reference_image_urls
+            ):
+                raise ValueError("Multi-reference edits require ordered PNG data URLs")
+            payload["images"] = [{"image_url": url} for url in reference_image_urls]
+            response = self.request_edit_json(payload)
+        elif reference_image_url is not None:
             payload["images"] = [{"image_url": reference_image_url}]
             response = self.request_edit_json(payload)
         else:

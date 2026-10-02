@@ -127,6 +127,16 @@ def _collect(
             if item.is_file():
                 rel = item.relative_to(work).as_posix()
                 add("Bots/" + rel, rel)
+    cta_folder = work / "CTA"
+    if cta_folder.exists():
+        if cta_folder.is_symlink() or not cta_folder.is_dir():
+            raise PublicationError("Unsafe casero CTA placement directory")
+        for item in sorted(cta_folder.rglob("*")):
+            if item.is_symlink():
+                raise PublicationError("Linked CTA placement artifact")
+            if item.is_file():
+                rel = item.relative_to(work).as_posix()
+                add("Bots/" + rel, rel)
     for name in ("visual_plan.json", "avatar_voice.json"):
         add("Bots/" + name, name)
     # Strip the mutable publication pointer: snapshots stay identical on safe retries.

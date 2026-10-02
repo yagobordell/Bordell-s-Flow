@@ -713,6 +713,7 @@ def generate_b2_ltx_video(
     check_capacity: Callable[[], None] | None = None,
     check_a2v_worker: Callable[[], None] | None = None,
     check_i2v_worker: Callable[[], None] | None = None,
+    casero_cta_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Durably submit exactly one LTX request per video beat/avatar group, then mux.
 
@@ -720,6 +721,12 @@ def generate_b2_ltx_video(
     allocates Salad resources or silently falls back to still images.
     """
     from ai_video_factory.compositor.b_video import render_b2_ltx_video
+    from ai_video_factory.workflows.casero_cta_video import (
+        cta_assets,
+        finish_cta,
+        insert_cta,
+        submit_cta_first,
+    )
 
     timeline, jobs, run_dir = build_b2_video_plan(output, plan, audio, images)
     digest = run_dir.name
@@ -787,8 +794,19 @@ def generate_b2_ltx_video(
 
     # Preserve the existing fail-closed guard: no new input upload or paid job
     # publication happens while the singleton Capacity Controller is unhealthy.
-    if pending_jobs and check_capacity is not None:
+    if casero_cta_dir is not None:
+        cta_assets(casero_cta_dir)
+    if (pending_jobs or casero_cta_dir is not None) and check_capacity is not None:
         check_capacity()
+    if casero_cta_dir is not None and check_a2v_worker is not None and not (
+        casero_cta_dir / "completed.json"
+    ).is_file():
+        check_a2v_worker()
+    # Submit CTA first on the shared Postgres A2V queue, BEFORE normal B2 jobs.
+    cta_submitted = (
+        submit_cta_first(casero_cta_dir, executor, queue)
+        if casero_cta_dir is not None else None
+    )
 
     uncached_jobs: list[B2VideoJob] = []
     for job, _record, _clip in pending_jobs:
@@ -880,8 +898,23 @@ def generate_b2_ltx_video(
 
     if manifest.get("status") == "completed":
         _verified_asset(output, manifest.get("file"), manifest.get("sha256"))
+        if casero_cta_dir is not None and "cta_insertion" not in manifest:
+            raise B2VideoError(
+                "Completed video predates CTA insertion; reconcile prior publication"
+            )
         return manifest
     result = render_b2_ltx_video(output, run_dir, timeline, jobs, manifest, images, audio)
+    if casero_cta_dir is not None:
+        finish_cta(casero_cta_dir, cta_submitted, executor)
+        raw = json.loads((output / "B1.1" / "input.json").read_text(encoding="utf-8"))
+        source_script = raw["plain_script_for_recording"]
+        inserted = insert_cta(
+            output, source_script, plan, audio,
+            output / result["file"], casero_cta_dir, run_dir / "with_cta.mp4",
+        )
+        result.update(inserted)
+        result["duration_seconds"] += inserted["cta_insertion"]["cta_duration_seconds"]
+        result["audio_source"] = "verified_original_pcm_with_per_avatar_casero_cta"
     manifest.update(result)
     manifest["status"] = "completed"
     _save_json(manifest_path, manifest)

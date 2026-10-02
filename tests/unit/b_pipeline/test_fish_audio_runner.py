@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from ai_video_factory.bots.contracts import B2Output, B11Output, B12Output
+from ai_video_factory.bots.contracts import B11Output, B12Output
 from scripts.pipeline import run_b_pipeline as runner
 
 VOICE = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
@@ -59,6 +59,7 @@ def test_full_b_run_starts_fish_concurrently_and_no_audio_skips_it(
     created_audio = []
 
     args = Namespace(
+        visual_style="profesional",
         script_file=None,
         scripts_dir=script.parent,
         script=script.name,
@@ -234,6 +235,7 @@ def test_images_wait_for_b2_and_validated_stt_before_paid_requests(
     audio_released = asyncio.Event()
     order = []
     args = Namespace(
+        visual_style="profesional",
         script_file=None,
         scripts_dir=script.parent,
         script=script.name,
@@ -362,6 +364,7 @@ def test_stop_saves_resumable_stages_without_audio_or_images(
     script, avatar = _files(tmp_path)
     output = tmp_path / "output" / script.stem
     args = Namespace(
+        visual_style="profesional",
         script_file=None,
         scripts_dir=script.parent,
         script=script.name,
@@ -399,10 +402,15 @@ def test_stop_saves_resumable_stages_without_audio_or_images(
                     "error": None,
                 })
             else:
-                assert output_type is B2Output
+                from ai_video_factory.bots.contracts import ProfessionalB2Output
+
+                assert output_type is ProfessionalB2Output
                 block = payload["blocks"][0]
-                block["beats"][0].update(visual_type="avatar", description=None)
-                result = B2Output.model_validate({
+                block["beats"][0].update(
+                    visual_type="avatar", prompt=None, video_prompt=None,
+                    reference=False, audio=True,
+                )
+                result = ProfessionalB2Output.model_validate({
                     "pipeline_stage": "B2",
                     "narrative_core": payload["narrative_core"],
                     "blocks": [block],
@@ -441,7 +449,7 @@ def test_stop_saves_resumable_stages_without_audio_or_images(
             ["B1.2/merged_output.json"], ["B2", "visual_plan.json"],
         ),
         (
-            "B2", "B2", ["B11Output", "B12Output", "B2Output"],
+            "B2", "B2", ["B11Output", "B12Output", "ProfessionalB2Output"],
             ["B2/merged_output.json", "visual_plan.json"], ["images"],
         ),
     ):
