@@ -99,8 +99,8 @@ stops capacity in finally. Interruption outside PowerShell finally still
 requires manual Salad verification.
 
 To test offload separately, add `"fast-lowres-none"` **last** in
-ProfileSelection and pass `AllowNoOffload=$true`. Never run the
-unproven no-offload configuration as a normal production request.
+ProfileSelection and pass `AllowNoOffload=$true`. The low-resolution no-offload variant is still an unpromoted experiment;
+the separate full-resolution FP8 no-offload profile was selected below.
 To test Triton on already-validated lowres, add `fast-lowres-triton`
 after `fast-lowres` and measure the separate decoder and total latency.
 
@@ -125,9 +125,9 @@ after `fast-lowres` and measure the separate decoder and total latency.
    and review full 1280x720 output. The target is **near 90s warm 5s**
    if hardware, quality and stability allow it. The benchmark may
    show that a stronger NVFP4/Blackwell-specific build is necessary.
-7. Do not merge the new feature branch or switch the normal run to FAST
-   without the user's review and approval. Fall back to the exact
-   pre-existing validated guided default if any gate fails.
+7. Original promotion requirement: do not deploy FAST before user review.
+   This gate was later satisfied by the successful full-resolution FP8
+   no-offload benchmark and the user's explicit final selection below.
 
 There are deliberately **no Salad bootstrap/download modifications** here.
 
