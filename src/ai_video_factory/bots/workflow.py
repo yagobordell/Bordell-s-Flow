@@ -21,7 +21,6 @@ from pydantic import BaseModel, ValidationError
 from ai_video_factory.config import settings
 from ai_video_factory.providers.base import StructuredTextProvider
 
-from .cta import CTAPlacement, validate_placement
 from .contracts import (
     B2Input,
     B2InputBlock,
@@ -34,6 +33,7 @@ from .contracts import (
     MaterializedBlock,
     ProfessionalB2Output,
 )
+from .cta import CTAPlacement, validate_placement
 
 # Transport adaptation to Responses API Structured Outputs.
 _STRUCTURED_TRANSPORT = (
