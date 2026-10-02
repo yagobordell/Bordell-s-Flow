@@ -5,7 +5,7 @@ param(
     [Parameter(Mandatory)][string]$ExpectedPinnedImage,
     [ValidateRange(0.5, 12)][double]$DurationSeconds = 2,
     [ValidateRange(0, 2147483646)][int]$SeedBase = 4242,
-    [ValidateSet("default", "default-silent-verify", "static-camera", "cfg-b2", "cfg-b2-silent", "cfg-b2-triton", "fast-vanilla-reference", "fast-vanilla", "fast-lowres", "fast-lowres-triton", "fast-lowres-none")][string]$I2VProfile = "default",
+    [ValidateSet("default", "default-silent-verify", "static-camera", "cfg-b2", "cfg-b2-silent", "cfg-b2-triton", "fast-vanilla-reference", "fast-vanilla", "fast-lowres", "fast-lowres-triton", "fast-lowres-none", "fast-vanilla-none", "fast-vanilla-triton", "fast-vanilla-nvfp4")][string]$I2VProfile = "default",
     [string]$CompareWithRunId = "",
     [switch]$RequireExactBaselineVideoSha,
     [string]$RunId = ([Guid]::NewGuid().ToString("N")),
