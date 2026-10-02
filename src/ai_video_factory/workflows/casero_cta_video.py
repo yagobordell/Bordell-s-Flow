@@ -10,17 +10,21 @@ from ai_video_factory.bots.contracts import B11Output
 from ai_video_factory.bots.cta import CTAPlacement, validate_placement
 from ai_video_factory.bots.workflow import materialize_blocks
 from ai_video_factory.compositor.static_preview import (
-    _align_stt_tokens, _tokens, _verified_asset,
+    _align_stt_tokens,
+    _tokens,
+    _verified_asset,
 )
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
 from ai_video_factory.inference.gpu_failures import DEFAULT_GPU_MAX_ATTEMPTS
 from ai_video_factory.inference.storage import sha256_file
 from ai_video_factory.providers.inference_jobs import (
-    InferenceJobExecutor, cached_inference_response,
+    InferenceJobExecutor,
+    cached_inference_response,
 )
 from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_RECOMMENDED_MAX_SECONDS,
-    LTX_A2V_STATIC_SAFE_GENERATION_PROFILE, LTX_A2V_TASK,
+    LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+    LTX_A2V_TASK,
 )
 from ai_video_factory.workers.ltx25.jobs import ltx_a2v_application_job_id
 
