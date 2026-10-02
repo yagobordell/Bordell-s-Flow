@@ -315,9 +315,10 @@ async def prepare_casero_cta(
         _require(directory, ready, "final")
         return {**ready, "directory": str(directory)}
     from time import perf_counter
+    cached_ebook_script = (directory / "script.json").is_file()
     started = perf_counter()
     text = await _ebook_text(directory, script, covers.files[0], provider, model, on_api_response)
-    if on_call_duration is not None:
+    if not cached_ebook_script and on_call_duration is not None:
         on_call_duration("CTA Ebook", None, perf_counter()-started)
     tts, _ = await asyncio.gather(
         asyncio.to_thread(_tts, directory, text, voice_id),
