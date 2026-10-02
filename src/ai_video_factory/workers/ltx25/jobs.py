@@ -5,7 +5,7 @@ import json
 import re
 
 from .a2v import LTX_A2V_GENERATION_PROFILE
-from .model import LTX_GENERATION_PROFILE, LTX_SUPPORTED_I2V_PROFILES
+from .model import LTX_PRODUCTION_I2V_PROFILE, LTX_SUPPORTED_I2V_PROFILES
 
 
 def ltx_video_application_job_id(
@@ -18,7 +18,7 @@ def ltx_video_application_job_id(
     height: int,
     fps: int,
     num_frames: int,
-    generation_profile: str = LTX_GENERATION_PROFILE,
+    generation_profile: str = LTX_PRODUCTION_I2V_PROFILE,
 ) -> str:
     """Return the stable application job ID for one LTX-2.5 generation request."""
 

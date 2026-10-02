@@ -14,7 +14,16 @@ from ai_video_factory.workers.ltx25.model import (
     LTX_CFG_BATCH2_SILENT_PROFILE,
     LTX_CFG_BATCH2_TRITON_PROFILE,
     LTX_DEFAULT_SILENT_VERIFY_PROFILE,
+    LTX_FAST_FULLRES_NO_OFFLOAD_PROFILE,
+    LTX_FAST_FULLRES_NVFP4_PROFILE,
+    LTX_FAST_FULLRES_TRITON_PROFILE,
+    LTX_FAST_LOWRES_NO_OFFLOAD_PROFILE,
+    LTX_FAST_LOWRES_PROFILE,
+    LTX_FAST_LOWRES_TRITON_PROFILE,
+    LTX_FAST_VANILLA_PROFILE,
+    LTX_FAST_VANILLA_REFERENCE_PROFILE,
     LTX_GENERATION_PROFILE,
+    LTX_PRODUCTION_I2V_PROFILE,
     LTX_STATIC_CAMERA_GENERATION_PROFILE,
 )
 from ai_video_factory.workflows.video_generation import (
@@ -128,11 +137,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--i2v-profile",
         choices=(
-            "default", "default-silent-verify", "static-camera",
+            "default", "legacy-guided", "default-silent-verify", "static-camera",
             "cfg-b2", "cfg-b2-silent", "cfg-b2-triton",
+            "fast-vanilla-reference", "fast-vanilla", "fast-lowres",
+            "fast-lowres-triton", "fast-lowres-none",
+            "fast-vanilla-none", "fast-vanilla-triton", "fast-vanilla-nvfp4",
         ),
         default="default",
-        help="Opt-in I2V experiment; normal Phase 8 remains unchanged.",
+        help="I2V recipe; default is validated full-resolution FP8 no-offload.",
     )
     parser.add_argument(
         "--output-dir",
@@ -184,12 +196,21 @@ def main() -> None:
         fps=args.fps,
         seed_base=args.seed_base,
         generation_profile={
-            "default": LTX_GENERATION_PROFILE,
+            "default": LTX_PRODUCTION_I2V_PROFILE,
+            "legacy-guided": LTX_GENERATION_PROFILE,
             "default-silent-verify": LTX_DEFAULT_SILENT_VERIFY_PROFILE,
             "static-camera": LTX_STATIC_CAMERA_GENERATION_PROFILE,
             "cfg-b2": LTX_CFG_BATCH2_PROFILE,
             "cfg-b2-silent": LTX_CFG_BATCH2_SILENT_PROFILE,
             "cfg-b2-triton": LTX_CFG_BATCH2_TRITON_PROFILE,
+            "fast-vanilla-reference": LTX_FAST_VANILLA_REFERENCE_PROFILE,
+            "fast-vanilla": LTX_FAST_VANILLA_PROFILE,
+            "fast-lowres": LTX_FAST_LOWRES_PROFILE,
+            "fast-lowres-triton": LTX_FAST_LOWRES_TRITON_PROFILE,
+            "fast-lowres-none": LTX_FAST_LOWRES_NO_OFFLOAD_PROFILE,
+            "fast-vanilla-none": LTX_FAST_FULLRES_NO_OFFLOAD_PROFILE,
+            "fast-vanilla-triton": LTX_FAST_FULLRES_TRITON_PROFILE,
+            "fast-vanilla-nvfp4": LTX_FAST_FULLRES_NVFP4_PROFILE,
         }[args.i2v_profile],
     )
 

@@ -48,7 +48,7 @@ from ai_video_factory.workers.ltx25.jobs import (
     ltx_video_application_job_id,
 )
 from ai_video_factory.workers.ltx25.model import (
-    LTX_GENERATION_PROFILE,
+    LTX_PRODUCTION_I2V_PROFILE,
     LTX_VIDEO_TASK,
     ltx_num_frames_for_duration,
 )
@@ -210,6 +210,7 @@ def _fingerprint(
     timeline: dict[str, Any], audio: dict[str, Any],
     assets: dict[tuple[int, str], Path], avatar: Path,
     *, profile: str | None = None,
+    i2v_profile: str | None = LTX_PRODUCTION_I2V_PROFILE,
 ) -> str:
     relevant = {
         "schema": _SCHEMA,
@@ -225,6 +226,13 @@ def _fingerprint(
         "negative_prompt": AVATAR_NEGATIVE_PROMPT,
         "fps": _FPS,
     }
+    # Only I2V-containing B2 runs need a new directory when its recipe changes;
+    # historical v4 fingerprints omitted this key entirely.
+    if i2v_profile is not None and any(
+        beat["visual_type"] == "media_video" and not beat.get("audio")
+        for beat in timeline["beats"]
+    ):
+        relevant["i2v_profile"] = i2v_profile
     canonical = json.dumps(relevant, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -327,7 +335,7 @@ def build_b2_video_plan(
             job_id = f"b2-{beat_ids[0]}-" + ltx_video_application_job_id(
                 shot_id=ordinal, prompt=prompt, keyframe_sha256=image_sha,
                 seed=seed, width=1280, height=720, fps=_FPS,
-                num_frames=num_frames, generation_profile=LTX_GENERATION_PROFILE,
+                num_frames=num_frames, generation_profile=LTX_PRODUCTION_I2V_PROFILE,
             )
             key = f"b2-ltx/inputs/images/{image_sha}.png"
             request = InferenceJobRequest(
@@ -341,7 +349,7 @@ def build_b2_video_plan(
                     content_type="video/mp4",
                 ),
                 parameters={
-                    "generation_profile": LTX_GENERATION_PROFILE,
+                    "generation_profile": LTX_PRODUCTION_I2V_PROFILE,
                     "prompt": prompt, "seed": seed,
                     "width": 1280, "height": 720, "fps": _FPS,
                     "num_frames": num_frames,
@@ -575,6 +583,7 @@ def _inherit_completed_v4_clips(
     old_digest = _fingerprint(
         timeline, audio, assets, avatar,
         profile=LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
+        i2v_profile=None,  # Exact historical v4 directory/fingerprint.
     )[:20]
     if old_digest == digest:
         return
@@ -600,6 +609,10 @@ def _inherit_completed_v4_clips(
 
     for job, record, old_record in zip(jobs, manifest["jobs"], previous_jobs, strict=True):
         if record["status"] == "completed" or old_record.get("status") != "completed":
+            continue
+        if job.kind == "i2v":
+            # Its promoted recipe changes output pixels and paid request identity;
+            # never masquerade an old guided I2V clip as new FP8 resident output.
             continue
         if (
             old_record.get("kind") != job.kind
@@ -635,9 +648,6 @@ def _inherit_completed_v4_clips(
                     ),
                 },
             })
-        else:
-            old_request = job.request
-            old_id = job.request.job_id
         if (
             old_record.get("job_id") != old_id
             or old_record.get("request_sha256") != old_request.fingerprint()
@@ -686,10 +696,7 @@ def _inherit_completed_v4_clips(
             duration_seconds=job.duration_seconds,
             replayed=True,
             reused_from_job_id=old_id,
-            reused_generation_profile=(
-                LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE
-                if job.kind == "a2v" else LTX_GENERATION_PROFILE
-            ),
+            reused_generation_profile=LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
         )
         _save_json(manifest_path, manifest)
         print(
@@ -705,6 +712,7 @@ def generate_b2_ltx_video(
     poll_seconds: float = 15.0, timeout_seconds: float = 21600.0,
     check_capacity: Callable[[], None] | None = None,
     check_a2v_worker: Callable[[], None] | None = None,
+    check_i2v_worker: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Durably submit exactly one LTX request per video beat/avatar group, then mux.
 
@@ -769,6 +777,13 @@ def generate_b2_ltx_video(
             raise B2VideoError("Refusing linked LTX output path")
         clip.parent.mkdir(parents=True, exist_ok=True)
         pending_jobs.append((job, record, clip))
+
+    # The promoted profile is only executable after a compatible immutable
+    # I2V image has been deployed. Do not submit its paid jobs to an old worker.
+    if check_i2v_worker is not None and any(
+        job.kind == "i2v" for job, _record, _clip in pending_jobs
+    ):
+        check_i2v_worker()
 
     # Preserve the existing fail-closed guard: no new input upload or paid job
     # publication happens while the singleton Capacity Controller is unhealthy.

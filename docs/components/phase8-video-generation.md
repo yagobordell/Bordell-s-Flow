@@ -45,6 +45,23 @@ Run directly with:
 python scripts/pipeline/run_phase8_videos.py
 ```
 
+Since the 2026-10-02 RTX 5090 5-second qualification, the normal Phase 8
+`--i2v-profile default` (also the implicit default) selects full-resolution
+FP8_CAST with `OffloadMode.NONE` and the upstream 8+3 vanilla denoiser.
+Its measured 5-second times were 99.82s and 83.79s (mean 91.81s),
+excluding worker startup; not an SLA. It keeps 1280x768 internal geometry
+and delivers silent 1280x720/24fps. Old guided CFG jobs remain available
+explicitly via `--i2v-profile legacy-guided`; they retain their own job IDs
+and R2 objects rather than masquerading as the new profile.
+
+IMPORTANT: Before starting **new** B2 I2V jobs, Prepare the dedicated stopped
+`ltx25_i2v` Salad group with the immutable digest of the reviewed **standard**
+Dockerfile FP8 benchmark image. Record that digest as
+`SALAD_LTX25_FP8_I2V_IMAGE` in `config/salad.env`. Both the managed B2 pipeline and the controlled Phase 8 wrapper check
+Salad actually serves this digest before publishing new I2V work.
+Do **not** use the separate NVFP4 experiment image for this setting.
+A2V and existing cached A2V results retain their profiles and group.
+
 Normal production uses `scripts/pipeline/run_phase8_videos_controlled.ps1`, which
 starts the dedicated `ltx25_i2v` group, not the avatar `ltx25` group. The
 transport marker is `postgres:ltx25_i2v` to prevent silent reuse of a manifest

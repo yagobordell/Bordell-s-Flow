@@ -35,7 +35,7 @@ from ai_video_factory.providers.job_queue import (
 )
 from ai_video_factory.workers.ltx25.jobs import ltx_video_application_job_id
 from ai_video_factory.workers.ltx25.model import (
-    LTX_GENERATION_PROFILE,
+    LTX_PRODUCTION_I2V_PROFILE,
     LTX_SUPPORTED_I2V_PROFILES,
     LTX_VIDEO_TASK,
     ltx_num_frames_for_duration,
@@ -99,7 +99,7 @@ def build_video_generation_plan(
     height: int = 720,
     fps: int = 24,
     seed_base: int = 42,
-    generation_profile: str = LTX_GENERATION_PROFILE,
+    generation_profile: str = LTX_PRODUCTION_I2V_PROFILE,
 ) -> list[VideoGenerationPlanItem]:
     """Build deterministic LTX queue requests for every canonical shot."""
 

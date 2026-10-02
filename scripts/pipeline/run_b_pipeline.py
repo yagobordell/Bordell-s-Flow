@@ -1028,6 +1028,47 @@ def _require_ltx_safe_a2v_worker() -> None:
         )
 
 
+def _require_ltx_safe_i2v_worker() -> None:
+    """Fail before paid I2V if Salad is not serving the reviewed FP8 resident image."""
+    repo_root = Path(__file__).resolve().parents[2]
+    load_dotenv(repo_root / "config" / "app.env", override=False)
+    load_dotenv(repo_root / "config" / "salad.env", override=False)
+    load_dotenv(repo_root / ".env", override=False)
+    expected = os.getenv("SALAD_LTX25_FP8_I2V_IMAGE", "").strip()
+    if not re.fullmatch(r"[^ ]+@sha256:[0-9a-fA-F]{64}", expected):
+        raise RuntimeError(
+            "Promoted full-resolution FP8 no-offload I2V requires "
+            "SALAD_LTX25_FP8_I2V_IMAGE=<repository>@sha256:<64-hex-digest> "
+            "in config/salad.env. Prepare the reviewed standard I2V image "
+            "before generating new I2V clips."
+        )
+    document = json.loads(
+        (repo_root / "deploy" / "salad" / "services.json").read_text(encoding="utf-8")
+    )
+    definition = document["services"]["ltx25_i2v"]
+    reviewed_repo = re.sub(r":[^/:]+$", "", definition["image"])
+    if not expected.startswith(f"{reviewed_repo}@sha256:"):
+        raise RuntimeError("Pinned FP8 I2V image must use the configured worker repository")
+    client = SaladClient(
+        SaladDispatchConfig(
+            api_key=settings.salad_api_key,
+            api_base_url=os.getenv("SALAD_API_BASE_URL", DEFAULT_SALAD_API_BASE_URL),
+            organization_name=os.getenv("SALAD_ORGANIZATION"),
+            project_name=os.getenv("SALAD_PROJECT"),
+            container_group_name=definition["group_name"],
+        )
+    )
+    deployed = client.describe_container_group()
+    container = deployed.get("container")
+    actual = container.get("image") if isinstance(container, dict) else None
+    if actual != expected:
+        raise RuntimeError(
+            "Salad LTX I2V worker image mismatch; no paid inference submitted. "
+            f"Expected reviewed FP8 image {expected}, group reports {actual!r}. "
+            "Prepare the exact digest for ltx25_i2v; leave A2V untouched."
+        )
+
+
 async def _video_if_ready(
     output: Path,
     report: dict[str, object],
@@ -1098,6 +1139,7 @@ async def _video_if_ready(
                     timeout_seconds=max(settings.inference_client_timeout_seconds, 21600.0),
                     check_capacity=_require_ltx_capacity_controller,
                     check_a2v_worker=_require_ltx_safe_a2v_worker,
+                    check_i2v_worker=_require_ltx_safe_i2v_worker,
                 )
         finally:
             queue.close()

@@ -6,6 +6,7 @@ import pytest
 from _video_generation_support import FakeQueue, FakeStorage, _inputs
 
 from ai_video_factory.providers.job_queue import QueueJobStatus
+from ai_video_factory.workers.ltx25.model import LTX_PRODUCTION_I2V_PROFILE
 from ai_video_factory.workflows.video_generation import (
     build_video_generation_plan,
     run_video_generation,
@@ -31,6 +32,7 @@ def test_plan_is_deterministic_and_preserves_ltx_frame_rules(tmp_path: Path) -> 
     assert [item.request.job_id for item in first] == [item.request.job_id for item in second]
     assert [item.request.parameters["num_frames"] for item in first] == [89, 65]
     assert [item.request.parameters["seed"] for item in first] == [43, 44]
+    assert first[0].request.parameters["generation_profile"] == LTX_PRODUCTION_I2V_PROFILE
     assert first[0].request.parameters["width"] == 1280
     assert first[0].request.parameters["height"] == 720
     assert first[0].request.parameters["fps"] == 24
@@ -113,3 +115,14 @@ def test_fanout_submits_all_jobs_before_polling_and_resume_skips_successes(
     )
     assert sum(queue.submit_counts.values()) == 2
     assert queue.operations == []
+
+
+
+def test_controlled_phase8_refuses_unreviewed_i2v_image_before_paid_capacity() -> None:
+    source = Path("scripts/pipeline/run_phase8_videos_controlled.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "SALAD_LTX25_FP8_I2V_IMAGE" in source
+    assert "Import-EnvFile" in source
+    assert "image=$ExpectedFP8Image" in source
+    assert source.index("image=$ExpectedFP8Image") < source.index("$WorkerManager @Start")

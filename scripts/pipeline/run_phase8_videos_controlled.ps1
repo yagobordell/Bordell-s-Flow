@@ -58,7 +58,25 @@ if ($Misses -eq 0) {
     exit 0
 }
 
+# Verify the reviewed immutable FP8 image before any new paid I2V work.
+. (Join-Path $RepoRoot "scripts\salad\_env_file.ps1")
+Import-EnvFile -Path ".env"
+$ExpectedFP8Image = [Environment]::GetEnvironmentVariable(
+    "SALAD_LTX25_FP8_I2V_IMAGE", [EnvironmentVariableTarget]::Process
+)
+if ($ExpectedFP8Image -notmatch '^[^\s@]+@sha256:[0-9a-fA-F]{64}$') {
+    throw "Set SALAD_LTX25_FP8_I2V_IMAGE to the reviewed immutable FP8 worker digest."
+}
 $Services = Get-Content -LiteralPath $ServicesPath -Raw | ConvertFrom-Json
+$ImageRepo = [string]$Services.services.ltx25_i2v.image -replace ':[^/:]+$', ''
+if (-not $ExpectedFP8Image.StartsWith("${ImageRepo}@sha256:")) {
+    throw "Pinned FP8 digest is not from the configured I2V worker repository."
+}
+$I2VStatus = (& $WorkerManager -Action Status -Service ltx25_i2v -NonInteractive | Out-String)
+if ($LASTEXITCODE -ne 0 -or
+    $I2VStatus -notmatch [regex]::Escape("image=$ExpectedFP8Image")) {
+    throw "Salad I2V image mismatch; Prepare the reviewed digest before GPU allocation. $I2VStatus"
+}
 $MaxReplicas = [int]$Services.services.ltx25_i2v.capacity.max_replicas
 $ReplicaCount = [Math]::Max(1, [Math]::Min($Misses, $MaxReplicas))
 $Start = @{ Action = "Start"; Service = "ltx25_i2v"; Replicas = $ReplicaCount }
