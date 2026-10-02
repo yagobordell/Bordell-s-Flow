@@ -34,7 +34,8 @@ _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", flags=re.ASCII)
 _IMAGE_PREFIX = "iphone 6 photo done by an elderly:  "
 _PROFESSIONAL_IMAGE_PREFIX = (
     "Render the following scene as authentic high-end iPhone 16/17 Pro Max photography, "
-    "not DSLR or cinematic photography. Preserve the described scene, composition, "
+    "not DSLR or cinematic photography.  instagram rhode style. "
+    "Preserve the described scene, composition, "
     "relationships, lighting, and mood, realistic skin texture, natural facial imperfections, "
     "authentic everyday environment, documentary feel, not polished, not cinematic, "
     "not luxury editorial."
