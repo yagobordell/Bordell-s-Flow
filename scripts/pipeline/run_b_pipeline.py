@@ -2104,11 +2104,6 @@ async def main() -> None:
     if visual_style != "casero" and args.ebook_cover:
         raise SystemExit("--ebook-cover solo se admite en modo casero.")
     covers = None
-    if visual_style == "casero" and args.from_stage == "B1.1":
-        data_root = args.avatars_dir if managed_target is not None else args.avatars_dir.parent
-        covers = ensure_ebook_covers(
-            avatar_file, data_dir=data_root, names=args.ebook_cover,
-        )
     if not settings.openai_api_key:
         raise SystemExit("OPENAI_API_KEY is missing")
     if (
@@ -2169,6 +2164,12 @@ async def main() -> None:
         avatar_file = organize_avatar(
             avatar_file, args.avatars_dir, reference_audio=voice.audio_filename
         )
+        if visual_style == "casero":
+            ensure_avatar_meta(avatar_file, args.avatars_dir)
+            data_root = args.avatars_dir if managed_target is not None else args.avatars_dir.parent
+            covers = ensure_ebook_covers(
+                avatar_file, data_dir=data_root, names=args.ebook_cover,
+            )
         output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
     else:
         output = _prepare_resume_output(output_root, script_file, avatar_file=avatar_file)
