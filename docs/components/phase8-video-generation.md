@@ -57,8 +57,8 @@ and R2 objects rather than masquerading as the new profile.
 IMPORTANT: Before starting **new** B2 I2V jobs, Prepare the dedicated stopped
 `ltx25_i2v` Salad group with the immutable digest of the reviewed **standard**
 Dockerfile FP8 benchmark image. Record that digest as
-`SALAD_LTX25_FP8_I2V_IMAGE` in `config/salad.env`. The managed B2 pipeline
-checks Salad actually serves this digest before publishing new I2V work.
+`SALAD_LTX25_FP8_I2V_IMAGE` in `config/salad.env`. Both the managed B2 pipeline and the controlled Phase 8 wrapper check
+Salad actually serves this digest before publishing new I2V work.
 Do **not** use the separate NVFP4 experiment image for this setting.
 A2V and existing cached A2V results retain their profiles and group.
 
