@@ -2421,6 +2421,7 @@ async def main() -> None:
         if (
             visual_style == "casero" and stop_stage is None
             and not getattr(args, "no_audio", False)
+            and not args.skip_images
         ):
             if args.from_stage != "B1.1":
                 if not (output / "CTA" / "output.json").is_file():
