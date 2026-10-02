@@ -59,11 +59,15 @@ within a continuous occasion only when continuity calls for them.
 Professional B2 makes no special branding or packaging choices: the scene
 description is driven by the beat, not by brand-specific positive or negative
 instructions. The professional grid adds no such rules. The professional bot's
-general scene-prompt instructions now discourage generic negative lists
-and stock disclaimers about irrelevant scene details: exclusions should
-prevent only a concrete mistake specific to that beat, not introduce
-new content restrictions. This does not prescribe whether ordinary scene
-details may appear. The legacy `casero` prompt and grid are unchanged.
+general scene-prompt instructions require affirmative scene descriptions
+instead of generated negative clauses, exclusions or stock disclaimers.
+When a scene includes a phone, screen or document, B2 describes natural
+handling and orientation; app/page/document content is kept in a separate
+brief context note rather than making the screen/page face the camera.
+This applies to still-image and video-animation prompts. Professional
+grid requests preserve the existing Voice over context unchanged, but
+panel descriptions determine the visible scenes and screen orientation.
+The legacy `casero` prompt and grid are unchanged.
 
 A clearly visible presenter making a simple, speaking-compatible
 demonstration can use `audio: true`, including on a `media_video` beat;
@@ -483,7 +487,7 @@ del prompt de B2. El modo `casero` conserva el prefijo histórico
 solo la descripción documental de la escena y `effective_image_prompt()`
 antepone:
 
-`Render the following scene as authentic high-end iPhone 16/17 Pro Max photography, not DSLR or cinematic photography. Preserve the described scene, composition, relationships, lighting, and mood, realistic skin texture, natural facial imperfections, authentic everyday environment, documentary feel, not polished, not cinematic, not luxury editorial.`
+`Render the following scene as authentic high-end iPhone 16/17 Pro Max photography, not DSLR or cinematic photography.  instagram rhode style. Preserve the described scene, composition, relationships, lighting, and mood, realistic skin texture, natural facial imperfections, authentic everyday environment, documentary feel, not polished, not cinematic, not luxury editorial.`
 
 Cuando B2 marca continuidad con `1. `, `2. `, etc., el número permanece como
 primer token y el prefijo se inserta inmediatamente después. Los beats
