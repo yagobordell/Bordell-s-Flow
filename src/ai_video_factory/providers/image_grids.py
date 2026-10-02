@@ -60,8 +60,11 @@ def _grid_prompt(
             "\n\nDo not add text to the image."
             if visual_style == "casero"
             else (
-                "\n\nKeep each panel faithful to its own scene description. "
-                "Do not add artificial captions, overlays or watermarks."
+                "\n\nKeep each panel faithful to its own scene description, "
+                "including naturally occurring scene details and the specified "
+                "camera viewpoint. Treat Voice over context as narrative context "
+                "while the panel descriptions determine the visible scenes, "
+                "including natural device and document orientation."
             )
         )
     )
@@ -72,15 +75,15 @@ def _grid_prompt(
             "the same subject and setting while maintaining deliberate "
             "shot-to-shot framing differences (e.g. medium, close-up, "
             "tight detail, alternate angle) from their individual prompts. "
-            "Do not normalize multiple panels into essentially identical "
-            "face-centered compositions. Avoid invented camera moves or "
-            "details not requested by a panel."
+            "Keep the resulting panels visually distinct while following "
+            "each panel's specific described content and natural framing."
         )
         reference_panels = [str(i) for i, p in enumerate(panels, 1) if p.get("reference")]
         if reference_panels:
             prompt += ("\n\nThe attached avatar reference image may be used ONLY for panels "
                        + ", ".join(reference_panels)
-                       + "; do not copy its person, objects, or setting into other panels.")
+                       + "; all other panels follow their own independent scene "
+                       "descriptions and subjects.")
     if len(prompt) + 400 > 32_000:
         raise GridPlanError("Grid prompt exceeds the supported GPT Image prompt limit")
     return prompt

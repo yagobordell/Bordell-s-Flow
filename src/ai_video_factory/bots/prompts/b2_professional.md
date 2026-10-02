@@ -221,12 +221,44 @@ Write the shortest self-contained prompt that fully controls:
 - the facial expression and gaze/attention appropriate to the scene whenever a
   referenced person's face is visible;
 - continuity details when required;
-- a narrowly targeted exclusion ONLY if a concrete, beat-specific mistake
-  would materially misrepresent the scene. Do not add generic negative lists
-  or stock disclaimers about incidental scene details. Describe what should
-  appear instead of inventing default restrictions on what may appear.
+- affirmative scene details that directly support the beat's visual purpose.
+
+Write every image prompt as an affirmative description of the intended scene,
+subjects, actions and composition. Describe the desired result directly; omit
+negative prompt clauses, preventive exclusions and routine disclaimers.
 
 Do not add decorative story facts merely to make the image more vivid.
+
+Screens and documents: context belongs outside the visible scene
+
+Apply this rule consistently to phones, tablets, laptops, desktop monitors,
+televisions, other electronic screens, printed papers and documents. When the
+narration mentions an app, website, message, chart, report, document text or
+any other screen/page content, use that information to understand the scene.
+Write the visible scene primarily as a person naturally holding, using,
+looking at or handling the device or document, with the device/page oriented
+naturally toward that person. Describe the camera viewpoint from the
+observer's side of this ordinary interaction.
+
+Place specific content details in a short, separate parenthetical CONTEXT
+note when they matter for the narrative, rather than describing them as
+visible text, interface layouts, graphics or a camera-facing surface.
+Examples:
+- "A man relaxing on his sofa, holding his smartphone naturally in one
+  hand and looking down at it, viewed from across the room.
+  (For context: he is scrolling through Instagram.)"
+- "A woman seated at her desk, reading a printed document held naturally
+  in both hands, viewed from a three-quarter side angle.
+  (For context: she is reviewing a financial report about declining revenue.)"
+- "A student working at a laptop at a cafe, typing while looking at the
+  laptop in a natural seated position.
+  (For context: the student is reading an online article about the topic.)"
+
+Apply the same separation in video_prompt: describe the visible hand, body
+and device/document movement from the starting image, with the specific
+app, page or document content retained only as parenthetical context when
+needed. A screen or document remains oriented naturally toward its user
+through the action. Preserve the upstream narration unchanged.
 
 Video animation prompt (video_prompt)
 
@@ -236,35 +268,32 @@ duration. Describe one coherent beat-supported action from that frame:
 what moves, in which direction/order, how fast, facial expression and gaze,
 natural hand/body gestures, and how the shot should show the movement.
 Keep identity, clothing, objects, setting, shot size, angle and framing
-consistent with the supplied starting image. Use a natural single take,
-not multiple scenes or an invented time jump.
+consistent with the supplied starting image. Show one natural continuous
+real-time take.
 
 When audio=false, video_prompt is sent DIRECTLY to I2V as the positive
 animation instruction. Give concrete, visual, physically plausible
 motion: e.g. an applicator gently touches the cheek, blends the product
-in two small controlled dabs, then eases away. People in observational
-I2V may exchange natural looks or speak to each other where the
-established scene warrants it, but NEVER describe an unsynchronized
-presenter talking to camera, delivering a monologue or addressing the
-viewer. Keep narration as voice-over. Do not ask everyone to keep
-their mouths unnaturally closed. Prefer natural restrained gestures
-and real-time pacing over dramatic posing, cuts or camera tricks.
+in two small controlled dabs, then eases away. In observational
+I2V, describe task-focused behavior, natural gaze and restrained
+gestures while the narration plays as voice-over. People may exchange
+natural looks or converse with each other when the established scene
+warrants it. Keep the movement continuous and naturally paced.
 
 When audio=true, video_prompt is instead sent to the A2V speaking
 generator alongside the actual beat speech audio. Describe facial
 engagement, mouth visibility, natural lip/jaw movement in synchrony with
 the provided audio, restrained head and hand gestures compatible with
-speaking and the simple accompanying action. Do not instruct silence or
-closed mouths, and do not demand detailed independent motion that
-speaking-focused A2V cannot reliably guarantee. The canonical
+speaking and the simple accompanying action. Give A2V speaking-compatible
+actions and natural synced mouth movement; detailed independent motion
+remains secondary to reliable speech. The canonical
 speaking-to-camera prompt and static-camera recipe remain controlled
 by application code; video_prompt adds beat-specific details to it.
 
-video_prompt MUST be a pure animation instruction, not an image prompt:
-do not repeat global photographic styling, re-describe unrelated props,
-prepend continuity numbers or merely copy the narration. A physical
-"slight zoom-in" belongs to downstream Ken Burns for static images;
-do not demand dynamic zoom/dolly on the pinned A2V camera.
+video_prompt MUST be a pure beat-specific animation instruction.
+Describe movement developing from the image and use the pinned,
+static-camera composition for A2V. Downstream Ken Burns handles
+slight zoom effects on static images.
 
 reference
 
@@ -296,7 +325,9 @@ If the face is not visible (hands-only or rear view), do not invent instructions
 for an unseen expression. This rule applies to any referenced visible person,
 not merely the presenter.
 
-reference = true does not mean the presenter must appear. If the reference is used only for an object or environment and no person should appear, say so explicitly.
+reference = true does not mean the presenter must appear. If the reference is
+used only for an object or environment, describe the intended object-only
+or environment-only shot positively.
 
 Presenter-led demonstration casting
 
@@ -537,9 +568,13 @@ Before output, review the block for:
 - sequence shot progression: adjoining numbered prompts preserve continuity
   while avoiding near-duplicate framing and emphasizing distinct steps;
 - redundancy: repeated visuals remain only when repetition is narratively useful;
-- prompt discipline: do not add generic prohibitions or routine disclaimers
-  about incidental scene details; any negative constraint must prevent a
-  concrete, beat-specific material error;
+- prompt discipline: image and video prompts use affirmative, scene-specific
+  descriptions of the intended result, free of exclusion clauses and stock
+  negative-prompt lists;
+- screens/documents: naturally oriented phones, other screens and documents
+  are described as the person uses them, with specific app/page/document
+  content separated into a brief parenthetical context note; apply this
+  rule to still frames and video animation;
 - reference correctness: every dependency on the supplied image is explicit and
   unrelated source-image style, expression, background or pose are not copied;
 - referenced visible faces: a natural beat-specific expression and relevant
@@ -562,11 +597,12 @@ Do not optimize whole-script format percentages. Runs of any format are acceptab
 
 Minimal reference example
 
-If the supplied reference shows a distinctive dark navy two-door car needed by the beat, but the presenter should not appear:
+If the supplied reference shows a distinctive dark navy two-door car
+and the beat needs an object-only shot:
 
 {
   "visual_type": "media_image",
-  "prompt": "Use the supplied reference only to preserve the visible dark navy two-door car and its recognizable body shape. Show that car alone on a residential driveway, front three-quarter view, entire car visible. No person or extra cars.",
+  "prompt": "Use the supplied reference only to preserve the visible dark navy two-door car and its recognizable body shape. Show an object-focused photograph of that car on a residential driveway, front three-quarter view, entire car visible.",
   "reference": true,
   "audio": false
 }
@@ -590,7 +626,7 @@ voice-over, an appropriate media_video output could use:
 {
   "visual_type": "media_video",
   "prompt": "2. Use the reference to preserve the presenter's identity. At the same vanity and in the same outfit, frame a tight cheek-and-hand close-up just as her fingertip touches a thin layer of moisturizer. She looks toward the mirror with a focused, relaxed expression.",
-  "video_prompt": "From the supplied starting frame, the presenter uses two slow fingertip passes to smooth the thin moisturizer layer over the cheek, then gently lifts her hand away. Natural wrist motion and subtle blinking; eyes remain on the mirror. One steady close-up take, continuous action without cuts or addressing the viewer.",
+  "video_prompt": "From the supplied starting frame, the presenter uses two slow fingertip passes to smooth the thin moisturizer layer over the cheek, then gently lifts her hand away. Natural wrist motion and subtle blinking; eyes remain on the mirror. One steady close-up take centered on the continuous action and the mirror-facing subject.",
   "reference": true,
   "audio": false
 }
@@ -633,10 +669,16 @@ Before emitting success, verify:
   the reference photo's original facial expression is not copied by default;
 - reference=true prompts without a visible face are exempt from facial-expression
   instructions (for example, objects or hands-only details);
-- prompts that use reference only for object/environment continuity exclude the presenter when appropriate;
+- reference-only object/environment prompts describe the intended
+  object-only or environment-only scene positively;
+- prompts involving phones, other screens or documents focus on natural use
+  and orientation, separating the specific on-screen/on-page content
+  into parenthetical context rather than a visible-content description;
+- both image and animation prompts follow affirmative scene writing,
+  with video_prompt describing only beat-specific movement;
 - image and animation instructions are separate; media_video has a
   self-contained video_prompt while other visual types use native null;
-- no unrelated artificial overlays were added; narration is unchanged;
+- scene details are relevant to the beat; narration is unchanged;
 - avatar and avatar_media have audio = true;
 - media_image ALWAYS has audio=false and does not request visible speaking;
   active referenced presenter demonstrations favor media_video instead;

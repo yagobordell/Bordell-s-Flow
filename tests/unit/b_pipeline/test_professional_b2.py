@@ -20,7 +20,7 @@ from ai_video_factory.bots.contracts import (
     ProfessionalVisualBeat,
 )
 from ai_video_factory.bots.workflow import run_b_pipeline
-from ai_video_factory.providers.image_grids import plan_image_jobs
+from ai_video_factory.providers.image_grids import _grid_prompt, plan_image_jobs
 from ai_video_factory.providers.openai import OpenAIProvider
 from ai_video_factory.providers.openai_batch_images import (
     ImageOptions,
@@ -101,8 +101,13 @@ def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions()
     assert "The LAST beat of every type=close block MUST" in prompt
     assert "prompt=null, video_prompt=null, reference=false, audio=true" in prompt
     assert "skip discretionary steps 3-12" in prompt
-    assert "Do not add generic negative lists" in prompt
-    assert "do not add generic prohibitions or routine disclaimers" in prompt
+    assert "Write every image prompt as an affirmative description" in prompt
+    assert "omit\nnegative prompt clauses, preventive exclusions" in prompt
+    assert "Screens and documents: context belongs outside the visible scene" in prompt
+    assert "(For context: he is scrolling through Instagram.)" in prompt
+    assert "(For context: she is reviewing a financial report about declining revenue.)" in prompt
+    assert "A screen or document remains oriented naturally toward its user" in prompt
+    assert "No person or extra cars." not in prompt
     assert "It never forces avatar, media, or any opening/closing anchor" not in prompt
     # Avoid replacing one brand rule with another, including in this correction.
     for word in ("brands", "branding", "logos", "packaging"):
@@ -396,7 +401,8 @@ def test_professional_image_requests_send_exact_prompts_and_explicit_reference(
     assert len(calls) == 2
     style = (
         "Render the following scene as authentic high-end iPhone 16/17 Pro Max photography, "
-        "not DSLR or cinematic photography. Preserve the described scene, composition, "
+        "not DSLR or cinematic photography.  instagram rhode style. "
+        "Preserve the described scene, composition, "
         "relationships, lighting, and mood, realistic skin texture, natural facial imperfections, "
         "authentic everyday environment, documentary feel, not polished, not cinematic, "
         "not luxury editorial."
@@ -435,12 +441,54 @@ def test_professional_grid_never_adds_amateur_header_and_scopes_reference() -> N
     for token in ("brand", "logo", "packaging", "claim"):
         assert token not in grid["description"].lower()
     assert "Do not add visible text unless" not in grid["description"]
-    assert "Do not add artificial captions, overlays or watermarks" in grid["description"]
+    assert "Treat Voice over context as narrative context" in grid["description"]
+    assert "natural device and document orientation" in grid["description"]
+    assert "Do not add artificial captions" not in grid["description"]
     assert "Respect EACH panel's own requested shot scale" in grid["description"]
-    assert "Do not normalize multiple panels" in grid["description"]
+    assert "Keep the resulting panels visually distinct" in grid["description"]
+    assert "Do not normalize multiple panels" not in grid["description"]
     assert effective_image_prompt(
         grid["description"], visual_style="profesional"
-    ).startswith("Render the following scene as authentic high-end iPhone 16/17 Pro Max")
+    ).startswith(
+        "Render the following scene as authentic high-end iPhone 16/17 Pro Max "
+        "photography, not DSLR or cinematic photography.  instagram rhode style."
+    )
+
+
+def test_professional_grid_keeps_original_voice_over_as_context() -> None:
+    panels = [
+        {
+            "beat_id": "1B",
+            "description": (
+                "1. A person casually holding a smartphone while looking at it, "
+                "viewed from across the room. "
+                "(For context: the person is scrolling through Instagram.)"
+            ),
+            "text": "The person is scrolling through Instagram.",
+            "reference": False,
+        },
+        {
+            "beat_id": "1C",
+            "description": (
+                "2. A woman reading a printed sheet held in her own hands. "
+                "(For context: the page contains a quarterly financial report.)"
+            ),
+            "text": "She reads a quarterly financial report.",
+            "reference": False,
+        },
+    ]
+    grid_prompt = _grid_prompt(panels, 2, 1, visual_style="profesional")
+    assert (
+        "Voice over context:\n1B: The person is scrolling through Instagram."
+        "\n1C: She reads a quarterly financial report."
+    ) in grid_prompt
+    assert "panel descriptions determine the visible scenes" in grid_prompt
+    assert "natural device and document orientation" in grid_prompt
+    assert "Do not add artificial captions" not in grid_prompt
+    assert (
+        "photography, not DSLR or cinematic photography.  instagram rhode style."
+        in effective_image_prompt(grid_prompt, visual_style="profesional")
+    )
 
 
 def test_audio_ownership_and_regenerated_avatar_split_ltx_jobs() -> None:
