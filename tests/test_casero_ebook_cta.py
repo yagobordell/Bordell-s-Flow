@@ -95,3 +95,78 @@ def test_cta_audio_first_half_is_exactly_half_of_even_pcm_samples(tmp_path: Path
         assert full.getnframes() == 48002
         assert half.getnframes() * 2 == full.getnframes()
         assert half.getframerate() == 48000
+
+
+def test_casero_cta_launches_concurrently_with_b11_and_professional_skips() -> None:
+    """A one-slot B concurrency limit must not serialize B1.1 against CTA."""
+    import asyncio
+
+    from ai_video_factory.bots.contracts import B11Output
+    from ai_video_factory.bots.workflow import run_b_pipeline
+
+    source = "Intro one. Start main."
+    valid_b11 = B11Output.model_validate({
+        "pipeline_stage": "B1.1",
+        "narrative_core": {"central_question": "Q", "final_answer": "A"},
+        "blocks": [
+            {
+                "block_id": 1, "type": "intro",
+                "emotional_entry": "neutral", "emotional_exit": "ready",
+                "span": {"first_words": "Intro one.", "last_words": "Intro one."},
+            },
+            {
+                "block_id": 2, "type": "development",
+                "emotional_entry": "ready", "emotional_exit": "focused",
+                "span": {"first_words": "Start main.", "last_words": "Start main."},
+            },
+        ],
+        "error": None,
+    })
+
+    class ConcurrentProvider:
+        def __init__(self, concurrent: bool) -> None:
+            self.concurrent = concurrent
+            self.b11_started = asyncio.Event()
+            self.cta_started = asyncio.Event()
+            self.calls: list[str] = []
+
+        async def generate_structured(self, **kwargs):
+            output_type = kwargs["output_type"]
+            self.calls.append(output_type.__name__)
+            if output_type is B11Output:
+                self.b11_started.set()
+                if self.concurrent:
+                    await asyncio.wait_for(self.cta_started.wait(), 1.0)
+                return valid_b11
+            assert output_type is CTAPlacement
+            self.cta_started.set()
+            await asyncio.wait_for(self.b11_started.wait(), 1.0)
+            return CTAPlacement(
+                previous_sentence="Intro one.", next_sentence="Start main.",
+            )
+
+    async def exercise(style: str, expected: list[str]) -> dict:
+        provider = ConcurrentProvider(concurrent=style == "casero")
+        outputs: dict[str, dict] = {}
+        result = await asyncio.wait_for(
+            run_b_pipeline(
+                source, provider=provider, max_parallel_calls=1,
+                visual_style=style,
+                enable_casero_cta=True,
+                stop_after="B1.1",
+                on_output=lambda stage, block_id, payload: outputs.__setitem__(
+                    stage, payload
+                ),
+            ),
+            timeout=2.0,
+        )
+        assert result.b11.narrative_core.central_question == "Q"
+        assert sorted(provider.calls) == sorted(expected)
+        return outputs
+
+    casero = asyncio.run(exercise("casero", ["B11Output", "CTAPlacement"]))
+    assert casero["CTA"]["previous_sentence"] == "Intro one."
+    assert casero["CTA"]["next_sentence"] == "Start main."
+    assert casero["CTA"]["insert_after_character"] == len("Intro one.")
+    professional = asyncio.run(exercise("profesional", ["B11Output"]))
+    assert "CTA" not in professional
