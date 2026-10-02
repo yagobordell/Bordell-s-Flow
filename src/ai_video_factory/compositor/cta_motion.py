@@ -105,7 +105,6 @@ def _render_frame(
         _paste(bg, qr.resize((size, size), Image.Resampling.NEAREST).convert("RGBA"), qx, qy)
         if t >= 4.7:
             wave = (math.sin((t-4.7)*math.pi/1.2)+1)/2
-            r = size//2 + round(6*wave)
             for x,y,dx,dy in ((qx-8,qy-8,1,1),(qx+size+8,qy-8,-1,1),
                               (qx-8,qy+size+8,1,-1),(qx+size+8,qy+size+8,-1,-1)):
                 d.line((x,y,x+dx*(19+round(5*wave)),y),fill=GOLD,width=4)
