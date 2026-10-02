@@ -229,5 +229,44 @@ Blackwell GPU capability, compiled native kernels and the precise
 official checkpoint. NVFP4-prequant uses NONE offload because the
 upstream CPU streamer cannot load its companion-key quantization.
 
-Do not merge or choose a production profile before stable repeated
-5s RTX 5090 inference and visual validation with several prompts.
+At the time of those experiments, no promotion decision was made.
+The subsequent final selection was full-resolution FP8_CAST with
+OffloadMode.NONE after the user reviewed all generated outputs and the
+five-second benchmark confirmed 99.82s and 83.79s (91.81s mean). This
+profile now owns the **normal I2V default**, with a distinct immutable
+job identity and B2 run fingerprint. It does not affect A2V.
+
+## Selected production rollout (2026-10-02)
+
+Use the existing **standard** Dockerfile FP8 image already published for the
+successful benchmark; do not use Dockerfile.nvfp4. The reference model,
+8+3 schedule, 1280x768 internal grid, final silent 1280x720/24fps delivery,
+and eager decoder are unchanged. The 2 repeated FP8 no-offload MP4 SHA-256
+digests matched the corresponding FP8 vanilla controls for their seeds.
+Reserved CUDA peak was approximately 23.65 GB on RTX 5090 32GB.
+
+The code default changes only new I2V job requests. Legacy guided I2V job
+identities remain recognized and queryable. The B2 run fingerprint changes
+only when there are I2V beats. Old guided I2V clips are not silently
+inherited as new FP8 outputs, while compatible A2V clip reuse remains.
+
+The production switch requires an **operator deployment step** because a
+Git merge cannot replace an already-running pinned Salad container.
+Stop the capacity controller while mutating the group, finish existing
+jobs, then prepare the **stopped ltx25_i2v group only** with the reviewed
+standard FP8 image digest. Copy that exact digest to
+`SALAD_LTX25_FP8_I2V_IMAGE` in `config/salad.env` on the host:
+
+~~~powershell
+$FP8Digest = (Get-Content (Join-Path $env:TEMP "ltx-fp8-build.json") -Raw |
+    ConvertFrom-Json).'containerimage.digest'
+$FP8PinnedImage = "docker.io/yagobordell/ai-video-factory@${FP8Digest}"
+docker buildx imagetools inspect $FP8PinnedImage
+.\scripts\salad\manage_salad_worker.ps1 -Action Prepare -Service ltx25_i2v -SkipBuild -PinnedImage $FP8PinnedImage -EnvFile .env -NonInteractive
+.\scripts\salad\manage_salad_worker.ps1 -Action Status -Service ltx25_i2v -EnvFile .env -NonInteractive
+~~~
+
+Do not edit the A2V `ltx25` group. Keep all extra research profiles opt-in:
+Triton and NVFP4 were benchmarked but **not** selected; low-resolution
+profiles likewise remain outside production. Cold Salad initialization
+and download times were excluded from the quoted per-video latency.
