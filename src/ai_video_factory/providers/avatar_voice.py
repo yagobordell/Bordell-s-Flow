@@ -54,9 +54,9 @@ def valid_voice_provider(value: str) -> str:
 
 def _choose_provider() -> str:
     print(
-        "Selecciona el proveedor de voz para Casero:\\n"
-        "  1. Fish Audio\\n"
-        "  2. MiniMax\\n"
+        "Selecciona el proveedor de voz para Casero:\n"
+        "  1. Fish Audio\n"
+        "  2. MiniMax\n"
         "  3. ElevenLabs",
         flush=True,
     )
