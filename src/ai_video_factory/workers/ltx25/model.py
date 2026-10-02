@@ -835,7 +835,9 @@ class DirectLTX25Backend:
             from .nvfp4_runtime import require_nvfp4_runtime
 
             require_nvfp4_runtime(bindings.torch, self._device)
-            transformer_path = self._model_files.transformer.parent / _NVFP4_TRANSFORMER.rsplit("/", 1)[-1]
+            transformer_path = (
+                self._model_files.transformer.parent / _NVFP4_TRANSFORMER.rsplit("/", 1)[-1]
+            )
             if not transformer_path.is_file():
                 raise FileNotFoundError(
                     f"Opt-in NVFP4 checkpoint is missing: {transformer_path}. "
