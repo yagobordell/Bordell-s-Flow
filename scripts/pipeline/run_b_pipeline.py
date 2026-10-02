@@ -129,7 +129,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--tts-provider", choices=("fishaudio", "minimax", "elevenlabs"),
-        help="Solo Casero: 1=Fish Audio, 2=MiniMax, 3=ElevenLabs. Si falta y es interactivo, pregunta primero.",
+        help=(
+            "Solo Casero: 1=Fish Audio, 2=MiniMax, 3=ElevenLabs. "
+            "Si es interactivo, pregunta antes del ID."
+        ),
     )
     voices = parser.add_mutually_exclusive_group()
     voices.add_argument(
