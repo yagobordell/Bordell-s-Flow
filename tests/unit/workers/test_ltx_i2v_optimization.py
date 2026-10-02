@@ -20,6 +20,7 @@ from ai_video_factory.workers.ltx25.model import (
     LTX_CFG_BATCH2_TRITON_PROFILE,
     LTX_DEFAULT_SILENT_VERIFY_PROFILE,
     LTX_GENERATION_PROFILE,
+    LTX_PRODUCTION_I2V_PROFILE,
     LTX_SUPPORTED_I2V_PROFILES,
     DirectLTX25Backend,
     LTXVideoParameters,
@@ -40,6 +41,7 @@ def test_experimental_profiles_are_distinct_and_keep_default_fingerprint() -> No
     )
     profiles = (
         LTX_GENERATION_PROFILE,
+        LTX_PRODUCTION_I2V_PROFILE,
         LTX_DEFAULT_SILENT_VERIFY_PROFILE,
         LTX_CFG_BATCH2_PROFILE,
         LTX_CFG_BATCH2_SILENT_PROFILE,
@@ -48,6 +50,9 @@ def test_experimental_profiles_are_distinct_and_keep_default_fingerprint() -> No
     identities = {ltx_video_application_job_id(**request, generation_profile=p) for p in profiles}
     assert len(identities) == len(profiles)
     assert ltx_video_application_job_id(**request) == ltx_video_application_job_id(
+        **request, generation_profile=LTX_PRODUCTION_I2V_PROFILE
+    )
+    assert ltx_video_application_job_id(**request) != ltx_video_application_job_id(
         **request, generation_profile=LTX_GENERATION_PROFILE
     )
     for profile in LTX_SUPPORTED_I2V_PROFILES:
