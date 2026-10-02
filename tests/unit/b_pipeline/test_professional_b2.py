@@ -479,8 +479,8 @@ def test_professional_grid_keeps_original_voice_over_as_context() -> None:
     ]
     grid_prompt = _grid_prompt(panels, 2, 1, visual_style="profesional")
     assert (
-        "Voice over context:\\n1B: The person is scrolling through Instagram."
-        "\\n1C: She reads a quarterly financial report."
+        "Voice over context:\n1B: The person is scrolling through Instagram."
+        "\n1C: She reads a quarterly financial report."
     ) in grid_prompt
     assert "panel descriptions determine the visible scenes" in grid_prompt
     assert "natural device and document orientation" in grid_prompt
