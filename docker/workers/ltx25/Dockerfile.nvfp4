@@ -101,7 +101,7 @@ RUN nvcc --version \
        python3 -m pip install --break-system-packages --no-build-isolation \
        --no-deps /opt/ltx/packages/ltx-kernels \
     && python3 -c \
-       "import importlib.util; assert importlib.util.find_spec('nvfp4_cpp') is not None; import ltx_kernels.nvfp4; print('NVFP4_EXTENSION_BUILT_SM120')" 
+       "import torch; import nvfp4_cpp; import ltx_kernels.nvfp4; print('NVFP4_EXTENSION_BUILT_SM120')" 
 
 COPY docker/workers/ltx25/download_models.sh /usr/local/bin/download-models
 COPY docker/workers/ltx25/model-manifest.json /usr/local/share/ltx25-model-manifest.json
