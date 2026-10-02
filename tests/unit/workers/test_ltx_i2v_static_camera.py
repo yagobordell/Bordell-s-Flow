@@ -13,13 +13,14 @@ from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
 from ai_video_factory.workers.ltx25.jobs import ltx_video_application_job_id
 from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
+    LTX_PRODUCTION_I2V_PROFILE,
     LTX_STATIC_CAMERA_GENERATION_PROFILE,
     LTXVideoParameters,
 )
 from ai_video_factory.workflows.video_generation import build_video_generation_plan
 
 
-def test_static_camera_profile_is_opt_in_and_default_profile_is_unchanged() -> None:
+def test_static_camera_profile_is_opt_in_and_legacy_profile_is_supported() -> None:
     params = {
         "generation_profile": LTX_STATIC_CAMERA_GENERATION_PROFILE,
         "prompt": "A woman whispering to the microphone.",
@@ -58,12 +59,20 @@ def test_opt_in_profile_keeps_input_seed_and_prompt_but_uses_distinct_job_identi
     kwargs = {"keyframe_base_dir": tmp_path, "seed_base": 4242}
     default = build_video_generation_plan(*args, **kwargs)[0].request
     explicit_default = build_video_generation_plan(
-        *args, generation_profile=LTX_GENERATION_PROFILE, **kwargs
+        *args, generation_profile=LTX_PRODUCTION_I2V_PROFILE, **kwargs
     )[0].request
     static = build_video_generation_plan(
         *args, generation_profile=LTX_STATIC_CAMERA_GENERATION_PROFILE, **kwargs
     )[0].request
+    legacy = build_video_generation_plan(
+        *args, generation_profile=LTX_GENERATION_PROFILE, **kwargs
+    )[0].request
     assert default.job_id == explicit_default.job_id
+    assert default.parameters["generation_profile"] == LTX_PRODUCTION_I2V_PROFILE
+    assert legacy.parameters["generation_profile"] == LTX_GENERATION_PROFILE
+    assert legacy.job_id != default.job_id
+    assert legacy.fingerprint() != default.fingerprint()
+    assert legacy.output.key != default.output.key
     assert default.fingerprint() == explicit_default.fingerprint()
     assert default.parameters["prompt"] == static.parameters["prompt"] == prompt
     assert default.parameters["seed"] == static.parameters["seed"] == 4243
@@ -127,7 +136,7 @@ def test_static_camera_uses_real_guided_stage_one_and_unchanged_stage_two() -> N
     assert "self.video_decoder(" in source
 
 
-def test_default_application_job_id_does_not_depend_on_opt_in_profile() -> None:
+def test_default_application_job_id_has_distinct_legacy_and_static_profiles() -> None:
     args = {
         "shot_id": 1,
         "prompt": "A stationary camera.",
@@ -140,6 +149,9 @@ def test_default_application_job_id_does_not_depend_on_opt_in_profile() -> None:
     }
     baseline = ltx_video_application_job_id(**args)
     assert baseline == ltx_video_application_job_id(
+        **args, generation_profile=LTX_PRODUCTION_I2V_PROFILE
+    )
+    assert baseline != ltx_video_application_job_id(
         **args, generation_profile=LTX_GENERATION_PROFILE
     )
     assert baseline != ltx_video_application_job_id(
