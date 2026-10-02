@@ -270,3 +270,62 @@ def test_batch_and_collector_only_enable_native_profile_explicitly() -> None:
     assert "Official pinned NVFP4 asset unavailable." in benchmark
     assert '"fast-vanilla-nvfp4": LTX_FAST_FULLRES_NVFP4_PROFILE' in collector
     assert "seed_identity = $EffectiveSeedIdentity" in benchmark
+
+
+
+def test_official_hf_nvfp4_metadata_preflight_is_pinned_and_fail_closed(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import io
+    import runpy
+
+    scope = runpy.run_path("scripts/smoke/check_ltx25_nvfp4_source.py")
+    check = scope["require_official_nvfp4_available"]
+    manifest = json.loads(
+        Path("docker/workers/ltx25/model-manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    seen: list[str] = []
+
+    class FakeResponse:
+        def __enter__(self) -> io.BytesIO:
+            return io.BytesIO(
+                json.dumps(
+                    [{
+                        "path": manifest["i2v_nvfp4_files"][0],
+                        "size": 123456,
+                    }]
+                ).encode()
+            )
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+    def fake_urlopen(request: object, timeout: int) -> FakeResponse:
+        assert timeout == 30
+        seen.append(str(request.full_url))
+        assert request.get_header("Authorization") == "Bearer test-token"
+        return FakeResponse()
+
+    monkeypatch.setitem(check.__globals__, "urlopen", fake_urlopen)
+    assert check(manifest, "test-token") == 123456
+    assert manifest["revision"] in seen[0]
+    assert seen[0].endswith("/diffusion_models")
+    with pytest.raises(ValueError, match="official"):
+        check({**manifest, "repository": "unverified/model"}, "test-token")
+    with pytest.raises(ValueError, match="pinned"):
+        check({**manifest, "revision": "main"}, "test-token")
+    with pytest.raises(ValueError, match="official distilled"):
+        check({**manifest, "i2v_nvfp4_files": ["random"]}, "test-token")
+
+    def empty_listing(request: object, timeout: int) -> FakeResponse:
+        class Empty(FakeResponse):
+            def __enter__(self) -> io.BytesIO:
+                return io.BytesIO(b"[]")
+
+        return Empty()
+
+    monkeypatch.setitem(check.__globals__, "urlopen", empty_listing)
+    with pytest.raises(RuntimeError, match="missing at pinned"):
+        check(manifest, "test-token")
