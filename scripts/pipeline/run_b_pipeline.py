@@ -57,9 +57,8 @@ from ai_video_factory.providers.avatar_library import (
 )
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.avatar_style import ensure_avatar_style
-from ai_video_factory.providers.ebook_covers import ensure_ebook_covers
-from ai_video_factory.workflows.casero_cta import prepare_casero_cta
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice
+from ai_video_factory.providers.ebook_covers import ensure_ebook_covers
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE, GridPlanError
 from ai_video_factory.providers.openai_batch_images import (
@@ -76,6 +75,7 @@ from ai_video_factory.workflows.b_video import (
     generate_b2_ltx_video,
     has_pending_b2_video,
 )
+from ai_video_factory.workflows.casero_cta import prepare_casero_cta
 
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
