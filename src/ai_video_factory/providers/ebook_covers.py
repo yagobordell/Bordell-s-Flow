@@ -5,9 +5,9 @@ import hashlib
 import json
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 from PIL import Image
 
@@ -21,7 +21,8 @@ class EbookCovers:
 
 
 def _safe_cover(root: Path, stem: str) -> Path:
-    if not isinstance(stem, str) or not _STEM.fullmatch(stem) or stem in {".", ".."} or stem.endswith(".png"):
+    if (not isinstance(stem, str) or not _STEM.fullmatch(stem)
+            or stem in {".", ".."} or stem.endswith(".png")):
         raise ValueError("Indica solo el nombre del PNG, sin .png ni carpetas.")
     root = root.resolve(strict=True)
     path = root / (stem + ".png")
@@ -53,14 +54,18 @@ def ensure_ebook_covers(
             raise ValueError("Configuración de portadas inválida.")
         saved = tuple(item["name"] for item in record["covers"])
         if names is not None and tuple(names) != saved:
-            raise ValueError("Las portadas del avatar ya están fijadas; no se cambiarán automáticamente.")
+            raise ValueError(
+                "Las portadas del avatar ya están fijadas; no se cambiarán automáticamente."
+            )
         selected = saved
     else:
         if names is None:
             if interactive is None:
                 interactive = sys.stdin.isatty()
             if not interactive:
-                raise ValueError("Casero requiere --ebook-cover NOMBRE (una o dos veces) en el primer run.")
+                raise ValueError(
+                    "Casero requiere --ebook-cover NOMBRE (una o dos veces) en el primer run."
+                )
             first = input("Portada principal (nombre sin .png, en data/): ").strip()
             second = input("Portada secundaria opcional (Enter para ninguna, sin .png): ").strip()
             selected = (first, second) if second else (first,)
@@ -82,7 +87,9 @@ def ensure_ebook_covers(
             original = _safe_cover(data_dir, item)
             digest = hashlib.sha256(original.read_bytes()).hexdigest()
             if record is not None and digest != record["covers"][number-1]["sha256"]:
-                raise ValueError("La portada original ha cambiado respecto a la selección guardada.")
+                raise ValueError(
+                    "La portada original ha cambiado respecto a la selección guardada."
+                )
             if pinned.is_file() and (
                 pinned.is_symlink() or hashlib.sha256(pinned.read_bytes()).hexdigest() != digest
             ):
@@ -111,7 +118,9 @@ def ensure_ebook_covers(
     else:
         tmp = record_file.with_suffix(".json.part")
         if tmp.exists() or tmp.is_symlink():
-            raise ValueError("Selección anterior de portadas interrumpida; revisa el archivo .part.")
+            raise ValueError(
+                "Selección anterior de portadas interrumpida; revisa el archivo .part."
+            )
         try:
             tmp.write_text(json.dumps({
                 "schema_version": "ebook-covers-v1", "avatar": avatar.name,
