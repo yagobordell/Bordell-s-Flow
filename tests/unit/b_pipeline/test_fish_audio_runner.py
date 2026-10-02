@@ -59,6 +59,7 @@ def test_full_b_run_starts_fish_concurrently_and_no_audio_skips_it(
     created_audio = []
 
     args = Namespace(
+        visual_style="profesional",
         script_file=None,
         scripts_dir=script.parent,
         script=script.name,
@@ -234,6 +235,7 @@ def test_images_wait_for_b2_and_validated_stt_before_paid_requests(
     audio_released = asyncio.Event()
     order = []
     args = Namespace(
+        visual_style="profesional",
         script_file=None,
         scripts_dir=script.parent,
         script=script.name,
@@ -362,6 +364,7 @@ def test_stop_saves_resumable_stages_without_audio_or_images(
     script, avatar = _files(tmp_path)
     output = tmp_path / "output" / script.stem
     args = Namespace(
+        visual_style="profesional",
         script_file=None,
         scripts_dir=script.parent,
         script=script.name,
