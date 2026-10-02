@@ -250,6 +250,10 @@ def test_native_image_and_asset_opt_in_cannot_modify_normal_salad_bootstrap() ->
     assert "LTX_I2V_NVFP4_RUNTIME=enabled" in nvfp4
     assert "LTX_INCLUDE_I2V_NVFP4_ASSETS=true" in nvfp4
     assert "TORCH_CUDA_ARCH_LIST=12.0 MAX_JOBS=2" in nvfp4
+    # The library's own functional module imports torch before nvfp4_cpp;
+    # merely finding the compiled extension does not validate libc10.so loading.
+    assert "import torch; import nvfp4_cpp; import ltx_kernels.nvfp4" in nvfp4
+    assert "find_spec('nvfp4_cpp')" not in nvfp4
     assert manifest["revision"] == "6c7e5e573ac1667efc83407806fe9b0b93730e60"
     assert manifest["i2v_nvfp4_files"] == [
         "diffusion_models/ltx-2.5-22b-distilled-transformer-nvfp4.safetensors"
