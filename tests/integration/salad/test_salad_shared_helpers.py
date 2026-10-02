@@ -57,6 +57,7 @@ def test_shared_http_status_supports_missing_and_numeric_status() -> None:
     _run_powershell(
         f"$ErrorActionPreference = 'Stop'\n"
         f". {_quote(SALAD_SCRIPTS / '_http_status.ps1')}\n"
+        "Set-StrictMode -Version Latest\n"
         "$known = [pscustomobject]@{Exception = [pscustomobject]@{"
         "Response = [pscustomobject]@{StatusCode = 503}}}\n"
         "if ((Get-HttpStatusCode -ErrorRecord $known) -ne 503) "
@@ -64,6 +65,46 @@ def test_shared_http_status_supports_missing_and_numeric_status() -> None:
         "$unknown = [pscustomobject]@{Exception = [pscustomobject]@{Response = $null}}\n"
         "if ($null -ne (Get-HttpStatusCode -ErrorRecord $unknown)) "
         "{ throw 'missing status' }\n"
+        "$absent = [pscustomobject]@{Exception = "
+        "[pscustomobject]@{Message = 'network unavailable'}}\n"
+        "if ($null -ne (Get-HttpStatusCode -ErrorRecord $absent)) "
+        "{ throw 'missing HTTP Response property' }\n"
+        "$missing_exception = [pscustomobject]@{Message = 'unexpected local error'}\n"
+        "if ($null -ne (Get-HttpStatusCode -ErrorRecord $missing_exception)) "
+        "{ throw 'missing Exception property' }\n"
+        "$missing_code = [pscustomobject]@{Exception = [pscustomobject]@{"
+        "Response = [pscustomobject]@{Message = 'proxy error'}}}\n"
+        "if ($null -ne (Get-HttpStatusCode -ErrorRecord $missing_code)) "
+        "{ throw 'missing StatusCode property' }\n"
+        "Set-StrictMode -Version Latest\n"
+        "try { throw 'original-transport-failure' } catch { "
+        "if ($null -ne (Get-HttpStatusCode -ErrorRecord $_)) "
+        "{ throw 'non-HTTP exception must return null' }; "
+        "if ($_.Exception.Message -ne 'original-transport-failure') "
+        "{ throw 'original error was obscured' } }\n"
+    )
+
+
+def test_try_get_group_preserves_original_transport_exception() -> None:
+    manager = (SALAD_SCRIPTS / "manage_salad_worker.ps1").read_text(encoding="utf-8")
+    group_reader = "function Try-Get-Group {" + manager.split(
+        "function Try-Get-Group {", maxsplit=1
+    )[1].split("function Get-Group {", maxsplit=1)[0]
+    _run_powershell(
+        "$ErrorActionPreference = 'Stop'\n"
+        "Set-StrictMode -Version Latest\n"
+        f". {_quote(SALAD_SCRIPTS / '_http_status.ps1')}\n"
+        "$ContainersBase = 'https://example.invalid'\n"
+        "$GroupName = 'ltx25-i2v-test'\n"
+        "function Invoke-SaladRequest { "
+        "param([hashtable]$Headers, [string]$Uri, [string]$Operation) "
+        "throw 'actual-salad-transport-failure' }\n"
+        + group_reader
+        + "\n"
+        + "try { Try-Get-Group -Headers @{}; throw 'must have failed' } "
+        + "catch { if ($_.Exception.Message -ne 'actual-salad-transport-failure') "
+        + "{ throw \"Original failure was masked: $($_.Exception.Message)\" } }\n"
+        + "exit 0\n"
     )
 
 
