@@ -26,8 +26,8 @@ def prepare_fast_keyframe(source: Path, destination: Path) -> Path:
 
     with Image.open(source) as opened:
         image = opened.convert("RGB")
-    if image.width <= 0 or image.height <= 0:
-        raise ValueError("The fast-path input keyframe must not be empty")
+    if (image.width, image.height) != (1280, 736) and image.width * 9 != image.height * 16:
+        raise ValueError("Fast-path input must be 16:9 or Qwen 1280x736")
     fitted = _fit_image_with_edge_padding(
         image, width=FAST_INTERNAL_SIZE[0], height=FAST_INTERNAL_SIZE[1]
     )
