@@ -19,7 +19,7 @@ from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
     LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
 )
-from ai_video_factory.workers.ltx25.model import LTX_VIDEO_TASK
+from ai_video_factory.workers.ltx25.model import LTX_GENERATION_PROFILE, LTX_VIDEO_TASK
 from ai_video_factory.workflows import b_video
 from scripts.pipeline import run_b_pipeline as runner
 
@@ -607,7 +607,7 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
         LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
     )
     monkeypatch.setattr(
-        b_video, "LTX_PRODUCTION_I2V_PROFILE", b_video.LTX_GENERATION_PROFILE,
+        b_video, "LTX_PRODUCTION_I2V_PROFILE", LTX_GENERATION_PROFILE,
     )
     monkeypatch.setattr(b_video, "_fingerprint", old_v4_fingerprint)
     timeline, old_jobs, old_run = b_video.build_b2_video_plan(
