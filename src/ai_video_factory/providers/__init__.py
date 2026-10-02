@@ -1,8 +1,8 @@
 """External model and API providers."""
 
 from .base import StructuredTextProvider
-from .gemini_tts import GeminiTtsSpeechProvider
 from .fallback_speech import BreezeThenFishSpeechProvider, SpeechFallbackFailedError
+from .gemini_tts import GeminiTtsSpeechProvider
 from .images import (
     GeneratedImage,
     ImageProvider,
