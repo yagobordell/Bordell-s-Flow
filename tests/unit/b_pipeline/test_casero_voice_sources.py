@@ -20,7 +20,6 @@ from ai_video_factory.providers.avatar_voice import ensure_avatar_voice
 from ai_video_factory.workflows import casero_cta
 from scripts.pipeline import run_b_pipeline as runner
 
-
 DEFAULT = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
 SCRIPT = "Una introducción. Una conclusión."
 B11 = B11Output.model_validate({
