@@ -314,7 +314,12 @@ class ApiCostLedger:
             {"B1.1": max(1, expected_b11_calls), "CTA": 0, "CTA Ebook": 0,
              "B1.2": blocks, "B2": blocks, "CTA image": 0}
             if expected_calls is None
-            else {stage: expected_calls.get(stage, 0 if stage in {"CTA", "CTA Ebook", "CTA image"} else None) for stage in _STAGES}
+            else {
+                stage: expected_calls.get(
+                    stage, 0 if stage in {"CTA", "CTA Ebook", "CTA image"} else None
+                )
+                for stage in _STAGES
+            }
         )
         previous_image_count = expected.get(_IMAGE_STAGE)
         expected[_IMAGE_STAGE] = max(
