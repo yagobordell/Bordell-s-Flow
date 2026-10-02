@@ -165,6 +165,14 @@ def finish_cta(directory: Path, submitted: tuple[Any, Any] | None,
         if temporary.is_symlink():
             raise CTACompositionError("Unsafe CTA A2V temporary path")
         executor.download_output(response, temporary)
+        from ai_video_factory.workflows.b_video import B2VideoJob, _probe_video
+        expected = B2VideoJob(
+            kind="a2v", beats=("CTA",), first_index=0, last_index=0,
+            start_seconds=0.0, end_seconds=assets["half_seconds"],
+            image=assets["files"]["image"], audio=assets["files"]["first_half"],
+            request=request,
+        )
+        _probe_video(temporary, expected)
         # Same pinned static-camera proof required by ordinary A2V jobs.
         metadata = request.sidecar_outputs["metadata"]
         stat = executor.storage.stat(metadata.key)
