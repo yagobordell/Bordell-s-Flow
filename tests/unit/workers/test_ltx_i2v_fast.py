@@ -194,9 +194,12 @@ def test_fast_backend_preserves_public_contract_and_reports_per_phase(
         written_paths.append(raw)
         raw.write_bytes(b"".join(kwargs["video"]))
 
-    from ai_video_factory.workers.ltx25 import fast_i2v
-
-    monkeypatch.setattr(fast_i2v, "generate_fast_distilled", fake_gen)
+    # Do not import the GPU-only LTX upstream packages during offline CI.
+    monkeypatch.setitem(
+        sys.modules,
+        "ai_video_factory.workers.ltx25.fast_i2v",
+        SimpleNamespace(generate_fast_distilled=fake_gen),
+    )
     monkeypatch.setattr(
         fast_delivery, "deliver_fast_video",
         lambda raw, output: output.write_bytes(raw.read_bytes()) or 0.0,
