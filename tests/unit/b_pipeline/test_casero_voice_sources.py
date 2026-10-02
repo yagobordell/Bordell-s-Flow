@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -200,7 +199,7 @@ def test_other_voice_sources_never_call_director(
     assert json.loads((block / "output.json").read_text()) == {
         "plain_script_for_recording": SCRIPT,
     }
-    assert json.loads((block / "task.json").read_text())["director_usage"] if False else True
+    assert "director_usage" not in json.loads((block / "task.json").read_text())
 
 
 def test_resume_rejects_switching_voice_library_before_paid_work(
