@@ -7,6 +7,7 @@ param(
     [ValidateRange(0, 2147483646)][int]$SeedBase = 4242,
     [ValidateSet("default", "cfg-b2", "cfg-b2-silent", "fast-vanilla-reference", "fast-vanilla", "fast-lowres", "fast-lowres-triton", "fast-lowres-none", "fast-vanilla-none", "fast-vanilla-triton", "fast-vanilla-nvfp4")][string[]]$ProfileSelection = @("default", "cfg-b2", "fast-vanilla-reference", "fast-vanilla", "fast-lowres"),
     [ValidateRange(1, 3)][int]$RepeatCount = 1,
+    [string]$SeedIdentity = "",
     [switch]$AllowNoOffload,
     [string]$BaselineRunId = "",
     [string]$BaselineLogsCsv = "",
@@ -163,8 +164,8 @@ foreach ($Round in 1..$RepeatCount) {
 }
 $Hasher = [Security.Cryptography.SHA256]::Create()
 try {
-    $SeedIdentity = if ($BaselineRunId) { $BaselineRunId } else { $RunId }
-    $RunSeedHash = $Hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($SeedIdentity))
+    $EffectiveSeedIdentity = if ($SeedIdentity) { $SeedIdentity } else { $RunId }
+    $RunSeedHash = $Hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($EffectiveSeedIdentity))
 }
 finally {
     $Hasher.Dispose()
@@ -177,6 +178,7 @@ $Plan = [ordered]@{
     pinned_image = $ExpectedPinnedImage
     profiles = @($Profiles)
     repeat_count = $RepeatCount
+    seed_identity = $EffectiveSeedIdentity
     original_baseline_run_id = $BaselineRunId
     effective_seed_base = $EffectiveSeedBase
     duration_seconds = $DurationSeconds
