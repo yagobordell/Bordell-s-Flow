@@ -12,7 +12,6 @@ import json
 import shutil
 import subprocess
 import wave
-from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable
 
