@@ -658,6 +658,10 @@ def test_professional_video_prompt_reaches_i2v_and_owns_paid_identity(
     assert len(jobs) == 1
     assert jobs[0].kind == "i2v"
     assert jobs[0].request.parameters["prompt"] == video_prompt
+    from ai_video_factory.workers.ltx25.model import LTX_PRODUCTION_I2V_PROFILE
+
+    assert jobs[0].request.parameters["generation_profile"] == LTX_PRODUCTION_I2V_PROFILE
+    assert "fp8none" in jobs[0].request.parameters["generation_profile"]
     first_id = jobs[0].request.job_id
 
     beat["video_prompt"] = video_prompt + " She pauses with her hand down."
