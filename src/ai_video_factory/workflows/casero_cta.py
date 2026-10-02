@@ -313,7 +313,7 @@ async def prepare_casero_cta(
     if (directory/"completed.json").is_file():
         ready = _read(directory/"completed.json")
         _require(directory, ready, "final")
-        return ready
+        return {**ready, "directory": str(directory)}
     from time import perf_counter
     started = perf_counter()
     text = await _ebook_text(directory, script, covers.files[0], provider, model, on_api_response)
