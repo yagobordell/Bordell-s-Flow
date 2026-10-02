@@ -1,13 +1,33 @@
-name: CI
+name: CI Python
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    paths:
+      - "src/**"
+      - "tests/**/*.py"
+      - "tests/fixtures/**"
+      - "infra/**"
+      - "config/**"
+      - "deploy/**"
+      - "docker/**"
+      - "scripts/**/*.py"
+      - "scripts/**/*.ps1"
+      - "scripts/**/*.sh"
+      - "run.ps1"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".env.example"
+      - ".dockerignore"
+      - ".github/workflows/ci-python.yml"
+  workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-python-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -15,6 +35,9 @@ permissions:
 
 jobs:
   python:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     # FFmpeg apt installation can take >12 min on hosted runners; leave time for pytest.
     timeout-minutes: 35
@@ -143,6 +166,9 @@ jobs:
         run: find docker -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
 
   ltx-batch-fast:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -175,26 +201,10 @@ jobs:
           ) | Out-Null
           if ($Errors) { throw "PowerShell syntax: $($Errors -join '; ')" }
 
-  remotion:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Set up Node 22
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: "22"
-
-      - name: Install Remotion project
-        run: npm ci --prefix remotion --no-audit --no-fund
-
-      - name: TypeScript
-        run: npm --prefix remotion run typecheck
-
   youtube:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
