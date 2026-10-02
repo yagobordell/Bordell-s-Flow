@@ -587,7 +587,7 @@ def test_non_oom_terminal_failure_requires_manual_reconciliation(tmp_path: Path)
     assert json.loads(previous.read_text(encoding="utf-8"))["status"] == "running"
 
 
-def test_v5_recovery_preserves_completed_v4_clips_and_submits_only_failed_a2v(
+def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from ai_video_factory.compositor import b_video as compositor
@@ -595,10 +595,21 @@ def test_v5_recovery_preserves_completed_v4_clips_and_submits_only_failed_a2v(
 
     plan, audio, images = _case(tmp_path, monkeypatch)
     v5 = b_video.LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
+    selected_i2v = b_video.LTX_PRODUCTION_I2V_PROFILE
+    new_fingerprint = b_video._fingerprint
+
+    def old_v4_fingerprint(*args: object, **kwargs: object) -> str:
+        kwargs["i2v_profile"] = None
+        return new_fingerprint(*args, **kwargs)
+
     monkeypatch.setattr(
         b_video, "LTX_A2V_STATIC_SAFE_GENERATION_PROFILE",
         LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
     )
+    monkeypatch.setattr(
+        b_video, "LTX_PRODUCTION_I2V_PROFILE", b_video.LTX_GENERATION_PROFILE,
+    )
+    monkeypatch.setattr(b_video, "_fingerprint", old_v4_fingerprint)
     timeline, old_jobs, old_run = b_video.build_b2_video_plan(
         tmp_path, plan, audio, images
     )
@@ -630,6 +641,8 @@ def test_v5_recovery_preserves_completed_v4_clips_and_submits_only_failed_a2v(
             }), encoding="utf-8")
     b_video._save_json(old_run / "manifest.json", previous)
     monkeypatch.setattr(b_video, "LTX_A2V_STATIC_SAFE_GENERATION_PROFILE", v5)
+    monkeypatch.setattr(b_video, "LTX_PRODUCTION_I2V_PROFILE", selected_i2v)
+    monkeypatch.setattr(b_video, "_fingerprint", new_fingerprint)
     monkeypatch.setattr(
         b_video, "_probe_video",
         lambda source, job: (
@@ -699,15 +712,19 @@ def test_v5_recovery_preserves_completed_v4_clips_and_submits_only_failed_a2v(
         tmp_path, plan, audio, images, queue=FakeQueue(), storage=FakeStorage(),
     )
     assert result["status"] == "completed"
-    assert len(submitted) == 1
-    assert submitted[0] != old_jobs[2].request.job_id
+    assert len(submitted) == 2
+    assert old_jobs[1].request.job_id not in submitted
+    assert old_jobs[2].request.job_id not in submitted
     manifest_file = tmp_path / "video" / "runs" / result["fingerprint"][:20] / "manifest.json"
     saved = json.loads(manifest_file.read_text(encoding="utf-8"))
-    for idx in (0, 1):
-        assert saved["jobs"][idx]["reused_from_job_id"] == old_jobs[idx].request.job_id
-        assert saved["jobs"][idx]["status"] == "completed"
-        assert _sha(tmp_path / saved["jobs"][idx]["file"]) == previous["jobs"][idx]["sha256"]
-    assert saved["jobs"][2]["job_id"] == submitted[0]
+    assert saved["jobs"][0]["reused_from_job_id"] == old_jobs[0].request.job_id
+    assert saved["jobs"][0]["status"] == "completed"
+    assert _sha(tmp_path / saved["jobs"][0]["file"]) == previous["jobs"][0]["sha256"]
+    assert saved["jobs"][1]["job_id"] in submitted
+    assert saved["jobs"][1]["job_id"] != old_jobs[1].request.job_id
+    assert "reused_from_job_id" not in saved["jobs"][1]
+    assert saved["jobs"][2]["job_id"] in submitted
+    assert saved["jobs"][2]["job_id"] != old_jobs[2].request.job_id
     assert "reused_from_job_id" not in saved["jobs"][2]
     older = json.loads((old_run / "manifest.json").read_text(encoding="utf-8"))
     assert older["status"] == "superseded"
