@@ -16,7 +16,7 @@ from ai_video_factory.providers import (
     SaladBreezeSpeechProvider,
     SaladFishSpeechProvider,
 )
-from ai_video_factory.providers.gemini_tts import ( 
+from ai_video_factory.providers.gemini_tts import (
     DEFAULT_GEMINI_TTS_MODEL,
     DEFAULT_GEMINI_TTS_VOICE,
 )
