@@ -29,6 +29,7 @@ from ai_video_factory.providers.openai_batch_images import (
 )
 from ai_video_factory.workflows import b_video
 from ai_video_factory.workflows.b_video import _group_beats
+from scripts.pipeline import run_b_pipeline as pipeline_cli
 from scripts.pipeline.run_b_pipeline import select_visual_style
 
 
@@ -749,3 +750,46 @@ def test_professional_responses_request_attaches_avatar_image() -> None:
     assert content[1] == {
         "type": "input_image", "image_url": "data:image/png;base64,AAAA"
     }
+
+
+
+def test_only_i2v_runs_get_new_fp8_run_fingerprint(tmp_path: Path) -> None:
+    avatar = tmp_path / "avatar.png"
+    avatar.write_bytes(_avatar_png())
+    audio = {"sha256": "b" * 64}
+    avatar_only = {"beats": [{"visual_type": "avatar", "audio": True}]}
+    assert b_video._fingerprint(avatar_only, audio, {}, avatar) == (
+        b_video._fingerprint(avatar_only, audio, {}, avatar, i2v_profile=None)
+    )
+    i2v_timeline = {"beats": [{"visual_type": "media_video", "audio": False}]}
+    assert b_video._fingerprint(i2v_timeline, audio, {}, avatar) != (
+        b_video._fingerprint(i2v_timeline, audio, {}, avatar, i2v_profile=None)
+    )
+
+
+def test_promoted_i2v_deployment_guard_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = "docker.io/yagobordell/ai-video-factory@sha256:" + "a" * 64
+    monkeypatch.setattr(pipeline_cli, "load_dotenv", lambda *args, **kwargs: False)
+    monkeypatch.delenv("SALAD_LTX25_FP8_I2V_IMAGE", raising=False)
+    with pytest.raises(RuntimeError, match="SALAD_LTX25_FP8_I2V_IMAGE"):
+        pipeline_cli._require_ltx_safe_i2v_worker()
+    monkeypatch.setenv("SALAD_LTX25_FP8_I2V_IMAGE", expected)
+    monkeypatch.setattr(
+        pipeline_cli, "SaladClient",
+        lambda config: SimpleNamespace(
+            describe_container_group=lambda: {
+                "container": {"image": expected[:-1] + "b"}
+            },
+        ),
+    )
+    with pytest.raises(RuntimeError, match="image mismatch"):
+        pipeline_cli._require_ltx_safe_i2v_worker()
+    monkeypatch.setattr(
+        pipeline_cli, "SaladClient",
+        lambda config: SimpleNamespace(
+            describe_container_group=lambda: {"container": {"image": expected}},
+        ),
+    )
+    pipeline_cli._require_ltx_safe_i2v_worker()
