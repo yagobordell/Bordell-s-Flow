@@ -9,6 +9,7 @@ param(
     [ValidateRange(1, 3)][int]$RepeatCount = 1,
     [string]$SeedIdentity = "",
     [switch]$AllowNoOffload,
+    [switch]$AllowNvfp4,
     [string]$BaselineRunId = "",
     [string]$BaselineLogsCsv = "",
     [string]$RunId = ("fast-batch-" + [Guid]::NewGuid().ToString("N")),
@@ -27,6 +28,7 @@ $SourceCheck = Join-Path $PSScriptRoot "check_ltx25_python_source.py"
 $Ready = Join-Path $PSScriptRoot "wait_salad_ltx25_ready.py"
 $Smoke = Join-Path $PSScriptRoot "ltx25_i2v_smoke.py"
 $R2Preflight = Join-Path $RepoRoot "scripts\pipeline\check_r2_ready.py"
+$Nvfp4Preflight = Join-Path $PSScriptRoot "check_ltx25_nvfp4_source.py"
 $Runner = Join-Path $RepoRoot "scripts\pipeline\run_phase8_videos.py"
 $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
@@ -36,9 +38,13 @@ if ($RunId -notmatch "^[A-Za-z0-9_-]{1,80}$") {
     throw "RunId must contain only letters, numbers, underscore or hyphen (1-80 chars)."
 }
 if ($BaselineRunId) { throw "The fast benchmark always performs NEW GPU inference; omit historical BaselineRunId." }
-if ($ProfileSelection -contains "fast-vanilla-nvfp4" -and
-    $ProfileSelection.Count -ne 1) {
-    throw "Native NVFP4 requires its own exclusive pinned Docker image and separate benchmark run."
+if ($ProfileSelection -contains "fast-vanilla-nvfp4") {
+    if (-not $AllowNvfp4) {
+        throw "NVFP4 changes precision and requires a dedicated Docker image: pass -AllowNvfp4."
+    }
+    if ($ProfileSelection.Count -ne 1) {
+        throw "Native NVFP4 requires its own exclusive pinned Docker image and separate benchmark run."
+    }
 }
 if (($ProfileSelection -contains "fast-lowres-none" -or
      $ProfileSelection -contains "fast-vanilla-none") -and -not $AllowNoOffload) {
@@ -86,6 +92,12 @@ if ($LASTEXITCODE -ne 0) { throw "LTX Python source mismatch; run uv sync --lock
 if ($LASTEXITCODE -ne 0) { throw "Local I2V readiness configuration preflight failed; no GPU allocated." }
 & $Python $R2Preflight
 if ($LASTEXITCODE -ne 0) { throw "R2 preflight failed; refusing paid Salad capacity." }
+if ($ProfileSelection -contains "fast-vanilla-nvfp4") {
+    & $Python $Nvfp4Preflight --env-file $EnvFile
+    if ($LASTEXITCODE -ne 0) {
+        throw "Official pinned NVFP4 asset unavailable. No Salad GPU allocated."
+    }
+}
 
 
 # Prepare and hash-check every candidate BEFORE allocating paid capacity.
