@@ -3,9 +3,9 @@
 import argparse
 import asyncio
 import io
-import wave
 import json
 import sys
+import wave
 from pathlib import Path
 
 import pytest
@@ -113,7 +113,11 @@ def test_gemini_generates_canonical_wav_and_does_not_clear_breeze_fallback(
             assert kwargs["output_format"] == "wav"
             return GeneratedSpeech(
                 content=make_wav(), extension="wav", media_type="audio/wav",
-                metadata={"provider": "gemini", "voice": args.gemini_voice, "model": args.gemini_model},
+                metadata={
+                    "provider": "gemini",
+                    "voice": args.gemini_voice,
+                    "model": args.gemini_model,
+                },
             )
 
     monkeypatch.setattr(phase5, "GeminiTtsSpeechProvider", FakeGemini)
