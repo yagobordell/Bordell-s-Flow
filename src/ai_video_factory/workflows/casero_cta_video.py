@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import math
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -309,7 +308,6 @@ def insert_cta(
     clip = compose_reusable_cta(directory)
     cache = _read(directory/"completed.json")
     cta_duration = float(cache["duration_seconds"])
-    frames = round(cta_duration*_FPS)
     temp = destination.with_suffix(".part.mp4")
     if temp.is_symlink() or temp.exists() or destination.is_symlink():
         raise CTACompositionError("Unsafe CTA insertion output")
