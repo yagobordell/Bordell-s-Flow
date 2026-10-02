@@ -13,7 +13,9 @@ import shutil
 import subprocess
 import wave
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+
+from collections.abc import Callable
 
 from PIL import Image
 
@@ -146,7 +148,9 @@ def _tts(directory: Path, script: str, voice_id: str) -> dict[str, Any]:
         "voice_id": voice_id,
     }
     if state.get("text_sha256") != hashlib.sha256(script.encode()).hexdigest() or state.get("voice_id") != voice_id:
-        raise CaseroCTAError("Saved CTA TTS belongs to a different script or voice")
+        raise CaseroCTAError(
+            "Saved CTA TTS belongs to a different script or voice"
+        )
     if "master" in state:
         _require(directory, state, "master")
         _require(directory, state, "first_half")
@@ -209,7 +213,9 @@ def _image(directory: Path, covers: EbookCovers, avatar: Path,
     if state_path.is_file():
         record = _read(state_path)
         if record.get("status") != "completed":
-            raise CaseroCTAError("CTA image submission may have been billed; reconcile image_state.json")
+            raise CaseroCTAError(
+                "CTA image submission may have been billed; reconcile image_state.json"
+            )
         _require(directory, record, "image")
         return
     refs = [_png_data_url(f) for f in covers.files]
@@ -306,7 +312,9 @@ async def prepare_casero_cta(
     }
     if identity_path.exists():
         if _read(identity_path) != identity:
-            raise CaseroCTAError("Avatar CTA cache inputs have changed; manual reconciliation required")
+            raise CaseroCTAError(
+                "Avatar CTA cache inputs have changed; manual reconciliation required"
+            )
     else:
         _save(identity_path, identity)
     if (directory/"completed.json").is_file():
