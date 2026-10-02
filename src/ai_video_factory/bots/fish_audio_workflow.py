@@ -696,7 +696,7 @@ async def _generate_block(
                     "resume requires a validated saved output"
                 )
             state["status"] = "director_running"
-        _atomic_json(state_path, state)
+            _atomic_json(state_path, state)
             def save_director_response(response: Any) -> None:
                 usage = getattr(response, "usage", None)
                 usage_data = (
