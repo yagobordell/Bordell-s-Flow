@@ -286,7 +286,10 @@ def insert_cta(
     main_video: Path, directory: Path, destination: Path,
 ) -> dict[str, Any]:
     placement_data = _read(output/"CTA"/"output.json")
-    placement = CTAPlacement.model_validate(placement_data)
+    placement = CTAPlacement.model_validate({
+        "previous_sentence": placement_data["previous_sentence"],
+        "next_sentence": placement_data["next_sentence"],
+    })
     cut = insertion_second(output, source_script, placement, plan, audio)
     main_duration = float(audio["duration_seconds"])
     # 24-fps cuts are a video-frame constraint; place the speech cut at the
