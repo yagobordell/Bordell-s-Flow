@@ -96,7 +96,9 @@ def _post_json(
         raise GeminiTtsError(f"Gemini TTS returned HTTP {exc.code}") from None
     except (URLError, TimeoutError, OSError) as exc:
         # A failed POST may have been billed. Never retry it automatically.
-        raise GeminiTtsError("Gemini TTS transport failed; submission outcome may be unknown") from exc
+        raise GeminiTtsError(
+            "Gemini TTS transport failed; submission outcome may be unknown"
+        ) from exc
 
     try:
         decoded = json.loads(raw)
