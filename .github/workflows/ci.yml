@@ -16,7 +16,8 @@ permissions:
 jobs:
   python:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # FFmpeg apt installation can take >12 min on hosted runners; leave time for pytest.
+    timeout-minutes: 35
     services:
       postgres:
         image: postgres:16-alpine
@@ -54,6 +55,9 @@ jobs:
       - name: Dependency consistency
         run: uv pip check
 
+      - name: Ruff
+        run: uv run --no-sync ruff check .
+
       - name: Initialize test Postgres
         shell: bash
         run: |
@@ -67,22 +71,17 @@ jobs:
             psql "$TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f "$migration"
           done
 
-      - name: FFmpeg for exact Fish Audio gap test
+      - name: Install required FFmpeg and QR test tools
         run: |
-          if ! command -v ffmpeg >/dev/null 2>&1; then
+          packages=()
+          if ! command -v ffmpeg >/dev/null 2>&1; then packages+=(ffmpeg); fi
+          if ! command -v zbarimg >/dev/null 2>&1; then packages+=(zbar-tools); fi
+          if (("${#packages[@]}" > 0)); then
             sudo apt-get update -qq
-            sudo apt-get install -y ffmpeg
+            sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
           fi
-
-      - name: Install independent QR decoder
-        run: |
-          if ! command -v zbarimg >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y zbar-tools
-          fi
-
-      - name: Ruff
-        run: uv run --no-sync ruff check .
+          command -v ffmpeg
+          command -v zbarimg
 
       - name: Scan tracked files for OAuth secrets
         run: uv run --no-sync python scripts/security/check_youtube_secrets.py
@@ -142,6 +141,39 @@ jobs:
       - name: Bash syntax
         shell: bash
         run: find docker -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+
+  ltx-batch-fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - name: Install project and test dependencies
+        run: uv sync --locked --extra dev
+      - name: Check experimental benchmark Ruff
+        run: uv run --no-sync ruff check .
+      - name: Test experimental benchmark without external services
+        run: uv run --no-sync python -m pytest -q tests/unit/workers/test_ltx_i2v_batch_metrics.py tests/unit/workers/test_ltx_i2v_optimization.py tests/unit/workers/test_ltx_i2v_static_camera.py tests/integration/salad/test_ltx_i2v_lifecycle.py tests/integration/salad/test_salad_shared_helpers.py
+      - name: Parse controlled batch PowerShell
+        shell: pwsh
+        run: |
+          $Tokens = $null
+          $Errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path "scripts/smoke/run_ltx25_i2v_benchmark_batch.ps1"),
+              [ref]$Tokens,
+              [ref]$Errors
+          ) | Out-Null
+          if ($Errors) { throw "PowerShell syntax: $($Errors -join '; ')" }
 
   remotion:
     runs-on: ubuntu-latest
