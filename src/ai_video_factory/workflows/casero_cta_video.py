@@ -116,7 +116,9 @@ def _cta_request(directory: Path, assets: dict[str, Any]) -> InferenceJobRequest
     )
 
 
-def submit_cta_first(directory: Path, executor: InferenceJobExecutor, queue: Any) -> tuple[Any, Any] | None:
+def submit_cta_first(
+    directory: Path, executor: InferenceJobExecutor, queue: Any,
+) -> tuple[Any, Any] | None:
     """Submit before ALL normal B2 queue.submit calls, not merely wait first."""
     if (directory/"completed.json").is_file():
         ready = _read(directory/"completed.json")
