@@ -26,6 +26,7 @@ from ai_video_factory.providers.ai33_speech import (
     audio_url_of,
     task_id_of,
 )
+from ai_video_factory.providers.avatar_voice import valid_voice_provider
 from ai_video_factory.providers.ebook_covers import EbookCovers
 from ai_video_factory.providers.openai_images import OpenAIImageClient
 from ai_video_factory.providers.openai_stt import OpenAISttClient
@@ -141,16 +142,20 @@ def split_cta_audio(master: Path, first_half: Path) -> float:
     return half / 48000
 
 
-def _tts(directory: Path, script: str, voice_id: str) -> dict[str, Any]:
+def _tts(
+    directory: Path, script: str, voice_id: str, voice_provider: str = "fishaudio",
+) -> dict[str, Any]:
     state_path = directory / "tts_state.json"
     speech = AI33SpeechClient(settings.ai33_api_key or "")
     state = _read(state_path) if state_path.is_file() else {
         "status": "new", "text_sha256": hashlib.sha256(script.encode()).hexdigest(),
         "voice_id": voice_id,
+        "voice_provider": voice_provider,
     }
     if (
         state.get("text_sha256") != hashlib.sha256(script.encode()).hexdigest()
         or state.get("voice_id") != voice_id
+        or state.get("voice_provider", "fishaudio") != voice_provider
     ):
         raise CaseroCTAError(
             "Saved CTA TTS belongs to a different script or voice"
@@ -297,6 +302,7 @@ async def _ebook_text(
 async def prepare_casero_cta(
     *, avatar: Path, covers: EbookCovers, qr_path: Path, qr_url: str,
     script: str, voice_id: str, provider: Any, model: str,
+    voice_provider: str = "fishaudio",
     on_api_response: Callable[[str, int | None, object], None] | None = None,
     on_call_duration: Callable[[str, int | None, float], None] | None = None,
     on_image_usage: Callable[[dict[str, object] | None, str], None] | None = None,
@@ -304,6 +310,7 @@ async def prepare_casero_cta(
     """Prepare independent assets concurrently; finished A2V is queued with main video."""
     if not script.strip() or not voice_id:
         raise CaseroCTAError("CTA requires original first script and a selected voice")
+    valid_voice_provider(voice_provider)
     directory = avatar.parent / "meta" / "cta"
     if directory.is_symlink() or directory.parent.is_symlink():
         raise CaseroCTAError("Unsafe CTA cache directory")
@@ -312,10 +319,14 @@ async def prepare_casero_cta(
     identity = {
         "schema_version": "casero-cta-v1", "avatar_sha256": _sha(avatar),
         "cover_sha256": list(covers.sha256), "qr_sha256": _sha(qr_path),
-        "voice_id": voice_id, "qr_url": qr_url,
+        "voice_id": voice_id, "voice_provider": voice_provider,
+        "qr_url": qr_url,
     }
     if identity_path.exists():
-        if _read(identity_path) != identity:
+        saved_identity = _read(identity_path)
+        if {**saved_identity, "voice_provider": saved_identity.get(
+            "voice_provider", "fishaudio"
+        )} != identity:
             raise CaseroCTAError(
                 "Avatar CTA cache inputs have changed; manual reconciliation required"
             )
@@ -332,7 +343,7 @@ async def prepare_casero_cta(
     if not cached_ebook_script and on_call_duration is not None:
         on_call_duration("CTA Ebook", None, perf_counter()-started)
     tts, _ = await asyncio.gather(
-        asyncio.to_thread(_tts, directory, text, voice_id),
+        asyncio.to_thread(_tts, directory, text, voice_id, voice_provider),
         asyncio.to_thread(_image, directory, covers, avatar, on_image_usage),
     )
     await asyncio.gather(

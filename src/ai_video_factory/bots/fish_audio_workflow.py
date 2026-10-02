@@ -15,6 +15,7 @@ from ai_video_factory.providers.ai33_speech import (
     audio_url_of,
     task_id_of,
 )
+from ai_video_factory.providers.avatar_voice import valid_voice_provider
 from ai_video_factory.providers.base import StructuredTextProvider
 from ai_video_factory.providers.openai_stt import OpenAISttClient, OpenAISttError
 
@@ -637,6 +638,7 @@ async def _generate_block(
     speed: float,
     poll_timeout_seconds: int,
     poll_interval_seconds: float,
+    voice_provider: str = "fishaudio",
 ) -> dict[str, Any]:
     block = payload.blocks[0]
     directory = run_dir / "blocks" / f"block_{block.block_id}"
@@ -648,6 +650,7 @@ async def _generate_block(
         if (
             state.get("block_id") != block.block_id
             or state.get("source_sha256") != source_sha
+            or state.get("voice_provider", "fishaudio") != voice_provider
             or _read_json(directory / "input.json") != input_data
         ):
             raise FishAudioWorkflowError(f"Saved Fish input differs for block {block.block_id}")
@@ -658,8 +661,9 @@ async def _generate_block(
             "source_sha256": source_sha,
             "director_model": director_model,
             "voice_id": voice_id,
+            "voice_provider": voice_provider,
             "speed": speed,
-            "status": "director_running",
+            "status": "director_running" if voice_provider == "fishaudio" else "text_ready",
         }
         _atomic_json(directory / "input.json", input_data)
         _atomic_json(state_path, state)
@@ -669,50 +673,63 @@ async def _generate_block(
         directed_text = directed.get("plain_script_for_recording")
         if not isinstance(directed_text, str):
             raise FishAudioWorkflowError(f"Malformed saved Fish output for block {block.block_id}")
-        validate_fish_script(block.text, directed_text)
+        if voice_provider == "fishaudio":
+            validate_fish_script(block.text, directed_text)
+        elif directed_text != block.text:
+            raise FishAudioWorkflowError("Non-Fish TTS must preserve the raw spoken block")
     else:
         if state.get("task_id") or state.get("status") == "tts_submitting_unknown":
             raise FishAudioWorkflowError("Paid Fish task has no durable director output")
-        if provider is None:
-            raise FishAudioWorkflowError(
-                f"Block {block.block_id} has no completed director; "
-                "resume requires a validated saved output"
+        if voice_provider != "fishaudio":
+            # Never run or bill the Fish director on MiniMax / ElevenLabs.
+            directed_text = block.text
+            _atomic_json(
+                directory / "output.json",
+                {"plain_script_for_recording": directed_text},
             )
-        state["status"] = "director_running"
-        _atomic_json(state_path, state)
-        def save_director_response(response: Any) -> None:
-            usage = getattr(response, "usage", None)
-            usage_data = (
-                usage.model_dump(mode="json")
-                if usage is not None and callable(getattr(usage, "model_dump", None))
-                else usage if isinstance(usage, dict) else None
-            )
-            state["director_usage"] = usage_data
-            state["director_response"] = {
-                "id": getattr(response, "id", None),
-                "model": getattr(response, "model", None),
-                "service_tier": getattr(response, "service_tier", None),
-                "usage": usage_data,
-            }
+            state["status"] = "director_skipped"
             _atomic_json(state_path, state)
+        else:
+            if provider is None:
+                raise FishAudioWorkflowError(
+                    f"Block {block.block_id} has no completed director; "
+                    "resume requires a validated saved output"
+                )
+            state["status"] = "director_running"
+            _atomic_json(state_path, state)
+            def save_director_response(response: Any) -> None:
+                usage = getattr(response, "usage", None)
+                usage_data = (
+                    usage.model_dump(mode="json")
+                    if usage is not None and callable(getattr(usage, "model_dump", None))
+                    else usage if isinstance(usage, dict) else None
+                )
+                state["director_usage"] = usage_data
+                state["director_response"] = {
+                    "id": getattr(response, "id", None),
+                    "model": getattr(response, "model", None),
+                    "service_tier": getattr(response, "service_tier", None),
+                    "usage": usage_data,
+                }
+                _atomic_json(state_path, state)
 
-        try:
-            directed, _response = await run_fish_director(
-                payload, provider=provider, model=director_model,
-                on_response=save_director_response,
-            )
-        except FishAudioScriptError:
-            state["status"] = "director_invalid"
+            try:
+                directed, _response = await run_fish_director(
+                    payload, provider=provider, model=director_model,
+                    on_response=save_director_response,
+                )
+            except FishAudioScriptError:
+                state["status"] = "director_invalid"
+                _atomic_json(state_path, state)
+                raise
+            except Exception:
+                state["status"] = "director_unknown"
+                _atomic_json(state_path, state)
+                raise
+            directed_text = directed.plain_script_for_recording
+            _atomic_json(directory / "output.json", directed.model_dump())
+            state["status"] = "director_completed"
             _atomic_json(state_path, state)
-            raise
-        except Exception:
-            state["status"] = "director_unknown"
-            _atomic_json(state_path, state)
-            raise
-        directed_text = directed.plain_script_for_recording
-        _atomic_json(directory / "output.json", directed.model_dump())
-        state["status"] = "director_completed"
-        _atomic_json(state_path, state)
 
     if state.get("status") == "completed":
         return _block_audio(output, directory, state)
@@ -787,6 +804,7 @@ async def generate_fish_audio(
     max_parallel_calls: int = 8,
     poll_timeout_seconds: int = 3600,
     poll_interval_seconds: float = 8.0,
+    voice_provider: str = "fishaudio",
     resume: bool = False,
     speech_client: AI33SpeechClient | None = None,
     stt_client: OpenAISttClient | None = None,
@@ -800,6 +818,7 @@ async def generate_fish_audio(
         or any(ch.isspace() for ch in voice_id)
     ):
         raise FishAudioWorkflowError("AI33 voice ID is missing or invalid")
+    valid_voice_provider(voice_provider)
     if max_parallel_calls < 1:
         raise FishAudioWorkflowError("max_parallel_calls must be positive")
     inputs = _inputs(script, b11)
@@ -825,9 +844,12 @@ async def generate_fish_audio(
             state.get("source_sha256") != source_sha
             or state.get("inputs_sha256") != inputs_sha
             or state.get("voice_id") != voice_id
+            or state.get("voice_provider", "fishaudio") != voice_provider
             or state.get("director_model") != director_model
-            or state.get("director_prompt_sha256")
-            != hashlib.sha256(fish_prompt_bytes()).hexdigest()
+            or state.get("director_prompt_sha256") != (
+                hashlib.sha256(fish_prompt_bytes()).hexdigest()
+                if voice_provider == "fishaudio" else None
+            )
             or state.get("speed") != speed
         ):
             raise FishAudioWorkflowError("Saved Fish audio input, prompt or voice differs")
@@ -852,7 +874,11 @@ async def generate_fish_audio(
             "source_sha256": source_sha,
             "inputs_sha256": inputs_sha,
             "director_model": director_model,
-            "director_prompt_sha256": hashlib.sha256(fish_prompt_bytes()).hexdigest(),
+            "director_prompt_sha256": (
+                hashlib.sha256(fish_prompt_bytes()).hexdigest()
+                if voice_provider == "fishaudio" else None
+            ),
+            "voice_provider": voice_provider,
             "voice_id": voice_id,
             "speed": speed,
             "block_ids": [item.current_block_id for item in inputs],
@@ -864,7 +890,7 @@ async def generate_fish_audio(
         if not ai33_api_key:
             raise FishAudioWorkflowError("AI33_API_KEY is required for Fish voice synthesis")
         speech_client = AI33SpeechClient(ai33_api_key)
-    if provider is None and not resume:
+    if provider is None and not resume and voice_provider == "fishaudio":
         raise FishAudioWorkflowError("OPENAI_API_KEY is required for the Fish director")
 
     semaphore = asyncio.Semaphore(max_parallel_calls)
@@ -882,6 +908,7 @@ async def generate_fish_audio(
                 speed=speed,
                 poll_timeout_seconds=poll_timeout_seconds,
                 poll_interval_seconds=poll_interval_seconds,
+                voice_provider=voice_provider,
             )
             if stt_client is not None:
                 item = await _transcribe_block(
@@ -931,7 +958,7 @@ async def generate_fish_audio(
     artifact: dict[str, Any] = {
         "status": "completed",
         "provider": "ai33",
-        "voice_source": voice_id.split("_", 1)[0] if "_" in voice_id else "ai33",
+        "voice_source": voice_provider,
         "voice_id": voice_id,
         "run_id": state["run_id"],
         "file": (run_dir / merged["file"]).relative_to(output).as_posix(),
@@ -948,7 +975,7 @@ async def generate_fish_audio(
         "block_count": len(blocks),
         "blocks": blocks,
         "credit_cost": sum(credits) if all(value is not None for value in credits) else None,
-        "director_model": director_model,
+        "director_model": director_model if voice_provider == "fishaudio" else None,
     }
     state["status"] = "completed"
     state["audio"] = artifact

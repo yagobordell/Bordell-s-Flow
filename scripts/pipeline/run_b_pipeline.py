@@ -57,7 +57,7 @@ from ai_video_factory.providers.avatar_library import (
 )
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.avatar_style import ensure_avatar_style
-from ai_video_factory.providers.avatar_voice import ensure_avatar_voice
+from ai_video_factory.providers.avatar_voice import ensure_avatar_voice, valid_voice_provider
 from ai_video_factory.providers.ebook_covers import ensure_ebook_covers
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE, GridPlanError
@@ -126,6 +126,13 @@ def parse_args() -> argparse.Namespace:
         "--qr-url",
         metavar="URL",
         help="Enlace del ebook para crear el QR de un avatar nuevo sin preguntar en la CLI.",
+    )
+    parser.add_argument(
+        "--tts-provider", choices=("fishaudio", "minimax", "elevenlabs"),
+        help=(
+            "Solo Casero: 1=Fish Audio, 2=MiniMax, 3=ElevenLabs. "
+            "Si es interactivo, pregunta antes del ID."
+        ),
     )
     voices = parser.add_mutually_exclusive_group()
     voices.add_argument(
@@ -1161,6 +1168,9 @@ async def _video_if_ready(
                             (output / "qr.png").read_bytes()
                         ).hexdigest()
                         or cached["voice_id"] != _run_voice_id(output)
+                        or cached.get("voice_provider", "fishaudio") != (
+                            _run_voice_provider(output)
+                        )
                     ):
                         raise RuntimeError(
                             "Cached casero CTA identity differs from this run's avatar, QR or voice"
@@ -1478,6 +1488,23 @@ def _run_voice_id(output: Path) -> str:
     # Older runs did not have per-avatar voice snapshots.
     return settings.ai33_fish_voice_id
 
+
+def _run_voice_provider(output: Path) -> str:
+    """Treat legacy voice snapshots as Fish and reject unknown saved providers."""
+    path = output / "avatar_voice.json"
+    if path.is_symlink():
+        raise SystemExit("El snapshot de voz es un enlace no permitido.")
+    if not path.exists():
+        return "fishaudio"
+    try:
+        snapshot = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(snapshot, dict):
+            raise ValueError("El snapshot de voz no es un objeto.")
+        return valid_voice_provider(snapshot.get("provider", "fishaudio"))
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"Proveedor de voz del run inválido: {path}") from exc
+
+
 async def _generate_audio(
     script: str,
     output: Path,
@@ -1496,6 +1523,7 @@ async def _generate_audio(
         provider=provider,
         ai33_api_key=settings.ai33_api_key,
         voice_id=_run_voice_id(output),
+        voice_provider=_run_voice_provider(output),
         speed=settings.ai33_fish_speed,
         poll_timeout_seconds=settings.ai33_fish_poll_timeout_seconds,
         poll_interval_seconds=settings.ai33_fish_poll_interval_seconds,
@@ -2121,6 +2149,8 @@ async def main() -> None:
         )
     else:
         visual_style = select_visual_style(getattr(args, "visual_style", None))
+    if visual_style != "casero" and getattr(args, "tts_provider", None) is not None:
+        raise SystemExit("--tts-provider solo está disponible en modo casero.")
     if visual_style != "casero" and getattr(args, "ebook_cover", None):
         raise SystemExit("--ebook-cover solo se admite en modo casero.")
     covers = None
@@ -2179,6 +2209,8 @@ async def main() -> None:
             use_default=bool(getattr(args, "default_voice", False)),
             default_voice_id=settings.ai33_fish_voice_id,
             api_key=settings.ai33_api_key,
+            allow_sources=visual_style == "casero",
+            input_provider=getattr(args, "tts_provider", None),
             activate=stop_stage is None and not getattr(args, "no_audio", False),
         )
         avatar_file = organize_avatar(
@@ -2234,6 +2266,8 @@ async def main() -> None:
             use_default=bool(getattr(args, "default_voice", False)),
             default_voice_id=settings.ai33_fish_voice_id,
             api_key=settings.ai33_api_key,
+            allow_sources=visual_style == "casero",
+            input_provider=getattr(args, "tts_provider", None),
             activate=False,
         )
         avatar_file = organize_avatar(
@@ -2447,7 +2481,8 @@ async def main() -> None:
                 raise RuntimeError("The avatar CTA QR does not match its persisted PNG")
             cta_task = asyncio.create_task(prepare_casero_cta(
                 avatar=avatar_file, covers=covers, qr_path=qr_path, qr_url=qr.url,
-                script=script, voice_id=_run_voice_id(output), provider=provider,
+                script=script, voice_id=_run_voice_id(output),
+                voice_provider=_run_voice_provider(output), provider=provider,
                 model=settings.openai_model,
                 on_api_response=ledger.record,
                 on_call_duration=timings.record_call,

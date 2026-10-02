@@ -26,6 +26,7 @@ _VOICE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_:-]{1,255}\Z")
 class AvatarVoice:
     mode: str
     voice_id: str | None
+    provider: str = "fishaudio"
     audio_filename: str | None = None
     audio_sha256: str | None = None
 
@@ -33,9 +34,45 @@ class AvatarVoice:
         return {
             "mode": self.mode,
             "voice_id": self.voice_id,
+            "provider": self.provider,
             "audio_filename": self.audio_filename,
             "audio_sha256": self.audio_sha256,
         }
+
+
+VOICE_PROVIDERS = ("fishaudio", "minimax", "elevenlabs")
+_VOICE_LABELS = {
+    "1": "fishaudio", "2": "minimax", "3": "elevenlabs",
+}
+
+
+def valid_voice_provider(value: str) -> str:
+    if value not in VOICE_PROVIDERS:
+        raise ValueError("El proveedor debe ser fishaudio, minimax o elevenlabs.")
+    return value
+
+
+def _choose_provider() -> str:
+    print(
+        "Selecciona el proveedor de voz para Casero:\n"
+        "  1. Fish Audio\n"
+        "  2. MiniMax\n"
+        "  3. ElevenLabs",
+        flush=True,
+    )
+    while True:
+        try:
+            chosen = input("Selecciona 1, 2 o 3: ").strip()
+        except (EOFError, KeyboardInterrupt) as exc:
+            raise SystemExit("Proveedor de voz no seleccionado.") from exc
+        if chosen in _VOICE_LABELS:
+            return _VOICE_LABELS[chosen]
+        print("Selecciona exactamente 1, 2 o 3.", flush=True)
+
+
+def _record_provider(record: dict[str, Any]) -> str:
+    # Historical records were created exclusively for Fish Audio.
+    return valid_voice_provider(record.get("provider", "fishaudio"))
 
 
 def _valid_voice_id(value: str) -> str:
@@ -106,6 +143,9 @@ def _load(path: Path, avatar_file: Path) -> dict[str, Any]:
             raise ValueError("Los metadatos no corresponden al avatar.")
         mode = record.get("mode")
         status = record.get("status")
+        voice_provider = _record_provider(record)
+        if voice_provider != "fishaudio" and mode != "voice_id":
+            raise ValueError("MiniMax y ElevenLabs requieren un Voice ID.")
         if mode not in {"default", "voice_id", "clone"} or status not in {
             "ready", "selected", "clone_submitting_unknown", "clone_poll_pending"
         }:
@@ -176,6 +216,8 @@ def ensure_avatar_voice(
     input_audio_filename: str | None = None,
     use_default: bool = False,
     interactive: bool | None = None,
+    allow_sources: bool = False,
+    input_provider: str | None = None,
     activate: bool = True,
     api_key: str | None = None,
     client: AI33SpeechClient | None = None,
@@ -186,11 +228,33 @@ def ensure_avatar_voice(
     A clone selected during --no-audio/--stop is saved but submitted only when needed.
     """
     _valid_voice_id(default_voice_id)
+    if input_provider is not None:
+        input_provider = valid_voice_provider(input_provider)
+        if not allow_sources and input_provider != "fishaudio":
+            raise SystemExit("MiniMax y ElevenLabs solo están disponibles en Casero.")
     if sum((input_voice_id is not None, input_audio_filename is not None, use_default)) > 1:
         raise SystemExit("Usa solo una opción entre --voice-id, --voice-audio y --default-voice.")
     _slot, path = _safe_slot(avatar_file, avatars_dir)
     record = _load(path, avatar_file) if path.exists() else None
-
+    if record is not None:
+        stored_provider = _record_provider(record)
+        if input_provider is not None and input_provider != stored_provider:
+            raise SystemExit("El avatar ya tiene otro proveedor de voz asignado.")
+        if not allow_sources and stored_provider != "fishaudio":
+            raise SystemExit("La voz MiniMax/ElevenLabs se admite solo para Casero.")
+        voice_provider = stored_provider
+    elif allow_sources:
+        if interactive is None:
+            interactive = sys.stdin.isatty()
+        voice_provider = input_provider or (
+            _choose_provider() if interactive else "fishaudio"
+        )
+    else:
+        voice_provider = "fishaudio"
+    if voice_provider != "fishaudio" and (use_default or input_audio_filename):
+        raise SystemExit(
+            "MiniMax y ElevenLabs necesitan --voice-id, no --voice-audio ni --default-voice."
+        )
     if input_voice_id is not None:
         desired_mode, desired_value = "voice_id", _valid_voice_id(input_voice_id)
     elif input_audio_filename is not None:
@@ -214,6 +278,7 @@ def ensure_avatar_voice(
         return AvatarVoice(
             mode="clone",
             voice_id=record["voice_id"],
+            provider="fishaudio",
             audio_filename=record["audio_filename"],
             audio_sha256=record["audio_sha256"],
         )
@@ -233,9 +298,25 @@ def ensure_avatar_voice(
         if desired_mode is None:
             if interactive is None:
                 interactive = sys.stdin.isatty()
-            desired_mode, desired_value = _choose(avatar_file, interactive=interactive)
+            if voice_provider == "fishaudio":
+                desired_mode, desired_value = _choose(avatar_file, interactive=interactive)
+            elif interactive:
+                while True:
+                    entered = input(
+                        f"Voice ID de {voice_provider} en OpenSpeaker: "
+                    ).strip()
+                    try:
+                        desired_mode, desired_value = "voice_id", _valid_voice_id(entered)
+                        break
+                    except ValueError as exc:
+                        print(exc, flush=True)
+            else:
+                raise SystemExit(
+                    f"Primera ejecución Casero con {voice_provider}: indica --voice-id ID."
+                )
         record = {
             "avatar_filename": avatar_file.name,
+            "provider": voice_provider,
             "mode": desired_mode,
             "status": "ready" if desired_mode != "clone" else "selected",
         }
@@ -248,18 +329,19 @@ def ensure_avatar_voice(
         _save(path, record)
 
     if record["mode"] == "default":
-        return AvatarVoice(mode="default", voice_id=default_voice_id)
+        return AvatarVoice(mode="default", voice_id=default_voice_id, provider=voice_provider)
     if record["mode"] == "voice_id" or record["status"] == "ready":
         return AvatarVoice(
             mode=record["mode"],
             voice_id=record["voice_id"],
+            provider=voice_provider,
             audio_filename=record.get("audio_filename"),
             audio_sha256=record.get("audio_sha256"),
         )
 
     if not activate:
         return AvatarVoice(
-            mode="clone", voice_id=None,
+            mode="clone", voice_id=None, provider="fishaudio",
             audio_filename=record["audio_filename"],
             audio_sha256=record["audio_sha256"],
         )
@@ -331,6 +413,7 @@ def ensure_avatar_voice(
     return AvatarVoice(
         mode="clone",
         voice_id=record["voice_id"],
+        provider="fishaudio",
         audio_filename=record["audio_filename"],
         audio_sha256=record["audio_sha256"],
     )
