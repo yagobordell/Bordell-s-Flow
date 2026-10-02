@@ -283,7 +283,8 @@ def test_fast_benchmark_requires_explicit_opt_in_for_no_offload() -> None:
     script = Path("scripts/smoke/run_ltx25_i2v_fast_benchmark.ps1").read_text(
         encoding="utf-8"
     )
-    assert 'if ($ProfileSelection -contains "fast-lowres-none" -and -not $AllowNoOffload)' in script
+    assert '$ProfileSelection -contains "fast-lowres-none" -or' in script
+    assert '$ProfileSelection -contains "fast-vanilla-none") -and -not $AllowNoOffload)' in script
     assert "baseline" in script.lower()
     assert "Assert-SameInputs" in script
     assert 'if (-not $?) { throw "I2V cleanup FAILED' in script
