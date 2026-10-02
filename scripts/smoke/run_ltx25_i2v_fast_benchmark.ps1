@@ -5,7 +5,7 @@ param(
     [Parameter(Mandatory)][string]$ExpectedPinnedImage,
     [ValidateRange(0.5, 12)][double]$DurationSeconds = 5,
     [ValidateRange(0, 2147483646)][int]$SeedBase = 4242,
-    [ValidateSet("default", "cfg-b2", "cfg-b2-silent", "fast-vanilla-reference", "fast-vanilla", "fast-lowres", "fast-lowres-triton", "fast-lowres-none")][string[]]$ProfileSelection = @("default", "cfg-b2", "fast-vanilla-reference", "fast-vanilla", "fast-lowres"),
+    [ValidateSet("default", "cfg-b2", "cfg-b2-silent", "fast-vanilla-reference", "fast-vanilla", "fast-lowres", "fast-lowres-triton", "fast-lowres-none", "fast-vanilla-none", "fast-vanilla-triton", "fast-vanilla-nvfp4")][string[]]$ProfileSelection = @("default", "cfg-b2", "fast-vanilla-reference", "fast-vanilla", "fast-lowres"),
     [ValidateRange(1, 3)][int]$RepeatCount = 1,
     [switch]$AllowNoOffload,
     [string]$BaselineRunId = "",
@@ -35,7 +35,12 @@ if ($RunId -notmatch "^[A-Za-z0-9_-]{1,80}$") {
     throw "RunId must contain only letters, numbers, underscore or hyphen (1-80 chars)."
 }
 if ($BaselineRunId) { throw "The fast benchmark always performs NEW GPU inference; omit historical BaselineRunId." }
-if ($ProfileSelection -contains "fast-lowres-none" -and -not $AllowNoOffload) {
+if ($ProfileSelection -contains "fast-vanilla-nvfp4" -and
+    $ProfileSelection.Count -ne 1) {
+    throw "Native NVFP4 requires its own exclusive pinned Docker image and separate benchmark run."
+}
+if (($ProfileSelection -contains "fast-lowres-none" -or
+     $ProfileSelection -contains "fast-vanilla-none") -and -not $AllowNoOffload) {
     throw "FP8 no-offload may OOM on a 32 GB RTX 5090; pass -AllowNoOffload explicitly."
 }
 if (@($ProfileSelection | Select-Object -Unique).Count -ne $ProfileSelection.Count) {
@@ -94,8 +99,10 @@ if ($Profiles -contains "fast-vanilla-reference" -and
     [Array]::IndexOf($Profiles, "fast-vanilla")) {
     throw "The upstream vanilla reference must precede instrumented vanilla."
 }
-if ($Profiles -contains "fast-lowres-none" -and $Profiles[-1] -ne "fast-lowres-none") {
-    throw "Potential OOM: fast-lowres-none must be the LAST benchmark profile."
+if (($Profiles -contains "fast-lowres-none" -or
+     $Profiles -contains "fast-vanilla-none") -and
+    $Profiles[-1] -notin @("fast-lowres-none", "fast-vanilla-none")) {
+    throw "Potential OOM: a no-offload FP8 profile must be LAST in the batch."
 }
 $Collector = Join-Path $PSScriptRoot "ltx25_i2v_benchmark_metrics.py"
 function Save-BatchJson {
