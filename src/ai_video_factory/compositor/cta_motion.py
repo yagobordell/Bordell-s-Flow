@@ -52,7 +52,7 @@ def _background() -> Image.Image:
     pix = strip.load()
     for y in range(H):
         f = y / max(1, H - 1)
-        pix[0, y] = tuple(round(a + (b - a) * f) for a, b in zip(NAVY, STEEL))
+        pix[0, y] = tuple(round(a + (b - a) * f) for a, b in zip(NAVY, STEEL, strict=True))
     bg = strip.resize((W, H)).convert("RGBA")
     halo = Image.new("RGBA", (900, 900), GOLD + (0,))
     alpha = Image.new("L", halo.size, 0)
@@ -157,12 +157,14 @@ def build_motion(cover_path: Path, qr_path: Path, qr_url: str,
     tmp.unlink(missing_ok=True)
     proc = subprocess.Popen(command, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
-        assert proc.stdin is not None
+        if proc.stdin is None:
+            raise RuntimeError("CTA FFmpeg stdin unavailable")
         for frame in range(frames):
             proc.stdin.write(_render_frame(frame/FPS, background=background,
                                            cover=cover, qr=qr, domain=domain).tobytes())
         proc.stdin.close()
-        assert proc.stderr is not None
+        if proc.stderr is None:
+            raise RuntimeError("CTA FFmpeg stderr unavailable")
         error = proc.stderr.read().decode("utf-8", "replace")
         if proc.wait() != 0:
             raise RuntimeError(f"CTA FFmpeg render failed: {error[-1000:]}")
