@@ -205,7 +205,7 @@ def test_resume_rejects_switching_voice_library_before_paid_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     speech = FakeSpeech(unknown=True)
-    with pytest.raises(FishAudioWorkflowError, match="incomplete"):
+    with pytest.raises(FishAudioWorkflowError, match="outcome unknown"):
         asyncio.run(generate_fish_audio(
             SCRIPT, tmp_path, b11=B11, provider=None,
             ai33_api_key=None, speech_client=speech,
