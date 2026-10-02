@@ -88,6 +88,15 @@ if (Test-Path -LiteralPath $BatchPath) {
     throw "Batch directory already exists; use a new -RunId: $BatchPath"
 }
 $Profiles = @($ProfileSelection)
+if ($Profiles -contains "fast-vanilla-reference" -and
+    $Profiles -contains "fast-vanilla" -and
+    [Array]::IndexOf($Profiles, "fast-vanilla-reference") -gt
+    [Array]::IndexOf($Profiles, "fast-vanilla")) {
+    throw "The upstream vanilla reference must precede instrumented vanilla."
+}
+if ($Profiles -contains "fast-lowres-none" -and $Profiles[-1] -ne "fast-lowres-none") {
+    throw "Potential OOM: fast-lowres-none must be the LAST benchmark profile."
+}
 $Collector = Join-Path $PSScriptRoot "ltx25_i2v_benchmark_metrics.py"
 function Save-BatchJson {
     param([string]$Path, $Value)
@@ -267,6 +276,30 @@ try {
             Require-Python "MP4 validation: $Profile"
             $Technical = Get-Content -LiteralPath (Join-Path $ProfilePath "i2v-smoke-report.json") -Raw | ConvertFrom-Json
             $Result.video_sha256 = [string]$Technical.video_sha256
+            if ($Profile -eq "fast-vanilla" -and
+                $Profiles -contains "fast-vanilla-reference") {
+                $ReferenceReportPath = Join-Path $BatchPath (
+                    "r$Round-fast-vanilla-reference\i2v-smoke-report.json"
+                )
+                if (-not (Test-Path -LiteralPath $ReferenceReportPath -PathType Leaf)) {
+                    throw "Missing same-seed upstream vanilla reference receipt."
+                }
+                $ReferenceReport = Get-Content -LiteralPath $ReferenceReportPath -Raw |
+                    ConvertFrom-Json
+                $ExactMatch = [string]$ReferenceReport.video_sha256 -ceq $Result.video_sha256
+                $Equivalence = [ordered]@{
+                    round = $Round
+                    seed_base = $RoundSeedBase
+                    upstream_sha256 = [string]$ReferenceReport.video_sha256
+                    instrumented_sha256 = $Result.video_sha256
+                    exact_mp4_sha256_match = $ExactMatch
+                }
+                Save-BatchJson (Join-Path $ProfilePath "vanilla-equivalence.json") $Equivalence
+                if (-not $ExactMatch) {
+                    throw "VANILLA QUALITY GATE FAILED: instrumented vanilla MP4 differs from the same-seed pinned upstream vanilla. Do not promote FAST."
+                }
+                Write-Host "VANILLA QUALITY GATE PASSED: reference and silent instrumented MP4 identical." -ForegroundColor Green
+            }
             $Result.status = "video_valid_metrics_pending"
             Save-BatchJson (Join-Path $ProfilePath "run-result.json") $Result
             $LogsEndUtc = [DateTime]::UtcNow
@@ -284,7 +317,7 @@ try {
                 $Result.gpu_run_end_utc = [DateTime]::UtcNow.ToString("o")
                 $Result.client_wall_seconds = $Timer.Elapsed.TotalSeconds
             }
-            if ($Result.status -eq "running") { $Result.status = "failed" }
+            if ($Result.status -ne "succeeded") { $Result.status = "failed" }
             $Result["error"] = $_.Exception.Message
             Save-BatchJson (Join-Path $ProfilePath "run-result.json") $Result
             & $Python $Collector summarize --batch-dir $BatchPath
