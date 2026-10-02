@@ -2121,7 +2121,7 @@ async def main() -> None:
         )
     else:
         visual_style = select_visual_style(getattr(args, "visual_style", None))
-    if visual_style != "casero" and args.ebook_cover:
+    if visual_style != "casero" and getattr(args, "ebook_cover", None):
         raise SystemExit("--ebook-cover solo se admite en modo casero.")
     covers = None
     if not settings.openai_api_key:
@@ -2188,7 +2188,7 @@ async def main() -> None:
             ensure_avatar_meta(avatar_file, args.avatars_dir)
             data_root = args.avatars_dir if managed_target is not None else args.avatars_dir.parent
             covers = ensure_ebook_covers(
-                avatar_file, data_dir=data_root, names=args.ebook_cover,
+                avatar_file, data_dir=data_root, names=getattr(args, "ebook_cover", None),
             )
         output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
     else:
@@ -2434,7 +2434,7 @@ async def main() -> None:
                         if managed_target is not None else args.avatars_dir.parent
                     )
                     covers = ensure_ebook_covers(
-                        avatar_file, data_dir=data_root, names=args.ebook_cover,
+                        avatar_file, data_dir=data_root, names=getattr(args, "ebook_cover", None),
                     )
             if covers is None:
                 raise RuntimeError("Casero CTA covers were not prepared")
