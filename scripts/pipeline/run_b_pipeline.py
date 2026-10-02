@@ -1145,6 +1145,26 @@ async def _video_if_ready(
                     and (output / "CTA" / "output.json").is_file()
                     else None
                 )
+                if isinstance(run, dict) and run.get("casero_cta_enabled") is True:
+                    if cta_dir is None:
+                        raise RuntimeError(
+                            "Casero CTA assets or placement missing; reconcile before LTX"
+                        )
+                    from ai_video_factory.workflows.casero_cta_video import cta_assets
+
+                    cached = cta_assets(cta_dir)
+                    if (
+                        cached["avatar_sha256"] != hashlib.sha256(
+                            (output / "avatar.png").read_bytes()
+                        ).hexdigest()
+                        or cached["qr_sha256"] != hashlib.sha256(
+                            (output / "qr.png").read_bytes()
+                        ).hexdigest()
+                        or cached["voice_id"] != _run_voice_id(output)
+                    ):
+                        raise RuntimeError(
+                            "Cached casero CTA identity differs from this run's avatar, QR or voice"
+                        )
                 return generate_b2_ltx_video(
                     output, plan, audio, images, casero_cta_dir=cta_dir,
                     queue=queue, storage=storage,
