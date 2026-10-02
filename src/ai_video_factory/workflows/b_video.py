@@ -48,7 +48,6 @@ from ai_video_factory.workers.ltx25.jobs import (
     ltx_video_application_job_id,
 )
 from ai_video_factory.workers.ltx25.model import (
-    LTX_GENERATION_PROFILE,
     LTX_PRODUCTION_I2V_PROFILE,
     LTX_VIDEO_TASK,
     ltx_num_frames_for_duration,
@@ -211,6 +210,7 @@ def _fingerprint(
     timeline: dict[str, Any], audio: dict[str, Any],
     assets: dict[tuple[int, str], Path], avatar: Path,
     *, profile: str | None = None,
+    i2v_profile: str | None = LTX_PRODUCTION_I2V_PROFILE,
 ) -> str:
     relevant = {
         "schema": _SCHEMA,
@@ -226,6 +226,13 @@ def _fingerprint(
         "negative_prompt": AVATAR_NEGATIVE_PROMPT,
         "fps": _FPS,
     }
+    # Only I2V-containing B2 runs need a new directory when its recipe changes;
+    # historical v4 fingerprints omitted this key entirely.
+    if i2v_profile is not None and any(
+        beat["visual_type"] == "media_video" and not beat.get("audio")
+        for beat in timeline["beats"]
+    ):
+        relevant["i2v_profile"] = i2v_profile
     canonical = json.dumps(relevant, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -576,6 +583,7 @@ def _inherit_completed_v4_clips(
     old_digest = _fingerprint(
         timeline, audio, assets, avatar,
         profile=LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
+        i2v_profile=None,  # Exact historical v4 directory/fingerprint.
     )[:20]
     if old_digest == digest:
         return
@@ -601,6 +609,10 @@ def _inherit_completed_v4_clips(
 
     for job, record, old_record in zip(jobs, manifest["jobs"], previous_jobs, strict=True):
         if record["status"] == "completed" or old_record.get("status") != "completed":
+            continue
+        if job.kind == "i2v":
+            # Its promoted recipe changes output pixels and paid request identity;
+            # never masquerade an old guided I2V clip as new FP8 resident output.
             continue
         if (
             old_record.get("kind") != job.kind
@@ -636,9 +648,6 @@ def _inherit_completed_v4_clips(
                     ),
                 },
             })
-        else:
-            old_request = job.request
-            old_id = job.request.job_id
         if (
             old_record.get("job_id") != old_id
             or old_record.get("request_sha256") != old_request.fingerprint()
@@ -687,10 +696,7 @@ def _inherit_completed_v4_clips(
             duration_seconds=job.duration_seconds,
             replayed=True,
             reused_from_job_id=old_id,
-            reused_generation_profile=(
-                LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE
-                if job.kind == "a2v" else LTX_GENERATION_PROFILE
-            ),
+            reused_generation_profile=LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
         )
         _save_json(manifest_path, manifest)
         print(
