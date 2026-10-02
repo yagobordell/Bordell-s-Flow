@@ -38,6 +38,7 @@ from ltx_pipelines.utils.types import (
 
 from .i2v_metrics import I2VPhaseMetrics
 
+
 def generate_fast_distilled(  # noqa: PLR0913
     self: DistilledPipeline,
     prompt: str,
