@@ -712,6 +712,7 @@ def generate_b2_ltx_video(
     poll_seconds: float = 15.0, timeout_seconds: float = 21600.0,
     check_capacity: Callable[[], None] | None = None,
     check_a2v_worker: Callable[[], None] | None = None,
+    check_i2v_worker: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Durably submit exactly one LTX request per video beat/avatar group, then mux.
 
@@ -776,6 +777,13 @@ def generate_b2_ltx_video(
             raise B2VideoError("Refusing linked LTX output path")
         clip.parent.mkdir(parents=True, exist_ok=True)
         pending_jobs.append((job, record, clip))
+
+    # The promoted profile is only executable after a compatible immutable
+    # I2V image has been deployed. Do not submit its paid jobs to an old worker.
+    if check_i2v_worker is not None and any(
+        job.kind == "i2v" for job, _record, _clip in pending_jobs
+    ):
+        check_i2v_worker()
 
     # Preserve the existing fail-closed guard: no new input upload or paid job
     # publication happens while the singleton Capacity Controller is unhealthy.
