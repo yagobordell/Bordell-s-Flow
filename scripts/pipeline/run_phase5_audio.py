@@ -12,8 +12,13 @@ from ai_video_factory.domain import SourceScript
 from ai_video_factory.providers import (
     BreezeFallbackEligibleError,
     FishSpeechReference,
+    GeminiTtsSpeechProvider,
     SaladBreezeSpeechProvider,
     SaladFishSpeechProvider,
+)
+from ai_video_factory.providers.gemini_tts import ( 
+    DEFAULT_GEMINI_TTS_MODEL,
+    DEFAULT_GEMINI_TTS_VOICE,
 )
 from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
@@ -68,10 +73,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--provider",
-        choices=("breeze", "fish"),
+        choices=("breeze", "fish", "gemini"),
         default="breeze",
         help="Provider for this attempt; the controlled wrapper serializes fallback GPU lifecycle.",
     )
+    parser.add_argument("--gemini-model", default=DEFAULT_GEMINI_TTS_MODEL)
+    parser.add_argument("--gemini-voice", default=DEFAULT_GEMINI_TTS_VOICE)
     parser.add_argument("--primary-model", default=settings.breeze_tts_model)
     parser.add_argument(
         "--primary-voice",
@@ -242,39 +249,48 @@ async def main() -> None:
         raise SystemExit(f"Source script file not found: {args.source_file}")
 
     source = SourceScript.model_validate_json(args.source_file.read_text(encoding="utf-8"))
-    storage = create_r2_storage(
-        endpoint_url=_required_setting("R2_ENDPOINT_URL", settings.r2_endpoint_url),
-        bucket=_required_setting("R2_BUCKET", settings.r2_bucket),
-        access_key_id=_required_setting("R2_ACCESS_KEY_ID", settings.r2_access_key_id),
-        secret_access_key=_required_setting(
-            "R2_SECRET_ACCESS_KEY",
-            settings.r2_secret_access_key,
-        ),
-    )
-
-    if args.provider == "breeze":
-        executor = _executor(storage=storage, args=args)
-        provider: SpeechProvider = SaladBreezeSpeechProvider(
-            executor=executor,
-            temp_dir=settings.temp_dir / "breeze-client",
-            cfg_scale=args.cfg_scale,
-            seed=args.primary_seed,
+    if args.provider == "gemini":
+        provider: SpeechProvider = GeminiTtsSpeechProvider(
+            api_key=_required_setting("GEMINI_API_KEY", settings.gemini_api_key),
         )
-        model = args.primary_model
-        voice = args.primary_voice
+        model = args.gemini_model
+        voice = args.gemini_voice
+        if not model.strip() or not voice.strip():
+            raise SystemExit("Gemini TTS model and voice must be non-empty")
     else:
-        reference = _build_reference(args)
-        _validate_reference_object(storage, reference)
-        executor = _executor(storage=storage, args=args)
-        provider = SaladFishSpeechProvider(
-            executor=executor,
-            temp_dir=settings.temp_dir / "fish-speech-client",
-            reference=reference,
-            seed=args.fallback_seed,
-            allow_unconditioned=args.allow_unconditioned_fish,
+        # Only GPU-backed providers need R2 or Postgres; Gemini is independent.
+        storage = create_r2_storage(
+            endpoint_url=_required_setting("R2_ENDPOINT_URL", settings.r2_endpoint_url),
+            bucket=_required_setting("R2_BUCKET", settings.r2_bucket),
+            access_key_id=_required_setting("R2_ACCESS_KEY_ID", settings.r2_access_key_id),
+            secret_access_key=_required_setting(
+                "R2_SECRET_ACCESS_KEY", settings.r2_secret_access_key
+            ),
         )
-        model = args.fallback_model
-        voice = reference.profile if reference is not None else "unconditioned"
+
+        if args.provider == "breeze":
+            executor = _executor(storage=storage, args=args)
+            provider = SaladBreezeSpeechProvider(
+                executor=executor,
+                temp_dir=settings.temp_dir / "breeze-client",
+                cfg_scale=args.cfg_scale,
+                seed=args.primary_seed,
+            )
+            model = args.primary_model
+            voice = args.primary_voice
+        else:
+            reference = _build_reference(args)
+            _validate_reference_object(storage, reference)
+            executor = _executor(storage=storage, args=args)
+            provider = SaladFishSpeechProvider(
+                executor=executor,
+                temp_dir=settings.temp_dir / "fish-speech-client",
+                reference=reference,
+                seed=args.fallback_seed,
+                allow_unconditioned=args.allow_unconditioned_fish,
+            )
+            model = args.fallback_model
+            voice = reference.profile if reference is not None else "unconditioned"
 
     if args.preflight_only:
         print(f"PHASE5_PROVIDER_PREFLIGHT provider={args.provider} ok=true")
@@ -326,12 +342,14 @@ async def main() -> None:
         json.dumps(provenance, indent=2, ensure_ascii=False, sort_keys=True),
         encoding="utf-8",
     )
-    args.fallback_state.unlink(missing_ok=True)
+    if args.provider in {"breeze", "fish"}:
+        args.fallback_state.unlink(missing_ok=True)
 
     print(f"Phase 5 narration audio complete. Metadata: {args.metadata.resolve()}")
     print(f"Provider provenance: {args.provenance.resolve()}")
     print(f"Measured narration duration: {narration.duration_seconds:.3f} seconds")
-    print(f"Breeze generation profile: {BREEZE_TTS2_GENERATION_PROFILE}")
+    if args.provider == "breeze":
+        print(f"Breeze generation profile: {BREEZE_TTS2_GENERATION_PROFILE}")
     print(f"Generated with provider={args.provider} model={model}")
 
 
