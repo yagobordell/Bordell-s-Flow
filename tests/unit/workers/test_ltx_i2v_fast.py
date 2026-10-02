@@ -16,7 +16,8 @@ import pytest
 from PIL import Image
 
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
-from ai_video_factory.workers.ltx25 import fast_delivery, model as ltx_model
+from ai_video_factory.workers.ltx25 import fast_delivery
+from ai_video_factory.workers.ltx25 import model as ltx_model
 from ai_video_factory.workers.ltx25.fast_delivery import (
     FAST_DELIVERY_SIZE,
     FAST_INTERNAL_SIZE,
@@ -53,6 +54,12 @@ def test_fast_profiles_have_immutable_distinct_replay_identities(tmp_path: Path)
         [VideoPrompt(shot_id=1, prompt="A subject stirs a drink silently.")],
         [ShotTiming(shot_id=1, start_seconds=0.0, end_seconds=5.0)],
     )
+    assert {
+        LTX_FAST_VANILLA_REFERENCE_PROFILE,
+        LTX_FAST_VANILLA_PROFILE,
+        LTX_FAST_LOWRES_TRITON_PROFILE,
+        LTX_FAST_LOWRES_NO_OFFLOAD_PROFILE,
+    } <= set(LTX_FAST_PROFILES)
     plans = [
         build_video_generation_plan(
             *inputs, keyframe_base_dir=tmp_path, seed_base=4242,
