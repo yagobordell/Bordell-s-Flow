@@ -58,6 +58,7 @@ def generate_fast_distilled(  # noqa: PLR0913
     generated_keyframes: int | Sequence[int] = 0,
     decode_audio: bool = False,
     metrics: I2VPhaseMetrics | None = None,
+    profile_prompt_subphases: bool = False,
 ) -> PipelineOutput:
     """Generate using pinned upstream's vanilla stage-1 and stage-2 SimpleDenoiser.
     Stage 1 samples with the ancestral (SDE) Euler sampler or the deterministic one according
@@ -78,7 +79,12 @@ def generate_fast_distilled(  # noqa: PLR0913
         vae_dtype = dtype
 
     prompt_phase = metrics.phase("prompt_encode_seconds") if metrics else nullcontext()
-    with prompt_phase:
+    prompt_observation = nullcontext()
+    if profile_prompt_subphases and metrics is not None:
+        from .fast_prompt_metrics import profile_prompt_encoder
+
+        prompt_observation = profile_prompt_encoder(self.prompt_encoder, metrics)
+    with prompt_phase, prompt_observation:
         (ctx_p,) = self.prompt_encoder(
             [prompt],
             enhance_first_prompt=enhance_prompt,
