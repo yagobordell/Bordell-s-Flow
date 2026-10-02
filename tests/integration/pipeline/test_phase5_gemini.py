@@ -2,6 +2,8 @@
 
 import argparse
 import asyncio
+import io
+import wave
 import json
 import sys
 from pathlib import Path
@@ -11,7 +13,16 @@ import pytest
 from ai_video_factory.domain import SourceScript
 from ai_video_factory.providers.speech import GeneratedSpeech
 from scripts.pipeline import run_phase5_audio as phase5
-from tests.unit.providers.test_gemini_tts import make_wav
+
+
+def make_wav() -> bytes:
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(24_000)
+        wav_file.writeframes(bytes(2_400 * 2))
+    return buffer.getvalue()
 
 
 def _args(tmp_path: Path, *, provider: str = "gemini", preflight: bool = False):
