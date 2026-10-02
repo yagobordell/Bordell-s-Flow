@@ -722,7 +722,10 @@ def generate_b2_ltx_video(
     """
     from ai_video_factory.compositor.b_video import render_b2_ltx_video
     from ai_video_factory.workflows.casero_cta_video import (
-        cta_assets, finish_cta, insert_cta, submit_cta_first,
+        cta_assets,
+        finish_cta,
+        insert_cta,
+        submit_cta_first,
     )
 
     timeline, jobs, run_dir = build_b2_video_plan(output, plan, audio, images)
