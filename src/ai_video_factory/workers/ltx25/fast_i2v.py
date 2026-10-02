@@ -55,7 +55,7 @@ def generate_fast_distilled(  # noqa: PLR0913
     stage_2_sigmas: torch.Tensor = STAGE_2_DISTILLED_SIGMAS,
     color_space: HDRColorSpace | None = None,
     generated_keyframes: int | Sequence[int] = 0,
-    decode_audio: bool = True,
+    decode_audio: bool = False,
     metrics: I2VPhaseMetrics | None = None,
 ) -> PipelineOutput:
     """Generate using pinned upstream's vanilla stage-1 and stage-2 SimpleDenoiser.
