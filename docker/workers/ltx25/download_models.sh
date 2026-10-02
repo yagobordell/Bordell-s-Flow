@@ -8,6 +8,7 @@ MODEL_ROOT="${LTX_MODEL_ROOT:-/workspace/models/ltx-2.5}"
 MODEL_REPOSITORY="${LTX_MODEL_REPOSITORY:-Lightricks/LTX-2.5}"
 MODEL_REVISION="${LTX_MODEL_REVISION:-6c7e5e573ac1667efc83407806fe9b0b93730e60}"
 INCLUDE_DEV_ASSETS="${LTX_INCLUDE_A2V_DEV_ASSETS:-false}"
+INCLUDE_I2V_NVFP4_ASSETS="${LTX_INCLUDE_I2V_NVFP4_ASSETS:-false}"
 INSTALLED_MANIFEST="${MODEL_ROOT}/.bordell-installed-model-manifest.json"
 
 POLL_SECONDS="${LTX_MODEL_DOWNLOAD_PROGRESS_INTERVAL_SECONDS:-30}"
@@ -24,19 +25,23 @@ THROUGHPUT_WINDOW_SECONDS="${LTX_MODEL_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS:-180}"
 }
 
 mapfile -t MANIFEST_VALUES < <(
-  python3 - "${MANIFEST_PATH}" "${INCLUDE_DEV_ASSETS}" <<'PY'
+  python3 - "${MANIFEST_PATH}" "${INCLUDE_DEV_ASSETS}" "${INCLUDE_I2V_NVFP4_ASSETS}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 include_dev = sys.argv[2].strip().lower() in {"1", "true", "yes", "on"}
+include_nvfp4 = sys.argv[3].strip().lower() in {"1", "true", "yes", "on"}
 print(manifest["repository"])
 print(manifest["revision"])
 for item in manifest["shared_files"]:
     print("FILE\t" + item)
 if include_dev:
     for item in manifest["dev_files"]:
+        print("FILE\t" + item)
+if include_nvfp4:
+    for item in manifest["i2v_nvfp4_files"]:
         print("FILE\t" + item)
 PY
 )
