@@ -9,8 +9,7 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
-from ai_video_factory.providers import GeminiTtsSpeechProvider
-from ai_video_factory.providers import gemini_tts as gemini
+from ai_video_factory.providers import GeminiTtsSpeechProvider, gemini_tts as gemini
 
 
 def make_wav(
