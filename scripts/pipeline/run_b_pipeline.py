@@ -1165,6 +1165,9 @@ async def _video_if_ready(
                             (output / "qr.png").read_bytes()
                         ).hexdigest()
                         or cached["voice_id"] != _run_voice_id(output)
+                        or cached.get("voice_provider", "fishaudio") != (
+                            _run_voice_provider(output)
+                        )
                     ):
                         raise RuntimeError(
                             "Cached casero CTA identity differs from this run's avatar, QR or voice"
