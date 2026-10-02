@@ -130,3 +130,104 @@ after `fast-lowres` and measure the separate decoder and total latency.
    pre-existing validated guided default if any gate fails.
 
 There are deliberately **no Salad bootstrap/download modifications** here.
+
+
+## Opt-in full-resolution FP8, Triton and native NVFP4 experiments
+
+The first real 5s/121-frame A/B measured fast-vanilla at 109.18s and
+95.74s versus default at 146.93s and 125.67s. Our instrumented
+fast-vanilla and pinned upstream reference produced identical MP4s
+in both rounds. Preserve 1280x768 native internal diffusion and silent
+1280x720 delivery while evaluating remaining optimizations.
+
+| CLI name | DiT precision | Offload | DiffVAE | Risk |
+| --- | --- | --- | --- | --- |
+| fast-vanilla | FP8_CAST | CPU | eager | Existing validated reference |
+| fast-vanilla-triton | FP8_CAST | CPU | optional Triton | Changed decoder rounding |
+| fast-vanilla-none | FP8_CAST | NONE | eager | 32GB RTX 5090 OOM possible |
+| fast-vanilla-nvfp4 | Official prequant NVFP4 | NONE | eager | Separate native image + visual differences |
+
+For the three new profiles, the instrumentation separates Gemma
+loading+encoding and embeddings-builder time. There is deliberately
+no repeated-prompt cache shortcut: normal beats may use unique prompts.
+
+### FP8 comparison using the normal experimental image
+
+Build and pin the normal Dockerfile from this branch as before.
+Stop the Capacity Controller and avatar group; Prepare the stopped
+I2V group with the matching immutable Docker digest. For the first
+run, prefer a cheaper 2-second smoke.
+
+~~~powershell
+$SeedIdentity = "ltx-five-sec-candidates-v1"
+$Opts = @{
+    Image = $Image
+    Prompt = $Prompt
+    ExpectedPinnedImage = $PinnedImage
+    DurationSeconds = 5
+    SeedBase = 4242
+    SeedIdentity = $SeedIdentity
+    ProfileSelection = @("fast-vanilla", "fast-vanilla-triton", "fast-vanilla-none")
+    RepeatCount = 2
+    RunId = "fp8-fullres-$(Get-Date -Format yyyyMMddHHmmss)"
+    AllowNoOffload = $true
+    EnvFile = ".env"
+    NonInteractive = $true
+}
+.\scripts\smoke\run_ltx25_i2v_fast_benchmark.ps1 @Opts
+~~~
+
+Place the potential-OOM FP8 none profile LAST, with explicit consent.
+A failure stops capacity, preserves earlier clips/metrics and cannot
+silently become a production configuration.
+
+### Separate official native NVFP4 image
+
+Dockerfile.nvfp4 uses the pinned upstream revision and PyTorch/CUDA
+2.11/12.8 devel image to compile SM120 native kernels. It opts in
+to the official distilled NVFP4 checkpoint at the exact pinned HF
+revision; the normal worker Dockerfile and model assets are unchanged.
+Expect a larger Docker pull and an extra model download.
+
+Verify licensed access and the exact pinned checkpoint metadata BEFORE
+building or allocating any GPU:
+
+~~~powershell
+uv run --locked --extra dev python scripts/smoke/check_ltx25_nvfp4_source.py --manifest docker/workers/ltx25/model-manifest.json --env-file .env
+~~~
+
+Build the experimental image with Dockerfile.nvfp4 (not the normal
+Dockerfile) using your existing docker buildx build --push workflow
+and obtain the immutable repository@sha256 digest. Prepare the STOPPED
+I2V group with that new digest. Then execute the NVFP4-only batch:
+
+~~~powershell
+$Nvfp4Options = @{
+    Image = $Image
+    Prompt = $Prompt
+    ExpectedPinnedImage = $Nvfp4PinnedImage
+    DurationSeconds = 5
+    SeedBase = 4242
+    SeedIdentity = $SeedIdentity
+    ProfileSelection = @("fast-vanilla-nvfp4")
+    RepeatCount = 2
+    RunId = "nvfp4-fullres-$(Get-Date -Format yyyyMMddHHmmss)"
+    AllowNvfp4 = $true
+    EnvFile = ".env"
+    NonInteractive = $true
+}
+.\scripts\smoke\run_ltx25_i2v_fast_benchmark.ps1 @Nvfp4Options
+~~~
+
+Using the same SeedIdentity aligns the actual per-round seeds across
+the two separate Docker-image runs. NVFP4 changes precision: do NOT
+require identical MP4 hashes versus FP8; compare visual quality, motion,
+camera behavior and prompt alignment in multiple representative scenes.
+
+NVFP4 fails closed without its special image runtime marker,
+Blackwell GPU capability, compiled native kernels and the precise
+official checkpoint. NVFP4-prequant uses NONE offload because the
+upstream CPU streamer cannot load its companion-key quantization.
+
+Do not merge or choose a production profile before stable repeated
+5s RTX 5090 inference and visual validation with several prompts.
