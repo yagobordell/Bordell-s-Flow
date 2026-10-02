@@ -68,11 +68,46 @@ def ensure_ebook_covers(
             selected = tuple(names)
         if len(selected) not in (1, 2) or len(set(selected)) != len(selected):
             raise ValueError("Indica una o dos portadas PNG distintas, en orden de prioridad.")
-    covers = tuple(_safe_cover(data_dir, item) for item in selected)
-    hashes = tuple(hashlib.sha256(item.read_bytes()).hexdigest() for item in covers)
+    # Snapshot the first selection so a future generation can reuse the avatar
+    # even after the original data/ uploads have been moved or removed.
+    snapshot_dir = meta / "ebook"
+    if snapshot_dir.is_symlink():
+        raise ValueError("La carpeta de portadas del avatar no puede ser un enlace.")
+    source_files: list[Path] = []
+    hashes: list[str] = []
+    for number, item in enumerate(selected, 1):
+        pinned = snapshot_dir / f"cover_{number}.png"
+        original = data_dir / (item + ".png")
+        if original.is_file():
+            original = _safe_cover(data_dir, item)
+            digest = hashlib.sha256(original.read_bytes()).hexdigest()
+            if record is not None and digest != record["covers"][number-1]["sha256"]:
+                raise ValueError("La portada original ha cambiado respecto a la selección guardada.")
+            if pinned.is_file() and (
+                pinned.is_symlink() or hashlib.sha256(pinned.read_bytes()).hexdigest() != digest
+            ):
+                raise ValueError("La copia persistente de la portada ha cambiado.")
+            if not pinned.is_file():
+                snapshot_dir.mkdir(parents=True, exist_ok=True)
+                temporary_cover = pinned.with_suffix(".part")
+                if temporary_cover.exists() or temporary_cover.is_symlink():
+                    raise ValueError("Copia de portada incompleta; revisa .part")
+                try:
+                    temporary_cover.write_bytes(original.read_bytes())
+                    temporary_cover.replace(pinned)
+                finally:
+                    temporary_cover.unlink(missing_ok=True)
+        else:
+            if record is None or pinned.is_symlink() or not pinned.is_file():
+                raise ValueError(f"Falta la portada original y su copia: {item}.png")
+            digest = hashlib.sha256(pinned.read_bytes()).hexdigest()
+            if digest != record["covers"][number-1]["sha256"]:
+                raise ValueError("La portada guardada ya no coincide con su SHA-256.")
+        source_files.append(pinned)
+        hashes.append(digest)
     if record is not None:
-        if tuple(item["sha256"] for item in record["covers"]) != hashes:
-            raise ValueError("Ha cambiado una portada ya vinculada al avatar. Revisa el CTA guardado.")
+        if tuple(item["sha256"] for item in record["covers"]) != tuple(hashes):
+            raise ValueError("Ha cambiado una portada vinculada a este avatar.")
     else:
         tmp = record_file.with_suffix(".json.part")
         if tmp.exists() or tmp.is_symlink():
@@ -85,4 +120,4 @@ def ensure_ebook_covers(
             tmp.replace(record_file)
         finally:
             tmp.unlink(missing_ok=True)
-    return EbookCovers(covers, hashes)
+    return EbookCovers(tuple(source_files), tuple(hashes))
