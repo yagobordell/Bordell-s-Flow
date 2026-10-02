@@ -21,6 +21,7 @@ from pydantic import BaseModel, ValidationError
 from ai_video_factory.config import settings
 from ai_video_factory.providers.base import StructuredTextProvider
 
+from .cta import CTAPlacement, validate_placement
 from .contracts import (
     B2Input,
     B2InputBlock,
@@ -413,6 +414,7 @@ async def run_b_pipeline(
     model: str | None = None,
     max_parallel_calls: int = 8,
     visual_style: Literal["casero", "profesional"] = "casero",
+    enable_casero_cta: bool = False,
     avatar_image: bytes | None = None,
     start_from: Literal["B1.1", "B1.2", "B2"] = "B1.1",
     stop_after: Literal["B1.1", "B1.2", "B2"] = "B2",
@@ -484,7 +486,40 @@ async def run_b_pipeline(
             )
         return output
 
+    async def call_cta() -> None:
+        started = perf_counter()
+        payload = {"script_for_recording": script}
+
+        async def attempt(suffix: str = "") -> CTAPlacement:
+            return await _call_stage(
+                "CTA", None, payload, provider=provider, model=model,
+                prompt="cta.md", instructions_suffix=suffix,
+                output_type=CTAPlacement, on_input=on_input,
+                on_api_response=on_api_response, on_call_duration=on_call_duration,
+            )
+
+        try:
+            try:
+                found = await attempt()
+                position = validate_placement(script, found)
+            except ValueError as error:
+                found = await attempt(
+                    "\n\nYour previous CTA anchor pair failed deterministic validation: "
+                    + str(error) + ". Return exact unique adjacent spoken sentences."
+                )
+                position = validate_placement(script, found)
+            if on_output is not None:
+                on_output("CTA", None, {
+                    **found.model_dump(), "insert_after_character": position,
+                })
+        finally:
+            if on_stage_duration is not None:
+                on_stage_duration("CTA", perf_counter() - started)
+
+    cta_task: asyncio.Task[None] | None = None
     if start_from == "B1.1":
+        if enable_casero_cta and visual_style == "casero":
+            cta_task = asyncio.create_task(call_cta())
         b11_started = perf_counter()
         try:
             b11 = await call_b11()
@@ -523,6 +558,8 @@ async def run_b_pipeline(
                 on_stage_duration("B1.1", perf_counter() - b11_started)
         if on_stage_complete is not None:
             on_stage_complete("B1.1", len(materialized), None)
+        if cta_task is not None:
+            await asyncio.shield(cta_task)
         if stop_after == "B1.1":
             return BPipelineResult(b11=b11, b12=(), b2=())
     else:
