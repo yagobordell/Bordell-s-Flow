@@ -664,7 +664,14 @@ class DirectLTX25Backend:
 
                         with metrics.phase("pipeline_call_seconds"):
                             result = generate_fast_distilled(
-                                pipeline, decode_audio=False, metrics=metrics,
+                                pipeline,
+                                decode_audio=False,
+                                metrics=metrics,
+                                profile_prompt_subphases=parameters.generation_profile in (
+                                    LTX_FAST_FULLRES_NO_OFFLOAD_PROFILE,
+                                    LTX_FAST_FULLRES_TRITON_PROFILE,
+                                    LTX_FAST_FULLRES_NVFP4_PROFILE,
+                                ),
                                 **pipeline_kwargs,
                             )
                 elif parameters.generation_profile == LTX_STATIC_CAMERA_GENERATION_PROFILE:
