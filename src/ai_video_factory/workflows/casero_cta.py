@@ -12,10 +12,9 @@ import json
 import shutil
 import subprocess
 import wave
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-
-from collections.abc import Callable
 
 from PIL import Image
 
@@ -23,7 +22,9 @@ from ai_video_factory.bots.cta import CTAEbook
 from ai_video_factory.compositor.cta_motion import build_motion
 from ai_video_factory.config import settings
 from ai_video_factory.providers.ai33_speech import (
-    AI33SpeechClient, task_id_of, audio_url_of,
+    AI33SpeechClient,
+    audio_url_of,
+    task_id_of,
 )
 from ai_video_factory.providers.ebook_covers import EbookCovers
 from ai_video_factory.providers.openai_images import OpenAIImageClient
@@ -147,7 +148,10 @@ def _tts(directory: Path, script: str, voice_id: str) -> dict[str, Any]:
         "status": "new", "text_sha256": hashlib.sha256(script.encode()).hexdigest(),
         "voice_id": voice_id,
     }
-    if state.get("text_sha256") != hashlib.sha256(script.encode()).hexdigest() or state.get("voice_id") != voice_id:
+    if (
+        state.get("text_sha256") != hashlib.sha256(script.encode()).hexdigest()
+        or state.get("voice_id") != voice_id
+    ):
         raise CaseroCTAError(
             "Saved CTA TTS belongs to a different script or voice"
         )
