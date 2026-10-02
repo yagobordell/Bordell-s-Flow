@@ -92,7 +92,10 @@ def _render_frame(
         d.line((text_x, H//2 + 15, text_x + round(125*eye), H//2 + 15), fill=GOLD, width=4)
     body = _ease((t - 2.1) / 0.6)
     if body:
-        d.text((text_x, H//2 + 48), "SCAN FOR YOUR COPY", fill=WHITE + (round(255*body),), font=_font(38))
+        d.text(
+            (text_x, H//2 + 48), "SCAN FOR YOUR COPY",
+            fill=WHITE + (round(255*body),), font=_font(38),
+        )
     # Original v4 hierarchy: QR card at the top-right, explanatory text outside.
     pqr = _ease((t - 4.1) / 0.6)
     if pqr:
