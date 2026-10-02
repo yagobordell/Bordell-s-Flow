@@ -41,12 +41,21 @@ def validate_channel_name(name: str) -> str:
     return value
 
 
-def _source_checkout_root() -> Path | None:
-    """Find the checkout if running from source; wheels may have no checkout."""
-    for parent in Path(__file__).resolve().parents:
+def _checkout_root(path: Path) -> Path | None:
+    """Find a project checkout, even when this package was installed elsewhere."""
+    for parent in (path, *path.parents):
         if (parent / "pyproject.toml").is_file() and (parent / ".gitignore").is_file():
-            return parent
+            return parent.resolve()
     return None
+
+
+def _reject_linked_ancestors(path: Path) -> None:
+    """Resolve none of the path until symlink and Windows junction checks pass."""
+    for segment in (path, *path.parents):
+        if segment.is_symlink() or segment.is_junction():
+            raise YouTubeConfigurationError(
+                "YouTube keystore path must not traverse symlinks or Windows junctions"
+            )
 
 
 class YouTubeStore:
@@ -55,13 +64,22 @@ class YouTubeStore:
     def __init__(self, directory: Path | str, *, repo_root: Path | None = None) -> None:
         if not str(directory).strip():
             raise YouTubeConfigurationError("YOUTUBE_KEYSTORE_DIR is not configured")
-        original = Path(directory).expanduser()
-        if original.is_symlink():
-            raise YouTubeConfigurationError("YouTube keystore must not be a symbolic link")
+        # On Windows this expands e.g. %USERPROFILE%; on Linux it expands $HOME.
+        original = Path(os.path.expandvars(str(directory))).expanduser()
+        if not original.is_absolute():
+            raise YouTubeConfigurationError("YOUTUBE_KEYSTORE_DIR must be an absolute path")
+        _reject_linked_ancestors(original)
         resolved = original.resolve(strict=False)
-        checkout = repo_root if repo_root is not None else _source_checkout_root()
-        if checkout is not None:
-            repository = checkout.resolve()
+        roots = (
+            (repo_root.resolve(),) if repo_root is not None else
+            tuple(
+                root for root in (
+                    _checkout_root(Path(__file__).resolve()),
+                    _checkout_root(Path.cwd().resolve()),
+                ) if root is not None
+            )
+        )
+        for repository in roots:
             if resolved == repository or resolved.is_relative_to(repository):
                 raise YouTubeConfigurationError(
                     "YouTube keystore must be outside the repository"
@@ -69,19 +87,22 @@ class YouTubeStore:
         self.directory = resolved
 
     def ensure_directory(self) -> Path:
-        if self.directory.is_symlink():
-            raise YouTubeConfigurationError("YouTube keystore must not be a symbolic link")
+        _reject_linked_ancestors(self.directory)
         if self.directory.exists() and not self.directory.is_dir():
             raise YouTubeConfigurationError("YouTube keystore path is not a directory")
         try:
-            self.directory.mkdir(parents=True, exist_ok=True)
+            self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            if os.name == "posix" and self.directory.stat().st_mode & 0o077:
+                raise YouTubeConfigurationError(
+                    "YouTube keystore directory needs owner-only permissions (chmod 700)"
+                )
         except OSError:
             raise YouTubeConfigurationError("Cannot initialize YouTube keystore") from None
         return self.directory
 
     def client_secret_path(self, *, required: bool = True) -> Path:
         path = self.directory / _CLIENT_SECRET
-        if path.is_symlink() or (path.exists() and not path.is_file()):
+        if path.is_symlink() or path.is_junction() or (path.exists() and not path.is_file()):
             raise YouTubeConfigurationError("Invalid YouTube client_secret.json")
         if required and not path.is_file():
             raise YouTubeConfigurationError("YouTube client_secret.json is missing")
@@ -90,14 +111,14 @@ class YouTubeStore:
     def token_path(self, channel: str, *, required: bool = False) -> Path:
         """Case-insensitive lookup preserves the existing filename's spelling."""
         name = validate_channel_name(channel)
-        if self.directory.is_symlink() or (
+        if self.directory.is_symlink() or self.directory.is_junction() or (
             self.directory.exists() and not self.directory.is_dir()
         ):
             raise YouTubeConfigurationError("Invalid YouTube keystore directory")
-        requested = (name + ".json").casefold()
+        requested = unicodedata.normalize("NFC", name + ".json").casefold()
         matches = [
             entry for entry in self.directory.iterdir()
-            if entry.name.casefold() == requested
+            if unicodedata.normalize("NFC", entry.name).casefold() == requested
         ] if self.directory.is_dir() else []
         if len(matches) > 1:
             raise YouTubeConfigurationError("Conflicting YouTube channel token filenames")
@@ -143,7 +164,7 @@ class YouTubeStore:
                 stream.flush()
                 os.fsync(stream.fileno())
             # Refuse a late symlink replacement rather than following it.
-            if destination.is_symlink():
+            if destination.is_symlink() or destination.is_junction():
                 raise YouTubeConfigurationError("Unsafe YouTube channel token destination")
             os.replace(temporary, destination)
         except OSError:
@@ -154,16 +175,18 @@ class YouTubeStore:
         return destination
 
     def list_channels(self) -> tuple[str, ...]:
+        _reject_linked_ancestors(self.directory)
         if not self.directory.is_dir():
             return ()
         names: dict[str, str] = {}
         for file in self.directory.iterdir():
             if file.suffix.casefold() != ".json" or file.name.casefold() == _CLIENT_SECRET:
                 continue
-            if file.is_symlink() or not file.is_file():
+            if file.is_symlink() or file.is_junction() or not file.is_file():
                 raise YouTubeConfigurationError("Unsafe YouTube channel token entry")
             channel = validate_channel_name(file.name[:-5])
-            if channel.casefold() in names:
+            key = unicodedata.normalize("NFC", channel).casefold()
+            if key in names:
                 raise YouTubeConfigurationError("Conflicting YouTube channel token filenames")
-            names[channel.casefold()] = channel
+            names[key] = channel
         return tuple(sorted(names.values(), key=str.casefold))

@@ -5,7 +5,7 @@ import json
 import re
 
 from .a2v import LTX_A2V_GENERATION_PROFILE
-from .model import LTX_GENERATION_PROFILE, LTX_STATIC_CAMERA_GENERATION_PROFILE
+from .model import LTX_GENERATION_PROFILE, LTX_SUPPORTED_I2V_PROFILES
 
 
 def ltx_video_application_job_id(
@@ -22,7 +22,7 @@ def ltx_video_application_job_id(
 ) -> str:
     """Return the stable application job ID for one LTX-2.5 generation request."""
 
-    if generation_profile not in (LTX_GENERATION_PROFILE, LTX_STATIC_CAMERA_GENERATION_PROFILE):
+    if generation_profile not in LTX_SUPPORTED_I2V_PROFILES:
         raise ValueError("Unsupported I2V generation profile")
 
     plan = {

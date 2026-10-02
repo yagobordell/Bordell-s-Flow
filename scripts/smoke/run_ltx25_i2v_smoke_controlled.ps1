@@ -5,8 +5,9 @@ param(
     [Parameter(Mandatory)][string]$ExpectedPinnedImage,
     [ValidateRange(0.5, 12)][double]$DurationSeconds = 2,
     [ValidateRange(0, 2147483646)][int]$SeedBase = 4242,
-    [ValidateSet("default", "static-camera")][string]$I2VProfile = "default",
+    [ValidateSet("default", "default-silent-verify", "static-camera", "cfg-b2", "cfg-b2-silent", "cfg-b2-triton")][string]$I2VProfile = "default",
     [string]$CompareWithRunId = "",
+    [switch]$RequireExactBaselineVideoSha,
     [string]$RunId = ([Guid]::NewGuid().ToString("N")),
     [string]$OutputDir = "data/output/deployment-validation/ltx25-i2v",
     [string]$EnvFile = ".env",
@@ -35,8 +36,13 @@ if (-not [string]::IsNullOrWhiteSpace($CompareWithRunId) -and
     ($CompareWithRunId -notmatch "^[A-Za-z0-9_-]{1,80}$" -or $CompareWithRunId -eq $RunId)) {
     throw "-CompareWithRunId must be a different, existing safe baseline RunId."
 }
-if (-not [string]::IsNullOrWhiteSpace($CompareWithRunId) -and $I2VProfile -ne "static-camera") {
-    throw "-CompareWithRunId is only supported for the experimental static-camera profile."
+if (-not [string]::IsNullOrWhiteSpace($CompareWithRunId) -and $I2VProfile -eq "default") {
+    throw "-CompareWithRunId requires an experimental I2V profile."
+}
+if ($RequireExactBaselineVideoSha -and
+    ($I2VProfile -ne "default-silent-verify" -or
+     [string]::IsNullOrWhiteSpace($CompareWithRunId))) {
+    throw "-RequireExactBaselineVideoSha requires -I2VProfile default-silent-verify and an existing -CompareWithRunId."
 }
 if ($ExpectedPinnedImage -notmatch "^[^\s@]+@sha256:[0-9a-fA-F]{64}$") {
     throw "-ExpectedPinnedImage must be an immutable repo@sha256:digest reference."
@@ -48,7 +54,7 @@ $ImageRepository = [string]$I2V.image -replace ":[^/:]+$", ""
 if (-not $ExpectedPinnedImage.StartsWith("${ImageRepository}@sha256:")) {
     throw "The expected image digest must refer to the reviewed I2V Docker repository."
 }
-if ($I2VProfile -eq "static-camera" -and
+if ($I2VProfile -ne "default" -and
     $ExpectedPinnedImage -eq "docker.io/yagobordell/ai-video-factory@sha256:bffdca9cfaf5e6e19cd9f20b7f88a562c3af8cf2854d7bad56e1f66700a87564") {
     throw "The v11 image from i2v-smoke-003 does not contain static-camera inference; publish a NEW image first."
 }
@@ -64,6 +70,9 @@ if (-not (Test-Path -LiteralPath $Image -PathType Leaf)) {
 Import-EnvFile -Path $EnvFile
 & $Python $SourceCheck (Join-Path $RepoRoot "src\ai_video_factory\workers\ltx25\__init__.py")
 if ($LASTEXITCODE -ne 0) { throw "LTX Python source mismatch; run uv sync --locked --extra dev --python 3.12." }
+# Fail locally before allocating Salad if readiness credentials or account selection drift.
+& $Python $Ready --service ltx25_i2v --env-file $EnvFile --expected-image $ExpectedPinnedImage --check-config-only
+if ($LASTEXITCODE -ne 0) { throw "Local I2V readiness configuration preflight failed; no GPU allocated." }
 & $Python $R2Preflight
 if ($LASTEXITCODE -ne 0) { throw "R2 preflight failed; refusing paid Salad capacity." }
 
@@ -144,11 +153,33 @@ try {
         "--timeout-seconds", $TimeoutSeconds,
         "--poll-seconds", 15
     )
-    if ($I2VProfile -eq "static-camera") { $RunnerArgs += @("--i2v-profile", "static-camera") }
+    if ($I2VProfile -ne "default") { $RunnerArgs += @("--i2v-profile", $I2VProfile) }
     & $Python $Runner @RunnerArgs
     if ($LASTEXITCODE -ne 0) { throw "I2V Postgres/R2 generation failed." }
     & $Python $Smoke validate --video (Join-Path $Output "video_clips\shot_001.mp4") --duration-seconds $DurationSeconds --output-dir $RunPath
     if ($LASTEXITCODE -ne 0) { throw "I2V output technical verification failed." }
+    if ($RequireExactBaselineVideoSha) {
+        $NewReportFile = Join-Path $RunPath "i2v-smoke-report.json"
+        $NewReport = Get-Content -LiteralPath $NewReportFile -Raw | ConvertFrom-Json
+        $NewSha = [string]$NewReport.video_sha256
+        $BaselineSha = [string]$BaselineCheck.video_sha256
+        $Matches = $NewSha -ceq $BaselineSha
+        $Receipt = [ordered]@{
+            verification_profile = $I2VProfile
+            reference_run_id = $CompareWithRunId
+            reference_video_sha256 = $BaselineSha
+            fresh_run_id = $RunId
+            fresh_video_sha256 = $NewSha
+            exact_mp4_sha256_match = $Matches
+            technical_status = [string]$NewReport.status
+        }
+        $Receipt | ConvertTo-Json -Depth 5 |
+            Set-Content -LiteralPath (Join-Path $RunPath "quality-equivalence.json") -Encoding utf8
+        if (-not $Matches) {
+            throw "VISUAL QUALITY GATE FAILED: fresh default-silent MP4 differs from the original. Do not promote the changed worker image."
+        }
+        Write-Host "QUALITY GATE PASSED: fresh default-silent MP4 exactly matches original SHA256=$NewSha" -ForegroundColor Green
+    }
 }
 finally {
     if ($StartRequested) {

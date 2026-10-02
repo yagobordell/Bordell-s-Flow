@@ -1,0 +1,88 @@
+"""Opt-in CUDA-synchronized per-phase timing for the LTX I2V worker.
+
+Decode yields chunks lazily, so video timing must wrap iterator consumption,
+not just VideoDecoder.__call__. Instrumentation runs only when explicitly
+requested and does not mutate tensors, RNG or pipeline components.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+class I2VPhaseMetrics:
+    def __init__(self, torch_module: Any, device: Any) -> None:
+        self._cuda = getattr(torch_module, "cuda", None)
+        self._device = device
+        self._is_cuda = str(device).startswith("cuda") and bool(
+            self._cuda is not None and self._cuda.is_available()
+        )
+        self.timings: dict[str, float] = {}
+        self.cuda_peak_reset = False
+
+    def begin_generation(self) -> None:
+        """Reset allocator peaks before this request, without changing tensors or RNG.
+
+        Do not fail a video job if the installed torch backend lacks this
+        instrumentation. The metric explicitly reports whether reset worked.
+        """
+        if not self._is_cuda:
+            return
+        reset = getattr(self._cuda, "reset_peak_memory_stats", None)
+        if not callable(reset):
+            return
+        try:
+            self._synchronize()
+            reset(self._device)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("LTX25_I2V_CUDA_PEAK_RESET_UNAVAILABLE error=%s", exc)
+        else:
+            self.cuda_peak_reset = True
+
+    def _synchronize(self) -> None:
+        if self._is_cuda:
+            synchronize = getattr(self._cuda, "synchronize", None)
+            if synchronize is not None:
+                synchronize()
+
+    @contextmanager
+    def phase(self, name: str) -> Iterator[None]:
+        self._synchronize()
+        start = time.perf_counter()
+        try:
+            yield
+        finally:
+            self._synchronize()
+            elapsed = time.perf_counter() - start
+            self.timings[name] = self.timings.get(name, 0.0) + elapsed
+
+    def video_chunks(self, chunks: Iterator[Any]) -> Iterator[Any]:
+        """Measure actual lazy DiffVAE work when the encoder pulls each chunk."""
+        source = iter(chunks)
+        while True:
+            with self.phase("video_decode_seconds"):
+                try:
+                    chunk = next(source)
+                except StopIteration:
+                    return
+            yield chunk
+
+    def cuda_peak(self) -> dict[str, float]:
+        if not self._is_cuda:
+            return {}
+        peak_allocated = getattr(self._cuda, "max_memory_allocated", None)
+        peak_reserved = getattr(self._cuda, "max_memory_reserved", None)
+        return {
+            key: round(fn() / (1024 * 1024), 2)
+            for key, fn in (
+                ("cuda_peak_allocated_mb", peak_allocated),
+                ("cuda_peak_reserved_mb", peak_reserved),
+            )
+            if callable(fn)
+        }
