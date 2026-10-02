@@ -1,0 +1,248 @@
+"""Gemini 3.8 TTS adapter for the provider-neutral Phase 5 narration workflow."""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import binascii
+import io
+import json
+import math
+import wave
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
+
+from .speech import GeneratedSpeech, SpeechFormat
+
+DEFAULT_GEMINI_TTS_MODEL = "gemini-3.8-flash-tts"
+DEFAULT_GEMINI_TTS_VOICE = "Algenib"
+DEFAULT_GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+DEFAULT_SAMPLE_RATE_HZ = 24_000
+DEFAULT_CHANNELS = 1
+MAX_STYLE_PROMPT_BYTES = 4_000
+
+_VERBATIM = "The text is the verbatim transcript. Do not add, omit, or rewrite words."
+
+
+class GeminiTtsError(RuntimeError):
+    """The Gemini response or its audio did not satisfy the TTS contract."""
+
+
+def _fit_utf8(value: str, *, max_bytes: int) -> str:
+    encoded = value.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return value
+    return encoded[:max_bytes].decode("utf-8", errors="ignore").rstrip()
+
+
+def _build_style(instructions: str, speed: float) -> str:
+    if not math.isfinite(speed) or not 0.25 <= speed <= 4.0:
+        raise ValueError("Gemini TTS speed must be between 0.25 and 4.0")
+    if speed < 1.0:
+        pace = "Use a measured, slightly slower pace."
+    elif speed > 1.0:
+        pace = "Use a brisk pace."
+    else:
+        pace = "Use a natural conversational pace."
+
+    # Reserve room for both mandatory rules even when optional instructions are oversized.
+    required = f"{_VERBATIM}\n{pace}"
+    available = MAX_STYLE_PROMPT_BYTES - len(required.encode("utf-8")) - 1
+    optional = _fit_utf8(instructions.strip(), max_bytes=available)
+    return f"{optional}\n{required}" if optional else required
+
+
+def _build_payload(
+    *, text: str, voice: str, instructions: str, speed: float
+) -> dict[str, Any]:
+    return {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": text,
+                        "speech_metadata": {"style": _build_style(instructions, speed)},
+                    }
+                ],
+            }
+        ],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "responseFormat": {
+                "audio": {"mimeType": "AUDIO_WAV", "sampleRate": DEFAULT_SAMPLE_RATE_HZ}
+            },
+            "speechConfig": {"voiceConfig": {"voice": voice}},
+        },
+    }
+
+
+def _post_json(
+    *, url: str, api_key: str, payload: dict[str, Any], timeout_seconds: float
+) -> dict[str, Any]:
+    request = Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            raw = response.read()
+    except HTTPError as exc:
+        # Do not echo server-controlled error bodies; they may contain credentials.
+        raise GeminiTtsError(f"Gemini TTS returned HTTP {exc.code}") from None
+    except (URLError, TimeoutError, OSError) as exc:
+        # A failed POST may have been billed. Never retry it automatically.
+        raise GeminiTtsError("Gemini TTS transport failed; submission outcome may be unknown") from exc
+
+    try:
+        decoded = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise GeminiTtsError("Gemini TTS returned invalid JSON") from exc
+    if not isinstance(decoded, dict):
+        raise GeminiTtsError("Gemini TTS response must be a JSON object")
+    return decoded
+
+
+def _decode_audio(payload: dict[str, Any]) -> bytes:
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        raise GeminiTtsError("Gemini TTS returned no candidates")
+
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        content = candidate.get("content")
+        parts = content.get("parts") if isinstance(content, dict) else None
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            if not isinstance(part, dict) or not isinstance(part.get("inlineData"), dict):
+                continue
+            inline_data = part["inlineData"]
+            mime_type = str(inline_data.get("mimeType") or "").split(";", 1)[0].lower()
+            if mime_type not in {"audio/wav", "audio/x-wav"}:
+                raise GeminiTtsError(
+                    f"Gemini TTS returned unexpected MIME type: {mime_type or '<missing>'}"
+                )
+            raw_data = inline_data.get("data")
+            if not isinstance(raw_data, str) or not raw_data.strip():
+                raise GeminiTtsError("Gemini TTS returned empty audio data")
+            try:
+                audio = base64.b64decode(raw_data, validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise GeminiTtsError("Gemini TTS returned invalid base64 audio") from exc
+            if not audio:
+                raise GeminiTtsError("Gemini TTS returned empty WAV bytes")
+            return audio
+
+    raise GeminiTtsError("Gemini TTS returned no inline audio")
+
+
+def _validate_wav(data: bytes) -> dict[str, int]:
+    if len(data) < 44 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise GeminiTtsError("Gemini TTS returned invalid WAV container")
+    # A standard, non-streaming Gemini WAV must not claim more bytes than received.
+    if int.from_bytes(data[4:8], "little") + 8 > len(data):
+        raise GeminiTtsError("Gemini TTS returned truncated WAV container")
+
+    try:
+        with wave.open(io.BytesIO(data), "rb") as wav_file:
+            sample_rate = wav_file.getframerate()
+            channels = wav_file.getnchannels()
+            sample_width = wav_file.getsampwidth()
+            compression = wav_file.getcomptype()
+            frame_count = wav_file.getnframes()
+            frames = wav_file.readframes(frame_count)
+    except (EOFError, OSError, ValueError, wave.Error) as exc:
+        raise GeminiTtsError("Gemini TTS returned unreadable WAV audio") from exc
+
+    if sample_rate != DEFAULT_SAMPLE_RATE_HZ:
+        raise GeminiTtsError(
+            f"Gemini TTS returned {sample_rate} Hz; expected {DEFAULT_SAMPLE_RATE_HZ} Hz"
+        )
+    if channels != DEFAULT_CHANNELS:
+        raise GeminiTtsError(f"Gemini TTS returned {channels} channels; expected mono")
+    if sample_width != 2 or compression != "NONE":
+        raise GeminiTtsError("Gemini TTS returned audio outside PCM16 WAV contract")
+    if frame_count <= 0 or not frames:
+        raise GeminiTtsError("Gemini TTS returned empty WAV audio")
+    if len(frames) != frame_count * channels * sample_width:
+        raise GeminiTtsError("Gemini TTS returned incomplete WAV frames")
+    return {"sample_rate_hz": sample_rate, "channels": channels}
+
+
+class GeminiTtsSpeechProvider:
+    """Direct Gemini API adapter; owns no storage, queue, or application settings."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        api_base_url: str = DEFAULT_GEMINI_API_BASE_URL,
+        timeout_seconds: float = 120.0,
+    ) -> None:
+        if not api_key.strip():
+            raise ValueError("Gemini TTS requires a non-empty API key")
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        self._api_key = api_key.strip()
+        self._api_base_url = api_base_url.rstrip("/")
+        self._timeout_seconds = float(timeout_seconds)
+
+    async def generate_speech(
+        self,
+        *,
+        text: str,
+        model: str,
+        voice: str,
+        instructions: str,
+        speed: float,
+        output_format: SpeechFormat,
+    ) -> GeneratedSpeech:
+        if output_format != "wav":
+            raise ValueError("Gemini TTS provider only supports WAV")
+        if not text.strip():
+            raise ValueError("Gemini TTS requires non-empty text")
+        if not model.strip():
+            raise ValueError("Gemini TTS requires a model")
+        if not voice.strip():
+            raise ValueError("Gemini TTS requires a voice")
+        return await asyncio.to_thread(
+            self._generate_sync,
+            text=text,
+            model=model.strip(),
+            voice=voice.strip(),
+            instructions=instructions,
+            speed=speed,
+        )
+
+    def _generate_sync(
+        self, *, text: str, model: str, voice: str, instructions: str, speed: float
+    ) -> GeneratedSpeech:
+        payload = _build_payload(
+            text=text, voice=voice, instructions=instructions, speed=speed
+        )
+        response = _post_json(
+            url=f"{self._api_base_url}/models/{quote(model, safe='-._')}:generateContent",
+            api_key=self._api_key,
+            payload=payload,
+            timeout_seconds=self._timeout_seconds,
+        )
+        audio = _decode_audio(response)
+        info = _validate_wav(audio)
+        return GeneratedSpeech(
+            content=audio,
+            media_type="audio/wav",
+            extension="wav",
+            metadata={
+                "provider": "gemini",
+                "model": model,
+                "voice": voice,
+                "sample_rate_hz": info["sample_rate_hz"],
+                "channels": info["channels"],
+            },
+        )
