@@ -1890,7 +1890,7 @@ class TimingLedger:
         self._stages[stage] = self._stages.get(stage, 0.0) + elapsed_seconds
 
     def record_call(self, stage: str, block_id: int | None, elapsed_seconds: float) -> None:
-        if stage not in _STAGES:
+        if stage not in _METRIC_STAGES:
             raise ValueError(f"Unknown stage: {stage}")
         self._calls.append(
             {
