@@ -57,6 +57,8 @@ from ai_video_factory.providers.avatar_library import (
 )
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.avatar_style import ensure_avatar_style
+from ai_video_factory.providers.ebook_covers import ensure_ebook_covers
+from ai_video_factory.workflows.casero_cta import prepare_casero_cta
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE, GridPlanError
@@ -78,6 +80,7 @@ from ai_video_factory.workflows.b_video import (
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
 _STAGES = ("B1.1", "B1.2", "B2")
+_METRIC_STAGES = ("B1.1", "CTA", "CTA Ebook", "B1.2", "B2")
 
 
 def parse_args() -> argparse.Namespace:
@@ -114,6 +117,10 @@ def parse_args() -> argparse.Namespace:
         "--avatar",
         metavar="NAME",
         help="Select a PNG avatar from --avatars-dir, with or without its .png suffix.",
+    )
+    parser.add_argument(
+        "--ebook-cover", action="append", metavar="NOMBRE",
+        help="Modo casero: portada PNG en data/ sin extension; repetir para portada secundaria.",
     )
     parser.add_argument(
         "--qr-url",
@@ -1823,11 +1830,11 @@ class BotArtifacts:
         self._output = output
 
     def _folder(self, stage: str, block_id: int | None) -> Path:
-        if stage not in _STAGES:
+        if stage not in (*_STAGES, "CTA"):
             raise ValueError(f"Unknown B pipeline stage: {stage}")
-        if stage == "B1.1":
+        if stage in {"B1.1", "CTA"}:
             if block_id is not None:
-                raise ValueError("B1.1 must not have a block ID")
+                raise ValueError(f"{stage} must not have a block ID")
             return self._output / stage
         if block_id is None or block_id < 1:
             raise ValueError(f"{stage} requires a positive block ID")
@@ -1872,7 +1879,7 @@ class TimingLedger:
         self._calls: list[dict[str, object]] = []
 
     def record_stage(self, stage: str, elapsed_seconds: float) -> None:
-        if stage not in _STAGES:
+        if stage not in _METRIC_STAGES:
             raise ValueError(f"Unknown stage: {stage}")
         self._stages[stage] = self._stages.get(stage, 0.0) + elapsed_seconds
 
@@ -1896,14 +1903,14 @@ class TimingLedger:
         calls = report.get("calls")
         if not isinstance(stages, dict) or not isinstance(calls, list):
             raise ValueError("Cannot restore malformed timing history")
-        for stage in _STAGES:
+        for stage in _METRIC_STAGES:
             entry = stages.get(stage)
             if isinstance(entry, dict) and isinstance(entry.get("elapsed_seconds"), (int, float)):
                 self._stages[stage] = float(entry["elapsed_seconds"])
         for call in calls:
             if (
                 not isinstance(call, dict)
-                or call.get("stage") not in _STAGES
+                or call.get("stage") not in _METRIC_STAGES
                 or not isinstance(call.get("elapsed_seconds"), (int, float))
             ):
                 raise ValueError("Cannot restore malformed timing call history")
@@ -1916,7 +1923,7 @@ class TimingLedger:
     def report(self, *, run_seconds: float, status: str) -> dict[str, object]:
         calls = sorted(
             self._calls,
-            key=lambda item: (_STAGES.index(str(item["stage"])), item["block_id"] or 0),
+            key=lambda item: (_METRIC_STAGES.index(str(item["stage"])), item["block_id"] or 0),
         )
         return {
             "unit": "seconds",
@@ -1937,7 +1944,7 @@ class TimingLedger:
                         3,
                     ),
                 }
-                for stage in _STAGES
+                for stage in _METRIC_STAGES
             },
             "calls": calls,
         }
