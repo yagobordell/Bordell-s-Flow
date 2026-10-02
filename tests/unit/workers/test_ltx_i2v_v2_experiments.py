@@ -223,8 +223,10 @@ def test_opt_in_prompt_instrumentation_restores_methods_on_failure() -> None:
     with pytest.raises(RuntimeError, match="synthetic failure"):
         with profile_prompt_encoder(prompt, metrics):
             prompt()
-    assert prompt._text_encoder_ctx is original_text
-    assert prompt._build_embeddings_processor is original_embeddings
+    assert prompt._text_encoder_ctx.__func__ is original_text.__func__
+    assert prompt._build_embeddings_processor.__func__ is original_embeddings.__func__
+    assert "_text_encoder_ctx" not in vars(prompt)
+    assert "_build_embeddings_processor" not in vars(prompt)
     assert metrics.timings["prompt_text_encoder_load_and_encode_seconds"] >= 0
     assert metrics.timings["prompt_embeddings_processor_build_seconds"] >= 0
 
