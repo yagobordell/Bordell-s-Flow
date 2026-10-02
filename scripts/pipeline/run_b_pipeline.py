@@ -1139,8 +1139,14 @@ async def _video_if_ready(
                 organization=os.getenv("SALAD_ORGANIZATION"),
                 project=os.getenv("SALAD_PROJECT"),
             ):
+                cta_dir = (
+                    Path(run["cta_cache_dir"])
+                    if isinstance(run, dict) and isinstance(run.get("cta_cache_dir"), str)
+                    and (output / "CTA" / "output.json").is_file()
+                    else None
+                )
                 return generate_b2_ltx_video(
-                    output, plan, audio, images,
+                    output, plan, audio, images, casero_cta_dir=cta_dir,
                     queue=queue, storage=storage,
                     poll_seconds=settings.inference_client_poll_seconds,
                     timeout_seconds=max(settings.inference_client_timeout_seconds, 21600.0),
@@ -2391,6 +2397,26 @@ async def main() -> None:
             reasoning_effort=settings.openai_reasoning_effort,
             service_tier="default",
         )
+        if visual_style == "casero" and stop_stage is None and args.from_stage == "B1.1" and (
+            not getattr(args, "no_audio", False)
+        ):
+            if covers is None:
+                raise RuntimeError("Casero CTA covers were not prepared")
+            qr_path = avatar_file.parent / "meta" / "qr.png"
+            if not qr_path.is_file():
+                qr_path = avatar_file.parent / "qr.png"
+            if qr_path.is_symlink() or not qr_path.is_file() or (
+                hashlib.sha256(qr_path.read_bytes()).hexdigest() != qr.sha256
+            ):
+                raise RuntimeError("The avatar CTA QR does not match its persisted PNG")
+            cta_task = asyncio.create_task(prepare_casero_cta(
+                avatar=avatar_file, covers=covers, qr_path=qr_path, qr_url=qr.url,
+                script=script, voice_id=_run_voice_id(output), provider=provider,
+                model=settings.openai_model,
+                on_api_response=ledger.record,
+                on_call_duration=timings.record_call,
+                on_image_usage=ledger.record_cta_image,
+            ))
         if audio_enabled:
             run_metadata["audio_generation"] = {"status": "running"}
             save_report("running", None)
@@ -2419,6 +2445,15 @@ async def main() -> None:
             on_stage_duration=timings.record_stage,
             on_stage_complete=stage_complete,
         )
+        if cta_task is not None:
+            prepared_cta = await asyncio.shield(cta_task)
+            run_metadata["cta_cache_dir"] = prepared_cta["directory"]
+            run_metadata["casero_cta"] = {"status": prepared_cta["status"]}
+            save_report("running", len(result.b12))
+        elif visual_style == "casero" and args.from_stage != "B1.1":
+            cache = avatar_file.parent / "meta" / "cta"
+            if (cache / "identity.json").is_file() and (output / "CTA" / "output.json").is_file():
+                run_metadata["cta_cache_dir"] = str(cache)
         visual_plan = None
         if stop_index >= 2:
             visual_plan = result.visual_plan()
@@ -2549,6 +2584,12 @@ async def main() -> None:
                         "status": "deferred", "reason": "audio_or_images_incomplete",
                     }
     except Exception:
+        if cta_task is not None and not cta_task.done():
+            # Never abandon an in-flight paid CTA TTS or GPT Image POST.
+            try:
+                await asyncio.shield(cta_task)
+            except Exception as exc:
+                run_metadata["casero_cta"] = {"status": "incomplete", "error": str(exc)}
         if audio_task is not None and not audio_joined:
             # Never abandon an in-flight paid TTS submission by cancelling
             # its task when a separate B stage fails.
