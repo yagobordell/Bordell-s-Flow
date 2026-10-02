@@ -45,12 +45,23 @@ LTX_FAST_VANILLA_PROFILE = "ltx25-fast-vanilla-silent-native-fp8cpu-a95ab-v1"
 LTX_FAST_LOWRES_PROFILE = "ltx25-fast-vanilla-silent-1024x576-fp8cpu-eager-a95ab-v1"
 LTX_FAST_LOWRES_TRITON_PROFILE = "ltx25-fast-vanilla-silent-1024x576-fp8cpu-triton-a95ab-v1"
 LTX_FAST_LOWRES_NO_OFFLOAD_PROFILE = "ltx25-fast-vanilla-silent-1024x576-fp8none-eager-a95ab-v1"
+LTX_FAST_FULLRES_NO_OFFLOAD_PROFILE = "ltx25-fast-vanilla-silent-native-fp8none-eager-a95ab-v1"
+LTX_FAST_FULLRES_TRITON_PROFILE = "ltx25-fast-vanilla-silent-native-fp8cpu-triton-a95ab-v1"
+LTX_FAST_FULLRES_NVFP4_PROFILE = "ltx25-fast-vanilla-silent-native-nvfp4none-eager-a95ab-v1"
+_NVFP4_TRANSFORMER = "diffusion_models/ltx-2.5-22b-distilled-transformer-nvfp4.safetensors"
+LTX_FULLRES_NO_OFFLOAD_PROFILES = (
+    LTX_FAST_FULLRES_NO_OFFLOAD_PROFILE,
+    LTX_FAST_FULLRES_NVFP4_PROFILE,
+)
 LTX_FAST_PROFILES = (
     LTX_FAST_VANILLA_REFERENCE_PROFILE,
     LTX_FAST_VANILLA_PROFILE,
     LTX_FAST_LOWRES_PROFILE,
     LTX_FAST_LOWRES_TRITON_PROFILE,
     LTX_FAST_LOWRES_NO_OFFLOAD_PROFILE,
+    LTX_FAST_FULLRES_NO_OFFLOAD_PROFILE,
+    LTX_FAST_FULLRES_TRITON_PROFILE,
+    LTX_FAST_FULLRES_NVFP4_PROFILE,
 )
 LTX_FAST_LOWRES_PROFILES = (
     LTX_FAST_LOWRES_PROFILE,
@@ -487,6 +498,7 @@ class DirectLTX25Backend:
         self._pipeline_requested_diffvae_backend: str | None = None
         self._pipeline_effective_diffvae_backend: str | None = None
         self._pipeline_requested_offload_mode: str = "cpu"
+        self._pipeline_requested_quantization: str = "fp8_cast"
         # A prepared pipeline object can still defer heavy weight loading until its first run.
         self._pipeline_successful_generations = 0
         self._mode_controller = mode_controller or LTXPipelineModeController()
@@ -553,12 +565,23 @@ class DirectLTX25Backend:
         requested_backend = (
             "triton"
             if parameters.generation_profile
-            in (LTX_CFG_BATCH2_TRITON_PROFILE, LTX_FAST_LOWRES_TRITON_PROFILE)
+            in (
+                LTX_CFG_BATCH2_TRITON_PROFILE,
+                LTX_FAST_LOWRES_TRITON_PROFILE,
+                LTX_FAST_FULLRES_TRITON_PROFILE,
+            )
             else "eager"
         )
         requested_offload = (
-            "none" if parameters.generation_profile == LTX_FAST_LOWRES_NO_OFFLOAD_PROFILE
+            "none" if parameters.generation_profile in (
+                LTX_FAST_LOWRES_NO_OFFLOAD_PROFILE,
+                *LTX_FULLRES_NO_OFFLOAD_PROFILES,
+            )
             else "cpu"
+        )
+        requested_quantization = (
+            "nvfp4_prequant" if parameters.generation_profile == LTX_FAST_FULLRES_NVFP4_PROFILE
+            else "fp8_cast"
         )
         fast_recipe = parameters.generation_profile in LTX_FAST_PROFILES
         lowres_recipe = parameters.generation_profile in LTX_FAST_LOWRES_PROFILES
@@ -572,6 +595,7 @@ class DirectLTX25Backend:
                 self._pipeline is not None
                 and self._pipeline_requested_diffvae_backend == requested_backend
                 and self._pipeline_requested_offload_mode == requested_offload
+                and self._pipeline_requested_quantization == requested_quantization
             )
 
             bindings = self._get_bindings()
@@ -583,6 +607,8 @@ class DirectLTX25Backend:
                     pipeline_kwargs_for_load = {"requested_diffvae_backend": requested_backend}
                     if requested_offload != "cpu":
                         pipeline_kwargs_for_load["requested_offload_mode"] = requested_offload
+                    if requested_quantization != "fp8_cast":
+                        pipeline_kwargs_for_load["requested_quantization"] = requested_quantization
                     pipeline = self._get_or_build_pipeline(
                         bindings, **pipeline_kwargs_for_load
                     )
@@ -718,7 +744,7 @@ class DirectLTX25Backend:
                                 else False if fast_recipe else decode_audio
                             ),
                             "vanilla_simple_denoiser": fast_recipe,
-                            "quantization": "FP8_CAST",
+                            "quantization": requested_quantization,
                             "offload_mode": requested_offload,
                             "internal_width": pipeline_width,
                             "internal_height": pipeline_height,
@@ -767,6 +793,7 @@ class DirectLTX25Backend:
         self._pipeline_requested_diffvae_backend = None
         self._pipeline_effective_diffvae_backend = None
         self._pipeline_requested_offload_mode = "cpu"
+        self._pipeline_requested_quantization = "fp8_cast"
         self._pipeline_successful_generations = 0
         gc.collect()
         if self._bindings is not None:
@@ -778,27 +805,49 @@ class DirectLTX25Backend:
     def _get_or_build_pipeline(
         self, bindings: _LTXBindings, *, requested_diffvae_backend: str = "eager",
         requested_offload_mode: str = "cpu",
+        requested_quantization: str = "fp8_cast",
     ) -> Any:
         if requested_offload_mode not in ("cpu", "none"):
             raise ValueError("Unsupported LTX I2V offload mode")
+        if requested_quantization not in ("fp8_cast", "nvfp4_prequant"):
+            raise ValueError("Unsupported LTX I2V quantization")
+        if requested_quantization == "nvfp4_prequant" and requested_offload_mode != "none":
+            raise ValueError("NVFP4 prequant requires nonstreaming model residency")
         if self._pipeline is not None:
             if (self._pipeline_requested_diffvae_backend == requested_diffvae_backend
-                    and self._pipeline_requested_offload_mode == requested_offload_mode):
+                    and self._pipeline_requested_offload_mode == requested_offload_mode
+                    and self._pipeline_requested_quantization == requested_quantization):
                 return self._pipeline
             self._release_pipeline_locked()
 
         load_started = time.monotonic()
         logger.info("LTX25_I2V_PIPELINE_LOAD_START device=%s", self._device)
         self._mode_controller.activate("image_to_video")
+        transformer_path = self._model_files.transformer
+        if requested_quantization == "nvfp4_prequant":
+            from .nvfp4_runtime import require_nvfp4_runtime
+
+            require_nvfp4_runtime(bindings.torch, self._device)
+            transformer_path = self._model_files.transformer.parent / _NVFP4_TRANSFORMER.rsplit("/", 1)[-1]
+            if not transformer_path.is_file():
+                raise FileNotFoundError(
+                    f"Opt-in NVFP4 checkpoint is missing: {transformer_path}. "
+                    "Use the separate NVFP4 benchmark image; normal worker unchanged."
+                )
         model_paths = bindings.model_paths.from_split(
-            transformer_path=str(self._model_files.transformer),
+            transformer_path=str(transformer_path),
             text_encoder_path=str(self._model_files.text_encoder),
             video_vae_path=str(self._model_files.video_vae),
             audio_vae_path=str(self._model_files.audio_vae),
         )
-        quantization = bindings.quantization_kind.FP8_CAST.to_policy(
-            checkpoint_path=str(self._model_files.transformer)
-        )
+        if requested_quantization == "nvfp4_prequant":
+            quantization = bindings.quantization_kind.NVFP4_PREQUANT.to_policy(
+                checkpoint_path=str(transformer_path)
+            )
+        else:
+            quantization = bindings.quantization_kind.FP8_CAST.to_policy(
+                checkpoint_path=str(transformer_path)
+            )
         effective_backend = _select_diffvae_backend(
             bindings, requested_diffvae_backend
         )
@@ -814,6 +863,7 @@ class DirectLTX25Backend:
             ),
         )
         self._pipeline_requested_offload_mode = requested_offload_mode
+        self._pipeline_requested_quantization = requested_quantization
         self._pipeline_requested_diffvae_backend = requested_diffvae_backend
         self._pipeline_effective_diffvae_backend = effective_backend
         logger.info(
