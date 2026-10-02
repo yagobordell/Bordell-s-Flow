@@ -203,7 +203,8 @@ def _stt(directory: Path) -> None:
     })
 
 
-def _image(directory: Path, covers: EbookCovers, avatar: Path) -> None:
+def _image(directory: Path, covers: EbookCovers, avatar: Path,
+           on_image_usage: Callable[[dict[str, object] | None, str], None] | None = None) -> None:
     image = directory / "promotion.png"
     state_path = directory / "image_state.json"
     if state_path.is_file():
@@ -222,6 +223,8 @@ def _image(directory: Path, covers: EbookCovers, avatar: Path) -> None:
         model=settings.openai_image_model, size="1280x720", quality="medium",
         destination=image, reference_image_urls=refs,
     )
+    if on_image_usage is not None:
+        on_image_usage(result.get("usage"), result["model"])
     _save(state_path, {
         "status": "completed", "reference_sha256": [*covers.sha256, _sha(avatar)],
         "image": {"file": "promotion.png", "sha256": _sha(image)},
@@ -287,6 +290,7 @@ async def prepare_casero_cta(
     script: str, voice_id: str, provider: Any, model: str,
     on_api_response: Callable[[str, int | None, object], None] | None = None,
     on_call_duration: Callable[[str, int | None, float], None] | None = None,
+    on_image_usage: Callable[[dict[str, object] | None, str], None] | None = None,
 ) -> dict[str, Any]:
     """Prepare independent assets concurrently; finished A2V is queued with main video."""
     if not script.strip() or not voice_id:
@@ -317,7 +321,7 @@ async def prepare_casero_cta(
         on_call_duration("CTA Ebook", None, perf_counter()-started)
     tts, _ = await asyncio.gather(
         asyncio.to_thread(_tts, directory, text, voice_id),
-        asyncio.to_thread(_image, directory, covers, avatar),
+        asyncio.to_thread(_image, directory, covers, avatar, on_image_usage),
     )
     await asyncio.gather(
         asyncio.to_thread(_stt, directory),
