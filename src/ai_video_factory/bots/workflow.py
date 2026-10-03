@@ -732,10 +732,15 @@ async def run_b_pipeline(
     if stop_after == "B1.2":
         return BPipelineResult(b11=b11, b12=tuple(b12_results), b2=())
 
+    # One shared retry budget per B2 block. Global avatar-run repairs consume
+    # the SAME budget as local schema and source-integrity corrections.
+    b2_correction_counts: dict[int, int] = {}
+    b2_call_numbers: dict[int, int] = {}
+    b2_last_response_ids: dict[int, str] = {}
+
     async def b2_one(
         meta: BlockMeta, block: MaterializedBlock, b12: B12Output,
         correction_suffix: str = "",
-        rejection_attempt_offset: int = 0,
     ) -> B2Output | ProfessionalB2Output:
         beats = validate_beats(b12, block)
         b2_input = B2Input(
@@ -752,151 +757,100 @@ async def run_b_pipeline(
                 ),
             ),
         )
-        async def call_b2(instructions_suffix: str = "") -> B2Output | ProfessionalB2Output:
+        block_id = block.block_id
+        if correction_suffix:
+            if b2_correction_counts.get(block_id, 0) >= MAX_VALIDATION_RETRIES:
+                raise BPipelineValidationError(
+                    f"B2 block {block_id} exhausted its validation retry budget"
+                )
+            b2_correction_counts[block_id] = b2_correction_counts.get(block_id, 0) + 1
+
+        def remember_response(response_id: str) -> None:
+            b2_last_response_ids[block_id] = response_id
+
+        async def call_b2(
+            feedback: str = "", previous_response_id: str | None = None,
+        ) -> B2Output | ProfessionalB2Output:
             async with semaphore:
                 return await _call_stage(
                     "B2",
-                    block.block_id,
+                    block_id,
                     b2_input.model_dump(),
                     provider=provider,
                     model=model,
                     prompt="b2_professional.md" if visual_style == "profesional" else "b2.md",
-                    instructions_suffix=instructions_suffix,
-                    output_type=ProfessionalB2Output if visual_style == "profesional" else B2Output,
+                    instructions_suffix="\n\n" + feedback if feedback else "",
+                    output_type=(
+                        ProfessionalB2Output if visual_style == "profesional" else B2Output
+                    ),
                     input_image_url=image_url,
+                    correction_feedback=feedback or None,
+                    previous_response_id=previous_response_id,
+                    on_response_id=remember_response,
                     on_input=on_input,
                     on_api_response=on_api_response,
                     on_call_duration=on_call_duration,
                 )
 
-        def schema_error_payload(error: ValidationError) -> dict[str, object]:
-            return {
-                "unparsed_response": True,
-                "schema_errors": json.loads(error.json(include_url=False)),
-            }
-
-        async def retry_after_schema_error(
-            first_error: ValidationError,
-        ) -> B2Output | ProfessionalB2Output:
-            if on_rejected_b2_output is not None:
-                on_rejected_b2_output(
-                    block.block_id,
-                    rejection_attempt_offset + 1,
-                    str(first_error),
-                    schema_error_payload(first_error),
-                )
-            visual_rules = (
-                "For professional B2, prompt=null is permitted only for a reused "
-                "avatar with reference=false; all other visuals require a "
-                "nonempty prompt. media_video requires a nonempty video_prompt; "
-                "all other visual types require video_prompt=null. "
-                "avatar/avatar_media require audio=true; "
-                "media_image ALWAYS requires audio=false. Generated "
-                "synchronized visible speech must use media_video with audio=true. "
-                "The FIRST beat of an intro block and LAST beat of a close block "
-                "MUST use the unchanged original avatar: visual_type=avatar, "
-                "prompt=null, video_prompt=null, reference=false, audio=true. "
-                "These boundary beats cannot be regenerated or replaced by media. "
-                "Do not omit reference or audio booleans."
-                if visual_style == "profesional"
-                else (
-                    "visual_type='avatar' requires description=null; every other "
-                    "visual_type requires a nonempty description."
-                )
-            )
-            retry_suffix = (
-                "\n\nB2 automatic schema correction attempt. Your previous structured "
-                "response could not be parsed because it violated the required output "
-                f"schema: {first_error}\n"
-                "Return one complete corrected B2 object for the same input block. "
-                "Preserve the narrative core and every upstream block and beat field "
-                "exactly. Follow the supplied output schema. "
-                f"{visual_rules} Do not omit required fields."
-            )
+        feedback = correction_suffix
+        previous_response_id = (
+            b2_last_response_ids.get(block_id)
+            if correction_suffix and getattr(provider, "supports_response_continuation", False)
+            else None
+        )
+        while True:
+            b2_call_numbers[block_id] = b2_call_numbers.get(block_id, 0) + 1
+            attempt = b2_call_numbers[block_id]
+            candidate: B2Output | ProfessionalB2Output | None = None
             try:
-                retry_output = await call_b2(correction_suffix + retry_suffix)
-            except ValidationError as retry_error:
+                candidate = await call_b2(feedback, previous_response_id)
+                if candidate.error is not None:
+                    _require_success("B2", candidate.error)
+                validate_visuals(candidate, b2_input)
+                if on_output is not None:
+                    on_output("B2", block_id, candidate.model_dump())
+                return candidate
+            except (ValidationError, BPipelineValidationError, RuntimeError) as error:
+                if isinstance(error, RuntimeError) and not is_schema_failure(error):
+                    raise
+                rejected = candidate.model_dump() if candidate is not None else {
+                    "unparsed_response": True,
+                    "schema_errors": (
+                        json.loads(error.json(include_url=False))
+                        if isinstance(error, ValidationError) else str(error)
+                    ),
+                }
                 if on_rejected_b2_output is not None:
-                    on_rejected_b2_output(
-                        block.block_id,
-                        rejection_attempt_offset + 2,
-                        str(retry_error),
-                        schema_error_payload(retry_error),
-                    )
-                raise BPipelineValidationError(
-                    f"B2 block {block.block_id} failed schema validation after one retry: "
-                    f"{retry_error}"
-                ) from retry_error
-            try:
-                validate_visuals(retry_output, b2_input)
-            except BPipelineValidationError as retry_error:
-                if on_rejected_b2_output is not None:
-                    on_rejected_b2_output(
-                        block.block_id,
-                        rejection_attempt_offset + 2,
-                        str(retry_error),
-                        retry_output.model_dump(),
-                    )
-                raise BPipelineValidationError(
-                    f"B2 block {block.block_id} failed validation after schema retry: "
-                    f"{retry_error}"
-                ) from retry_error
-            return retry_output
-
-        try:
-            output = await call_b2(correction_suffix)
-        except ValidationError as first_schema_error:
-            output = await retry_after_schema_error(first_schema_error)
-        else:
-            try:
-                validate_visuals(output, b2_input)
-            except BPipelineValidationError as first_error:
-                if on_rejected_b2_output is not None:
-                    on_rejected_b2_output(
-                        block.block_id, rejection_attempt_offset + 1,
-                        str(first_error), output.model_dump()
-                    )
-                retry_suffix = (
-                    "\n\nB2 automatic correction attempt. Your previous structured response "
-                    f"failed output validation: {first_error}\n"
-                    "Return a corrected complete B2 object for the same input block. Preserve "
-                    "the narrative core and every upstream block and beat field exactly; "
-                    "correct only the invalid B2 visual assignments, scene prompts, "
-                    "video_prompt values, reference/audio flags or descriptions. "
-                    "Follow the supplied output schema.\n"
-                    "Previous B2 response:\n"
-                    f"{_payload(output.model_dump())}"
-                )
-                try:
-                    retry_output = await call_b2(correction_suffix + retry_suffix)
-                except ValidationError as retry_schema_error:
-                    if on_rejected_b2_output is not None:
-                        on_rejected_b2_output(
-                            block.block_id,
-                            rejection_attempt_offset + 2,
-                            str(retry_schema_error),
-                            schema_error_payload(retry_schema_error),
-                        )
+                    on_rejected_b2_output(block_id, attempt, str(error), rejected)
+                if candidate is not None and candidate.error is not None:
+                    # The frozen B1.2 source must be repaired upstream, not by B2.
+                    raise
+                if b2_correction_counts.get(block_id, 0) >= MAX_VALIDATION_RETRIES:
                     raise BPipelineValidationError(
-                        f"B2 block {block.block_id} failed schema validation on retry: "
-                        f"{retry_schema_error}"
-                    ) from retry_schema_error
-                try:
-                    validate_visuals(retry_output, b2_input)
-                except BPipelineValidationError as retry_error:
-                    if on_rejected_b2_output is not None:
-                        on_rejected_b2_output(
-                            block.block_id, rejection_attempt_offset + 2,
-                            str(retry_error), retry_output.model_dump()
-                        )
-                    raise BPipelineValidationError(
-                        f"B2 block {block.block_id} failed validation after one retry: "
-                        f"{retry_error}"
-                    ) from retry_error
-                output = retry_output
-        if on_output is not None:
-            on_output("B2", block.block_id, output.model_dump())
-        return output
+                        f"B2 block {block_id} failed validation after "
+                        f"{MAX_VALIDATION_RETRIES} retries: {error}"
+                    ) from error
+                b2_correction_counts[block_id] = b2_correction_counts.get(block_id, 0) + 1
+                previous_response_id = (
+                    b2_last_response_ids.get(block_id)
+                    if getattr(provider, "supports_response_continuation", False)
+                    else None
+                )
+                feedback = validation_feedback(
+                    "B2 " + visual_style, error, block_id=block_id,
+                    previous=candidate.model_dump() if candidate else None,
+                    continued=previous_response_id is not None,
+                    instructions=(
+                        "Repair only this B2 block. Preserve the narrative core, "
+                        "block metadata, all frozen beats, beat IDs, and narration exactly. "
+                        "Fix the invalid visual assignments, prompts, video_prompt, "
+                        "descriptions, reference/audio flags and any mandatory "
+                        "presenter anchors according to the selected B2 schema. "
+                        "For professional style, presenter practical actions must "
+                        "use media_video and media_image must have audio=false. "
+                        "Do not change any valid visual decision unnecessarily."
+                    ),
+                )
 
     retry_ids = set(retry_b2_block_ids or ())
     if retry_ids:
@@ -927,9 +881,8 @@ async def run_b_pipeline(
         else:
             b2_results = list(generated_b2)
 
-        # Parallel block calls cannot see presenter runs crossing block boundaries.
-        # Validate the ordered join and repair only the relevant block if needed.
-        global_corrections: dict[int, int] = {}
+        # Parallel workers cannot see presenter runs crossing block boundaries.
+        # Fix one eligible block at a time without re-running any other block.
         while (overflow := _overlong_avatar_run(b2_results)) is not None:
             run, total = overflow
             offset = 0
@@ -938,48 +891,57 @@ async def run_b_pipeline(
                 left = offset
                 right = total - left - beat.characters
                 offset += beat.characters
-                if global_corrections.get(beat.block_id, 0) < 2:
-                    candidates.append(
-                        (
-                            max(left, right),
-                            global_corrections.get(beat.block_id, 0),
-                            beat.block_id,
-                            beat.beat_id,
-                        )
-                    )
+                current_block = b2_results[beat.block_id - 1].blocks[0]
+                index = next(
+                    i for i, item in enumerate(current_block.beats)
+                    if item.beat_id == beat.beat_id
+                )
+                mandatory = visual_style == "profesional" and (
+                    (current_block.type == "intro" and index == 0)
+                    or (current_block.type == "close"
+                        and index == len(current_block.beats) - 1)
+                )
+                if not mandatory and (
+                    b2_correction_counts.get(beat.block_id, 0) < MAX_VALIDATION_RETRIES
+                ):
+                    candidates.append((
+                        max(left, right),
+                        b2_correction_counts.get(beat.block_id, 0),
+                        beat.block_id,
+                        beat.beat_id,
+                    ))
             if not candidates:
                 raise BPipelineValidationError(
                     _avatar_run_error(run, total)
-                    + "; no correctable discretionary B2 beat remains"
+                    + "; no discretionary B2 block has validation retries remaining"
                 )
             _, _, block_id, target_beat_id = min(candidates)
             previous = b2_results[block_id - 1]
-            correction_number = global_corrections.get(block_id, 0) + 1
-            # Reserve attempts 1/2 for local validation and 3 slots per
-            # whole-video correction so the runner retains all rejected JSON.
-            global_attempt = 3 + (correction_number - 1) * 3
-            error = _avatar_run_error(run, total)
+            error = BPipelineValidationError(_avatar_run_error(run, total))
             if on_rejected_b2_output is not None:
                 on_rejected_b2_output(
-                    block_id, global_attempt, error, previous.model_dump()
+                    block_id, b2_call_numbers[block_id], str(error), previous.model_dump()
                 )
-            global_corrections[block_id] = correction_number
-            suffix = (
-                "\n\nB2 whole-video avatar-run correction. The other blocks have "
-                "already been assigned. The joined result violates a hard limit: "
-                f"{error}. Change the visual assignment of beat {target_beat_id} "
-                "in YOUR block to a faithful media_image or media_video visual "
-                "(not avatar_media), or break this run with another discretionary "
-                "beat in your block. Keep every frozen beat text unchanged. "
-                "Preserve every other valid visual "
-                "decision where possible. Return only the corrected complete "
-                "B2 block. Previous response for this block:\n"
-                f"{_payload(previous.model_dump())}"
+            suffix = validation_feedback(
+                "B2 " + visual_style, error, block_id=block_id,
+                previous=previous.model_dump(),
+                continued=(
+                    bool(b2_last_response_ids.get(block_id))
+                    and getattr(provider, "supports_response_continuation", False)
+                ),
+                instructions=(
+                    "B2 whole-video avatar-run correction: the joined video has "
+                    "more than 120 consecutive avatar/avatar_media narration characters. "
+                    f"Change visual assignment {target_beat_id} to a faithful "
+                    "non-presenter media_image or media_video visual, or break the "
+                    "run at another discretionary beat within THIS block. "
+                    "Never change mandatory professional intro/close anchors. "
+                    "Keep all frozen narration and upstream fields unchanged."
+                ),
             )
             index = block_id - 1
             b2_results[index] = await b2_one(
-                b11.blocks[index], materialized[index], b12_results[index],
-                suffix, global_attempt,
+                b11.blocks[index], materialized[index], b12_results[index], suffix,
             )
     finally:
         if on_stage_duration is not None:
