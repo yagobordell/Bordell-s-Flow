@@ -4,7 +4,6 @@ import hashlib
 import io
 import json
 import wave
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
