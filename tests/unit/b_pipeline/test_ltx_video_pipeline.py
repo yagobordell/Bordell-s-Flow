@@ -144,6 +144,10 @@ def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     assert {item.name for item in first.request.inputs} == {"image", "audio"}
     assert video.request.task == LTX_VIDEO_TASK
     assert video.request.job_id.startswith("b2-1D-")
+    assert first.request.parameters["width"] == 1920
+    assert first.request.parameters["height"] == 1080
+    assert video.request.parameters["width"] == 1920
+    assert video.request.parameters["height"] == 1080
     assert video.request.parameters["prompt"] == "A bird takes off."
     assert video.request.parameters["num_frames"] == 17
     assert video.request.inputs[0].sha256 == images["items"][1]["sha256"]
@@ -611,13 +615,14 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
     )
     monkeypatch.setattr(b_video, "_fingerprint", old_v4_fingerprint)
     timeline, old_jobs, old_run = b_video.build_b2_video_plan(
-        tmp_path, plan, audio, images
+        tmp_path, plan, audio, images, output_size=(1280, 720),
     )
     # Production saves only the 20-character directory name in manifest.fingerprint.
     # A full 64-character synthetic fingerprint hid the original recovery bug.
     old_digest = b_video._fingerprint(
         timeline, audio, b_video._source_assets(tmp_path, plan, images)[1],
         b_video._source_assets(tmp_path, plan, images)[0],
+        output_size=(1280, 720),
     )[:20]
     assert len(old_digest) == 20
     assert old_run.name == old_digest
@@ -710,6 +715,7 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
     monkeypatch.setattr(compositor, "render_b2_ltx_video", fake_render)
     result = b_video.generate_b2_ltx_video(
         tmp_path, plan, audio, images, queue=FakeQueue(), storage=FakeStorage(),
+        output_size=(1280, 720),
     )
     assert result["status"] == "completed"
     assert len(submitted) == 2
@@ -804,7 +810,7 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     monkeypatch.setattr(b_video, "cached_inference_response", lambda *_args: None)
     result = b_video.generate_b2_ltx_video(
         tmp_path, plan, audio, images, queue=FakeQueue(),
-        storage=FakeStorage(),
+        storage=FakeStorage(), output_size=(1280, 720),
     )
     assert result["status"] == "completed"
     assert result["i2v_jobs"] == 1
@@ -840,7 +846,7 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     assert motion["zoom_end"] == 1.0
     again = b_video.generate_b2_ltx_video(
         tmp_path, plan, audio, images, queue=FakeQueue(),
-        storage=FakeStorage(),
+        storage=FakeStorage(), output_size=(1280, 720),
     )
     assert again["sha256"] == result["sha256"]
     assert len(submitted) == 3
