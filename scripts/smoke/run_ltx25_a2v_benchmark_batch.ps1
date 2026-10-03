@@ -11,6 +11,8 @@ param(
     )][string[]]$Profiles = @("reference-bench-cpu", "reference-fp8none"),
     [ValidateRange(3, 10)][int]$Repetitions = 4,
     [long]$Seed = 4242,
+    [ValidateRange(0, 21600)][int]$MaxProfileTotalSeconds = 0,
+    [switch]$ContinueOnTerminalFailure,
     [string]$OutputDir = "",
     [string]$EnvFile = ".env",
     [ValidateRange(120, 21600)][int]$BootstrapTimeoutSeconds = 7200,
@@ -37,6 +39,7 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
 }
 $Manager = Join-Path $Root 'scripts\salad\manage_salad_worker.ps1'
 $Isolation = Join-Path $PSScriptRoot 'check_ltx_a2v_benchmark_isolation.py'
+$QueueGate = Join-Path $PSScriptRoot 'check_ltx_a2v_benchmark_jobs.py'
 $Ready = Join-Path $PSScriptRoot 'wait_salad_ltx25_ready.py'
 $Submit = Join-Path $PSScriptRoot 'submit_ltx25_a2v_smoke.py'
 $SourceCheck = Join-Path $PSScriptRoot 'check_ltx25_python_source.py'
@@ -48,6 +51,8 @@ if ($LASTEXITCODE -ne 0) { throw "Wrong Python worktree; run uv sync --locked --
 if ($LASTEXITCODE -ne 0) { throw "R2 preflight failed; no GPU allocated" }
 & $Python $Isolation --env-file $EnvFile
 if ($LASTEXITCODE -ne 0) { throw "A2V benchmark isolation preflight failed" }
+& $Python $QueueGate
+if ($LASTEXITCODE -ne 0) { throw "A2V Postgres queue is not idle; no GPU allocated" }
 
 $RunId = Get-Date -Format 'yyyyMMddHHmmss'
 if (-not $OutputDir) {
@@ -66,6 +71,8 @@ $Manifest = [ordered]@{
     profiles = $Profiles
     repetitions = $Repetitions
     runs = @()
+    failures = @()
+    skipped_profiles = @()
     lifecycle = [ordered]@{}
 }
 $Clock = [Diagnostics.Stopwatch]::StartNew()
@@ -90,6 +97,13 @@ try {
 
     foreach ($profile in $Profiles) {
         for ($iteration = 1; $iteration -le $Repetitions; $iteration++) {
+            # A2V production and experiment share the Postgres task. Even
+            # after the initial preflight, never claim a new sample if an
+            # unrelated job appears or the previous sample remains retryable.
+            & $Python $QueueGate
+            if ($LASTEXITCODE -ne 0) {
+                throw "A2V queue not idle before next sample; stopping experimental group"
+            }
             $segment = "a2v-fp8-$RunId-$profile-$iteration"
             $out = Join-Path $OutputDir $segment
             $args = @(
@@ -101,7 +115,30 @@ try {
             Write-Host "Running $segment" -ForegroundColor Cyan
             $logPath = Join-Path $OutputDir "$segment.log"
             & $Python $Submit @args 2>&1 | Tee-Object -FilePath $logPath
-            if ($LASTEXITCODE -ne 0) { throw "Benchmark failed: $segment; see $logPath" }
+            if ($LASTEXITCODE -ne 0) {
+                $Failure = [ordered]@{
+                    profile = $profile
+                    iteration = $iteration
+                    segment = $segment
+                    log = $logPath
+                    reason = 'submit_failed'
+                }
+                $Manifest.failures += $Failure
+                $Manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $OutputDir 'manifest.json') -Encoding UTF8
+                if (-not $ContinueOnTerminalFailure) {
+                    throw "Benchmark failed: $segment; see $logPath"
+                }
+                # A timeout, retryable GPU OOM, active lease, queue contention
+                # or local media-validation failure is NOT safe to skip. Only
+                # a confirmed terminal 'failed' row with an idle A2V queue is.
+                & $Python $QueueGate --terminal-failure-dir $out --expected-segment $segment
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Failed job is not safely terminal; stopping group: $segment"
+                }
+                Write-Warning "Skipping only terminally failed profile $profile; see $logPath"
+                $Manifest.skipped_profiles += $profile
+                break
+            }
             $metadata = @(Get-ChildItem -LiteralPath $out -Filter 'metadata.json')
             $video = @(Get-ChildItem -LiteralPath $out -Filter '*.mp4')
             if ($metadata.Count -ne 1 -or $video.Count -ne 1) {
@@ -110,6 +147,9 @@ try {
             $details = Get-Content -LiteralPath $metadata[0].FullName -Raw | ConvertFrom-Json
             if ($details.pipeline_reused -ne ($iteration -gt 1)) {
                 throw "Incorrect cold/warm classification for $segment"
+            }
+            if ($details.prompt_cache_hit -ne ($iteration -gt 1)) {
+                throw "Gemma embedding cache failed to hit on the controlled warm prompt: $segment"
             }
             $Manifest.runs += [ordered]@{
                 profile = $profile
@@ -121,6 +161,12 @@ try {
                 cuda_peak_reserved_mb = $details.cuda_peak_reserved_mb
             }
             $Manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $OutputDir 'manifest.json') -Encoding UTF8
+            if ($MaxProfileTotalSeconds -gt 0 -and
+                [double]$details.total_elapsed_seconds -gt $MaxProfileTotalSeconds) {
+                Write-Warning "Profile $profile exceeded $MaxProfileTotalSeconds seconds; skipping remaining repetitions."
+                $Manifest.skipped_profiles += $profile
+                break
+            }
         }
     }
     $Manifest.lifecycle.benchmark_seconds = $Clock.Elapsed.TotalSeconds
