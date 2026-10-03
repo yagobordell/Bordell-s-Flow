@@ -23,6 +23,7 @@ $Ready = Join-Path $PSScriptRoot "wait_salad_ltx25_ready.py"
 $Submit = Join-Path $PSScriptRoot "submit_ltx25_a2v_smoke.py"
 $Python = Join-Path $Root ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $Python)) { $Python = (Get-Command python -ErrorAction Stop).Source }
+if (-not $Accept1080pOomRisk) { throw "Explicitly acknowledge 1080p RTX 5090 OOM risk." }
 if ($RunId -notmatch '^[A-Za-z0-9_-]{1,80}$') { throw "Use a new safe RunId (1-80 characters)." }
 if ($ExpectedPinnedImage -notmatch '^[^\s@]+@sha256:[0-9a-fA-F]{64}$') {
     throw "ExpectedPinnedImage must be the reviewed experimental repo@sha256:digest."
@@ -48,7 +49,7 @@ foreach ($Audio in @($Audio720, $Audio1080)) {
     if ($LASTEXITCODE -ne 0) { throw "Could not probe audio: $Audio" }
     $Duration = [double]::Parse(([string]$DurationText).Trim(), [Globalization.CultureInfo]::InvariantCulture)
     if ($Duration -le 0 -or $Duration -gt 12) {
-        throw "A2V reference speech must be 0-12 seconds. $Audio: $Duration s"
+        throw "A2V reference speech must be 0-12 seconds. ${Audio}: $Duration s"
     }
 }
 . (Join-Path $Root "scripts\salad\_env_file.ps1")
