@@ -30,7 +30,7 @@ def test_two_user_routes_share_one_db_but_never_one_task():
     import psycopg
 
     dsn = os.environ["TEST_POSTGRES_DSN"]
-    a, b = PREFIX + "a" * 64, PREFIX + "b" * 64
+    a, b = PREFIX + uuid.uuid4().hex * 2, PREFIX + uuid.uuid4().hex * 2
     expected = route_for_image("ltx25", a)
     with ThreadPoolExecutor(max_workers=4) as pool:
         registrations = list(
@@ -90,4 +90,9 @@ def test_two_user_routes_share_one_db_but_never_one_task():
             connection.execute(
                 "DELETE FROM gpu.jobs WHERE job_id = ANY(%s)",
                 ([req.job_id for req in requests],),
+            )
+            connection.execute(
+                "DELETE FROM gpu.worker_image_routes WHERE service = %s "
+                "AND image = ANY(%s)",
+                ("ltx25", [a, b]),
             )
