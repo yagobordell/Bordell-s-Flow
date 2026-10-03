@@ -985,6 +985,7 @@ class DirectLTX25Backend:
         parameters_b: LTXVideoParameters,
         allow_sequential_fallback: bool = False,
         reuse_transformer_across_stages: bool = False,
+        accept_full_hd_batch2_oom_risk: bool = False,
     ) -> dict[str, Any]:
         """EXPERIMENT: B=2, then shared-weight B=1, then EXACT existing B=1.
 
@@ -1008,10 +1009,25 @@ class DirectLTX25Backend:
         def geometry(p: LTXVideoParameters) -> tuple[int, int, int, int]:
             return p.width, p.height, p.fps, p.num_frames
 
-        if geometry(parameters_a) != geometry(parameters_b) or geometry(parameters_a) != (
-            1280, 720, 24, 121,
-        ):
-            raise ValueError("Batch2 experiment requires two matching 5s 720p/24fps videos")
+        dimensions = geometry(parameters_a)
+        if dimensions != geometry(parameters_b):
+            raise ValueError("Batch2 experiment requires matching per-video dimensions")
+        if dimensions == (1920, 1080, 24, 121):
+            if not accept_full_hd_batch2_oom_risk:
+                raise ValueError(
+                    "1080p batch2 has not been GPU-validated: "
+                    "explicitly accept the OOM risk"
+                )
+            if allow_sequential_fallback or reuse_transformer_across_stages:
+                raise ValueError(
+                    "Full HD trial must be real B2 with separate transformer "
+                    "builds and no silent sequential fallback"
+                )
+        elif dimensions != (1280, 720, 24, 121):
+            raise ValueError(
+                "Batch2 experiment supports two matching 5s 720p/24fps videos, "
+                "or an explicit-risk trial with two 5s 1080p/24fps videos"
+            )
         if parameters_a.seed == parameters_b.seed:
             raise ValueError("Separate videos must have separate RNG seeds")
 
@@ -1088,6 +1104,9 @@ class DirectLTX25Backend:
                     "shared_transformer_stage_builds": 1 if shared_stages else 2,
                     "transformer_reused_between_stages": shared_stages,
                     "quality": "visual_review_pending",
+                    "requested_width": dimensions[0],
+                    "requested_height": dimensions[1],
+                    "full_hd_gpu_validation_pending": dimensions[1] == 1080,
                     "recipe": LTX_PRODUCTION_I2V_PROFILE,
                     "individual_seeds": [parameters_a.seed, parameters_b.seed],
                     "elapsed_seconds": time.monotonic() - started,
