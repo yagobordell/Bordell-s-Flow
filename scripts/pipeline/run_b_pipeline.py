@@ -80,13 +80,11 @@ from ai_video_factory.providers.openai_batch_images import (
     clear_b2_images_for_rerun,
     generate_b2_images,
 )
-from ai_video_factory.providers.professional_image_finishing import (
-    finish_professional_images,
-)
-from ai_video_factory.providers.optium_image_upscaler import create_optium_image_upscaler
 from ai_video_factory.providers.openai_stt import OpenAISttClient
+from ai_video_factory.providers.optium_image_upscaler import create_optium_image_upscaler
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.professional_avatar_voice import ensure_professional_avatar_voice
+from ai_video_factory.providers.professional_image_finishing import finish_professional_images
 from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.publishing import publish_completed_run
 from ai_video_factory.workflows.b_video import (
