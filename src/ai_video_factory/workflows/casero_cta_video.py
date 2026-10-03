@@ -106,7 +106,7 @@ def _cta_request(
         generation_profile=LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
     )
     if worker_image:
-        job_id += "-im" + worker_image.rsplit(":", 1)[-1][:12]
+        job_id += "-im" + worker_image.rsplit(":", 1)[-1][:16]
     return InferenceJobRequest(
         job_id=job_id,
         task=(
@@ -145,7 +145,7 @@ def submit_cta_first(
     assets = cta_assets(directory)
     request = _cta_request(directory, assets, worker_image=worker_image)
     state_file = directory / (
-        "a2v_state_" + worker_image.rsplit(":", 1)[-1][:12] + ".json"
+        "a2v_state_" + worker_image.rsplit(":", 1)[-1][:16] + ".json"
         if worker_image else "a2v_state.json"
     )
     if state_file.is_file():
@@ -180,7 +180,7 @@ def finish_cta(directory: Path, submitted: tuple[Any, Any] | None,
     video = directory/"avatar_a2v.mp4"
     worker_image = request.parameters.get("required_worker_image")
     a2v_state = directory / (
-        "a2v_state_" + worker_image.rsplit(":", 1)[-1][:12] + ".json"
+        "a2v_state_" + worker_image.rsplit(":", 1)[-1][:16] + ".json"
         if isinstance(worker_image, str) else "a2v_state.json"
     )
     if not video.is_file():
