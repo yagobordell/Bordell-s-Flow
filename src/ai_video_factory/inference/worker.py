@@ -160,6 +160,13 @@ class InferenceWorker:
                 f"worker {self.worker_id} is draining and cannot claim new inference jobs"
             )
 
+        if (
+            request.task in {"video.ltx25.audio_to_video", "video.ltx25.image_to_video"}
+            and request.parameters.get("required_worker_image") != self.required_worker_image
+        ):
+            raise UnsupportedTaskError(
+                "This LTX worker is not assigned to the requested immutable Docker image"
+            )
         request_sha256 = request.fingerprint()
         recovered = self._recover_before_claim(request, request_sha256)
         if recovered is not None:
