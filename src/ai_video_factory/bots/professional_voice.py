@@ -350,7 +350,16 @@ async def plan_professional_voice(
                     on_response, on_timing, bid,
                 )
 
-        v2s = list(await asyncio.gather(*(one(block) for block in blocks)))
+        v2_outcomes = await asyncio.gather(
+            *(one(block) for block in blocks), return_exceptions=True,
+        )
+        v2_failures = [entry for entry in v2_outcomes if isinstance(entry, BaseException)]
+        if v2_failures:
+            raise VoicePlanError(
+                f"V2 has {len(v2_failures)} incomplete block(s); "
+                "valid blocks were checkpointed for safe recovery"
+            ) from v2_failures[0]
+        v2s = [entry for entry in v2_outcomes if isinstance(entry, V2)]
         new: list[dict[str, Any]] = []
         for v2 in v2s:
             rhythm = rhythm_by_id[v2.block_id]
@@ -393,8 +402,17 @@ async def plan_professional_voice(
                 root / "V3" / f"block_{bid}", on_response, on_timing, bid,
             )
 
-    v3s = list(await asyncio.gather(*(perform(block, v2)
-                                      for block, v2 in zip(blocks, v2s, strict=True))))
+    v3_outcomes = await asyncio.gather(
+        *(perform(block, v2) for block, v2 in zip(blocks, v2s, strict=True)),
+        return_exceptions=True,
+    )
+    v3_failures = [entry for entry in v3_outcomes if isinstance(entry, BaseException)]
+    if v3_failures:
+        raise VoicePlanError(
+            f"V3 has {len(v3_failures)} incomplete block(s); "
+            "valid blocks were checkpointed for safe recovery"
+        ) from v3_failures[0]
+    v3s = [entry for entry in v3_outcomes if isinstance(entry, V3)]
     return v1, v2s, v3s
 
 
