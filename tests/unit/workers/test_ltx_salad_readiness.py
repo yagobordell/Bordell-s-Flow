@@ -80,6 +80,7 @@ def _wait(
     timeout: float = 10,
     clock: _Clock | None = None,
     report: Callable[[str], None] | None = None,
+    expected_task_mode: str = "",
 ) -> str:
     timer = clock or _Clock()
     return wait_for_ready(
@@ -87,6 +88,7 @@ def _wait(
         group_name=GROUP_NAME,
         image_repository=IMAGE_REPO,
         expected_image=PINNED_IMAGE,
+        expected_task_mode=expected_task_mode,
         timeout_seconds=timeout,
         poll_seconds=1,
         clock=timer.now,
@@ -207,6 +209,51 @@ def test_fail_closed_after_bounded_transient_salad_errors() -> None:
     with pytest.raises(RuntimeError, match="five consecutive polls"):
         _wait(_Salad([], error=error), clock=timer)
     assert timer.elapsed == 4
+
+
+def test_i2v_recovers_from_one_522_during_image_download() -> None:
+    """An edge timeout must not abort an otherwise healthy image pull."""
+    error = SaladRequestError(
+        message="Cloudflare 522", status_code=522, url="https://api.salad.com", detail=""
+    )
+
+    class _FlakyI2V(_Salad):
+        failed = False
+
+        def describe_container_group(self) -> dict[str, Any]:
+            if not self.failed:
+                self.failed = True
+                raise error
+            return super().describe_container_group()
+
+    client = _FlakyI2V([(_group(), [_instance(ready=True)])])
+    clock = _Clock()
+    reports: list[str] = []
+    assert _wait(
+        client, clock=clock, report=reports.append, expected_task_mode="i2v"
+    ) == "gpu-one"
+    assert clock.elapsed == 2
+    assert any("transient status=522" in report for report in reports)
+
+
+def test_i2v_522_still_fails_after_bounded_retries() -> None:
+    error = SaladRequestError(
+        message="Cloudflare 522", status_code=522, url="https://api.salad.com", detail=""
+    )
+    clock = _Clock()
+    with pytest.raises(RuntimeError, match="five consecutive polls"):
+        _wait(_Salad([], error=error), clock=clock, expected_task_mode="i2v")
+    assert clock.elapsed == 4
+
+
+def test_a2v_does_not_inherit_i2v_only_522_retry_rule() -> None:
+    error = SaladRequestError(
+        message="Cloudflare 522", status_code=522, url="https://api.salad.com", detail=""
+    )
+    clock = _Clock()
+    with pytest.raises(SaladRequestError, match="Cloudflare 522"):
+        _wait(_Salad([], error=error), clock=clock, expected_task_mode="a2v")
+    assert clock.elapsed == 0
 
 
 def test_nontransient_salad_error_is_not_masked() -> None:
