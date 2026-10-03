@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sys
+import threading
+import weakref
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -258,6 +260,179 @@ def test_two_build_batch2_does_not_preencode_second_stage() -> None:
         ("conditioning", 1280),
         ("stage", "stage2"),
     ]
+
+
+def test_full_hd_releases_stage1_image_conditioning_before_second_stage() -> None:
+    """Retained stage1 conditioning must not steal 1080p transformer VRAM."""
+    torch = pytest.importorskip("torch")
+    import ai_video_factory.workers.ltx25.paired_i2v as paired
+
+    class Conditioning:
+        def __init__(self, value: int) -> None:
+            self.value = value
+            self.latent = torch.ones((2, 3), dtype=torch.bfloat16)
+
+    marker = []
+    events = []
+    context = SimpleNamespace(
+        video_encoding=torch.zeros((1, 4, 2)),
+        audio_encoding=torch.zeros((1, 4, 2)),
+    )
+    pair = (paired.PairInput("A", 5243, "a.png"), paired.PairInput("B", 5244, "b.png"))
+
+    def conditioning(_pipeline, _pair, width: int, _height: int):
+        events.append(("condition", width))
+        if width > 1000:
+            import gc
+
+            gc.collect()
+            assert marker[0]() is None, "Unused stage1 GPU conditioning remains alive"
+        item = Conditioning(width)
+        if width < 1000:
+            marker.append(weakref.ref(item))
+        return [item]
+
+    def stage(*args, **kwargs):
+        events.append(("stage", kwargs["stage_label"]))
+        latent = torch.ones((2, 1, 1, 2, 2), dtype=torch.bfloat16)
+        return SimpleNamespace(latent=latent), SimpleNamespace(latent=latent)
+
+    pipeline = SimpleNamespace(
+        stage=SimpleNamespace(),
+        device=torch.device("cpu"),
+        duration_predictor=None,
+        video_decoder=SimpleNamespace(checkpoint_path="fake", diffvae_optimization=None),
+        upsampler=lambda x: x,
+        use_ancestral_sampler=True,
+    )
+    with (
+        patch.object(paired, "_encode_pair_prompts", return_value=(
+            (pair[0], context), (pair[1], context),
+        )),
+        patch.object(paired, "_batch_conditionings", side_effect=conditioning),
+        patch.object(paired, "_paired_stage", side_effect=stage),
+        patch.object(paired, "assert_resolution"),
+        patch.object(paired, "require_num_frames_source"),
+        patch.object(paired, "resolve_num_frames", return_value=121),
+        patch.object(paired, "tiling_scale_factors_for_vae"),
+        patch.object(paired, "ensure_tiling_config", return_value=None),
+        patch.object(paired, "_log_gpu_checkpoint"),
+    ):
+        result = paired.generate_paired_fast_distilled(
+            pipeline, pair=pair, width=1920, height=1088,
+            frame_rate=24, num_frames=121,
+            full_hd_memory_cleanup=True,
+        )
+    assert len(result) == 2
+    assert events == [
+        ("condition", 960), ("stage", "stage1"),
+        ("condition", 1920), ("stage", "stage2"),
+    ]
+
+
+def test_full_hd_boundary_trim_only_evicts_unreachable_cuda_cache() -> None:
+    torch = pytest.importorskip("torch")
+    import ai_video_factory.workers.ltx25.paired_i2v as paired
+
+    with (
+        patch.object(paired.gc, "collect") as collect,
+        patch.object(torch.cuda, "is_available", return_value=True),
+        patch.object(torch.cuda, "empty_cache") as empty,
+        patch.object(paired, "_cuda_memory_snapshot", return_value={}),
+        patch.object(paired, "_memory_pressure", return_value={}),
+    ):
+        paired._log_gpu_checkpoint("baseline", trim=False)
+        collect.assert_not_called()
+        empty.assert_not_called()
+        paired._log_gpu_checkpoint("full_hd_stage_boundary", trim=True)
+        collect.assert_called_once_with()
+        empty.assert_called_once_with()
+
+
+def test_full_hd_pair_selects_disk_streaming_but_720p_keeps_gpu_resident(
+    tmp_path: Path,
+) -> None:
+    """Exercise real backend branch selection without torch, GPU or model weights."""
+    import ai_video_factory.workers.ltx25.model as model
+
+    backend = object.__new__(DirectLTX25Backend)
+    backend._lock = threading.RLock()
+    backend._device = "cuda"
+    backend._pipeline_successful_generations = 0
+    src_a, src_b = tmp_path / "a.png", tmp_path / "b.png"
+    src_a.write_bytes(b"a")
+    src_b.write_bytes(b"b")
+    calls = []
+    fake_torch = SimpleNamespace(
+        cuda=SimpleNamespace(
+            reset_peak_memory_stats=lambda: None,
+            max_memory_allocated=lambda: 27,
+        ),
+    )
+    fake_bindings = SimpleNamespace(
+        torch=fake_torch,
+        image_conditioning_input=lambda **kwargs: kwargs,
+        encode_video=lambda **kwargs: calls.append(kwargs),
+        get_video_chunks_number=lambda *_args: 1,
+    )
+    fake_pair_module = SimpleNamespace(
+        PairInput=lambda prompt, seed, image: (prompt, seed, image),
+        generate_paired_fast_distilled=Mock(return_value=(
+            SimpleNamespace(video="a", num_frames=121, tiling_config=None),
+            SimpleNamespace(video="b", num_frames=121, tiling_config=None),
+        )),
+    )
+    orig_pair_module = sys.modules.get(
+        "ai_video_factory.workers.ltx25.paired_i2v",
+    )
+    fake_name = "ai_video_factory.workers.ltx25.paired_i2v"
+    try:
+        sys.modules[fake_name] = fake_pair_module
+        for width, height, expected_mode in (
+            (1280, 720, "none"), (1920, 1080, "disk"),
+        ):
+            policy = SimpleNamespace(fuse_rule=object())
+            pipeline = SimpleNamespace(
+                stage=SimpleNamespace(
+                    _is_streaming=expected_mode == "disk",
+                    _quantization=policy,
+                ),
+            )
+            with (
+                patch.object(backend, "ready"),
+                patch.object(backend, "_get_bindings", return_value=fake_bindings),
+                patch.object(backend, "_validate_runtime"),
+                patch.object(backend, "_get_or_build_pipeline", return_value=pipeline) as loader,
+                patch.object(model, "_torch_inference_context", return_value=nullcontext()),
+                patch.object(model, "_prepare_grid_keyframe", side_effect=lambda p, *_a, **_kw: p),
+                patch.object(model, "_crop_video_to_requested", side_effect=lambda v, **_kw: v),
+            ):
+                first = LTXVideoParameters(
+                    generation_profile=LTX_PRODUCTION_I2V_PROFILE,
+                    prompt="A", seed=5243, width=width, height=height,
+                    fps=24, num_frames=121,
+                )
+                second = first.model_copy(update={"prompt": "B", "seed": 5244})
+                assert backend._pair_attempt(
+                    keyframe_a=src_a, keyframe_b=src_b,
+                    output_a=tmp_path / "a.mp4", output_b=tmp_path / "b.mp4",
+                    parameters_a=first, parameters_b=second,
+                    forward_batch_size=2,
+                ) == 27
+                assert loader.call_args.kwargs["requested_offload_mode"] == expected_mode
+                assert fake_pair_module.generate_paired_fast_distilled.call_args.kwargs[
+                    "max_forward_batch_size"
+                ] == 2
+                assert fake_pair_module.generate_paired_fast_distilled.call_args.kwargs[
+                    "full_hd_memory_cleanup"
+                ] is (expected_mode == "disk")
+            fake_pair_module.generate_paired_fast_distilled.reset_mock()
+    finally:
+        if orig_pair_module is None:
+            sys.modules.pop(fake_name, None)
+        else:
+            sys.modules[fake_name] = orig_pair_module
+    assert len(calls) == 4
 
 
 def test_stage_reuse_oom_retries_approved_true_b2_before_any_b1(tmp_path: Path) -> None:
