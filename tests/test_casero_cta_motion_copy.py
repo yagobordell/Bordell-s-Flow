@@ -7,12 +7,12 @@ import json
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageChops
+from PIL import Image
 from pydantic import ValidationError
 
 from ai_video_factory.bots.cta_motion_copy import CTAMotionCopy
 from ai_video_factory.compositor.cta_motion import (
-    W, H, _background, _copy_layout, _font, _render_frame,
+    W, H, _copy_layout, _render_frame,
 )
 from ai_video_factory.workflows import casero_cta as workflow
 from ai_video_factory.workflows import casero_cta_video as video
