@@ -46,7 +46,7 @@ which is deliberately absent by default. Example power-shell-only
 local preflight (no Salad started):
 
 ```powershell
-.\\scripts\\smoke\\run_ltx25_i2v_batch2_trial.ps1 @Shared `
+.\scripts\smoke\run_ltx25_i2v_batch2_trial.ps1 @Shared `
     -Width 1920 -Height 1080 `
     -AcceptFullHdBatch2OomRisk -CheckInputsOnly
 ```
