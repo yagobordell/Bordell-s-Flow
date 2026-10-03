@@ -24,14 +24,15 @@ def build_ltx25_runners(settings: LTX25WorkerSettings) -> TaskRunnerRegistry:
                 )
             )
         )
-    if settings.task_mode in ("a2v", "both"):
+    if settings.task_mode in ("a2v", "a2v_experimental", "both"):
         runners.append(
             LTXAudioToVideoTaskRunner(
                 backend=DirectLTX25AudioToVideoBackend(
                     model_root=settings.model_root,
                     device=settings.device,
                     mode_controller=mode_controller,
-                )
+                ),
+                experimental=settings.task_mode == "a2v_experimental",
             )
         )
     return TaskRunnerRegistry(runners)
