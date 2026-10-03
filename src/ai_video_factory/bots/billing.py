@@ -123,6 +123,49 @@ class ApiCostLedger:
 
         self._records.append(record)
 
+    def sync_professional_voice_usage(self, output: Path) -> None:
+        """Reconcile all paid V calls from durable checkpoints without double billing.
+
+        Prior reports without new checkpoints retain their original V records.
+        A missing/unknown API response stays unpriced rather than becoming $0.
+        """
+        states: list[Path] = []
+        for root in (output / "voice_direction", output):
+            for stage in ("V1", "V2", "V3"):
+                stage_root = root / stage
+                if stage_root.is_symlink():
+                    raise ValueError("Linked professional voice billing directory")
+                states.extend(sorted(stage_root.rglob("api_call_*.json")))
+        seen = {
+            (item["stage"], item.get("response_id"), item.get("source_state_file"))
+            for item in self._records if item["stage"] in {"V1", "V2", "V3"}
+        }
+        response_ids = {
+            (item["stage"], item.get("response_id"))
+            for item in self._records
+            if item["stage"] in {"V1", "V2", "V3"} and item.get("response_id") is not None
+        }
+        for path in states:
+            if path.is_symlink() or path.parent.is_symlink():
+                raise ValueError(f"Linked professional voice billing state: {path}")
+            item = json.loads(path.read_text(encoding="utf-8"))
+            stage, block_id, response = (
+                item.get("stage"), item.get("block_id"), item.get("response"),
+            )
+            if (stage not in {"V1", "V2", "V3"} or not isinstance(response, dict)
+                or (block_id is not None and (type(block_id) is not int or block_id < 1))):
+                raise ValueError(f"Malformed professional voice API call: {path}")
+            relative = path.relative_to(output).as_posix()
+            response_id = response.get("id")
+            if ((stage, response_id, relative) in seen
+                or (response_id is not None and (stage, response_id) in response_ids)):
+                continue
+            self.record(stage, block_id, response)
+            self._records[-1]["source_state_file"] = relative
+            seen.add((stage, response_id, relative))
+            if response_id is not None:
+                response_ids.add((stage, response_id))
+
     def sync_fish_director_usage(self, output: Path) -> None:
         """Reconcile durable Fish director responses without double-counting resumes."""
         runs = output / "audio" / "runs"
