@@ -11,7 +11,7 @@ import json
 import re
 import unicodedata
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.resources import files
 from time import perf_counter
 from typing import Literal
@@ -325,7 +325,8 @@ class BPipelineResult:
     b12: tuple[B12Output, ...]
     b2: tuple[B2Output | ProfessionalB2Output, ...]
     visual_style: Literal["casero", "profesional"] = "casero"
-
+    b2_correction_counts: dict[int, int] = field(default_factory=dict)
+    b2_response_ids: dict[int, str] = field(default_factory=dict)
 
     def merged_b12_output(self) -> dict[str, object]:
         """Application-owned complete B1.2 join, ordered by frozen block ID."""
@@ -445,6 +446,9 @@ async def run_b_pipeline(
     retry_b2_block_ids: frozenset[int] | None = None,
     previous_partial_b12: dict[int, B12Output] | None = None,
     previous_partial_b2: dict[int, B2Output | ProfessionalB2Output] | None = None,
+    previous_b2_correction_counts: dict[int, int] | None = None,
+    previous_b2_response_ids: dict[int, str] | None = None,
+    retry_b2_feedback: dict[int, str] | None = None,
     on_input: Callable[[str, int | None, dict[str, object]], None] | None = None,
     on_output: Callable[[str, int | None, dict[str, object]], None] | None = None,
     on_rejected_output: Callable[[int, str, dict[str, object]], None] | None = None,
@@ -758,9 +762,11 @@ async def run_b_pipeline(
 
     # One shared retry budget per B2 block. Global avatar-run repairs consume
     # the SAME budget as local schema and source-integrity corrections.
-    b2_correction_counts: dict[int, int] = {}
-    b2_call_numbers: dict[int, int] = {}
-    b2_last_response_ids: dict[int, str] = {}
+    b2_correction_counts = dict(previous_b2_correction_counts or {})
+    b2_call_numbers: dict[int, int] = {
+        block_id: count + 1 for block_id, count in b2_correction_counts.items()
+    }
+    b2_last_response_ids = dict(previous_b2_response_ids or {})
 
     async def b2_one(
         meta: BlockMeta, block: MaterializedBlock, b12: B12Output,
@@ -898,11 +904,37 @@ async def run_b_pipeline(
     else:
         previous_by_id = {}
 
+    async def b2_selected(
+        meta: BlockMeta, block: MaterializedBlock, b12: B12Output,
+    ) -> B2Output | ProfessionalB2Output:
+        if retry_ids and meta.block_id in retry_ids and retry_b2_feedback:
+            previous = previous_by_id[meta.block_id]
+            error = BPipelineValidationError(retry_b2_feedback[meta.block_id])
+            if on_rejected_b2_output is not None:
+                on_rejected_b2_output(
+                    meta.block_id, b2_call_numbers.get(meta.block_id, 1),
+                    str(error), previous.model_dump(),
+                )
+            suffix = validation_feedback(
+                "B2 " + visual_style, error, block_id=meta.block_id,
+                previous=previous.model_dump(),
+                continued=bool(b2_last_response_ids.get(meta.block_id))
+                and getattr(provider, "supports_response_continuation", False),
+                instructions=(
+                    "Repair the failed image-grid continuity numbering for ONLY "
+                    "this B2 block. Keep frozen beats and all other valid visuals, "
+                    "while correcting the visual descriptions/prompts whose "
+                    "numbering caused the image preflight error."
+                ),
+            )
+            return await b2_one(meta, block, b12, suffix)
+        return await b2_one(meta, block, b12)
+
     b2_started = perf_counter()
     try:
         b2_outcomes = await asyncio.gather(
             *(
-                b2_one(meta, block, b12)
+                b2_selected(meta, block, b12)
                 for meta, block, b12 in zip(b11.blocks, materialized, b12_results, strict=True)
                 if (not retry_ids or meta.block_id in retry_ids)
                 and (not previous_partial_b2 or meta.block_id not in previous_partial_b2)
@@ -1023,6 +1055,8 @@ async def run_b_pipeline(
         b12=tuple(b12_results),
         b2=tuple(b2_results),
         visual_style=visual_style,
+        b2_correction_counts=b2_correction_counts,
+        b2_response_ids=b2_last_response_ids,
     )
     if on_stage_complete is not None:
         on_stage_complete("B2", len(b2_results), result.merged_b2_output())
