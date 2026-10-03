@@ -23,7 +23,10 @@ def _group() -> dict[str, Any]:
     return {
         "name": GROUP_NAME,
         "version": 9,
-        "container": {"image": PINNED_IMAGE},
+        "container": {
+            "image": PINNED_IMAGE,
+            "environment_variables": {"LTX_WORKER_TASK_MODE": "i2v"},
+        },
         "readiness_probe": {"http": {"path": "/ready", "port": 8080}},
         "current_state": {"status": "running"},
         "pending_change": False,
