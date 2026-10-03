@@ -9,10 +9,11 @@ import asyncio
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Callable, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -20,7 +21,8 @@ from ai_video_factory.bots.audio_join import join_audio_blocks
 from ai_video_factory.bots.fish_audio_workflow import _transcribe_block
 from ai_video_factory.config import settings
 from ai_video_factory.providers.gemini_tts import (
-    DEFAULT_GEMINI_TTS_MODEL, GeminiTtsSpeechProvider,
+    DEFAULT_GEMINI_TTS_MODEL,
+    GeminiTtsSpeechProvider,
 )
 from ai_video_factory.providers.openai_stt import OpenAISttClient
 
@@ -232,9 +234,11 @@ async def _direct(
             prior = output_type.model_validate(_read(cached))
             check(prior)
             return prior
-        except (ValueError, ValidationError):
+        except (ValueError, ValidationError) as exc:
             # A corrupt saved result cannot silently be used as model authority.
-            raise VoicePlanError(f"{stage} block {block_id}: saved result no longer validates")
+            raise VoicePlanError(
+                f"{stage} block {block_id}: saved result no longer validates"
+            ) from exc
     previous_id = None
     for attempt in range(3):
         instructions = prompt
@@ -327,16 +331,21 @@ async def plan_professional_voice(
         rhythm_by_id = {r.block_id: r for r in v1.block_rhythms}
         semaphore = asyncio.Semaphore(max_parallel_calls)
 
-        async def one(block: dict[str, Any]) -> V2:
-            async with semaphore:
+        async def one(
+            block: dict[str, Any],
+            *, _semaphore: asyncio.Semaphore = semaphore,
+            _rhythms: dict[int, BlockRhythm] = rhythm_by_id,
+            _global: V1 = v1, _iteration: int = iteration,
+        ) -> V2:
+            async with _semaphore:
                 bid = block["block_id"]
-                rhythm = rhythm_by_id[bid]
+                rhythm = _rhythms[bid]
                 return await _direct(
-                    "V2", {"narrative_core": core, "curve": v1.curve,
-                           "block_rhythms": [x.model_dump() for x in v1.block_rhythms],
+                    "V2", {"narrative_core": core, "curve": _global.curve,
+                           "block_rhythms": [x.model_dump() for x in _global.block_rhythms],
                            "current_block": block},
-                    V2, lambda value: _check_v2(value, block, rhythm), provider, model,
-                    root / "V2" / f"pass_{iteration + 1}" / f"block_{bid}",
+                    V2, lambda candidate: _check_v2(candidate, block, rhythm), provider, model,
+                    root / "V2" / f"pass_{_iteration + 1}" / f"block_{bid}",
                     on_response, on_timing, bid,
                 )
 
@@ -366,7 +375,8 @@ async def plan_professional_voice(
         contested.extend(new)
     else:
         raise VoicePlanError("V1/V2 baseline reconciliation did not converge")
-    assert v1 is not None
+    if v1 is None:
+        raise VoicePlanError("V1 failed to produce global rhythm")
     rhythms = {r.block_id: r for r in v1.block_rhythms}
     semaphore = asyncio.Semaphore(max_parallel_calls)
 
