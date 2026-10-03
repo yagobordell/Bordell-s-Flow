@@ -21,12 +21,6 @@ from ai_video_factory.providers.inference_jobs import (
     InferenceJobExecutor,
     cached_inference_response,
 )
-from ai_video_factory.workers.ltx25.a2v import (
-    LTX_A2V_RECOMMENDED_MAX_SECONDS,
-    LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
-    LTX_A2V_TASK,
-)
-from ai_video_factory.workers.ltx25.jobs import ltx_a2v_application_job_id
 from ai_video_factory.video_resolution import (
     DEFAULT_VIDEO_HEIGHT,
     DEFAULT_VIDEO_WIDTH,
@@ -34,6 +28,12 @@ from ai_video_factory.video_resolution import (
     LEGACY_VIDEO_WIDTH,
     validate_video_size,
 )
+from ai_video_factory.workers.ltx25.a2v import (
+    LTX_A2V_RECOMMENDED_MAX_SECONDS,
+    LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+    LTX_A2V_TASK,
+)
+from ai_video_factory.workers.ltx25.jobs import ltx_a2v_application_job_id
 
 _FPS = 24
 _PROMPT = "A Person speaking to the camera."
