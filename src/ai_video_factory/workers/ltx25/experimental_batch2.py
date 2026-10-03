@@ -8,8 +8,9 @@ production jobs, output replay or external-client ID reassignment.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -17,11 +18,7 @@ from ai_video_factory.inference.contracts import InferenceJobRequest
 from ai_video_factory.inference.gpu_failures import is_retryable_gpu_failure
 from ai_video_factory.inference.ports import LocalArtifact, LocalSidecarArtifact
 
-from .model import (
-    LTX_PRODUCTION_I2V_PROFILE,
-    LTXVideoParameters,
-    DirectLTX25Backend,
-)
+from .model import LTX_PRODUCTION_I2V_PROFILE, DirectLTX25Backend, LTXVideoParameters
 
 LTX_I2V_BATCH2_TASK = "video.ltx25.experimental_batch2"
 
@@ -33,7 +30,7 @@ class Batch2Parameters(BaseModel):
     allow_sequential_fallback: bool = False
 
     @model_validator(mode="after")
-    def check_pair(self) -> "Batch2Parameters":
+    def check_pair(self) -> Batch2Parameters:
         a, b = self.a, self.b
         if (a.generation_profile, b.generation_profile) != (
             LTX_PRODUCTION_I2V_PROFILE, LTX_PRODUCTION_I2V_PROFILE,
@@ -83,7 +80,10 @@ class ExperimentalBatch2TaskRunner:
             "video/mp4", "application/json",
         ):
             raise ValueError("Batch2 sidecar content types are invalid")
-        if not sidecars["video_b"].key.endswith(".mp4") or not sidecars["report"].key.endswith(".json"):
+        if (
+            not sidecars["video_b"].key.endswith(".mp4")
+            or not sidecars["report"].key.endswith(".json")
+        ):
             raise ValueError("Batch2 sidecar key extensions are invalid")
         params = Batch2Parameters.model_validate(request.parameters)
         output_a = work_dir / "batch2-a.mp4"
@@ -104,12 +104,16 @@ class ExperimentalBatch2TaskRunner:
         for path in (output_a, output_b):
             if not path.is_file() or path.stat().st_size == 0:
                 raise ValueError(f"Batch2 generated an empty or missing video: {path.name}")
-        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         return LocalArtifact(
             path=output_a,
             content_type="video/mp4",
             sidecars=(
                 LocalSidecarArtifact(name="video_b", path=output_b, content_type="video/mp4"),
-                LocalSidecarArtifact(name="report", path=report_path, content_type="application/json"),
+                LocalSidecarArtifact(
+                    name="report", path=report_path, content_type="application/json"
+                ),
             ),
         )
