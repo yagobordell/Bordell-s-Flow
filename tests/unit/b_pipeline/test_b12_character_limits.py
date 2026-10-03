@@ -216,15 +216,15 @@ def test_unrelated_b12_validation_failure_is_repaired() -> None:
         _output(FIRST, SECOND),
     )
     result = asyncio.run(
-            run_b_pipeline(
+        run_b_pipeline(
                 script,
                 provider=provider,
                 model="test-model",
                 start_from="B1.2",
                 stop_after="B1.2",
                 previous_b11=_b11(script),
-            )
         )
+    )
     assert len(provider.calls) == 2
     assert "".join(beat.text for beat in result.b12[0].beats) == script
 
