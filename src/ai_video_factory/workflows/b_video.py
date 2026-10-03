@@ -829,7 +829,7 @@ def generate_b2_ltx_video(
         check_a2v_worker()
     # Submit CTA first on the shared Postgres A2V queue, BEFORE normal B2 jobs.
     cta_submitted = (
-        submit_cta_first(casero_cta_dir, executor, queue)
+        submit_cta_first(casero_cta_dir, executor, queue, video_size=output_size)
         if casero_cta_dir is not None else None
     )
 
@@ -930,12 +930,15 @@ def generate_b2_ltx_video(
         return manifest
     result = render_b2_ltx_video(output, run_dir, timeline, jobs, manifest, images, audio)
     if casero_cta_dir is not None:
-        finish_cta(casero_cta_dir, cta_submitted, executor)
+        finish_cta(
+            casero_cta_dir, cta_submitted, executor, video_size=output_size,
+        )
         raw = json.loads((output / "B1.1" / "input.json").read_text(encoding="utf-8"))
         source_script = raw["plain_script_for_recording"]
         inserted = insert_cta(
             output, source_script, plan, audio,
             output / result["file"], casero_cta_dir, run_dir / "with_cta.mp4",
+            video_size=output_size,
         )
         result.update(inserted)
         result["duration_seconds"] += inserted["cta_insertion"]["cta_duration_seconds"]
