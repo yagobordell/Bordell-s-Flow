@@ -21,7 +21,10 @@ def test_a2v_accepts_1080_output_and_pads_only_internal_grid() -> None:
     request = LTXAudioToVideoParameters(width=1920, height=1080, fps=24)
     assert _pipeline_dimensions(request) == (1920, 1088)
     assert (request.width, request.height) == (1920, 1080)
-    assert _pipeline_dimensions(LTXAudioToVideoParameters()) == (1280, 768)
+    assert _pipeline_dimensions(LTXAudioToVideoParameters()) == (1920, 1088)
+    assert _pipeline_dimensions(
+        LTXAudioToVideoParameters(width=1280, height=720)
+    ) == (1280, 768)
     with pytest.raises(ValidationError, match="divisible by 64"):
         LTXAudioToVideoParameters(width=1920, height=1081)
 
