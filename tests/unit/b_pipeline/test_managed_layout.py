@@ -188,6 +188,109 @@ def test_launcher_passes_managed_target_and_resume_without_paid_calls(
     assert "--avatar" not in commands[0]
 
 
+def test_resume_infers_avatar_from_owning_folder_not_loose_ebook_cover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "data"
+    _png(root / "cover_playbook.png")
+    _png(root / "Layla" / "Layla.png")
+    saved = root / "Layla" / "bodas_15_costes_ocultos"
+    saved.mkdir()
+    script = saved / "bodas_15_costes_ocultos.txt"
+    script.write_text("Already started.", encoding="utf-8")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(run_managed, "WORK_ROOT", tmp_path / "work")
+    monkeypatch.setattr(run_managed, "sync_managed_outputs", lambda *_: None)
+    monkeypatch.setattr(
+        run_managed.subprocess, "call", lambda cmd: calls.append(cmd) or 0,
+    )
+    monkeypatch.setattr(
+        "builtins.input", lambda _: pytest.fail("Known script must not ask for an avatar"),
+    )
+
+    assert run_managed.main([
+        "bodas_15_costes_ocultos", "--from", "B2", "--data-root", str(root),
+    ]) == 0
+    assert len(calls) == 1
+    assert "--avatar" in calls[0]
+    assert calls[0][calls[0].index("--avatar") + 1] == "Layla"
+    assert str(script) in calls[0]
+    assert (root / "cover_playbook.png").is_file()
+
+
+def test_existing_avatar_pending_script_is_selected_without_cover_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "data"
+    _png(root / "cover_playbook.png")
+    _png(root / "Layla" / "Layla.png")
+    pending = root / "Layla" / "new_video.txt"
+    pending.write_text("New script.", encoding="utf-8")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(run_managed, "WORK_ROOT", tmp_path / "work")
+    monkeypatch.setattr(run_managed, "sync_managed_outputs", lambda *_: None)
+    monkeypatch.setattr(
+        run_managed.subprocess, "call", lambda cmd: calls.append(cmd) or 0,
+    )
+    monkeypatch.setattr(
+        "builtins.input", lambda _: pytest.fail("Known script must not ask for an avatar"),
+    )
+
+    assert run_managed.main([
+        "new_video", "--no-image", "--data-root", str(root),
+    ]) == 0
+    assert len(calls) == 1
+    assert calls[0][calls[0].index("--avatar") + 1] == "Layla"
+    assert (root / "Layla" / "new_video" / "new_video.txt").is_file()
+    assert (root / "cover_playbook.png").is_file()
+
+
+def test_registered_ebook_cover_is_not_listed_as_managed_avatar(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+) -> None:
+    root = tmp_path / "data"
+    _png(root / "cover_playbook.png")
+    _png(root / "Layla" / "Layla.png")
+    meta = root / "Layla" / "meta"
+    meta.mkdir()
+    (meta / "ebook_covers.json").write_text(
+        json.dumps({
+            "schema_version": "ebook-covers-v1",
+            "avatar": "Layla.png",
+            "covers": [{"name": "cover_playbook", "sha256": "test"}],
+        }), encoding="utf-8",
+    )
+    assert run_managed.main(["--list-avatars", "--data-root", str(root)]) == 0
+    assert capsys.readouterr().out.strip() == "Layla"
+
+
+def test_resume_same_script_under_multiple_avatars_requires_real_owner_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "data"
+    _png(root / "cover_playbook.png")
+    for avatar in ("Layla", "Eva"):
+        _png(root / avatar / (avatar + ".png"))
+        run = root / avatar / "shared"
+        run.mkdir()
+        (run / "shared.txt").write_text("Started.", encoding="utf-8")
+    choices: list[list[str]] = []
+
+    def choose(options: list[str], kind: str) -> str:
+        assert kind == "avatars"
+        choices.append(options)
+        return "Layla"
+
+    monkeypatch.setattr(run_managed, "_choose", choose)
+    monkeypatch.setattr(run_managed, "WORK_ROOT", tmp_path / "work")
+    monkeypatch.setattr(run_managed, "sync_managed_outputs", lambda *_: None)
+    monkeypatch.setattr(run_managed.subprocess, "call", lambda _: 0)
+    assert run_managed.main([
+        "shared", "--from", "B2", "--data-root", str(root),
+    ]) == 0
+    assert choices == [["Eva", "Layla"]]
+
+
 @pytest.fixture
 def managed_complete(tmp_path: Path) -> tuple[Path, Path, Path]:
     avatar_dir = tmp_path / "data" / "Jorge"
