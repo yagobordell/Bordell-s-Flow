@@ -72,7 +72,8 @@ def cta_assets(directory: Path) -> dict[str, Any]:
     tts = _read(directory/"tts_state.json")
     stt = _read(directory/"stt_state.json")
     image = _read(directory/"image_state.json")
-    motion = _read(directory/"motion_state.json")
+    v2_motion = directory/"motion_v2_state.json"
+    motion = _read(v2_motion if v2_motion.is_file() else directory/"motion_state.json")
     for state in (tts, stt, image, motion):
         if state.get("status") != "completed":
             raise CTACompositionError("Incomplete casero CTA media asset")
@@ -205,13 +206,20 @@ def finish_cta(directory: Path, submitted: tuple[Any, Any] | None,
     return compose_reusable_cta(directory, assets)
 
 
-def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None) -> Path:
+def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None, *,
+                         upgrade_legacy: bool = False) -> Path:
+    previous: dict[str, Any] | None = None
     if (directory/"completed.json").is_file():
-        record = _read(directory/"completed.json")
-        path = directory/record["final"]["file"]
-        if sha256_file(path) != record["final"]["sha256"]:
+        previous = _read(directory/"completed.json")
+        path = directory/previous["final"]["file"]
+        if path.is_symlink() or not path.is_file() or (
+            sha256_file(path) != previous["final"]["sha256"]
+        ):
             raise CTACompositionError("Reusable CTA digest changed")
-        return path
+        if not upgrade_legacy:
+            return path
+        if previous.get("schema_version") != "casero-cta-final-v1":
+            raise CTACompositionError("Only a legacy CTA can be locally upgraded")
     if assets is None:
         assets = cta_assets(directory)
     half = assets["half_seconds"]
@@ -221,8 +229,8 @@ def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None) 
     tail_frames = total_frames-first_frames
     if first_frames < 1 or tail_frames < 1:
         raise CTACompositionError("CTA media frame count invalid")
-    destination = directory/"final_cta.mp4"
-    temp = directory/"final_cta.part.mp4"
+    destination = directory/("final_cta_v2.mp4" if upgrade_legacy else "final_cta.mp4")
+    temp = directory/("final_cta_v2.part.mp4" if upgrade_legacy else "final_cta.part.mp4")
     if temp.exists() or temp.is_symlink() or destination.is_symlink():
         raise CTACompositionError("Unreconciled CTA final composition")
     # First 50% of speech uses A2V. The other 50% plus 1500ms uses QR motion.
@@ -243,13 +251,59 @@ def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None) 
         "-t",f"{duration:.9f}","-movflags","+faststart",str(temp),
     ])
     temp.replace(destination)
-    _atomic(directory/"completed.json",{
-        "schema_version":"casero-cta-final-v1","status":"completed",
-        "duration_seconds":duration,"speech_seconds":assets["duration_seconds"],
-        "first_half_seconds":half,"trailing_silence_seconds":1.5,
-        "final":{"file":destination.name,"sha256":sha256_file(destination)},
-    })
+    v2_motion = (directory / "motion_v2_state.json").is_file()
+    completion = {
+        "schema_version": "casero-cta-final-v2" if v2_motion else "casero-cta-final-v1",
+        "status": "completed",
+        "duration_seconds": duration, "speech_seconds": assets["duration_seconds"],
+        "first_half_seconds": half, "trailing_silence_seconds": 1.5,
+        "final": {"file": destination.name, "sha256": sha256_file(destination)},
+    }
+    if v2_motion:
+        completion["motion_copy_sha256"] = sha256_file(directory / "motion_copy.json")
+    if upgrade_legacy:
+        # Preserve the original finished video until a verified replacement exists.
+        # Never remove old files, paid media or the old completion reference mid-render.
+        saved = _read(directory / "completed.json")
+        if saved != previous:
+            raise CTACompositionError("CTA completion changed during local upgrade")
+        temp_record = directory / "completed.json.v2.part"
+        if temp_record.exists() or temp_record.is_symlink():
+            raise CTACompositionError("Unreconciled CTA upgrade checkpoint")
+        try:
+            temp_record.write_text(
+                json.dumps(completion, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temp_record.replace(directory / "completed.json")
+        finally:
+            temp_record.unlink(missing_ok=True)
+    else:
+        _atomic(directory/"completed.json", completion)
     return destination
+
+
+def upgrade_cached_cta(directory: Path) -> Path:
+    """Upgrade a v1 CTA with local A2V+speech only, preserving paid artifacts."""
+    legacy = _read(directory / "completed.json")
+    if legacy.get("schema_version") != "casero-cta-final-v1":
+        raise CTACompositionError("CTA upgrade requires legacy v1 completion")
+    old_clip = directory / legacy["final"]["file"]
+    if (old_clip.is_symlink() or not old_clip.is_file()
+            or sha256_file(old_clip) != legacy["final"]["sha256"]):
+        raise CTACompositionError("Legacy finished CTA changed or missing")
+    a2v_state = _read(directory / "a2v_state.json")
+    original_a2v = directory / "avatar_a2v.mp4"
+    if (a2v_state.get("status") != "completed" or
+            original_a2v.is_symlink() or not original_a2v.is_file() or
+            sha256_file(original_a2v) != a2v_state.get("sha256")):
+        raise CTACompositionError(
+            "Legacy CTA A2V cannot be verified locally. Original CTA preserved; "
+            "reconcile avatar_a2v.mp4 without resubmitting a paid job."
+        )
+    if not (directory / "motion_v2_state.json").is_file():
+        raise CTACompositionError("Missing validated new CTA motion")
+    return compose_reusable_cta(directory, cta_assets(directory), upgrade_legacy=True)
 
 
 def insertion_second(

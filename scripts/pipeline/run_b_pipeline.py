@@ -94,7 +94,7 @@ from ai_video_factory.workflows.casero_cta import prepare_casero_cta
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
 _STAGES = ("B1.1", "B1.2", "B2")
-_METRIC_STAGES = ("B1.1", "CTA", "CTA Ebook", "B1.2", "B2", "V1", "V2", "V3")
+_METRIC_STAGES = ("B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "V1", "V2", "V3")
 
 
 def parse_args() -> argparse.Namespace:
@@ -2495,6 +2495,7 @@ async def main() -> None:
                 "B1.1": max(1, timings.call_count("B1.1")),
                 "CTA": max(1, timings.call_count("CTA")) if visual_style == "casero" else 0,
                 "CTA Ebook": timings.call_count("CTA Ebook"),
+                "CTA Motion": timings.call_count("CTA Motion"),
                 "CTA image": sum(r["stage"] == "CTA image" for r in ledger.records),
                 "B1.2": (
                     max(report_blocks, timings.call_count("B1.2"))
@@ -2509,6 +2510,7 @@ async def main() -> None:
             expected_calls = dict(resume_expected_calls)
             expected_calls["CTA"] = timings.call_count("CTA")
             expected_calls["CTA Ebook"] = timings.call_count("CTA Ebook")
+            expected_calls["CTA Motion"] = timings.call_count("CTA Motion")
             expected_calls["CTA image"] = sum(
                 r["stage"] == "CTA image" for r in ledger.records
             )

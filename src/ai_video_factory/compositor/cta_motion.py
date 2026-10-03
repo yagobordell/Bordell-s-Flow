@@ -14,6 +14,8 @@ from urllib.parse import urlsplit
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from ai_video_factory.bots.cta_motion_copy import CTAMotionCopy
+
 W, H, FPS = 1920, 1080, 30
 NAVY = (14, 26, 38)
 STEEL = (46, 79, 110)
@@ -64,14 +66,63 @@ def _background() -> Image.Image:
     return bg
 
 
+def _wrap_to_width(text: str, draw: ImageDraw.ImageDraw,
+                   font: ImageFont.FreeTypeFont, limit: int) -> list[str]:
+    """Wrap display copy at word boundaries (characters for unspaced scripts)."""
+    parts = text.split() if " " in text else list(text)
+    separator = " " if " " in text else ""
+    lines: list[str] = []
+    current = ""
+    for part in parts:
+        candidate = current + (separator if current else "") + part
+        if draw.textbbox((0, 0), candidate, font=font)[2] <= limit:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = part
+            if draw.textbbox((0, 0), current, font=font)[2] > limit:
+                raise ValueError("CTA motion copy has an unbreakable word too wide for the layout")
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _copy_layout(
+    copy: CTAMotionCopy, text_width: int,
+) -> tuple[list[str], ImageFont.FreeTypeFont, list[ImageFont.FreeTypeFont]]:
+    probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    for size in (62, 58, 54, 50, 46, 42, 38):
+        title_font = _font(size)
+        try:
+            title_lines = _wrap_to_width(copy.title, probe, title_font, text_width)
+        except ValueError:
+            continue
+        if len(title_lines) <= 2:
+            break
+    else:
+        raise ValueError("CTA motion title cannot fit within two lines")
+    bullet_fonts: list[ImageFont.FreeTypeFont] = []
+    for line in copy.benefits:
+        for size in (34, 32, 30, 28, 26, 24, 22):
+            font = _font(size, bold=False)
+            if probe.textbbox((0, 0), line, font=font)[2] <= text_width - 52:
+                bullet_fonts.append(font)
+                break
+        else:
+            raise ValueError("CTA motion benefit cannot fit on one line")
+    return title_lines, title_font, bullet_fonts
+
+
 def _render_frame(
     t: float, *, background: Image.Image, cover: Image.Image,
-    qr: Image.Image, domain: str,
+    qr: Image.Image, domain: str, copy: CTAMotionCopy | None = None,
+    layout: tuple[list[str], ImageFont.FreeTypeFont, list[ImageFont.FreeTypeFont]] | None = None,
 ) -> Image.Image:
     bg = background.copy()
     d = ImageDraw.Draw(bg, "RGBA")
     # v4: large book slides from the left before the QR enters from above.
-    cov_h = H - 140
+    cov_h = min(H - 140, round(670 * cover.height / cover.width))
     cov_w = round(cov_h * cover.width / cover.height)
     progress = _ease((t - 0.25) / 1.0)
     if progress > 0:
@@ -85,15 +136,38 @@ def _render_frame(
         )
         _paste(bg, shadow.filter(ImageFilter.GaussianBlur(20)), x-24, 46)
         _paste(bg, image, x, 70)
-    text_x = min(W - 550, 70 + cov_w + 90)
+    text_x = max(780, 70 + cov_w + 72)
     eye = _ease((t - 1.4) / 0.45)
     if eye:
-        d.text((text_x, H//2 - 65), "THE BOOK", fill=GOLD + (round(255*eye),), font=_font(48))
-        d.line((text_x, H//2 + 15, text_x + round(125*eye), H//2 + 15), fill=GOLD, width=4)
+        eye_y = 340 if copy is not None else H//2 - 65
+        d.text((text_x, eye_y), "THE BOOK", fill=GOLD + (round(255*eye),), font=_font(48))
+        d.line((text_x, eye_y + 75, text_x + round(125*eye), eye_y + 75),
+               fill=GOLD, width=4)
+    if copy is not None and layout is not None:
+        title_lines, title_font, bullet_fonts = layout
+        for i, line in enumerate(title_lines):
+            reveal = _ease((t - 1.75 - 0.18*i) / 0.55)
+            if reveal:
+                d.text((text_x + round((1-reveal)*24), 430 + 74*i), line,
+                       fill=WHITE + (round(255*reveal),), font=title_font)
+        bullet_y = 615 if len(title_lines) == 1 else 680
+        for i, (line, font) in enumerate(zip(copy.benefits, bullet_fonts, strict=True)):
+            reveal = _ease((t - 2.9 - 0.28*i) / 0.50)
+            if reveal:
+                y = bullet_y + 62*i
+                d.ellipse((text_x, y+4, text_x+24, y+28),
+                          outline=GOLD + (round(255*reveal),), width=3)
+                d.line((text_x+6,y+16,text_x+11,y+21),
+                       fill=GOLD + (round(255*reveal),), width=3)
+                d.line((text_x+11,y+21,text_x+19,y+9),
+                       fill=GOLD + (round(255*reveal),), width=3)
+                d.text((text_x+42, y), line,
+                       fill=WHITE + (round(255*reveal),), font=font)
     body = _ease((t - 2.1) / 0.6)
     if body:
         d.text(
-            (text_x, H//2 + 48), "SCAN FOR YOUR COPY",
+            (text_x, 925 if copy is not None else H//2 + 48),
+            "SCAN FOR YOUR COPY",
             fill=WHITE + (round(255*body),), font=_font(38),
         )
     # Original v4 hierarchy: QR card at the top-right, explanatory text outside.
@@ -129,7 +203,8 @@ def _render_frame(
 
 
 def build_motion(cover_path: Path, qr_path: Path, qr_url: str,
-                 duration_seconds: float, destination: Path) -> None:
+                 duration_seconds: float, destination: Path, *,
+                 copy: CTAMotionCopy | None = None) -> None:
     if not 1.5 <= duration_seconds <= 60.0:
         raise ValueError("CTA motion duration must be between 1.5 and 60 seconds")
     if shutil.which("ffmpeg") is None:
@@ -146,6 +221,10 @@ def build_motion(cover_path: Path, qr_path: Path, qr_url: str,
         qr = source.convert("RGB")
     domain = urlsplit(qr_url).hostname or ""
     background = _background()
+    book_height = min(H - 140, round(670 * cover.height / cover.width))
+    book_width = round(book_height * cover.width / cover.height)
+    text_x = max(780, 70 + book_width + 72)
+    layout = _copy_layout(copy, W - text_x - 45) if copy is not None else None
     frames = math.ceil(duration_seconds * FPS)
     command = [
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
@@ -161,7 +240,8 @@ def build_motion(cover_path: Path, qr_path: Path, qr_url: str,
             raise RuntimeError("CTA FFmpeg stdin unavailable")
         for frame in range(frames):
             proc.stdin.write(_render_frame(frame/FPS, background=background,
-                                           cover=cover, qr=qr, domain=domain).tobytes())
+                                           cover=cover, qr=qr, domain=domain,
+                                           copy=copy, layout=layout).tobytes())
         proc.stdin.close()
         if proc.stderr is None:
             raise RuntimeError("CTA FFmpeg stderr unavailable")

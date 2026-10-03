@@ -19,6 +19,7 @@ from typing import Any
 from PIL import Image
 
 from ai_video_factory.bots.cta import CTAEbook
+from ai_video_factory.bots.cta_motion_copy import CTAMotionCopy
 from ai_video_factory.compositor.cta_motion import build_motion
 from ai_video_factory.config import settings
 from ai_video_factory.providers.ai33_speech import (
@@ -246,21 +247,74 @@ def _image(directory: Path, covers: EbookCovers, avatar: Path,
     })
 
 
-def _motion(directory: Path, cover: Path, qr_path: Path, qr_url: str, half: float) -> None:
-    state_path = directory / "motion_state.json"
+def _motion(directory: Path, cover: Path, qr_path: Path, qr_url: str,
+            half: float, copy: CTAMotionCopy) -> None:
+    """Versioned local render: never overwrite legacy completed media."""
+    state_path = directory / "motion_v2_state.json"
+    copy_sha = _sha(directory / "motion_copy.json")
     if state_path.is_file():
         record = _read(state_path)
-        if record.get("status") == "completed":
-            _require(directory, record, "motion")
-            if abs(record["duration_seconds"] - (half + 1.5)) > 1e-7:
-                raise CaseroCTAError("Saved motion has incorrect CTA duration")
-            return
-    path = directory / "motion.mp4"
-    build_motion(cover, qr_path, qr_url, half+1.5, path)
+        if record.get("status") != "completed":
+            raise CaseroCTAError("Unreconciled CTA motion v2 rendering")
+        _require(directory, record, "motion")
+        if (abs(record["duration_seconds"] - (half + 1.5)) > 1e-7
+                or record.get("motion_copy_sha256") != copy_sha):
+            raise CaseroCTAError("Saved CTA motion v2 inputs differ")
+        return
+    path = directory / "motion_v2.mp4"
+    if path.exists() or path.is_symlink():
+        raise CaseroCTAError("CTA motion v2 exists without a verified checkpoint")
+    build_motion(cover, qr_path, qr_url, half + 1.5, path, copy=copy)
     _save(state_path, {
-        "status": "completed", "duration_seconds": half+1.5,
+        "status": "completed", "duration_seconds": half + 1.5,
+        "motion_copy_sha256": copy_sha,
         "motion": {"file": path.name, "sha256": _sha(path)},
     })
+
+
+async def _motion_text(
+    directory: Path, spoken_cta: str, cover: Path, provider: Any, model: str,
+    on_api_response: Callable[[str, int | None, object], None] | None,
+) -> CTAMotionCopy:
+    destination = directory / "motion_copy.json"
+    if destination.is_file():
+        return CTAMotionCopy.model_validate(_read(destination))
+    state = directory / "motion_copy_state.json"
+    if state.is_file():
+        raise CaseroCTAError(
+            "CTA motion text generation previously started; reconcile motion_copy_state.json"
+        )
+    _save(state, {
+        "status": "request_started_unknown",
+        "spoken_cta_sha256": hashlib.sha256(spoken_cta.encode()).hexdigest(),
+        "cover_sha256": _sha(cover),
+    })
+    from importlib.resources import files
+    instructions = files("ai_video_factory.bots.prompts").joinpath(
+        "cta_motion.md"
+    ).read_text(encoding="utf-8") + _API_SUFFIX
+    kwargs = {
+        "model": model, "instructions": instructions,
+        "input_text": json.dumps({"spoken_cta": spoken_cta}, ensure_ascii=False),
+        "input_image_url": _png_data_url(cover), "output_type": CTAMotionCopy,
+    }
+    metered = getattr(provider, "generate_structured_with_response", None)
+    if callable(metered):
+        result, response = await metered(**kwargs)
+        if on_api_response is not None:
+            on_api_response("CTA Motion", None, response)
+    else:
+        result = await provider.generate_structured(**kwargs)
+    if not isinstance(result, CTAMotionCopy):
+        result = CTAMotionCopy.model_validate(result)
+    _save(destination, result.model_dump())
+    _save(state, {
+        "status": "completed",
+        "spoken_cta_sha256": hashlib.sha256(spoken_cta.encode()).hexdigest(),
+        "cover_sha256": _sha(cover),
+        "output_sha256": _sha(destination),
+    })
+    return result
 
 
 async def _ebook_text(
@@ -332,25 +386,95 @@ async def prepare_casero_cta(
             )
     else:
         _save(identity_path, identity)
-    if (directory/"completed.json").is_file():
-        ready = _read(directory/"completed.json")
+    cached_final = (directory / "completed.json").is_file()
+    if cached_final:
+        ready = _read(directory / "completed.json")
         _require(directory, ready, "final")
-        return {**ready, "directory": str(directory)}
+        if ready.get("schema_version") == "casero-cta-final-v2":
+            # Completed new-format CTA: no paid text, speech, image or GPU calls.
+            from ai_video_factory.workflows.casero_cta_video import cta_assets
+            cta_assets(directory)
+            return {**ready, "directory": str(directory)}
+        if ready.get("schema_version") != "casero-cta-final-v1":
+            raise CaseroCTAError("Unknown finished CTA schema")
+        # Before billing even the new text bot, ensure migration can run locally.
+        # A v1 clip must not be silently replaced or reconstructed by a paid job.
+        if not (directory / "script.json").is_file():
+            raise CaseroCTAError("Legacy CTA speech script missing; keep original CTA")
+        original_a2v = directory / "avatar_a2v.mp4"
+        state_path = directory / "a2v_state.json"
+        if not state_path.is_file():
+            raise CaseroCTAError("Legacy CTA A2V checkpoint missing; keep original CTA")
+        saved_a2v = _read(state_path)
+        if (saved_a2v.get("status") != "completed"
+                or original_a2v.is_symlink() or not original_a2v.is_file()
+                or _sha(original_a2v) != saved_a2v.get("sha256")):
+            raise CaseroCTAError(
+                "Legacy CTA A2V cannot be verified locally; "
+                "reconcile before requesting new motion copy"
+            )
+
     from time import perf_counter
     cached_ebook_script = (directory / "script.json").is_file()
     started = perf_counter()
-    text = await _ebook_text(directory, script, covers.files[0], provider, model, on_api_response)
+    text = await _ebook_text(
+        directory, script, covers.files[0], provider, model, on_api_response,
+    )
     if not cached_ebook_script and on_call_duration is not None:
         on_call_duration("CTA Ebook", None, perf_counter()-started)
-    tts, _ = await asyncio.gather(
-        asyncio.to_thread(_tts, directory, text, voice_id, voice_provider),
-        asyncio.to_thread(_image, directory, covers, avatar, on_image_usage),
+
+    cached_motion_text = (directory / "motion_copy.json").is_file()
+    motion_started = perf_counter()
+    motion_copy_task = asyncio.create_task(_motion_text(
+        directory, text, covers.files[0], provider, model, on_api_response,
+    ))
+    if cached_final:
+        # Safe migration: only new bot+local render. Existing TTS, edit, STT
+        # and A2V are never submitted again.
+        tts = _read(directory / "tts_state.json")
+        _require(directory, tts, "master")
+        _require(directory, tts, "first_half")
+        copy = await asyncio.shield(motion_copy_task)
+        if not cached_motion_text and on_call_duration is not None:
+            on_call_duration("CTA Motion", None, perf_counter() - motion_started)
+        await asyncio.to_thread(
+            _motion, directory, covers.files[0], qr_path, qr_url,
+            float(tts["half_seconds"]), copy,
+        )
+        from ai_video_factory.workflows.casero_cta_video import upgrade_cached_cta
+        upgraded = await asyncio.to_thread(upgrade_cached_cta, directory)
+        return {"status": "completed", "directory": str(directory),
+                "final": {"file": upgraded.name, "sha256": _sha(upgraded)}}
+
+    # New avatar CTA: prepare the bot while speech and image run independently.
+    # Wait for *every* paid call even when a sibling task fails. Ordinary
+    # gather can raise early while a billed TTS/image request still runs.
+    tts_task = asyncio.create_task(asyncio.to_thread(
+        _tts, directory, text, voice_id, voice_provider,
+    ))
+    image_task = asyncio.create_task(asyncio.to_thread(
+        _image, directory, covers, avatar, on_image_usage,
+    ))
+    outcomes = await asyncio.gather(
+        tts_task, image_task, motion_copy_task, return_exceptions=True,
     )
-    await asyncio.gather(
+    for outcome in outcomes:
+        if isinstance(outcome, BaseException):
+            raise outcome
+    tts, _, copy = outcomes
+    if not cached_motion_text and on_call_duration is not None:
+        on_call_duration("CTA Motion", None, perf_counter() - motion_started)
+    finishing = await asyncio.gather(
         asyncio.to_thread(_stt, directory),
-        asyncio.to_thread(_motion, directory, covers.files[0], qr_path, qr_url,
-                          float(tts["half_seconds"])),
+        asyncio.to_thread(
+            _motion, directory, covers.files[0], qr_path, qr_url,
+            float(tts["half_seconds"]), copy,
+        ),
+        return_exceptions=True,
     )
+    for outcome in finishing:
+        if isinstance(outcome, BaseException):
+            raise outcome
     return {
         **identity, "status": "assets_ready", "directory": str(directory),
         "half_seconds": tts["half_seconds"], "duration_seconds": tts["duration_seconds"],
