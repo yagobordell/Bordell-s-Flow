@@ -161,7 +161,7 @@ class InferenceWorker:
             )
 
         if (
-            request.task in {"video.ltx25.audio_to_video", "video.ltx25.image_to_video"}
+            request.task in {"video.ltx25.audio_to_video", "video.ltx25.generate"}
             and request.parameters.get("required_worker_image") != self.required_worker_image
         ):
             raise UnsupportedTaskError(
