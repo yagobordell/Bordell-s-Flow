@@ -1,0 +1,231 @@
+"""Offline contract tests for grounded, reusable casero CTA motion copy."""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+from PIL import Image, ImageChops
+from pydantic import ValidationError
+
+from ai_video_factory.bots.cta_motion_copy import CTAMotionCopy
+from ai_video_factory.compositor.cta_motion import (
+    W, H, _background, _copy_layout, _font, _render_frame,
+)
+from ai_video_factory.workflows import casero_cta as workflow
+from ai_video_factory.workflows import casero_cta_video as video
+
+
+def _png(path: Path) -> None:
+    Image.new("RGB", (240, 360), "white").save(path, format="PNG")
+
+
+def _save(path: Path, payload: dict) -> None:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("payload", [
+    {"title": "", "benefits": []},
+    {"title": " " + "Libro", "benefits": []},
+    {"title": "A" * 73, "benefits": []},
+    {"title": "Libro", "benefits": ["x" * 53]},
+    {"title": "Libro", "benefits": ["bien", "BIEN"]},
+    {"title": "Libro", "benefits": ["uno", "dos", "tres", "cuatro"]},
+    {"title": "Libro", "benefits": [], "qr_text": "Override fixed English label"},
+])
+def test_motion_copy_rejects_invalid_fields(payload: dict) -> None:
+    with pytest.raises(ValidationError):
+        CTAMotionCopy.model_validate(payload)
+
+
+def test_motion_copy_can_be_grounded_without_invented_benefits() -> None:
+    assert CTAMotionCopy(title="Mi guía", benefits=[]).model_dump() == {
+        "title": "Mi guía", "benefits": [],
+    }
+
+
+def test_renderer_shows_book_specific_copy_but_owns_fixed_english_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ai_video_factory.compositor.cta_motion as motion
+
+    cover = Image.new("RGB", (180, 260), "white")
+    qr = Image.new("RGB", (300, 300), "white")
+    copy = CTAMotionCopy(
+        title="Guía de boda", benefits=["Planificación", "Lista de invitados"],
+    )
+    font_layout = _copy_layout(copy, 900)
+    assert len(font_layout[0]) == 1
+    assert len(font_layout[2]) == 2
+    captured: list[str] = []
+    real_draw = motion.ImageDraw.Draw
+
+    def spy_draw(img, *args, **kwargs):
+        drawer = real_draw(img, *args, **kwargs)
+        real_text = drawer.text
+
+        def spy_text(xy, txt, *a, **kw):
+            captured.append(txt)
+            return real_text(xy, txt, *a, **kw)
+
+        drawer.text = spy_text
+        return drawer
+
+    monkeypatch.setattr(motion.ImageDraw, "Draw", spy_draw)
+    frame = _render_frame(
+        6, background=Image.new("RGBA", (W, H), "black"), cover=cover,
+        qr=qr, domain="ejemplo.com", copy=copy, layout=font_layout,
+    )
+    assert frame.size == (1920, 1080)
+    assert {"THE BOOK", "SCAN FOR YOUR COPY", "SCAN WITH YOUR",
+            "MOBILE PHONE", "Guía de boda", "Planificación",
+            "Lista de invitados"} <= set(captured)
+    assert "ejemplo.com" in captured
+
+
+def test_motion_text_bot_uses_saved_spoken_cta_and_only_primary_cover(
+    tmp_path: Path,
+) -> None:
+    cache = tmp_path / "cta"
+    cache.mkdir()
+    cover = tmp_path / "book.png"
+    _png(cover)
+    responses = []
+
+    class Provider:
+        async def generate_structured_with_response(self, **kwargs):
+            responses.append(kwargs)
+            return CTAMotionCopy(title="Libro visible", benefits=["Tema de portada"]), {
+                "usage": {"input_tokens": 22, "output_tokens": 16},
+            }
+
+    calls = []
+    first = asyncio.run(workflow._motion_text(
+        cache, "Locución guardada", cover, Provider(), "test-model",
+        lambda name, block, response: calls.append((name, block, response)),
+    ))
+    second = asyncio.run(workflow._motion_text(
+        cache, "Locución guardada", cover, Provider(), "test-model", None,
+    ))
+    assert first == second
+    assert len(responses) == 1
+    assert responses[0]["output_type"] is CTAMotionCopy
+    assert json.loads(responses[0]["input_text"]) == {"spoken_cta": "Locución guardada"}
+    assert responses[0]["input_image_url"].startswith("data:image/png;base64,")
+    assert len(calls) == 1 and calls[0][0] == "CTA Motion"
+    assert _sha(cache / "motion_copy.json") == json.loads(
+        (cache / "motion_copy_state.json").read_text()
+    )["output_sha256"]
+
+
+def test_motion_copy_unknown_paid_request_is_not_repeated(tmp_path: Path) -> None:
+    directory = tmp_path / "cta"
+    directory.mkdir()
+    cover = tmp_path / "cover.png"
+    _png(cover)
+    _save(directory / "motion_copy_state.json", {"status": "request_started_unknown"})
+
+    class Provider:
+        async def generate_structured(self, **_):
+            pytest.fail("Must not repeat uncertain billed request")
+
+    with pytest.raises(workflow.CaseroCTAError, match="reconcile"):
+        asyncio.run(workflow._motion_text(
+            directory, "CTA", cover, Provider(), "model", None,
+        ))
+
+
+def test_motion_v2_state_and_local_legacy_upgrade_preserve_old_video(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = tmp_path / "cta"
+    directory.mkdir()
+    cover, qr = tmp_path / "cover.png", tmp_path / "qr.png"
+    _png(cover)
+    _png(qr)
+    copy = CTAMotionCopy(title="Mi ebook", benefits=[])
+    _save(directory / "motion_copy.json", copy.model_dump())
+    writes = []
+
+    def fake_motion(cov, qr_file, qr_url, seconds, target, *, copy):
+        writes.append((cov, qr_file, qr_url, seconds, copy))
+        target.write_bytes(b"new motion")
+
+    monkeypatch.setattr(workflow, "build_motion", fake_motion)
+    workflow._motion(directory, cover, qr, "https://example.com", 6.0, copy)
+    workflow._motion(directory, cover, qr, "https://example.com", 6.0, copy)
+    assert len(writes) == 1
+    assert writes[0][3] == 7.5
+    assert (directory / "motion_v2.mp4").read_bytes() == b"new motion"
+    assert _sha(directory / "motion_v2.mp4") == json.loads(
+        (directory / "motion_v2_state.json").read_text()
+    )["motion"]["sha256"]
+
+    def put(name: str, data: bytes) -> Path:
+        path = directory / name
+        path.write_bytes(data)
+        return path
+
+    old = put("final_cta.mp4", b"untouched original CTA")
+    a2v = put("avatar_a2v.mp4", b"existing verified A2V")
+    master = put("cta.wav", b"existing master narration")
+    first = put("first_half.wav", b"first half")
+    stt = put("stt.json", b"{}")
+    promotion = put("promotion.png", b"existing promotion")
+    _save(directory / "identity.json", {"avatar_sha256": "a", "qr_sha256": "b"})
+    _save(directory / "completed.json", {
+        "schema_version": "casero-cta-final-v1", "status": "completed",
+        "final": {"file": old.name, "sha256": _sha(old)},
+    })
+    _save(directory / "a2v_state.json", {
+        "status": "completed", "sha256": _sha(a2v),
+    })
+    _save(directory / "tts_state.json", {
+        "status": "completed", "duration_seconds": 12., "half_seconds": 6.,
+        "master": {"file": master.name, "sha256": _sha(master)},
+        "first_half": {"file": first.name, "sha256": _sha(first)},
+    })
+    _save(directory / "stt_state.json", {
+        "status": "completed",
+        "transcript": {"file": stt.name, "sha256": _sha(stt)},
+    })
+    _save(directory / "image_state.json", {
+        "status": "completed",
+        "image": {"file": promotion.name, "sha256": _sha(promotion)},
+    })
+
+    def fake_ffmpeg(arguments):
+        Path(arguments[-1]).write_bytes(b"upgraded local render")
+
+    monkeypatch.setattr(video, "_ffmpeg", fake_ffmpeg)
+    new = video.upgrade_cached_cta(directory)
+    assert new.name == "final_cta_v2.mp4"
+    assert new.read_bytes() == b"upgraded local render"
+    assert old.read_bytes() == b"untouched original CTA"
+    completed = json.loads((directory / "completed.json").read_text())
+    assert completed["schema_version"] == "casero-cta-final-v2"
+    assert completed["motion_copy_sha256"] == _sha(directory / "motion_copy.json")
+    assert completed["final"]["sha256"] == _sha(new)
+
+
+def test_legacy_cta_upgrade_refuses_missing_paid_a2v(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "cta"
+    directory.mkdir()
+    old = directory / "final_cta.mp4"
+    old.write_bytes(b"old")
+    _save(directory / "completed.json", {
+        "schema_version": "casero-cta-final-v1",
+        "final": {"file": old.name, "sha256": _sha(old)},
+    })
+    _save(directory / "a2v_state.json", {"status": "completed", "sha256": "unknown"})
+    with pytest.raises(video.CTACompositionError, match="without resubmitting"):
+        video.upgrade_cached_cta(directory)
+    assert old.read_bytes() == b"old"
