@@ -214,11 +214,19 @@ def validate_beats(result: B12Output, block: MaterializedBlock) -> list[Beat]:
         if not _without_whitespace_and_punctuation(beat.text) or len(beat.text.split()) > 40:
             raise BPipelineValidationError(f"Invalid B1.2 beat text or length: {beat.beat_id}")
     actual_text = "".join(beat.text for beat in result.beats)
-    if _without_whitespace_and_punctuation(actual_text) != _without_whitespace_and_punctuation(
-        block.text
-    ):
+    actual_words = _without_whitespace_and_punctuation(actual_text)
+    expected_words = _without_whitespace_and_punctuation(block.text)
+    if actual_words != expected_words:
+        mismatch = next(
+            (index for index, (got, wanted) in enumerate(zip(actual_words, expected_words))
+             if got != wanted),
+            min(len(actual_words), len(expected_words)),
+        )
         raise BPipelineValidationError(
-            "B1.2 beat text differs from the materialized block beyond whitespace or punctuation"
+            "B1.2 beat text differs from the materialized block beyond whitespace "
+            f"or punctuation at normalized character {mismatch} in block {block.block_id}; "
+            f"expected {expected_words[mismatch:mismatch + 25]!r}, "
+            f"received {actual_words[mismatch:mismatch + 25]!r}"
         )
     length_errors = _beat_character_length_errors(result.beats, block)
     if length_errors:
@@ -304,16 +312,36 @@ def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input)
         raise BPipelineValidationError("B2 altered the narrative core or omitted the block")
     actual = result.blocks[0]
     expected = supplied.blocks[0]
-    if actual.model_dump(exclude={"beats"}) != expected.model_dump(exclude={"beats"}):
-        raise BPipelineValidationError("B2 altered frozen B1.1 block metadata")
+    actual_meta = actual.model_dump(exclude={"beats"})
+    expected_meta = expected.model_dump(exclude={"beats"})
+    if actual_meta != expected_meta:
+        differences = [
+            f"{name}: expected {expected_meta.get(name)!r}, got {actual_meta.get(name)!r}"
+            for name in expected_meta.keys() | actual_meta.keys()
+            if expected_meta.get(name) != actual_meta.get(name)
+        ]
+        raise BPipelineValidationError(
+            f"B2 altered frozen B1.1 block metadata for block {expected.block_id}: "
+            + "; ".join(sorted(differences))
+        )
     if len(actual.beats) != len(expected.beats):
         raise BPipelineValidationError("B2 changed the number of beats")
     for visual, upstream in zip(actual.beats, expected.beats, strict=True):
         restored = visual.model_dump(exclude={
             "visual_type", "description", "prompt", "video_prompt", "reference", "audio"
         })
-        if restored != upstream.model_dump():
-            raise BPipelineValidationError("B2 changed a frozen B1.2 beat")
+        expected_beat = upstream.model_dump()
+        if restored != expected_beat:
+            differences = [
+                f"{name}: expected {expected_beat.get(name)!r}, "
+                f"got {restored.get(name)!r}"
+                for name in expected_beat.keys() | restored.keys()
+                if expected_beat.get(name) != restored.get(name)
+            ]
+            raise BPipelineValidationError(
+                f"B2 changed a frozen B1.2 beat {upstream.beat_id}: "
+                + "; ".join(sorted(differences))
+            )
     overflow = _overlong_avatar_run((result,))
     if overflow is not None:
         raise BPipelineValidationError(_avatar_run_error(*overflow))
