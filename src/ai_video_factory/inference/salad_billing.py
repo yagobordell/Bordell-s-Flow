@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .salad import DEFAULT_SALAD_API_BASE_URL, SaladClient, SaladDispatchConfig
+from .worker_image_routes import route_for_image
 
 PRICING_URL = "https://salad.com/pricing"
 PRICING_AS_OF = "2026-09-12"
@@ -80,6 +81,7 @@ class SaladCostMeter:
         project: str | None,
         poll_seconds: float = 15.0,
         clients: dict[str, SaladClient] | None = None,
+        worker_images: dict[str, str] | None = None,
     ) -> None:
         if poll_seconds <= 0:
             raise ValueError("Salad cost polling interval must be positive")
@@ -97,6 +99,13 @@ class SaladCostMeter:
         document = json.loads(services_path.read_text(encoding="utf-8"))
         definitions = document["services"]
         self._definitions = {name: definitions[name] for name in _SERVICES}
+        # This is observed group cost, not a per-user allocation.
+        for kind, image in (worker_images or {}).items():
+            service = "ltx25" if kind == "a2v" else "ltx25_i2v"
+            route = route_for_image(service, image)
+            self._definitions[service + "@" + image.rsplit(":", 1)[-1][:16]] = {
+                **definitions[service], "group_name": route.group_name,
+            }
         if self._unavailable is None:
             for service, definition in self._definitions.items():
                 self._clients[service] = (
@@ -133,7 +142,7 @@ class SaladCostMeter:
             "services": {
                 service: {
                     "group_name": definition["group_name"],
-                    "hourly_rate_usd": _rate(service, definition),
+                    "hourly_rate_usd": _rate(service.split("@", 1)[0], definition),
                     "gpu_running_seconds": 0.0,
                     "last_running": {},
                     "sample_errors": 0,
@@ -273,8 +282,10 @@ def read_salad_costs(path: Path) -> dict[str, Any] | None:
     priced_samples = 0
     for session in journal["sessions"]:
         incomplete |= session.get("status") != "completed"
-        for service in _SERVICES:
-            entry = session["services"][service]
+        for lane, entry in session["services"].items():
+            service = lane.split("@", 1)[0]
+            if service not in totals:
+                raise ValueError("Unrecognized Salad LTX cost service in journal")
             successful_samples += entry.get("successful_samples", 0)
             seconds = float(entry["gpu_running_seconds"])
             totals[service]["gpu_running_seconds"] += seconds
