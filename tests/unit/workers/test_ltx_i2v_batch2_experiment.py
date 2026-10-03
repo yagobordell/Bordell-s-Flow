@@ -44,7 +44,7 @@ def parameters(seed: int, *, width: int = 1280) -> dict:
 
 def request(*, bad_sidecar: bool = False) -> InferenceJobRequest:
     job_id = "ltx-batch2-unit-01"
-    params = {"a": parameters(5242), "b": parameters(5243)}
+    params = {"a": parameters(5243), "b": parameters(5244)}
     return InferenceJobRequest(
         job_id=job_id,
         task=LTX_I2V_BATCH2_TASK,
@@ -71,16 +71,16 @@ def request(*, bad_sidecar: bool = False) -> InferenceJobRequest:
 
 def test_batch2_validation_rejects_profile_geometry_and_seed_drift() -> None:
     valid = Batch2Parameters.model_validate(request().parameters)
-    assert (valid.a.seed, valid.b.seed) == (5242, 5243)
+    assert (valid.a.seed, valid.b.seed) == (5243, 5244)
     assert valid.allow_sequential_fallback is False
 
-    bad = {"a": parameters(5242), "b": parameters(5242)}
+    bad = {"a": parameters(5243), "b": parameters(5243)}
     with pytest.raises(ValueError, match="distinct|seeds"):
         Batch2Parameters.model_validate(bad)
-    bad["b"] = {**parameters(5243, width=1024), "height": 768}
+    bad["b"] = {**parameters(5244, width=1024), "height": 768}
     with pytest.raises(ValueError, match="restricted|720p"):
         Batch2Parameters.model_validate(bad)
-    bad["b"] = {**parameters(5243), "generation_profile": "ltx25-not-a-profile"}
+    bad["b"] = {**parameters(5244), "generation_profile": "ltx25-not-a-profile"}
     with pytest.raises(ValueError):
         Batch2Parameters.model_validate(bad)
 
@@ -90,8 +90,8 @@ def test_batch2_outputs_are_one_atomic_primary_plus_two_named_sidecars(tmp_path:
         def generate_pair(self, **kwargs):
             assert kwargs["keyframe_a"].name == "image-a.png"
             assert kwargs["keyframe_b"].name == "image-b.png"
-            assert kwargs["parameters_a"].seed == 5242
-            assert kwargs["parameters_b"].seed == 5243
+            assert kwargs["parameters_a"].seed == 5243
+            assert kwargs["parameters_b"].seed == 5244
             kwargs["output_a"].write_bytes(b"video-a")
             kwargs["output_b"].write_bytes(b"video-b")
             return {"mode": "batch2", "quality": "visual_review_pending"}
@@ -136,8 +136,8 @@ def test_gpu_oom_downgrades_to_shared_stage_without_hiding_the_mode(tmp_path: Pa
         report = backend.generate_pair(
             keyframe_a=a, keyframe_b=b,
             output_a=tmp_path / "a.mp4", output_b=tmp_path / "b.mp4",
-            parameters_a=LTXVideoParameters.model_validate(parameters(5242)),
-            parameters_b=LTXVideoParameters.model_validate(parameters(5243)),
+            parameters_a=LTXVideoParameters.model_validate(parameters(5243)),
+            parameters_b=LTXVideoParameters.model_validate(parameters(5244)),
             allow_sequential_fallback=True,
         )
     assert report["mode"] == "stage_shared_sequential_forward"
@@ -160,13 +160,13 @@ def test_gpu_oom_last_resort_uses_exact_two_reference_generations(tmp_path: Path
         report = backend.generate_pair(
             keyframe_a=a, keyframe_b=b,
             output_a=tmp_path / "a.mp4", output_b=tmp_path / "b.mp4",
-            parameters_a=LTXVideoParameters.model_validate(parameters(5242)),
-            parameters_b=LTXVideoParameters.model_validate(parameters(5243)),
+            parameters_a=LTXVideoParameters.model_validate(parameters(5243)),
+            parameters_b=LTXVideoParameters.model_validate(parameters(5244)),
             allow_sequential_fallback=True,
         )
     assert report["mode"] == "reference_sequential_oom_fallback"
     assert backend._pair_attempt.call_count == 2
-    assert [x.kwargs["parameters"].seed for x in backend.generate.call_args_list] == [5242, 5243]
+    assert [x.kwargs["parameters"].seed for x in backend.generate.call_args_list] == [5243, 5244]
 
 
 def test_gpu_batch2_is_never_silently_relabelled_after_oom(tmp_path: Path) -> None:
@@ -181,8 +181,8 @@ def test_gpu_batch2_is_never_silently_relabelled_after_oom(tmp_path: Path) -> No
             backend.generate_pair(
                 keyframe_a=a, keyframe_b=b,
                 output_a=tmp_path / "a.mp4", output_b=tmp_path / "b.mp4",
-                parameters_a=LTXVideoParameters.model_validate(parameters(5242)),
-                parameters_b=LTXVideoParameters.model_validate(parameters(5243)),
+                parameters_a=LTXVideoParameters.model_validate(parameters(5243)),
+                parameters_b=LTXVideoParameters.model_validate(parameters(5244)),
             )
     assert backend._pair_attempt.call_count == 1
 
