@@ -1260,6 +1260,26 @@ async def _video_if_ready(
             load_dotenv(repo_root / "config" / "app.env", override=False)
             load_dotenv(repo_root / "config" / "salad.env", override=False)
             load_dotenv(repo_root / ".env", override=False)
+            video_beats = [
+                beat for block in plan["blocks"] for beat in block["beats"]
+            ]
+            wants_a2v = (
+                run.get("casero_cta_enabled") is True
+                or any(
+                    beat["visual_type"] in {"avatar", "avatar_media"}
+                    or beat.get("audio") is True for beat in video_beats
+                )
+            )
+            wants_i2v = any(
+                beat["visual_type"] == "media_video"
+                and beat.get("audio") is not True for beat in video_beats
+            )
+            selected_images = {
+                kind: image for kind, required, image in (
+                    ("a2v", wants_a2v, os.getenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", "").strip()),
+                    ("i2v", wants_i2v, os.getenv("SALAD_LTX25_FP8_I2V_IMAGE", "").strip()),
+                ) if required and image
+            }
             with SaladCostMeter(
                 output,
                 services_path=Path(__file__).resolve().parents[2]
@@ -1267,6 +1287,7 @@ async def _video_if_ready(
                 api_key=settings.salad_api_key,
                 organization=os.getenv("SALAD_ORGANIZATION"),
                 project=os.getenv("SALAD_PROJECT"),
+                worker_images=selected_images,
             ):
                 cta_dir = (
                     Path(run["cta_cache_dir"])
@@ -1305,12 +1326,7 @@ async def _video_if_ready(
                     check_capacity=_require_ltx_capacity_controller,
                     check_a2v_worker=_require_ltx_safe_a2v_worker,
                     check_i2v_worker=_require_ltx_safe_i2v_worker,
-                    worker_images={
-                        kind: image for kind, image in (
-                            ("a2v", os.getenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", "").strip()),
-                            ("i2v", os.getenv("SALAD_LTX25_FP8_I2V_IMAGE", "").strip()),
-                        ) if image
-                    } or None,
+                    worker_images=selected_images or None,
                 )
         finally:
             queue.close()
