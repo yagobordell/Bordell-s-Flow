@@ -89,9 +89,13 @@ def _build_directed_payload(*, turns: list[dict[str, str]], voice: str) -> dict[
         spoken, style = turn.get("text"), turn.get("style")
         if not isinstance(spoken, str) or not spoken.strip():
             raise ValueError("Gemini directed TTS requires non-empty transcript turns")
-        if not isinstance(style, str) or not style.strip() or len(style.encode("utf-8")) > 1500:
+        if (not isinstance(style, str) or not style.strip()
+            or len((style.strip() + "\n" + _VERBATIM).encode("utf-8")) > 1500):
             raise ValueError("Gemini directed TTS requires a concise style on each turn")
-        parts.append({"text": spoken, "speech_metadata": {"style": style}})
+        parts.append({
+            "text": spoken,
+            "speech_metadata": {"style": style.strip() + "\n" + _VERBATIM},
+        })
     return {
         "contents": [{"role": "user", "parts": parts}],
         "generationConfig": {

@@ -130,8 +130,9 @@ def test_gemini_part_styles_not_spoken_and_only_allowlisted_tags():
     payload = gemini_tts._build_directed_payload(turns=turns, voice="Algenib")
     parts = payload["contents"][0]["parts"]
     assert parts[0]["text"] == "Hola, <breath>mundo. "
-    assert parts[0]["speech_metadata"]["style"] == "Measured, conversational"
-    assert parts[1]["speech_metadata"]["style"] == "Warm, deliberate"
+    assert parts[0]["speech_metadata"]["style"].startswith("Measured, conversational")
+    assert "verbatim transcript" in parts[0]["speech_metadata"]["style"]
+    assert parts[1]["speech_metadata"]["style"].startswith("Warm, deliberate")
     assert "Measured" not in parts[0]["text"]
 
 

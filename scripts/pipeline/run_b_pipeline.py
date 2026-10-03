@@ -152,7 +152,7 @@ def parse_args() -> argparse.Namespace:
     voices.add_argument(
         "--voice-id",
         metavar="ID",
-        help="Voice ID de AI33Pro para este avatar (se guarda la primera vez).",
+        help="Voice ID del proveedor Casero o voz Gemini Profesional; se guarda por avatar.",
     )
     voices.add_argument(
         "--voice-audio",
@@ -220,7 +220,7 @@ def parse_args() -> argparse.Namespace:
         dest="stop_stage",
         choices=_STAGES,
         default=None,
-        help="Stop after this planning stage, without starting Fish Audio or image generation.",
+        help="Stop after this planning stage, without starting TTS or image generation.",
     )
     parser.add_argument(
         "--skip-images",
@@ -252,17 +252,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-audio",
         action="store_true",
-        help="Run B1.1/B1.2/B2 (and optional images) without Fish director or TTS.",
+        help="Run B1.1/B1.2/B2 without the style-specific voice directors or TTS.",
     )
     parser.add_argument(
         "--regenerate-audio",
         action="store_true",
-        help="Run only Fish director and a NEW TTS task; never run B bots or images.",
+        help="Create fresh audio using the saved B result and its style-specific TTS.",
     )
     parser.add_argument(
         "--resume-audio",
         action="store_true",
-        help="Resume a saved Fish TTS task without rerunning its director or B bots.",
+        help="Resume saved Casero or Gemini block TTS safely without rerunning B bots.",
     )
     args = parser.parse_args()
     if args.youtube_only and not settings.youtube_enabled:
@@ -1338,11 +1338,14 @@ async def _preflight_saved_run_audio(
         or saved_audio.get("stt_complete") is not True
     ):
         return False
+    # Keep Casero's established call signature and retry policy unchanged.
+    # Professional Gemini intentionally forbids implicit paid Fish regeneration.
+    options = (
+        {"allow_audio_regeneration": False}
+        if saved_audio.get("provider") == "gemini" else {}
+    )
     run_metadata["stt_alignment"] = await _preflight_stt_alignment_with_retries(
-        output,
-        plan,
-        saved_audio,
-        allow_audio_regeneration=saved_audio.get("provider") != "gemini",
+        output, plan, saved_audio, **options,
     )
     return True
 
