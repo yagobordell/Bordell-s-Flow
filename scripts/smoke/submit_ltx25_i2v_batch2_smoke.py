@@ -40,6 +40,7 @@ def parser() -> argparse.Namespace:
     p.add_argument("--reference-a", type=Path)
     p.add_argument("--reference-b", type=Path)
     p.add_argument("--allow-sequential-fallback", action="store_true")
+    p.add_argument("--enable-stage-reuse", action="store_true")
     p.add_argument("--disable-stage-reuse", action="store_true")
     p.add_argument("--check-inputs-only", action="store_true")
     p.add_argument("--timeout-seconds", type=float, default=10800)
@@ -96,6 +97,8 @@ def main() -> None:
     a = parser()
     if not a.run_id.replace("-", "").replace("_", "").isalnum() or len(a.run_id) > 70:
         raise ValueError("Run ID must have 1-70 safe characters")
+    if a.enable_stage_reuse and a.disable_stage_reuse:
+        raise ValueError("Stage reuse flags are mutually exclusive")
     if a.seed_a == a.seed_b or not 0 <= a.seed_a <= 2**31 - 1 or not 0 <= a.seed_b <= 2**31 - 1:
         raise ValueError("Use two distinct valid seeds")
     if not a.prompt_a.strip() or not a.prompt_b.strip():
@@ -133,7 +136,7 @@ def main() -> None:
             for name, path, prompt, seed in inputs
         ],
         "allow_sequential_fallback": a.allow_sequential_fallback,
-        "reuse_transformer_across_stages": not a.disable_stage_reuse,
+        "reuse_transformer_across_stages": a.enable_stage_reuse and not a.disable_stage_reuse,
     }
     fingerprint = hashlib.sha256(
         json.dumps(spec, sort_keys=True).encode("utf-8")
@@ -164,7 +167,7 @@ def main() -> None:
             "a": {**plan, "prompt": a.prompt_a, "seed": a.seed_a},
             "b": {**plan, "prompt": a.prompt_b, "seed": a.seed_b},
             "allow_sequential_fallback": a.allow_sequential_fallback,
-            "reuse_transformer_across_stages": not a.disable_stage_reuse,
+            "reuse_transformer_across_stages": a.enable_stage_reuse and not a.disable_stage_reuse,
         },
     )
     (a.output_dir / "job-request.json").write_text(
