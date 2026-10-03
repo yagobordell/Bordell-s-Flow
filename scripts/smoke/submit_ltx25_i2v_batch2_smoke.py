@@ -136,7 +136,10 @@ def main() -> None:
             raise ValueError(f"Existing reference video not found: {path}")
         references.append({"path": str(path), "sha256": sha256_file(path)})
     if a.check_inputs_only:
-        print(f"Batch2 inputs valid: two native {a.width}x{a.height} PNGs, separate seeds and fixed 5s recipe")
+        print(
+            f"Batch2 inputs valid: two native {a.width}x{a.height} PNGs, "
+            "separate seeds and fixed 5s recipe"
+        )
         return
     if a.output_dir.exists():
         raise ValueError("Run directory already exists; choose a new run ID")
