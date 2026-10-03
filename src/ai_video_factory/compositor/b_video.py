@@ -138,9 +138,9 @@ def render_b2_ltx_video(
         (int(job.request.parameters["width"]), int(job.request.parameters["height"]))
         for job in jobs
     }
-    if len(sizes) != 1:
+    if len(sizes) > 1:
         raise B2VideoCompositionError("Mixed B2 clip resolutions cannot be composed")
-    width, height = next(iter(sizes))
+    width, height = next(iter(sizes), (_WIDTH, _HEIGHT))
     validate_video_size(width, height, _FPS)
     beats = timeline["beats"]
     avatar = _verified_asset(
