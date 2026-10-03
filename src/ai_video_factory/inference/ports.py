@@ -114,6 +114,7 @@ class JobRepository(Protocol):
     def next_pending_request(
         self,
         task_names: tuple[str, ...],
+        required_worker_image: str | None = None,
     ) -> InferenceJobRequest | None: ...
 
     def is_instance_draining(self, instance_id: str) -> bool: ...
