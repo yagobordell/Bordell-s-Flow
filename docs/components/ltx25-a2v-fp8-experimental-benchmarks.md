@@ -1,0 +1,173 @@
+# LTX 2.5 A2V FP8 residency and decoder benchmark — EXPERIMENT ONLY
+
+Branch: `experiment/ltx25-a2v-fp8-residency-profiling-20261003` from
+`main` at `357d289a00f4f10c87028b969861099d03819115`.
+No production profile is reassigned; no production or I2V group image is changed.
+The experiment service is intentionally **not** in the normal Salad stack service order.
+
+## Source audit and constraints
+
+- Pinned upstream Docker source:
+  `Lightricks/LTX-2@a95ab856bf29407b6b066ede0abe1846050db56c`;
+  model revision `6c7e5e573ac1667efc83407806fe9b0b93730e60`.
+- Baseline for **matched-quality** comparisons: this repository's
+  `reference` distilled A2V recipe, not the legacy `fast` or `guided`
+  recipes. It uses **1280×720 / 24 fps public output** with deterministic
+  internal 1280×768 grid padding, an audio-driven 8k+1 frame count, identical
+  image, seed, prompt, frozen audio latents during both stages, 8 ancestral
+  stage-1 plus 3 Euler stage-2 diffusion steps. Its reference image strengths
+  are 0.7 and 1.0. Conditioning WAV is padded with silence solely to preserve
+  the original speech tail. Its final output uses the decoded original audio,
+  **not** generated audio. This is central to lip-sync safety.
+- Production/legacy A2V normally uses FP8_CAST + CPU offload; historical
+  memory-safe profiles use DISK and a safety reserve. These profiles, prompts,
+  checkpoint filenames, steps, audio preparation and output sizes are left
+  unchanged. Production I2V is an isolated different worker group already
+  configured for FP8/no-offload.
+- OffloadMode.NONE is supported by the pinned upstream A2VidPipelineTwoStage
+  constructor, and is passed to PromptEncoder and both DiffusionStage
+  instances. This **does not establish a VRAM fit**: audio/video VAE, tile
+  activations and caching add A2V-specific memory demand. A failed
+  32-GB CUDA allocation disqualifies that profile; do not shrink frames,
+  change timesteps or offload audio conditioning away to rescue a benchmark.
+- The original 5090 DiffVAE NATTEN fallback previously segfaulted.
+  Eager SDPA stays the default. Opt-in Triton uses the same upstream probe as
+  I2V, and is reported as effective only if the probe succeeds. Triton may
+  change decoder floating-point rounding. It must pass decoded-media checks
+  **and** human visual/auditory review independently.
+- No new A2V NVFP4 profile yet. Although I2V supports an opt-in official
+  prequantized transformer, NVFP4 A2V 5090 memory and audio/video parity
+  have not been demonstrated. Do not silently substitute the I2V checkpoint
+  or promote it without an independent study.
+
+## Experimental profiles
+
+| CLI profile | Original recipe | Transformer | Offload | DiffVAE |
+| --- | --- | --- | --- | --- |
+| `reference-bench-cpu` | reference, instrumented control | FP8_CAST | CPU | eager |
+| `reference-fp8none` | reference, unchanged | FP8_CAST | NONE | eager |
+| `reference-cpu-triton` | reference, unchanged | FP8_CAST | CPU | Triton |
+| `reference-none-triton` | reference, unchanged | FP8_CAST | NONE | Triton |
+| `static-fp8none` | static-reference **not equivalent to reference** | FP8_CAST | NONE | eager |
+
+The `static-fp8none` profile must be compared with the existing
+`static-reference` control, not with the non-static reference. Never interpret
+differences in static versus standard facial guidance as an offload effect.
+
+The profiler is active only for these experimental identifiers. Metrics in
+the sidecar and structured `LTX25_A2V_PHASE_METRICS` log include:
+audio pre-processing; model build; prompt encoding; prompt model context
+acquire/release; embeddings-processor construction; remaining prompt
+execution (including tokenization); decoded input audio; AudioVAE encode;
+both image conditioning stages; stage-1 and stage-2 diffusion; latent
+upsampling; actual lazy video decoder consumption; encoder/mux exclusive
+of decoder; wall-clock total; cold/warm reuse; peak allocated and reserved
+CUDA memory. Output audio decode time is correctly reported as zero: the
+original decoded waveform is forwarded to mux.
+
+**Measurement limit:** the pinned upstream's Gemma context-enter operation
+combines disk/host weight construction, host-to-device transfer and related
+setup. `prompt_model_acquire_seconds` measures these together. Claiming
+separate load and H2D timings without an upstream-level instrumentation
+hook would be false. A transfer-specific follow-up should add synchronized
+non-mutating hooks to the pinned upstream context in the *experimental*
+image only and verify identical embeddings before using those numbers.
+The current timing synchronizes CUDA around experimental phases, which
+adds benchmark overhead and must be consistent between CPU and NONE.
+
+## GPU validation gates (not satisfied by offline tests)
+
+1. Before touching Salad, check no active A2V job, turn off the singleton
+   capacity controller using the existing operational procedure, and ensure
+   the **production A2V group** is already stably stopped. Schedule a
+   maintenance window if production normally needs A2V; never interrupt
+   another user's job. The benchmark's read-only isolation gate refuses
+   active/pending production groups and active/pending experimental groups.
+   I2V is never stopped or reconfigured by these scripts.
+2. Publish and pin **only** the new experimental image/group below. Ensure
+   Salad and your local sources refer to this branch/commit and that the
+   container has one 32-GB RTX 5090. No GPU tests were performed while
+   preparing this branch.
+3. Run `reference-bench-cpu` followed by `reference-fp8none`, **at least
+   three repetitions each** (four by default: one cold, three warm) against
+   exactly the same real source image/WAV, literal prompt, geometry and seed.
+   The runner gives each attempt a distinct job ID to prevent Postgres/R2
+   cache replay. It retains outputs, logs, metadata and a lifecycle manifest.
+   It stops its own experiment group in `finally`, including partial starts.
+4. Inspect `comparison.json`. Compare median and spread of **warm**
+   generations, cold build, VRAM peaks, prompt, diffusion, decode and total
+   wall clock, as well as capacity/readiness/stop. Equal offload recipe
+   **should** yield the same decoded output; investigate any mismatches in
+   decoded video hashes and reject mismatched decoded audio. Hashes of
+   encoded MP4 alone are insufficient.
+5. Two reviewers should perform side-by-side **visual and auditory** checks:
+   identity, teeth/lips/jaw, blinking, facial shape, pauses, end-of-speech
+   tail and phoneme alignment (especially /p/, /b/, /m/ and silence). Compare
+   exactly the same timecodes for reference and opt-in variants. A speech
+   synchronization metric, if used, only supplements human review.
+6. Only after an acceptable eager variant exists, separately test Triton
+   with the same paired inputs. Reject a Triton trial if the probe fell back
+   to eager; any decoder-rounding differences require visual scrutiny.
+   Repeat actual GPU runs across fresh Salad starts to measure startup
+   variability. Never promote a single lucky run.
+
+## Exact PowerShell commands (from the repository root)
+
+First, switch locally to the remote experimental branch and confirm your
+existing `config/salad.env`/R2/Postgres setup (do not commit secrets):
+
+```powershell
+git fetch origin
+git switch experiment/ltx25-a2v-fp8-residency-profiling-20261003
+uv sync --locked --extra dev --python 3.12
+uv run --no-sync ruff check .
+uv run --no-sync python -m pytest tests/unit/workers/test_ltx_a2v_experiments.py tests/unit/workers/test_ltx_a2v_runtime.py
+.\scripts\salad\manage_salad_worker.ps1 -Action Validate -Service ltx25_a2v_experimental
+```
+
+After separately confirming no A2V jobs are active, the production A2V group
+is already stopped and the capacity controller is stopped, prepare only the
+experimental service. This builds and pushes the new image using the
+branch's Docker source, then prepares the experimental group **stopped**:
+
+```powershell
+$Tag = "docker.io/yagobordell/ai-video-factory:ltx25-a2v-fp8-experiment-v1"
+.\scripts\salad\manage_salad_worker.ps1 -Action Prepare -Service ltx25_a2v_experimental -Image $Tag -EnvFile config/salad.env -NonInteractive
+docker buildx imagetools inspect $Tag
+# Copy the published sha256 digest from the inspect output:
+$Pinned = "docker.io/yagobordell/ai-video-factory@sha256:<PASTE_64_HEX_DIGEST>"
+.\scripts\salad\manage_salad_worker.ps1 -Action Status -Service ltx25_a2v_experimental -EnvFile config/salad.env
+```
+
+Then pass your **real** sample paths and literal prompt. Do not substitute
+synthetic speech when evaluating phoneme-level lip-sync:
+
+```powershell
+$Prompt = 'A medium close-up talking head of the person in the reference image. The person speaks directly to camera with clear visible lip and jaw articulation precisely synchronized to the supplied speech audio. Lip sync matches every spoken phoneme. Natural blinking and restrained head movement. Static camera.'
+$Out = 'data/output/deployment-validation/ltx25-a2v-fp8-review'
+.\scripts\smoke\run_ltx25_a2v_benchmark_batch.ps1 `
+  -Audio '.\data\input\avatar\monje.wav' `
+  -AvatarImage '.\data\input\avatar\monje.png' `
+  -Prompt $Prompt -Seed 4242 `
+  -Profiles reference-bench-cpu,reference-fp8none `
+  -Repetitions 4 -ExpectedPinnedImage $Pinned `
+  -EnvFile config/salad.env -OutputDir $Out -NonInteractive
+uv run --no-sync python scripts/smoke/compare_ltx_a2v_benchmarks.py "$Out/manifest.json"
+.\scripts\salad\manage_salad_worker.ps1 -Action Status -Service ltx25_a2v_experimental -EnvFile config/salad.env
+```
+
+If CPU/NONE pass the quality gate, use a **fresh** `-OutputDir` and run
+`-Profiles reference-bench-cpu,reference-cpu-triton,reference-none-triton`
+with the same `$Prompt`, seed and inputs. For any failure, preserve the
+partial manifest and logs; do not mask or replace CUDA OOM results. The
+controlled runner only starts/stops `ltx25_a2v_experimental`, never
+`ltx25` or `ltx25_i2v`. Separately review the official job logs and
+Postgres state, and confirm group status after cleanup.
+
+## Promotion block
+
+All new profiles are opt-in. Automated tests and functional MP4/audio checks
+are *not* lip-sync certification. No merge, production profile change,
+experimental profile deletion or default dispatch switch is permitted until
+real RTX 5090 evidence and human review establish a configuration worth
+selecting. A draft PR may collect static checks without changing production.
