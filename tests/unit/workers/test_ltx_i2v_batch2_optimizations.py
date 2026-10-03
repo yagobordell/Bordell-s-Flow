@@ -7,7 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import pytest
 import torch
 
 from ai_video_factory.workers.ltx25.model import (
