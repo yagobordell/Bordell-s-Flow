@@ -373,7 +373,7 @@ def test_studio_voice_name_is_persisted_and_can_be_changed_explicitly(tmp_path) 
     assert not (path.parent / "gemini_voice.json.tmp").exists()
 
 
-@pytest.mark.parametrize("voice", ["Uncle/Enzo", "Uncle\\nEnzo", "a", "Bad  Name"])
+@pytest.mark.parametrize("voice", ["Uncle/Enzo", "Uncle\nEnzo", "a", "Bad  Name"])
 def test_invalid_studio_voice_does_not_overwrite_config(tmp_path, voice) -> None:
     avatar = tmp_path / "Enzo" / "Enzo.png"
     avatar.parent.mkdir()
