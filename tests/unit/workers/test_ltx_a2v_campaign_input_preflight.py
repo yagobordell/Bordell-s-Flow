@@ -12,6 +12,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[3]
 CAMPAIGN = ROOT / "scripts" / "smoke" / "run_ltx25_a2v_resolution_batch.ps1"
+I2V_CAMPAIGN = ROOT / "scripts" / "smoke" / "run_ltx25_i2v_queue_campaign.ps1"
 
 
 @pytest.mark.parametrize("same_path", [True, False])
@@ -44,12 +45,14 @@ def test_a2v_input_preflight_accepts_identical_mp3_for_two_avatars(
     manifest = json.loads((ROOT / "deploy" / "salad" / "services.json").read_text())
     repo = manifest["services"]["ltx25"]["image"].rsplit(":", maxsplit=1)[0]
     pinned = f"{repo}@sha256:{'0' * 64}"
+    local_env = tmp_path / "local-test.env"
+    local_env.write_text("A2V_CAMPAIGN_LOADER_TEST=success\n", encoding="utf-8")
     common = [
         "pwsh", "-NoProfile", "-File", str(CAMPAIGN),
         "-Avatar720", str(first), "-Audio720", str(speech),
         "-Avatar1080", str(second), "-Audio1080", str(alternative),
         "-ExpectedPinnedImage", pinned, "-Accept1080pOomRisk",
-        "-CheckInputsOnly",
+        "-CheckInputsOnly", "-EnvFile", str(local_env),
     ]
     result = subprocess.run(
         common, cwd=ROOT, capture_output=True, text=True, check=False
@@ -66,3 +69,32 @@ def test_a2v_input_preflight_accepts_identical_mp3_for_two_avatars(
     )
     assert rejected.returncode != 0
     assert "DIFFERENT avatar images" in rejected.stderr
+
+
+def test_i2v_campaign_loads_env_without_contacting_salad(tmp_path: Path) -> None:
+    """Catch the same missing RepoRoot binding in the other campaign script."""
+    if shutil.which("pwsh") is None:
+        pytest.skip("PowerShell required for offline environment regression")
+
+    local_env = tmp_path / "local-test.env"
+    local_env.write_text("I2V_CAMPAIGN_LOADER_TEST=success\n", encoding="utf-8")
+    manifest = json.loads((ROOT / "deploy" / "salad" / "services.json").read_text())
+    repo = manifest["services"]["ltx25_i2v"]["image"].rsplit(":", maxsplit=1)[0]
+    result = subprocess.run(
+        [
+            "pwsh", "-NoProfile", "-File", str(I2V_CAMPAIGN),
+            "-ImageA", str(tmp_path / "a.png"),
+            "-ImageB", str(tmp_path / "b.png"),
+            "-PromptA", "Subtle movement to the left",
+            "-PromptB", "Subtle movement to the right",
+            "-ExpectedPinnedImage", f"{repo}@sha256:{'0' * 64}",
+            "-EnvFile", str(local_env),
+            "-CheckEnvironmentOnly",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "No Salad or R2 operations were performed" in result.stdout
