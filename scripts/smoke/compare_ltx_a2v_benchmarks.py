@@ -50,6 +50,12 @@ def _decoded_stream_sha(path: Path, *, audio: bool) -> str:
         process.stderr.close()
 
 
+def _warm_metric(samples: list[dict[str, Any]], field: str) -> float | None:
+    if len(samples) < 2:
+        return None
+    return statistics.median(float(x[field]) for x in samples[1:])
+
+
 def analyze_manifest(
     manifest_path: Path, *, hash_media: bool = True, allow_partial: bool = False
 ) -> dict[str, Any]:
@@ -134,12 +140,6 @@ def analyze_manifest(
         times = [float(x["total_elapsed_seconds"]) for x in samples]
         warm = times[1:]
 
-        def warm_median(field: str) -> float | None:
-            return (
-                statistics.median(float(x[field]) for x in samples[1:])
-                if warm else None
-            )
-
         groups[profile] = {
             "cold_seconds": times[0],
             "completed_samples": len(samples),
@@ -149,10 +149,10 @@ def analyze_manifest(
             "warm_range_seconds": max(warm) - min(warm) if len(warm) > 1 else None,
             "cold_peak_reserved_mb": samples[0].get("cuda_peak_reserved_mb"),
             "warm_peak_reserved_mb": [x.get("cuda_peak_reserved_mb") for x in samples[1:]],
-            "stage1_warm_median_seconds": warm_median("stage1_diffusion_seconds"),
-            "stage2_warm_median_seconds": warm_median("stage2_diffusion_seconds"),
-            "decoder_warm_median_seconds": warm_median("video_decode_seconds"),
-            "prompt_warm_median_seconds": warm_median("prompt_encode_seconds"),
+            "stage1_warm_median_seconds": _warm_metric(samples, "stage1_diffusion_seconds"),
+            "stage2_warm_median_seconds": _warm_metric(samples, "stage2_diffusion_seconds"),
+            "decoder_warm_median_seconds": _warm_metric(samples, "video_decode_seconds"),
+            "prompt_warm_median_seconds": _warm_metric(samples, "prompt_encode_seconds"),
         }
     return {
         "source_manifest": str(manifest_path),
