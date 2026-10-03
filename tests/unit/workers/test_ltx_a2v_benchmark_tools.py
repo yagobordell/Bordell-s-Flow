@@ -23,7 +23,7 @@ def test_a2v_experimental_group_is_isolated_and_not_normal_stack() -> None:
     prod = groups["ltx25"]
     i2v = groups["ltx25_i2v"]
     assert len({exp["group_name"], prod["group_name"], i2v["group_name"]}) == 3
-    assert exp["environment"]["LTX_WORKER_TASK_MODE"] == "a2v"
+    assert exp["environment"]["LTX_WORKER_TASK_MODE"] == "a2v_experimental"
     assert prod["environment"]["LTX_WORKER_TASK_MODE"] == "a2v"
     assert i2v["environment"]["LTX_WORKER_TASK_MODE"] == "i2v"
     assert exp["capacity"] == {"start_replicas": 1, "max_replicas": 1}
