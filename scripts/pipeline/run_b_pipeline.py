@@ -2646,42 +2646,53 @@ async def main() -> None:
             run_metadata["image_generation"] = {"status": "running"}
             save_report("running", len(result.b12))
             image_started = perf_counter()
-            try:
-                image_manifest = await _generate_images(output, visual_plan)
-            except ImageGenerationError as image_error:
-                retry_block_id = _continuity_retry_block_id(image_error)
-                if retry_block_id is None:
-                    raise
-                print(
-                    f"  B2 bloque {retry_block_id}: numeración de continuidad inválida; "
-                    "reintentando solo ese bloque...",
-                    flush=True,
-                )
-                result = await run_b_pipeline(
-                    script,
-                    provider=provider,
-                    model=settings.openai_model,
-                    max_parallel_calls=args.max_parallel_calls,
-                    visual_style=visual_style,
-                    avatar_image=avatar_bytes,
-                    start_from="B2",
-                    stop_after="B2",
-                    previous_b11=result.b11,
-                    previous_b12=result.b12,
-                    previous_b2=result.b2,
-                    retry_b2_block_ids=frozenset({retry_block_id}),
-                    on_input=artifacts.input,
-                    on_output=output_and_start_audio,
-                    on_rejected_b2_output=artifacts.rejected_b2,
-                    on_api_response=ledger.record,
-                    on_call_duration=timings.record_call,
-                    on_stage_duration=timings.record_stage,
-                    on_stage_complete=stage_complete,
-                )
-                visual_plan = result.visual_plan()
-                visual_plan["avatar"] = avatar_metadata
-                _write(output / "visual_plan.json", visual_plan)
-                image_manifest = await _generate_images(output, visual_plan)
+            # A downstream continuity failure is still a B2 validation error.
+            # Spend the affected block's remaining B2 retries, never retry all blocks.
+            while True:
+                try:
+                    image_manifest = await _generate_images(output, visual_plan)
+                    break
+                except ImageGenerationError as image_error:
+                    retry_block_id = _continuity_retry_block_id(image_error)
+                    if retry_block_id is None:
+                        raise
+                    if result.b2_correction_counts.get(retry_block_id, 0) >= 2:
+                        raise RuntimeError(
+                            f"B2 block {retry_block_id} exhausted its two validation "
+                            "retries before image-grid continuity could be repaired"
+                        ) from image_error
+                    print(
+                        f"  B2 bloque {retry_block_id}: numeración de continuidad inválida; "
+                        "corrigiendo solo ese bloque...",
+                        flush=True,
+                    )
+                    result = await run_b_pipeline(
+                        script,
+                        provider=provider,
+                        model=settings.openai_model,
+                        max_parallel_calls=args.max_parallel_calls,
+                        visual_style=visual_style,
+                        avatar_image=avatar_bytes,
+                        start_from="B2",
+                        stop_after="B2",
+                        previous_b11=result.b11,
+                        previous_b12=result.b12,
+                        previous_b2=result.b2,
+                        previous_b2_correction_counts=result.b2_correction_counts,
+                        previous_b2_response_ids=result.b2_response_ids,
+                        retry_b2_feedback={retry_block_id: str(image_error)},
+                        retry_b2_block_ids=frozenset({retry_block_id}),
+                        on_input=artifacts.input,
+                        on_output=output_and_start_audio,
+                        on_rejected_b2_output=artifacts.rejected_b2,
+                        on_api_response=ledger.record,
+                        on_call_duration=timings.record_call,
+                        on_stage_duration=timings.record_stage,
+                        on_stage_complete=stage_complete,
+                    )
+                    visual_plan = result.visual_plan()
+                    visual_plan["avatar"] = avatar_metadata
+                    _write(output / "visual_plan.json", visual_plan)
             run_metadata["image_generation"] = _image_summary(image_manifest)
             image_costs, _ = save_report("running", len(result.b12))
             if getattr(args, "managed_target", None) is not None:
