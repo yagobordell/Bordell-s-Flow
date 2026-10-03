@@ -30,7 +30,11 @@ B = PREFIX + "b" * 64
 def _job(name: str, image: str | None):
     parameters = {"required_worker_image": image} if image else {}
     return InferenceJobRequest(
-        job_id=name, task="video.ltx25.audio_to_video",
+        job_id=name,
+        task=(
+            route_for_image("ltx25", image).task_name
+            if image else "video.ltx25.audio_to_video"
+        ),
         output=ObjectOutput(key=f"jobs/{name}/clip.mp4", content_type="video/mp4"),
         parameters=parameters,
     )
@@ -73,11 +77,14 @@ def test_legacy_and_two_docker_versions_cannot_claim_each_others_jobs():
 
     assert repo.next_pending_request(("video.ltx25.audio_to_video",)).job_id == "legacy"
     assert repo.next_pending_request(
-        ("video.ltx25.audio_to_video",), required_worker_image=A,
+        (route_for_image("ltx25", A).task_name,), required_worker_image=A,
     ).job_id == "version-a"
     assert repo.next_pending_request(
-        ("video.ltx25.audio_to_video",), required_worker_image=B,
+        (route_for_image("ltx25", B).task_name,), required_worker_image=B,
     ).job_id == "version-b"
+    # A pre-upgrade worker that only knows the base task can never observe
+    # either versioned task, even though it has no image filter.
+    assert repo.next_pending_request(("video.ltx25.audio_to_video",)).job_id == "legacy"
 
 
 def _definition():
