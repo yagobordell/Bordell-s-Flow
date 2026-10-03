@@ -47,7 +47,8 @@ def _create_fake_checkout(tmp_path: Path, *, fail_ready: bool) -> tuple[Path, Pa
         "(out / 'avatar_segment.mp4').write_bytes(b'mock mp4')\n"
         "iteration = int(out.name.rsplit('-', 1)[-1])\n"
         "(out / 'metadata.json').write_text(json.dumps({"
-        "'pipeline_reused': iteration > 1, 'prompt_cache_hit': iteration > 1, 'total_elapsed_seconds': 60.0,"
+        "'pipeline_reused': iteration > 1, 'prompt_cache_hit': iteration > 1, "
+        "'total_elapsed_seconds': 60.0,"
         "'cuda_peak_reserved_mb': 24000.0, 'profile': profile"
         "}))\n"
     )
