@@ -88,11 +88,16 @@ def _wrap_to_width(text: str, draw: ImageDraw.ImageDraw,
     return lines
 
 
-def _copy_layout(copy: CTAMotionCopy, text_width: int) -> tuple[list[str], ImageFont.FreeTypeFont, list[ImageFont.FreeTypeFont]]:
+def _copy_layout(
+    copy: CTAMotionCopy, text_width: int,
+) -> tuple[list[str], ImageFont.FreeTypeFont, list[ImageFont.FreeTypeFont]]:
     probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     for size in (62, 58, 54, 50, 46, 42, 38):
         title_font = _font(size)
-        title_lines = _wrap_to_width(copy.title, probe, title_font, text_width)
+        try:
+            title_lines = _wrap_to_width(copy.title, probe, title_font, text_width)
+        except ValueError:
+            continue
         if len(title_lines) <= 2:
             break
     else:
@@ -216,7 +221,9 @@ def build_motion(cover_path: Path, qr_path: Path, qr_url: str,
         qr = source.convert("RGB")
     domain = urlsplit(qr_url).hostname or ""
     background = _background()
-    text_x = max(780, 70 + min(670, round(min(H-140, 670*cover.height/cover.width) * cover.width/cover.height)) + 72)
+    book_height = min(H - 140, round(670 * cover.height / cover.width))
+    book_width = round(book_height * cover.width / cover.height)
+    text_x = max(780, 70 + book_width + 72)
     layout = _copy_layout(copy, W - text_x - 45) if copy is not None else None
     frames = math.ceil(duration_seconds * FPS)
     command = [
