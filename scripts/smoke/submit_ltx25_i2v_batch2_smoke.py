@@ -191,7 +191,7 @@ def main() -> None:
             "b": {**plan, "prompt": a.prompt_b, "seed": a.seed_b},
             "allow_sequential_fallback": a.allow_sequential_fallback,
             "reuse_transformer_across_stages": a.enable_stage_reuse and not a.disable_stage_reuse,
-        "accept_full_hd_batch2_oom_risk": a.accept_full_hd_batch2_oom_risk,
+            "accept_full_hd_batch2_oom_risk": a.accept_full_hd_batch2_oom_risk,
         },
     )
     (a.output_dir / "job-request.json").write_text(
