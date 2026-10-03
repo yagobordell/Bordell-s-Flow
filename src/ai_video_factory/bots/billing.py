@@ -134,6 +134,32 @@ class ApiCostLedger:
             state = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(state, dict):
                 raise ValueError(f"Invalid Fish director accounting state: {path}")
+            source = path.relative_to(output).as_posix()
+            history = state.get("director_responses")
+            if history is not None:
+                if not isinstance(history, list):
+                    raise ValueError(f"Malformed saved Fish director history: {path}")
+                # Rebuild this block's charges from durable individual attempts.
+                # The prefix also removes legacy single-response entries.
+                self._records = [
+                    item for item in self._records
+                    if item.get("director_state_file") != source
+                    and not str(item.get("director_state_file", "")).startswith(source + "#")
+                ]
+                for entry in history:
+                    if not isinstance(entry, dict) or not isinstance(entry.get("attempt"), int):
+                        raise ValueError(f"Malformed Fish director history entry: {path}")
+                    response = {
+                        "id": entry.get("id"),
+                        "model": entry.get("model") or state.get("director_model"),
+                        "service_tier": entry.get("service_tier") or "default",
+                        "usage": entry.get("usage"),
+                    }
+                    self.record("Fish director", state.get("block_id"), response)
+                    self._records[-1]["director_state_file"] = (
+                        f"{source}#{entry['attempt']}"
+                    )
+                continue
             response = state.get("director_response")
             if response is not None and not isinstance(response, dict):
                 raise ValueError(f"Malformed saved Fish director response: {path}")
@@ -155,7 +181,6 @@ class ApiCostLedger:
                     "service_tier": response.get("service_tier") or "default",
                     "usage": response.get("usage"),
                 }
-            source = path.relative_to(output).as_posix()
             current = next(
                 (
                     index for index, item in enumerate(self._records)

@@ -27,6 +27,7 @@ from .fish_audio import (
     run_fish_director,
     validate_fish_script,
 )
+from .validation_retries import MAX_VALIDATION_RETRIES, is_schema_failure, validation_feedback
 from .workflow import materialize_blocks
 
 _DEFAULT_VOICE_ID = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
@@ -697,35 +698,133 @@ async def _generate_block(
                 )
             state["status"] = "director_running"
             _atomic_json(state_path, state)
-            def save_director_response(response: Any) -> None:
-                usage = getattr(response, "usage", None)
-                usage_data = (
-                    usage.model_dump(mode="json")
-                    if usage is not None and callable(getattr(usage, "model_dump", None))
-                    else usage if isinstance(usage, dict) else None
+            director_attempts = state.get("director_attempts_used", 0)
+            if not isinstance(director_attempts, int) or director_attempts < 0:
+                raise FishAudioWorkflowError("Invalid saved Fish director attempt count")
+            if director_attempts >= MAX_VALIDATION_RETRIES + 1:
+                raise FishAudioWorkflowError(
+                    f"Fish director block {block.block_id} has exhausted its "
+                    "two validation retries; manually reconcile this block"
                 )
-                state["director_usage"] = usage_data
-                state["director_response"] = {
-                    "id": getattr(response, "id", None),
-                    "model": getattr(response, "model", None),
-                    "service_tier": getattr(response, "service_tier", None),
-                    "usage": usage_data,
-                }
+            previous_response_id: str | None = (
+                (state.get("director_response") or {}).get("id")
+                if getattr(provider, "supports_response_continuation", False)
+                else None
+            )
+            feedback = ""
+            if director_attempts and state.get("status") == "director_invalid":
+                # A resume after a saved validation failure continues the same
+                # conversation and spends only the remaining block attempts.
+                rejected_path = directory / f"rejected_attempt_{director_attempts}.json"
+                rejected = _read_json(rejected_path)
+                previous = rejected.get("response")
+                if not isinstance(previous, dict) or previous.get("unparsed_response"):
+                    previous = None
+                feedback = validation_feedback(
+                    "Fish Audio",
+                    FishAudioScriptError(str(rejected["validation_error"])),
+                    block_id=block.block_id,
+                    previous=previous,
+                    continued=bool(previous_response_id),
+                    instructions=(
+                        "Repair this one directed block. Preserve all source words "
+                        "and their order; insert only correctly positioned Fish "
+                        "tags, never inside words or after the final spoken word."
+                    ),
+                )
+            while director_attempts < MAX_VALIDATION_RETRIES + 1:
+                director_attempts += 1
+                candidate: dict[str, Any] | None = None
+                state["director_attempts_used"] = director_attempts
+                state["status"] = "director_running"
                 _atomic_json(state_path, state)
 
-            try:
-                directed, _response = await run_fish_director(
-                    payload, provider=provider, model=director_model,
-                    on_response=save_director_response,
-                )
-            except FishAudioScriptError:
-                state["status"] = "director_invalid"
-                _atomic_json(state_path, state)
-                raise
-            except Exception:
-                state["status"] = "director_unknown"
-                _atomic_json(state_path, state)
-                raise
+                def save_director_response(
+                    response: Any, attempt_number: int = director_attempts,
+                ) -> None:
+                    usage = getattr(response, "usage", None)
+                    usage_data = (
+                        usage.model_dump(mode="json")
+                        if usage is not None and callable(getattr(usage, "model_dump", None))
+                        else usage if isinstance(usage, dict) else None
+                    )
+                    record = {
+                        "attempt": attempt_number,
+                        "id": getattr(response, "id", None),
+                        "model": getattr(response, "model", None),
+                        "service_tier": getattr(response, "service_tier", None),
+                        "usage": usage_data,
+                    }
+                    history = state.setdefault("director_responses", [])
+                    if not isinstance(history, list):
+                        raise FishAudioWorkflowError("Malformed saved director accounting history")
+                    history.append(record)
+                    state["director_usage"] = usage_data
+                    state["director_response"] = record
+                    _atomic_json(state_path, state)
+
+                def save_candidate(
+                    output: Any, attempt_number: int = director_attempts,
+                ) -> None:
+                    nonlocal candidate
+                    candidate = output.model_dump()
+                    _atomic_json(
+                        directory / f"director_candidate_{attempt_number}.json",
+                        candidate,
+                    )
+
+                try:
+                    directed, _response = await run_fish_director(
+                        payload, provider=provider, model=director_model,
+                        on_response=save_director_response,
+                        on_candidate=save_candidate,
+                        previous_response_id=previous_response_id if feedback else None,
+                        correction_feedback=feedback,
+                    )
+                except Exception as error:
+                    if not isinstance(error, FishAudioScriptError) and not is_schema_failure(error):
+                        state["status"] = "director_unknown"
+                        _atomic_json(state_path, state)
+                        raise
+                    _atomic_json(
+                        directory / f"rejected_attempt_{director_attempts}.json",
+                        {
+                            "attempt": director_attempts,
+                            "validation_error": str(error),
+                            "response": candidate if candidate is not None else {
+                                "unparsed_response": True,
+                            },
+                        },
+                    )
+                    state["status"] = "director_invalid"
+                    state.setdefault("director_validation_errors", []).append(str(error))
+                    _atomic_json(state_path, state)
+                    if director_attempts > MAX_VALIDATION_RETRIES:
+                        raise FishAudioScriptError(
+                            f"Fish director block {block.block_id} failed validation "
+                            f"after {MAX_VALIDATION_RETRIES} retries: {error}"
+                        ) from error
+                    previous_response_id = (
+                        (state.get("director_response") or {}).get("id")
+                        if getattr(provider, "supports_response_continuation", False)
+                        else None
+                    )
+                    feedback = validation_feedback(
+                        "Fish Audio", error, block_id=block.block_id,
+                        previous=candidate,
+                        continued=bool(previous_response_id),
+                        instructions=(
+                            "Repair only the Fish director text for this block. "
+                            "Do not add, remove, replace or reorder any spoken words. "
+                            "Only insert valid, well-positioned Fish emotion/delivery "
+                            "tags without splitting words or placing tags after "
+                            "the final spoken word. Preserve the original script "
+                            "apart from permitted layout/punctuation differences. "
+                            "Return the full directed block in the required schema."
+                        ),
+                    )
+                else:
+                    break
             directed_text = directed.plain_script_for_recording
             _atomic_json(directory / "output.json", directed.model_dump())
             state["status"] = "director_completed"

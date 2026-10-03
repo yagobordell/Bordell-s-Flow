@@ -49,6 +49,8 @@ class OpenAIProvider:
         self._rate_limit_retries = rate_limit_retries
         self._rate_limit_backoff_seconds = rate_limit_backoff_seconds
 
+    supports_response_continuation = True
+
     async def generate_structured[StructuredOutputT: BaseModel](
         self,
         *,
@@ -57,6 +59,7 @@ class OpenAIProvider:
         input_text: str,
         output_type: type[StructuredOutputT],
         input_image_url: str | None = None,
+        previous_response_id: str | None = None,
     ) -> StructuredOutputT:
         response = await self._parse_with_flex_fallback(
             model=model,
@@ -69,6 +72,7 @@ class OpenAIProvider:
                 if input_image_url is not None else input_text
             ),
             text_format=output_type,
+            **({"previous_response_id": previous_response_id} if previous_response_id else {}),
         )
 
         parsed = response.output_parsed
@@ -88,6 +92,7 @@ class OpenAIProvider:
         input_text: str,
         output_type: type[StructuredOutputT],
         input_image_url: str | None = None,
+        previous_response_id: str | None = None,
     ) -> tuple[StructuredOutputT, Any]:
         """Return validated structured output and its original, usage-bearing API response.
 
@@ -105,6 +110,7 @@ class OpenAIProvider:
                 if input_image_url is not None else input_text
             ),
             text_format=output_type,
+            **({"previous_response_id": previous_response_id} if previous_response_id else {}),
         )
         parsed = response.output_parsed
         if parsed is None:

@@ -19,7 +19,14 @@ from PIL import Image
 
 from ai_video_factory.bots import run_b_pipeline
 from ai_video_factory.bots.billing import ApiCostLedger
-from ai_video_factory.bots.contracts import B11Output, B12Output
+from ai_video_factory.bots.contracts import (
+    B2Input,
+    B2InputBlock,
+    B2Output,
+    B11Output,
+    B12Output,
+    ProfessionalB2Output,
+)
 from ai_video_factory.bots.fish_audio_workflow import (
     AudioRegenerationLimitReached,
     SttRetryLimitReached,
@@ -28,7 +35,11 @@ from ai_video_factory.bots.fish_audio_workflow import (
     retranscribe_audio_block,
     unfinished_audio_runs,
 )
-from ai_video_factory.bots.workflow import materialize_blocks, validate_beats
+from ai_video_factory.bots.workflow import (
+    materialize_blocks,
+    validate_beats,
+    validate_visuals,
+)
 from ai_video_factory.compositor.static_preview import (
     StaticPreviewError,
     SttAlignmentError,
@@ -739,7 +750,10 @@ def _load_resume_checkpoint(
     start_from: str,
     script: str,
     script_sha256: str,
-) -> tuple[dict[str, object], B11Output, tuple[B12Output, ...] | None]:
+) -> tuple[
+    dict[str, object], B11Output, tuple[B12Output, ...] | None,
+    dict[int, B12Output], dict[int, B2Output | ProfessionalB2Output],
+]:
     try:
         report = json.loads((output / "run_report.json").read_text(encoding="utf-8"))
         if not isinstance(report, dict) or not isinstance(report.get("run"), dict):
@@ -756,6 +770,19 @@ def _load_resume_checkpoint(
         if b11.error is not None or b11.blocks is None or b11.narrative_core is None:
             raise ValueError("the saved B1.1 response is not a successful checkpoint")
         materialized = materialize_blocks(script, b11.blocks)
+
+        partial_b12: dict[int, B12Output] = {}
+        partial_b2: dict[int, B2Output | ProfessionalB2Output] = {}
+        if (start_from == "B1.2" and run.get("status") == "failed"
+            and not (output / "B1.2" / "merged_output.json").exists()):
+            for block in materialized:
+                path = output / "B1.2" / f"block_{block.block_id}" / "output.json"
+                if path.is_symlink() or path.parent.is_symlink():
+                    raise ValueError("unsafe saved B1.2 block")
+                if path.is_file():
+                    saved = B12Output.model_validate(json.loads(path.read_text(encoding="utf-8")))
+                    validate_beats(saved, block)
+                    partial_b12[block.block_id] = saved
 
         b12_results: tuple[B12Output, ...] | None = None
         if start_from == "B2":
@@ -790,6 +817,33 @@ def _load_resume_checkpoint(
                 validate_beats(response, block)
                 parsed.append(response)
             b12_results = tuple(parsed)
+            if (run.get("status") == "failed"
+                and not (output / "B2" / "merged_output.json").exists()):
+                expected_type = (
+                    ProfessionalB2Output if run.get("visual_style") == "profesional"
+                    else B2Output
+                )
+                for block in materialized:
+                    path = output / "B2" / f"block_{block.block_id}" / "output.json"
+                    if path.is_symlink() or path.parent.is_symlink():
+                        raise ValueError("unsafe saved B2 block")
+                    if path.is_file():
+                        saved = expected_type.model_validate(
+                            json.loads(path.read_text(encoding="utf-8"))
+                        )
+                        meta = b11.blocks[block.block_id - 1]
+                        supplied = B2Input(
+                            narrative_core=b11.narrative_core,
+                            current_block_id=block.block_id,
+                            blocks=(B2InputBlock(
+                                block_id=meta.block_id, type=meta.type,
+                                emotional_entry=meta.emotional_entry,
+                                emotional_exit=meta.emotional_exit, span=meta.span,
+                                beats=b12_results[block.block_id - 1].beats,
+                            ),),
+                        )
+                        validate_visuals(saved, supplied)
+                        partial_b2[block.block_id] = saved
 
         costs = report["api_costs"]
         timings = report["timings"]
@@ -799,7 +853,7 @@ def _load_resume_checkpoint(
             or not isinstance(timings, dict)
         ):
             raise ValueError("the saved run report lacks request or timing history")
-        return report, b11, b12_results
+        return report, b11, b12_results, partial_b12, partial_b2
     except (OSError, KeyError, TypeError, ValueError) as exc:
         raise SystemExit(f"Cannot resume from {start_from}: {exc}") from exc
 
@@ -1895,7 +1949,15 @@ class BotArtifacts:
         return self._output / stage / f"block_{block_id}"
 
     def input(self, stage: str, block_id: int | None, payload: dict[str, object]) -> None:
-        _write(self._folder(stage, block_id) / "input.json", payload)
+        directory = self._folder(stage, block_id)
+        original = directory / "input.json"
+        if not original.is_file():
+            _write(original, payload)
+            return
+        attempt = 2
+        while (directory / f"input_attempt_{attempt}.json").exists():
+            attempt += 1
+        _write(directory / f"input_attempt_{attempt}.json", payload)
 
     def output(self, stage: str, block_id: int | None, payload: dict[str, object]) -> None:
         _write(self._folder(stage, block_id) / "output.json", payload)
@@ -2189,6 +2251,8 @@ async def main() -> None:
     planned_blocks: int | None = None
     previous_b11: B11Output | None = None
     previous_b12: tuple[B12Output, ...] | None = None
+    previous_partial_b12: dict[int, B12Output] = {}
+    previous_partial_b2: dict[int, B2Output | ProfessionalB2Output] = {}
     if args.from_stage == "B1.1":
         previous_output = output_root / script_file.stem
         if previous_output.exists() and has_pending_b2_video(previous_output):
@@ -2225,7 +2289,8 @@ async def main() -> None:
         output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
     else:
         output = _prepare_resume_output(output_root, script_file, avatar_file=avatar_file)
-        previous_report, previous_b11, previous_b12 = _load_resume_checkpoint(
+        (previous_report, previous_b11, previous_b12,
+         previous_partial_b12, previous_partial_b2) = _load_resume_checkpoint(
             output,
             start_from=args.from_stage,
             script=script,
@@ -2247,7 +2312,11 @@ async def main() -> None:
             resume_expected_calls = {
                 stage: prior_counts[stage]
                 + (
-                    block_count if rerun_from_index <= stage_index <= stop_index else 0
+                    (block_count - len(previous_partial_b12)
+                     if stage == "B1.2" else
+                     block_count - len(previous_partial_b2)
+                     if stage == "B2" else block_count)
+                    if rerun_from_index <= stage_index <= stop_index else 0
                 )
                 for stage_index, stage in enumerate(_STAGES)
             }
@@ -2506,6 +2575,14 @@ async def main() -> None:
             stop_after=stop_stage or "B2",
             previous_b11=previous_b11,
             previous_b12=previous_b12,
+            **(
+                {"previous_partial_b12": previous_partial_b12}
+                if previous_partial_b12 else {}
+            ),
+            **(
+                {"previous_partial_b2": previous_partial_b2}
+                if previous_partial_b2 else {}
+            ),
             on_input=artifacts.input,
             on_output=output_and_start_audio,
             on_rejected_output=artifacts.rejected_b11,
@@ -2575,42 +2652,53 @@ async def main() -> None:
             run_metadata["image_generation"] = {"status": "running"}
             save_report("running", len(result.b12))
             image_started = perf_counter()
-            try:
-                image_manifest = await _generate_images(output, visual_plan)
-            except ImageGenerationError as image_error:
-                retry_block_id = _continuity_retry_block_id(image_error)
-                if retry_block_id is None:
-                    raise
-                print(
-                    f"  B2 bloque {retry_block_id}: numeración de continuidad inválida; "
-                    "reintentando solo ese bloque...",
-                    flush=True,
-                )
-                result = await run_b_pipeline(
-                    script,
-                    provider=provider,
-                    model=settings.openai_model,
-                    max_parallel_calls=args.max_parallel_calls,
-                    visual_style=visual_style,
-                    avatar_image=avatar_bytes,
-                    start_from="B2",
-                    stop_after="B2",
-                    previous_b11=result.b11,
-                    previous_b12=result.b12,
-                    previous_b2=result.b2,
-                    retry_b2_block_ids=frozenset({retry_block_id}),
-                    on_input=artifacts.input,
-                    on_output=output_and_start_audio,
-                    on_rejected_b2_output=artifacts.rejected_b2,
-                    on_api_response=ledger.record,
-                    on_call_duration=timings.record_call,
-                    on_stage_duration=timings.record_stage,
-                    on_stage_complete=stage_complete,
-                )
-                visual_plan = result.visual_plan()
-                visual_plan["avatar"] = avatar_metadata
-                _write(output / "visual_plan.json", visual_plan)
-                image_manifest = await _generate_images(output, visual_plan)
+            # A downstream continuity failure is still a B2 validation error.
+            # Spend the affected block's remaining B2 retries, never retry all blocks.
+            while True:
+                try:
+                    image_manifest = await _generate_images(output, visual_plan)
+                    break
+                except ImageGenerationError as image_error:
+                    retry_block_id = _continuity_retry_block_id(image_error)
+                    if retry_block_id is None:
+                        raise
+                    if result.b2_correction_counts.get(retry_block_id, 0) >= 2:
+                        raise RuntimeError(
+                            f"B2 block {retry_block_id} exhausted its two validation "
+                            "retries before image-grid continuity could be repaired"
+                        ) from image_error
+                    print(
+                        f"  B2 bloque {retry_block_id}: numeración de continuidad inválida; "
+                        "corrigiendo solo ese bloque...",
+                        flush=True,
+                    )
+                    result = await run_b_pipeline(
+                        script,
+                        provider=provider,
+                        model=settings.openai_model,
+                        max_parallel_calls=args.max_parallel_calls,
+                        visual_style=visual_style,
+                        avatar_image=avatar_bytes,
+                        start_from="B2",
+                        stop_after="B2",
+                        previous_b11=result.b11,
+                        previous_b12=result.b12,
+                        previous_b2=result.b2,
+                        previous_b2_correction_counts=result.b2_correction_counts,
+                        previous_b2_response_ids=result.b2_response_ids,
+                        retry_b2_feedback={retry_block_id: str(image_error)},
+                        retry_b2_block_ids=frozenset({retry_block_id}),
+                        on_input=artifacts.input,
+                        on_output=output_and_start_audio,
+                        on_rejected_b2_output=artifacts.rejected_b2,
+                        on_api_response=ledger.record,
+                        on_call_duration=timings.record_call,
+                        on_stage_duration=timings.record_stage,
+                        on_stage_complete=stage_complete,
+                    )
+                    visual_plan = result.visual_plan()
+                    visual_plan["avatar"] = avatar_metadata
+                    _write(output / "visual_plan.json", visual_plan)
             run_metadata["image_generation"] = _image_summary(image_manifest)
             image_costs, _ = save_report("running", len(result.b12))
             if getattr(args, "managed_target", None) is not None:

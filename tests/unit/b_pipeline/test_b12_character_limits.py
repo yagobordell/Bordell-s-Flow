@@ -166,10 +166,10 @@ def test_short_beat_repair_merges_with_adjacent_beat() -> None:
 
 def test_second_invalid_repair_fails_closed_with_both_rejections() -> None:
     script = FIRST + SECOND
-    provider = RepairProvider(_output(script), _output(script))
+    provider = RepairProvider(_output(script), _output(script), _output(script))
     rejected = []
     saved = []
-    with pytest.raises(BPipelineValidationError, match="after one retry"):
+    with pytest.raises(BPipelineValidationError, match="after 2 retries"):
         asyncio.run(
             run_b_pipeline(
                 script,
@@ -182,15 +182,17 @@ def test_second_invalid_repair_fails_closed_with_both_rejections() -> None:
                 on_output=lambda *args: saved.append(args),
             )
         )
-    assert len(provider.calls) == 2
-    assert [item[1] for item in rejected] == [1, 2]
+    assert len(provider.calls) == 3
+    assert [item[1] for item in rejected] == [1, 2, 3]
     assert saved == []
 
 
 def test_repaired_text_must_reconstruct_original_including_punctuation() -> None:
     script = FIRST + SECOND
     altered_second = SECOND[:-1] + ","
-    provider = RepairProvider(_output(script), _output(FIRST, altered_second))
+    provider = RepairProvider(
+        _output(script), _output(FIRST, altered_second), _output(FIRST, altered_second)
+    )
     rejected = []
     with pytest.raises(BPipelineValidationError, match="reconstruct the original block exactly"):
         asyncio.run(
@@ -204,24 +206,27 @@ def test_repaired_text_must_reconstruct_original_including_punctuation() -> None
                 on_rejected_b12_output=lambda *args: rejected.append(args),
             )
         )
-    assert [item[1] for item in rejected] == [1, 2]
+    assert [item[1] for item in rejected] == [1, 2, 3]
 
 
-def test_unrelated_b12_validation_failure_does_not_trigger_paid_repair() -> None:
+def test_unrelated_b12_validation_failure_is_repaired() -> None:
     script = FIRST + SECOND
-    provider = RepairProvider(_output(FIRST.replace("primera", "tercera"), SECOND))
-    with pytest.raises(BPipelineValidationError, match="differs from the materialized block"):
-        asyncio.run(
-            run_b_pipeline(
+    provider = RepairProvider(
+        _output(FIRST.replace("primera", "tercera"), SECOND),
+        _output(FIRST, SECOND),
+    )
+    result = asyncio.run(
+        run_b_pipeline(
                 script,
                 provider=provider,
                 model="test-model",
                 start_from="B1.2",
                 stop_after="B1.2",
                 previous_b11=_b11(script),
-            )
         )
-    assert len(provider.calls) == 1
+    )
+    assert len(provider.calls) == 2
+    assert "".join(beat.text for beat in result.b12[0].beats) == script
 
 
 def test_rejected_b12_attempt_is_persisted(tmp_path) -> None:

@@ -102,16 +102,25 @@ async def run_fish_director(
     provider: StructuredTextProvider,
     model: str,
     on_response: Callable[[Any], None] | None = None,
+    on_candidate: Callable[[FishAudioScript], None] | None = None,
+    previous_response_id: str | None = None,
+    correction_feedback: str = "",
 ) -> tuple[FishAudioScript, Any | None]:
     """Send the exact same per-block JSON input shape used by B1.2."""
     block = payload.blocks[0]
     input_text = json.dumps(payload.model_dump(), ensure_ascii=False, separators=(",", ":"))
+    continued = bool(
+        previous_response_id and getattr(provider, "supports_response_continuation", False)
+    )
     kwargs: dict[str, Any] = {
         "model": model,
-        "instructions": fish_prompt_bytes().decode("utf-8") + _STRUCTURED_SUFFIX,
-        "input_text": input_text,
+        "instructions": fish_prompt_bytes().decode("utf-8") + _STRUCTURED_SUFFIX
+            + ("\n\n" + correction_feedback if correction_feedback else ""),
+        "input_text": correction_feedback if continued else input_text,
         "output_type": FishAudioScript,
     }
+    if continued:
+        kwargs["previous_response_id"] = previous_response_id
     metered = getattr(provider, "generate_structured_with_response", None)
     if callable(metered):
         output, response = await metered(**kwargs)
@@ -121,5 +130,7 @@ async def run_fish_director(
         on_response(response)
     if not isinstance(output, FishAudioScript):
         output = FishAudioScript.model_validate(output)
+    if on_candidate is not None:
+        on_candidate(output)
     validate_fish_script(block.text, output.plain_script_for_recording)
     return output, response
