@@ -26,6 +26,10 @@ The successful *old* GPU batch2 experiment validated TWO 720p outputs, not
   full-HD OUTPUT pixels, but this does not magically create an independent
   high-resolution source photograph. 1920×1080 reference images should be
   generated upstream for the ideal full-HD visual input quality.
+- B2 still-image beats now render **directly from their original PNG** at
+  1920×1080, including high-resolution/x2 image assets. They never first
+  discard detail by making a 720p preview and scaling it back up for the
+  final Ken Burns clip. The interactive static preview still defaults 720p.
 - Existing fast 576p → public 720p LTX profiles and isolated true-B2 pair
   smoke are deliberately unchanged. They remain **explicit legacy /
   experimental recipes**, not the default professional output.
