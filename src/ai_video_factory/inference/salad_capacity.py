@@ -187,6 +187,10 @@ def build_salad_capacity_runtime(
             )
             # Creating a registered group requires actual unfinished demand.
             # A mere stale registration never allocates a new GPU group.
+            if route.routing_contract != "v1":
+                # Never consume a GPU for an older/unverified Docker that
+                # cannot poll the new image-specific task aliases.
+                continue
             demand = bool(store.list_stage_jobs(
                 binding=binding, statuses=ACTIVE_STATUSES,
             ))
