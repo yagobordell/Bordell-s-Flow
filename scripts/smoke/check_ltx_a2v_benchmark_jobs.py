@@ -44,12 +44,6 @@ def validate_terminal_failed_attempt(
         # submitted file are authoritative, but require a stable prefix too.
         if not isinstance(job_id, str) or not job_id.startswith("ltx-a2v-"):
             raise RuntimeError("Failed attempt's job identity is invalid")
-    found = [row for row in rows if row["job_id"] == job_id]
-    if len(found) != 1 or found[0]["status"] != "failed":
-        raise RuntimeError(
-            f"Cannot continue: job {job_id!r} is not terminal 'failed' "
-            "(it may still be running/retryable, or local output validation failed)"
-        )
     return job_id
 
 
@@ -68,14 +62,13 @@ def main() -> int:
     try:
         with psycopg.connect(dsn, connect_timeout=10) as connection:
             with connection.cursor() as cursor:
-                # Include all A2V jobs, not just this batch; the task name is
-                # shared with normal production A2V.
+                # Never LIMIT a mixed terminal/active query: 200 recent
+                # failures must not mask a runnable older production job.
                 cursor.execute(
                     """
                     SELECT job_id, status, lease_expires_at
                     FROM gpu.jobs WHERE task = %s
-                      AND status IN ('pending', 'retryable_failed', 'running', 'failed')
-                    ORDER BY created_at DESC LIMIT 200
+                      AND status IN ('pending', 'retryable_failed', 'running')
                     """,
                     (_A2V_TASK,),
                 )
@@ -83,6 +76,22 @@ def main() -> int:
                     dict(zip(("job_id", "status", "lease_expires_at"), record))
                     for record in cursor.fetchall()
                 ]
+                failed_job_id = (
+                    validate_terminal_failed_attempt(
+                        args.terminal_failure_dir, [], expected_segment=args.expected_segment
+                    )
+                    if args.terminal_failure_dir else None
+                )
+                failed_row = None
+                if failed_job_id is not None:
+                    cursor.execute(
+                        """
+                        SELECT status FROM gpu.jobs
+                        WHERE task = %s AND job_id = %s
+                        """,
+                        (_A2V_TASK, failed_job_id),
+                    )
+                    failed_row = cursor.fetchone()
     except Exception as exc:
         print(f"A2V queue inspection failed; refusing to continue: {exc}", file=sys.stderr)
         return 1
@@ -97,14 +106,14 @@ def main() -> int:
             )
         return 1
     if args.terminal_failure_dir:
-        try:
-            job = validate_terminal_failed_attempt(
-                args.terminal_failure_dir, rows, expected_segment=args.expected_segment
+        if failed_row != ("failed",):
+            print(
+                f"Cannot continue: job {failed_job_id!r} is not terminal failed "
+                "(possible lease, retry or media-validation mismatch)",
+                file=sys.stderr,
             )
-        except (OSError, ValueError, RuntimeError) as exc:
-            print(f"A2V terminal-failure check failed: {exc}", file=sys.stderr)
             return 1
-        print(f"A2V_TERMINAL_FAILURE_SAFE job_id={job}")
+        print(f"A2V_TERMINAL_FAILURE_SAFE job_id={failed_job_id}")
     print("A2V_QUEUE_IDLE_OK")
     return 0
 
