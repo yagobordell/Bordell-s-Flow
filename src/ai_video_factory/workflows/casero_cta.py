@@ -464,11 +464,17 @@ async def prepare_casero_cta(
     tts, _, copy = outcomes
     if not cached_motion_text and on_call_duration is not None:
         on_call_duration("CTA Motion", None, perf_counter() - motion_started)
-    await asyncio.gather(
+    finishing = await asyncio.gather(
         asyncio.to_thread(_stt, directory),
-        asyncio.to_thread(_motion, directory, covers.files[0], qr_path, qr_url,
-                          float(tts["half_seconds"]), copy),
+        asyncio.to_thread(
+            _motion, directory, covers.files[0], qr_path, qr_url,
+            float(tts["half_seconds"]), copy,
+        ),
+        return_exceptions=True,
     )
+    for outcome in finishing:
+        if isinstance(outcome, BaseException):
+            raise outcome
     return {
         **identity, "status": "assets_ready", "directory": str(directory),
         "half_seconds": tts["half_seconds"], "duration_seconds": tts["duration_seconds"],
