@@ -20,7 +20,6 @@ from typing import Any
 from PIL import Image
 
 from ai_video_factory.image_upscaling import ImageUpscaler
-from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE
 from ai_video_factory.providers.openai_images import OpenAIImageClient
 
 _VIDEO_SOURCE = (1920, 1088)
