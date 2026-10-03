@@ -77,9 +77,9 @@ try {
         AllowBootstrappingInstance = $true
     }
     if ($NonInteractive) { $startArgs.NonInteractive = $true }
+    $Started = $true
     & $Manager @startArgs
     if (-not $?) { throw "A2V Salad allocation failed" }
-    $Started = $true
     $Manifest.lifecycle.capacity_seconds = $Clock.Elapsed.TotalSeconds
 
     & $Python $Ready --env-file $EnvFile --timeout-seconds $BootstrapTimeoutSeconds --poll-seconds 15 --expected-image $ExpectedPinnedImage --service ltx25_a2v_experimental
