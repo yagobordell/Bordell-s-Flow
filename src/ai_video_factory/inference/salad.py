@@ -79,6 +79,33 @@ class SaladClient:
             raise RuntimeError("Salad returned an invalid container group list")
         return [dict(item) for item in items if isinstance(item, dict)]
 
+    def list_gpu_classes(self) -> list[dict[str, object]]:
+        self._validate_project_config()
+        base = self.config.api_base_url.rstrip("/")
+        payload = self._get(
+            f"{base}/organizations/{self.config.organization_name}/gpu-classes"
+        )
+        items = payload.get("items")
+        if not isinstance(items, list):
+            raise RuntimeError("Salad GPU class response has no items collection")
+        return [dict(item) for item in items if isinstance(item, dict)]
+
+    def create_container_group(self, payload: dict[str, object]) -> None:
+        self._validate_project_config()
+        request = Request(
+            self._build_project_containers_url(),
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers={**self._headers(), "Content-Type": "application/json"},
+        )
+        status_code, detail = self._request(request)
+        if status_code not in {200, 201, 202}:
+            self._raise_request_error(
+                status_code=status_code,
+                url=request.full_url,
+                detail=detail,
+            )
+
     def describe_container_group(self) -> dict[str, object]:
         self._validate_config()
         return self._get(self._build_container_url())
