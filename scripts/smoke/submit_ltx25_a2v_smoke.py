@@ -13,6 +13,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
+import ai_video_factory.workers.ltx25.a2v as a2v
 from ai_video_factory.config import settings
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
 from ai_video_factory.inference.gpu_failures import DEFAULT_GPU_MAX_ATTEMPTS
@@ -231,7 +232,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--segment-id", default="smoke-001")
     parser.add_argument(
         "--profile",
-        choices=("fast", "reference", "static-reference", "dev", "guided"),
+        choices=(
+            "fast", "reference", "static-reference", "dev", "guided",
+            "reference-bench-cpu", "reference-fp8none",
+            "reference-cpu-triton", "reference-none-triton", "static-fp8none",
+        ),
         default="reference",
         help="Functional avatar A2V baseline; fast/dev remain explicit comparison modes.",
     )
@@ -259,6 +264,11 @@ def main() -> None:
         "static-reference": LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
         "dev": LTX_A2V_DEV_GENERATION_PROFILE,
         "guided": LTX_A2V_GUIDED_GENERATION_PROFILE,
+        "reference-bench-cpu": a2v.LTX_A2V_BENCH_CPU_PROFILE,
+        "reference-fp8none": a2v.LTX_A2V_BENCH_NONE_PROFILE,
+        "reference-cpu-triton": a2v.LTX_A2V_BENCH_CPU_TRITON_PROFILE,
+        "reference-none-triton": a2v.LTX_A2V_BENCH_NONE_TRITON_PROFILE,
+        "static-fp8none": a2v.LTX_A2V_BENCH_STATIC_NONE_PROFILE,
     }
     profile = profiles[args.profile]
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -450,8 +460,17 @@ def main() -> None:
     if metadata["generation_profile"] != profile:
         raise RuntimeError("A2V worker used a mismatched generation profile")
 
-    static_reference = args.profile == "static-reference"
-    distilled_profile = args.profile in {"fast", "reference", "static-reference"}
+    static_reference = args.profile in {"static-reference", "static-fp8none"}
+    experimental_profiles = {
+        "reference-bench-cpu": ("cpu", "eager"),
+        "reference-fp8none": ("none", "eager"),
+        "reference-cpu-triton": ("cpu", "triton"),
+        "reference-none-triton": ("none", "triton"),
+        "static-fp8none": ("none", "eager"),
+    }
+    distilled_profile = args.profile in {
+        "fast", "reference", "static-reference", *experimental_profiles,
+    }
     expected_variant = "distilled" if distilled_profile else "dev"
     expected_steps = 8 if distilled_profile else 30
     expected_cfg = 1.25 if static_reference else (1.0 if distilled_profile else 3.0)
@@ -496,7 +515,7 @@ def main() -> None:
         raise RuntimeError("A2V metadata/output duration mismatch")
     if abs(effective_audio_duration - output_duration) > tolerance:
         raise RuntimeError("A2V conditioned audio/video duration mismatch")
-    if args.profile in {"reference", "static-reference", "guided"}:
+    if args.profile in {"reference", "static-reference", "guided", *experimental_profiles}:
         reference_required = {
             "generation_recipe",
             "stage_1_sampler",
@@ -523,11 +542,15 @@ def main() -> None:
         expected_recipe = (
             "distilled_static_reference"
             if static_reference
-            else ("distilled_reference" if args.profile == "reference" else "upstream_guided_dev")
+            else (
+                "distilled_reference"
+                if args.profile in {"reference", *experimental_profiles}
+                else "upstream_guided_dev"
+            )
         )
         expected_sampler = (
             "euler_ancestral"
-            if args.profile in {"reference", "static-reference"}
+            if args.profile in {"reference", "static-reference", *experimental_profiles}
             else "euler"
         )
         if metadata["generation_recipe"] != expected_recipe:
@@ -537,7 +560,8 @@ def main() -> None:
         if metadata["stage_2_sampler"] != "euler":
             raise RuntimeError("reference A2V Stage 2 is not Euler")
         expected_strength = (
-            0.8 if static_reference else (0.7 if args.profile == "reference" else 1.0)
+            0.8 if static_reference
+            else (0.7 if args.profile in {"reference", *experimental_profiles} else 1.0)
         )
         if float(metadata["stage_1_image_strength"]) != expected_strength:
             raise RuntimeError("A2V worker used the wrong Stage 1 image strength")
@@ -568,6 +592,35 @@ def main() -> None:
         if abs(effective_audio_duration - grid_duration) > tolerance:
             raise RuntimeError("reference A2V output audio does not cover its snapped grid")
         _validate_reference_voice_tail(audio, video_path)
+        if args.profile in experimental_profiles:
+            expected_offload, expected_backend = experimental_profiles[args.profile]
+            if metadata["offload_mode"] != expected_offload:
+                raise RuntimeError("A2V experimental offload is not the requested mode")
+            if metadata.get("diffvae_backend_requested") != expected_backend:
+                raise RuntimeError("A2V experimental decoder request is incorrect")
+            if metadata.get("diffvae_backend_effective") != expected_backend:
+                raise RuntimeError(
+                    "A2V requested Triton but fell back to eager; "
+                    "rejecting a misleading benchmark"
+                )
+            required_timings = {
+                "audio_prepare_seconds", "pipeline_build_seconds",
+                "prompt_encode_seconds", "prompt_model_acquire_seconds",
+                "prompt_model_release_seconds",
+                "prompt_embeddings_processor_build_seconds",
+                "prompt_other_execution_seconds", "audio_input_decode_seconds",
+                "audio_vae_encode_seconds", "stage1_diffusion_seconds",
+                "stage2_diffusion_seconds", "spatial_upsample_seconds",
+                "video_decode_seconds", "encode_mux_excluding_video_decode_seconds",
+                "audio_output_decode_seconds",
+                "cuda_peak_allocated_mb", "cuda_peak_reserved_mb",
+            }
+            missing_timings = required_timings - metadata.keys()
+            if missing_timings:
+                raise RuntimeError(
+                    "A2V benchmark incomplete; missing phase metrics: "
+                    + ", ".join(sorted(missing_timings))
+                )
     else:
         if effective_audio_duration > input_duration + tolerance:
             raise RuntimeError("A2V output audio unexpectedly exceeds input speech duration")
