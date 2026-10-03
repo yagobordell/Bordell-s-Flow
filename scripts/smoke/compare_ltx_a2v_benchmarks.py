@@ -62,7 +62,9 @@ def analyze_manifest(
         and not manifest.get("skipped_profiles")
     )
     if not complete and not allow_partial:
-        raise ValueError("The benchmark has incomplete repetitions; use --allow-partial for diagnostics")
+        raise ValueError(
+            "The benchmark has incomplete repetitions; use --allow-partial for diagnostics"
+        )
     by_profile: dict[str, list[dict[str, Any]]] = defaultdict(list)
     comparison_rows: list[dict[str, Any]] = []
     control_hashes: dict[str, tuple[str, str]] = {}
