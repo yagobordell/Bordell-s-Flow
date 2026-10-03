@@ -191,25 +191,32 @@ def test_experimental_lock_can_coexist_with_controller_but_blocks_its_peers(
     # cannot mutate its one Salad group while production runs independently.
     owned: set[int] = set()
 
+    class TupleResult:
+        def __init__(self, value: bool) -> None:
+            self.value = value
+
+        def fetchone(self) -> tuple[bool]:
+            return (self.value,)
+
     class Connection:
         def __init__(self) -> None:
             self.closed = False
             self.keys: set[int] = set()
 
-        def execute(self, sql: str, params: tuple[int, int]) -> _Result:
+        def execute(self, sql: str, params: tuple[int, int]) -> TupleResult:
             key = int(params[1])
             if "pg_try_advisory_lock" in sql:
                 acquired = key not in owned
                 if acquired:
                     self.keys.add(key)
                     owned.add(key)
-                return _Result({"ok": acquired})
+                return TupleResult(acquired)
             if "FROM pg_locks" in sql:
-                return _Result({"held": key in self.keys})
+                return TupleResult(key in self.keys)
             if "pg_advisory_unlock" in sql:
                 owned.remove(key)
                 self.keys.remove(key)
-                return _Result({"released": True})
+                return TupleResult(True)
             raise AssertionError("unexpected query")
 
         def close(self) -> None:
