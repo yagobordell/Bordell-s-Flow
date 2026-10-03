@@ -73,6 +73,7 @@ def test_batch2_validation_rejects_profile_geometry_and_seed_drift() -> None:
     valid = Batch2Parameters.model_validate(request().parameters)
     assert (valid.a.seed, valid.b.seed) == (5243, 5244)
     assert valid.allow_sequential_fallback is False
+    assert valid.reuse_transformer_across_stages is False
 
     bad = {"a": parameters(5243), "b": parameters(5243)}
     with pytest.raises(ValueError, match="distinct|seeds"):
