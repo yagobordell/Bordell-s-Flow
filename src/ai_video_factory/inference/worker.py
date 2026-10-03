@@ -111,12 +111,14 @@ class InferenceWorker:
         lease_seconds: int = 90,
         heartbeat_seconds: int = 30,
         gpu_retry_cooldown_seconds: float = 60.0,
+        required_worker_image: str | None = None,
     ) -> None:
         self.storage = storage
         self.repository = repository
         self.runners = runners
         self.worker_id = worker_id
         self.salad_instance_id = str(salad_instance_id or "").strip() or None
+        self.required_worker_image = required_worker_image
         self.temp_dir = temp_dir
         self.lease_seconds = lease_seconds
         self.heartbeat_seconds = heartbeat_seconds
@@ -751,7 +753,11 @@ class InferenceWorker:
             and self.repository.is_instance_draining(self.salad_instance_id)
         ):
             return None
-        return self.repository.next_pending_request(self.runners.task_names)
+        if self.required_worker_image is None:
+            return self.repository.next_pending_request(self.runners.task_names)
+        return self.repository.next_pending_request(
+            self.runners.task_names, required_worker_image=self.required_worker_image,
+        )
 
     def ready(self) -> None:
         self.repository.ping()
