@@ -118,6 +118,25 @@ def _request(
     )
 
 
+def test_worker_rejects_ambiguous_legacy_a2v_request_without_geometry() -> None:
+    backend = FakeBackend()
+    runner = LTXAudioToVideoTaskRunner(backend=backend)
+    request = _request().model_copy(
+        update={"parameters": {
+            "generation_profile": LTX_A2V_GENERATION_PROFILE,
+            "prompt": "A stable talking head.",
+            "seed": 73,
+            "fps": 24,
+        }}
+    )
+    with pytest.raises(NonRetryableTaskError, match="explicitly provide width and height"):
+        runner._validate_request(
+            request,
+            {"image": Path("legacy.png"), "audio": Path("legacy.wav")},
+        )
+    assert backend.calls == []
+
+
 def test_a2v_parameters_are_audio_driven_and_default_to_full_hd_24fps() -> None:
     parameters = LTXAudioToVideoParameters()
 
