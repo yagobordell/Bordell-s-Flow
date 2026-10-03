@@ -300,7 +300,10 @@ def crop_grid_assets(
                 "block_id": block_id,
                 "beat_id": beat_id,
                 "visual_type": panel["visual_type"],
-                **({"reference": panel["reference"]} if isinstance(panel.get("reference"), bool) else {}),
+                **(
+                    {"reference": panel["reference"]}
+                    if isinstance(panel.get("reference"), bool) else {}
+                ),
                 "file": f"images/block_{block_id}/{beat_id}.png",
                 "sha256": hashlib.sha256(data).hexdigest(),
                 "provider": "grid_crop",
