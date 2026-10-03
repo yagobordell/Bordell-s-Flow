@@ -173,7 +173,11 @@ def finish_cta(directory: Path, submitted: tuple[Any, Any] | None,
         return directory/record["final"]["file"]
     request, assets = submitted
     video = directory/"avatar_a2v.mp4"
-    a2v_state = directory/"a2v_state.json"
+    worker_image = request.parameters.get("required_worker_image")
+    a2v_state = directory / (
+        "a2v_state_" + worker_image.rsplit(":", 1)[-1][:12] + ".json"
+        if isinstance(worker_image, str) else "a2v_state.json"
+    )
     if not video.is_file():
         response = executor.execute(request, metadata={"capability":"casero-cta-a2v"})
         temporary = directory/"avatar_a2v.part.mp4"
