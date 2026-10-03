@@ -85,6 +85,44 @@ Do not enable automatic B=2 1080p in normal B2 dispatch until its dedicated
 RTX 5090 trial succeeds. If it cannot fit on 32-GiB hardware, re-evaluate
 GPU capacity and scheduling explicitly; do not reduce output quality.
 
+## Postmortem and VRAM reduction after the failed 1080p test
+
+The first paid native two-video 1920×1080 test **did not succeed**:
+it completed BOTH Gemma prompts, the first true-B2 FP8 transformer stage
+and upsampling, then OOMed in the stage2 transformer with PyTorch
+peak reserved VRAM of roughly 30.5 GiB on the 31.8-GiB device. The
+full-size stage2 activation requirement was not measured exactly.
+
+**New I2V-only unproven mitigation**: full-HD B2 now uses LTX upstream's
+DISK block-streaming mode with the exact FP8_CAST quantization policy
+and the same max forward batch=2, steps, seeds, prompts and geometry.
+Streaming has only `DISK_CPU_SLOTS=2` pinned host buffer slots, rather
+than pinning the full model in the 40-GiB host. The transformer is still
+one shared model per stage and each forward is genuinely B=2, not two
+B=1 calls. This substantially reduces persistent GPU model weight
+residency at the price of repeated local checkpoint/block I/O and
+potentially much higher latency; do NOT promise a specific speed.
+
+Separately the paired I2V pipeline drops the redundant individual
+Gemma embedding outputs after concatenation, drops stage1 conditioning
+immediately after stage1, drops its video latent after the unchanged
+independent upsampler calls, retains only required stage1 AUDIO latent
+for stage2, and trims otherwise unreachable CUDA cached blocks at
+full-HD stage boundaries. Read-only per-transformer-forward and
+per-stage GPU snapshots now distinguish persistent weight pressure
+from transient full-HD activations. The visually approved 720p paired
+path is still GPU-resident / full B=2 and does not trim GPU memory at
+each stage.
+
+This reduction is implemented and CPU-regression-tested only. Only a
+fresh pinned-image paid RTX 5090 trial can determine hardware fit,
+runtime and visual equivalence. Never silently reduce resolution, FPS,
+precision, denoising steps or GPU batch to make an experiment pass.
+The user is separately optimizing A2V: **this follow-up does not
+change any A2V worker files, profiles or audio/lipsync code**.
+The old multi-purpose experimental PR is currently behind main and
+has merge conflicts; do NOT merge it wholesale into current A2V work.
+
 ## Next validation (after the currently-running 720p trial completes)
 
 1. Verify Full HD model-grid and request/manifest contract unit tests and
