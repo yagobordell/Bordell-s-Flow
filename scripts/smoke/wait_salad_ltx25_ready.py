@@ -28,6 +28,7 @@ from ai_video_factory.inference.salad import (
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PINNED_IMAGE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 _TRANSIENT_API_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+_I2V_EDGE_TIMEOUT_STATUSES = frozenset({520, 521, 522, 523, 524})
 
 
 def _required_salad_account_env(name: str) -> str:
@@ -184,7 +185,15 @@ def wait_for_ready(
             )
             transient_failures = 0
         except SaladRequestError as error:
-            if error.status_code not in _TRANSIENT_API_STATUSES:
+            # During I2V image pull, Salad's Cloudflare edge can return
+            # HTTP 522 even though the container continues downloading.
+            # This polling loop is read-only; never extend this special
+            # treatment to A2V or container-group mutations.
+            transient_i2v_edge = (
+                expected_task_mode == "i2v"
+                and error.status_code in _I2V_EDGE_TIMEOUT_STATUSES
+            )
+            if error.status_code not in _TRANSIENT_API_STATUSES and not transient_i2v_edge:
                 raise
             transient_failures += 1
             if transient_failures >= 5:
