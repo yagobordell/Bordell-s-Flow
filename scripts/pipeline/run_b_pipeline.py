@@ -59,6 +59,7 @@ from ai_video_factory.inference.salad import (
     SaladClient,
     SaladDispatchConfig,
 )
+from ai_video_factory.inference.salad_image_upscaler_start import ensure_image_upscaler_ready
 from ai_video_factory.inference.salad_billing import SaladCostMeter, read_salad_costs
 from ai_video_factory.managed_layout import publish_managed_run, sync_managed_outputs
 from ai_video_factory.providers import OpenAIProvider
@@ -933,6 +934,14 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
                 "Professional image x2 requires configured OptiumLabs Salad/R2: "
                 + ", ".join(missing)
             )
+        # Start only after validated B2 planning and before any paid GPT images.
+        # The existing independent group is reused if another run has it ready.
+        await asyncio.to_thread(
+            ensure_image_upscaler_ready,
+            api_key=settings.salad_api_key,
+            gateway_url=settings.image_upscaler_url,
+            auto_start=settings.image_upscaler_auto_start,
+        )
         upscaler = await asyncio.to_thread(
             create_optium_image_upscaler,
             base_url=settings.image_upscaler_url,
