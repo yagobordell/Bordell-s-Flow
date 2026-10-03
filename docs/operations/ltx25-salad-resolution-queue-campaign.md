@@ -17,7 +17,7 @@ uv run --locked --extra dev python -m pytest -q tests/unit/workers/test_ltx_a2v_
 .\scripts\salad\manage_salad_stack.ps1 -Action Validate
 ```
 
-Provide two distinct real presenter images and two distinct WAV files, ideally **5 seconds of speech** each; the reference profile accepts at most 12 seconds per audio segment. Example files below should be replaced by real existing paths. Both A2V cases use the `reference` recipe and 24 fps; they are separate avatars, not resolution samples of the same identity.
+Provide two distinct real presenter images. Reuse the **same WAV or MP3** for both avatars (recommended for directly comparable 720p/1080p timing), ideally **5 seconds of speech**. Different audio files also work, but should have closely matching durations. The reference profile accepts at most 12 seconds per audio segment. Example files below should be replaced by real existing paths. Both A2V cases use the `reference` recipe and 24 fps; they are separate avatars, not resolution samples of the same identity.
 
 Stop the singleton Capacity Controller first using `docs/operations/salad-capacity-controller.md`. The manager refuses concurrent manual mutations using its PostgreSQL advisory lock. Make sure there is no outstanding A2V/I2V work in the shared Postgres queue. Both Salad LTX groups must be stopped when beginning each campaign.
 
@@ -45,19 +45,19 @@ Only use `Prepare` with both groups idle and the controller stopped. The A2V pin
 
 ## A2V paid session: 720p B, then 1080p A (same one GPU)
 
-The script verifies different image/audio hashes, audio durations, image pinning, R2, Python worktree and stopped group isolation **before starting Salad**. It starts A2V once, waits for `/ready`, runs 720p first and then experimental 1080p, preserving each result. A failure aborts remaining paid trials and still attempts `Stop` in a `finally` block.
+The script verifies distinct avatar images, valid speech files and durations, image pinning, R2, Python worktree and stopped group isolation **before starting Salad**. Reusing identical speech is permitted and recorded in the campaign summary. It starts A2V once, waits for `/ready`, runs 720p first and then experimental 1080p, preserving each result. A failure aborts remaining paid trials and still attempts `Stop` in a `finally` block.
 
 ```powershell
 $RunA2V = "a2v-resolutions-$(Get-Date -Format yyyyMMddHHmmss)"
 .\scripts\smoke\run_ltx25_a2v_resolution_batch.ps1 `
-    -Avatar720 ".\data\input\avatar_b.png" -Audio720 ".\data\input\avatar_b.wav" `
-    -Avatar1080 ".\data\input\avatar_a.png" -Audio1080 ".\data\input\avatar_a.wav" `
+    -Avatar720 ".\data\input\avatar_b.png" -Audio720 ".\data\input\speech.mp3" `
+    -Avatar1080 ".\data\input\avatar_a.png" -Audio1080 ".\data\input\speech.mp3" `
     -ExpectedPinnedImage $A2VPinnedImage `
     -Accept1080pOomRisk `
     -RunId $RunA2V -EnvFile .env
 ```
 
-Inspect `data/output/deployment-validation/ltx25-a2v-resolutions/<RunId>/campaign.json`, both MP4s, `metadata.json` and ffprobe files. Check lip-sync, visual integrity and speech tail independently for both avatars; codec/metadata success does not imply good lip-sync. Record inference time, total generation time, wall time, peak VRAM and whether 1080p failed OOM. Confirm `ltx25` is stopped afterwards.
+Inspect `data/output/deployment-validation/ltx25-a2v-resolutions/<RunId>/campaign.json`, both MP4s, `metadata.json` and ffprobe files. Check lip-sync, visual integrity and speech tail independently for both avatars; codec/metadata success does not imply good lip-sync. Record inference time, total generation time, wall time, peak VRAM whether identical speech was used, and whether 1080p failed OOM. Confirm `ltx25` is stopped afterwards.
 
 ## I2V: pin the reviewed production FP8 image (no GPU yet)
 
