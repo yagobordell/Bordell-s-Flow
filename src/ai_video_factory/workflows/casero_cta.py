@@ -429,18 +429,21 @@ async def prepare_casero_cta(
                 "final": {"file": upgraded.name, "sha256": _sha(upgraded)}}
 
     # New avatar CTA: prepare the bot while speech and image run independently.
-    try:
-        (tts, _), copy = await asyncio.gather(
-            asyncio.gather(
-                asyncio.to_thread(_tts, directory, text, voice_id, voice_provider),
-                asyncio.to_thread(_image, directory, covers, avatar, on_image_usage),
-            ),
-            motion_copy_task,
-        )
-    except Exception:
-        # A paid request cannot be abandoned while another component fails.
-        await asyncio.gather(motion_copy_task, return_exceptions=True)
-        raise
+    # Wait for *every* paid call even when a sibling task fails. Ordinary
+    # gather can raise early while a billed TTS/image request still runs.
+    tts_task = asyncio.create_task(asyncio.to_thread(
+        _tts, directory, text, voice_id, voice_provider,
+    ))
+    image_task = asyncio.create_task(asyncio.to_thread(
+        _image, directory, covers, avatar, on_image_usage,
+    ))
+    outcomes = await asyncio.gather(
+        tts_task, image_task, motion_copy_task, return_exceptions=True,
+    )
+    for outcome in outcomes:
+        if isinstance(outcome, BaseException):
+            raise outcome
+    tts, _, copy = outcomes
     if not cached_motion_text and on_call_duration is not None:
         on_call_duration("CTA Motion", None, perf_counter() - motion_started)
     await asyncio.gather(
