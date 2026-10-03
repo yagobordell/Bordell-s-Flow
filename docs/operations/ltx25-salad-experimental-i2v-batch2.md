@@ -29,6 +29,56 @@ change floating-point accumulation even when all generation parameters match.
 Do not merge or switch production to batch2 unless both results meet quality
 requirements and memory/timing benefits are actually observed on Salad.
 
+
+## Quality-preserving latency changes (experimental, NOT approved without GPU trial)
+
+The opt-in pair job now builds Gemma **once**, but still encodes each text
+prompt separately in B=1, using the same tokenizer, Gemma weights/dtype,
+single-prompt padding and embeddings processor arithmetic. The embeddings
+processor also loads only once. Each stage builds the video encoder only
+once, but passes image A then B through the SAME single-image conditioning
+function. No image is conditioned on another image.
+
+By default, the new experimental pair job attempts to **keep one FP8
+transformer on GPU from stage 1 through upsample and stage 2**. The existing
+B=2 GPU kernels, both independent RNG streams, sigmas and latents are
+unchanged. Keeping transformer weights resident while VAE upsampling MAY
+exhaust 32 GiB VRAM. If it does, the worker automatically frees the failed
+attempt and retries the previously visually approved **two-transformer-build
+B=2** recipe, even when sequential fallback was NOT enabled. Only an
+explicit -AllowSequentialFallback permits subsequent B=1 downgrade. Never
+claim the faster one-build optimization if the report shows the recovery path.
+
+The report's truthful per-run fields:
+- mode=batch2 and actual_gpu_batch_size=2: genuine one-GPU batch2;
+- shared_transformer_stage_builds=1 and transformer_reused_between_stages=true:
+  the optimized single-build batch2 survived both stages;
+- shared_transformer_stage_builds=2 and transformer_reused_between_stages=false:
+  the original approved GPU batch2 two-load stage path ran;
+- failed_attempts: OOMs and whether an optimized shared-stage attempt was
+  retried. Use elapsed_seconds AND transformer stage logs, not just mode.
+
+**Control experiment:** to run the updated one-build workflow against the
+approved original two-build batch2, use the exact same images, prompts,
+seeds and new RunId with -DisableStageReuse. This flag leaves shared Gemma
+and video encoder optimizations on, isolating just transformer residency.
+An additional unmodified old-Docker reference is needed to isolate *all*
+changes; the previously approved visual October 3 pair is the reference.
+Avoid paying for another trial until CI is green and a new pinned image
+has been built and prepared while Salad is stopped.
+
+The worker now logs LTX25_I2V_PAIR_PROMPT_SHARED_METRICS,
+LTX25_I2V_PAIR_SHARED_TRANSFORMER_LOADED and
+LTX25_I2V_PAIR_STAGE_METRICS. Process counters under /proc/self provide
+RSS, major/minor page faults and physical read bytes when Salad masks
+cgroup memory paths; cgroup v1 and v2 counters are also supported.
+The first transformer load may still be limited by actual storage/network
+throughput. No code can guarantee to eliminate that cost without changing
+how the underlying 42-GB BF16 checkpoint is stored or loaded. A separate
+lossless checkpoint-cache experiment would require its own integrity and
+quality gates; this branch deliberately does not alter weights/precision.
+
+
 ## Build and prepare an experimental Docker image
 
 Stop the Capacity Controller and confirm both LTX groups are stopped and the
