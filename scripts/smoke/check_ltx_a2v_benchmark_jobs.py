@@ -39,11 +39,14 @@ def validate_terminal_failed_attempt(
     request = json.loads(matches[0].read_text(encoding="utf-8-sig"))
     job_id = request.get("job_id")
     # Input request is our own persisted job file, not a guessed prefix query.
-    if not isinstance(job_id, str) or expected_segment not in job_id:
-        # IDs may truncate long segment names; the request parameters + exact
-        # submitted file are authoritative, but require a stable prefix too.
-        if not isinstance(job_id, str) or not job_id.startswith("ltx-a2v-"):
-            raise RuntimeError("Failed attempt's job identity is invalid")
+    # The job-ID builder truncates long segment IDs before appending a hash.
+    # Match the run/profile prefix, then use this exact persisted request ID
+    # for the terminal-status query; never inspect or cancel another job.
+    if (
+        not isinstance(job_id, str)
+        or not job_id.startswith("ltx-a2v-" + expected_segment[:32])
+    ):
+        raise RuntimeError("Failed attempt's job identity does not match the segment")
     return job_id
 
 
