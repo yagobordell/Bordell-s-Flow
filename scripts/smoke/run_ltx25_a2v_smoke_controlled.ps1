@@ -2,7 +2,11 @@
 param(
     [Parameter(Mandatory)][string]$Audio,
     [string]$AvatarImage = "",
-    [ValidateSet("fast", "reference", "static-reference", "dev", "guided")][string]$Profile = "reference",
+    [ValidateSet(
+        "fast", "reference", "static-reference", "dev", "guided",
+        "reference-bench-cpu", "reference-fp8none",
+        "reference-cpu-triton", "reference-none-triton", "static-fp8none"
+    )][string]$Profile = "reference",
     [string]$SegmentId = "smoke-001",
     [string]$Prompt = "",
     [long]$Seed = 4242,
@@ -49,8 +53,11 @@ if (-not [string]::IsNullOrWhiteSpace($ExpectedPinnedImage) -and
     $ExpectedPinnedImage -notmatch "^[^\s@]+@sha256:[0-9a-fA-F]{64}$") {
     throw "-ExpectedPinnedImage must use immutable repo@sha256:digest form."
 }
-if ($Profile -eq "static-reference" -and [string]::IsNullOrWhiteSpace($ExpectedPinnedImage)) {
-    throw "Static-reference is experimental and requires -ExpectedPinnedImage for a freshly reviewed Docker image."
+if ($Profile -in @(
+    "static-reference", "reference-bench-cpu", "reference-fp8none",
+    "reference-cpu-triton", "reference-none-triton", "static-fp8none"
+) -and [string]::IsNullOrWhiteSpace($ExpectedPinnedImage)) {
+    throw "Experimental A2V requires -ExpectedPinnedImage for a reviewed, immutable Docker image."
 }
 if ($Profile -eq "guided") {
     $Services = Get-Content -LiteralPath (Join-Path $RepoRoot "deploy\salad\services.json") -Raw | ConvertFrom-Json
