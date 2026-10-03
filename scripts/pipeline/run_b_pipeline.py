@@ -54,14 +54,9 @@ from ai_video_factory.inference.capacity_controller import (
     read_capacity_controller_health,
     validate_capacity_controller_dsn,
 )
-from ai_video_factory.inference.salad import (
-    DEFAULT_SALAD_API_BASE_URL,
-    SaladClient,
-    SaladDispatchConfig,
-)
 from ai_video_factory.inference.salad_billing import SaladCostMeter, read_salad_costs
 from ai_video_factory.inference.salad_image_upscaler_start import ensure_image_upscaler_ready
-from ai_video_factory.inference.salad_ltx_worker_prepare import ensure_a2v_image
+from ai_video_factory.inference.worker_image_routes import register_route, route_for_image
 from ai_video_factory.managed_layout import publish_managed_run, sync_managed_outputs
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
@@ -1158,90 +1153,50 @@ def _require_ltx_capacity_controller() -> None:
     )
 
 
-def _require_ltx_safe_a2v_worker() -> None:
-    """Reject paid A2V v5 until its patched host-memory image is actually deployed."""
+def _selected_ltx_image(service: str) -> str:
+    """Read this run's own immutable Docker choice, never another user's group."""
     repo_root = Path(__file__).resolve().parents[2]
-    load_dotenv(repo_root / "config" / "app.env", override=False)
-    load_dotenv(repo_root / "config" / "salad.env", override=False)
-    load_dotenv(repo_root / ".env", override=False)
-    expected = os.getenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", "").strip()
-    if not re.fullmatch(r"[^ ]+@sha256:[0-9a-fA-F]{64}", expected):
+    for file in (repo_root / "config" / "app.env", repo_root / "config" / "salad.env",
+                 repo_root / ".env"):
+        load_dotenv(file, override=False)
+    key = (
+        "SALAD_LTX25_PAGEABLE_A2V_IMAGE"
+        if service == "ltx25" else "SALAD_LTX25_FP8_I2V_IMAGE"
+    )
+    image = os.getenv(key, "").strip()
+    if not image:
+        raise RuntimeError(f"{key} requires this run's immutable reviewed Docker digest")
+    route_for_image(service, image)
+    return image
+
+
+def _register_ltx_worker(service: str) -> None:
+    """Register demand only. Run never changes, starts or stops a Salad LTX group."""
+    image = _selected_ltx_image(service)
+    dsn = settings.salad_capacity_controller_postgres_dsn or settings.postgres_dsn
+    if not dsn:
+        raise RuntimeError("POSTGRES_DSN is required to register immutable LTX routes")
+    try:
+        route = register_route(dsn, service=service, image=image)
+    except Exception as exc:
         raise RuntimeError(
-            "Pinned-host fallback LTX A2V v5 requires SALAD_LTX25_PAGEABLE_A2V_IMAGE="
-            "<repository>@sha256:<64-hex-digest> in config/salad.env. "
-            "Build, publish and Prepare the new LTX worker first; "
-            "do not resubmit the failed v4 job to an unpatched Docker image."
-        )
-    document = json.loads(
-        (Path(__file__).resolve().parents[2] / "deploy" / "salad" / "services.json")
-        .read_text(encoding="utf-8")
+            "Could not register the isolated LTX Docker group in PostgreSQL. "
+            "Apply infra/sql/006_worker_image_routes.sql on Supabase and "
+            "verify controller connectivity; no paid job was submitted."
+        ) from exc
+    print(
+        f"  LTX {service} version={image.rsplit(':', 1)[-1][:16]} "
+        f"group={route.group_name}; no existing deployment will be modified",
+        flush=True,
     )
-    group_name = document["services"]["ltx25"]["group_name"]
-    client = SaladClient(
-        SaladDispatchConfig(
-            api_key=settings.salad_api_key,
-            api_base_url=os.getenv("SALAD_API_BASE_URL", DEFAULT_SALAD_API_BASE_URL),
-            organization_name=os.getenv("SALAD_ORGANIZATION"),
-            project_name=os.getenv("SALAD_PROJECT"),
-            container_group_name=group_name,
-        )
-    )
-    configured_image = document["services"]["ltx25"]["image"]
-    configured_repository = re.sub(r":[^/:]+$", "", configured_image)
-    ensure_a2v_image(
-        client=client,
-        expected=expected,
-        configured_repository=configured_repository,
-        repo_root=repo_root,
-        controller_dsn=(
-            settings.salad_capacity_controller_postgres_dsn or settings.postgres_dsn
-        ),
-        auto_prepare=(
-            os.getenv("SALAD_LTX_AUTO_PREPARE_ON_MISMATCH", "true").strip().lower()
-            in {"true", "1", "yes", "on"}
-        ),
-    )
+
+
+def _require_ltx_safe_a2v_worker() -> None:
+    _register_ltx_worker("ltx25")
 
 
 def _require_ltx_safe_i2v_worker() -> None:
-    """Fail before paid I2V if Salad is not serving the reviewed FP8 resident image."""
-    repo_root = Path(__file__).resolve().parents[2]
-    load_dotenv(repo_root / "config" / "app.env", override=False)
-    load_dotenv(repo_root / "config" / "salad.env", override=False)
-    load_dotenv(repo_root / ".env", override=False)
-    expected = os.getenv("SALAD_LTX25_FP8_I2V_IMAGE", "").strip()
-    if not re.fullmatch(r"[^ ]+@sha256:[0-9a-fA-F]{64}", expected):
-        raise RuntimeError(
-            "Promoted full-resolution FP8 no-offload I2V requires "
-            "SALAD_LTX25_FP8_I2V_IMAGE=<repository>@sha256:<64-hex-digest> "
-            "in config/salad.env. Prepare the reviewed standard I2V image "
-            "before generating new I2V clips."
-        )
-    document = json.loads(
-        (repo_root / "deploy" / "salad" / "services.json").read_text(encoding="utf-8")
-    )
-    definition = document["services"]["ltx25_i2v"]
-    reviewed_repo = re.sub(r":[^/:]+$", "", definition["image"])
-    if not expected.startswith(f"{reviewed_repo}@sha256:"):
-        raise RuntimeError("Pinned FP8 I2V image must use the configured worker repository")
-    client = SaladClient(
-        SaladDispatchConfig(
-            api_key=settings.salad_api_key,
-            api_base_url=os.getenv("SALAD_API_BASE_URL", DEFAULT_SALAD_API_BASE_URL),
-            organization_name=os.getenv("SALAD_ORGANIZATION"),
-            project_name=os.getenv("SALAD_PROJECT"),
-            container_group_name=definition["group_name"],
-        )
-    )
-    deployed = client.describe_container_group()
-    container = deployed.get("container")
-    actual = container.get("image") if isinstance(container, dict) else None
-    if actual != expected:
-        raise RuntimeError(
-            "Salad LTX I2V worker image mismatch; no paid inference submitted. "
-            f"Expected reviewed FP8 image {expected}, group reports {actual!r}. "
-            "Prepare the exact digest for ltx25_i2v; leave A2V untouched."
-        )
+    _register_ltx_worker("ltx25_i2v")
 
 
 async def _video_if_ready(
@@ -1350,6 +1305,12 @@ async def _video_if_ready(
                     check_capacity=_require_ltx_capacity_controller,
                     check_a2v_worker=_require_ltx_safe_a2v_worker,
                     check_i2v_worker=_require_ltx_safe_i2v_worker,
+                    worker_images={
+                        kind: image for kind, image in (
+                            ("a2v", os.getenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", "").strip()),
+                            ("i2v", os.getenv("SALAD_LTX25_FP8_I2V_IMAGE", "").strip()),
+                        ) if image
+                    } or None,
                 )
         finally:
             queue.close()
