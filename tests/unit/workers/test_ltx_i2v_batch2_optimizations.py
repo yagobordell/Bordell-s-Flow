@@ -201,6 +201,70 @@ def test_shared_stage_uses_exact_same_transformer_for_both_passes() -> None:
     assert image_inputs_seen == [[first_image_conditioning], [second_image_conditioning]]
 
 
+def test_two_build_batch2_does_not_preencode_second_stage() -> None:
+    """The memory fallback must restore the visual-reference stage ordering."""
+    torch = pytest.importorskip("torch")
+    import ai_video_factory.workers.ltx25.paired_i2v as paired
+    from ai_video_factory.workers.ltx25.paired_i2v import (
+        PairInput,
+        generate_paired_fast_distilled,
+    )
+
+    events = []
+    latent = torch.ones((2, 1, 1, 2, 2), dtype=torch.bfloat16)
+    context = SimpleNamespace(
+        video_encoding=torch.zeros((1, 4, 2)),
+        audio_encoding=torch.zeros((1, 4, 2)),
+    )
+
+    def conditioning(_pipeline, _pair, width, _height):
+        events.append(("conditioning", width))
+        return [width]
+
+    def stage(*args, **kwargs):
+        events.append(("stage", kwargs["stage_label"]))
+        return SimpleNamespace(latent=latent), SimpleNamespace(latent=latent)
+
+    def upsample(x):
+        events.append(("upsample", None))
+        return x
+
+    pipeline = SimpleNamespace(
+        stage=SimpleNamespace(),
+        device=torch.device("cpu"),
+        duration_predictor=None,
+        image_conditioner=SimpleNamespace(resolve_crf=lambda images: images),
+        video_decoder=SimpleNamespace(checkpoint_path="fake", diffvae_optimization=None),
+        upsampler=upsample,
+        use_ancestral_sampler=True,
+    )
+    with (
+        patch.object(paired, "_encode_pair_prompts", return_value=(context, context)),
+        patch.object(paired, "_batch_conditionings", side_effect=conditioning),
+        patch.object(paired, "_paired_stage", side_effect=stage),
+        patch.object(paired, "assert_resolution"),
+        patch.object(paired, "require_num_frames_source"),
+        patch.object(paired, "resolve_num_frames", return_value=121),
+        patch.object(paired, "tiling_scale_factors_for_vae"),
+        patch.object(paired, "ensure_tiling_config", return_value=None),
+        patch.object(paired, "_memory_pressure", return_value={}),
+    ):
+        generate_paired_fast_distilled(
+            pipeline,
+            pair=(PairInput("A", 5243, "a.png"), PairInput("B", 5244, "b.png")),
+            width=1280, height=768, frame_rate=24, num_frames=121,
+            reuse_transformer_across_stages=False,
+        )
+    assert events == [
+        ("conditioning", 640),
+        ("stage", "stage1"),
+        ("upsample", None),
+        ("upsample", None),
+        ("conditioning", 1280),
+        ("stage", "stage2"),
+    ]
+
+
 def test_stage_reuse_oom_retries_approved_true_b2_before_any_b1(tmp_path: Path) -> None:
     backend = object.__new__(DirectLTX25Backend)
     backend._pair_attempt = Mock(side_effect=[RuntimeError("CUDA out of memory"), 26])
