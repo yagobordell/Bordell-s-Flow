@@ -274,6 +274,7 @@ try {
                 "--prompts", (Join-Path $Inputs "video_prompts.json"),
                 "--timings", (Join-Path $Inputs "shot_timings.json"),
                 "--output-dir", $Output,
+                "--width", 1280, "--height", 720,
                 "--seed-base", $RoundSeedBase,
                 "--timeout-seconds", $TimeoutSeconds,
                 "--poll-seconds", 15,
