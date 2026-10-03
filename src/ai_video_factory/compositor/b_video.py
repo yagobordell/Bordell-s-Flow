@@ -24,13 +24,18 @@ from ai_video_factory.compositor.static_preview import (
     _verified_asset,
 )
 from ai_video_factory.inference.storage import sha256_file
+from ai_video_factory.video_resolution import (
+    DEFAULT_VIDEO_HEIGHT,
+    DEFAULT_VIDEO_WIDTH,
+    validate_video_size,
+)
 
 if TYPE_CHECKING:
     from ai_video_factory.workflows.b_video import B2VideoJob
 
 _FPS = 24
-_WIDTH = 1280
-_HEIGHT = 720
+_WIDTH = DEFAULT_VIDEO_WIDTH
+_HEIGHT = DEFAULT_VIDEO_HEIGHT
 
 
 class B2VideoCompositionError(RuntimeError):
@@ -48,7 +53,10 @@ def _run_ffmpeg(command: list[str], description: str) -> None:
         )
 
 
-def _probe_final(path: Path, duration: float, frames: int) -> float:
+def _probe_final(
+    path: Path, duration: float, frames: int,
+    *, width: int = _WIDTH, height: int = _HEIGHT,
+) -> float:
     result = subprocess.run(
         [
             "ffprobe", "-v", "error",
@@ -68,8 +76,10 @@ def _probe_final(path: Path, duration: float, frames: int) -> float:
     if len(videos) != 1 or len(audios) != 1:
         raise B2VideoCompositionError("Final LTX video must have one video and one audio")
     video = videos[0]
-    if (video["width"], video["height"]) != (_WIDTH, _HEIGHT):
-        raise B2VideoCompositionError("Final LTX output is not 1280x720")
+    if (video["width"], video["height"]) != (width, height):
+        raise B2VideoCompositionError(
+            f"Final LTX output is not {width}x{height}"
+        )
     numerator, denominator = map(int, video.get("avg_frame_rate", "0/1").split("/"))
     if not denominator or abs(numerator / denominator - _FPS) > 0.01:
         raise B2VideoCompositionError("Final LTX video is not 24 fps")
@@ -81,14 +91,17 @@ def _probe_final(path: Path, duration: float, frames: int) -> float:
     return actual
 
 
-def _fit(width: int) -> str:
+def _fit(width: int, *, height: int = _HEIGHT) -> str:
     return (
-        f"scale={width}:{_HEIGHT}:force_original_aspect_ratio=increase,"
-        f"crop={width}:{_HEIGHT},setsar=1"
+        f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},setsar=1"
     )
 
 
-def _motion_filter(beat: dict[str, Any], frames: int, image_index: int) -> str:
+def _motion_filter(
+    beat: dict[str, Any], frames: int, image_index: int,
+    *, width: int = _WIDTH, height: int = _HEIGHT,
+) -> str:
     duration_seconds = frames / _FPS
     direction = motion_direction_for_index(image_index)
     beat["motion"] = motion_metadata(
@@ -96,8 +109,8 @@ def _motion_filter(beat: dict[str, Any], frames: int, image_index: int) -> str:
         direction=direction,
     )
     filter_chain = build_clip_ken_burns_filter(
-        width=_WIDTH,
-        height=_HEIGHT,
+        width=width,
+        height=height,
         fps=_FPS,
         duration_seconds=duration_seconds,
         direction=direction,
@@ -118,6 +131,17 @@ def render_b2_ltx_video(
         raise B2VideoCompositionError("ffmpeg and ffprobe are required for B2 LTX video")
     if run_dir.is_symlink():
         raise B2VideoCompositionError("Refusing linked LTX render directory")
+    # Every source clip must belong to the same immutable delivery resolution.
+    # Preserve playback of historical 720p jobs without silently resizing
+    # new Full HD generations down to the old format.
+    sizes = {
+        (int(job.request.parameters["width"]), int(job.request.parameters["height"]))
+        for job in jobs
+    }
+    if len(sizes) != 1:
+        raise B2VideoCompositionError("Mixed B2 clip resolutions cannot be composed")
+    width, height = next(iter(sizes))
+    validate_video_size(width, height, _FPS)
     beats = timeline["beats"]
     avatar = _verified_asset(
         output, manifest.get("avatar_file", "avatar.png"),
@@ -178,7 +202,9 @@ def render_b2_ltx_video(
                 _beat_frame(avatar, source, kind, frame)
                 command = [
                     "-loop", "1", "-framerate", str(_FPS), "-i", str(frame),
-                    "-vf", _motion_filter(beat, frames, image_count),
+                    "-vf", _motion_filter(
+                        beat, frames, image_count, width=width, height=height,
+                    ),
                 ]
                 image_count += 1
             else:
@@ -205,8 +231,8 @@ def render_b2_ltx_video(
                     command.extend(["-loop", "1", "-i", str(media)])
                     command.extend([
                         "-filter_complex",
-                        f"[0:v]fps={_FPS},{_fit(_WIDTH // 2)}[left];"
-                        f"[1:v]fps={_FPS},{_fit(_WIDTH // 2)}[right];"
+                        f"[0:v]fps={_FPS},{_fit(width // 2, height=height)}[left];"
+                        f"[1:v]fps={_FPS},{_fit(width // 2, height=height)}[right];"
                         f"[left][right]hstack=inputs=2,format=yuv420p,"
                         f"{padding}[v]",
                         "-map", "[v]",
@@ -214,7 +240,7 @@ def render_b2_ltx_video(
                 else:
                     command.extend([
                         "-vf",
-                        f"fps={_FPS},{_fit(_WIDTH)},format=yuv420p,{padding}",
+                        f"fps={_FPS},{_fit(width, height=height)},format=yuv420p,{padding}",
                     ])
             command.extend([
                 "-an", "-frames:v", str(frames),
@@ -266,7 +292,10 @@ def render_b2_ltx_video(
             "-t", f"{timeline['duration_seconds']:.9f}",
             "-movflags", "+faststart", str(temporary),
         ], "B2 LTX final mux")
-        actual = _probe_final(temporary, timeline["duration_seconds"], total_frames)
+        actual = _probe_final(
+            temporary, timeline["duration_seconds"], total_frames,
+            width=width, height=height,
+        )
         temporary.replace(final)
     finally:
         temporary.unlink(missing_ok=True)
@@ -277,7 +306,7 @@ def render_b2_ltx_video(
         "sha256": sha256_file(final),
         "duration_seconds": timeline["duration_seconds"],
         "rendered_duration_seconds": actual,
-        "fps": _FPS, "width": _WIDTH, "height": _HEIGHT,
+        "fps": _FPS, "width": width, "height": height,
         "beat_count": len(beats),
         "i2v_jobs": sum(job.kind == "i2v" for job in jobs),
         "a2v_jobs": sum(job.kind == "a2v" for job in jobs),
