@@ -16,7 +16,9 @@ from ai_video_factory.providers.professional_image_finishing import (
     ProfessionalImageFinishingError,
     finish_professional_images,
 )
-\n\ndef png(size: tuple[int, int]) -> bytes:
+
+
+def png(size: tuple[int, int]) -> bytes:
     out = io.BytesIO()
     Image.new("RGB", size, (80, 110, 145)).save(out, "PNG")
     return out.getvalue()
