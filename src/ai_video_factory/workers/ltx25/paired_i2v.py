@@ -41,16 +41,16 @@ logger = logging.getLogger(__name__)
 
 
 def _encode_pair_prompts(pipeline: Any, pair: tuple[PairInput, PairInput]) -> tuple[Any, Any]:
-    """Return to the successful visually reviewed B=2 prompt memory lifetime.
+    """Restore approved B=2 per-sample image resolution and prompt memory lifetime.
 
-    Each prompt uses the *exact* upstream PromptEncoder.__call__, including
-    Gemma disposal and allocator trimming BEFORE the next prompt starts.
-    The new shared-Gemma fast path failed at weight transfer on both internal
-    attempts in Salad; avoid keeping its GPU weights/outputs live across clips.
+    Per sample: resolve CRF, call the complete upstream PromptEncoder so Gemma
+    and its embeddings processor dispose/trim, then move to the next sample.
+    The shared-Gemma optimization OOMed during model-weight copy on Salad.
     """
-    results = []
+    prepared = []
     for index, sample in enumerate(pair):
         started = time.perf_counter()
+        image = pipeline.image_conditioner.resolve_crf([sample.image])[0]
         logger.info(
             "LTX25_I2V_PAIR_PROMPT_BASELINE_START index=%d memory=%s",
             index, json.dumps(_memory_pressure(), sort_keys=True),
@@ -61,7 +61,7 @@ def _encode_pair_prompts(pipeline: Any, pair: tuple[PairInput, PairInput]) -> tu
             enhance_static_cache=False,
             enhance_prompt_image=sample.image[0],
         )
-        results.append(context)
+        prepared.append((PairInput(sample.prompt, sample.seed, image), context))
         logger.info(
             "LTX25_I2V_PAIR_PROMPT_BASELINE_METRICS %s",
             json.dumps({
@@ -71,7 +71,7 @@ def _encode_pair_prompts(pipeline: Any, pair: tuple[PairInput, PairInput]) -> tu
                 "memory": _memory_pressure(),
             }, sort_keys=True),
         )
-    return results[0], results[1]
+    return prepared[0], prepared[1]
 
 
 @dataclass(frozen=True)
@@ -304,17 +304,7 @@ def generate_paired_fast_distilled(
     # time. Attempting combined text encoding could change text-conditioning.
     # Explicitly restore upstream per-prompt Gemma and connector disposal.
     # The unverified shared-Gemma attempt OOMed while transferring weights.
-    contexts = _encode_pair_prompts(pipeline, pair)
-    prepared = [
-        (
-            PairInput(
-                item.prompt, item.seed,
-                pipeline.image_conditioner.resolve_crf([item.image])[0],
-            ),
-            context,
-        )
-        for item, context in zip(pair, contexts, strict=True)
-    ]
+    prepared = _encode_pair_prompts(pipeline, pair)
     resolved = tuple(x[0] for x in prepared)
     video_ctx = torch.cat([x[1].video_encoding for x in prepared], dim=0)
     audio_ctx = torch.cat([x[1].audio_encoding for x in prepared], dim=0)
