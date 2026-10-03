@@ -391,16 +391,115 @@ def test_ltx_selects_finished_professional_png_not_original_grid_or_crop(tmp_pat
         _source_assets(tmp_path, plan, images)
 
 
-def test_professional_upscaler_preflight_occurs_before_paid_gpt(monkeypatch, tmp_path):
+def test_professional_generates_paid_originals_before_salad_then_recovers(
+    monkeypatch, tmp_path,
+):
     import asyncio
+    import json
 
     from scripts.pipeline import run_b_pipeline as runner
 
-    monkeypatch.setattr(runner.settings, "image_upscaler_url", None)
+    direct = RecordingGPT()
+    upscaler = RecordingUpscaler()
+    plan = professional(beat("1B", "media_image", "Forest"))
     monkeypatch.setattr(
         runner, "generate_b2_images",
-        lambda *args, **kwargs: pytest.fail("Paid GPT images were submitted"),
+        lambda output, visual_plan, **kwargs: gpt.generate_b2_images(
+            output, visual_plan, options=kwargs["options"], api_key=None,
+            direct_client=direct,
+        ),
     )
-    plan = professional(beat("1B", "media_image", "Forest"))
-    with pytest.raises(gpt.ImageGenerationError, match="IMAGE_UPSCALER_URL"):
+    monkeypatch.setattr(runner.settings, "image_upscaler_url", None)
+    with pytest.raises(gpt.ImageGenerationError, match="GPT originals are saved"):
         asyncio.run(runner._generate_images(tmp_path, plan))
+
+    original = tmp_path / "images" / "block_1" / "1B.png"
+    paid_data = original.read_bytes()
+    saved = json.loads((tmp_path / "images" / "manifest.json").read_text())
+    assert saved["status"] == "completed"
+    assert saved["finishing_status"] == "pending_upscaler"
+    assert len(direct.calls) == 1
+    assert runner._resume_unfinished_images(tmp_path, plan)
+
+    # Subsequent --images-only must skip clearing saved originals. Once Salad
+    # is available, the same plan safely reuses GPT state and finishes x2.
+    calls = []
+    monkeypatch.setattr(runner.settings, "image_upscaler_url", "https://gateway.salad.cloud")
+    for setting in (
+        "salad_api_key", "r2_endpoint_url", "r2_bucket",
+        "r2_access_key_id", "r2_secret_access_key",
+    ):
+        monkeypatch.setattr(runner.settings, setting, "test-value")
+    monkeypatch.setattr(
+        runner, "ensure_image_upscaler_ready",
+        lambda **kwargs: calls.append("salad_ready"),
+    )
+    monkeypatch.setattr(
+        runner, "create_optium_image_upscaler",
+        lambda **kwargs: upscaler,
+    )
+    result = asyncio.run(runner._generate_images(tmp_path, plan))
+    assert calls == ["salad_ready"]
+    assert original.read_bytes() == paid_data
+    assert len(direct.calls) == 1
+    assert upscaler.calls == [((1280, 720), (2560, 1440))]
+    assert result["finishing_status"] == "completed"
+    assert not runner._resume_unfinished_images(tmp_path, plan)
+
+
+def test_professional_paid_originals_survive_transient_salad_start_error(
+    monkeypatch, tmp_path,
+):
+    import asyncio
+    import json
+
+    from scripts.pipeline import run_b_pipeline as runner
+
+    direct = RecordingGPT()
+    plan = professional(beat("1B", "media_image", "Forest"))
+    monkeypatch.setattr(
+        runner, "generate_b2_images",
+        lambda output, visual_plan, **kwargs: gpt.generate_b2_images(
+            output, visual_plan, options=kwargs["options"], api_key=None,
+            direct_client=direct,
+        ),
+    )
+    for setting in (
+        "salad_api_key", "r2_endpoint_url", "r2_bucket",
+        "r2_access_key_id", "r2_secret_access_key",
+    ):
+        monkeypatch.setattr(runner.settings, setting, "test-value")
+    monkeypatch.setattr(runner.settings, "image_upscaler_url", "https://gateway.salad.cloud")
+
+    def reject_salad(**kwargs):
+        assert (tmp_path / "images" / "block_1" / "1B.png").is_file()
+        raise RuntimeError("Salad not ready")
+
+    monkeypatch.setattr(runner, "ensure_image_upscaler_ready", reject_salad)
+    with pytest.raises(gpt.ImageGenerationError, match="Salad not ready"):
+        asyncio.run(runner._generate_images(tmp_path, plan))
+    saved = json.loads((tmp_path / "images" / "manifest.json").read_text())
+    assert saved["finishing_status"] == "pending_upscaler"
+    assert runner._resume_unfinished_images(tmp_path, plan)
+    assert len(direct.calls) == 1
+
+
+def test_images_only_resume_keeps_incomplete_paid_states(tmp_path):
+    import json
+
+    from scripts.pipeline import run_b_pipeline as runner
+
+    plan = professional(beat("1B", "media_image", "Forest"))
+    manifest = tmp_path / "images" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({
+        "schema_version": "openai-b2-images-v1",
+        "status": "incomplete",
+    }), encoding="utf-8")
+    assert runner._resume_unfinished_images(tmp_path, plan)
+    manifest.write_text(json.dumps({
+        "schema_version": "openai-b2-images-v1",
+        "status": "completed",
+        "finishing_status": "completed",
+    }), encoding="utf-8")
+    assert not runner._resume_unfinished_images(tmp_path, plan)

@@ -90,6 +90,37 @@ pwsh -File scripts/salad/manage_image_upscaler_service.ps1 -Action Status
 
 Use the printed Gateway URL as `IMAGE_UPSCALER_URL`.
 
+### On-demand startup from run.ps1
+
+By default, `IMAGE_UPSCALER_AUTO_START=true`: when a validated B2 plan
+needs professional `media_image` or `avatar_media` beats, both ordinary and
+`--images-only` runs **generate and checkpoint original paid GPT images first**.
+Grid panels are also cropped and verified. Only then does the existing Salad
+API client inspect the independent Container Group, start it if stopped and
+wait for a ready instance (up to 30 minutes) before x2 processing. Already
+running/deploying instances are reused; no new group is provisioned.
+A wrong Gateway URL, missing organization/project, API failure or readiness
+timeout leaves the original images untouched and the manifest explicitly
+`pending_upscaler`, but still prevents publishing any unfinished professional
+images.
+
+Retry the same saved B2 plan with `run.ps1 <script> <avatar> --images-only`.
+When original generation or professional finishing is incomplete, the runner
+keeps the existing paid PNGs and their job states, reuses verified originals
+and completes only unfinished work. A fully completed image run keeps the
+existing `--images-only` explicit regeneration behavior.
+
+To opt out, put `IMAGE_UPSCALER_AUTO_START=false` in `config/salad.env` and
+start the group yourself. Casero, professional jobs without x2 photo beats,
+planning-only, audio-only and video-only runs do not start the image upscaler.
+
+**Startup does not imply automatic shutdown.** Other concurrent runs may share
+this independent single-replica service, so stopping it at the end of one run
+could interrupt another. Stop the group from Salad after all image workloads
+have completed to avoid unnecessary GPU charges. Automated safe idle shutdown
+would require shared cross-run lease/idle coordination.
+
+
 ## Bordell runtime configuration
 
 Bordell keeps credentials and account selectors in `.env`. Put the upscaler URL in

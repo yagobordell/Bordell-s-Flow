@@ -77,9 +77,13 @@ GPT Image generation size, quality, prompt and original paid PNG. **Only after**
 individual generation or verified grid-panel cropping, the OptiumLabs Salad
 image service runs **exact 2x** on each such beat:
 `1280x720 -> 2560x1440` and `768x864 -> 1536x1728` respectively.
-The service is mandatory for professional photo beats: missing
-`IMAGE_UPSCALER_URL`, `SALAD_API_KEY`, or existing R2 credentials makes the
-new run fail **before any paid GPT image work**. This never affects Casero.
+The service is mandatory to **finish** professional photo beats, but Salad
+availability does not gate original GPT Image generation. Paid original PNGs and
+verified grid crops are saved first; then Salad is started/reused and the x2
+finishing runs. If Salad/R2 is unavailable, the manifest records
+`finishing_status=pending_upscaler` and `--images-only` reuses the saved paid
+originals instead of charging for them again. Preview/video publishing still
+requires completed professional finishing. This never affects Casero.
 
 Images destined for professional I2V or newly generated speaking A2V source
 frames (`media_video` and generated `avatar`) are **native GPT Image**
