@@ -7,9 +7,9 @@ from types import SimpleNamespace
 import pytest
 
 from ai_video_factory.bots.contracts import (
+    B2Output,
     B11Output,
     B12Output,
-    B2Output,
     ProfessionalB2Output,
 )
 from ai_video_factory.bots.workflow import BPipelineValidationError, run_b_pipeline
