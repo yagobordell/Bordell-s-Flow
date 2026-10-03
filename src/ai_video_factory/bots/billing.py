@@ -26,7 +26,7 @@ _IMAGE_PRICING = {
     "image_input": Decimal("8.00"),
     "image_output": Decimal("30.00"),
 }
-_STAGES = ("B1.1", "CTA", "CTA Ebook", "B1.2", "B2", "Fish director", _IMAGE_STAGE, "CTA image")
+_STAGES = ("B1.1", "CTA", "CTA Ebook", "B1.2", "B2", "V1", "V2", "V3", "Fish director", _IMAGE_STAGE, "CTA image")
 
 
 def _field(value: object, name: str, default: Any = None) -> Any:
@@ -355,6 +355,12 @@ class ApiCostLedger:
         )
         expected["CTA image"] = sum(item["stage"] == "CTA image" for item in ordered)
         fish_count = sum(item["stage"] == "Fish director" for item in ordered)
+        for v_stage in ("V1", "V2", "V3"):
+            expected[v_stage] = (
+                sum(item["stage"] == v_stage for item in ordered)
+                if expected_calls is None
+                else expected_calls.get(v_stage, sum(item["stage"] == v_stage for item in ordered))
+            )
         expected["Fish director"] = (
             fish_count if expected_calls is None
             else expected_calls.get("Fish director", fish_count)
@@ -388,8 +394,8 @@ class ApiCostLedger:
         return {
             "currency": "USD",
             "kind": "estimated_api_token_cost_not_invoice",
-            "included": "GPT-6 Luna planning, Fish director and GPT Image 2.5 calls",
-            "excluded": "OpenAI STT and Fish TTS charges",
+            "included": "GPT-6 Luna B/V planning, Fish director and GPT Image 2.5 calls",
+            "excluded": "OpenAI STT and all Gemini/AI33 TTS provider charges",
             "run_status": run_status,
             "pricing_status": "complete" if complete else "partial_or_unavailable",
             "pricing_model": "gpt-6-luna",
