@@ -32,15 +32,30 @@ requirements and memory/timing benefits are actually observed on Salad.
 
 ## Quality-preserving latency changes (experimental, NOT approved without GPU trial)
 
-The opt-in pair job now builds Gemma **once**, but still encodes each text
-prompt separately in B=1, using the same tokenizer, Gemma weights/dtype,
-single-prompt padding and embeddings processor arithmetic. The embeddings
-processor also loads only once. Each stage builds the video encoder only
-once, but passes image A then B through the SAME single-image conditioning
-function. No image is conditioned on another image.
+**Important October 3 OOM postmortem:** the NEW shared-Gemma implementation
+never reached transformer generation: the first attempt began the shared
+prompt phase, OOMed, and restarted B=2; the second attempt OOMed while
+copying Gemma weights to CUDA (traceback in safetensors loader). It is NOT
+evidence that resident transformer failed; even the nonresident fallback
+ran out of memory before either diffusion stage. Therefore the experimental
+shared-Gemma optimization has been ROLLED BACK. Both prompts again use
+the COMPLETE original upstream PromptEncoder, including separate image
+resolution, single-prompt call, text encoder disposal, embeddings
+processor and allocator trim BETWEEN videos. Do not assume these changes
+fully resolve the OOM without a GPU validation run.
 
-By default, the new experimental pair job attempts to **keep one FP8
-transformer on GPU from stage 1 through upsample and stage 2**. The existing
+Each diffusion stage still builds the video encoder once, passing image A
+and image B separately through the approved one-image conditioning
+function. The earlier OOM-fallback bug that kept BOTH stages' image
+conditionings resident is also fixed: the visually approved two-build
+B=2 path builds stage2 conditioning only AFTER stage1 and upsample.
+
+By default, the experimental pair job uses the **previously successful
+two-build B=2 stage path**. The unproven single-build optimization is
+now disabled by default: activate it only with `-EnableStageReuse` after
+reviewing this OOM and arranging an explicitly controlled GPU test. When
+enabled, it tries to **keep one FP8 transformer on GPU from stage 1
+through upsample and stage 2**. The existing
 B=2 GPU kernels, both independent RNG streams, sigmas and latents are
 unchanged. Keeping transformer weights resident while VAE upsampling MAY
 exhaust 32 GiB VRAM. If it does, the worker automatically frees the failed
@@ -58,16 +73,18 @@ The report's truthful per-run fields:
 - failed_attempts: OOMs and whether an optimized shared-stage attempt was
   retried. Use elapsed_seconds AND transformer stage logs, not just mode.
 
-**Control experiment:** to run the updated one-build workflow against the
-approved original two-build batch2, use the exact same images, prompts,
-seeds and new RunId with -DisableStageReuse. This flag leaves shared Gemma
-and video encoder optimizations on, isolating just transformer residency.
+**Control experiment:** the safe default is the two-build B=2 path with
+original per-prompt Gemma disposal. A strictly opt-in trial of single-
+build transformer GPU residency requires `-EnableStageReuse` and a new
+RunId with the exact same inputs/prompts/seeds. The legacy flag
+`-DisableStageReuse` is still accepted but is now redundant by default.
+Do not claim a speedup or GPU-memory fit without actual measurements.
 An additional unmodified old-Docker reference is needed to isolate *all*
 changes; the previously approved visual October 3 pair is the reference.
 Avoid paying for another trial until CI is green and a new pinned image
 has been built and prepared while Salad is stopped.
 
-The worker now logs LTX25_I2V_PAIR_PROMPT_SHARED_METRICS,
+The worker now logs LTX25_I2V_PAIR_PROMPT_BASELINE_METRICS,
 LTX25_I2V_PAIR_SHARED_TRANSFORMER_LOADED and
 LTX25_I2V_PAIR_STAGE_METRICS. Process counters under /proc/self provide
 RSS, major/minor page faults and physical read bytes when Salad masks
@@ -132,10 +149,12 @@ $Shared = @{
 
 The last command validates local inputs, reference files and .env for FREE;
 it makes NO Salad/R2 requests. Once that passes, run one paid experiment.
-The recommended first attempt allows both transparent reduced-memory modes:
+The recommended next controlled run should NOT begin until the old Salad
+worker logs are reviewed. The safe two-build B=2 mode is now the default;
+for a strict true B=2 run omit sequential fallback:
 
 ~~~powershell
-.\scripts\smoke\run_ltx25_i2v_batch2_trial.ps1 @Shared -AllowSequentialFallback
+.\scripts\smoke\run_ltx25_i2v_batch2_trial.ps1 @Shared
 ~~~
 
 For a strict genuine B=2 admission test, omit -AllowSequentialFallback. An
