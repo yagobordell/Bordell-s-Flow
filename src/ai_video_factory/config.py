@@ -55,6 +55,7 @@ class Settings(BaseSettings):
 
     salad_api_key: str | None = None
     image_upscaler_url: str | None = None
+    image_upscaler_auto_start: bool = True
     hf_token: str | None = None
     postgres_dsn: str | None = None
     # The capacity leader may require a session DSN distinct from the worker pool.
