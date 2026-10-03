@@ -14,6 +14,7 @@ import pytest
 from PIL import Image
 
 from ai_video_factory.compositor import b_video as compositor
+from ai_video_factory.compositor.static_preview import _beat_frame
 from ai_video_factory.video_resolution import validate_video_size
 from ai_video_factory.workers.ltx25.a2v import LTXAudioToVideoParameters
 from ai_video_factory.workers.ltx25.model import (
@@ -149,3 +150,20 @@ def test_casero_cta_full_hd_composition_preserves_exact_1080p(
     assert (receipt["width"], receipt["height"]) == (1920, 1080)
     with pytest.raises(CTACompositionError, match="1280x720"):
         compose_reusable_cta(tmp_path, video_size=(1280, 720))
+
+
+def test_full_hd_still_uses_original_source_pixels_not_720p_preview(
+    tmp_path: Path,
+) -> None:
+    avatar = tmp_path / "avatar.png"
+    original = tmp_path / "original-image-x2.png"
+    destination = tmp_path / "full-hd-still.png"
+    Image.new("RGB", (1280, 720), "white").save(avatar)
+    high_res = Image.new("RGB", (2560, 1440), (30, 50, 80))
+    high_res.paste((240, 30, 10), (0, 0, 1280, 1440))
+    high_res.save(original)
+    _beat_frame(avatar, original, "media_image", destination, size=(1920, 1080))
+    with Image.open(destination) as result:
+        assert result.size == (1920, 1080)
+        assert result.getpixel((200, 500)) == (240, 30, 10)
+        assert result.getpixel((1720, 500)) == (30, 50, 80)
