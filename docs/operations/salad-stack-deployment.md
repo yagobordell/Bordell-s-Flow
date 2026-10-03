@@ -179,3 +179,13 @@ it from `run`, and never patch an existing image-specific group to a
 different digest. Keep `SALAD_VERSION_MAX_GROUPS` sufficiently large for the
 authorized versions that must remain registered, while constraining the
 global project replica quota to control GPU costs.
+
+
+If you already have a manually managed experiment group in the *same* Salad
+project, you may explicitly list its exact name in
+`SALAD_EXTERNAL_GROUP_ALLOWLIST` (comma-separated). The controller never
+changes allowlisted groups and reserves their observed running replicas from
+the global project quota. During any external group's pending/deploying
+transition, allocation is conservatively deferred until its capacity is known.
+Unrecognized/unregistered groups still fail closed. This allowlist is for
+legacy manual tests; ordinary `run` image versions need no allowlist.
