@@ -8,6 +8,7 @@ The audited B pipeline itself retains its legacy CLI and separate recovery files
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -83,8 +84,6 @@ def _managed_avatar_names(data: Path) -> list[str]:
         if record.is_symlink() or not record.is_file():
             continue
         try:
-            import json
-
             payload = json.loads(record.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             # The cover reader will validate its persisted record when needed.
