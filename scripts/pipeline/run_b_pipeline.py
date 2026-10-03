@@ -1184,6 +1184,14 @@ def _register_ltx_worker(service: str) -> None:
             "Apply infra/sql/006_worker_image_routes.sql on Supabase and "
             "verify controller connectivity; no paid job was submitted."
         ) from exc
+    if route.routing_contract != "v1":
+        raise RuntimeError(
+            "The selected immutable LTX Docker image has not been verified "
+            "for routing contract v1. Rebuild this image with the versioned "
+            "worker adapter, smoke-test it, then approve it once with "
+            "scripts/salad/approve_worker_image.py. No paid LTX inference "
+            "has been submitted."
+        )
     print(
         f"  LTX {service} version={image.rsplit(':', 1)[-1][:16]} "
         f"group={route.group_name}; no existing deployment will be modified",
