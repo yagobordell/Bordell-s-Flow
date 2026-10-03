@@ -112,6 +112,7 @@ def _paired_stage(
     initial_video: torch.Tensor | None = None,
     initial_audio: torch.Tensor | None = None,
     ancestral: bool = False,
+    max_forward_batch_size: int = 2,
 ) -> tuple[Any, Any]:
     """Pinned DiffusionStage.__call__ semantics with VideoPixelShape(batch=2).
 
@@ -153,7 +154,7 @@ def _paired_stage(
     with stage._transformer_ctx(video_tools=video_tools) as built:
         transformer = built if stage._model_wrapper is None else stage._model_wrapper(built, video_tools)
         # This is genuinely a single B=2 model forward, NOT two serialized jobs.
-        batched_transformer = BatchSplitAdapter(transformer, max_batch_size=2)
+        batched_transformer = BatchSplitAdapter(transformer, max_batch_size=max_forward_batch_size)
         denoiser = SimpleDenoiser(video_context, audio_context)
         kwargs = {
             "sigmas": sigmas,
@@ -210,6 +211,7 @@ def generate_paired_fast_distilled(
     height: int,
     frame_rate: float,
     num_frames: int,
+    max_forward_batch_size: int = 2,
 ) -> tuple[Any, Any]:
     """Generate two clips in B=2 transformer forwards with B=1 quality semantics.
 
@@ -218,6 +220,8 @@ def generate_paired_fast_distilled(
     """
     from ltx_pipelines.utils.types import PipelineOutput
 
+    if max_forward_batch_size not in (1, 2):
+        raise ValueError("Experimental transformer forward batch size must be 1 or 2")
     if len(pair) != 2 or pair[0].seed == pair[1].seed:
         raise ValueError("Batch2 needs two independent seeds")
     assert_resolution(height=height, width=width, is_two_stage=True)
@@ -272,6 +276,7 @@ def generate_paired_fast_distilled(
         width=width // 2, height=height // 2,
         frames=num_frames, fps=frame_rate,
         ancestral=pipeline.use_ancestral_sampler,
+        max_forward_batch_size=max_forward_batch_size,
     )
     # Upscale individually, preserving baseline's B=1 arithmetic and peak VRAM.
     upscaled = torch.cat(
@@ -291,6 +296,7 @@ def generate_paired_fast_distilled(
         frames=num_frames, fps=frame_rate,
         initial_video=upscaled,
         initial_audio=first_audio.latent,
+        max_forward_batch_size=max_forward_batch_size,
     )
     # Decode separately: both latents are independent; never decode one clip
     # with the other's seed, or create two live VAE models.
@@ -302,5 +308,8 @@ def generate_paired_fast_distilled(
             _lazy_decode(pipeline, latent, tiling, generator),
             None, num_frames, tiling, None, latent,
         ))
-    logger.info("LTX25_I2V_BATCH2_GENERATED shared_transformer_stage_builds=2 seeds=%s", seeds)
+    logger.info(
+        "LTX25_I2V_PAIR_GENERATED shared_transformer_stage_builds=2 forward_batch=%d seeds=%s",
+        max_forward_batch_size, seeds,
+    )
     return tuple(results)
