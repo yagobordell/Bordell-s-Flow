@@ -148,6 +148,15 @@ def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     assert first.request.parameters["height"] == 1080
     assert video.request.parameters["width"] == 1920
     assert video.request.parameters["height"] == 1080
+    legacy_timeline, legacy_jobs, legacy_run = b_video.build_b2_video_plan(
+        tmp_path, plan, audio, images, output_size=(1280, 720),
+    )
+    assert legacy_timeline["duration_seconds"] == _timeline["duration_seconds"]
+    assert legacy_run != _run_dir
+    assert legacy_jobs[0].request.job_id != first.request.job_id
+    assert legacy_jobs[1].request.job_id != video.request.job_id
+    assert legacy_jobs[0].request.parameters["width"] == 1280
+    assert legacy_jobs[1].request.parameters["height"] == 720
     assert video.request.parameters["prompt"] == "A bird takes off."
     assert video.request.parameters["num_frames"] == 17
     assert video.request.inputs[0].sha256 == images["items"][1]["sha256"]
