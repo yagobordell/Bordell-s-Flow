@@ -90,9 +90,11 @@ def _managed_avatar_names(data: Path) -> list[str]:
             continue
         if not isinstance(payload, dict):
             continue
-        for item in payload.get("covers", []):
-            if isinstance(item, dict) and isinstance(item.get("name"), str):
-                covers.add(item["name"].casefold())
+        entries = payload.get("covers")
+        if isinstance(entries, list):
+            for item in entries:
+                if isinstance(item, dict) and isinstance(item.get("name"), str):
+                    covers.add(item["name"].casefold())
 
     avatars = available_avatars(data)
     return sorted({
