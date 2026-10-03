@@ -124,3 +124,39 @@ Required secrets such as `POSTGRES_DSN`, R2 credentials,
 
 Production workers poll Postgres directly. Do not add `SALAD_QUEUE_ENABLED`, per-model queue names
 or queue-autoscaler configuration back into deployment state.
+
+
+## Reviewed LTX A2V image drift during `run.ps1`
+
+The pinned A2V image in `SALAD_LTX25_PAGEABLE_A2V_IMAGE` must match the
+independent Salad `ltx25` worker exactly. A Git pull never redeploys a pinned
+Docker image. A mismatch is not an inference retry and cannot be corrected by
+simply starting the Container Group.
+
+By default, `SALAD_LTX_AUTO_PREPARE_ON_MISMATCH=true`. When an A2V job is about
+to be submitted, `run` checks the image. If it is already correct, the
+existing controller owns all normal scaling. If the group reports a different
+image, `run` calls the existing audited `manage_salad_worker.ps1 -Action Prepare`
+**only if** the group is stably stopped with no pending Salad change, the
+Capacity Controller is inactive, and Postgres has zero unfinished A2V jobs.
+The manager rechecks stopped state and obtains the same session advisory lock
+used by the controller; `-AllowControllerOverride` is never used. After
+preparation, the runner verifies the pinned image and stopped state again.
+
+If the controller is active, the worker is running/deploying, or Postgres has
+unfinished A2V jobs, automatic replacement deliberately fails before paid
+inference. Complete/drain existing jobs and schedule a maintenance interval:
+stop the singleton Capacity Controller, then use the existing audited manager:
+
+```powershell
+.\\scripts\\salad\\manage_salad_worker.ps1 \`
+  -Action Prepare -Service ltx25 \`
+  -PinnedImage $env:SALAD_LTX25_PAGEABLE_A2V_IMAGE \`
+  -EnvFile .env -NonInteractive
+```
+
+Restart the Capacity Controller and re-run `run.ps1 <script> <avatar>
+--generate-video`. Validated audio and images are reused; no new paid LTX
+work is submitted while the exact reviewed digest is missing. I2V deployment
+remains independent and is not silently changed. Set
+`SALAD_LTX_AUTO_PREPARE_ON_MISMATCH=false` to disable automatic preparation.
