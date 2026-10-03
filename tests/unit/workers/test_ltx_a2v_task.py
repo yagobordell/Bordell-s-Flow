@@ -118,7 +118,7 @@ def _request(
     )
 
 
-def test_a2v_parameters_are_audio_driven_and_keep_720p24_defaults() -> None:
+def test_a2v_parameters_are_audio_driven_and_default_to_full_hd_24fps() -> None:
     parameters = LTXAudioToVideoParameters()
 
     assert parameters.generation_profile == LTX_A2V_GENERATION_PROFILE
@@ -135,8 +135,8 @@ def test_a2v_parameters_are_audio_driven_and_keep_720p24_defaults() -> None:
     ).prompt == "woman talks into a mic"
     with pytest.raises(ValidationError, match="generation_profile"):
         LTXAudioToVideoParameters(generation_profile="ltx25-a2v-unknown")
-    assert parameters.width == 1280
-    assert parameters.height == 720
+    assert parameters.width == 1920
+    assert parameters.height == 1080
     assert parameters.fps == 24
     assert "synchronization" in parameters.prompt
 
