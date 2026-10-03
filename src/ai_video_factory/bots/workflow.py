@@ -736,7 +736,17 @@ async def run_b_pipeline(
 
         b12_started = perf_counter()
         try:
-            b12_results = await asyncio.gather(*(b12_one(block) for block in materialized))
+            b12_outcomes = await asyncio.gather(
+                *(b12_one(block) for block in materialized),
+                return_exceptions=True,
+            )
+            b12_failures = [
+                item for item in b12_outcomes if isinstance(item, BaseException)
+            ]
+            if b12_failures:
+                # Successful block outputs are already persisted for --from B1.2.
+                raise b12_failures[0]
+            b12_results = [item for item in b12_outcomes if isinstance(item, B12Output)]
         finally:
             if on_stage_duration is not None:
                 on_stage_duration("B1.2", perf_counter() - b12_started)
@@ -890,14 +900,23 @@ async def run_b_pipeline(
 
     b2_started = perf_counter()
     try:
-        generated_b2 = await asyncio.gather(
+        b2_outcomes = await asyncio.gather(
             *(
                 b2_one(meta, block, b12)
                 for meta, block, b12 in zip(b11.blocks, materialized, b12_results, strict=True)
                 if (not retry_ids or meta.block_id in retry_ids)
                 and (not previous_partial_b2 or meta.block_id not in previous_partial_b2)
-            )
+            ),
+            return_exceptions=True,
         )
+        b2_failures = [item for item in b2_outcomes if isinstance(item, BaseException)]
+        if b2_failures:
+            # Finish every independent block before allowing a stage failure.
+            raise b2_failures[0]
+        generated_b2 = [
+            item for item in b2_outcomes
+            if isinstance(item, (B2Output, ProfessionalB2Output))
+        ]
         if retry_ids:
             generated_by_id = {item.blocks[0].block_id: item for item in generated_b2}
             b2_results = [
