@@ -29,6 +29,7 @@ class Batch2Parameters(BaseModel):
     b: LTXVideoParameters
     allow_sequential_fallback: bool = False
     reuse_transformer_across_stages: bool = False
+    accept_full_hd_batch2_oom_risk: bool = False
 
     @model_validator(mode="after")
     def check_pair(self) -> Batch2Parameters:
@@ -37,12 +38,25 @@ class Batch2Parameters(BaseModel):
             LTX_PRODUCTION_I2V_PROFILE, LTX_PRODUCTION_I2V_PROFILE,
         ):
             raise ValueError("Batch2 must use the exact validated production FP8 I2V recipe")
-        if (a.width, a.height, a.fps, a.num_frames) != (
-            1280, 720, 24, 121,
-        ) or (b.width, b.height, b.fps, b.num_frames) != (
-            1280, 720, 24, 121,
-        ):
-            raise ValueError("Experimental batch2 is restricted to two 5s 720p/24fps videos")
+        geometry = (a.width, a.height, a.fps, a.num_frames)
+        if geometry != (b.width, b.height, b.fps, b.num_frames):
+            raise ValueError("Batch2 requires matching video geometries and frame counts")
+        if geometry == (1920, 1080, 24, 121):
+            if not self.accept_full_hd_batch2_oom_risk:
+                raise ValueError(
+                    "1080p batch2 is unvalidated on a 32-GiB RTX 5090: "
+                    "explicitly accept the Full HD OOM risk before this experiment"
+                )
+            if self.allow_sequential_fallback or self.reuse_transformer_across_stages:
+                raise ValueError(
+                    "Unvalidated 1080p batch2 forbids sequential fallback and "
+                    "unvalidated shared-stage transformer residency"
+                )
+        elif geometry != (1280, 720, 24, 121):
+            raise ValueError(
+                "Experimental batch2 only supports matching 5s 720p clips, "
+                "or explicit-risk matching 5s 1080p clips"
+            )
         if a.seed == b.seed:
             raise ValueError("Samples must have distinct RNG seeds")
         return self
@@ -98,6 +112,7 @@ class ExperimentalBatch2TaskRunner:
                 parameters_a=params.a, parameters_b=params.b,
                 allow_sequential_fallback=params.allow_sequential_fallback,
                 reuse_transformer_across_stages=params.reuse_transformer_across_stages,
+                accept_full_hd_batch2_oom_risk=params.accept_full_hd_batch2_oom_risk,
             )
         except Exception as exc:
             if is_retryable_gpu_failure(exc):
