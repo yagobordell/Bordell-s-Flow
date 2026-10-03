@@ -7,7 +7,7 @@ param(
     [Parameter(Mandatory)][string]$PromptB,
     [Parameter(Mandatory)][string]$ExpectedPinnedImage,
     [string]$RunId = ("i2v-batch2-" + [DateTime]::UtcNow.ToString("yyyyMMddHHmmss")),
-    [int]$SeedA = 5242, [int]$SeedB = 5243,
+    [int]$SeedA = 5243, [int]$SeedB = 5244,
     [string]$ReferenceA = "", [string]$ReferenceB = "",
     [string]$EnvFile = ".env",
     [switch]$CheckInputsOnly, [switch]$AllowSequentialFallback,
