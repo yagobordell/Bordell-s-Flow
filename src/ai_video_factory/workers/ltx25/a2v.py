@@ -1512,6 +1512,15 @@ class LTXAudioToVideoTaskRunner:
         request: InferenceJobRequest,
         inputs: Mapping[str, Path],
     ) -> None:
+        # Missing public geometry was historically interpreted as 720p.
+        # Reject such ambiguous old queue records rather than interpreting
+        # their unchanged paid fingerprint as the NEW 1080p default.
+        if "width" not in request.parameters or "height" not in request.parameters:
+            raise _input_error(
+                "INVALID_REQUEST",
+                "A2V requests must explicitly provide width and height "
+                "(1920x1080 for new Full HD jobs or 1280x720 for legacy jobs)",
+            )
         if request.task != self.task_name:
             raise _input_error(
                 "INVALID_REQUEST",
