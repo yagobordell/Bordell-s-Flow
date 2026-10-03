@@ -83,7 +83,7 @@ def _write_fake_benchmark(
     for profile in profiles:
         for iteration in range(1, 4):
             directory = folder / f"{profile}-{iteration}"
-            directory.mkdir()
+            directory.mkdir(parents=True)
             video = directory / "avatar_segment.mp4"
             video.write_bytes(b"fake-mp4")
             meta = directory / "metadata.json"
