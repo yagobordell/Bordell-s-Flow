@@ -59,8 +59,8 @@ from ai_video_factory.inference.salad import (
     SaladClient,
     SaladDispatchConfig,
 )
-from ai_video_factory.inference.salad_image_upscaler_start import ensure_image_upscaler_ready
 from ai_video_factory.inference.salad_billing import SaladCostMeter, read_salad_costs
+from ai_video_factory.inference.salad_image_upscaler_start import ensure_image_upscaler_ready
 from ai_video_factory.managed_layout import publish_managed_run, sync_managed_outputs
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
