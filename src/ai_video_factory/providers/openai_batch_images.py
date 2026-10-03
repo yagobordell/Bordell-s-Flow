@@ -105,7 +105,12 @@ class ImageOptions:
 
 def _job_quality(job: dict[str, Any], options: ImageOptions) -> str:
     """Only composite grids use medium; individual image jobs keep the configured low."""
-    return _GRID_IMAGE_QUALITY if job.get("grid") is not None else options.quality
+    return (
+        _GRID_IMAGE_QUALITY
+        if job.get("grid") is not None
+        or (job.get("visual_style") == "profesional" and job.get("video_source"))
+        else options.quality
+    )
 
 
 def effective_image_prompt(
