@@ -654,10 +654,15 @@ async def generate_professional_audio(
                 state = {"block_id": bid, "fingerprint": _fingerprint(turns), "status": "planned"}
                 _json(state_path, state)
             audio_path = folder / "audio.wav"
-            if state["status"] in {"tts_submitting_unknown", "tts_invalid"}:
-                raise VoicePlanError(
-                    f"Gemini block {bid} may have incurred charges; reconcile {state_path}"
-                )
+            # A block is either completed or retryable.  Older runs may still
+            # contain the removed ambiguous states; migrate them to planned so
+            # --resume-audio can finish the run after a provider failure.
+            if state["status"] in {
+                "tts_submitting_unknown", "tts_invalid", "tts_failed",
+            }:
+                state["status"] = "planned"
+                state.pop("error", None)
+                _json(state_path, state)
             if state["status"] == "planned":
                 # Explicit --regenerate-audio uses a new nonce and must generate
                 # fresh audio; normal B2 correction may reuse identical speech.
@@ -674,14 +679,20 @@ async def generate_professional_audio(
                     state["sha256"] = reused_digest
                     _json(state_path, state)
             if state["status"] == "planned":
-                state["status"] = "tts_submitting_unknown"
-                _json(state_path, state)
+                # Keep an incomplete block retryable until a verified WAV is
+                # available.  There is deliberately no ambiguous submission
+                # state in this workflow.
                 try:
                     generated = await speech.generate_directed_speech(
                         turns=turns, model=DEFAULT_GEMINI_TTS_MODEL, voice=voice_id,
                     )
-                except Exception:
-                    # Keep ambiguous state even for malformed returned audio: paid call exists.
+                except Exception as exc:
+                    # Failed blocks are retryable.  The caller explicitly opted
+                    # into retrying incomplete audio instead of preserving an
+                    # ambiguous state that permanently blocks the run.
+                    state["status"] = "tts_failed"
+                    state["error"] = type(exc).__name__
+                    _json(state_path, state)
                     raise
                 audio_path.parent.mkdir(parents=True, exist_ok=True)
                 audio_path.write_bytes(generated.content)

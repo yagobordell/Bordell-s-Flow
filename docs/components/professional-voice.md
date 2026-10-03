@@ -74,10 +74,10 @@ For professional avatars, the voice is stored separately from Casero under
 avatar library root). The first interactive run requests an optional Gemini voice name or ID;
 Enter chooses the built-in default, Algenib. Non-interactive runs also use
 Algenib unless `--voice-id` is explicitly supplied. Google AI Studio names
-containing spaces (e.g. `Uncle Enzo 3`) must be quoted in PowerShell and
-are sent through `speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName`,
-as in Google's exported SDK example. Legacy single-token IDs
-(`Algenib`, `Kore`, `voice_...`) retain their previous wire format.
+containing spaces (e.g. `Uncle Enzo 3`) must be quoted in PowerShell. When an
+API key is available, the launcher looks up that exact display name through
+`GET /v1beta/voices` and stores the returned `voice_...` ID. Legacy single-token
+IDs (`Algenib`, `Kore`, `voice_...`) continue to work directly.
 Google must recognize the chosen voice for the configured API account.
 
 ```powershell
@@ -110,19 +110,17 @@ State for each paid Gemini block is written under
 `audio/runs/gemini-<fingerprint>/blocks/block_<id>/task.json` before
 submission. Completed WAVs and STT transcripts are hashed; the existing
 `audio/latest.json` and block timeline contract are preserved.
-`--resume-audio` reuses verified completed artifacts, or attempts only
-unsubmitted/missing portions of one pending run. A `tts_submitting_unknown`
-block is **never retried blindly**: reconcile the charge and saved result
-manually. `--regenerate-audio` explicitly starts a distinct paid audio
-generation using the saved professional B2 plan and direction, after
-rejecting any unresolved prior paid attempts.
+`--resume-audio` reuses verified completed artifacts and retries incomplete
+blocks of one pending run. A failed block is recorded as retryable and never
+as an ambiguous permanent state. `--regenerate-audio` explicitly starts a
+distinct paid audio generation using the saved professional B2 plan and
+direction.
 
-OpenAI STT reconciliation follows the existing two-retry policy. **Gemini
-block TTS is not silently regenerated** after exhausting STT corrections;
-otherwise a paid unknown-result POST could be duplicated. Resolve that
-failure explicitly. No live paid Gemini API smoke is implied by offline
-tests; verify the selected voice and tagged multilingual style with a
-controlled real test before production deployment.
+OpenAI STT reconciliation follows the existing two-retry policy. Gemini
+block TTS retries incomplete blocks when `--resume-audio` is requested. No
+live paid Gemini API smoke is implied by offline tests; verify the selected
+voice and tagged multilingual style with a controlled real test before
+production deployment.
 
 ## V1 / V2 / V3 metrics and cost accounting
 

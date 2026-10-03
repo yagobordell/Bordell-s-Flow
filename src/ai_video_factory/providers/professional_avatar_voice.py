@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ai_video_factory.providers.gemini_tts import (
     DEFAULT_GEMINI_TTS_VOICE,
+    resolve_gemini_voice_id,
     validate_gemini_voice_name,
 )
 
@@ -29,7 +30,7 @@ class ProfessionalAvatarVoice:
 def ensure_professional_avatar_voice(
     *, avatar_file: Path, input_voice_id: str | None = None,
     use_default: bool = False, interactive: bool | None = None,
-    allow_replace: bool = False,
+    allow_replace: bool = False, gemini_api_key: str | None = None,
 ) -> ProfessionalAvatarVoice:
     """Prompt at first use only; non-interactive CI can use the prebuilt default."""
     if not avatar_file.is_file() or avatar_file.is_symlink():
@@ -61,11 +62,16 @@ def ensure_professional_avatar_voice(
             ).strip()
             selected = choice or DEFAULT_GEMINI_TTS_VOICE
     if current is not None:
-        saved = validate_gemini_voice_name(current.get("voice_id"))
+        saved = resolve_gemini_voice_id(
+            validate_gemini_voice_name(current.get("voice_id")),
+            api_key=gemini_api_key,
+        )
+        if selected is not None:
+            selected = resolve_gemini_voice_id(selected, api_key=gemini_api_key)
         if selected is not None and selected != saved and not allow_replace:
             raise ValueError("This avatar already has a different professional Gemini voice")
         selected = selected if allow_replace else saved
-    selected = validate_gemini_voice_name(selected)
+    selected = resolve_gemini_voice_id(selected, api_key=gemini_api_key)
     if current is None or current["voice_id"] != selected:
         folder.mkdir(parents=True, exist_ok=True)
         temporary = folder / "gemini_voice.json.tmp"

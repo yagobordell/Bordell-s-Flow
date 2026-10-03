@@ -16,8 +16,8 @@ First professional run:
 ```
 Set `GEMINI_API_KEY` and `OPENAI_API_KEY`. Use `--no-audio` or `--stop B2`
 to skip post-B2 professional audio, or `--from B2` to re-run from a saved
-B2 checkpoint. `--resume-audio` reuses safe verified paid blocks; unknown
-paid POST outcomes require reconciliation, not blind retries.
+B2 checkpoint. `--resume-audio` reuses verified completed blocks and retries
+the incomplete ones.
 See [professional V pipeline and recovery](docs/components/professional-voice.md).
 The historical sections below include legacy Casero/Fish examples.
 

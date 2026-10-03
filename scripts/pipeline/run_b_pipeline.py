@@ -2439,6 +2439,7 @@ async def main() -> None:
                 input_voice_id=getattr(args, "voice_id", None),
                 use_default=bool(getattr(args, "default_voice", False)),
                 allow_replace=bool(getattr(args, "replace_professional_voice", False)),
+                gemini_api_key=settings.gemini_api_key,
             )
         else:
             voice = ensure_avatar_voice(
@@ -2513,6 +2514,7 @@ async def main() -> None:
                 avatar_file=avatar_file,
                 input_voice_id=getattr(args, "voice_id", None),
                 use_default=bool(getattr(args, "default_voice", False)),
+                gemini_api_key=settings.gemini_api_key,
             )
         else:
             voice = ensure_avatar_voice(

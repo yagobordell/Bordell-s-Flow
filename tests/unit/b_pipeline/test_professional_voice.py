@@ -254,6 +254,70 @@ def test_professional_audio_paid_block_is_reused(tmp_path, monkeypatch):
     assert speech.calls == 2
 
 
+def test_failed_gemini_block_is_retryable_without_unknown_state(tmp_path, monkeypatch):
+    async def plan(**_):
+        return _v1(), [_v2()], [_v3()]
+
+    async def transcribe(item, *, output, run_dir, stt_client):
+        folder = run_dir / "blocks" / "block_1"
+        path = folder / "stt.json"
+        path.write_text(json.dumps({
+            "model": stt_client.model,
+            "source_audio_sha256": item["sha256"],
+            "words": [{"word": "Hola", "start": 0, "end": .05}],
+        }))
+        return {
+            **item,
+            "stt": {
+                "file": path.relative_to(output).as_posix(),
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "model": stt_client.model,
+                "word_count": 1,
+            },
+        }
+
+    def join(inputs, dest):
+        assert inputs[0].is_file()
+        dest.write_bytes(_wav(48000))
+        digest = hashlib.sha256(dest.read_bytes()).hexdigest()
+        return {
+            "sha256": digest, "format": "wav", "bytes": dest.stat().st_size,
+            "duration_seconds": 0.1, "block_start_seconds": [0.0],
+            "block_end_seconds": [0.1], "block_durations_seconds": [0.1],
+        }
+
+    class Speech:
+        calls = 0
+
+        async def generate_directed_speech(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("provider temporarily unavailable")
+            return SimpleNamespace(content=_wav())
+
+    monkeypatch.setattr(pv, "plan_professional_voice", plan)
+    monkeypatch.setattr(pv, "_transcribe_block", transcribe)
+    monkeypatch.setattr(pv, "join_audio_blocks", join)
+    speech = Speech()
+    args = dict(
+        core={"central_question": "Why?", "final_answer": "Because."},
+        blocks=[_block()], output=tmp_path, provider=object(), model="test",
+        gemini_api_key="test", voice_id="Algenib", source_sha256="a" * 64,
+        speech_provider=speech, stt_client=SimpleNamespace(model="whisper-1"),
+    )
+
+    with pytest.raises(pv.VoicePlanError, match="1 incomplete blocks"):
+        asyncio.run(pv.generate_professional_audio(**args))
+    task_files = list(tmp_path.glob("audio/runs/*/blocks/block_1/task.json"))
+    assert len(task_files) == 1
+    failed = json.loads(task_files[0].read_text())
+    assert failed["status"] == "tts_failed"
+
+    result = asyncio.run(pv.generate_professional_audio(**args))
+    assert result["status"] == "completed"
+    assert speech.calls == 2
+
+
 def test_runner_professional_waits_for_b2_and_never_starts_fish(tmp_path, monkeypatch):
     """End-to-end routing: B2 must finish before V/Gemini, with AI33 unset."""
     from argparse import Namespace
