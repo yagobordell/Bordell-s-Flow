@@ -932,7 +932,18 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
         # Persist a resumable, explicitly unfinished checkpoint while waiting
         # for Salad. A readiness/config failure leaves all paid originals intact.
         manifest["finishing_status"] = "pending_upscaler"
-        _write(output / "images" / "manifest.json", manifest)
+        manifest_path = output / "images" / "manifest.json"
+        temporary = manifest_path.with_name(manifest_path.name + ".tmp")
+        if any(path.is_symlink() for path in (manifest_path.parent, manifest_path, temporary)):
+            raise ImageGenerationError("Refusing linked professional image checkpoint")
+        try:
+            temporary.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(manifest_path)
+        finally:
+            temporary.unlink(missing_ok=True)
         required = {
             "IMAGE_UPSCALER_URL": settings.image_upscaler_url,
             "SALAD_API_KEY": settings.salad_api_key,
