@@ -237,12 +237,17 @@ class ApiCostLedger:
             if planned is not None:
                 planned += additional
 
+        finished_archive = output / "images_replaced_professional_finishing"
+        if finished_archive.is_symlink():
+            raise ValueError("Refusing linked professional finishing billing archive")
         active = sorted(root.glob("block_*/*.json")) + sorted(
             (root / "grids").glob("*.json")
         ) + sorted(
             (root / "professional_finished").glob("block_*/*-native_grid_video.json")
         )
-        replaced = sorted(archive.glob("block_*/*.json"))
+        replaced = sorted(archive.glob("block_*/*.json")) + sorted(
+            finished_archive.glob("run-*/block_*/*-native_grid_video.json")
+        )
         active_count = 0
         replaced_count = 0
         for path in (*active, *replaced):
@@ -256,7 +261,7 @@ class ApiCostLedger:
             status = state.get("status")
             if status not in ("completed", "direct_submitting_unknown"):
                 continue  # direct_pending has not been submitted to the paid API.
-            if path.is_relative_to(archive):
+            if path.is_relative_to(archive) or path.is_relative_to(finished_archive):
                 replaced_count += 1
             else:
                 active_count += 1
