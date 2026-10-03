@@ -439,6 +439,8 @@ async def run_b_pipeline(
     previous_b12: tuple[B12Output, ...] | None = None,
     previous_b2: tuple[B2Output, ...] | None = None,
     retry_b2_block_ids: frozenset[int] | None = None,
+    previous_partial_b12: dict[int, B12Output] | None = None,
+    previous_partial_b2: dict[int, B2Output | ProfessionalB2Output] | None = None,
     on_input: Callable[[str, int | None, dict[str, object]], None] | None = None,
     on_output: Callable[[str, int | None, dict[str, object]], None] | None = None,
     on_rejected_output: Callable[[int, str, dict[str, object]], None] | None = None,
@@ -627,6 +629,12 @@ async def run_b_pipeline(
     else:
         # Two independent parallel waves: no B2 starts until every B1.2 succeeds.
         async def b12_one(block: MaterializedBlock) -> B12Output:
+            if previous_partial_b12 and block.block_id in previous_partial_b12:
+                saved = previous_partial_b12[block.block_id]
+                validate_beats(saved, block)
+                if on_output is not None:
+                    on_output("B1.2", block.block_id, saved.model_dump())
+                return saved
             b12_input = B12Input(
                 narrative_core=b11.narrative_core,
                 current_block_id=block.block_id,
@@ -853,6 +861,8 @@ async def run_b_pipeline(
                 )
 
     retry_ids = set(retry_b2_block_ids or ())
+    if retry_ids and previous_partial_b2:
+        raise ValueError("Cannot combine selective B2 retry with partial recovery")
     if retry_ids:
         if previous_b2 is None or len(previous_b2) != len(materialized):
             raise ValueError("B2 block retries require a complete validated B2 checkpoint")
@@ -869,7 +879,8 @@ async def run_b_pipeline(
             *(
                 b2_one(meta, block, b12)
                 for meta, block, b12 in zip(b11.blocks, materialized, b12_results, strict=True)
-                if not retry_ids or meta.block_id in retry_ids
+                if (not retry_ids or meta.block_id in retry_ids)
+                and (not previous_partial_b2 or meta.block_id not in previous_partial_b2)
             )
         )
         if retry_ids:
@@ -879,7 +890,34 @@ async def run_b_pipeline(
                 for block_id in range(1, len(materialized) + 1)
             ]
         else:
-            b2_results = list(generated_b2)
+            generated_by_id = {item.blocks[0].block_id: item for item in generated_b2}
+            b2_results = [
+                generated_by_id.get(block_id)
+                or (previous_partial_b2 or {}).get(block_id)
+                for block_id in range(1, len(materialized) + 1)
+            ]
+            if any(item is None for item in b2_results):
+                raise BPipelineValidationError("B2 partial recovery is missing a block")
+            if previous_partial_b2:
+                for block_id, saved in previous_partial_b2.items():
+                    if block_id < 1 or block_id > len(materialized):
+                        raise BPipelineValidationError("B2 partial recovery has invalid block IDs")
+                    meta, block, b12 = (
+                        b11.blocks[block_id - 1], materialized[block_id - 1],
+                        b12_results[block_id - 1],
+                    )
+                    expected = B2Input(
+                        narrative_core=b11.narrative_core, current_block_id=block_id,
+                        blocks=(B2InputBlock(
+                            block_id=meta.block_id, type=meta.type,
+                            emotional_entry=meta.emotional_entry,
+                            emotional_exit=meta.emotional_exit, span=meta.span,
+                            beats=validate_beats(b12, block),
+                        ),),
+                    )
+                    validate_visuals(saved, expected)
+                    if on_output is not None:
+                        on_output("B2", block_id, saved.model_dump())
 
         # Parallel workers cannot see presenter runs crossing block boundaries.
         # Fix one eligible block at a time without re-running any other block.
