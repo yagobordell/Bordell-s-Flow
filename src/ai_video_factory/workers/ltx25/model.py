@@ -898,6 +898,7 @@ class DirectLTX25Backend:
         parameters_a: LTXVideoParameters,
         parameters_b: LTXVideoParameters,
         forward_batch_size: int,
+        reuse_transformer_across_stages: bool = False,
     ) -> int | None:
         """Run one experimental attempt. Scoped so failed CUDA tensors can be released."""
         from .paired_i2v import PairInput, generate_paired_fast_distilled
@@ -939,6 +940,7 @@ class DirectLTX25Backend:
                     frame_rate=float(parameters_a.fps),
                     num_frames=parameters_a.num_frames,
                     max_forward_batch_size=forward_batch_size,
+                    reuse_transformer_across_stages=reuse_transformer_across_stages,
                 )
                 for result, output, params in zip(
                     results, (output_a, output_b),
@@ -978,6 +980,7 @@ class DirectLTX25Backend:
         parameters_a: LTXVideoParameters,
         parameters_b: LTXVideoParameters,
         allow_sequential_fallback: bool = False,
+        reuse_transformer_across_stages: bool = False,
     ) -> dict[str, Any]:
         """EXPERIMENT: B=2, then shared-weight B=1, then EXACT existing B=1.
 
@@ -1010,10 +1013,17 @@ class DirectLTX25Backend:
         failed_attempts: list[dict[str, Any]] = []
         outputs = (output_a, output_b)
 
-        # batch2: truly batched forwards. batch1: SAME shared transformer
-        # residency per stage, processing both samples as split B=1 forwards.
-        sizes = (2, 1) if allow_sequential_fallback else (2,)
-        for forward_batch in sizes:
+        # A one-build B=2 attempt holds the same GPU transformer across
+        # stage1, upsample and stage2. If upsample/conditioning cannot fit
+        # alongside it, retry the previously VISUALLY APPROVED two-build B=2
+        # kernel automatically before trying any B=1 fallback.
+        candidates = (
+            [(2, True), (2, False)] if reuse_transformer_across_stages
+            else [(2, False)]
+        )
+        if allow_sequential_fallback:
+            candidates.append((1, False))
+        for index, (forward_batch, shared_stages) in enumerate(candidates):
             label = "batch2" if forward_batch == 2 else "stage_shared_sequential_forward"
             attempt_started = time.monotonic()
             try:
@@ -1022,33 +1032,42 @@ class DirectLTX25Backend:
                     output_a=output_a, output_b=output_b,
                     parameters_a=parameters_a, parameters_b=parameters_b,
                     forward_batch_size=forward_batch,
+                    reuse_transformer_across_stages=shared_stages,
                 )
             except Exception as exc:
                 failure = classify_gpu_failure(exc)
                 failed_attempts.append({
                     "mode": label,
+                    "shared_between_stages": shared_stages,
                     "gpu_failure": failure,
                     "error_type": type(exc).__name__,
                     "elapsed_seconds": time.monotonic() - attempt_started,
                 })
                 for output in outputs:
                     output.unlink(missing_ok=True)
-                # CUDA OOM can leave unusable lazy VAE iterators and allocator
-                # state. Rebuild the pipeline before EACH reduced-memory retry.
                 if failure == "oom":
+                    # Scope of _pair_attempt has exited. Release the GPU
+                    # allocator and invalidate lazy iterators BEFORE reload.
                     self.invalidate_pipeline()
                     cleanup_cuda_memory()
-                if failure != "oom" or not allow_sequential_fallback:
+                if failure != "oom":
                     raise
                 logger.warning(
-                    "LTX25_I2V_PAIR_OOM mode=%s trying_less_memory=%s",
-                    label, forward_batch == 2,
+                    "LTX25_I2V_PAIR_OOM mode=%s shared_between_stages=%s next_attempt=%s",
+                    label, shared_stages,
+                    candidates[index + 1] if index + 1 < len(candidates) else None,
                 )
+                # No fallback means no silent downgrade to sequential video
+                # generation, but retrying B=2 WITHOUT shared model residency
+                # preserves the previously validated GPU-parallel algorithm.
+                if index + 1 == len(candidates) and not allow_sequential_fallback:
+                    raise
             else:
                 report = {
                     "mode": label,
                     "actual_gpu_batch_size": forward_batch,
-                    "shared_transformer_stage_builds": 2,
+                    "shared_transformer_stage_builds": 1 if shared_stages else 2,
+                    "transformer_reused_between_stages": shared_stages,
                     "quality": "visual_review_pending",
                     "recipe": LTX_PRODUCTION_I2V_PROFILE,
                     "individual_seeds": [parameters_a.seed, parameters_b.seed],
