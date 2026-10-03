@@ -19,6 +19,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $Root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
+# scripts/salad/_env_file.ps1 resolves this variable in the caller scope.
+$RepoRoot = $Root
 $Manager = Join-Path $Root "scripts\salad\manage_salad_worker.ps1"
 $Ready = Join-Path $PSScriptRoot "wait_salad_ltx25_ready.py"
 $Submit = Join-Path $PSScriptRoot "submit_ltx25_a2v_smoke.py"
@@ -60,12 +62,12 @@ foreach ($Audio in @($Audio720, $Audio1080)) {
         throw "A2V reference speech must be 0-12 seconds. ${Audio}: $Duration s"
     }
 }
-if ($CheckInputsOnly) {
-    Write-Host "Local A2V input preflight passed. No Salad or R2 operations were performed."
-    return
-}
 . (Join-Path $Root "scripts\salad\_env_file.ps1")
 Import-EnvFile -Path $EnvFile
+if ($CheckInputsOnly) {
+    Write-Host "Local A2V input and environment preflight passed. No Salad or R2 operations were performed."
+    return
+}
 & $Python (Join-Path $PSScriptRoot "check_ltx25_python_source.py") (Join-Path $Root "src\ai_video_factory\workers\ltx25\__init__.py")
 if ($LASTEXITCODE -ne 0) { throw "Wrong Python checkout. Run uv sync --locked --extra dev --python 3.12." }
 & $Python $Ready --service ltx25 --env-file $EnvFile --expected-image $ExpectedPinnedImage --check-config-only
