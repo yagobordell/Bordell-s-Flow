@@ -15,6 +15,7 @@ from ai_video_factory.inference.salad_autoscaler import (
     PostgresAutoscalerStore,
 )
 from ai_video_factory.inference.worker_image_routes import (
+    approve_route,
     register_route,
     route_for_image,
 )
@@ -41,6 +42,12 @@ def test_two_user_routes_share_one_db_but_never_one_task():
         )
     assert registrations == [expected] * 4
     assert register_route(dsn, service="ltx25", image=b) != expected
+    assert approve_route(
+        dsn, service="ltx25", image=a,
+    ).routing_contract == "v1"
+    assert approve_route(
+        dsn, service="ltx25", image=b,
+    ).routing_contract == "v1"
 
     unique = uuid.uuid4().hex[:10]
     requests = [
