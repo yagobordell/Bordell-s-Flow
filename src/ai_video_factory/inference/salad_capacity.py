@@ -179,7 +179,7 @@ def build_salad_capacity_runtime(
             capacity = definition["capacity"]
             binding = AutoscalerServiceBinding(
                 workload=dynamic,
-                task_names=_SERVICE_TASKS[service],
+                task_names=(route.task_name,),
                 autoscaler_env_prefix=service.upper(),
                 fallback_runtime_seconds=_FALLBACK_RUNTIME_SECONDS[service],
                 max_replicas=int(capacity["max_replicas"]),
