@@ -55,7 +55,35 @@ silently upscaling/reusing an earlier paid result.
 
 For explicitly approved 720p smoke jobs, the old runner scripts pass
 `--width 1280 --height 720`; the current 720p batch2 trial accepts only
-1280×720 and has **no 1080p switch**.
+1280×720 and retains **720p as its default**; the opt-in paired trial now exposes an explicitly authorized Full HD test switch.
+
+## Agreed scope: I2V parallel B=2 only; A2V stays single-video
+
+The intended final default is **1920×1080** in both I2V and A2V.
+Only I2V is intended to run TWO independent videos at once on one RTX
+5090. A2V must remain independent/single-video; its worker and ongoing
+external optimization branch are out of scope for this follow-up.
+The existing shared B2 orchestrator issues explicit 1080p requests;
+do not change the A2V worker code here while the parallel A2V work is underway.
+
+After the successful 720p native batch2 visual/performance campaign, the
+isolated **I2V-only** paired job and trial runner support an explicitly
+authorized, native **1920×1080 B=2** five-second experiment. This route
+requires `accept_full_hd_batch2_oom_risk=true` in its worker request and
+`-AcceptFullHdBatch2OomRisk -Width 1920 -Height 1080` in the PowerShell
+trial runner. Full-HD source inputs must each be 1920×1080 PNG, preferably
+from the upstream native Full HD image generation rather than a resized
+720p starting frame. The 720p experiment remains its default and is
+unchanged. No A2V code was modified by this I2V-only extension.
+
+The full-HD pair experiment forbids sequential fallback and shared-stage
+GPU-transformer residency. If it exhausts VRAM, it FAILS with a visible OOM
+report rather than silently generating at 720p or one at a time. A passed
+CPU/unit preflight only confirms the input/worker contract: GPU peak,
+speed, output visual identity and hardware fit are **NOT yet known**.
+Do not enable automatic B=2 1080p in normal B2 dispatch until its dedicated
+RTX 5090 trial succeeds. If it cannot fit on 32-GiB hardware, re-evaluate
+GPU capacity and scheduling explicitly; do not reduce output quality.
 
 ## Next validation (after the currently-running 720p trial completes)
 
