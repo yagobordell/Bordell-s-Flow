@@ -17,9 +17,9 @@ import torch
 from ltx_core.batch_split import BatchSplitAdapter
 from ltx_core.components.patchifiers import AudioPatchifier, VideoLatentPatchifier
 from ltx_core.conditioning.types.latent_cond import VideoConditionByLatentIndex
+from ltx_core.model.video_vae import AUTO_TILING
 from ltx_core.tools import AudioLatentTools, VideoLatentTools
 from ltx_core.types import AudioLatentShape, VideoLatentShape, VideoPixelShape
-from ltx_core.model.video_vae import AUTO_TILING
 from ltx_pipelines.utils.blocks import require_num_frames_source, resolve_num_frames
 from ltx_pipelines.utils.constants import DISTILLED_SIGMAS, STAGE_2_DISTILLED_SIGMAS
 from ltx_pipelines.utils.denoisers import SimpleDenoiser
@@ -152,7 +152,10 @@ def _paired_stage(
             model_dtype=stage._dtype,
         )
     with stage._transformer_ctx(video_tools=video_tools) as built:
-        transformer = built if stage._model_wrapper is None else stage._model_wrapper(built, video_tools)
+        transformer = (
+            built if stage._model_wrapper is None
+            else stage._model_wrapper(built, video_tools)
+        )
         # This is genuinely a single B=2 model forward, NOT two serialized jobs.
         batched_transformer = BatchSplitAdapter(transformer, max_batch_size=max_forward_batch_size)
         denoiser = SimpleDenoiser(video_context, audio_context)
@@ -301,7 +304,7 @@ def generate_paired_fast_distilled(
     # Decode separately: both latents are independent; never decode one clip
     # with the other's seed, or create two live VAE models.
     results = []
-    for i, item in enumerate(pair):
+    for i in range(2):
         generator = noiser.generators[i]
         latent = second_video.latent[i : i + 1]
         results.append(PipelineOutput(
