@@ -149,9 +149,15 @@ inference. Complete/drain existing jobs and schedule a maintenance interval:
 stop the singleton Capacity Controller, then use the existing audited manager:
 
 ```powershell
-.\\scripts\\salad\\manage_salad_worker.ps1 \`
-  -Action Prepare -Service ltx25 \`
-  -PinnedImage $env:SALAD_LTX25_PAGEABLE_A2V_IMAGE \`
+$RepoRoot = (Get-Location).Path
+. .\scripts\salad\_env_file.ps1
+Import-EnvFile -Path .env
+if (-not $env:SALAD_LTX25_PAGEABLE_A2V_IMAGE) {
+  throw "Set SALAD_LTX25_PAGEABLE_A2V_IMAGE in config/salad.env first"
+}
+.\scripts\salad\manage_salad_worker.ps1 `
+  -Action Prepare -Service ltx25 `
+  -PinnedImage $env:SALAD_LTX25_PAGEABLE_A2V_IMAGE `
   -EnvFile .env -NonInteractive
 ```
 
