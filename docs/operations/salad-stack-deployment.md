@@ -126,43 +126,56 @@ Production workers poll Postgres directly. Do not add `SALAD_QUEUE_ENABLED`, per
 or queue-autoscaler configuration back into deployment state.
 
 
-## Reviewed LTX A2V image drift during `run.ps1`
+## Concurrent LTX runs with different immutable Docker images
 
-The pinned A2V image in `SALAD_LTX25_PAGEABLE_A2V_IMAGE` must match the
-independent Salad `ltx25` worker exactly. A Git pull never redeploys a pinned
-Docker image. A mismatch is not an inference retry and cannot be corrected by
-simply starting the Container Group.
+Apply `infra/sql/006_worker_image_routes.sql` to the shared Supabase/Postgres
+database **before** deploying the new pipeline and controller. Restart the
+singleton Capacity Controller after updating its code. All users must point
+to the **same** PostgreSQL database, R2 bucket, Salad organization/project,
+and the same running controller. Do not start one controller per computer.
 
-By default, `SALAD_LTX_AUTO_PREPARE_ON_MISMATCH=true`. When an A2V job is about
-to be submitted, `run` checks the image. If it is already correct, the
-existing controller owns all normal scaling. If the group reports a different
-image, `run` calls the existing audited `manage_salad_worker.ps1 -Action Prepare`
-**only if** the group is stably stopped with no pending Salad change, the
-Capacity Controller is inactive, and Postgres has zero unfinished A2V jobs.
-The manager rechecks stopped state and obtains the same session advisory lock
-used by the controller; `-AllowControllerOverride` is never used. After
-preparation, the runner verifies the pinned image and stopped state again.
+Each user selects the exact pinned image through their own
+`SALAD_LTX25_PAGEABLE_A2V_IMAGE` (A2V) and
+`SALAD_LTX25_FP8_I2V_IMAGE` (I2V) environment settings. Both must reference
+immutable digests under `docker.io/yagobordell/ai-video-factory`.
 
-If the controller is active, the worker is running/deploying, or Postgres has
-unfinished A2V jobs, automatic replacement deliberately fails before paid
-inference. Complete/drain existing jobs and schedule a maintenance interval:
-stop the singleton Capacity Controller, then use the existing audited manager:
+On `run.ps1`, the application saves a unique, deterministic image-scoped
+job identity and registers the desired version in `gpu.worker_image_routes`.
+It never starts, prepares or patches a shared LTX Docker image.
+The controller discovers demand for each version, creates a **separate**
+reviewed Salad Container Group when necessary, and manages replicas in the
+same global project quota. Two users choosing the same digest share its
+group; two different digests use different groups and queue partitions.
+Existing unversioned jobs remain assigned exclusively to the original
+fixed A2V/I2V groups until completed. **Never** enable multiple singleton
+controllers for these groups.
 
-```powershell
-$RepoRoot = (Get-Location).Path
-. .\scripts\salad\_env_file.ps1
-Import-EnvFile -Path .env
-if (-not $env:SALAD_LTX25_PAGEABLE_A2V_IMAGE) {
-  throw "Set SALAD_LTX25_PAGEABLE_A2V_IMAGE in config/salad.env first"
-}
-.\scripts\salad\manage_salad_worker.ps1 `
-  -Action Prepare -Service ltx25 `
-  -PinnedImage $env:SALAD_LTX25_PAGEABLE_A2V_IMAGE `
-  -EnvFile .env -NonInteractive
-```
+The version-specific worker receives `INFERENCE_WORKER_IMAGE` matching its
+immutable image identity. PostgreSQL pending-job selection and controller
+demand filtering match that image exactly. Even direct worker requests with
+a different image are rejected before any paid GPU inference begins.
+A new group may need model bootstrap, but existing groups stay untouched;
+new queued jobs wait for matching capacity. The existing zero-demand
+downscale policy stops idle version groups. Registrations and stopped group
+definitions remain for future reuse; no automatic deletion risks an active
+or resumable job.
 
-Restart the Capacity Controller and re-run `run.ps1 <script> <avatar>
---generate-video`. Validated audio and images are reused; no new paid LTX
-work is submitted while the exact reviewed digest is missing. I2V deployment
-remains independent and is not silently changed. Set
-`SALAD_LTX_AUTO_PREPARE_ON_MISMATCH=false` to disable automatic preparation.
+For the two-host migration:
+1. Apply migration 006 once to the shared database.
+2. Update and restart the singleton controller, keeping other capacity
+   operations paused during its restart.
+3. Update both users' local repositories. Set their intended A2V/I2V
+   Docker digests independently.
+4. Run video generation normally. If the global GPU quota is exhausted,
+   jobs remain queued rather than changing another user's Docker image.
+
+Roll back safely by draining image-pinned pending/running jobs first. Old
+workers intentionally cannot consume image-pinned jobs. Do not downgrade
+only the controller or only a worker while versioned jobs are outstanding.
+
+The existing `scripts/salad/manage_salad_worker.ps1` remains available for
+operator-controlled maintenance of **legacy static groups** only. Do not use
+it from `run`, and never patch an existing image-specific group to a
+different digest. Keep `SALAD_VERSION_MAX_GROUPS` sufficiently large for the
+authorized versions that must remain registered, while constraining the
+global project replica quota to control GPU costs.
