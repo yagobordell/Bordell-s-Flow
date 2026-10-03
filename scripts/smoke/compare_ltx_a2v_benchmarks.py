@@ -31,8 +31,10 @@ def _decoded_stream_sha(path: Path, *, audio: bool) -> str:
     process = subprocess.Popen(
         command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
-    assert process.stdout is not None
-    assert process.stderr is not None
+    if process.stdout is None or process.stderr is None:
+        process.kill()
+        process.wait()
+        raise RuntimeError("ffmpeg subprocess pipes unavailable")
     try:
         for block in iter(lambda: process.stdout.read(1024 * 1024), b""):
             digest.update(block)
