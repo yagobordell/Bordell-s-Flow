@@ -300,3 +300,103 @@ def test_async_provider_yields_to_event_loop(monkeypatch) -> None:
         await asyncio.sleep(0)
         return await task
     assert asyncio.run(run_both()).extension == "wav"
+
+
+def test_custom_studio_voice_uses_exported_name_not_legacy_id(monkeypatch) -> None:
+    """Google Studio's `Uncle Enzo 3` is a name with spaces, not voice_... ID."""
+    requests = []
+
+    def fake_post(**kwargs):
+        requests.append(kwargs)
+        return answer(make_wav())
+
+    monkeypatch.setattr(gemini, "_post_json", fake_post)
+    provider = GeminiTtsSpeechProvider(api_key="test")
+    generated = generate(provider, voice="Uncle Enzo 3")
+    assert generated.metadata["voice"] == "Uncle Enzo 3"
+    config = requests[0]["payload"]["generationConfig"]
+    assert config == {
+        "responseModalities": ["AUDIO"],
+        "speechConfig": {
+            "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Uncle Enzo 3"}}
+        },
+    }
+    # The Phase 5 style and text remain separated.
+    part = requests[0]["payload"]["contents"][0]["parts"][0]
+    assert part["text"] == "Hello, café."
+    assert "Soft documentary voice." in part["speech_metadata"]["style"]
+
+
+def test_custom_voice_in_professional_v3_preserves_individual_part_styles() -> None:
+    turns = [
+        {"text": "Hello <breath>there.", "style": "Measured opening."},
+        {"text": "Next.", "style": "Accelerating."},
+    ]
+    payload = gemini._build_directed_payload(turns=turns, voice="Uncle Enzo 3")
+    assert payload["generationConfig"] == {
+        "responseModalities": ["AUDIO"],
+        "speechConfig": {
+            "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": "Uncle Enzo 3"}}
+        },
+    }
+    parts = payload["contents"][0]["parts"]
+    assert [part["text"] for part in parts] == ["Hello <breath>there.", "Next."]
+    assert "Measured opening." in parts[0]["speech_metadata"]["style"]
+    assert "Accelerating." in parts[1]["speech_metadata"]["style"]
+    assert all("verbatim transcript" in part["speech_metadata"]["style"] for part in parts)
+
+
+def test_studio_pcm16_is_converted_to_valid_canonical_wav(monkeypatch) -> None:
+    # The Studio export may return audio/L16 instead of an AUDIO_WAV container.
+    raw_pcm = b"\x00\x00\x20\x00" * 1200
+    sent = []
+
+    def fake_post(**kwargs):
+        sent.append(kwargs)
+        return answer(raw_pcm, "audio/L16;rate=24000")
+
+    monkeypatch.setattr(gemini, "_post_json", fake_post)
+    output = generate(GeminiTtsSpeechProvider(api_key="test"), voice="Uncle Enzo 3")
+    with wave.open(io.BytesIO(output.content), "rb") as wav_file:
+        assert wav_file.getframerate() == 24_000
+        assert wav_file.getnchannels() == 1
+        assert wav_file.getsampwidth() == 2
+        assert wav_file.readframes(2400) == raw_pcm
+    assert sent[0]["payload"]["generationConfig"]["speechConfig"]["voiceConfig"] == {
+        "prebuiltVoiceConfig": {"voiceName": "Uncle Enzo 3"}
+    }
+
+
+@pytest.mark.parametrize(
+    "mime",
+    ["audio/L16;rate=16000", "audio/L16;rate=24000;channels=2", "audio/L16"],
+)
+def test_studio_pcm_wrong_format_is_rejected(mime) -> None:
+    with pytest.raises(gemini.GeminiTtsError, match="unsupported PCM"):
+        gemini._decode_audio(answer(b"\x00\x00" * 120, mime))
+
+
+def test_studio_pcm_with_odd_sample_bytes_is_rejected() -> None:
+    with pytest.raises(gemini.GeminiTtsError, match="incomplete PCM16"):
+        gemini._decode_audio(answer(b"\x00\x00\x01", "audio/L16;rate=24000"))
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Uncle Enzo 3\n", " Uncle Enzo 3", "Uncle  Enzo 3", "Uncle/Enzo", "3;", "x"],
+)
+def test_invalid_custom_voice_never_posts(name, monkeypatch) -> None:
+    monkeypatch.setattr(
+        gemini, "_post_json", lambda **kwargs: pytest.fail("Invalid voice submitted")
+    )
+    with pytest.raises(ValueError, match="voice"):
+        generate(GeminiTtsSpeechProvider(api_key="test"), voice=name)
+
+
+def test_legacy_voice_id_stays_on_existing_wire_contract() -> None:
+    for name in ("Algenib", "Kore", "voice_abcd123"):
+        config = gemini._build_payload(
+            text="Hi", voice=name, instructions="Clear", speed=1.0,
+        )["generationConfig"]
+        assert config["speechConfig"]["voiceConfig"] == {"voice": name}
+        assert config["responseFormat"]["audio"]["mimeType"] == "AUDIO_WAV"

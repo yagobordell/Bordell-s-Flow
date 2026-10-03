@@ -54,6 +54,48 @@ def _build_style(instructions: str, speed: float) -> str:
     return f"{optional}\n{required}" if optional else required
 
 
+def validate_gemini_voice_name(value: str) -> str:
+    """Accept legacy provider IDs and exact Google Studio display names.
+
+    Names may contain ordinary spaces, e.g. "Uncle Enzo 3". Never silently
+    normalize internal whitespace: Google resolves the literal selected name.
+    """
+    if (
+        not isinstance(value, str) or not 2 <= len(value) <= 256
+        or value != value.strip() or not value[0].isalnum()
+        or not value[-1].isalnum()
+        or any(not (char.isalnum() or char in " -_") for char in value)
+        or "  " in value
+    ):
+        raise ValueError("Gemini voice must be a valid ID or exact Studio display name")
+    return value
+
+
+def _voice_config(voice: str) -> dict[str, Any]:
+    name = validate_gemini_voice_name(voice)
+    # Preserve the existing ID-based wire contract for Algenib, Kore and
+    # voice_... IDs. Multiword Studio names use Google's exported SDK
+    # structure: VoiceConfig(prebuilt_voice_config.voice_name=...).
+    if " " in name:
+        return {"prebuiltVoiceConfig": {"voiceName": name}}
+    return {"voice": name}
+
+
+def _generation_config(voice: str) -> dict[str, Any]:
+    config: dict[str, Any] = {
+        "responseModalities": ["AUDIO"],
+        "speechConfig": {"voiceConfig": _voice_config(voice)},
+    }
+    if " " not in voice:
+        # Keep legacy successful ID/default requests byte-compatible.
+        config["responseFormat"] = {
+            "audio": {"mimeType": "AUDIO_WAV", "sampleRate": DEFAULT_SAMPLE_RATE_HZ}
+        }
+    # Multiword Studio voices use the exact speech_config shape exported
+    # by Google AI Studio; Gemini may respond with audio/L16 raw PCM.
+    return config
+
+
 def _build_payload(
     *, text: str, voice: str, instructions: str, speed: float
 ) -> dict[str, Any]:
@@ -69,13 +111,7 @@ def _build_payload(
                 ],
             }
         ],
-        "generationConfig": {
-            "responseModalities": ["AUDIO"],
-            "responseFormat": {
-                "audio": {"mimeType": "AUDIO_WAV", "sampleRate": DEFAULT_SAMPLE_RATE_HZ}
-            },
-            "speechConfig": {"voiceConfig": {"voice": voice}},
-        },
+        "generationConfig": _generation_config(voice),
     }
 
 
@@ -98,13 +134,7 @@ def _build_directed_payload(*, turns: list[dict[str, str]], voice: str) -> dict[
         })
     return {
         "contents": [{"role": "user", "parts": parts}],
-        "generationConfig": {
-            "responseModalities": ["AUDIO"],
-            "responseFormat": {
-                "audio": {"mimeType": "AUDIO_WAV", "sampleRate": DEFAULT_SAMPLE_RATE_HZ}
-            },
-            "speechConfig": {"voiceConfig": {"voice": voice}},
-        },
+        "generationConfig": _generation_config(voice),
     }
 
 def _post_json(
@@ -153,8 +183,9 @@ def _decode_audio(payload: dict[str, Any]) -> bytes:
             if not isinstance(part, dict) or not isinstance(part.get("inlineData"), dict):
                 continue
             inline_data = part["inlineData"]
-            mime_type = str(inline_data.get("mimeType") or "").split(";", 1)[0].lower()
-            if mime_type not in {"audio/wav", "audio/x-wav"}:
+            mime = str(inline_data.get("mimeType") or "")
+            mime_type = mime.split(";", 1)[0].strip().lower()
+            if mime_type not in {"audio/wav", "audio/x-wav", "audio/l16"}:
                 raise GeminiTtsError(
                     f"Gemini TTS returned unexpected MIME type: {mime_type or '<missing>'}"
                 )
@@ -166,7 +197,28 @@ def _decode_audio(payload: dict[str, Any]) -> bytes:
             except (binascii.Error, ValueError) as exc:
                 raise GeminiTtsError("Gemini TTS returned invalid base64 audio") from exc
             if not audio:
-                raise GeminiTtsError("Gemini TTS returned empty WAV bytes")
+                raise GeminiTtsError("Gemini TTS returned empty audio bytes")
+            if mime_type == "audio/l16":
+                # Google Studio export can return raw 24-kHz PCM instead of a
+                # WAV container. Canonicalize it before the existing WAV check.
+                params = {}
+                for segment in mime.split(";")[1:]:
+                    key, sep, value = segment.strip().partition("=")
+                    if sep:
+                        params[key.strip().lower()] = value.strip()
+                if params.get("rate") != str(DEFAULT_SAMPLE_RATE_HZ) or (
+                    params.get("channels", "1") != "1"
+                ):
+                    raise GeminiTtsError("Gemini TTS returned unsupported PCM audio format")
+                if len(audio) % 2:
+                    raise GeminiTtsError("Gemini TTS returned incomplete PCM16 samples")
+                out = io.BytesIO()
+                with wave.open(out, "wb") as wav_file:
+                    wav_file.setnchannels(DEFAULT_CHANNELS)
+                    wav_file.setsampwidth(2)
+                    wav_file.setframerate(DEFAULT_SAMPLE_RATE_HZ)
+                    wav_file.writeframes(audio)
+                return out.getvalue()
             return audio
 
     raise GeminiTtsError("Gemini TTS returned no inline audio")
@@ -230,6 +282,7 @@ class GeminiTtsSpeechProvider:
         """Generate one directed professional B2 block without re-voicing the transcript."""
         if not model.strip() or not voice.strip():
             raise ValueError("Gemini directed TTS requires a model and voice")
+        voice = validate_gemini_voice_name(voice)
         payload = _build_directed_payload(turns=turns, voice=voice)
         return await asyncio.to_thread(self._generate_directed_sync, payload, model, voice)
 
@@ -273,6 +326,7 @@ class GeminiTtsSpeechProvider:
             raise ValueError("Gemini TTS requires a model")
         if not voice.strip():
             raise ValueError("Gemini TTS requires a voice")
+        voice = validate_gemini_voice_name(voice)
         return await asyncio.to_thread(
             self._generate_sync,
             text=text,

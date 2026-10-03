@@ -5,12 +5,14 @@ Never reuse Casero's Fish/MiniMax/ElevenLabs voice config.
 from __future__ import annotations
 
 import json
-import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from ai_video_factory.providers.gemini_tts import DEFAULT_GEMINI_TTS_VOICE
+from ai_video_factory.providers.gemini_tts import (
+    DEFAULT_GEMINI_TTS_VOICE,
+    validate_gemini_voice_name,
+)
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,7 @@ class ProfessionalAvatarVoice:
 def ensure_professional_avatar_voice(
     *, avatar_file: Path, input_voice_id: str | None = None,
     use_default: bool = False, interactive: bool | None = None,
+    allow_replace: bool = False,
 ) -> ProfessionalAvatarVoice:
     """Prompt at first use only; non-interactive CI can use the prebuilt default."""
     if not avatar_file.is_file() or avatar_file.is_symlink():
@@ -37,6 +40,8 @@ def ensure_professional_avatar_voice(
         raise ValueError("Professional voice config must not use symlinks")
     if use_default and input_voice_id is not None:
         raise ValueError("Choose --default-voice or --voice-id, not both")
+    if allow_replace and (input_voice_id is None or use_default):
+        raise ValueError("Replacing a professional voice requires an explicit --voice-id")
     if interactive is None:
         interactive = sys.stdin.isatty()
     current = None
@@ -56,18 +61,16 @@ def ensure_professional_avatar_voice(
             ).strip()
             selected = choice or DEFAULT_GEMINI_TTS_VOICE
     if current is not None:
-        saved = current.get("voice_id")
-        if selected is not None and selected != saved:
+        saved = validate_gemini_voice_name(current.get("voice_id"))
+        if selected is not None and selected != saved and not allow_replace:
             raise ValueError("This avatar already has a different professional Gemini voice")
-        selected = saved
-    if (not isinstance(selected, str)
-        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,255}", selected)):
-        raise ValueError("Professional Gemini voice ID contains invalid characters")
-    if current is None:
+        selected = selected if allow_replace else saved
+    selected = validate_gemini_voice_name(selected)
+    if current is None or current["voice_id"] != selected:
         folder.mkdir(parents=True, exist_ok=True)
         temporary = folder / "gemini_voice.json.tmp"
-        if temporary.is_symlink():
-            raise ValueError("Unsafe temporary professional voice config")
+        if temporary.exists() or temporary.is_symlink():
+            raise ValueError("Unreconciled professional Gemini voice config temp file")
         temporary.write_text(json.dumps({"provider": "gemini", "voice_id": selected},
                                         indent=2) + "\n", encoding="utf-8")
         temporary.replace(path)
