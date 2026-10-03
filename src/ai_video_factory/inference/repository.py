@@ -228,11 +228,14 @@ class InMemoryJobRepository:
     def next_pending_request(
         self,
         task_names: tuple[str, ...],
+        required_worker_image: str | None = None,
     ) -> InferenceJobRequest | None:
         now = datetime.now(UTC)
         with self._lock:
             for row in self._jobs.values():
                 if row.request.task not in task_names:
+                    continue
+                if row.request.parameters.get("required_worker_image") != required_worker_image:
                     continue
                 if row.status in {"pending", "retryable_failed"}:
                     return row.request.model_copy(deep=True)
@@ -580,6 +583,7 @@ class PostgresJobRepository:
     def next_pending_request(
         self,
         task_names: tuple[str, ...],
+        required_worker_image: str | None = None,
     ) -> InferenceJobRequest | None:
         if not task_names:
             return None
@@ -589,6 +593,7 @@ class PostgresJobRepository:
                 SELECT request
                 FROM gpu.jobs
                 WHERE task = ANY(%s)
+                  AND request #>> '{parameters,required_worker_image}' IS NOT DISTINCT FROM %s
                   AND (
                       status = 'pending'
                       OR status = 'retryable_failed'
@@ -606,7 +611,7 @@ class PostgresJobRepository:
                 ORDER BY created_at ASC, job_id ASC
                 LIMIT 1
                 """,
-                (list(task_names), f"{_NON_RETRYABLE_PREFIX}%"),
+                (list(task_names), required_worker_image, f"{_NON_RETRYABLE_PREFIX}%"),
             ).fetchone()
         if row is None:
             return None
