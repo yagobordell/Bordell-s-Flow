@@ -386,6 +386,7 @@ async def generate_professional_audio(
     on_timing: Callable[..., None] | None = None,
     max_parallel_calls: int = 8, stt_client: OpenAISttClient | None = None,
     speech_provider: GeminiTtsSpeechProvider | None = None,
+    generation_nonce: str = "",
 ) -> dict[str, Any]:
     """Publish professional block WAVs and an existing-timeline-compatible artifact."""
     if not blocks or not gemini_api_key:
@@ -400,7 +401,7 @@ async def generate_professional_audio(
     # Fingerprint includes effective directions; changed B2/V3 can never reuse paid audio.
     payload = {"blocks": blocks, "v1": v1.model_dump(), "v2": [x.model_dump() for x in v2s],
                "v3": [x.model_dump() for x in v3s], "voice": voice_id,
-               "model": DEFAULT_GEMINI_TTS_MODEL}
+               "model": DEFAULT_GEMINI_TTS_MODEL, "generation_nonce": generation_nonce}
     fingerprint = _fingerprint(payload)
     run_dir = output / "audio" / "runs" / ("gemini-" + fingerprint[:24])
     manifest = run_dir / "task.json"
@@ -423,7 +424,7 @@ async def generate_professional_audio(
     else:
         _json(manifest, {"fingerprint": fingerprint, "status": "planned",
                          "model": DEFAULT_GEMINI_TTS_MODEL, "voice": voice_id,
-                         "block_ids": [b["block_id"] for b in blocks]})
+                         "generation_nonce": generation_nonce, "block_ids": [b["block_id"] for b in blocks]})
     speech = speech_provider or GeminiTtsSpeechProvider(api_key=gemini_api_key)
     stt = stt_client or OpenAISttClient(api_key=settings.openai_api_key)
     semaphore = asyncio.Semaphore(max_parallel_calls)
