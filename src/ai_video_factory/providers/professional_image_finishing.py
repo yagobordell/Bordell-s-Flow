@@ -255,7 +255,7 @@ def finish_professional_images(
         *manifest.get("panel_assets", []),
     ]
     expected = {
-        (beat["block_id"], beat["beat_id"])
+        (block["block_id"], beat["beat_id"])
         for block in plan["blocks"] for beat in block["beats"]
         if beat.get("prompt") is not None
     }
