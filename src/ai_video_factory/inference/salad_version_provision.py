@@ -10,8 +10,7 @@ import os
 import time
 from typing import Any
 
-from .salad import DEFAULT_SALAD_API_BASE_URL, SaladClient, SaladDispatchConfig
-from .salad import SaladRequestError
+from .salad import DEFAULT_SALAD_API_BASE_URL, SaladClient, SaladDispatchConfig, SaladRequestError
 from .worker_image_routes import WorkerImageRoute
 
 
