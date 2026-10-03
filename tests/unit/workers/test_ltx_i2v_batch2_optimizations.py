@@ -34,16 +34,24 @@ def test_approved_per_prompt_gemma_disposal_restored_for_each_video() -> None:
     pytest.importorskip("torch")
     from ai_video_factory.workers.ltx25.paired_i2v import PairInput, _encode_pair_prompts
 
-    calls = []
+    events = []
+
+    def resolve(images):
+        assert len(images) == 1
+        events.append(("resolve", images[0]))
+        return ["resolved-" + images[0][0]]
 
     def prompt_encoder(prompts, **kwargs):
         assert len(prompts) == 1
         assert kwargs["enhance_first_prompt"] is False
         assert kwargs["enhance_static_cache"] is False
-        calls.append((prompts[0], kwargs["enhance_prompt_image"]))
-        return [f"context-for-{prompts[0]}"]
+        events.append(("prompt", prompts[0], kwargs["enhance_prompt_image"]))
+        return ["context-for-" + prompts[0]]
 
-    pipeline = SimpleNamespace(prompt_encoder=prompt_encoder)
+    pipeline = SimpleNamespace(
+        prompt_encoder=prompt_encoder,
+        image_conditioner=SimpleNamespace(resolve_crf=resolve),
+    )
     pair = (
         PairInput("Prompt A", 5243, image=("a.png",)),
         PairInput("Prompt B", 5244, image=("b.png",)),
@@ -52,9 +60,15 @@ def test_approved_per_prompt_gemma_disposal_restored_for_each_video() -> None:
         "ai_video_factory.workers.ltx25.paired_i2v._memory_pressure",
         return_value={"process_available": True},
     ):
-        contexts = _encode_pair_prompts(pipeline, pair)
-    assert contexts == ("context-for-Prompt A", "context-for-Prompt B")
-    assert calls == [("Prompt A", "a.png"), ("Prompt B", "b.png")]
+        prepared = _encode_pair_prompts(pipeline, pair)
+    assert prepared[0] == (PairInput("Prompt A", 5243, "resolved-a.png"), "context-for-Prompt A")
+    assert prepared[1] == (PairInput("Prompt B", 5244, "resolved-b.png"), "context-for-Prompt B")
+    assert events == [
+        ("resolve", ("a.png",)),
+        ("prompt", "Prompt A", "a.png"),
+        ("resolve", ("b.png",)),
+        ("prompt", "Prompt B", "b.png"),
+    ]
 
 
 def test_image_encoder_build_once_per_stage_with_two_b1_image_forwards() -> None:
@@ -154,7 +168,9 @@ def test_shared_stage_uses_exact_same_transformer_for_both_passes() -> None:
         return SimpleNamespace(latent=latent), SimpleNamespace(latent=latent)
 
     with (
-        patch.object(paired, "_encode_pair_prompts", return_value=(context, context)),
+        patch.object(paired, "_encode_pair_prompts", return_value=(
+            (images[0], context), (images[1], context),
+        )),
         patch.object(paired, "_batch_conditionings", image_conditionings),
         patch.object(paired, "_paired_stage", side_effect=fake_stage),
         patch.object(paired, "assert_resolution"),
@@ -215,7 +231,10 @@ def test_two_build_batch2_does_not_preencode_second_stage() -> None:
         use_ancestral_sampler=True,
     )
     with (
-        patch.object(paired, "_encode_pair_prompts", return_value=(context, context)),
+        patch.object(paired, "_encode_pair_prompts", return_value=(
+            (PairInput("A", 5243, "a.png"), context),
+            (PairInput("B", 5244, "b.png"), context),
+        )),
         patch.object(paired, "_batch_conditionings", side_effect=conditioning),
         patch.object(paired, "_paired_stage", side_effect=stage),
         patch.object(paired, "assert_resolution"),
