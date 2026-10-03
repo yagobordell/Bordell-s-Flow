@@ -27,8 +27,8 @@ from .fish_audio import (
     run_fish_director,
     validate_fish_script,
 )
-from .workflow import materialize_blocks
 from .validation_retries import MAX_VALIDATION_RETRIES, is_schema_failure, validation_feedback
+from .workflow import materialize_blocks
 
 _DEFAULT_VOICE_ID = "fishaudio_80e34d5e0b2b4577a486f3a77e357261"
 
@@ -739,7 +739,9 @@ async def _generate_block(
                 state["status"] = "director_running"
                 _atomic_json(state_path, state)
 
-                def save_director_response(response: Any) -> None:
+                def save_director_response(
+                    response: Any, attempt_number: int = director_attempts,
+                ) -> None:
                     usage = getattr(response, "usage", None)
                     usage_data = (
                         usage.model_dump(mode="json")
@@ -747,7 +749,7 @@ async def _generate_block(
                         else usage if isinstance(usage, dict) else None
                     )
                     record = {
-                        "attempt": director_attempts,
+                        "attempt": attempt_number,
                         "id": getattr(response, "id", None),
                         "model": getattr(response, "model", None),
                         "service_tier": getattr(response, "service_tier", None),
@@ -761,11 +763,13 @@ async def _generate_block(
                     state["director_response"] = record
                     _atomic_json(state_path, state)
 
-                def save_candidate(output: Any) -> None:
+                def save_candidate(
+                    output: Any, attempt_number: int = director_attempts,
+                ) -> None:
                     nonlocal candidate
                     candidate = output.model_dump()
                     _atomic_json(
-                        directory / f"director_candidate_{director_attempts}.json",
+                        directory / f"director_candidate_{attempt_number}.json",
                         candidate,
                     )
 
