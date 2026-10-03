@@ -26,7 +26,10 @@ _IMAGE_PRICING = {
     "image_input": Decimal("8.00"),
     "image_output": Decimal("30.00"),
 }
-_STAGES = ("B1.1", "CTA", "CTA Ebook", "B1.2", "B2", "V1", "V2", "V3", "Fish director", _IMAGE_STAGE, "CTA image")
+_STAGES = (
+    "B1.1", "CTA", "CTA Ebook", "B1.2", "B2",
+    "V1", "V2", "V3", "Fish director", _IMAGE_STAGE, "CTA image",
+)
 
 
 def _field(value: object, name: str, default: Any = None) -> Any:
