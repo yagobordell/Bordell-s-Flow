@@ -886,6 +886,160 @@ class DirectLTX25Backend:
         return self._pipeline
 
 
+
+    def generate_pair(
+        self,
+        *,
+        keyframe_a: Path,
+        keyframe_b: Path,
+        output_a: Path,
+        output_b: Path,
+        parameters_a: LTXVideoParameters,
+        parameters_b: LTXVideoParameters,
+        allow_sequential_fallback: bool = False,
+    ) -> dict[str, Any]:
+        """EXPERIMENT ONLY: one shared FP8 transformer, genuine B=2 forwards.
+
+        A GPU OOM either fails explicitly or resets the pipeline and regenerates
+        BOTH clips using unmodified reference B=1, never mixing half-batch
+        output with a reference output. Production single jobs are untouched.
+        """
+        from .paired_i2v import PairInput, generate_paired_fast_distilled
+
+        for path in (keyframe_a, keyframe_b):
+            if not path.is_file():
+                raise FileNotFoundError(f"Batch2 input not found: {path}")
+        profiles = (parameters_a.generation_profile, parameters_b.generation_profile)
+        if profiles != (LTX_PRODUCTION_I2V_PROFILE, LTX_PRODUCTION_I2V_PROFILE):
+            raise ValueError("Batch2 requires the existing validated FP8 no-offload profile")
+        geometry = lambda p: (p.width, p.height, p.fps, p.num_frames)
+        if geometry(parameters_a) != geometry(parameters_b):
+            raise ValueError("Both samples must use identical geometry and duration")
+        if (parameters_a.width, parameters_a.height, parameters_a.fps, parameters_a.num_frames) != (
+            1280, 720, 24, 121
+        ):
+            raise ValueError("Initial experimental batch2 is restricted to 720p, 24fps, 5s")
+        if parameters_a.seed == parameters_b.seed:
+            raise ValueError("Batch2 requires distinct independent seeds")
+
+        outputs = (output_a, output_b)
+        start = time.monotonic()
+        attempted_peak = None
+        try:
+            with self._lock:
+                self.ready()
+                bindings = self._get_bindings()
+                self._validate_runtime(bindings)
+                with _torch_inference_context(bindings.torch):
+                    cuda = bindings.torch.cuda
+                    if self._device.startswith("cuda"):
+                        cuda.reset_peak_memory_stats()
+                    pipeline = self._get_or_build_pipeline(
+                        bindings, requested_offload_mode="none"
+                    )
+                    pipeline_width, pipeline_height = _pipeline_dimensions(parameters_a)
+                    prepared = []
+                    for keyframe, output, params in (
+                        (keyframe_a, output_a, parameters_a),
+                        (keyframe_b, output_b, parameters_b),
+                    ):
+                        destination = output.parent / (output.stem + ".batch-grid.png")
+                        image_path = _prepare_grid_keyframe(
+                            keyframe, destination,
+                            requested_width=params.width,
+                            requested_height=params.height,
+                            pipeline_width=pipeline_width, pipeline_height=pipeline_height,
+                        )
+                        prepared.append(PairInput(
+                            params.prompt, params.seed,
+                            bindings.image_conditioning_input(
+                                path=str(image_path.resolve()), frame_idx=0,
+                                strength=1.0, crf=None,
+                            ),
+                        ))
+                    results = generate_paired_fast_distilled(
+                        pipeline,
+                        pair=(prepared[0], prepared[1]),
+                        width=pipeline_width, height=pipeline_height,
+                        frame_rate=float(parameters_a.fps),
+                        num_frames=parameters_a.num_frames,
+                    )
+                    for result, output, params in zip(
+                        results, outputs, (parameters_a, parameters_b), strict=True
+                    ):
+                        video = _crop_video_to_requested(
+                            result.video,
+                            requested_width=params.width,
+                            requested_height=params.height,
+                        ) if (pipeline_width, pipeline_height) != (
+                            params.width, params.height
+                        ) else result.video
+                        output.parent.mkdir(parents=True, exist_ok=True)
+                        bindings.encode_video(
+                            video=video, fps=params.fps, audio=None,
+                            output_path=str(output),
+                            video_chunks_number=bindings.get_video_chunks_number(
+                                result.num_frames, result.tiling_config
+                            ),
+                        )
+                    attempted_peak = (
+                        cuda.max_memory_allocated() if self._device.startswith("cuda") else None
+                    )
+                    self._pipeline_successful_generations += 2
+            report = {
+                "mode": "batch2",
+                "actual_gpu_batch_size": 2,
+                "quality": "visual_review_pending",
+                "recipe": LTX_PRODUCTION_I2V_PROFILE,
+                "individual_seeds": [parameters_a.seed, parameters_b.seed],
+                "elapsed_seconds": time.monotonic() - start,
+                "peak_vram_bytes": attempted_peak,
+            }
+            logger.info("LTX25_I2V_BATCH2_METRICS %s", json.dumps(report, sort_keys=True))
+            return report
+        except Exception as exc:
+            from ai_video_factory.inference.gpu_failures import (
+                classify_gpu_failure, cleanup_cuda_memory,
+            )
+            if not allow_sequential_fallback or classify_gpu_failure(exc) != "oom":
+                # Do not mark a partially emitted pair as succeeded.
+                for output in outputs:
+                    output.unlink(missing_ok=True)
+                if classify_gpu_failure(exc) == "oom":
+                    self.invalidate_pipeline()
+                    cleanup_cuda_memory()
+                raise
+            logger.warning(
+                "LTX25_I2V_BATCH2_OOM falling_back_to_two_reference_jobs type=%s",
+                type(exc).__name__,
+            )
+            for output in outputs:
+                output.unlink(missing_ok=True)
+            self.invalidate_pipeline()
+            cleanup_cuda_memory()
+            # Quality-preserving fallback uses EXACTLY the existing B=1 path,
+            # not changed seeds, resolution, LoRA, samplers or VAE settings.
+            self.generate(
+                keyframe_path=keyframe_a, output_path=output_a,
+                parameters=parameters_a,
+            )
+            self.generate(
+                keyframe_path=keyframe_b, output_path=output_b,
+                parameters=parameters_b,
+            )
+            report = {
+                "mode": "sequential_oom_fallback",
+                "actual_gpu_batch_size": 1,
+                "quality": "visual_review_pending",
+                "recipe": LTX_PRODUCTION_I2V_PROFILE,
+                "individual_seeds": [parameters_a.seed, parameters_b.seed],
+                "elapsed_seconds": time.monotonic() - start,
+                "failed_batch_peak_vram_bytes": attempted_peak,
+            }
+            logger.info("LTX25_I2V_BATCH2_METRICS %s", json.dumps(report, sort_keys=True))
+            return report
+
+
 class LTXVideoTaskRunner:
     """Task adapter for one storyboard-keyframe-conditioned LTX video clip."""
 
