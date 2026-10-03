@@ -2274,11 +2274,16 @@ async def main() -> None:
         args.from_stage == "B1.1"
         and getattr(args, "stop_stage", None) is None
         and not getattr(args, "no_audio", False)
-        and not settings.ai33_api_key
     ):
-        raise SystemExit(
-            "AI33_API_KEY is required for Fish TTS; pass --no-audio to skip."
-        )
+        if visual_style == "casero" and not settings.ai33_api_key:
+            raise SystemExit(
+                "AI33_API_KEY is required for Casero TTS; pass --no-audio to skip."
+            )
+        if visual_style == "profesional" and not settings.gemini_api_key:
+            raise SystemExit(
+                "GEMINI_API_KEY is required for professional TTS; "
+                "pass --no-audio to skip."
+            )
 
     if args.max_parallel_calls < 1:
         raise SystemExit("--max-parallel-calls must be positive")

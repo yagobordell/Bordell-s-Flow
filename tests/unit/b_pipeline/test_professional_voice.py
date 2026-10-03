@@ -240,3 +240,93 @@ def test_professional_audio_paid_block_is_reused(tmp_path, monkeypatch):
     assert third["run_id"] != first["run_id"]
     assert speech.calls == 1
     assert third["blocks"][0]["sha256"] == first["blocks"][0]["sha256"]
+
+
+def test_runner_professional_waits_for_b2_and_never_starts_fish(tmp_path, monkeypatch):
+    """End-to-end routing: B2 must finish before V/Gemini, with AI33 unset."""
+    from argparse import Namespace
+
+    from PIL import Image
+
+    from ai_video_factory.bots.contracts import B11Output
+    from scripts.pipeline import run_b_pipeline as runner
+
+    script = tmp_path / "input" / "sample.txt"
+    script.parent.mkdir()
+    script.write_text("Hola, mundo. Esa es la realidad.", encoding="utf-8")
+    avatar = tmp_path / "avatars" / "Julia.png"
+    avatar.parent.mkdir()
+    Image.new("RGB", (32, 24)).save(avatar, "PNG")
+    args = Namespace(
+        visual_style="profesional", script_file=None,
+        scripts_dir=script.parent, script=script.name, list_scripts=False,
+        avatars_dir=avatar.parent, avatar=avatar.name, list_avatars=False,
+        output=tmp_path / "output", max_parallel_calls=1,
+        from_stage="B1.1", skip_images=True, no_audio=False,
+        images_only=False, regenerate_audio=False, resume_audio=False,
+        voice_id="Kore",
+    )
+    b11 = B11Output.model_validate({
+        "pipeline_stage": "B1.1",
+        "narrative_core": {"central_question": "Why?", "final_answer": "Because."},
+        "blocks": [{
+            "block_id": 1, "type": "intro", "emotional_entry": "calm",
+            "emotional_exit": "clear",
+            "span": {"first_words": "Hola,", "last_words": "realidad."},
+        }],
+        "error": None,
+    })
+    steps = []
+
+    async def fake_b(_source, **kwargs):
+        kwargs["on_output"]("B1.1", None, b11.model_dump(mode="json"))
+        steps.append("B2_done")
+        return SimpleNamespace(
+            b11=b11, b12=[SimpleNamespace(block_id=1)],
+            b2=[SimpleNamespace(blocks=[
+                SimpleNamespace(model_dump=lambda **_: _block())
+            ])],
+            visual_plan=lambda: {"visual_style": "profesional", "blocks": []},
+        )
+
+    async def fake_professional(**kwargs):
+        steps.append("gemini_after_B2")
+        assert kwargs["voice_id"] == "Kore"
+        assert kwargs["blocks"][0]["beats"][0]["text"] == "Hola, mundo. "
+        return {
+            "status": "completed", "provider": "gemini",
+            "voice_id": "Kore", "stt_complete": False,
+            "file": "audio/mock.wav",
+        }
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Professional must not start Fish or paid image generation")
+
+    monkeypatch.setattr(runner, "parse_args", lambda: args)
+    monkeypatch.setattr(
+        runner, "ensure_avatar_qr",
+        lambda *, avatar_file, **_: SimpleNamespace(
+            url="https://example.test/book", png=avatar_file.read_bytes(),
+            sha256=hashlib.sha256(avatar_file.read_bytes()).hexdigest(),
+            generator="segno",
+        ),
+    )
+    monkeypatch.setattr(runner.settings, "openai_api_key", "test-key")
+    monkeypatch.setattr(runner.settings, "gemini_api_key", "test-gemini-key")
+    monkeypatch.setattr(runner.settings, "ai33_api_key", None)
+    monkeypatch.setattr(runner, "OpenAIProvider", lambda **_: object())
+    monkeypatch.setattr(runner, "run_b_pipeline", fake_b)
+    monkeypatch.setattr(runner, "generate_professional_audio", fake_professional)
+    monkeypatch.setattr(runner, "_generate_audio", forbidden)
+    monkeypatch.setattr(runner, "_generate_images", forbidden)
+
+    asyncio.run(runner.main())
+    assert steps == ["B2_done", "gemini_after_B2"]
+    output = tmp_path / "output" / "sample"
+    report = json.loads((output / "run_report.json").read_text())
+    assert report["run"]["audio_generation"]["provider"] == "gemini"
+    saved_voice = json.loads((output / "avatar_voice.json").read_text())
+    assert saved_voice == {
+        "mode": "voice_id", "status": "ready",
+        "provider": "gemini", "voice_id": "Kore",
+    }
