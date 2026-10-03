@@ -476,7 +476,7 @@ def test_professional_paid_originals_survive_transient_salad_start_error(
         raise RuntimeError("Salad not ready")
 
     monkeypatch.setattr(runner, "ensure_image_upscaler_ready", reject_salad)
-    with pytest.raises(RuntimeError, match="Salad not ready"):
+    with pytest.raises(gpt.ImageGenerationError, match="Salad not ready"):
         asyncio.run(runner._generate_images(tmp_path, plan))
     saved = json.loads((tmp_path / "images" / "manifest.json").read_text())
     assert saved["finishing_status"] == "pending_upscaler"
