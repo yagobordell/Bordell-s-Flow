@@ -263,51 +263,44 @@ def test_automatic_ltx_activation_requires_complete_audio_and_transport(
 
 
 
-def test_new_memory_safe_a2v_requires_exact_deployed_image_digest(
+def test_a2v_registers_immutable_digest_without_touching_another_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(runner, "load_dotenv", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(runner.settings, "salad_api_key", "test-key")
-    monkeypatch.setenv("SALAD_ORGANIZATION", "org")
-    monkeypatch.setenv("SALAD_PROJECT", "project")
+    monkeypatch.setattr(runner.settings, "postgres_dsn", "postgres://shared")
+    monkeypatch.setattr(runner.settings, "salad_capacity_controller_postgres_dsn", None)
     monkeypatch.delenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", raising=False)
-
     with pytest.raises(RuntimeError, match="SALAD_LTX25_PAGEABLE_A2V_IMAGE"):
         runner._require_ltx_safe_a2v_worker()
 
-    # A digest from a different repository must never be deployed,
-    # even when its SHA syntax is otherwise valid.
-    untrusted = "docker.io/test/factory@sha256:" + "a" * 64
-    monkeypatch.setenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", untrusted)
-    with pytest.raises(RuntimeError, match="different Docker repository"):
+    monkeypatch.setenv(
+        "SALAD_LTX25_PAGEABLE_A2V_IMAGE",
+        "docker.io/test/factory@sha256:" + "a" * 64,
+    )
+    with pytest.raises(ValueError, match="immutable digest"):
         runner._require_ltx_safe_a2v_worker()
 
-    # Test the authorized repo with a live mismatched group. The runner
-    # must reject the mismatch without attempting to replace a live worker.
-    repo = "docker.io/yagobordell/ai-video-factory@sha256:"
-    pinned = repo + "a" * 64
-    monkeypatch.setenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", pinned)
-    deployed = {"image": repo + "b" * 64}
-
-    class FakeSaladClient:
-        def __init__(self, config: object) -> None:
-            assert config.container_group_name == (
-                "ai-video-factory-ltx25-worker-v3"
-            )
-
-        def describe_container_group(self) -> dict:
-            return {
-                "container": deployed,
-                "current_state": {"status": "running"},
-                "pending_change": False,
-            }
-
-    monkeypatch.setattr(runner, "SaladClient", FakeSaladClient)
-    with pytest.raises(RuntimeError, match="image mismatch"):
-        runner._require_ltx_safe_a2v_worker()
-
-    deployed["image"] = pinned
+    called: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(
+        runner, "register_route",
+        lambda dsn, *, service, image: (
+            called.append((dsn, service, image))
+            or runner.route_for_image(service, image)
+        ),
+    )
+    one = "docker.io/yagobordell/ai-video-factory@sha256:" + "a" * 64
+    two = "docker.io/yagobordell/ai-video-factory@sha256:" + "b" * 64
+    monkeypatch.setenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", one)
     runner._require_ltx_safe_a2v_worker()
+    monkeypatch.setenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", two)
+    runner._require_ltx_safe_a2v_worker()
+    assert called == [
+        ("postgres://shared", "ltx25", one),
+        ("postgres://shared", "ltx25", two),
+    ]
+    assert runner.route_for_image("ltx25", one).group_name != (
+        runner.route_for_image("ltx25", two).group_name
+    )
 
 
 def test_capacity_guard_accepts_healthy_singleton(
