@@ -206,3 +206,39 @@ def test_b2_styles_can_repair_a_schema_failure_twice(model) -> None:
     ))
     assert provider.calls[1] == 3
     assert result.b2[0].blocks[0].beats[0].visual_type == "avatar"
+
+
+def test_failed_parallel_b12_wave_preserves_successful_block_for_resume() -> None:
+    class AlwaysBad(OneInvalidB12):
+        async def generate_structured(self, **kwargs):
+            data = json.loads(kwargs["input_text"])
+            block_id = data["current_block_id"]
+            self.calls[block_id] += 1
+            return B12Output.model_validate({
+                "pipeline_stage": "B1.2", "block_id": block_id,
+                "beats": [{
+                    "beat_id": "1X" if block_id == 1 else "2A",
+                    "text": data["blocks"][0]["text"], "beat_type": "claim",
+                }],
+                "error": None,
+            })
+
+    provider = AlwaysBad()
+    saved = {}
+    with pytest.raises(BPipelineValidationError, match="after 2 retries"):
+        asyncio.run(run_b_pipeline(
+            SOURCE, provider=provider, start_from="B1.2", stop_after="B1.2",
+            previous_b11=valid_b11(),
+            on_output=lambda stage, block_id, payload: saved.update({
+                block_id: B12Output.model_validate(payload),
+            }),
+        ))
+    assert provider.calls == {1: 3, 2: 1}
+    assert set(saved) == {2}
+    recovering = OneInvalidB12()
+    complete = asyncio.run(run_b_pipeline(
+        SOURCE, provider=recovering, start_from="B1.2", stop_after="B1.2",
+        previous_b11=valid_b11(), previous_partial_b12=saved,
+    ))
+    assert len(complete.b12) == 2
+    assert recovering.calls == {1: 2}
