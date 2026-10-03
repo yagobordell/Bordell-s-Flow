@@ -272,7 +272,7 @@ def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None, 
             raise CTACompositionError("Unreconciled CTA upgrade checkpoint")
         try:
             temp_record.write_text(
-                json.dumps(completion, ensure_ascii=False, indent=2) + "\\n",
+                json.dumps(completion, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
             temp_record.replace(directory / "completed.json")
