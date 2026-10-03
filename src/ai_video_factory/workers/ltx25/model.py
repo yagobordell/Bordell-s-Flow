@@ -89,6 +89,7 @@ LTX_SUPPORTED_I2V_PROFILES = (
     *LTX_FAST_PROFILES,
 )
 _CANONICAL_LANDSCAPE_SIZE = (1280, 720)
+_FULL_HD_LANDSCAPE_SIZE = (1920, 1080)
 _LTX_TWO_STAGE_SPATIAL_GRID = 64
 
 _TRANSFORMER = "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors"
@@ -136,10 +137,13 @@ class LTXVideoParameters(BaseModel):
             self.width % _LTX_TWO_STAGE_SPATIAL_GRID == 0
             and self.height % _LTX_TWO_STAGE_SPATIAL_GRID == 0
         )
-        if not on_native_grid and (self.width, self.height) != _CANONICAL_LANDSCAPE_SIZE:
+        if not on_native_grid and (self.width, self.height) not in (
+            _CANONICAL_LANDSCAPE_SIZE, _FULL_HD_LANDSCAPE_SIZE,
+        ):
             raise ValueError(
                 "LTX-2.5 two-stage dimensions must be divisible by 64, except the "
-                "canonical 1280x720 profile which uses deterministic internal grid padding"
+                "approved 1280x720 and 1920x1080 delivery, which use deterministic "
+                "internal grid padding"
             )
         if (self.num_frames - 1) % 8 != 0:
             raise ValueError("LTX-2.5 num_frames must satisfy 8k + 1")
