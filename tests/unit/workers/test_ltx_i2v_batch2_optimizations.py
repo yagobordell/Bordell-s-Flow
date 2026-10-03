@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -274,7 +275,15 @@ def test_stage_reuse_oom_retries_approved_true_b2_before_any_b1(tmp_path: Path) 
     second = tmp_path / "b.png"
     first.write_bytes(b"a")
     second.write_bytes(b"b")
-    with patch("ai_video_factory.inference.gpu_failures.cleanup_cuda_memory"):
+    active_exceptions_during_cleanup = []
+
+    def inspect_cleanup():
+        active_exceptions_during_cleanup.append(sys.exc_info()[0])
+
+    with patch(
+        "ai_video_factory.inference.gpu_failures.cleanup_cuda_memory",
+        side_effect=inspect_cleanup,
+    ):
         report = backend.generate_pair(
             keyframe_a=first, keyframe_b=second,
             output_a=tmp_path / "a.mp4", output_b=tmp_path / "b.mp4",
@@ -282,6 +291,7 @@ def test_stage_reuse_oom_retries_approved_true_b2_before_any_b1(tmp_path: Path) 
             reuse_transformer_across_stages=True,
             allow_sequential_fallback=False,
         )
+    assert active_exceptions_during_cleanup == [None]
     assert report["mode"] == "batch2"
     assert report["actual_gpu_batch_size"] == 2
     assert report["shared_transformer_stage_builds"] == 2
