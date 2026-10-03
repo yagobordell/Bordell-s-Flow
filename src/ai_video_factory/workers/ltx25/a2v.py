@@ -293,13 +293,13 @@ def _load_a2v_bindings() -> _A2VBindings:
     try:
         import torch
         from ltx_core.devices import cleanup_accelerator_memory
-        from ltx_core.model.video_vae.transformer.fallback_na import triton_na_available
         from ltx_core.loader import (
             LTXV_LORA_COMFY_RENAMING_MAP,
             LoraPathStrengthAndSDOps,
         )
         from ltx_core.model.video_vae import get_video_chunks_number
         from ltx_core.model.video_vae.transformer import apply as diffvae_apply
+        from ltx_core.model.video_vae.transformer.fallback_na import triton_na_available
         from ltx_pipelines.a2vid_two_stage import A2VidPipelineTwoStage
         from ltx_pipelines.utils import helpers as tiling_helpers
         from ltx_pipelines.utils.args import ImageConditioningInput
