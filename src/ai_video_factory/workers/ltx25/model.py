@@ -937,6 +937,10 @@ class DirectLTX25Backend:
                 )
                 if pair_offload_mode == "disk" and not pipeline.stage._is_streaming:
                     raise RuntimeError("Full HD B=2 requires block-streamed FP8 transformer")
+                if pair_offload_mode == "disk":
+                    policy = getattr(pipeline.stage, "_quantization", None)
+                    if policy is None or policy.fuse_rule is None:
+                        raise RuntimeError("Full HD block streaming requires FP8 cast policy")
                 pipeline_width, pipeline_height = _pipeline_dimensions(parameters_a)
                 pair = []
                 for keyframe, output, params in (
@@ -964,6 +968,7 @@ class DirectLTX25Backend:
                     num_frames=parameters_a.num_frames,
                     max_forward_batch_size=forward_batch_size,
                     reuse_transformer_across_stages=reuse_transformer_across_stages,
+                    full_hd_memory_cleanup=pair_offload_mode == "disk",
                 )
                 for result, output, params in zip(
                     results, (output_a, output_b),
