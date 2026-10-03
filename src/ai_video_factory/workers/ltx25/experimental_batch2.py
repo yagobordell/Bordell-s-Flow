@@ -28,7 +28,7 @@ class Batch2Parameters(BaseModel):
     a: LTXVideoParameters
     b: LTXVideoParameters
     allow_sequential_fallback: bool = False
-    reuse_transformer_across_stages: bool = True
+    reuse_transformer_across_stages: bool = False
 
     @model_validator(mode="after")
     def check_pair(self) -> Batch2Parameters:
