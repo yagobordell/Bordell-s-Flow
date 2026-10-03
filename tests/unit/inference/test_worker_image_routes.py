@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +13,7 @@ from ai_video_factory.inference.contracts import (
 from ai_video_factory.inference.errors import UnsupportedTaskError
 from ai_video_factory.inference.repository import InMemoryJobRepository
 from ai_video_factory.inference.salad import SaladRequestError
+from ai_video_factory.inference.worker import InferenceWorker
 from ai_video_factory.inference.salad_version_provision import (
     WorkerVersionProvisionError,
     WorkerVersionProvisioner,
@@ -160,3 +162,28 @@ def test_controller_never_mutates_a_group_owned_by_another_version(monkeypatch):
     with pytest.raises(WorkerVersionProvisionError, match="unexpected Docker image"):
         controller.ensure(route_for_image("ltx25", A), create=True)
     assert fake.created == []
+
+
+def test_direct_worker_rejects_foreign_docker_before_gpu_claim(tmp_path: Path):
+    repository = InMemoryJobRepository()
+    worker = InferenceWorker(
+        storage=SimpleNamespace(),
+        repository=repository,
+        runners=SimpleNamespace(task_names=("video.ltx25.audio_to_video",)),
+        worker_id="isolated-a2v-b",
+        temp_dir=tmp_path,
+        required_worker_image=B,
+    )
+    with pytest.raises(UnsupportedTaskError, match="immutable Docker image"):
+        worker.process(_job("different-docker", A))
+    with pytest.raises(UnsupportedTaskError, match="immutable Docker image"):
+        InferenceWorker(
+            storage=SimpleNamespace(),
+            repository=repository,
+            runners=SimpleNamespace(task_names=("video.ltx25.audio_to_video",)),
+            worker_id="legacy",
+            temp_dir=tmp_path,
+        ).process(_job("isolated-pending", A))
+    assert repository.next_pending_request(
+        ("video.ltx25.audio_to_video",), required_worker_image=A,
+    ) is None
