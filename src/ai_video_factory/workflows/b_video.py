@@ -283,12 +283,13 @@ def build_b2_video_plan(
                 raise B2VideoError(
                     f"Missing media_video video_prompt for {beat['beat_id']}"
                 )
-    worker_images = worker_images or {}
+    groups = _group_beats(beats)
+    requested = worker_images or {}
+    worker_images = {kind: requested[kind] for kind, _, _ in groups if kind in requested}
     digest = _fingerprint(timeline, audio, assets, avatar, worker_images=worker_images)
     run_dir = output / "video" / "runs" / digest[:20]
     if run_dir.is_symlink() or run_dir.parent.is_symlink():
         raise B2VideoError("Refusing linked B2 LTX run directory")
-    groups = _group_beats(beats)
     master = _verified_asset(output, audio.get("file"), audio.get("sha256"))
 
     # The pinned reference cannot represent an arbitrarily long audio run.
@@ -348,9 +349,9 @@ def build_b2_video_plan(
                 seed=seed, width=1280, height=720, fps=_FPS,
                 num_frames=num_frames, generation_profile=LTX_PRODUCTION_I2V_PROFILE,
             )
-            image = worker_images.get("i2v")
-            if image:
-                job_id += "-im" + image.rsplit(":", 1)[-1][:12]
+            required_image = worker_images.get("i2v")
+            if required_image:
+                job_id += "-im" + required_image.rsplit(":", 1)[-1][:12]
             key = f"b2-ltx/inputs/images/{image_sha}.png"
             request = InferenceJobRequest(
                 job_id=job_id, task=LTX_VIDEO_TASK,
@@ -368,7 +369,7 @@ def build_b2_video_plan(
                     "width": 1280, "height": 720, "fps": _FPS,
                     **({"required_worker_image": worker_image} if worker_image else {}),
                     "num_frames": num_frames,
-                    **({"required_worker_image": image} if image else {}),
+                    **({"required_worker_image": required_image} if required_image else {}),
                 },
             )
             audio_path = None
