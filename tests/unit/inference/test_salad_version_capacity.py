@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from ai_video_factory.inference import salad_capacity
 from ai_video_factory.inference.salad_autoscaler import (
+    AutoscalerReconciliationError,
+    PredictiveSaladAutoscaler,
     allocate_project_quota,
     build_global_demands,
 )
@@ -104,3 +109,27 @@ def test_singleton_adds_both_a2v_versions_without_modifying_default_groups(monke
     assert set(quotas) == {route_a.stage, route_b.stage}
     assert all(amount == 1 for amount in quotas.values())
     assert sum(quotas.values()) <= config.project_max_replicas
+
+
+def test_manual_experimental_group_reserves_quota_without_being_managed(monkeypatch):
+    external = "ai-video-factory-ltx25-a2v-manual-test"
+    client = SimpleNamespace(
+        list_project_container_groups=lambda: [
+            {"name": "static", "current_state": {"status": "running"}, "replicas": 1},
+            {"name": external, "current_state": {"status": "running"}, "replicas": 2},
+        ],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=SimpleNamespace(), store=SimpleNamespace(),
+        clients={"static": client}, bindings={},
+        managed_group_names={"static"},
+    )
+    with pytest.raises(AutoscalerReconciliationError, match="unmanaged"):
+        autoscaler._assert_project_inventory_owned()
+    monkeypatch.setenv("SALAD_EXTERNAL_GROUP_ALLOWLIST", external)
+    assert autoscaler._assert_project_inventory_owned() == 2
+    client.list_project_container_groups = lambda: [
+        {"name": external, "current_state": {"status": "deploying"}, "replicas": 3},
+    ]
+    with pytest.raises(AutoscalerReconciliationError, match="transitioning"):
+        autoscaler._assert_project_inventory_owned()
