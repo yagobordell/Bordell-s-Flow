@@ -30,6 +30,41 @@ Do not merge or switch production to batch2 unless both results meet quality
 requirements and memory/timing benefits are actually observed on Salad.
 
 
+## Narrow follow-up objective (I2V only)
+
+The final target is 1080p delivery for both I2V and A2V; **only I2V**
+should execute TWO video clips in the same GPU batch. A2V continues
+ONE video per job and its separate optimization work is NOT changed here.
+
+The original successful 720p pair stays the DEFAULT isolated test. Only
+after separately validating the I2V 1080p single-video memory/quality
+profile should an operator schedule a dedicated paired full-HD trial.
+This new I2V-only trial accepts exactly two NATIVE 1920x1080 PNG inputs,
+two separate prompts/seeds and the unchanged five-second 24fps FP8 recipe.
+Its parameters require explicit `accept_full_hd_batch2_oom_risk=true`,
+which is deliberately absent by default. Example power-shell-only
+local preflight (no Salad started):
+
+```powershell
+.\\scripts\\smoke\\run_ltx25_i2v_batch2_trial.ps1 @Shared `
+    -Width 1920 -Height 1080 `
+    -AcceptFullHdBatch2OomRisk -CheckInputsOnly
+```
+
+A separate fresh immutable 1080p Docker image, new RunId and a deliberate
+paid GPU approval are necessary for a real hardware test. NEVER run the
+paid 1080p trial accidentally during the already verified 720p benchmark.
+A full-HD paired trial refuses sequential fallback and unverified shared
+stage-resident transformer weights; an OOM is visible rather than hidden
+by a downgrade. **There is no evidence yet that native B=2 1080p fits in
+the existing 32-GiB RTX 5090.** Keep production B2 routing to ordinary
+single-video requests until the GPU test and visual review actually pass.
+
+No A2V worker source is changed as part of this follow-up. This historical
+combined experimental PR still contains prior A2V changes and has diverged
+from the concurrently optimized A2V base; it must NOT be merged wholesale.
+Reconcile/split I2V-only work after the A2V work is complete.
+
 ## Quality-preserving latency changes (experimental, NOT approved without GPU trial)
 
 **Important October 3 OOM postmortem:** the NEW shared-Gemma implementation
