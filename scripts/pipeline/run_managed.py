@@ -9,9 +9,11 @@ The audited B pipeline itself retains its legacy CLI and separate recovery files
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 from ai_video_factory.managed_layout import sync_managed_outputs
@@ -36,7 +38,7 @@ One raw TXT = pending; a folder with that TXT = started or completed.
 The persistent QR, voice, optional clone audio and one-time visual style
 are saved in data/<avatar>/meta/. A conflicting --style is refused.
 
-Options include --no-image, --no-video, --style, --from B2,
+Options include --no-image, --no-video, --style, --from B2, --rerun,
 --images-only, --generate-video, --resume-audio, --regenerate-audio,
 --publish-only, --youtube-only, --sync-only, --list-avatars, --list-scripts, --data-root PATH.
 --sync-only exports existing verified media without API or GPU calls.
@@ -190,7 +192,8 @@ def prepare_managed_script(
     if destination.exists():
         raise SystemExit(
             f"The script already has a run folder: {destination}. "
-            "Use the appropriate resume option instead of overwriting."
+            "Use --rerun to start it again, or the appropriate resume option "
+            "to continue it."
         )
     if not available:
         raise SystemExit(
@@ -257,6 +260,71 @@ def _is_resume(flags: list[str]) -> bool:
     )
 
 
+def _archive_managed_run(
+    data: Path,
+    avatar: str,
+    script: str,
+    destination: Path,
+    work: Path,
+) -> Path:
+    """Move a prior run aside before an explicit fresh rerun.
+
+    The script is copied back as a pending input after the old visible run has
+    been archived.  Both the human-facing output and the internal checkpoints
+    are retained, so a rerun cannot silently destroy a paid run's audit trail.
+    """
+    if destination.is_symlink() or destination.is_junction():
+        raise SystemExit(f"Refusing to archive linked run folder: {destination}")
+    source = destination / f"{script}.txt"
+    if source.is_symlink() or not source.is_file():
+        raise SystemExit(
+            f"Cannot rerun {script}: missing source script in {destination}"
+        )
+    avatar_dir = data / avatar
+    history = avatar_dir / ".history"
+    if history.is_symlink() or history.is_junction():
+        raise SystemExit(f"Refusing to use linked history folder: {history}")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    archive = history / f"{script}-{stamp}"
+    counter = 1
+    while archive.exists():
+        archive = history / f"{script}-{stamp}-{counter}"
+        counter += 1
+    history.mkdir(parents=True, exist_ok=True)
+
+    work_archive: Path | None = None
+    if work.exists():
+        if work.is_symlink() or work.is_junction():
+            raise SystemExit(f"Refusing to archive linked work folder: {work}")
+        work_history = work.parent / ".history"
+        if work_history.is_symlink() or work_history.is_junction():
+            raise SystemExit(f"Refusing to use linked work history folder: {work_history}")
+        work_history.mkdir(parents=True, exist_ok=True)
+        work_archive = work_history / archive.name
+        work_counter = 1
+        while work_archive.exists():
+            work_archive = work_history / f"{archive.name}-{work_counter}"
+            work_counter += 1
+
+    shutil.move(str(destination), str(archive))
+    pending = avatar_dir / f"{script}.txt"
+    try:
+        if pending.exists() or pending.is_symlink():
+            raise SystemExit(
+                f"Cannot rerun {script}: pending duplicate already exists at {pending}"
+            )
+        shutil.copy2(archive / f"{script}.txt", pending)
+        if work_archive is not None:
+            shutil.move(str(work), str(work_archive))
+    except Exception:
+        if pending.is_file() and not pending.is_symlink():
+            pending.unlink()
+        if archive.is_dir() and not destination.exists():
+            shutil.move(str(archive), str(destination))
+        raise
+    return archive
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if "--legacy-layout" in args:
@@ -305,7 +373,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             sys.executable, str(CORE), "--qr-only",
             "--avatars-dir", str(data), "--avatar", qr_avatar, *flags,
         ])
+    rerun = "--rerun" in flags
+    if rerun:
+        flags.remove("--rerun")
+        if any(
+            flag in flags
+            for flag in (
+                "--from", "--images-only", "--generate-video", "--videos-only",
+                "--regenerate-audio", "--resume-audio", "--publish-only",
+                "--youtube-only", "--sync-only",
+            )
+        ):
+            raise SystemExit(
+                "--rerun starts from B1.1 and cannot be combined with resume options"
+            )
     resume = _is_resume(flags)
+    discovery_resume = resume or rerun
     if avatar_arg:
         avatar = _name(avatar_arg, ".png")
     elif script_arg:
@@ -313,9 +396,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # (for example, a book cover used by its casero CTA).
         script_name = _name(script_arg, ".txt")
         matches = _script_avatar_candidates(
-            data, script_name, resume=resume, avatar_names=avatar_names,
+            data, script_name, resume=discovery_resume, avatar_names=avatar_names,
         )
-        if resume and not matches:
+        if discovery_resume and not matches:
             raise SystemExit(
                 f"No started script folder for {script_name}. "
                 "Check the script name or provide its avatar explicitly."
@@ -326,11 +409,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     if avatar not in avatar_names:
         raise SystemExit(f"No PNG avatar found for {avatar}")
     if "--list-scripts" in flags:
-        print("\n".join(_script_options(data, avatar, resume)) or "No pending .txt scripts")
+        print(
+            "\n".join(_script_options(data, avatar, discovery_resume))
+            or "No pending .txt scripts"
+        )
         return 0
     script = _name(script_arg, ".txt") if script_arg else _choose(
-        _script_options(data, avatar, resume), "scripts"
+        _script_options(data, avatar, discovery_resume), "scripts"
     )
+    destination = data / avatar / script
+    work_root = WORK_ROOT / avatar
+    work = work_root / script
+    if rerun:
+        if not destination.is_dir():
+            raise SystemExit(f"Cannot rerun missing run folder: {destination}")
+        archived = _archive_managed_run(data, avatar, script, destination, work)
+        print(f"  Previous run archived at: {archived}")
+        resume = False
     reference_audio = None
     if "--voice-audio" in flags:
         index = flags.index("--voice-audio")
@@ -340,8 +435,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     _, source = prepare_managed_script(
         data, avatar, script, resume=resume, reference_audio=reference_audio
     )
-    destination = data / avatar / script
-    work_root = WORK_ROOT / avatar
     if "--sync-only" in flags:
         if flags != ["--sync-only"]:
             raise SystemExit("--sync-only cannot be combined with generation options")

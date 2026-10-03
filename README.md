@@ -53,6 +53,8 @@ en `.video_factory_work/<avatar>/<guion>/`, para permitir reanudación.
 .\\run.ps1 test01 Jorge
 .\\run.ps1 test02 Jorge --no-video
 .\\run.ps1 test02 Jorge --generate-video
+# Repetir test02 desde B1.1, conservando la ejecución anterior:
+.\\run.ps1 test02 Jorge --rerun
 ```
 
 Los apartados antiguos del README que muestran `data/input`,

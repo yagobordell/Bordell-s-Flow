@@ -188,6 +188,40 @@ def test_launcher_passes_managed_target_and_resume_without_paid_calls(
     assert "--avatar" not in commands[0]
 
 
+def test_explicit_rerun_archives_existing_visible_and_internal_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "data"
+    _png(root / "Enzo" / "Enzo.png")
+    existing = root / "Enzo" / "test"
+    existing.mkdir()
+    (existing / "test.txt").write_text("Original script.", encoding="utf-8")
+    (existing / "old-output.txt").write_text("keep me", encoding="utf-8")
+    work = tmp_path / ".video_factory_work"
+    old_work = work / "Enzo" / "test"
+    old_work.mkdir(parents=True)
+    (old_work / "run_report.json").write_text("{}", encoding="utf-8")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(run_managed, "WORK_ROOT", work)
+    monkeypatch.setattr(run_managed, "sync_managed_outputs", lambda *_: None)
+    monkeypatch.setattr(
+        run_managed.subprocess, "call", lambda command: calls.append(command) or 0,
+    )
+
+    assert run_managed.main([
+        "test", "Enzo", "--rerun", "--data-root", str(root),
+    ]) == 0
+
+    assert (root / "Enzo" / "test" / "test.txt").read_text(encoding="utf-8") == (
+        "Original script."
+    )
+    history = list((root / "Enzo" / ".history").iterdir())
+    assert len(history) == 1
+    assert (history[0] / "old-output.txt").read_text(encoding="utf-8") == "keep me"
+    assert list((work / "Enzo" / ".history").iterdir())
+    assert "--rerun" not in calls[0]
+
+
 def test_resume_infers_avatar_from_owning_folder_not_loose_ebook_cover(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
