@@ -6,7 +6,6 @@ LTX replica mutations. Never override its lock or replace an active worker.
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shutil
