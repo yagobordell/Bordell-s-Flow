@@ -821,7 +821,7 @@ class DirectLTX25Backend:
         requested_offload_mode: str = "cpu",
         requested_quantization: str = "fp8_cast",
     ) -> Any:
-        if requested_offload_mode not in ("cpu", "none"):
+        if requested_offload_mode not in ("cpu", "disk", "none"):
             raise ValueError("Unsupported LTX I2V offload mode")
         if requested_quantization not in ("fp8_cast", "nvfp4_prequant"):
             raise ValueError("Unsupported LTX I2V quantization")
@@ -875,6 +875,7 @@ class DirectLTX25Backend:
             quantization=quantization,
             offload_mode=(
                 bindings.offload_mode.NONE if requested_offload_mode == "none"
+                else bindings.offload_mode.DISK if requested_offload_mode == "disk"
                 else bindings.offload_mode.CPU
             ),
         )
@@ -915,9 +916,27 @@ class DirectLTX25Backend:
                 cuda = bindings.torch.cuda
                 if self._device.startswith("cuda"):
                     cuda.reset_peak_memory_stats()
-                pipeline = self._get_or_build_pipeline(
-                    bindings, requested_offload_mode="none"
+                # Native 1080p B=2 exhausted RTX 5090 VRAM inside the stage2
+                # transformer. Block-streaming FP8 uses the exact same weights,
+                # forward batch size, sigmas and independent random generators.
+                # DISK keeps only two pinned CPU block slots, unlike RAM
+                # streaming, so the 40-GiB Salad container is protected too.
+                # The proven 720p B=2 path remains GPU-resident and unchanged.
+                pair_offload_mode = (
+                    "disk" if (parameters_a.width, parameters_a.height) == (1920, 1080)
+                    else "none"
                 )
+                logger.info(
+                    "LTX25_I2V_PAIR_MEMORY_POLICY resolution=%dx%d offload=%s "
+                    "true_gpu_batch=%d",
+                    parameters_a.width, parameters_a.height, pair_offload_mode,
+                    forward_batch_size,
+                )
+                pipeline = self._get_or_build_pipeline(
+                    bindings, requested_offload_mode=pair_offload_mode,
+                )
+                if pair_offload_mode == "disk" and not pipeline.stage._is_streaming:
+                    raise RuntimeError("Full HD B=2 requires block-streamed FP8 transformer")
                 pipeline_width, pipeline_height = _pipeline_dimensions(parameters_a)
                 pair = []
                 for keyframe, output, params in (
@@ -1107,6 +1126,7 @@ class DirectLTX25Backend:
                     "requested_width": dimensions[0],
                     "requested_height": dimensions[1],
                     "full_hd_gpu_validation_pending": dimensions[1] == 1080,
+                    "transformer_offload_mode": "disk" if dimensions[1] == 1080 else "none",
                     "recipe": LTX_PRODUCTION_I2V_PROFILE,
                     "individual_seeds": [parameters_a.seed, parameters_b.seed],
                     "elapsed_seconds": time.monotonic() - started,
