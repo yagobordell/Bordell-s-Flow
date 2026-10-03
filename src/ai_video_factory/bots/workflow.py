@@ -218,7 +218,7 @@ def validate_beats(result: B12Output, block: MaterializedBlock) -> list[Beat]:
     expected_words = _without_whitespace_and_punctuation(block.text)
     if actual_words != expected_words:
         mismatch = next(
-            (index for index, (got, wanted) in enumerate(zip(actual_words, expected_words))
+            (index for index, (got, wanted) in enumerate(zip(actual_words, expected_words, strict=False))
              if got != wanted),
             min(len(actual_words), len(expected_words)),
         )
