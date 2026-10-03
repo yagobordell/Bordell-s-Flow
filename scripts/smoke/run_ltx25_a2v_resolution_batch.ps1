@@ -8,6 +8,7 @@ param(
     [Parameter(Mandatory)][string]$Audio1080,
     [Parameter(Mandatory)][string]$ExpectedPinnedImage,
     [Parameter(Mandatory)][switch]$Accept1080pOomRisk,
+    [switch]$CheckInputsOnly,
     [string]$Prompt = "A person speaking naturally to the camera, matching the supplied speech.",
     [string]$RunId = ("a2v-resolutions-" + [DateTime]::UtcNow.ToString("yyyyMMddHHmmss")),
     [string]$EnvFile = ".env",
@@ -58,6 +59,10 @@ foreach ($Audio in @($Audio720, $Audio1080)) {
     if ($Duration -le 0 -or $Duration -gt 12) {
         throw "A2V reference speech must be 0-12 seconds. ${Audio}: $Duration s"
     }
+}
+if ($CheckInputsOnly) {
+    Write-Host "Local A2V input preflight passed. No Salad or R2 operations were performed."
+    return
 }
 . (Join-Path $Root "scripts\salad\_env_file.ps1")
 Import-EnvFile -Path $EnvFile
