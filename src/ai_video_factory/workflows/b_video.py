@@ -352,7 +352,7 @@ def build_b2_video_plan(
             )
             required_image = worker_images.get("i2v")
             if required_image:
-                job_id += "-im" + required_image.rsplit(":", 1)[-1][:12]
+                job_id += "-im" + required_image.rsplit(":", 1)[-1][:16]
             key = f"b2-ltx/inputs/images/{image_sha}.png"
             request = InferenceJobRequest(
                 job_id=job_id,
@@ -406,7 +406,7 @@ def build_b2_video_plan(
             )
             worker_image = worker_images.get("a2v")
             if worker_image:
-                job_id += "-im" + worker_image.rsplit(":", 1)[-1][:12]
+                job_id += "-im" + worker_image.rsplit(":", 1)[-1][:16]
             request = InferenceJobRequest(
                 job_id=job_id,
                 task=(
