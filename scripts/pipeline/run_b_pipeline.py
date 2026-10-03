@@ -1786,9 +1786,11 @@ async def _run_audio_only(
     # complete B runs. Paid token usage is reconciled from durable V states.
     audio_started = perf_counter()
     prior_timing = TimingLedger()
-    prior_elapsed = prior_timing.restore(report["timings"])
+    prior_elapsed = prior_timing.restore(report["timings"]) if is_professional else 0.0
 
     def finish_audio_timing() -> None:
+        if not is_professional:
+            return
         status = report["run"].get("status", "running")
         if status not in {"running", "completed", "failed"}:
             status = "running"
