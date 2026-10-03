@@ -11,7 +11,7 @@ import json
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ai_video_factory.inference.storage import sha256_file
@@ -21,7 +21,7 @@ RUNNER = Path(__file__).resolve().parents[1] / "pipeline" / "run_phase8_videos.p
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def save(path: Path, value: object) -> None:
