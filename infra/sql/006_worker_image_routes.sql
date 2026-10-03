@@ -4,6 +4,8 @@ CREATE TABLE IF NOT EXISTS gpu.worker_image_routes (
     service text NOT NULL CHECK (service IN ('ltx25', 'ltx25_i2v')),
     image text NOT NULL CHECK (image ~ '^docker[.]io/yagobordell/ai-video-factory@sha256:[0-9a-f]{64}$'),
     group_name text NOT NULL UNIQUE,
+    routing_contract text NOT NULL DEFAULT 'unverified'
+        CHECK (routing_contract IN ('unverified', 'v1')),
     registered_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (service, image)
 );
