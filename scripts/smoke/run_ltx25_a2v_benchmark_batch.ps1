@@ -130,7 +130,7 @@ finally {
     try {
         if ($Started) {
             & $Manager -Action Stop -Service ltx25_a2v_experimental -EnvFile $EnvFile -NonInteractive
-            if (-not $?) { throw "A2V Stop failed; manually verify stopped/replicas=0/pending=False" }
+            if (-not $?) { throw "A2V Stop failed; manually verify stopped/no live instances/pending=False" }
         }
     }
     finally {
