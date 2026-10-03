@@ -992,6 +992,8 @@ class DirectLTX25Backend:
             cleanup_cuda_memory,
         )
 
+        from .resource_metrics import cuda_memory_snapshot, memory_pressure
+
         for path in (keyframe_a, keyframe_b):
             if not path.is_file():
                 raise FileNotFoundError(f"Batch2 input not found: {path}")
@@ -1036,6 +1038,18 @@ class DirectLTX25Backend:
                 )
             except Exception as exc:
                 failure = classify_gpu_failure(exc)
+                logger.warning(
+                    "LTX25_I2V_PAIR_ATTEMPT_FAILED %s",
+                    json.dumps({
+                        "mode": label,
+                        "shared_between_stages": shared_stages,
+                        "failure": failure,
+                        "exception_type": type(exc).__name__,
+                        "elapsed_seconds": time.monotonic() - attempt_started,
+                        "cuda": cuda_memory_snapshot(),
+                        "system": memory_pressure(),
+                    }, sort_keys=True),
+                )
                 failed_attempts.append({
                     "mode": label,
                     "shared_between_stages": shared_stages,
