@@ -31,5 +31,8 @@ class LTX25WorkerSettings(InferenceWorkerSettings):
         if not self.device.strip():
             raise ValueError("LTX_DEVICE must be non-empty")
         if self.worker_mode == "production" and self.worker_poll_jobs and self.task_mode == "both":
-            raise ValueError("Production LTX polling requires an explicit i2v, a2v, or a2v_experimental mode")
+            raise ValueError(
+                "Production LTX polling requires explicit i2v, a2v, "
+                "or a2v_experimental mode"
+            )
         return self
