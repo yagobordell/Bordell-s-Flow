@@ -20,7 +20,12 @@ from PIL import Image
 from ai_video_factory.bots import run_b_pipeline
 from ai_video_factory.bots.billing import ApiCostLedger
 from ai_video_factory.bots.contracts import (
-    B11Output, B12Output, B2Input, B2InputBlock, B2Output, ProfessionalB2Output,
+    B11Output,
+    B12Output,
+    B2Input,
+    B2InputBlock,
+    B2Output,
+    ProfessionalB2Output,
 )
 from ai_video_factory.bots.fish_audio_workflow import (
     AudioRegenerationLimitReached,
@@ -30,7 +35,11 @@ from ai_video_factory.bots.fish_audio_workflow import (
     retranscribe_audio_block,
     unfinished_audio_runs,
 )
-from ai_video_factory.bots.workflow import materialize_blocks, validate_beats, validate_visuals
+from ai_video_factory.bots.workflow import (
+    materialize_blocks,
+    validate_beats,
+    validate_visuals,
+)
 from ai_video_factory.compositor.static_preview import (
     StaticPreviewError,
     SttAlignmentError,
@@ -819,7 +828,9 @@ def _load_resume_checkpoint(
                     if path.is_symlink() or path.parent.is_symlink():
                         raise ValueError("unsafe saved B2 block")
                     if path.is_file():
-                        saved = expected_type.model_validate(json.loads(path.read_text(encoding="utf-8")))
+                        saved = expected_type.model_validate(
+                            json.loads(path.read_text(encoding="utf-8"))
+                        )
                         meta = b11.blocks[block.block_id - 1]
                         supplied = B2Input(
                             narrative_core=b11.narrative_core,
