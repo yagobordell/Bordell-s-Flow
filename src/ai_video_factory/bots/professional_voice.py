@@ -513,6 +513,17 @@ async def plan_professional_voice(
             "valid blocks were checkpointed for safe recovery"
         ) from v3_failures[0]
     v3s = [entry for entry in v3_outcomes if isinstance(entry, V3)]
+    # Present the final reconciled result like B1.2/B2, without hiding
+    # intermediate passes and per-block files needed for troubleshooting.
+    _json(root / "V1" / "merged_output.json", v1.model_dump(mode="json"))
+    _json(root / "V2" / "merged_output.json", {
+        "pipeline_stage": "V2",
+        "blocks": [item.model_dump(mode="json") for item in v2s],
+    })
+    _json(root / "V3" / "merged_output.json", {
+        "pipeline_stage": "V3",
+        "blocks": [item.model_dump(mode="json") for item in v3s],
+    })
     return v1, v2s, v3s
 
 
