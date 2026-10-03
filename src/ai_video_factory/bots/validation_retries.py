@@ -49,10 +49,14 @@ def validation_feedback(
                 value = span.get(field)
                 if isinstance(value, str) and value:
                     count = normalized.count(" ".join(value.split()))
-                    if count != 1:
+                    if count != 1 or any(
+                        term in str(error).lower() for term in ('tile', 'ambiguous')
+                    ):
                         diagnostics.append(
                             f"Block {block.get('block_id')} span.{field}: "
-                            f"{value!r} has {count} occurrence(s) in the normalized source. "
+                            f"{value!r} has {count} occurrence(s), first at "
+                            f"offset {normalized.find(chr(32).join(value.split()))}, "
+                            "in the normalized source. "
                             "Check the intended boundary and the ordered full-script tiling."
                         )
     lines = [
