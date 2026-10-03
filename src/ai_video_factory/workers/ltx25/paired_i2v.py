@@ -14,7 +14,6 @@ import time
 from contextlib import nullcontext
 from dataclasses import dataclass
 from functools import partial
-from pathlib import Path
 from typing import Any
 
 import torch
@@ -36,31 +35,9 @@ from ltx_pipelines.utils.helpers import (
 )
 from ltx_pipelines.utils.samplers import euler_ancestral_denoising_loop, euler_denoising_loop
 
+from .resource_metrics import memory_pressure as _memory_pressure
+
 logger = logging.getLogger(__name__)
-
-
-def _memory_pressure() -> dict[str, int]:
-    """Read-only cgroup diagnostics; does not pin weights or increase RAM demand."""
-    values = {}
-    for path, key in (
-        ("/sys/fs/cgroup/memory.current", "cgroup_memory_current_bytes"),
-        ("/sys/fs/cgroup/memory.swap.current", "cgroup_swap_current_bytes"),
-    ):
-        try:
-            values[key] = int(Path(path).read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
-            continue
-    try:
-        stats = Path("/sys/fs/cgroup/memory.stat").read_text(encoding="utf-8")
-        parsed = dict(line.split() for line in stats.splitlines() if len(line.split()) == 2)
-        for name in ("pgmajfault", "file", "anon", "pgscan", "pgsteal"):
-            if name in parsed:
-                values[f"cgroup_{name}"] = int(parsed[name])
-    except (OSError, ValueError):
-        pass
-    return values
-
-
 
 
 def _encode_pair_prompts(pipeline: Any, pair: tuple[PairInput, PairInput]) -> tuple[Any, Any]:
