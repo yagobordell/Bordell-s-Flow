@@ -1741,10 +1741,14 @@ async def _run_audio_only(
         raise SystemExit("Audio source must be UTF-8") from exc
     if report.get("run", {}).get("script_sha256") != hashlib.sha256(raw).hexdigest():
         raise SystemExit("Script changed since the B run; audio-only mode is blocked")
+    is_professional = report.get("run", {}).get("visual_style") == "profesional"
     if not resume and not settings.openai_api_key:
-        raise SystemExit("OPENAI_API_KEY is required to rerun the Fish director")
-    if not settings.ai33_api_key:
-        raise SystemExit("AI33_API_KEY is required for the Fish Audio voice task")
+        raise SystemExit("OPENAI_API_KEY is required to rerun the voice director")
+    if is_professional:
+        if not settings.gemini_api_key:
+            raise SystemExit("GEMINI_API_KEY is required for professional Gemini TTS")
+    elif not settings.ai33_api_key:
+        raise SystemExit("AI33_API_KEY is required for Casero voice synthesis")
     b11_path = output / "B1.1" / "output.json"
     if b11_path.is_symlink() or not b11_path.is_file():
         raise SystemExit("Audio-only mode requires the saved validated B1.1 output")
@@ -1760,11 +1764,12 @@ async def _run_audio_only(
     previous_sha = (
         previous_audio.get("sha256") if isinstance(previous_audio, dict) else None
     )
-    _activate_pending_avatar_clone(output, report)
+    if not is_professional:
+        _activate_pending_avatar_clone(output, report)
 
     provider = (
         None
-        if resume
+        if resume and not is_professional
         else OpenAIProvider(
             api_key=settings.openai_api_key,
             reasoning_effort=settings.openai_reasoning_effort,
@@ -1778,9 +1783,44 @@ async def _run_audio_only(
             artifact = _latest_completed_audio(output, hashlib.sha256(raw).hexdigest())
             reused_audio = artifact is not None
         if artifact is None:
-            artifact = await _generate_audio(
-                script, output, b11=b11, provider=provider, resume=resume
-            )
+            if is_professional:
+                merged_path = output / "B2" / "merged_output.json"
+                if merged_path.is_symlink() or not merged_path.is_file():
+                    raise RuntimeError("Professional audio requires a saved validated B2 result")
+                merged = json.loads(merged_path.read_text(encoding="utf-8"))
+                blocks = merged.get("blocks")
+                core = merged.get("narrative_core")
+                if not isinstance(blocks, list) or not blocks or not isinstance(core, dict):
+                    raise RuntimeError("Professional B2 merged checkpoint is incomplete")
+                for block in blocks:
+                    ProfessionalB2Output.model_validate({
+                        "pipeline_stage": "B2", "narrative_core": core,
+                        "blocks": [block], "error": None,
+                    })
+                pending = unfinished_audio_runs(output)
+                if resume and len(pending) != 1:
+                    raise RuntimeError("Professional --resume-audio requires one pending Gemini task")
+                if pending and not resume:
+                    raise RuntimeError("An incomplete paid audio task exists; reconcile before regeneration")
+                nonce = (
+                    _read_json(pending[0]).get("generation_nonce", "")
+                    if resume else uuid4().hex
+                )
+                if resume and not pending[0].parent.name.startswith("gemini-"):
+                    raise RuntimeError("Pending audio task is not a professional Gemini run")
+                artifact = await generate_professional_audio(
+                    core=core, blocks=blocks, output=output,
+                    provider=provider, model=settings.openai_model,
+                    gemini_api_key=settings.gemini_api_key,
+                    voice_id=_run_voice_id(output),
+                    source_sha256=hashlib.sha256(raw).hexdigest(),
+                    generation_nonce=nonce,
+                    max_parallel_calls=8,
+                )
+            else:
+                artifact = await _generate_audio(
+                    script, output, b11=b11, provider=provider, resume=resume
+                )
     except Exception:
         report["run"]["audio_generation"] = {"status": "incomplete"}
         _refresh_audio_costs(report, output)
@@ -1806,6 +1846,7 @@ async def _run_audio_only(
                 output,
                 json.loads(plan_path.read_text(encoding="utf-8")),
                 artifact,
+                allow_audio_regeneration=artifact.get("provider") != "gemini",
             ) or {"status": "skipped"}
         except Exception as exc:
             report["run"]["stt_alignment"] = {"status": "failed", "error": str(exc)}
@@ -1859,7 +1900,7 @@ async def _run_audio_only(
         if managed_target is not None else output / artifact["file"]
     )
     print(
-        f"  {'Reused' if reused_audio else 'Fish Audio ready'}: {display_path} "
+        f"  {'Reused' if reused_audio else 'Narration ready'}: {display_path} "
         f"(voice {artifact['voice_id']})",
         flush=True,
     )
@@ -2652,6 +2693,7 @@ async def main() -> None:
                 model=settings.openai_model,
                 gemini_api_key=settings.gemini_api_key,
                 voice_id=_run_voice_id(output),
+                source_sha256=script_sha256,
                 on_response=ledger.record,
                 on_timing=timings.record_call,
                 max_parallel_calls=args.max_parallel_calls,
