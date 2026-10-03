@@ -92,15 +92,23 @@ Use the printed Gateway URL as `IMAGE_UPSCALER_URL`.
 
 ### On-demand startup from run.ps1
 
-By default, `IMAGE_UPSCALER_AUTO_START=true`: when a validated B2 plan contains
-professional `media_image` or `avatar_media` beats, both ordinary and
-`--images-only` runs use the existing Salad API client to inspect this independent
-Container Group, start it if stopped, and wait for a ready running instance
-(up to 30 minutes) **before making paid GPT Image calls**. This deliberately
-happens after B2 planning, not at `run.ps1` launch. A group already running
-or deploying is reused; no new group is provisioned. A wrong Gateway URL,
-missing Salad organization/project, API failure or readiness timeout fails
-closed with an actionable error before any GPT Image requests.
+By default, `IMAGE_UPSCALER_AUTO_START=true`: when a validated B2 plan
+needs professional `media_image` or `avatar_media` beats, both ordinary and
+`--images-only` runs **generate and checkpoint original paid GPT images first**.
+Grid panels are also cropped and verified. Only then does the existing Salad
+API client inspect the independent Container Group, start it if stopped and
+wait for a ready instance (up to 30 minutes) before x2 processing. Already
+running/deploying instances are reused; no new group is provisioned.
+A wrong Gateway URL, missing organization/project, API failure or readiness
+timeout leaves the original images untouched and the manifest explicitly
+`pending_upscaler`, but still prevents publishing any unfinished professional
+images.
+
+Retry the same saved B2 plan with `run.ps1 <script> <avatar> --images-only`.
+When original generation or professional finishing is incomplete, the runner
+keeps the existing paid PNGs and their job states, reuses verified originals
+and completes only unfinished work. A fully completed image run keeps the
+existing `--images-only` explicit regeneration behavior.
 
 To opt out, put `IMAGE_UPSCALER_AUTO_START=false` in `config/salad.env` and
 start the group yourself. Casero, professional jobs without x2 photo beats,
