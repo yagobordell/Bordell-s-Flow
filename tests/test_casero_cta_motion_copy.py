@@ -232,3 +232,83 @@ def test_legacy_cta_upgrade_refuses_missing_paid_a2v(
     with pytest.raises(video.CTACompositionError, match="without resubmitting"):
         video.upgrade_cached_cta(directory)
     assert old.read_bytes() == b"old"
+
+
+def test_completed_legacy_cta_only_bills_new_motion_bot_not_old_media(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.providers.ebook_covers import EbookCovers
+
+    parent = tmp_path / "Layla"
+    directory = parent / "meta" / "cta"
+    directory.mkdir(parents=True)
+    avatar = parent / "Layla.png"
+    cover = tmp_path / "book.png"
+    qr = parent / "meta" / "qr.png"
+    for path in (avatar, cover, qr):
+        _png(path)
+    covers = EbookCovers(files=(cover,), sha256=(_sha(cover),))
+    _save(directory / "identity.json", {
+        "schema_version": "casero-cta-v1",
+        "avatar_sha256": _sha(avatar),
+        "cover_sha256": list(covers.sha256),
+        "qr_sha256": _sha(qr),
+        "voice_id": "voice-1", "voice_provider": "fishaudio",
+        "qr_url": "https://example.com/book",
+    })
+    old = directory / "final_cta.mp4"
+    old.write_bytes(b"old final")
+    _save(directory / "completed.json", {
+        "schema_version": "casero-cta-final-v1",
+        "final": {"file": old.name, "sha256": _sha(old)},
+    })
+    (directory / "avatar_a2v.mp4").write_bytes(b"verified paid video")
+    _save(directory / "a2v_state.json", {
+        "status": "completed", "sha256": _sha(directory / "avatar_a2v.mp4"),
+    })
+    _save(directory / "script.json", {"cta": "Read the book to learn."})
+    for key, filename in (("master", "cta.wav"), ("first_half", "first_half.wav")):
+        (directory / filename).write_bytes(b"saved speech")
+    _save(directory / "tts_state.json", {
+        "status": "completed",
+        "half_seconds": 6., "duration_seconds": 12.,
+        "master": {"file": "cta.wav", "sha256": _sha(directory / "cta.wav")},
+        "first_half": {
+            "file": "first_half.wav", "sha256": _sha(directory / "first_half.wav"),
+        },
+    })
+    for name in ("_tts", "_image", "_stt"):
+        monkeypatch.setattr(
+            workflow, name, lambda *a, **kw: pytest.fail("Legacy paid media reissued"),
+        )
+    rendered = []
+    monkeypatch.setattr(
+        workflow, "_motion",
+        lambda *args: rendered.append(args),
+    )
+    monkeypatch.setattr(
+        video, "upgrade_cached_cta", lambda _: old,
+    )
+
+    class Provider:
+        calls = 0
+
+        async def generate_structured(self, **kwargs):
+            self.calls += 1
+            assert kwargs["output_type"] is CTAMotionCopy
+            return CTAMotionCopy(title="Visible cover", benefits=[])
+
+    provider = Provider()
+    args = {
+        "avatar": avatar, "covers": covers, "qr_path": qr,
+        "qr_url": "https://example.com/book",
+        "script": "The current video has a completely different introduction.",
+        "voice_id": "voice-1", "provider": provider, "model": "test",
+    }
+    first = asyncio.run(workflow.prepare_casero_cta(**args))
+    second = asyncio.run(workflow.prepare_casero_cta(**args))
+    assert first["status"] == second["status"] == "completed"
+    assert first["final"]["file"] == "final_cta.mp4"
+    assert len(rendered) == 2
+    assert provider.calls == 1
+    assert old.read_bytes() == b"old final"
