@@ -40,6 +40,7 @@ from ai_video_factory.video_resolution import (
 )
 from ai_video_factory.workers.ltx25.jobs import ltx_video_application_job_id
 from ai_video_factory.workers.ltx25.model import (
+    LTX_FAST_LOWRES_PROFILES,
     LTX_PRODUCTION_I2V_PROFILE,
     LTX_SUPPORTED_I2V_PROFILES,
     LTX_VIDEO_TASK,
@@ -112,6 +113,8 @@ def build_video_generation_plan(
     validate_video_size(width, height, fps)
     if generation_profile not in LTX_SUPPORTED_I2V_PROFILES:
         raise ValueError("Unsupported I2V generation profile")
+    if generation_profile in LTX_FAST_LOWRES_PROFILES and (width, height) != (1280, 720):
+        raise ValueError("Experimental fast 576p profiles require public 1280x720 delivery")
 
     base_dir = keyframe_base_dir.resolve()
     plan: list[VideoGenerationPlanItem] = []
