@@ -428,3 +428,59 @@ def test_rejected_fish_director_persists_billed_response_before_tts(
             for record in ledger.records] == ["1", "2", "3"]
     ledger.sync_fish_director_usage(tmp_path)
     assert len(ledger.records) == 3
+
+
+def test_fish_director_repairs_only_failed_block_with_response_context(tmp_path: Path) -> None:
+    class RecoveringDirector:
+        supports_response_continuation = True
+
+        def __init__(self):
+            self.calls = []
+
+        async def generate_structured_with_response(self, **kwargs):
+            self.calls.append(kwargs)
+            attempt = len(self.calls)
+            if attempt > 1:
+                assert kwargs["previous_response_id"] == f"fish_{attempt - 1}"
+                assert "VALIDATION FAILED: Fish Audio" in kwargs["input_text"]
+                assert "spoken words" in kwargs["input_text"]
+            return (
+                FishAudioScript(
+                    plain_script_for_recording=(
+                        "Unrelated words" if attempt < 3 else DIRECTED
+                    )
+                ),
+                SimpleNamespace(
+                    id=f"fish_{attempt}", model="gpt-6-luna",
+                    service_tier="default",
+                    usage=SimpleNamespace(model_dump=lambda **_kw: {
+                        "input_tokens": 100, "output_tokens": 25,
+                        "input_tokens_details": {
+                            "cached_tokens": 0, "cache_write_tokens": 0,
+                        },
+                        "output_tokens_details": {"reasoning_tokens": 10},
+                    }),
+                ),
+            )
+
+    director = RecoveringDirector()
+    speech = FakeSpeech()
+    completed = asyncio.run(generate_fish_audio(
+        SCRIPT, tmp_path, b11=B11, director_model="gpt-6-luna",
+        provider=director, ai33_api_key=None, speech_client=speech,
+    ))
+    assert completed["status"] == "completed"
+    assert len(director.calls) == 3
+    assert len(speech.creates) == 1
+    state_path = (
+        tmp_path / "audio" / "runs" / completed["run_id"]
+        / "blocks" / "block_1" / "task.json"
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["director_attempts_used"] == 3
+    assert len(state["director_responses"]) == 3
+    assert (state_path.parent / "rejected_attempt_1.json").is_file()
+    assert (state_path.parent / "rejected_attempt_2.json").is_file()
+    ledger = runner.ApiCostLedger()
+    ledger.sync_fish_director_usage(tmp_path)
+    assert len(ledger.records) == 3
