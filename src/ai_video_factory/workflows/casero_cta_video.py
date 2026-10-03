@@ -93,7 +93,9 @@ def cta_assets(directory: Path) -> dict[str, Any]:
             "duration_seconds": float(tts["duration_seconds"])}
 
 
-def _cta_request(directory: Path, assets: dict[str, Any]) -> InferenceJobRequest:
+def _cta_request(
+    directory: Path, assets: dict[str, Any], *, worker_image: str | None = None,
+) -> InferenceJobRequest:
     image_sha = sha256_file(assets["files"]["image"])
     audio_sha = sha256_file(assets["files"]["first_half"])
     job_id = ltx_a2v_application_job_id(
@@ -102,6 +104,8 @@ def _cta_request(directory: Path, assets: dict[str, Any]) -> InferenceJobRequest
         width=1280, height=720, fps=_FPS,
         generation_profile=LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
     )
+    if worker_image:
+        job_id += "-im" + worker_image.rsplit(":", 1)[-1][:12]
     return InferenceJobRequest(
         job_id=job_id, task=LTX_A2V_TASK, max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
         inputs=[
@@ -117,12 +121,14 @@ def _cta_request(directory: Path, assets: dict[str, Any]) -> InferenceJobRequest
             "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
             "prompt": _PROMPT, "seed": 4242, "width": 1280, "height": 720,
             "fps": _FPS,
+            **({"required_worker_image": worker_image} if worker_image else {}),
         },
     )
 
 
 def submit_cta_first(
     directory: Path, executor: InferenceJobExecutor, queue: Any,
+    *, worker_image: str | None = None,
 ) -> tuple[Any, Any] | None:
     """Submit before ALL normal B2 queue.submit calls, not merely wait first."""
     if (directory/"completed.json").is_file():
@@ -132,8 +138,11 @@ def submit_cta_first(
             raise CTACompositionError("Stored reusable CTA is missing or modified")
         return None
     assets = cta_assets(directory)
-    request = _cta_request(directory, assets)
-    state_file = directory/"a2v_state.json"
+    request = _cta_request(directory, assets, worker_image=worker_image)
+    state_file = directory / (
+        "a2v_state_" + worker_image.rsplit(":", 1)[-1][:12] + ".json"
+        if worker_image else "a2v_state.json"
+    )
     if state_file.is_file():
         state = _read(state_file)
         if state.get("request_sha256") != request.fingerprint():
