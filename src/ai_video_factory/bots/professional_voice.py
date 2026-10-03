@@ -9,6 +9,7 @@ import asyncio
 import hashlib
 import json
 import re
+import shutil
 from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
@@ -397,6 +398,60 @@ async def plan_professional_voice(
     return v1, v2s, v3s
 
 
+def _reuse_verified_block(
+    *, output: Path, current_run: Path, block_id: int, fingerprint: str,
+    model: str, voice_id: str, folder: Path,
+) -> str | None:
+    """Reuse an identical paid Gemini WAV across corrected B2 global plans.
+
+    Both the original run and block state must explicitly say the paid request
+    completed, and its raw bytes must match the saved SHA. A pending/unknown
+    request never enters this cache. Only immutable audio and optional valid STT
+    transcripts are copied; each destination still owns its own task identity.
+    """
+    for old_run in sorted((output / "audio" / "runs").glob("gemini-*")):
+        if old_run == current_run or old_run.is_symlink():
+            continue
+        root_path = old_run / "task.json"
+        prior_path = old_run / "blocks" / f"block_{block_id}" / "task.json"
+        if not root_path.is_file() or not prior_path.is_file():
+            continue
+        if root_path.is_symlink() or prior_path.is_symlink():
+            continue
+        root = _read(root_path)
+        if root.get("voice") != voice_id or root.get("model") != model:
+            continue
+        prior = _read(prior_path)
+        if prior.get("fingerprint") != fingerprint or prior.get("status") not in {
+            "tts_completed", "completed",
+        }:
+            continue
+        digest = prior.get("sha256")
+        source = prior_path.parent / "audio.wav"
+        if (not isinstance(digest, str) or source.is_symlink()
+            or not source.is_file()
+            or hashlib.sha256(source.read_bytes()).hexdigest() != digest):
+            continue
+        folder.mkdir(parents=True, exist_ok=True)
+        destination = folder / "audio.wav"
+        if destination.is_symlink():
+            raise VoicePlanError(f"Linked destination audio path: {destination}")
+        shutil.copyfile(source, destination)
+        # Reuse exactly matching STT; otherwise _transcribe_block owns the new call.
+        previous_stt = prior_path.parent / "stt.json"
+        if previous_stt.is_file() and not previous_stt.is_symlink():
+            transcript = _read(previous_stt)
+            if (transcript.get("source_audio_sha256") == digest
+                and transcript.get("model") == "whisper-1"
+                and isinstance(transcript.get("words"), list) and transcript["words"]):
+                target = folder / "stt.json"
+                if target.is_symlink():
+                    raise VoicePlanError(f"Linked destination STT path: {target}")
+                shutil.copyfile(previous_stt, target)
+        return digest
+    return None
+
+
 async def generate_professional_audio(
     *, core: dict[str, Any], blocks: list[dict[str, Any]], output: Path,
     provider: Any, model: str, gemini_api_key: str, voice_id: str,
@@ -473,6 +528,16 @@ async def generate_professional_audio(
                     f"Gemini block {bid} may have incurred charges; reconcile {state_path}"
                 )
             if state["status"] == "planned":
+                reused_digest = _reuse_verified_block(
+                    output=output, current_run=run_dir, block_id=bid,
+                    fingerprint=_fingerprint(turns), model=DEFAULT_GEMINI_TTS_MODEL,
+                    voice_id=voice_id, folder=folder,
+                )
+                if reused_digest is not None:
+                    state["status"] = "tts_completed"
+                    state["sha256"] = reused_digest
+                    _json(state_path, state)
+            if state["status"] == "planned":
                 state["status"] = "tts_submitting_unknown"
                 _json(state_path, state)
                 try:
@@ -509,6 +574,7 @@ async def generate_professional_audio(
     if failures:
         _json(manifest, {"fingerprint": fingerprint, "status": "incomplete",
                          "run_id": run_dir.name, "source_sha256": source_sha256,
+                         "model": DEFAULT_GEMINI_TTS_MODEL, "voice": voice_id,
                          "generation_nonce": generation_nonce,
                          "error": (
                              f"{len(failures)} block(s) incomplete; inspect block task states"
@@ -536,6 +602,7 @@ async def generate_professional_audio(
     }
     _json(manifest, {"fingerprint": fingerprint, "status": "completed",
                      "run_id": run_dir.name, "source_sha256": source_sha256,
+                     "model": DEFAULT_GEMINI_TTS_MODEL, "voice": voice_id,
                      "generation_nonce": generation_nonce, "audio": artifact})
     _json(output / "audio" / "latest.json", artifact)
     return artifact
