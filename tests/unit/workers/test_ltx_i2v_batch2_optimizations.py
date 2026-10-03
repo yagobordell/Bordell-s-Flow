@@ -30,56 +30,31 @@ def _parameters(seed: int) -> LTXVideoParameters:
     )
 
 
-def test_gemma_build_once_but_forward_and_connector_remain_independent() -> None:
-    # Lightweight CI omits the large GPU-only torch / LTX wheel set.
-    # This mock parity test also runs on local LTX-enabled dev environments.
+def test_approved_per_prompt_gemma_disposal_restored_for_each_video() -> None:
     pytest.importorskip("torch")
     from ai_video_factory.workers.ltx25.paired_i2v import PairInput, _encode_pair_prompts
 
-    calls = {"gemma_builds": 0, "processor_builds": 0, "prompts": []}
+    calls = []
 
-    class Gemma:
-        def encode(self, prompts):
-            assert len(prompts) == 1, "Batching two prompts changes reference tokenization"
-            calls["prompts"].append(tuple(prompts))
-            return [(f"hidden-{prompts[0]}", f"mask-{prompts[0]}")]
+    def prompt_encoder(prompts, **kwargs):
+        assert len(prompts) == 1
+        assert kwargs["enhance_first_prompt"] is False
+        assert kwargs["enhance_static_cache"] is False
+        calls.append((prompts[0], kwargs["enhance_prompt_image"]))
+        return [f"context-for-{prompts[0]}"]
 
-    class Processor:
-        def process_hidden_states(self, hidden, mask):
-            assert mask == hidden.replace("hidden-", "mask-")
-            return (hidden, mask)
-
-    def gemma_ctx():
-        calls["gemma_builds"] += 1
-        return nullcontext(Gemma())
-
-    def processor_builder():
-        calls["processor_builds"] += 1
-        return Processor()
-
-    encoder = SimpleNamespace(
-        _text_encoder_ctx=gemma_ctx,
-        _build_embeddings_processor=processor_builder,
-        _alloc_trim_strategy=None,
-    )
+    pipeline = SimpleNamespace(prompt_encoder=prompt_encoder)
     pair = (
-        PairInput("Prompt A", 5243, image=None),
-        PairInput("Prompt B", 5244, image=None),
+        PairInput("Prompt A", 5243, image=("a.png",)),
+        PairInput("Prompt B", 5244, image=("b.png",)),
     )
     with patch(
-        "ltx_pipelines.utils.gpu_model.gpu_model",
-        side_effect=lambda processor, **kwargs: nullcontext(processor),
+        "ai_video_factory.workers.ltx25.paired_i2v._memory_pressure",
+        return_value={"process_available": True},
     ):
-        contexts = _encode_pair_prompts(SimpleNamespace(prompt_encoder=encoder), pair)
-    assert contexts == (
-        ("hidden-Prompt A", "mask-Prompt A"),
-        ("hidden-Prompt B", "mask-Prompt B"),
-    )
-    assert calls == {
-        "gemma_builds": 1,
-        "processor_builds": 1,
-        "prompts": [("Prompt A",), ("Prompt B",)],
-    }
+        contexts = _encode_pair_prompts(pipeline, pair)
+    assert contexts == ("context-for-Prompt A", "context-for-Prompt B")
+    assert calls == [("Prompt A", "a.png"), ("Prompt B", "b.png")]
 
 
 def test_image_encoder_build_once_per_stage_with_two_b1_image_forwards() -> None:
