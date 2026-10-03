@@ -399,7 +399,16 @@ async def plan_professional_voice(
     max_parallel_calls: int = 8,
 ) -> tuple[V1, list[V2], list[V3]]:
     """No paid speech request starts before all V contracts validate."""
-    root = output / "voice_direction"
+    # New runs use exactly the B-stage sibling layout (output/V1,V2,V3).
+    # Historical in-progress runs continue using their legacy checkpoints,
+    # avoiding an accidental second paid V call after a software update.
+    legacy = output / "voice_direction"
+    if legacy.is_symlink() or any((output / stage).is_symlink()
+                                 for stage in ("V1", "V2", "V3")):
+        raise VoicePlanError("Linked voice checkpoint root")
+    if legacy.exists() and any((output / stage).exists() for stage in ("V1", "V2", "V3")):
+        raise VoicePlanError("Ambiguous legacy and current voice checkpoints")
+    root = legacy if legacy.exists() else output
     contested: list[dict[str, Any]] = []
     v1: V1 | None = None
     v2s: list[V2] = []
