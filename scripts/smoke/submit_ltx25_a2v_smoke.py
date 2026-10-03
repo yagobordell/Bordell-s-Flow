@@ -235,7 +235,8 @@ def parse_args() -> argparse.Namespace:
         choices=(
             "fast", "reference", "static-reference", "dev", "guided",
             "reference-bench-cpu", "reference-fp8none",
-            "reference-cpu-triton", "reference-none-triton", "static-fp8none",
+            "reference-cpu-triton", "reference-none-triton",
+            "static-bench-cpu", "static-fp8none",
         ),
         default="reference",
         help="Functional avatar A2V baseline; fast/dev remain explicit comparison modes.",
@@ -268,6 +269,7 @@ def main() -> None:
         "reference-fp8none": a2v.LTX_A2V_BENCH_NONE_PROFILE,
         "reference-cpu-triton": a2v.LTX_A2V_BENCH_CPU_TRITON_PROFILE,
         "reference-none-triton": a2v.LTX_A2V_BENCH_NONE_TRITON_PROFILE,
+        "static-bench-cpu": a2v.LTX_A2V_BENCH_STATIC_CPU_PROFILE,
         "static-fp8none": a2v.LTX_A2V_BENCH_STATIC_NONE_PROFILE,
     }
     profile = profiles[args.profile]
@@ -460,12 +462,13 @@ def main() -> None:
     if metadata["generation_profile"] != profile:
         raise RuntimeError("A2V worker used a mismatched generation profile")
 
-    static_reference = args.profile in {"static-reference", "static-fp8none"}
+    static_reference = args.profile in {"static-reference", "static-bench-cpu", "static-fp8none"}
     experimental_profiles = {
         "reference-bench-cpu": ("cpu", "eager"),
         "reference-fp8none": ("none", "eager"),
         "reference-cpu-triton": ("cpu", "triton"),
         "reference-none-triton": ("none", "triton"),
+        "static-bench-cpu": ("cpu", "eager"),
         "static-fp8none": ("none", "eager"),
     }
     distilled_profile = args.profile in {
