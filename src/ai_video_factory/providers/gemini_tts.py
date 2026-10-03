@@ -81,6 +81,21 @@ def _voice_config(voice: str) -> dict[str, Any]:
     return {"voice": name}
 
 
+def _generation_config(voice: str) -> dict[str, Any]:
+    config: dict[str, Any] = {
+        "responseModalities": ["AUDIO"],
+        "speechConfig": {"voiceConfig": _voice_config(voice)},
+    }
+    if " " not in voice:
+        # Keep legacy successful ID/default requests byte-compatible.
+        config["responseFormat"] = {
+            "audio": {"mimeType": "AUDIO_WAV", "sampleRate": DEFAULT_SAMPLE_RATE_HZ}
+        }
+    # Multiword Studio voices use the exact speech_config shape exported
+    # by Google AI Studio; Gemini may respond with audio/L16 raw PCM.
+    return config
+
+
 def _build_payload(
     *, text: str, voice: str, instructions: str, speed: float
 ) -> dict[str, Any]:
@@ -96,13 +111,7 @@ def _build_payload(
                 ],
             }
         ],
-        "generationConfig": {
-            "responseModalities": ["AUDIO"],
-            "responseFormat": {
-                "audio": {"mimeType": "AUDIO_WAV", "sampleRate": DEFAULT_SAMPLE_RATE_HZ}
-            },
-            "speechConfig": {"voiceConfig": _voice_config(voice)},
-        },
+        "generationConfig": _generation_config(voice),
     }
 
 
@@ -125,13 +134,7 @@ def _build_directed_payload(*, turns: list[dict[str, str]], voice: str) -> dict[
         })
     return {
         "contents": [{"role": "user", "parts": parts}],
-        "generationConfig": {
-            "responseModalities": ["AUDIO"],
-            "responseFormat": {
-                "audio": {"mimeType": "AUDIO_WAV", "sampleRate": DEFAULT_SAMPLE_RATE_HZ}
-            },
-            "speechConfig": {"voiceConfig": _voice_config(voice)},
-        },
+        "generationConfig": _generation_config(voice),
     }
 
 def _post_json(
