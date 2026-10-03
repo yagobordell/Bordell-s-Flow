@@ -1,5 +1,15 @@
 # B1.1 → B1.2 → B2 (replacement planning bots)
 
+Professional audio is now a downstream **post-B2** path:
+V1 (whole-film rhythm) → V2 (beat-level intent per block) →
+V3 (verbatim delivery, sustained style and optional human vocal tags) →
+Gemini 3.8 TTS per block. Casero retains its independent Fish/MiniMax/
+ElevenLabs path. V1/V2/V3 do not alter B2 visual contracts or any source
+narration. The original B8 documents are archived and the adapted prompts
+are versioned in `bots/prompts/v{1,2,3}.md`.
+See [Professional voice documentation](professional-voice.md).
+
+
 This standalone, opt-in stage loads its instruction documents from
 `src/ai_video_factory/bots/prompts/` on every run. Prompt edits take effect immediately;
 the runner does not require checksum updates. A transport note for Responses API
