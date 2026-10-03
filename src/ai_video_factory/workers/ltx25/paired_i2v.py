@@ -8,7 +8,10 @@ This module is *never* selected by the existing single-video task.
 
 from __future__ import annotations
 
+import json
 import logging
+import time
+from pathlib import Path
 from dataclasses import dataclass
 from functools import partial
 from typing import Any
@@ -33,6 +36,28 @@ from ltx_pipelines.utils.helpers import (
 from ltx_pipelines.utils.samplers import euler_ancestral_denoising_loop, euler_denoising_loop
 
 logger = logging.getLogger(__name__)
+
+
+def _memory_pressure() -> dict[str, int]:
+    """Read-only cgroup diagnostics; does not pin weights or increase RAM demand."""
+    values = {}
+    for path, key in (
+        ("/sys/fs/cgroup/memory.current", "cgroup_memory_current_bytes"),
+        ("/sys/fs/cgroup/memory.swap.current", "cgroup_swap_current_bytes"),
+    ):
+        try:
+            values[key] = int(Path(path).read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            continue
+    try:
+        stats = Path("/sys/fs/cgroup/memory.stat").read_text(encoding="utf-8")
+        parsed = dict(line.split() for line in stats.splitlines() if len(line.split()) == 2)
+        for name in ("pgmajfault", "file", "anon", "pgscan", "pgsteal"):
+            if name in parsed:
+                values[f"cgroup_{name}"] = int(parsed[name])
+    except (OSError, ValueError):
+        pass
+    return values
 
 
 @dataclass(frozen=True)
@@ -113,6 +138,7 @@ def _paired_stage(
     initial_audio: torch.Tensor | None = None,
     ancestral: bool = False,
     max_forward_batch_size: int = 2,
+    stage_label: str = "unknown",
 ) -> tuple[Any, Any]:
     """Pinned DiffusionStage.__call__ semantics with VideoPixelShape(batch=2).
 
@@ -151,7 +177,11 @@ def _paired_stage(
             new_noise_fn=_ancestral_noise(seeds, stage._device),
             model_dtype=stage._dtype,
         )
+    memory_before = _memory_pressure()
+    build_started = time.perf_counter()
     with stage._transformer_ctx(video_tools=video_tools) as built:
+        build_seconds = time.perf_counter() - build_started
+        denoise_started = time.perf_counter()
         transformer = (
             built if stage._model_wrapper is None
             else stage._model_wrapper(built, video_tools)
@@ -172,8 +202,20 @@ def _paired_stage(
             from ltx_core.components.diffusion_steps import EulerDiffusionStep
             kwargs["stepper"] = EulerDiffusionStep()
         video_state, audio_state = loop(**kwargs)
+        denoise_seconds = time.perf_counter() - denoise_started
         video_state = video_tools.unpatchify(video_tools.clear_conditioning(video_state))
         audio_state = audio_tools.unpatchify(audio_tools.clear_conditioning(audio_state))
+    logger.info(
+        "LTX25_I2V_PAIR_STAGE_METRICS %s",
+        json.dumps({
+            "stage": stage_label,
+            "forward_batch": max_forward_batch_size,
+            "transformer_build_seconds": build_seconds,
+            "denoise_seconds": denoise_seconds,
+            "memory_before": memory_before,
+            "memory_after": _memory_pressure(),
+        }, sort_keys=True),
+    )
     return video_state, audio_state
 
 
@@ -280,6 +322,7 @@ def generate_paired_fast_distilled(
         frames=num_frames, fps=frame_rate,
         ancestral=pipeline.use_ancestral_sampler,
         max_forward_batch_size=max_forward_batch_size,
+        stage_label="stage1",
     )
     # Upscale individually, preserving baseline's B=1 arithmetic and peak VRAM.
     upscaled = torch.cat(
@@ -300,6 +343,7 @@ def generate_paired_fast_distilled(
         initial_video=upscaled,
         initial_audio=first_audio.latent,
         max_forward_batch_size=max_forward_batch_size,
+        stage_label="stage2",
     )
     # Decode separately: both latents are independent; never decode one clip
     # with the other's seed, or create two live VAE models.
