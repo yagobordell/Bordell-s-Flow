@@ -348,11 +348,24 @@ def generate_paired_fast_distilled(
     # VideoEncoder must not compete for VRAM with resident transformer weights.
     # Same two independent B=1 encodes, strengths and values as before.
     stage1_images = _batch_conditionings(pipeline, resolved, width // 2, height // 2)
-    stage2_images = _batch_conditionings(pipeline, resolved, width, height)
+    # Preserve the already visually validated two-build batch2 VRAM lifetime:
+    # stage2 image conditions are constructed only AFTER stage1's transformer
+    # has been released and upsampling has completed. The optimized single-
+    # build path alone must pre-encode stage2 before holding transformer weights
+    # so its image encoder cannot compete with those resident weights.
+    stage2_images_prepared = (
+        _batch_conditionings(pipeline, resolved, width, height)
+        if reuse_transformer_across_stages else None
+    )
 
     def run_stages(shared_transformer: Any | None) -> tuple[Any, Any]:
         seeds = (pair[0].seed, pair[1].seed)
         noiser = _IndependentGaussianNoiser(seeds, pipeline.device)
+        logger.info(
+            "LTX25_I2V_PAIR_STAGE_START stage=stage1 shared_transformer=%s memory=%s",
+            shared_transformer is not None,
+            json.dumps(_memory_pressure(), sort_keys=True),
+        )
         stage1 = DISTILLED_SIGMAS.to(dtype=torch.float32, device=pipeline.device)
         stage2 = STAGE_2_DISTILLED_SIGMAS.to(dtype=torch.float32, device=pipeline.device)
         first_video, first_audio = _paired_stage(
@@ -371,9 +384,25 @@ def generate_paired_fast_distilled(
             shared_transformer=shared_transformer,
         )
         # Upscale individually, preserving baseline's B=1 arithmetic and peak VRAM.
+        logger.info(
+            "LTX25_I2V_PAIR_UPSAMPLE_START shared_transformer=%s memory=%s",
+            shared_transformer is not None,
+            json.dumps(_memory_pressure(), sort_keys=True),
+        )
         upscaled = torch.cat(
             [pipeline.upsampler(first_video.latent[i : i + 1]) for i in range(2)],
             dim=0,
+        )
+        stage2_images = stage2_images_prepared
+        if stage2_images is None:
+            # A pure two-build batch2 reconstructs stage2 conditioning at
+            # precisely the earlier post-upsampling point, preventing both
+            # stage image latent sets from staying GPU-resident throughout.
+            stage2_images = _batch_conditionings(pipeline, resolved, width, height)
+        logger.info(
+            "LTX25_I2V_PAIR_STAGE_START stage=stage2 shared_transformer=%s memory=%s",
+            shared_transformer is not None,
+            json.dumps(_memory_pressure(), sort_keys=True),
         )
         second_video, _ = _paired_stage(
             pipeline.stage,
