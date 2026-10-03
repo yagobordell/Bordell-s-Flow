@@ -28,6 +28,7 @@ class Batch2Parameters(BaseModel):
     a: LTXVideoParameters
     b: LTXVideoParameters
     allow_sequential_fallback: bool = False
+    reuse_transformer_across_stages: bool = True
 
     @model_validator(mode="after")
     def check_pair(self) -> Batch2Parameters:
@@ -96,6 +97,7 @@ class ExperimentalBatch2TaskRunner:
                 output_a=output_a, output_b=output_b,
                 parameters_a=params.a, parameters_b=params.b,
                 allow_sequential_fallback=params.allow_sequential_fallback,
+                reuse_transformer_across_stages=params.reuse_transformer_across_stages,
             )
         except Exception as exc:
             if is_retryable_gpu_failure(exc):
