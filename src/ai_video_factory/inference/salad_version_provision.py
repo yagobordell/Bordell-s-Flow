@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 import time
-from pathlib import Path
 from typing import Any
 
 from .salad import DEFAULT_SALAD_API_BASE_URL, SaladClient, SaladDispatchConfig
