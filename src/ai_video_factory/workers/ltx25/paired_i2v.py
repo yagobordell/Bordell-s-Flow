@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -181,6 +182,7 @@ def _paired_stage(
     ancestral: bool = False,
     max_forward_batch_size: int = 2,
     stage_label: str = "unknown",
+    shared_transformer: Any | None = None,
 ) -> tuple[Any, Any]:
     """Pinned DiffusionStage.__call__ semantics with VideoPixelShape(batch=2).
 
@@ -221,8 +223,16 @@ def _paired_stage(
         )
     memory_before = _memory_pressure()
     build_started = time.perf_counter()
-    with stage._transformer_ctx(video_tools=video_tools) as built:
-        build_seconds = time.perf_counter() - build_started
+    stage_ctx = (
+        nullcontext(shared_transformer)
+        if shared_transformer is not None
+        else stage._transformer_ctx(video_tools=video_tools)
+    )
+    with stage_ctx as built:
+        build_seconds = (
+            0.0 if shared_transformer is not None
+            else time.perf_counter() - build_started
+        )
         denoise_started = time.perf_counter()
         transformer = (
             built if stage._model_wrapper is None
@@ -253,6 +263,7 @@ def _paired_stage(
             "stage": stage_label,
             "forward_batch": max_forward_batch_size,
             "transformer_build_seconds": build_seconds,
+            "shared_transformer": shared_transformer is not None,
             "denoise_seconds": denoise_seconds,
             "memory_before": memory_before,
             "memory_after": _memory_pressure(),
@@ -303,6 +314,7 @@ def generate_paired_fast_distilled(
     frame_rate: float,
     num_frames: int,
     max_forward_batch_size: int = 2,
+    reuse_transformer_across_stages: bool = False,
 ) -> tuple[Any, Any]:
     """Generate two clips in B=2 transformer forwards with B=1 quality semantics.
 
@@ -354,58 +366,81 @@ def generate_paired_fast_distilled(
         diffvae_optimization=pipeline.video_decoder.diffvae_optimization,
         device=pipeline.device,
     )
-    seeds = (pair[0].seed, pair[1].seed)
-    noiser = _IndependentGaussianNoiser(seeds, pipeline.device)
-    stage1 = DISTILLED_SIGMAS.to(dtype=torch.float32, device=pipeline.device)
-    stage2 = STAGE_2_DISTILLED_SIGMAS.to(dtype=torch.float32, device=pipeline.device)
-    conditionings = _batch_conditionings(pipeline, resolved, width // 2, height // 2)
-    first_video, first_audio = _paired_stage(
-        pipeline.stage,
-        video_context=video_ctx,
-        audio_context=audio_ctx,
-        conditionings=conditionings,
-        noiser=noiser,
-        seeds=seeds,
-        sigmas=stage1,
-        width=width // 2, height=height // 2,
-        frames=num_frames, fps=frame_rate,
-        ancestral=pipeline.use_ancestral_sampler,
-        max_forward_batch_size=max_forward_batch_size,
-        stage_label="stage1",
-    )
-    # Upscale individually, preserving baseline's B=1 arithmetic and peak VRAM.
-    upscaled = torch.cat(
-        [pipeline.upsampler(first_video.latent[i : i + 1]) for i in range(2)],
-        dim=0,
-    )
-    conditionings = _batch_conditionings(pipeline, resolved, width, height)
-    second_video, _ = _paired_stage(
-        pipeline.stage,
-        video_context=video_ctx,
-        audio_context=audio_ctx,
-        conditionings=conditionings,
-        noiser=noiser,
-        seeds=seeds,
-        sigmas=stage2,
-        width=width, height=height,
-        frames=num_frames, fps=frame_rate,
-        initial_video=upscaled,
-        initial_audio=first_audio.latent,
-        max_forward_batch_size=max_forward_batch_size,
-        stage_label="stage2",
-    )
-    # Decode separately: both latents are independent; never decode one clip
-    # with the other's seed, or create two live VAE models.
-    results = []
-    for i in range(2):
-        generator = noiser.generators[i]
-        latent = second_video.latent[i : i + 1]
-        results.append(PipelineOutput(
-            _lazy_decode(pipeline, latent, tiling, generator),
-            None, num_frames, tiling, None, latent,
-        ))
-    logger.info(
-        "LTX25_I2V_PAIR_GENERATED shared_transformer_stage_builds=2 forward_batch=%d seeds=%s",
-        max_forward_batch_size, seeds,
-    )
-    return tuple(results)
+    def run_stages(shared_transformer: Any | None) -> tuple[Any, Any]:
+        seeds = (pair[0].seed, pair[1].seed)
+        noiser = _IndependentGaussianNoiser(seeds, pipeline.device)
+        stage1 = DISTILLED_SIGMAS.to(dtype=torch.float32, device=pipeline.device)
+        stage2 = STAGE_2_DISTILLED_SIGMAS.to(dtype=torch.float32, device=pipeline.device)
+        conditionings = _batch_conditionings(pipeline, resolved, width // 2, height // 2)
+        first_video, first_audio = _paired_stage(
+            pipeline.stage,
+            video_context=video_ctx,
+            audio_context=audio_ctx,
+            conditionings=conditionings,
+            noiser=noiser,
+            seeds=seeds,
+            sigmas=stage1,
+            width=width // 2, height=height // 2,
+            frames=num_frames, fps=frame_rate,
+            ancestral=pipeline.use_ancestral_sampler,
+            max_forward_batch_size=max_forward_batch_size,
+            stage_label="stage1",
+            shared_transformer=shared_transformer,
+        )
+        # Upscale individually, preserving baseline's B=1 arithmetic and peak VRAM.
+        upscaled = torch.cat(
+            [pipeline.upsampler(first_video.latent[i : i + 1]) for i in range(2)],
+            dim=0,
+        )
+        conditionings = _batch_conditionings(pipeline, resolved, width, height)
+        second_video, _ = _paired_stage(
+            pipeline.stage,
+            video_context=video_ctx,
+            audio_context=audio_ctx,
+            conditionings=conditionings,
+            noiser=noiser,
+            seeds=seeds,
+            sigmas=stage2,
+            width=width, height=height,
+            frames=num_frames, fps=frame_rate,
+            initial_video=upscaled,
+            initial_audio=first_audio.latent,
+            max_forward_batch_size=max_forward_batch_size,
+            stage_label="stage2",
+            shared_transformer=shared_transformer,
+        )
+        # Decode separately: both latents are independent; never decode one clip
+        # with the other's seed, or create two live VAE models.
+        results = []
+        for i in range(2):
+            generator = noiser.generators[i]
+            latent = second_video.latent[i : i + 1]
+            results.append(PipelineOutput(
+                _lazy_decode(pipeline, latent, tiling, generator),
+                None, num_frames, tiling, None, latent,
+            ))
+        logger.info(
+            "LTX25_I2V_PAIR_GENERATED transformer_stage_builds=%d forward_batch=%d seeds=%s",
+            1 if shared_transformer is not None else 2, max_forward_batch_size, seeds,
+        )
+        return tuple(results)
+
+    if reuse_transformer_across_stages:
+        # This pinned FP8 single-GPU stage has no shape-dependent wrapper.
+        # Hold exactly the SAME initialized weights for both denoising passes,
+        # including the existing VAE upsample in between. No changes to
+        # sampler, tensors or kernels. This may OOM if upsample needs the
+        # retained GPU memory; caller retries the APPROVED two-build B=2 path.
+        if pipeline.stage._model_wrapper is not None or pipeline.stage._is_streaming:
+            raise ValueError("Stage reuse supports only unwrapped resident FP8")
+        build_started = time.perf_counter()
+        with pipeline.stage._transformer_ctx() as transformer:
+            logger.info(
+                "LTX25_I2V_PAIR_SHARED_TRANSFORMER_LOADED %s",
+                json.dumps({
+                    "seconds": time.perf_counter() - build_started,
+                    "memory": _memory_pressure(),
+                }, sort_keys=True),
+            )
+            return run_stages(transformer)
+    return run_stages(None)
