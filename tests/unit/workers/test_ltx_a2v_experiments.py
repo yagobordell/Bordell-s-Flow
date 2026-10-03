@@ -23,6 +23,7 @@ from ai_video_factory.workers.ltx25.i2v_metrics import I2VPhaseMetrics
         (a2v.LTX_A2V_BENCH_NONE_PROFILE, "none", "eager", False),
         (a2v.LTX_A2V_BENCH_CPU_TRITON_PROFILE, "cpu", "triton", False),
         (a2v.LTX_A2V_BENCH_NONE_TRITON_PROFILE, "none", "triton", False),
+        (a2v.LTX_A2V_BENCH_STATIC_CPU_PROFILE, "cpu", "eager", True),
         (a2v.LTX_A2V_BENCH_STATIC_NONE_PROFILE, "none", "eager", True),
     ],
 )
