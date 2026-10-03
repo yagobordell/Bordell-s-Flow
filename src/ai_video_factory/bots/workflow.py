@@ -632,7 +632,15 @@ async def run_b_pipeline(
                 current_block_id=block.block_id,
                 blocks=(block,),
             )
-            async def call_b12(instructions_suffix: str = "") -> B12Output:
+            last_response_id: str | None = None
+
+            def remember_response(response_id: str) -> None:
+                nonlocal last_response_id
+                last_response_id = response_id
+
+            async def call_b12(
+                feedback: str = "", previous_response_id: str | None = None,
+            ) -> B12Output:
                 async with semaphore:
                     return await _call_stage(
                         "B1.2",
@@ -641,61 +649,73 @@ async def run_b_pipeline(
                         provider=provider,
                         model=model,
                         prompt="b1_2.md",
-                        instructions_suffix=instructions_suffix,
+                        instructions_suffix="\n\n" + feedback if feedback else "",
+                        correction_feedback=feedback or None,
+                        previous_response_id=previous_response_id,
+                        on_response_id=remember_response,
                         output_type=B12Output,
                         on_input=on_input,
                         on_api_response=on_api_response,
                         on_call_duration=on_call_duration,
                     )
 
-            output = await call_b12()
-            try:
-                validate_beats(output, block)
-            except BPipelineValidationError as first_error:
-                # Only the new character-boundary defects trigger a paid correction.
-                # Other upstream failures retain B1.2's existing fail-closed behavior.
-                if not output.beats or not _beat_character_length_errors(output.beats, block):
-                    raise
-                if on_rejected_b12_output is not None:
-                    on_rejected_b12_output(
-                        block.block_id, 1, str(first_error), output.model_dump()
-                    )
-                retry_suffix = (
-                    "\n\nB1.2 automatic beat-length correction. Your previous response "
-                    f"failed validation: {first_error}\n"
-                    "Return a corrected complete B1.2 object for the SAME original input "
-                    "block. Every beat must contain 13 to 100 characters after stripping "
-                    "boundary whitespace, except when the entire block is one beat with "
-                    "at most 12 characters. Split beats longer than 100 characters into "
-                    "as many contiguous source slices as necessary. Merge beats of at "
-                    "most 12 characters into the preceding or following beat within "
-                    "this block; choose the semantically appropriate neighbor without "
-                    "exceeding 100 characters or 40 words. If needed, relocate adjacent "
-                    "boundaries. Never edit, remove, reorder or duplicate source characters: "
-                    "the concatenated beat texts MUST equal blocks[0].text character for "
-                    "character. Reassign beat IDs consecutively from the block ID plus A, "
-                    "and assign beat_type for each resulting beat. Keep the original block "
-                    "metadata and narrative context unchanged. Follow the output schema.\n"
-                    "Previous invalid B1.2 response:\n"
-                    f"{_payload(output.model_dump())}"
-                )
-                retry_output = await call_b12(retry_suffix)
+            feedback = ""
+            previous_response_id: str | None = None
+            for attempt in range(1, MAX_VALIDATION_RETRIES + 2):
+                candidate: B12Output | None = None
                 try:
-                    validate_beats(retry_output, block)
-                    if "".join(beat.text for beat in retry_output.beats or []) != block.text:
+                    candidate = await call_b12(feedback, previous_response_id)
+                    # A declared invalid upstream input is not correctable by B1.2.
+                    if candidate.error is not None:
+                        _require_success("B1.2", candidate.error)
+                    validate_beats(candidate, block)
+                    if attempt > 1 and "".join(
+                        beat.text for beat in candidate.beats or []
+                    ) != block.text:
                         raise BPipelineValidationError(
                             "B1.2 corrected beats do not reconstruct the original block exactly"
                         )
-                except BPipelineValidationError as retry_error:
+                    output = candidate
+                    break
+                except (ValidationError, BPipelineValidationError, RuntimeError) as error:
+                    if isinstance(error, RuntimeError) and not is_schema_failure(error):
+                        raise
+                    if candidate is not None and candidate.error is not None:
+                        # Re-run the upstream stage instead of modifying frozen input.
+                        raise
+                    rejected = candidate.model_dump() if candidate is not None else {
+                        "unparsed_response": True, "validation_error": str(error),
+                    }
                     if on_rejected_b12_output is not None:
                         on_rejected_b12_output(
-                            block.block_id, 2, str(retry_error), retry_output.model_dump()
+                            block.block_id, attempt, str(error), rejected,
                         )
-                    raise BPipelineValidationError(
-                        f"B1.2 block {block.block_id} failed character-length correction "
-                        f"after one retry: {retry_error}"
-                    ) from retry_error
-                output = retry_output
+                    if attempt > MAX_VALIDATION_RETRIES:
+                        raise BPipelineValidationError(
+                            f"B1.2 block {block.block_id} failed validation after "
+                            f"{MAX_VALIDATION_RETRIES} retries: {error}"
+                        ) from error
+                    previous_response_id = (
+                        last_response_id
+                        if getattr(provider, "supports_response_continuation", False)
+                        else None
+                    )
+                    feedback = validation_feedback(
+                        "B1.2", error, block_id=block.block_id,
+                        previous=candidate.model_dump() if candidate else None,
+                        continued=previous_response_id is not None,
+                        instructions=(
+                            "Previous invalid B1.2 response: correct this block only. "
+                            "Keep every source word in the same order without insertion, "
+                            "deletion or replacement. Return consecutive beat IDs. "
+                            "Use at most 40 words and 100 characters per beat, at least "
+                            "13 characters except for a single unavoidable short block. "
+                            "Split long beats, merge short beats with a neighbor and "
+                            "adjust boundaries if necessary. The concatenation of ALL "
+                            "returned beat texts MUST equal the frozen input block "
+                            "character for character, including punctuation and spaces."
+                        ),
+                    )
             if on_output is not None:
                 on_output("B1.2", block.block_id, output.model_dump())
             return output
