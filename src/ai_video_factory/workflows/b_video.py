@@ -37,6 +37,13 @@ from ai_video_factory.providers.job_queue import (
     QueueJobNotFoundError,
     QueueJobStatus,
 )
+from ai_video_factory.video_resolution import (
+    DEFAULT_VIDEO_HEIGHT,
+    DEFAULT_VIDEO_WIDTH,
+    LEGACY_VIDEO_HEIGHT,
+    LEGACY_VIDEO_WIDTH,
+    validate_video_size,
+)
 from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_RECOMMENDED_MAX_SECONDS,
     LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
@@ -211,6 +218,7 @@ def _fingerprint(
     assets: dict[tuple[int, str], Path], avatar: Path,
     *, profile: str | None = None,
     i2v_profile: str | None = LTX_PRODUCTION_I2V_PROFILE,
+    output_size: tuple[int, int] = (DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT),
 ) -> str:
     relevant = {
         "schema": _SCHEMA,
@@ -233,6 +241,10 @@ def _fingerprint(
         for beat in timeline["beats"]
     ):
         relevant["i2v_profile"] = i2v_profile
+    # Historical 720p fingerprints remain byte-for-byte unchanged, while a
+    # new Full HD request can NEVER accidentally reuse old paid clips.
+    if output_size != (LEGACY_VIDEO_WIDTH, LEGACY_VIDEO_HEIGHT):
+        relevant["output_size"] = list(output_size)
     canonical = json.dumps(relevant, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -240,8 +252,11 @@ def _fingerprint(
 def build_b2_video_plan(
     output: Path, plan: dict[str, Any], audio: dict[str, Any],
     images: dict[str, Any],
+    *, output_size: tuple[int, int] = (DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT),
 ) -> tuple[dict[str, Any], list[B2VideoJob], Path]:
     """Validate all sources and durations BEFORE queuing any paid inference."""
+    width, height = output_size
+    validate_video_size(width, height, _FPS)
     timeline = build_stt_beat_timeline(output, plan, audio)
     beats = timeline["beats"]
     previous_frame = 0
@@ -273,7 +288,7 @@ def build_b2_video_plan(
                 raise B2VideoError(
                     f"Missing media_video video_prompt for {beat['beat_id']}"
                 )
-    digest = _fingerprint(timeline, audio, assets, avatar)
+    digest = _fingerprint(timeline, audio, assets, avatar, output_size=output_size)
     run_dir = output / "video" / "runs" / digest[:20]
     if run_dir.is_symlink() or run_dir.parent.is_symlink():
         raise B2VideoError("Refusing linked B2 LTX run directory")
@@ -334,7 +349,7 @@ def build_b2_video_plan(
                 )
             job_id = f"b2-{beat_ids[0]}-" + ltx_video_application_job_id(
                 shot_id=ordinal, prompt=prompt, keyframe_sha256=image_sha,
-                seed=seed, width=1280, height=720, fps=_FPS,
+                seed=seed, width=width, height=height, fps=_FPS,
                 num_frames=num_frames, generation_profile=LTX_PRODUCTION_I2V_PROFILE,
             )
             key = f"b2-ltx/inputs/images/{image_sha}.png"
@@ -351,7 +366,7 @@ def build_b2_video_plan(
                 parameters={
                     "generation_profile": LTX_PRODUCTION_I2V_PROFILE,
                     "prompt": prompt, "seed": seed,
-                    "width": 1280, "height": 720, "fps": _FPS,
+                    "width": width, "height": height, "fps": _FPS,
                     "num_frames": num_frames,
                 },
             )
@@ -379,7 +394,7 @@ def build_b2_video_plan(
             job_id = ltx_a2v_application_job_id(
                 segment_id=f"b2-{beat_ids[0]}-{beat_ids[-1]}",
                 prompt=a2v_prompt, image_sha256=image_sha,
-                audio_sha256=audio_sha, seed=seed, width=1280, height=720,
+                audio_sha256=audio_sha, seed=seed, width=width, height=height,
                 fps=_FPS, generation_profile=LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
             )
             request = InferenceJobRequest(
@@ -430,7 +445,8 @@ def _probe_video(path: Path, job: B2VideoJob) -> None:
     data = json.loads(probe.stdout)
     video = [entry for entry in data["streams"] if entry["codec_type"] == "video"]
     audio = [entry for entry in data["streams"] if entry["codec_type"] == "audio"]
-    if len(video) != 1 or (video[0]["width"], video[0]["height"]) != (1280, 720):
+    expected = (int(job.request.parameters["width"]), int(job.request.parameters["height"]))
+    if len(video) != 1 or (video[0]["width"], video[0]["height"]) != expected:
         raise B2VideoError("LTX output video geometry/streams differ from contract")
     if job.kind == "a2v" and len(audio) != 1:
         raise B2VideoError("A2V worker must return its own speech audio stream")
@@ -577,6 +593,12 @@ def _inherit_completed_v4_clips(
     This is an exact v4 -> v5 observability/runtime-only recovery, not a generic
     way of reusing outputs after editing the script or changing video settings.
     """
+    if any(
+        (job.request.parameters.get("width"), job.request.parameters.get("height"))
+        != (LEGACY_VIDEO_WIDTH, LEGACY_VIDEO_HEIGHT)
+        for job in jobs
+    ):
+        return  # Changing pixel geometry forbids v4 720p clip inheritance.
     avatar, assets = _source_assets(output, plan, images)
     # The run directory and manifest store the first 20 hex characters,
     # not the full 64-character content hash returned by _fingerprint.
@@ -714,6 +736,7 @@ def generate_b2_ltx_video(
     check_a2v_worker: Callable[[], None] | None = None,
     check_i2v_worker: Callable[[], None] | None = None,
     casero_cta_dir: Path | None = None,
+    output_size: tuple[int, int] = (DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT),
 ) -> dict[str, Any]:
     """Durably submit exactly one LTX request per video beat/avatar group, then mux.
 
@@ -728,7 +751,9 @@ def generate_b2_ltx_video(
         submit_cta_first,
     )
 
-    timeline, jobs, run_dir = build_b2_video_plan(output, plan, audio, images)
+    timeline, jobs, run_dir = build_b2_video_plan(
+        output, plan, audio, images, output_size=output_size,
+    )
     digest = run_dir.name
     manifest_path = run_dir / "manifest.json"
     expected = _new_manifest(jobs, audio, digest)
