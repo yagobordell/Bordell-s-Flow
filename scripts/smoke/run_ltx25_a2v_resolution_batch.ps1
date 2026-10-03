@@ -40,8 +40,15 @@ foreach ($File in @($Avatar720, $Audio720, $Avatar1080, $Audio1080)) {
 if ((Get-FileHash $Avatar720 -Algorithm SHA256).Hash -eq (Get-FileHash $Avatar1080 -Algorithm SHA256).Hash) {
     throw "This campaign requires two DIFFERENT avatar images."
 }
-if ((Get-FileHash $Audio720 -Algorithm SHA256).Hash -eq (Get-FileHash $Audio1080 -Algorithm SHA256).Hash) {
-    throw "This campaign requires two DIFFERENT speech files."
+# The same speech is preferred for a controlled 720p-versus-1080p comparison.
+# Do not reject identical content, even when supplied through two different paths.
+$Audio720Sha = (Get-FileHash -LiteralPath $Audio720 -Algorithm SHA256).Hash.ToLowerInvariant()
+$Audio1080Sha = (Get-FileHash -LiteralPath $Audio1080 -Algorithm SHA256).Hash.ToLowerInvariant()
+$SameAudio = $Audio720Sha -eq $Audio1080Sha
+if ($SameAudio) {
+    Write-Host "A2V comparison: identical speech input for both resolutions (controlled comparison)."
+} else {
+    Write-Warning "A2V comparison uses different speech: generation times are not directly comparable unless durations match."
 }
 if (-not (Get-Command ffprobe -ErrorAction SilentlyContinue)) { throw "ffprobe is required." }
 foreach ($Audio in @($Audio720, $Audio1080)) {
@@ -75,6 +82,9 @@ New-Item -ItemType Directory -Force -Path $Folder | Out-Null
 $SummaryPath = Join-Path $Folder "campaign.json"
 $Summary = [ordered]@{
     run_id = $RunId
+    same_audio = $SameAudio
+    audio_720_sha256 = $Audio720Sha
+    audio_1080_sha256 = $Audio1080Sha
     pinned_image = $ExpectedPinnedImage
     session_started_utc = [DateTime]::UtcNow.ToString("o")
     bootstrap_seconds = $null
