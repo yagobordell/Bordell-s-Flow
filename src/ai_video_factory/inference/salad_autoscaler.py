@@ -462,6 +462,9 @@ class PredictiveSaladAutoscaler:
             frozenset(managed_group_names) if managed_group_names is not None else None
         )
         self.logger = logger
+        # Installed by the singleton controller. Provisioning is never run by
+        # pipeline clients or standalone autoscaler unit tests.
+        self.route_refresher: Callable[[], None] | None = None
         self._downscale_candidates: dict[str, tuple[int, int]] = {}
         self._nonconvergence_candidates: dict[str, tuple[int, int, str]] = {}
         self._provider_transition_first_seen: dict[str, datetime] = {}
@@ -473,6 +476,8 @@ class PredictiveSaladAutoscaler:
     def reconcile(self) -> dict[str, AutoscaleResult]:
         if not self.config.enabled or not self.clients:
             return {}
+        if self.route_refresher is not None:
+            self.route_refresher()
         self._assert_project_inventory_owned()
         rows_by_stage = {
             stage: self.store.list_stage_jobs(
