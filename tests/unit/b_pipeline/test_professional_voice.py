@@ -240,6 +240,13 @@ def test_professional_audio_paid_block_is_reused(tmp_path, monkeypatch):
     assert third["run_id"] != first["run_id"]
     assert speech.calls == 1
     assert third["blocks"][0]["sha256"] == first["blocks"][0]["sha256"]
+    # A new named Studio voice is never allowed to borrow an old voice's WAV.
+    fourth = asyncio.run(pv.generate_professional_audio(
+        **{**args, "voice_id": "Uncle Enzo 3"}
+    ))
+    assert fourth["run_id"] != third["run_id"]
+    assert fourth["voice_id"] == "Uncle Enzo 3"
+    assert speech.calls == 2
 
 
 def test_runner_professional_waits_for_b2_and_never_starts_fish(tmp_path, monkeypatch):
@@ -330,3 +337,84 @@ def test_runner_professional_waits_for_b2_and_never_starts_fish(tmp_path, monkey
         "mode": "voice_id", "status": "ready",
         "provider": "gemini", "voice_id": "Kore",
     }
+
+
+def test_studio_voice_name_is_persisted_and_can_be_changed_explicitly(tmp_path) -> None:
+    avatar = tmp_path / "Enzo" / "Enzo.png"
+    avatar.parent.mkdir()
+    avatar.write_bytes(b"test avatar")
+    initial = ensure_professional_avatar_voice(
+        avatar_file=avatar, input_voice_id="Algenib", interactive=False,
+    )
+    saved_snapshot = initial.snapshot()
+    path = avatar.parent / "meta" / "gemini_voice.json"
+    original = path.read_bytes()
+    with pytest.raises(ValueError, match="different"):
+        ensure_professional_avatar_voice(
+            avatar_file=avatar, input_voice_id="Uncle Enzo 3", interactive=False,
+        )
+    assert path.read_bytes() == original
+    replacement = ensure_professional_avatar_voice(
+        avatar_file=avatar, input_voice_id="Uncle Enzo 3",
+        allow_replace=True, interactive=False,
+    )
+    assert replacement.voice_id == "Uncle Enzo 3"
+    assert json.loads(path.read_text()) == {
+        "provider": "gemini", "voice_id": "Uncle Enzo 3",
+    }
+    assert saved_snapshot["voice_id"] == "Algenib"
+    assert ensure_professional_avatar_voice(
+        avatar_file=avatar, interactive=False,
+    ).voice_id == "Uncle Enzo 3"
+    with pytest.raises(ValueError, match="requires"):
+        ensure_professional_avatar_voice(
+            avatar_file=avatar, allow_replace=True, interactive=False,
+        )
+    assert not (path.parent / "gemini_voice.json.tmp").exists()
+
+
+@pytest.mark.parametrize("voice", ["Uncle/Enzo", "Uncle\\nEnzo", "a", "Bad  Name"])
+def test_invalid_studio_voice_does_not_overwrite_config(tmp_path, voice) -> None:
+    avatar = tmp_path / "Enzo" / "Enzo.png"
+    avatar.parent.mkdir()
+    avatar.write_bytes(b"avatar")
+    ensure_professional_avatar_voice(
+        avatar_file=avatar, input_voice_id="Algenib", interactive=False,
+    )
+    path = avatar.parent / "meta" / "gemini_voice.json"
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="voice"):
+        ensure_professional_avatar_voice(
+            avatar_file=avatar, input_voice_id=voice, allow_replace=True,
+            interactive=False,
+        )
+    assert path.read_bytes() == before
+
+
+def test_cli_requires_explicit_custom_voice_replacement_for_new_runs(
+    monkeypatch,
+) -> None:
+    import sys
+
+    from scripts.pipeline import run_b_pipeline as runner
+
+    monkeypatch.setattr(sys, "argv", [
+        "run_b_pipeline.py", "--style", "profesional",
+        "--voice-id", "Uncle Enzo 3", "--replace-professional-voice",
+    ])
+    args = runner.parse_args()
+    assert args.voice_id == "Uncle Enzo 3"
+    assert args.replace_professional_voice is True
+
+    monkeypatch.setattr(sys, "argv", [
+        "run_b_pipeline.py", "--replace-professional-voice",
+    ])
+    with pytest.raises(SystemExit):
+        runner.parse_args()
+
+    monkeypatch.setattr(sys, "argv", [
+        "run_b_pipeline.py", "--voice-id", "Uncle Enzo 3",
+        "--replace-professional-voice", "--from", "B2",
+    ])
+    with pytest.raises(SystemExit):
+        runner.parse_args()
