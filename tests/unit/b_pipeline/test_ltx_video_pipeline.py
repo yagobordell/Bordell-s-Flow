@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from dataclasses import replace
 import hashlib
 import json
 import shutil
@@ -319,7 +320,7 @@ def test_a2v_registers_immutable_digest_without_touching_another_run(
         runner, "register_route",
         lambda dsn, *, service, image: (
             called.append((dsn, service, image))
-            or runner.route_for_image(service, image)
+            or replace(runner.route_for_image(service, image), routing_contract="v1")
         ),
     )
     one = "docker.io/yagobordell/ai-video-factory@sha256:" + "a" * 64
