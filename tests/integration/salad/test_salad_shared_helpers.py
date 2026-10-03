@@ -170,4 +170,8 @@ def test_i2v_get_522_retries_without_replaying_mutations_or_changing_a2v() -> No
         "} catch { "
         "if ($_.Exception.Message -ne 'synthetic HTTP 522' "
         "-or $script:Requests -ne 1) { throw } }\n"
+        # A caught PowerShell mock failure may leave $? false as the final
+        # pipeline result; a handled/verified mock must exit successfully.
+        + "Write-Output 'checked 522 retry and fail-closed mutations'\n"
+        + "exit 0\n"
     )
