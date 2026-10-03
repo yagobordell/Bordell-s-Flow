@@ -241,7 +241,11 @@ def main() -> int:
         action="store_true",
         help="Validate local account, service and image configuration without contacting Salad.",
     )
-    parser.add_argument("--service", choices=("ltx25", "ltx25_i2v", "ltx25_a2v_experimental"), default="ltx25")
+    parser.add_argument(
+        "--service",
+        choices=("ltx25", "ltx25_i2v", "ltx25_a2v_experimental"),
+        default="ltx25",
+    )
     args = parser.parse_args()
 
     env_file = Path(args.env_file)
