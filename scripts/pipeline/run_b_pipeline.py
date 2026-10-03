@@ -60,6 +60,7 @@ from ai_video_factory.inference.salad import (
     SaladDispatchConfig,
 )
 from ai_video_factory.inference.salad_billing import SaladCostMeter, read_salad_costs
+from ai_video_factory.inference.salad_ltx_worker_prepare import ensure_a2v_image
 from ai_video_factory.managed_layout import publish_managed_run, sync_managed_outputs
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
@@ -1154,15 +1155,21 @@ def _require_ltx_safe_a2v_worker() -> None:
             container_group_name=group_name,
         )
     )
-    deployed = client.describe_container_group()
-    container = deployed.get("container")
-    actual = container.get("image") if isinstance(container, dict) else None
-    if actual != expected:
-        raise RuntimeError(
-            "Salad LTX A2V worker image mismatch; no new paid inference submitted. "
-            f"Expected reviewed image {expected}, group reports {actual!r}. "
-            "Prepare the exact digest and ensure the group is updated."
-        )
+    configured_image = document["services"]["ltx25"]["image"]
+    configured_repository = re.sub(r":[^/:]+$", "", configured_image)
+    ensure_a2v_image(
+        client=client,
+        expected=expected,
+        configured_repository=configured_repository,
+        repo_root=repo_root,
+        controller_dsn=(
+            settings.salad_capacity_controller_postgres_dsn or settings.postgres_dsn
+        ),
+        auto_prepare=(
+            os.getenv("SALAD_LTX_AUTO_PREPARE_ON_MISMATCH", "true").strip().lower()
+            in {"true", "1", "yes", "on"}
+        ),
+    )
 
 
 def _require_ltx_safe_i2v_worker() -> None:
