@@ -60,6 +60,48 @@ def _memory_pressure() -> dict[str, int]:
     return values
 
 
+
+
+def _encode_pair_prompts(pipeline: Any, pair: tuple[PairInput, PairInput]) -> tuple[Any, Any]:
+    """Load Gemma/embedding processor ONCE, but run each sample in B=1.
+
+    This preserves the reference prompt tokenizer's one-prompt padding, its
+    original Gemma forward size and the connector's per-sample arithmetic.
+    The checkpoints, ops, dtype, device and output tensors are unchanged.
+    Only module residency/build count changes. Never mix unrelated prompts.
+    """
+    from ltx_pipelines.utils.gpu_model import gpu_model
+
+    encoder = pipeline.prompt_encoder
+    started = time.perf_counter()
+    logger.info("LTX25_I2V_PAIR_PROMPT_SHARED_START count=2")
+    with encoder._text_encoder_ctx() as gemma:
+        raw = []
+        for sample in pair:
+            (encoded,) = gemma.encode([sample.prompt])
+            raw.append(encoded)
+    gemma_seconds = time.perf_counter() - started
+    with gpu_model(
+        encoder._build_embeddings_processor(),
+        alloc_trim_strategy=encoder._alloc_trim_strategy,
+    ) as processor:
+        contexts = tuple(
+            processor.process_hidden_states(hidden_states, mask)
+            for hidden_states, mask in raw
+        )
+    logger.info(
+        "LTX25_I2V_PAIR_PROMPT_SHARED_METRICS %s",
+        json.dumps({
+            "gemma_build_and_two_independent_encodes_seconds": gemma_seconds,
+            "embeddings_and_total_seconds": time.perf_counter() - started,
+            "gemma_builds": 1,
+            "embeddings_processor_builds": 1,
+            "batch_size_per_prompt": 1,
+        }, sort_keys=True),
+    )
+    return contexts
+
+
 @dataclass(frozen=True)
 class PairInput:
     prompt: str
@@ -221,17 +263,21 @@ def _paired_stage(
 
 def _batch_conditionings(pipeline: Any, pair: tuple[PairInput, PairInput], width: int, height: int):
     """Encode each reference image separately to preserve the original conditioning."""
-    prepared = []
-    for item in pair:
-        encoded = pipeline.image_conditioner(
-            lambda encoder, sample=item: combined_image_conditionings(
-                images=[sample.image], height=height, width=width, video_encoder=encoder,
-                dtype=pipeline.dtype, device=pipeline.device,
+    def encode_individually(encoder: Any) -> list[Any]:
+        # Same one-image forward as the approved result, on the same encoder
+        # instance. A single encoder build per stage instead of two.
+        prepared = []
+        for item in pair:
+            encoded = combined_image_conditionings(
+                images=[item.image], height=height, width=width,
+                video_encoder=encoder, dtype=pipeline.dtype, device=pipeline.device,
             )
-        )
-        if len(encoded) != 1 or not isinstance(encoded[0], VideoConditionByLatentIndex):
-            raise ValueError("Experimental batch2 supports one first-frame image per sample")
-        prepared.append(encoded[0])
+            if len(encoded) != 1 or not isinstance(encoded[0], VideoConditionByLatentIndex):
+                raise ValueError("Experimental batch2 supports one first-frame image per sample")
+            prepared.append(encoded[0])
+        return prepared
+
+    prepared = pipeline.image_conditioner(encode_individually)
     if prepared[0].strength != prepared[1].strength:
         raise ValueError("Experimental batch2 requires identical image strengths")
     return [
@@ -273,16 +319,19 @@ def generate_paired_fast_distilled(
     require_num_frames_source(num_frames, pipeline.duration_predictor)
     # Preserve per-video Gemma tokenization/padding by encoding ONE prompt at a
     # time. Attempting combined text encoding could change text-conditioning.
-    prepared = []
-    for item in pair:
-        image = pipeline.image_conditioner.resolve_crf([item.image])[0]
-        (context,) = pipeline.prompt_encoder(
-            [item.prompt],
-            enhance_first_prompt=False,
-            enhance_static_cache=False,
-            enhance_prompt_image=item.image[0],
+    # The validated recipe does not enhance prompts. Keep one-prompt forwards
+    # exactly as before, but avoid building Gemma and connectors twice.
+    contexts = _encode_pair_prompts(pipeline, pair)
+    prepared = [
+        (
+            PairInput(
+                item.prompt, item.seed,
+                pipeline.image_conditioner.resolve_crf([item.image])[0],
+            ),
+            context,
         )
-        prepared.append((PairInput(item.prompt, item.seed, image), context))
+        for item, context in zip(pair, contexts, strict=True)
+    ]
     resolved = tuple(x[0] for x in prepared)
     video_ctx = torch.cat([x[1].video_encoding for x in prepared], dim=0)
     audio_ctx = torch.cat([x[1].audio_encoding for x in prepared], dim=0)
