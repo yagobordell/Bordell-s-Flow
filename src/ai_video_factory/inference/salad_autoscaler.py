@@ -350,7 +350,9 @@ def load_predictive_autoscaler_config(
             cold_start_seconds,
             minimum=0.0,
         )
-        default_jobs_per_replica = _DEFAULT_JOBS_PER_REPLICA.get(binding.workload)
+        default_jobs_per_replica = _DEFAULT_JOBS_PER_REPLICA.get(
+            binding.autoscaler_env_prefix.lower()
+        )
         if default_jobs_per_replica is not None:
             stage_jobs_per_replica[binding.workload] = _int_env(
                 f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_JOBS_PER_REPLICA",
