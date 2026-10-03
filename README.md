@@ -1,5 +1,27 @@
 # AI Video Factory
 
+## Professional voice: V1 → V2 → V3 → Gemini 3.8
+
+The `profesional` style now runs its voice directors **after validated B2**:
+V1 sets the film's rhythm, V2 distributes each block's intent across its
+beats, and V3 creates exact-text speech fragments with sustained
+`speech_metadata.style` and optional allowlisted human vocal events
+(`<breath>`, `<sigh>`, `<short pause>`, etc.). Gemini 3.8 is its only TTS
+provider; it has an independent saved voice for each professional avatar.
+`casero` retains Fish, MiniMax and ElevenLabs.
+
+First professional run:
+```powershell
+.\run.ps1 ejemplo Jorge --style profesional --voice-id Algenib
+```
+Set `GEMINI_API_KEY` and `OPENAI_API_KEY`. Use `--no-audio` or `--stop B2`
+to skip post-B2 professional audio, or `--from B2` to re-run from a saved
+B2 checkpoint. `--resume-audio` reuses safe verified paid blocks; unknown
+paid POST outcomes require reconciliation, not blind retries.
+See [professional V pipeline and recovery](docs/components/professional-voice.md).
+The historical sections below include legacy Casero/Fish examples.
+
+
 ## Nuevo flujo de archivos: un TXT suelto es un guion pendiente
 
 `run.ps1` usa ahora la estructura **`data/<avatar>/`**. Para el primer

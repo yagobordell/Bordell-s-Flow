@@ -13,6 +13,7 @@ from io import BytesIO
 from pathlib import Path
 from time import perf_counter
 from typing import Literal
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from PIL import Image
@@ -35,6 +36,7 @@ from ai_video_factory.bots.fish_audio_workflow import (
     retranscribe_audio_block,
     unfinished_audio_runs,
 )
+from ai_video_factory.bots.professional_voice import generate_professional_audio
 from ai_video_factory.bots.workflow import (
     materialize_blocks,
     validate_beats,
@@ -80,6 +82,7 @@ from ai_video_factory.providers.openai_batch_images import (
 )
 from ai_video_factory.providers.openai_stt import OpenAISttClient
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
+from ai_video_factory.providers.professional_avatar_voice import ensure_professional_avatar_voice
 from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.publishing import publish_completed_run
 from ai_video_factory.workflows.b_video import (
@@ -91,7 +94,7 @@ from ai_video_factory.workflows.casero_cta import prepare_casero_cta
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
 _STAGES = ("B1.1", "B1.2", "B2")
-_METRIC_STAGES = ("B1.1", "CTA", "CTA Ebook", "B1.2", "B2")
+_METRIC_STAGES = ("B1.1", "CTA", "CTA Ebook", "B1.2", "B2", "V1", "V2", "V3")
 
 
 def parse_args() -> argparse.Namespace:
@@ -149,7 +152,7 @@ def parse_args() -> argparse.Namespace:
     voices.add_argument(
         "--voice-id",
         metavar="ID",
-        help="Voice ID de AI33Pro para este avatar (se guarda la primera vez).",
+        help="Voice ID del proveedor Casero o voz Gemini Profesional; se guarda por avatar.",
     )
     voices.add_argument(
         "--voice-audio",
@@ -217,7 +220,7 @@ def parse_args() -> argparse.Namespace:
         dest="stop_stage",
         choices=_STAGES,
         default=None,
-        help="Stop after this planning stage, without starting Fish Audio or image generation.",
+        help="Stop after this planning stage, without starting TTS or image generation.",
     )
     parser.add_argument(
         "--skip-images",
@@ -249,17 +252,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-audio",
         action="store_true",
-        help="Run B1.1/B1.2/B2 (and optional images) without Fish director or TTS.",
+        help="Run B1.1/B1.2/B2 without the style-specific voice directors or TTS.",
     )
     parser.add_argument(
         "--regenerate-audio",
         action="store_true",
-        help="Run only Fish director and a NEW TTS task; never run B bots or images.",
+        help="Create fresh audio using the saved B result and its style-specific TTS.",
     )
     parser.add_argument(
         "--resume-audio",
         action="store_true",
-        help="Resume a saved Fish TTS task without rerunning its director or B bots.",
+        help="Resume saved Casero or Gemini block TTS safely without rerunning B bots.",
     )
     args = parser.parse_args()
     if args.youtube_only and not settings.youtube_enabled:
@@ -1335,10 +1338,14 @@ async def _preflight_saved_run_audio(
         or saved_audio.get("stt_complete") is not True
     ):
         return False
+    # Keep Casero's established call signature and retry policy unchanged.
+    # Professional Gemini intentionally forbids implicit paid Fish regeneration.
+    options = (
+        {"allow_audio_regeneration": False}
+        if saved_audio.get("provider") == "gemini" else {}
+    )
     run_metadata["stt_alignment"] = await _preflight_stt_alignment_with_retries(
-        output,
-        plan,
-        saved_audio,
+        output, plan, saved_audio, **options,
     )
     return True
 
@@ -1738,10 +1745,14 @@ async def _run_audio_only(
         raise SystemExit("Audio source must be UTF-8") from exc
     if report.get("run", {}).get("script_sha256") != hashlib.sha256(raw).hexdigest():
         raise SystemExit("Script changed since the B run; audio-only mode is blocked")
+    is_professional = report.get("run", {}).get("visual_style") == "profesional"
     if not resume and not settings.openai_api_key:
-        raise SystemExit("OPENAI_API_KEY is required to rerun the Fish director")
-    if not settings.ai33_api_key:
-        raise SystemExit("AI33_API_KEY is required for the Fish Audio voice task")
+        raise SystemExit("OPENAI_API_KEY is required to rerun the voice director")
+    if is_professional:
+        if not settings.gemini_api_key:
+            raise SystemExit("GEMINI_API_KEY is required for professional Gemini TTS")
+    elif not settings.ai33_api_key:
+        raise SystemExit("AI33_API_KEY is required for Casero voice synthesis")
     b11_path = output / "B1.1" / "output.json"
     if b11_path.is_symlink() or not b11_path.is_file():
         raise SystemExit("Audio-only mode requires the saved validated B1.1 output")
@@ -1757,11 +1768,12 @@ async def _run_audio_only(
     previous_sha = (
         previous_audio.get("sha256") if isinstance(previous_audio, dict) else None
     )
-    _activate_pending_avatar_clone(output, report)
+    if not is_professional:
+        _activate_pending_avatar_clone(output, report)
 
     provider = (
         None
-        if resume
+        if resume and not is_professional
         else OpenAIProvider(
             api_key=settings.openai_api_key,
             reasoning_effort=settings.openai_reasoning_effort,
@@ -1775,9 +1787,48 @@ async def _run_audio_only(
             artifact = _latest_completed_audio(output, hashlib.sha256(raw).hexdigest())
             reused_audio = artifact is not None
         if artifact is None:
-            artifact = await _generate_audio(
-                script, output, b11=b11, provider=provider, resume=resume
-            )
+            if is_professional:
+                merged_path = output / "B2" / "merged_output.json"
+                if merged_path.is_symlink() or not merged_path.is_file():
+                    raise RuntimeError("Professional audio requires a saved validated B2 result")
+                merged = json.loads(merged_path.read_text(encoding="utf-8"))
+                blocks = merged.get("blocks")
+                core = merged.get("narrative_core")
+                if not isinstance(blocks, list) or not blocks or not isinstance(core, dict):
+                    raise RuntimeError("Professional B2 merged checkpoint is incomplete")
+                for block in blocks:
+                    ProfessionalB2Output.model_validate({
+                        "pipeline_stage": "B2", "narrative_core": core,
+                        "blocks": [block], "error": None,
+                    })
+                pending = unfinished_audio_runs(output)
+                if resume and len(pending) != 1:
+                    raise RuntimeError(
+                        "Professional --resume-audio requires one pending Gemini task"
+                    )
+                if pending and not resume:
+                    raise RuntimeError(
+                        "An incomplete paid audio task exists; reconcile before regeneration"
+                    )
+                nonce = (
+                    json.loads(pending[0].read_text(encoding="utf-8")).get("generation_nonce", "")
+                    if resume else uuid4().hex
+                )
+                if resume and not pending[0].parent.name.startswith("gemini-"):
+                    raise RuntimeError("Pending audio task is not a professional Gemini run")
+                artifact = await generate_professional_audio(
+                    core=core, blocks=blocks, output=output,
+                    provider=provider, model=settings.openai_model,
+                    gemini_api_key=settings.gemini_api_key,
+                    voice_id=_run_voice_id(output),
+                    source_sha256=hashlib.sha256(raw).hexdigest(),
+                    generation_nonce=nonce,
+                    max_parallel_calls=8,
+                )
+            else:
+                artifact = await _generate_audio(
+                    script, output, b11=b11, provider=provider, resume=resume
+                )
     except Exception:
         report["run"]["audio_generation"] = {"status": "incomplete"}
         _refresh_audio_costs(report, output)
@@ -1803,6 +1854,7 @@ async def _run_audio_only(
                 output,
                 json.loads(plan_path.read_text(encoding="utf-8")),
                 artifact,
+                allow_audio_regeneration=artifact.get("provider") != "gemini",
             ) or {"status": "skipped"}
         except Exception as exc:
             report["run"]["stt_alignment"] = {"status": "failed", "error": str(exc)}
@@ -1856,7 +1908,7 @@ async def _run_audio_only(
         if managed_target is not None else output / artifact["file"]
     )
     print(
-        f"  {'Reused' if reused_audio else 'Fish Audio ready'}: {display_path} "
+        f"  {'Reused' if reused_audio else 'Narration ready'}: {display_path} "
         f"(voice {artifact['voice_id']})",
         flush=True,
     )
@@ -2222,11 +2274,16 @@ async def main() -> None:
         args.from_stage == "B1.1"
         and getattr(args, "stop_stage", None) is None
         and not getattr(args, "no_audio", False)
-        and not settings.ai33_api_key
     ):
-        raise SystemExit(
-            "AI33_API_KEY is required for Fish TTS; pass --no-audio to skip."
-        )
+        if visual_style == "casero" and not settings.ai33_api_key:
+            raise SystemExit(
+                "AI33_API_KEY is required for Casero TTS; pass --no-audio to skip."
+            )
+        if visual_style == "profesional" and not settings.gemini_api_key:
+            raise SystemExit(
+                "GEMINI_API_KEY is required for professional TTS; "
+                "pass --no-audio to skip."
+            )
 
     if args.max_parallel_calls < 1:
         raise SystemExit("--max-parallel-calls must be positive")
@@ -2265,21 +2322,33 @@ async def main() -> None:
             avatars_dir=args.avatars_dir,
             input_url=getattr(args, "qr_url", None),
         )
-        voice = ensure_avatar_voice(
-            avatar_file=avatar_file,
-            avatars_dir=args.avatars_dir,
-            input_voice_id=getattr(args, "voice_id", None),
-            input_audio_filename=getattr(args, "voice_audio", None),
-            use_default=bool(getattr(args, "default_voice", False)),
-            default_voice_id=settings.ai33_fish_voice_id,
-            api_key=settings.ai33_api_key,
-            allow_sources=visual_style == "casero",
-            input_provider=getattr(args, "tts_provider", None),
-            activate=stop_stage is None and not getattr(args, "no_audio", False),
-        )
-        avatar_file = organize_avatar(
-            avatar_file, args.avatars_dir, reference_audio=voice.audio_filename
-        )
+        if visual_style == "profesional":
+            if getattr(args, "tts_provider", None) is not None:
+                raise SystemExit("Profesional uses only Gemini TTS; --tts-provider is Casero-only.")
+            if getattr(args, "voice_audio", None) is not None:
+                raise SystemExit("Profesional needs a Gemini voice ID, not --voice-audio.")
+            avatar_file = organize_avatar(avatar_file, args.avatars_dir)
+            voice = ensure_professional_avatar_voice(
+                avatar_file=avatar_file,
+                input_voice_id=getattr(args, "voice_id", None),
+                use_default=bool(getattr(args, "default_voice", False)),
+            )
+        else:
+            voice = ensure_avatar_voice(
+                avatar_file=avatar_file,
+                avatars_dir=args.avatars_dir,
+                input_voice_id=getattr(args, "voice_id", None),
+                input_audio_filename=getattr(args, "voice_audio", None),
+                use_default=bool(getattr(args, "default_voice", False)),
+                default_voice_id=settings.ai33_fish_voice_id,
+                api_key=settings.ai33_api_key,
+                allow_sources=visual_style == "casero",
+                input_provider=getattr(args, "tts_provider", None),
+                activate=stop_stage is None and not getattr(args, "no_audio", False),
+            )
+            avatar_file = organize_avatar(
+                avatar_file, args.avatars_dir, reference_audio=voice.audio_filename
+            )
         if visual_style == "casero":
             ensure_avatar_meta(avatar_file, args.avatars_dir)
             data_root = args.avatars_dir if managed_target is not None else args.avatars_dir.parent
@@ -2327,21 +2396,33 @@ async def main() -> None:
             avatars_dir=args.avatars_dir,
             input_url=getattr(args, "qr_url", None),
         )
-        voice = ensure_avatar_voice(
-            avatar_file=avatar_file,
-            avatars_dir=args.avatars_dir,
-            input_voice_id=getattr(args, "voice_id", None),
-            input_audio_filename=getattr(args, "voice_audio", None),
-            use_default=bool(getattr(args, "default_voice", False)),
-            default_voice_id=settings.ai33_fish_voice_id,
-            api_key=settings.ai33_api_key,
-            allow_sources=visual_style == "casero",
-            input_provider=getattr(args, "tts_provider", None),
-            activate=False,
-        )
-        avatar_file = organize_avatar(
-            avatar_file, args.avatars_dir, reference_audio=voice.audio_filename
-        )
+        if visual_style == "profesional":
+            if getattr(args, "tts_provider", None) is not None:
+                raise SystemExit("Profesional uses only Gemini TTS; --tts-provider is Casero-only.")
+            if getattr(args, "voice_audio", None) is not None:
+                raise SystemExit("Profesional needs a Gemini voice ID, not --voice-audio.")
+            avatar_file = organize_avatar(avatar_file, args.avatars_dir)
+            voice = ensure_professional_avatar_voice(
+                avatar_file=avatar_file,
+                input_voice_id=getattr(args, "voice_id", None),
+                use_default=bool(getattr(args, "default_voice", False)),
+            )
+        else:
+            voice = ensure_avatar_voice(
+                avatar_file=avatar_file,
+                avatars_dir=args.avatars_dir,
+                input_voice_id=getattr(args, "voice_id", None),
+                input_audio_filename=getattr(args, "voice_audio", None),
+                use_default=bool(getattr(args, "default_voice", False)),
+                default_voice_id=settings.ai33_fish_voice_id,
+                api_key=settings.ai33_api_key,
+                allow_sources=visual_style == "casero",
+                input_provider=getattr(args, "tts_provider", None),
+                activate=False,
+            )
+            avatar_file = organize_avatar(
+                avatar_file, args.avatars_dir, reference_audio=voice.audio_filename
+            )
         _clear_outputs_from(output, args.from_stage)
 
     # Bind the voice to the run, not merely the mutable avatar library or .env.
@@ -2483,7 +2564,11 @@ async def main() -> None:
     audio_joined = False
     image_manifest: dict[str, object] | None = None
     audio_enabled = (
-        stop_stage is None and args.from_stage == "B1.1"
+        visual_style == "casero" and stop_stage is None and args.from_stage == "B1.1"
+        and not getattr(args, "no_audio", False)
+    )
+    professional_audio_enabled = (
+        visual_style == "profesional" and stop_stage is None
         and not getattr(args, "no_audio", False)
     )
 
@@ -2557,7 +2642,7 @@ async def main() -> None:
                 on_call_duration=timings.record_call,
                 on_image_usage=ledger.record_cta_image,
             ))
-        if audio_enabled:
+        if audio_enabled or professional_audio_enabled:
             run_metadata["audio_generation"] = {"status": "running"}
             save_report("running", None)
         elif args.from_stage == "B1.1":
@@ -2608,6 +2693,29 @@ async def main() -> None:
             # This binding is intentionally absent from audited B2 payloads.
             visual_plan["avatar"] = avatar_metadata
             _write(output / "visual_plan.json", visual_plan)
+        if professional_audio_enabled:
+            if visual_plan is None:
+                raise RuntimeError("Professional Gemini voice requires a completed B2 plan")
+            if not settings.gemini_api_key:
+                raise RuntimeError("GEMINI_API_KEY is required for professional Gemini 3.8 TTS")
+            run_metadata["audio_generation"] = await generate_professional_audio(
+                core=result.b11.narrative_core.model_dump(mode="json"),
+                blocks=[item.blocks[0].model_dump(mode="json") for item in result.b2],
+                output=output,
+                provider=provider,
+                model=settings.openai_model,
+                gemini_api_key=settings.gemini_api_key,
+                voice_id=_run_voice_id(output),
+                source_sha256=script_sha256,
+                on_response=ledger.record,
+                on_timing=timings.record_call,
+                max_parallel_calls=args.max_parallel_calls,
+            )
+            audio_joined = True
+            save_report("running", len(result.b12))
+            if getattr(args, "managed_target", None) is not None:
+                await asyncio.to_thread(sync_managed_outputs, output, args.managed_target)
+
         if audio_task is not None:
             if visual_plan is None:
                 raise RuntimeError("Audio alignment requires a completed B2 plan")
@@ -2699,6 +2807,32 @@ async def main() -> None:
                     visual_plan = result.visual_plan()
                     visual_plan["avatar"] = avatar_metadata
                     _write(output / "visual_plan.json", visual_plan)
+                    if professional_audio_enabled:
+                        # This B2 block changed after professional V/audio ran.
+                        # Re-direct from the corrected whole B2 plan. Identical
+                        # paid Gemini fragments are reused by verified block SHA.
+                        run_metadata["audio_generation"] = {"status": "running"}
+                        save_report("running", len(result.b12))
+                        run_metadata["audio_generation"] = await generate_professional_audio(
+                            core=result.b11.narrative_core.model_dump(mode="json"),
+                            blocks=[
+                                item.blocks[0].model_dump(mode="json")
+                                for item in result.b2
+                            ],
+                            output=output,
+                            provider=provider,
+                            model=settings.openai_model,
+                            gemini_api_key=settings.gemini_api_key,
+                            voice_id=_run_voice_id(output),
+                            source_sha256=script_sha256,
+                            on_response=ledger.record,
+                            on_timing=timings.record_call,
+                            max_parallel_calls=args.max_parallel_calls,
+                        )
+                        await _preflight_saved_run_audio(
+                            output, visual_plan, run_metadata,
+                        )
+                        save_report("running", len(result.b12))
             run_metadata["image_generation"] = _image_summary(image_manifest)
             image_costs, _ = save_report("running", len(result.b12))
             if getattr(args, "managed_target", None) is not None:

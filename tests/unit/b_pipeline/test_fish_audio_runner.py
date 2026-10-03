@@ -26,6 +26,14 @@ def _fake_avatar_qr(*, avatar_file: Path, **_kwargs):
     )
 
 
+
+def _fake_ebook_covers(avatar_file: Path) -> list[str]:
+    """Keep legacy Casero/Fish tests independent of real ebook onboarding."""
+    meta = avatar_file.parent / "meta"
+    meta.mkdir(exist_ok=True)
+    (meta / "qr.png").write_bytes(avatar_file.read_bytes())
+    return ["cover"]
+
 def _files(tmp_path: Path) -> tuple[Path, Path]:
     script = tmp_path / "input" / "test2.txt"
     script.parent.mkdir()
@@ -59,7 +67,7 @@ def test_full_b_run_starts_fish_concurrently_and_no_audio_skips_it(
     created_audio = []
 
     args = Namespace(
-        visual_style="profesional",
+        visual_style="casero",
         script_file=None,
         scripts_dir=script.parent,
         script=script.name,
@@ -108,6 +116,10 @@ def test_full_b_run_starts_fish_concurrently_and_no_audio_skips_it(
 
     monkeypatch.setattr(runner, "parse_args", lambda: args)
     monkeypatch.setattr(runner, "ensure_avatar_qr", _fake_avatar_qr)
+    monkeypatch.setattr(
+        runner, "ensure_ebook_covers",
+        lambda avatar_file, **_kw: _fake_ebook_covers(avatar_file),
+    )
     monkeypatch.setattr(runner.settings, "openai_api_key", "test-openai-key")
     monkeypatch.setattr(runner.settings, "ai33_api_key", "test-ai33-key")
     monkeypatch.setattr(runner, "OpenAIProvider", lambda **_kw: object())
@@ -187,6 +199,10 @@ def test_audio_only_mode_preserves_b_artifacts_and_skips_avatar_images(
 
     monkeypatch.setattr(runner, "parse_args", lambda: args)
     monkeypatch.setattr(runner, "ensure_avatar_qr", _fake_avatar_qr)
+    monkeypatch.setattr(
+        runner, "ensure_ebook_covers",
+        lambda avatar_file, **_kw: _fake_ebook_covers(avatar_file),
+    )
     monkeypatch.setattr(runner.settings, "openai_api_key", "test-openai-key")
     monkeypatch.setattr(runner.settings, "ai33_api_key", "test-ai33-key")
     monkeypatch.setattr(runner, "OpenAIProvider", lambda **_kw: object())
@@ -235,7 +251,7 @@ def test_images_wait_for_b2_and_validated_stt_before_paid_requests(
     audio_released = asyncio.Event()
     order = []
     args = Namespace(
-        visual_style="profesional",
+        visual_style="casero",
         script_file=None,
         scripts_dir=script.parent,
         script=script.name,
@@ -300,8 +316,16 @@ def test_images_wait_for_b2_and_validated_stt_before_paid_requests(
     monkeypatch.setattr(runner, "OpenAIProvider", lambda **_kw: object())
     monkeypatch.setattr(runner, "run_b_pipeline", fake_b)
     monkeypatch.setattr(runner, "_generate_audio", fake_audio)
+    monkeypatch.setattr(
+        runner, "ensure_ebook_covers",
+        lambda avatar_file, **_kw: _fake_ebook_covers(avatar_file),
+    )
     monkeypatch.setattr(runner, "_preflight_stt_alignment_with_retries", fake_alignment)
     monkeypatch.setattr(runner, "_generate_images", fake_images)
+    async def fake_cta(**_kw):
+        return {"directory": str(tmp_path / "cta"), "status": "completed"}
+
+    monkeypatch.setattr(runner, "prepare_casero_cta", fake_cta)
 
     async def run_bounded():
         await asyncio.wait_for(runner.main(), timeout=5)
