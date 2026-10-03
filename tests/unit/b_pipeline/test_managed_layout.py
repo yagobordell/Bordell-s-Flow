@@ -838,3 +838,44 @@ def test_saved_ltx_video_is_rejected_if_it_uses_other_narration(
         sync_managed_outputs(work, target)
     assert not (target / "test01.mp4").exists()
     assert not (target / "outputs" / "run_report.json").exists()
+
+
+
+def test_professional_v_stages_are_visible_next_to_b_bots_and_in_final_publication(
+    managed_complete: tuple[Path, Path, Path],
+) -> None:
+    work, script, target = managed_complete
+    _json(work, "V1/pass_1/input.json", {"payload": "direction"})
+    _json(work, "V1/pass_1/output.json", {"pipeline_stage": "V1"})
+    _json(work, "V2/pass_1/block_1/input.json", {"payload": "rhythm"})
+    _json(work, "V2/pass_1/block_1/output.json", {"pipeline_stage": "V2"})
+    _json(work, "V3/block_1/input.json", {"payload": "delivery"})
+    _json(work, "V3/block_1/rejected_attempt_1.json", {"error": "bad beat"})
+    _json(work, "V3/block_1/output.json", {"pipeline_stage": "V3"})
+    sync_managed_outputs(work, target)
+    for stage, rel in (
+        ("V1", "pass_1/input.json"), ("V1", "pass_1/output.json"),
+        ("V2", "pass_1/block_1/output.json"),
+        ("V3", "block_1/input.json"), ("V3", "block_1/rejected_attempt_1.json"),
+        ("V3", "block_1/output.json"),
+    ):
+        assert (target / "outputs" / stage / rel).is_file()
+    publish_managed_run(work, script, target)
+    assert (target / "outputs" / "V3" / "block_1" / "output.json").is_file()
+    published = json.loads((target / "manifest.json").read_text())
+    assert any(key.startswith("outputs/V1/") for key in published["files"])
+    assert any(key.startswith("outputs/V2/") for key in published["files"])
+    assert any(key.startswith("outputs/V3/") for key in published["files"])
+
+
+def test_legacy_v_checkpoints_are_exported_without_mutating_old_run(
+    managed_complete: tuple[Path, Path, Path],
+) -> None:
+    work, script, target = managed_complete
+    _json(work, "voice_direction/V1/pass_1/input.json", {"legacy": True})
+    _json(work, "voice_direction/V1/pass_1/output.json", {"legacy": True})
+    sync_managed_outputs(work, target)
+    assert (target / "outputs" / "V1" / "pass_1" / "input.json").is_file()
+    publish_managed_run(work, script, target)
+    assert (target / "outputs" / "V1" / "pass_1" / "output.json").is_file()
+    assert (work / "voice_direction" / "V1" / "pass_1" / "output.json").is_file()
