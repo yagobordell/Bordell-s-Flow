@@ -495,9 +495,9 @@ class InferenceWorker:
                     attempt_count,
                 )
                 if request.task in {
-                "video.ltx25.audio_to_video",
-                "video.ltx25.audio_to_video_experimental",
-            }:
+                    "video.ltx25.audio_to_video",
+                    "video.ltx25.audio_to_video_experimental",
+                }:
                     diagnostics = GpuJobDiagnostics(
                         storage=self.storage,
                         work_dir=work_dir,
