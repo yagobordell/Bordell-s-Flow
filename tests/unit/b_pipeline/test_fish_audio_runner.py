@@ -316,6 +316,10 @@ def test_images_wait_for_b2_and_validated_stt_before_paid_requests(
     monkeypatch.setattr(runner, "OpenAIProvider", lambda **_kw: object())
     monkeypatch.setattr(runner, "run_b_pipeline", fake_b)
     monkeypatch.setattr(runner, "_generate_audio", fake_audio)
+    monkeypatch.setattr(
+        runner, "ensure_ebook_covers",
+        lambda avatar_file, **_kw: _fake_ebook_covers(avatar_file),
+    )
     monkeypatch.setattr(runner, "_preflight_stt_alignment_with_retries", fake_alignment)
     monkeypatch.setattr(runner, "_generate_images", fake_images)
     async def fake_cta(**_kw):
