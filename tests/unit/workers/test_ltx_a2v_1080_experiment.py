@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pytest
 from PIL import Image
 from pydantic import ValidationError
@@ -51,10 +50,16 @@ def test_a2v_1080_avatar_grid_padding_keeps_full_requested_image(tmp_path: Path)
 
 
 def test_a2v_1080_decode_crop_removes_only_grid_padding() -> None:
-    chunk = np.zeros((2, 1088, 1920, 3), dtype=np.uint8)
-    chunk[:, 4:1084, :, :] = 137
-    cropped = _crop_video_chunk_to_requested(
-        chunk, requested_width=1920, requested_height=1080
+    class RecordingDecodedChunk:
+        shape = (2, 1088, 1920, 3)
+
+        def __getitem__(self, key: tuple[object, ...]) -> tuple[object, ...]:
+            return key
+
+    slices = _crop_video_chunk_to_requested(
+        RecordingDecodedChunk(), requested_width=1920, requested_height=1080
     )
-    assert cropped.shape == (2, 1080, 1920, 3)
-    assert np.all(cropped == 137)
+    assert slices[0] is Ellipsis
+    assert slices[1] == slice(4, 1084)
+    assert slices[2] == slice(0, 1920)
+    assert slices[3] == slice(None)
