@@ -56,6 +56,7 @@ from .reference_recipe import (
 logger = logging.getLogger(__name__)
 
 LTX_A2V_TASK = "video.ltx25.audio_to_video"
+LTX_A2V_EXPERIMENTAL_TASK = "video.ltx25.audio_to_video_experimental"
 # Each experimental profile is an immutable request identity. None replaces an
 # existing A2V profile or the separately deployed I2V service.
 LTX_A2V_BENCH_CPU_PROFILE = "ltx25-a2v-reference-bench-fp8cpu-eager-a95ab-v1"
@@ -1535,8 +1536,11 @@ class DirectLTX25AudioToVideoBackend:
 class LTXAudioToVideoTaskRunner:
     task_name = LTX_A2V_TASK
 
-    def __init__(self, *, backend: LTXAudioToVideoBackend) -> None:
+    def __init__(
+        self, *, backend: LTXAudioToVideoBackend, experimental: bool = False
+    ) -> None:
         self._backend = backend
+        self.task_name = LTX_A2V_EXPERIMENTAL_TASK if experimental else LTX_A2V_TASK
 
     def prepare(self) -> None:
         self._backend.prepare()
@@ -1603,6 +1607,14 @@ class LTXAudioToVideoTaskRunner:
             raise _input_error(
                 "INVALID_REQUEST",
                 f"LTXAudioToVideoTaskRunner cannot execute task {request.task!r}",
+            )
+        if (
+            self.task_name == LTX_A2V_EXPERIMENTAL_TASK
+            and request.parameters.get("generation_profile") not in LTX_A2V_EXPERIMENTS
+        ):
+            raise _input_error(
+                "INVALID_REQUEST",
+                "Experimental A2V task requires an immutable experimental profile",
             )
         if request.max_attempts != DEFAULT_GPU_MAX_ATTEMPTS:
             raise _input_error(
