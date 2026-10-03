@@ -985,7 +985,8 @@ class DirectLTX25Backend:
         NEVER be mistaken for validated parallel GPU generation.
         """
         from ai_video_factory.inference.gpu_failures import (
-            classify_gpu_failure, cleanup_cuda_memory,
+            classify_gpu_failure,
+            cleanup_cuda_memory,
         )
 
         for path in (keyframe_a, keyframe_b):
