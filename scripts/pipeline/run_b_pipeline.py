@@ -151,8 +151,8 @@ def parse_args() -> argparse.Namespace:
     voices = parser.add_mutually_exclusive_group()
     voices.add_argument(
         "--voice-id",
-        metavar="ID",
-        help="Voice ID del proveedor Casero o voz Gemini Profesional; se guarda por avatar.",
+        metavar="NAME_OR_ID",
+        help="ID del proveedor Casero o nombre/ID exacto de voz Gemini Profesional.",
     )
     voices.add_argument(
         "--voice-audio",
@@ -163,6 +163,14 @@ def parse_args() -> argparse.Namespace:
         "--default-voice",
         action="store_true",
         help="Guardar la voz predeterminada para el avatar sin preguntar.",
+    )
+    parser.add_argument(
+        "--replace-professional-voice",
+        action="store_true",
+        help=(
+            "Solo un nuevo run Profesional con --voice-id: actualiza la voz de este avatar "
+            "para futuras ejecuciones. Los runs anteriores conservan su voz guardada."
+        ),
     )
     parser.add_argument(
         "--qr-only",
@@ -265,6 +273,15 @@ def parse_args() -> argparse.Namespace:
         help="Resume saved Casero or Gemini block TTS safely without rerunning B bots.",
     )
     args = parser.parse_args()
+    if args.replace_professional_voice and (
+        args.voice_id is None or args.voice_audio is not None or args.default_voice
+        or args.from_stage != "B1.1" or args.regenerate_audio or args.resume_audio
+        or args.videos_only or args.images_only or args.qr_only or args.publish_only
+        or args.youtube_only or args.list_avatars or args.list_scripts
+    ):
+        parser.error(
+            "--replace-professional-voice requires --voice-id on a new planning run"
+        )
     if args.youtube_only and not settings.youtube_enabled:
         parser.error("--youtube-only requires YOUTUBE_ENABLED=true")
     if args.youtube_only and (
@@ -2263,6 +2280,8 @@ async def main() -> None:
         )
     else:
         visual_style = select_visual_style(getattr(args, "visual_style", None))
+    if getattr(args, "replace_professional_voice", False) and visual_style != "profesional":
+        raise SystemExit("--replace-professional-voice is available only in Profesional")
     if visual_style != "casero" and getattr(args, "tts_provider", None) is not None:
         raise SystemExit("--tts-provider solo está disponible en modo casero.")
     if visual_style != "casero" and getattr(args, "ebook_cover", None):
@@ -2332,6 +2351,7 @@ async def main() -> None:
                 avatar_file=avatar_file,
                 input_voice_id=getattr(args, "voice_id", None),
                 use_default=bool(getattr(args, "default_voice", False)),
+                allow_replace=bool(getattr(args, "replace_professional_voice", False)),
             )
         else:
             voice = ensure_avatar_voice(
