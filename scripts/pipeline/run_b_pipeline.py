@@ -1651,6 +1651,7 @@ def _refresh_audio_costs(report: dict[str, object], output: Path) -> None:
         return
     ledger = ApiCostLedger()
     ledger.restore_requests(previous["requests"])
+    ledger.sync_professional_voice_usage(output)
     ledger.sync_fish_director_usage(output)
     ledger.sync_image_usage(output)
     stages = previous.get("stages")
@@ -1781,6 +1782,23 @@ async def _run_audio_only(
     except (ValueError, OSError) as exc:
         raise SystemExit(f"Invalid B1.1 audio checkpoint: {exc}") from exc
 
+    # Audio-only runs must restore and extend the same V timing ledger as
+    # complete B runs. Paid token usage is reconciled from durable V states.
+    audio_started = perf_counter()
+    prior_timing = TimingLedger()
+    prior_elapsed = prior_timing.restore(report["timings"]) if is_professional else 0.0
+
+    def finish_audio_timing() -> None:
+        if not is_professional:
+            return
+        status = report["run"].get("status", "running")
+        if status not in {"running", "completed", "failed"}:
+            status = "running"
+        report["timings"] = prior_timing.report(
+            run_seconds=prior_elapsed + perf_counter() - audio_started,
+            status=status,
+        )
+
     previous_audio = report["run"].get("audio_generation")
     previous_sha = (
         previous_audio.get("sha256") if isinstance(previous_audio, dict) else None
@@ -1840,6 +1858,8 @@ async def _run_audio_only(
                     voice_id=_run_voice_id(output),
                     source_sha256=hashlib.sha256(raw).hexdigest(),
                     generation_nonce=nonce,
+                    on_timing=prior_timing.record_call,
+                    on_stage_duration=prior_timing.record_stage,
                     max_parallel_calls=8,
                 )
             else:
@@ -1848,6 +1868,8 @@ async def _run_audio_only(
                 )
     except Exception:
         report["run"]["audio_generation"] = {"status": "incomplete"}
+        report["run"]["status"] = "failed"
+        finish_audio_timing()
         _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
@@ -1856,6 +1878,7 @@ async def _run_audio_only(
         report["run"]["video_preview"] = {"status": "stale_audio_regeneration"}
         report["run"]["video_generation"] = {"status": "stale_audio_regeneration"}
     report["run"]["audio_generation"] = artifact
+    finish_audio_timing()
     _refresh_audio_costs(report, output)
     _write(report_path, report)
     if managed_target is not None:
@@ -1915,11 +1938,20 @@ async def _run_audio_only(
             raise
         if video is not None:
             report["run"]["video_generation"] = video
+    finish_audio_timing()
     _refresh_audio_costs(report, output)
     _write(report_path, report)
     await asyncio.to_thread(
         _publish_if_ready, output, script_file, results_root, managed_target
     )
+    if is_professional and not reused_audio:
+        for voice_stage in ("V1", "V2", "V3"):
+            duration = report["timings"]["stages"][voice_stage]["elapsed_seconds"]
+            if duration is not None:
+                _print_metric(
+                    voice_stage, duration,
+                    report["api_costs"]["stages"][voice_stage]["estimated_cost_usd"],
+                )
     display_path = (
         managed_target / "media" / "audio" / "narracion.wav"
         if managed_target is not None else output / artifact["file"]
@@ -2542,6 +2574,7 @@ async def main() -> None:
                     expected_calls["B2"] = max(
                         expected_calls["B2"] or 0, report_blocks, timings.call_count("B2")
                     )
+        ledger.sync_professional_voice_usage(output)
         ledger.sync_fish_director_usage(output)
         ledger.sync_image_usage(output)
         costs = ledger.report(
@@ -2731,10 +2764,18 @@ async def main() -> None:
                 source_sha256=script_sha256,
                 on_response=ledger.record,
                 on_timing=timings.record_call,
+                on_stage_duration=timings.record_stage,
                 max_parallel_calls=args.max_parallel_calls,
             )
             audio_joined = True
-            save_report("running", len(result.b12))
+            voice_costs, voice_times = save_report("running", len(result.b12))
+            for voice_stage in ("V1", "V2", "V3"):
+                seconds = voice_times["stages"][voice_stage]["elapsed_seconds"]
+                if seconds is not None:
+                    _print_metric(
+                        voice_stage, seconds,
+                        voice_costs["stages"][voice_stage]["estimated_cost_usd"],
+                    )
             if getattr(args, "managed_target", None) is not None:
                 await asyncio.to_thread(sync_managed_outputs, output, args.managed_target)
 
@@ -2849,6 +2890,7 @@ async def main() -> None:
                             source_sha256=script_sha256,
                             on_response=ledger.record,
                             on_timing=timings.record_call,
+                            on_stage_duration=timings.record_stage,
                             max_parallel_calls=args.max_parallel_calls,
                         )
                         await _preflight_saved_run_audio(

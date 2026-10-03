@@ -26,9 +26,16 @@ They never invent scenes, pictures, timing or narration.
   sustained `style`, exact source `speak` substrings and optional point-in-time
   **human vocal events**. It does not change a character of B2 narration.
 
-Every V stage stores its exact structured request and validated output under
-`voice_direction/V1`, `voice_direction/V2` and `voice_direction/V3` for
-recovery. A failed local response validation receives up to two explicitly
+New runs store the full structured requests and validated outputs beside the B
+stages: `V1/pass_<n>/`, `V2/pass_<n>/block_<id>/` and
+`V3/block_<id>/`. Each stage also exports its final
+`merged_output.json`. These directories, including corrective inputs,
+rejected attempts and immutable per-API-call token/duration records, are
+published as `<avatar>/<script>/outputs/V1`, `outputs/V2` and
+`outputs/V3`, alongside B1.1/B1.2/B2. The final delivered publication
+contains the same files. Existing unfinished runs still resume their
+`voice_direction/V*` checkpoints without an extra paid call; those files
+are mapped into the same public `outputs/V*` layout. A failed local response validation receives up to two explicitly
 described correction calls through OpenAI Responses API. One block's V2/V3
 validation failure never reruns successfully validated adjacent blocks within
 that pass. Re-entry from V2's evidence may require reevaluating multiple
@@ -116,3 +123,21 @@ otherwise a paid unknown-result POST could be duplicated. Resolve that
 failure explicitly. No live paid Gemini API smoke is implied by offline
 tests; verify the selected voice and tagged multilingual style with a
 controlled real test before production deployment.
+
+## V1 / V2 / V3 metrics and cost accounting
+
+`run_report.json` reports individual V API call durations and the actual
+wall-clock total for each stage. V2/V3 block calls execute concurrently:
+their stage wall time is measured once, **not** the sum of per-block durations.
+If V2 evidence sends V1 through another iteration, both V1 and V2 elapsed
+times accumulate for their respective stages. A resumed cached response
+does not create another paid-call record.
+
+Every V API return persists only its Responses API model, tier, token usage
+and response ID in `api_call_<n>.json` next to that attempt. This lets the
+billing ledger reconcile the same calls during full runs, audio-only
+regeneration or recovery, without double-charging archived responses.
+Unparsed responses and uncertain request outcomes are reported with unknown
+cost instead of being counted as free. OpenAI V planning uses the verified
+same Luna token price calculation as B1.1/B1.2/B2; **Gemini TTS and
+OpenAI STT remain excluded** from that OpenAI planning estimate, as before.

@@ -219,6 +219,59 @@ def _tagged(piece: Speak) -> str:
     return text
 
 
+def _response_snapshot(response: Any, model: str) -> dict[str, Any]:
+    """Persist only the API fields required for auditable per-call pricing."""
+    def field(value: Any, name: str) -> Any:
+        return value.get(name) if isinstance(value, dict) else getattr(value, name, None)
+
+    usage = field(response, "usage")
+    details = field(usage, "input_tokens_details")
+    output_details = field(usage, "output_tokens_details")
+    return {
+        "id": field(response, "id"),
+        "model": field(response, "model") or model,
+        "service_tier": field(response, "service_tier"),
+        "usage": {
+            "input_tokens": field(usage, "input_tokens"),
+            "output_tokens": field(usage, "output_tokens"),
+            "input_tokens_details": {
+                "cached_tokens": field(details, "cached_tokens"),
+                "cache_write_tokens": field(details, "cache_write_tokens"),
+            },
+            "output_tokens_details": {
+                "reasoning_tokens": field(output_details, "reasoning_tokens"),
+            },
+        } if usage is not None else None,
+    }
+
+
+def _save_api_call(
+    folder: Path, *, stage: str, block_id: int | None,
+    response: dict[str, Any], request: dict[str, Any],
+    elapsed_seconds: float, outcome: str,
+) -> None:
+    """Append rather than overwrite charges when B2 corrections rerun V planning."""
+    index = 1
+    while (folder / f"api_call_{index}.json").exists():
+        index += 1
+    _json(folder / f"api_call_{index}.json", {
+        "stage": stage, "block_id": block_id, "request_sha256": _fingerprint(request),
+        "response": response, "elapsed_seconds": round(elapsed_seconds, 3),
+        "outcome": outcome,
+    })
+
+
+async def _time_stage(
+    stage: str, operation: Any, on_stage_duration: Callable[..., None] | None,
+) -> Any:
+    started = perf_counter()
+    try:
+        return await operation
+    finally:
+        if on_stage_duration is not None:
+            on_stage_duration(stage, perf_counter() - started)
+
+
 async def _direct(
     stage: str, payload: dict[str, Any], output_type: type[Strict], check: Callable[[Any], None],
     provider: Any, model: str, folder: Path, on_response: Callable[..., None] | None,
@@ -263,6 +316,17 @@ async def _direct(
                 output_type=output_type, previous_response_id=previous_id,
             )
         except ValidationError as exc:
+            # The API could have charged for a response the SDK could not parse.
+            # Preserve a conservative unknown-cost call, not a fictitious $0.
+            elapsed = perf_counter() - start
+            _save_api_call(
+                folder, stage=stage, block_id=block_id,
+                response={"id": None, "model": model, "service_tier": None,
+                          "usage": None},
+                request=data, elapsed_seconds=elapsed, outcome="schema_invalid",
+            )
+            if on_timing is not None:
+                on_timing(stage, block_id, elapsed)
             # A provider response reached schema validation but could not be parsed.
             # Give the text bot a clear correction message; no paid speech is involved.
             _json(folder / f"rejected_attempt_{attempt + 1}.json", {
@@ -275,12 +339,27 @@ async def _direct(
                 ) from exc
             continue
         except Exception as exc:
+            elapsed = perf_counter() - start
+            _save_api_call(
+                folder, stage=stage, block_id=block_id,
+                response={"id": None, "model": model, "service_tier": None,
+                          "usage": None},
+                request=data, elapsed_seconds=elapsed, outcome="transport_unknown",
+            )
+            if on_timing is not None:
+                on_timing(stage, block_id, elapsed)
             # Transport or unknown POST outcomes must not silently be replayed.
             raise VoicePlanError(f"{stage} block {block_id}: provider failed: {exc}") from exc
+        elapsed = perf_counter() - start
+        _save_api_call(
+            folder, stage=stage, block_id=block_id,
+            response=_response_snapshot(raw, model),
+            request=data, elapsed_seconds=elapsed, outcome="received",
+        )
         if on_response:
             on_response(stage, block_id, raw)
         if on_timing:
-            on_timing(stage, block_id, perf_counter() - start)
+            on_timing(stage, block_id, elapsed)
         previous_id = getattr(raw, "id", None)
         try:
             check(response_obj)
@@ -315,20 +394,35 @@ def _resolved(rhythm: BlockRhythm, beat: BeatIntent) -> dict[str, Any]:
 async def plan_professional_voice(
     *, core: dict[str, Any], blocks: list[dict[str, Any]], output: Path, provider: Any,
     model: str, on_response: Callable[..., None] | None = None,
-    on_timing: Callable[..., None] | None = None, max_parallel_calls: int = 8,
+    on_timing: Callable[..., None] | None = None,
+    on_stage_duration: Callable[..., None] | None = None,
+    max_parallel_calls: int = 8,
 ) -> tuple[V1, list[V2], list[V3]]:
     """No paid speech request starts before all V contracts validate."""
-    root = output / "voice_direction"
+    # New runs use exactly the B-stage sibling layout (output/V1,V2,V3).
+    # Historical in-progress runs continue using their legacy checkpoints,
+    # avoiding an accidental second paid V call after a software update.
+    legacy = output / "voice_direction"
+    if legacy.is_symlink() or any((output / stage).is_symlink()
+                                 for stage in ("V1", "V2", "V3")):
+        raise VoicePlanError("Linked voice checkpoint root")
+    if legacy.exists() and any((output / stage).exists() for stage in ("V1", "V2", "V3")):
+        raise VoicePlanError("Ambiguous legacy and current voice checkpoints")
+    root = legacy if legacy.exists() else output
     contested: list[dict[str, Any]] = []
     v1: V1 | None = None
     v2s: list[V2] = []
     # V2 misfit re-enters the film-level V1; settled baselines stop re-entry.
     settled: set[tuple[int, str, str]] = set()
     for iteration in range(9):
-        v1 = await _direct("V1", {"narrative_core": core, "blocks": blocks,
-                               "contested_baselines": contested}, V1,
-                           lambda value: _check_v1(value, blocks, contested), provider, model,
-                           root / "V1" / f"pass_{iteration + 1}", on_response, on_timing, None)
+        v1 = await _time_stage(
+            "V1",
+            _direct("V1", {"narrative_core": core, "blocks": blocks,
+                           "contested_baselines": contested}, V1,
+                    lambda value: _check_v1(value, blocks, contested), provider, model,
+                    root / "V1" / f"pass_{iteration + 1}", on_response, on_timing, None),
+            on_stage_duration,
+        )
         rhythm_by_id = {r.block_id: r for r in v1.block_rhythms}
         semaphore = asyncio.Semaphore(max_parallel_calls)
 
@@ -350,8 +444,10 @@ async def plan_professional_voice(
                     on_response, on_timing, bid,
                 )
 
-        v2_outcomes = await asyncio.gather(
-            *(one(block) for block in blocks), return_exceptions=True,
+        v2_outcomes = await _time_stage(
+            "V2",
+            asyncio.gather(*(one(block) for block in blocks), return_exceptions=True),
+            on_stage_duration,
         )
         v2_failures = [entry for entry in v2_outcomes if isinstance(entry, BaseException)]
         if v2_failures:
@@ -402,9 +498,13 @@ async def plan_professional_voice(
                 root / "V3" / f"block_{bid}", on_response, on_timing, bid,
             )
 
-    v3_outcomes = await asyncio.gather(
-        *(perform(block, v2) for block, v2 in zip(blocks, v2s, strict=True)),
-        return_exceptions=True,
+    v3_outcomes = await _time_stage(
+        "V3",
+        asyncio.gather(
+            *(perform(block, v2) for block, v2 in zip(blocks, v2s, strict=True)),
+            return_exceptions=True,
+        ),
+        on_stage_duration,
     )
     v3_failures = [entry for entry in v3_outcomes if isinstance(entry, BaseException)]
     if v3_failures:
@@ -413,6 +513,17 @@ async def plan_professional_voice(
             "valid blocks were checkpointed for safe recovery"
         ) from v3_failures[0]
     v3s = [entry for entry in v3_outcomes if isinstance(entry, V3)]
+    # Present the final reconciled result like B1.2/B2, without hiding
+    # intermediate passes and per-block files needed for troubleshooting.
+    _json(root / "V1" / "merged_output.json", v1.model_dump(mode="json"))
+    _json(root / "V2" / "merged_output.json", {
+        "pipeline_stage": "V2",
+        "blocks": [item.model_dump(mode="json") for item in v2s],
+    })
+    _json(root / "V3" / "merged_output.json", {
+        "pipeline_stage": "V3",
+        "blocks": [item.model_dump(mode="json") for item in v3s],
+    })
     return v1, v2s, v3s
 
 
@@ -475,6 +586,7 @@ async def generate_professional_audio(
     provider: Any, model: str, gemini_api_key: str, voice_id: str,
     on_response: Callable[..., None] | None = None,
     on_timing: Callable[..., None] | None = None,
+    on_stage_duration: Callable[..., None] | None = None,
     max_parallel_calls: int = 8, stt_client: OpenAISttClient | None = None,
     speech_provider: GeminiTtsSpeechProvider | None = None,
     generation_nonce: str = "",
@@ -488,6 +600,7 @@ async def generate_professional_audio(
     v1, v2s, v3s = await plan_professional_voice(
         core=core, blocks=blocks, output=output, provider=provider, model=model,
         on_response=on_response, on_timing=on_timing,
+        on_stage_duration=on_stage_duration,
         max_parallel_calls=max_parallel_calls,
     )
     # Fingerprint includes effective directions; changed B2/V3 can never reuse paid audio.
