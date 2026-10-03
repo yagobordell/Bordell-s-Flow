@@ -50,6 +50,10 @@ by code after validating exact source reconstruction.
 Reference: https://ai.google.dev/gemini-api/docs/speech-generation
 
 Gemini provider is `gemini-3.8-flash-tts` for professional runs.
+For multiword Studio voices, Google's exported prebuilt-voice request may
+return 24-kHz mono `audio/L16;rate=24000`; the adapter wraps that PCM16
+into a canonical WAV and retains its sample-rate/channel checks. Existing
+single-token voices retain their original `AUDIO_WAV` request path.
 One single-speaker GenerateContent request receives the styled parts for
 one B2 block. The resulting WAV is retained per block and Whisper-1 supplies
 word timestamps. The existing sample-accurate join and STT→B2 timeline
@@ -60,16 +64,32 @@ process, not guessed lengths from V3.
 
 For professional avatars, the voice is stored separately from Casero under
 `data/<avatar>/meta/gemini_voice.json` (or the corresponding selected
-avatar library root). The first interactive run requests an optional Gemini
-voice ID; Enter chooses the built-in default, Algenib. Non-interactive runs
-choose Algenib unless `--voice-id` is explicitly supplied. Later runs reuse
-the saved ID and reject silent changes. Use a supported Google voice ID
-(e.g. `Algenib`, `Kore`, or a configured `voice_...` ID).
+avatar library root). The first interactive run requests an optional Gemini voice name or ID;
+Enter chooses the built-in default, Algenib. Non-interactive runs also use
+Algenib unless `--voice-id` is explicitly supplied. Google AI Studio names
+containing spaces (e.g. `Uncle Enzo 3`) must be quoted in PowerShell and
+are sent through `speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName`,
+as in Google's exported SDK example. Legacy single-token IDs
+(`Algenib`, `Kore`, `voice_...`) retain their previous wire format.
+Google must recognize the chosen voice for the configured API account.
 
 ```powershell
-.\run.ps1 ejemplo Jorge --style profesional --voice-id Algenib
-.\run.ps1 ejemplo2 Jorge --style profesional
+# First run: choose the custom Studio voice by its exact visible name.
+.\run.ps1 ejemplo Jorge --style profesional --voice-id "Uncle Enzo 3"
+
+# Later videos of this avatar reuse the saved name automatically.
+.\run.ps1 ejemplo2 Jorge
+
+# If this avatar already has a different professional voice, explicitly
+# change it on a NEW script (never on an old resumed run).
+.\run.ps1 ejemplo3 Jorge --voice-id "Uncle Enzo 3" --replace-professional-voice
 ```
+
+Without `--replace-professional-voice`, trying to change a saved voice
+still fails. Replacement requires `--voice-id` during a new B1.1 planning
+run. Existing saved run voice snapshots remain unchanged and each Gemini
+audio cache fingerprint includes the voice, so blocks from different voices
+cannot be accidentally reused. Casero uses separate voice settings.
 
 Requires `OPENAI_API_KEY` for planning/STT, `GEMINI_API_KEY` for Gemini
 TTS, FFmpeg for joining, and whatever normal keys the selected image/video
