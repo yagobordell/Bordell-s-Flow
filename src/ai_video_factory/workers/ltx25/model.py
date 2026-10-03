@@ -912,7 +912,8 @@ class DirectLTX25Backend:
         profiles = (parameters_a.generation_profile, parameters_b.generation_profile)
         if profiles != (LTX_PRODUCTION_I2V_PROFILE, LTX_PRODUCTION_I2V_PROFILE):
             raise ValueError("Batch2 requires the existing validated FP8 no-offload profile")
-        geometry = lambda p: (p.width, p.height, p.fps, p.num_frames)
+        def geometry(p: LTXVideoParameters) -> tuple[int, int, int, int]:
+            return p.width, p.height, p.fps, p.num_frames
         if geometry(parameters_a) != geometry(parameters_b):
             raise ValueError("Both samples must use identical geometry and duration")
         if (parameters_a.width, parameters_a.height, parameters_a.fps, parameters_a.num_frames) != (
