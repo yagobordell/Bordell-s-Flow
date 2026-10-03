@@ -355,9 +355,24 @@ function Invoke-SaladRequest {
             if ($Mutating) {
                 Assert-ManualCapacityMutationAuthority
             }
-            if (-not (Test-TransientSaladFailure -ErrorRecord $_) -or $Attempt -ge $MaxAttempts) { throw }
+            # Cloudflare 520-524 read-side failures may occur while an I2V
+            # container is pulling its image. Retrying GET is idempotent.
+            # Do NOT replay ambiguous POST/PATCH/DELETE responses: a failed
+            # response does not prove that Salad rejected the mutation.
+            # Keep the existing A2V manager behavior unchanged.
+            $StatusCode = Get-HttpStatusCode -ErrorRecord $_
+            $I2VTransientRead = (
+                $Service -eq "ltx25_i2v" -and
+                $Method -eq "Get" -and
+                $StatusCode -in @(520, 521, 522, 523, 524)
+            )
+            if (-not ($I2VTransientRead -or (Test-TransientSaladFailure -ErrorRecord $_)) -or
+                $Attempt -ge $MaxAttempts) { throw }
             $Delay = [Math]::Min(15, 2 * $Attempt)
-            Write-Warning "$Service Salad '$Operation' transient failure ($Attempt/$MaxAttempts); retrying in $Delay seconds."
+            Write-Warning (
+                "$Service Salad '$Operation' HTTP=$StatusCode transient failure " +
+                "($Attempt/$MaxAttempts); retrying in $Delay seconds."
+            )
             Wait-ManualCapacityMutationInterval -Seconds $Delay
         }
     }
