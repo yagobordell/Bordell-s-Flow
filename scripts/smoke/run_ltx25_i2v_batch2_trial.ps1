@@ -11,6 +11,7 @@ param(
     [string]$ReferenceA = "", [string]$ReferenceB = "",
     [string]$EnvFile = ".env",
     [switch]$CheckInputsOnly, [switch]$AllowSequentialFallback,
+    [switch]$DisableStageReuse,
     [ValidateRange(120,21600)][int]$BootstrapTimeoutSeconds = 7200,
     [ValidateRange(60,43200)][int]$JobTimeoutSeconds = 10800,
     [string]$OutputDir = "data/output/deployment-validation/ltx25-i2v-batch2"
@@ -47,6 +48,7 @@ $ArgsSubmit = @(
 if ($ReferenceA) { $ArgsSubmit += @("--reference-a", $ReferenceA) }
 if ($ReferenceB) { $ArgsSubmit += @("--reference-b", $ReferenceB) }
 if ($AllowSequentialFallback) { $ArgsSubmit += "--allow-sequential-fallback" }
+if ($DisableStageReuse) { $ArgsSubmit += "--disable-stage-reuse" }
 . (Join-Path $Root "scripts\salad\_env_file.ps1")
 Import-EnvFile -Path $EnvFile
 & $Python $Submit @ArgsSubmit --check-inputs-only
