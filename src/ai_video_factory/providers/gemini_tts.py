@@ -282,7 +282,7 @@ class GeminiTtsSpeechProvider:
         """Generate one directed professional B2 block without re-voicing the transcript."""
         if not model.strip() or not voice.strip():
             raise ValueError("Gemini directed TTS requires a model and voice")
-        voice = validate_gemini_voice_name(voice.strip())
+        voice = validate_gemini_voice_name(voice)
         payload = _build_directed_payload(turns=turns, voice=voice)
         return await asyncio.to_thread(self._generate_directed_sync, payload, model, voice)
 
@@ -326,7 +326,7 @@ class GeminiTtsSpeechProvider:
             raise ValueError("Gemini TTS requires a model")
         if not voice.strip():
             raise ValueError("Gemini TTS requires a voice")
-        voice = validate_gemini_voice_name(voice.strip())
+        voice = validate_gemini_voice_name(voice)
         return await asyncio.to_thread(
             self._generate_sync,
             text=text,
