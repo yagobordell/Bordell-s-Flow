@@ -35,6 +35,7 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     $Python = (Get-Command python -ErrorAction Stop).Source
 }
 $Manager = Join-Path $Root 'scripts\salad\manage_salad_worker.ps1'
+$Isolation = Join-Path $PSScriptRoot 'check_ltx_a2v_benchmark_isolation.py'
 $Ready = Join-Path $PSScriptRoot 'wait_salad_ltx25_ready.py'
 $Submit = Join-Path $PSScriptRoot 'submit_ltx25_a2v_smoke.py'
 $SourceCheck = Join-Path $PSScriptRoot 'check_ltx25_python_source.py'
