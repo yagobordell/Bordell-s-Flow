@@ -416,19 +416,21 @@ def _fit_image(path: Path, size: tuple[int, int]) -> Image.Image:
 def _beat_frame(
     avatar: Path, media: Path | None, visual_type: str,
     destination: Path,
+    *, size: tuple[int, int] = (_WIDTH, _HEIGHT),
 ) -> None:
+    width, height = size
     if visual_type == "avatar":
-        image = _fit_image(avatar, (_WIDTH, _HEIGHT))
+        image = _fit_image(avatar, (width, height))
     elif visual_type == "avatar_media":
         if media is None:
             raise StaticPreviewError("avatar_media beat has no generated PNG")
-        image = Image.new("RGB", (_WIDTH, _HEIGHT))
-        image.paste(_fit_image(avatar, (_WIDTH // 2, _HEIGHT)), (0, 0))
-        image.paste(_fit_image(media, (_WIDTH // 2, _HEIGHT)), (_WIDTH // 2, 0))
+        image = Image.new("RGB", (width, height))
+        image.paste(_fit_image(avatar, (width // 2, height)), (0, 0))
+        image.paste(_fit_image(media, (width // 2, height)), (width // 2, 0))
     elif visual_type in {"media_image", "media_video"}:
         if media is None:
             raise StaticPreviewError(f"{visual_type} beat has no generated PNG")
-        image = _fit_image(media, (_WIDTH, _HEIGHT))
+        image = _fit_image(media, (width, height))
     else:
         raise StaticPreviewError(f"Unknown B2 visual type: {visual_type}")
     image.save(destination, "PNG")
