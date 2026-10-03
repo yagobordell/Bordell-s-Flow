@@ -22,6 +22,9 @@ from ai_video_factory.workers.realesrgan.model import REALESRGAN_TASK
 from ai_video_factory.workers.whisper.model import WHISPER_TRANSCRIPTION_TASK
 
 from .salad import DEFAULT_SALAD_API_BASE_URL, SaladClient, SaladDispatchConfig
+from .salad_autoscaler import ACTIVE_STATUSES
+from .salad_version_provision import WorkerVersionProvisioner
+from .worker_image_routes import list_routes
 from .salad_autoscaler import (
     AutoscalerServiceBinding,
     PostgresAutoscalerStore,
@@ -148,6 +151,63 @@ def build_salad_capacity_runtime(
         managed_group_names=set(group_owners),
         logger=logger,
     )
+    provisioner = WorkerVersionProvisioner(
+        document=document, api_key=salad_api_key, organization=organization,
+        project=project, api_base_url=api_base_url,
+    )
+    static_group_names = set(group_owners)
+
+    def refresh_version_routes() -> None:
+        # This runs only inside the session-leader reconciliation loop.
+        # Static workers continue handling pre-migration jobs with no image key.
+        routes = list_routes(postgres_dsn)
+        max_routes = int(os.getenv("SALAD_VERSION_MAX_GROUPS", "16"))
+        if len(routes) > max_routes:
+            raise RuntimeError(
+                f"Registered LTX Docker versions ({len(routes)}) exceed "
+                f"SALAD_VERSION_MAX_GROUPS={max_routes}; archive idle routes first"
+            )
+        registered_names = {route.group_name for route in routes}
+        for route in routes:
+            service = route.service
+            dynamic = route.stage
+            if dynamic in static_group_names:
+                raise RuntimeError("Dynamic LTX route conflicts with static service name")
+            definition = services[service]
+            if not isinstance(definition, dict):
+                raise RuntimeError("LTX route refers to missing reviewed service")
+            capacity = definition["capacity"]
+            binding = AutoscalerServiceBinding(
+                workload=dynamic,
+                task_names=_SERVICE_TASKS[service],
+                autoscaler_env_prefix=service.upper(),
+                fallback_runtime_seconds=_FALLBACK_RUNTIME_SECONDS[service],
+                max_replicas=int(capacity["max_replicas"]),
+                required_worker_image=route.image,
+            )
+            # Creating a registered group requires actual unfinished demand.
+            # A mere stale registration never allocates a new GPU group.
+            demand = bool(store.list_stage_jobs(
+                binding=binding, statuses=ACTIVE_STATUSES,
+            ))
+            exists = provisioner.ensure(route, create=demand)
+            if not exists:
+                continue
+            if dynamic not in bindings:
+                bindings[dynamic] = binding
+                clients[dynamic] = provisioner.client(route)
+        autoscaler.managed_group_names = frozenset(
+            static_group_names | registered_names
+        )
+        # The config is immutable; rebuild when a new stage first appears.
+        if set(autoscaler.clients) != set(clients):
+            autoscaler.clients = dict(clients)
+            autoscaler.bindings = dict(bindings)
+            autoscaler.config = load_predictive_autoscaler_config(
+                stage_bindings=tuple(bindings.values()),
+            )
+
+    autoscaler.route_refresher = refresh_version_routes
     return SaladCapacityRuntime(autoscaler=autoscaler, store=store)
 
 
