@@ -247,3 +247,64 @@ def test_mixed_grid_video_resolution_comes_from_native_edit_not_resize():
     assert jobs[0]["video_panel_ids"] == ["1C"]
     assert jobs[0]["grid"]["panel_width"] == 1280
     # Native per-video output is a separately paid edit after cropping.
+
+
+def test_completed_professional_finishing_is_archived_on_b2_rerun(tmp_path):
+    from ai_video_factory.bots.billing import ApiCostLedger
+
+    plan = professional(
+        beat("1B", "media_image", "1. Forest"),
+        beat("1C", "media_video", "2. Forest video"),
+    )
+    direct = RecordingGPT()
+    original = gpt.generate_b2_images(
+        tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
+    )
+    crop_grid_assets(tmp_path, original)
+    finish_professional_images(
+        tmp_path, plan, original, upscaler=RecordingUpscaler(),
+        api_key=None, direct_client=direct,
+    )
+    assert not gpt.has_pending_image_tasks(tmp_path)
+    removed = gpt.clear_b2_images_for_rerun(tmp_path)
+    assert removed >= 4
+    archived = list((tmp_path / "images_replaced_professional_finishing").glob(
+        "run-*/block_1/1C-native_grid_video.json"
+    ))
+    assert len(archived) == 1
+    assert not (tmp_path / "images" / "professional_finished").exists()
+    ledger = ApiCostLedger()
+    ledger.sync_image_usage(tmp_path)
+    report = ledger.report(
+        blocks=0, run_status="completed",
+        expected_calls={"B1.1": 0, "B1.2": 0, "B2": 0, "Fish director": 0},
+    )
+    assert report["stages"]["B2 images"]["priced_calls"] == 1
+    assert "images_replaced_professional_finishing" in report["requests"][0][
+        "image_state_file"
+    ]
+
+
+def test_b2_rerun_refuses_unresolved_native_video_edit_without_deletion(tmp_path):
+    plan = professional(
+        beat("1B", "media_image", "1. Forest"),
+        beat("1C", "media_video", "2. Forest video"),
+    )
+    direct = RecordingGPT(fail_native=True)
+    original = gpt.generate_b2_images(
+        tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
+    )
+    crop_grid_assets(tmp_path, original)
+    with pytest.raises(ConnectionError, match="lost native"):
+        finish_professional_images(
+            tmp_path, plan, original, upscaler=RecordingUpscaler(),
+            api_key=None, direct_client=direct,
+        )
+    paid_grid = tmp_path / "images" / "grids" / "block_1_1B.png"
+    paid_bytes = paid_grid.read_bytes()
+    assert gpt.has_pending_image_tasks(tmp_path)
+    with pytest.raises(gpt.ImageGenerationError, match="finishing is unresolved"):
+        gpt.clear_b2_images_for_rerun(tmp_path)
+    assert paid_grid.read_bytes() == paid_bytes
+    assert (tmp_path / "images" / "professional_finished" / "block_1"
+            / "1C-native_grid_video.json").is_file()
