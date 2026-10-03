@@ -141,7 +141,9 @@ immutable digests under `docker.io/yagobordell/ai-video-factory`.
 
 On `run.ps1`, the application saves a unique, deterministic image-scoped
 job identity and registers the desired version in `gpu.worker_image_routes`.
-It never starts, prepares or patches a shared LTX Docker image.
+It never starts, prepares or patches a shared LTX Docker image. The queue
+task name itself includes the digest, so even an old unpatched worker that
+still polls by base task name **cannot claim work from a new version**.
 The controller discovers demand for each version, creates a **separate**
 reviewed Salad Container Group when necessary, and manages replicas in the
 same global project quota. Two users choosing the same digest share its
@@ -164,10 +166,35 @@ For the two-host migration:
 1. Apply migration 006 once to the shared database.
 2. Update and restart the singleton controller, keeping other capacity
    operations paused during its restart.
-3. Update both users' local repositories. Set their intended A2V/I2V
-   Docker digests independently.
-4. Run video generation normally. If the global GPU quota is exhausted,
+3. **Rebuild** each A2V/I2V Docker variant that will be used with `run`,
+   including the routing-v1 worker adapter in its source. Older immutable
+   images, including existing pre-migration digests, **do not** understand
+   the new versioned task names and cannot be used as-is.
+4. Smoke-test the exact rebuilt image and approve its immutable digest
+   *once* in the shared database:
+
+   ```powershell
+   uv run --locked --extra dev python scripts/salad/approve_worker_image.py \`
+     --service ltx25 \`
+     --image "docker.io/yagobordell/ai-video-factory@sha256:<REBUILT_DIGEST>" \`
+     --attest-routing-v1
+   ```
+
+   Use `--service ltx25_i2v` when approving an I2V variant. Never attest
+   an old/unpatched image. Approval is centralized per digest and service:
+   once approved, both hosts may use it without further coordination.
+5. Update both users' local repositories. Set their intended A2V/I2V
+   Docker digests independently. Different approved digests use different
+   groups; identical approved digests share one group.
+6. Run video generation normally. If the global GPU quota is exhausted,
    jobs remain queued rather than changing another user's Docker image.
+
+An unapproved digest is registered but **rejected before paid inference**;
+the controller will not allocate a GPU for it. A useful diagnostic tells
+the user to rebuild, test and approve that version first. This avoids
+spending money on an old container that appears ready but cannot claim
+the new queue task. New version groups cannot read any legacy unversioned
+jobs, and legacy groups cannot read image-scoped jobs.
 
 Roll back safely by draining image-pinned pending/running jobs first. Old
 workers intentionally cannot consume image-pinned jobs. Do not downgrade
