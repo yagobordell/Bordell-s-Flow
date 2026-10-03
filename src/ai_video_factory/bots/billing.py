@@ -128,6 +128,10 @@ class ApiCostLedger:
         if runs.is_symlink() or not runs.is_dir():
             raise ValueError("Fish audio runs directory is invalid or linked")
         for path in sorted(runs.glob("*/blocks/block_*/task.json")):
+            # Professional Gemini blocks are not Fish directors; their V-stage
+            # Responses usage is recorded separately as V1/V2/V3.
+            if path.parent.parent.parent.name.startswith("gemini-"):
+                continue
             parents = (path, path.parent, path.parent.parent, path.parent.parent.parent)
             if any(parent.is_symlink() for parent in parents):
                 raise ValueError(f"Refusing linked Fish director accounting state: {path}")
