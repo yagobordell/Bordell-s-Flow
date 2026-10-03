@@ -79,6 +79,30 @@ def _build_payload(
     }
 
 
+
+def _build_directed_payload(*, turns: list[dict[str, str]], voice: str) -> dict[str, Any]:
+    """One Gemini 3.8 request per B2 block, style per text part, tags only inline."""
+    if not turns:
+        raise ValueError("Gemini directed TTS needs at least one speech turn")
+    parts: list[dict[str, Any]] = []
+    for turn in turns:
+        spoken, style = turn.get("text"), turn.get("style")
+        if not isinstance(spoken, str) or not spoken.strip():
+            raise ValueError("Gemini directed TTS requires non-empty transcript turns")
+        if not isinstance(style, str) or not style.strip() or len(style.encode("utf-8")) > 1500:
+            raise ValueError("Gemini directed TTS requires a concise style on each turn")
+        parts.append({"text": spoken, "speech_metadata": {"style": style}})
+    return {
+        "contents": [{"role": "user", "parts": parts}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "responseFormat": {
+                "audio": {"mimeType": "AUDIO_WAV", "sampleRate": DEFAULT_SAMPLE_RATE_HZ}
+            },
+            "speechConfig": {"voiceConfig": {"voice": voice}},
+        },
+    }
+
 def _post_json(
     *, url: str, api_key: str, payload: dict[str, Any], timeout_seconds: float
 ) -> dict[str, Any]:
@@ -194,6 +218,38 @@ class GeminiTtsSpeechProvider:
         self._api_key = api_key.strip()
         self._api_base_url = api_base_url.rstrip("/")
         self._timeout_seconds = float(timeout_seconds)
+
+
+    async def generate_directed_speech(
+        self, *, turns: list[dict[str, str]], model: str, voice: str
+    ) -> GeneratedSpeech:
+        """Generate one directed professional B2 block without re-voicing the transcript."""
+        if not model.strip() or not voice.strip():
+            raise ValueError("Gemini directed TTS requires a model and voice")
+        payload = _build_directed_payload(turns=turns, voice=voice)
+        return await asyncio.to_thread(self._generate_directed_sync, payload, model, voice)
+
+    def _generate_directed_sync(
+        self, payload: dict[str, Any], model: str, voice: str
+    ) -> GeneratedSpeech:
+        response = _post_json(
+            url=f"{self._api_base_url}/models/{quote(model, safe='-._')}:generateContent",
+            api_key=self._api_key,
+            payload=payload,
+            timeout_seconds=self._timeout_seconds,
+        )
+        audio = _decode_audio(response)
+        info = _validate_wav(audio)
+        return GeneratedSpeech(
+            content=audio,
+            media_type="audio/wav",
+            extension="wav",
+            metadata={
+                "provider": "gemini", "model": model, "voice": voice,
+                "sample_rate_hz": info["sample_rate_hz"],
+                "channels": info["channels"],
+            },
+        )
 
     async def generate_speech(
         self,
