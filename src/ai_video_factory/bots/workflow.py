@@ -387,7 +387,9 @@ async def _call_stage[OutputT: BaseModel](
     on_response_id: Callable[[str], None] | None = None,
 ) -> OutputT:
     """Record exactly the submitted input and meter the returned API response."""
-    continued = bool(previous_response_id and getattr(provider, "supports_response_continuation", False))
+    continued = bool(
+        previous_response_id and getattr(provider, "supports_response_continuation", False)
+    )
     if on_input is not None:
         submitted = dict(payload)
         if correction_feedback:
@@ -400,7 +402,9 @@ async def _call_stage[OutputT: BaseModel](
     kwargs = {
         "model": model,
         "instructions": _instructions(prompt) + instructions_suffix,
-        "input_text": correction_feedback if continued and correction_feedback else _payload(payload),
+        "input_text": (
+            correction_feedback if continued and correction_feedback else _payload(payload)
+        ),
         "output_type": output_type,
     }
     if input_image_url is not None and not continued:
@@ -573,7 +577,8 @@ async def run_b_pipeline(
                         on_rejected_output(attempt, str(error), rejected)
                     if attempt > MAX_VALIDATION_RETRIES:
                         raise BPipelineValidationError(
-                            f"B1.1 failed validation after {MAX_VALIDATION_RETRIES} retries: {error}"
+                            f"B1.1 failed validation after {MAX_VALIDATION_RETRIES} "
+                            f"retries: {error}"
                         ) from error
                     previous_response_id = (
                         b11_response_id
@@ -856,7 +861,16 @@ async def run_b_pipeline(
                         "presenter anchors according to the selected B2 schema. "
                         "For professional style, presenter practical actions must "
                         "use media_video and media_image must have audio=false. "
-                        "Do not change any valid visual decision unnecessarily."
+                        "Do not change any valid visual decision unnecessarily. "
+                        + (
+                            "For professional B2, only a reused avatar may have a null "
+                            "prompt; all other visuals require a nonempty prompt. "
+                            "media_image ALWAYS requires audio=false; media_video requires "
+                            "a nonempty video_prompt for synchronized speech. "
+                            "The FIRST beat of an intro and LAST beat of a close must "
+                            "reuse the original avatar without regeneration."
+                            if visual_style == "profesional" else ""
+                        )
                     ),
                 )
 
