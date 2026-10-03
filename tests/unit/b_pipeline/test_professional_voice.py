@@ -176,7 +176,10 @@ def test_plan_validation_retries_only_v3_and_persists_outputs(tmp_path):
     ))
     assert [type(item).__name__ for item in result] == ["V1", "list", "list"]
     assert provider.calls == ["V1", "V2", "V3", "V3"]
-    assert (tmp_path / "voice_direction/V3/block_1/rejected_attempt_1.json").is_file()
+    assert (tmp_path / "V3/block_1/rejected_attempt_1.json").is_file()
+    assert (tmp_path / "V1/pass_1/input.json").is_file()
+    assert (tmp_path / "V2/pass_1/block_1/output.json").is_file()
+    assert (tmp_path / "V3/block_1/input_attempt_2.json").is_file()
     # The second invocation reuses validated V1/V2/V3 files without paid text calls.
     asyncio.run(pv.plan_professional_voice(
         core={"central_question": "Why?", "final_answer": "Because."},
@@ -418,3 +421,83 @@ def test_cli_requires_explicit_custom_voice_replacement_for_new_runs(
     ])
     with pytest.raises(SystemExit):
         runner.parse_args()
+
+
+
+def test_professional_voice_stage_wall_times_are_separate_from_parallel_call_time(
+    tmp_path,
+) -> None:
+    provider = FakeProvider()
+    stage_times = []
+    call_times = []
+    kwargs = {
+        "core": {"central_question": "Why?", "final_answer": "Because."},
+        "blocks": [_block()], "output": tmp_path, "provider": provider,
+        "model": "gpt-6-luna",
+        "on_timing": lambda stage, block, elapsed: call_times.append(
+            (stage, block, elapsed)
+        ),
+        "on_stage_duration": lambda stage, elapsed: stage_times.append((stage, elapsed)),
+    }
+    asyncio.run(pv.plan_professional_voice(**kwargs))
+    assert [stage for stage, _ in stage_times] == ["V1", "V2", "V3"]
+    assert [stage for stage, _, _ in call_times] == ["V1", "V2", "V3"]
+    assert all(seconds >= 0 for _, seconds in stage_times)
+    assert all(seconds >= 0 for _, _, seconds in call_times)
+    # Existing checkpoints never trigger paid V calls a second time.
+    asyncio.run(pv.plan_professional_voice(**kwargs))
+    assert len(provider.calls) == 3
+    assert len(call_times) == 3
+    assert len(stage_times) == 6
+    assert (tmp_path / "V1/pass_1/api_call_1.json").is_file()
+
+
+def test_legacy_professional_voice_checkpoints_are_reused_without_paid_repost(
+    tmp_path,
+) -> None:
+    legacy = tmp_path / "voice_direction"
+    legacy.mkdir()
+    provider = FakeProvider()
+    kwargs = {
+        "core": {"central_question": "Why?", "final_answer": "Because."},
+        "blocks": [_block()], "output": tmp_path, "provider": provider,
+        "model": "gpt-6-luna",
+    }
+    asyncio.run(pv.plan_professional_voice(**kwargs))
+    # Move only the completed V checkpoints to the old layout as if a prior
+    # version produced them; no model calls should be needed afterwards.
+    for stage in ("V1", "V2", "V3"):
+        (tmp_path / stage).rename(legacy / stage)
+    asyncio.run(pv.plan_professional_voice(**kwargs))
+    assert provider.calls == ["V1", "V2", "V3"]
+    assert not (tmp_path / "V1").exists()
+
+
+def test_api_usage_snapshots_are_append_only_across_v_retries(tmp_path) -> None:
+    class WithUsage(FakeProvider):
+        async def generate_structured_with_response(self, *, output_type, **kwargs):
+            result, raw = await super().generate_structured_with_response(
+                output_type=output_type, **kwargs,
+            )
+            raw.model = "gpt-6-luna"
+            raw.service_tier = "default"
+            raw.usage = SimpleNamespace(
+                input_tokens=100, output_tokens=10,
+                input_tokens_details=SimpleNamespace(
+                    cached_tokens=0, cache_write_tokens=0,
+                ),
+                output_tokens_details=SimpleNamespace(reasoning_tokens=2),
+            )
+            return result, raw
+
+    provider = WithUsage(invalid_v3=True)
+    asyncio.run(pv.plan_professional_voice(
+        core={"central_question": "Why?", "final_answer": "Because."},
+        blocks=[_block()], output=tmp_path, provider=provider, model="gpt-6-luna",
+    ))
+    first = json.loads((tmp_path / "V3/block_1/api_call_1.json").read_text())
+    second = json.loads((tmp_path / "V3/block_1/api_call_2.json").read_text())
+    assert first["outcome"] == second["outcome"] == "received"
+    assert first["response"]["usage"]["input_tokens"] == 100
+    assert first["response"]["id"] != second["response"]["id"]
+    assert first["request_sha256"] != second["request_sha256"]
