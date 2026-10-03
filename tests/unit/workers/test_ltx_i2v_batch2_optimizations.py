@@ -130,7 +130,19 @@ def test_shared_stage_uses_exact_same_transformer_for_both_passes() -> None:
     import ai_video_factory.workers.ltx25.paired_i2v as paired
 
     model = object()
-    stage_context = Mock(side_effect=lambda **kwargs: nullcontext(model))
+    first_image_conditioning = object()
+    second_image_conditioning = object()
+    image_conditionings = Mock(
+        side_effect=[[first_image_conditioning], [second_image_conditioning]]
+    )
+
+    def checked_stage_context(**kwargs):
+        # Both independent image encodes must finish before holding the GPU
+        # transformer, minimizing additional VRAM at the VAE stage boundary.
+        assert image_conditionings.call_count == 2
+        return nullcontext(model)
+
+    stage_context = Mock(side_effect=checked_stage_context)
     stage = SimpleNamespace(
         _model_wrapper=None, _is_streaming=False, _transformer_ctx=stage_context,
     )
@@ -150,15 +162,17 @@ def test_shared_stage_uses_exact_same_transformer_for_both_passes() -> None:
         use_ancestral_sampler=True,
     )
     forwarded = []
+    image_inputs_seen = []
     latent = torch.ones((2, 1, 1, 2, 2), dtype=torch.bfloat16)
 
     def fake_stage(*args, **kwargs):
         forwarded.append(kwargs["shared_transformer"])
+        image_inputs_seen.append(kwargs["conditionings"])
         return SimpleNamespace(latent=latent), SimpleNamespace(latent=latent)
 
     with (
         patch.object(paired, "_encode_pair_prompts", return_value=(context, context)),
-        patch.object(paired, "_batch_conditionings", return_value=[]),
+        patch.object(paired, "_batch_conditionings", image_conditionings),
         patch.object(paired, "_paired_stage", side_effect=fake_stage),
         patch.object(paired, "assert_resolution"),
         patch.object(paired, "require_num_frames_source"),
@@ -176,6 +190,8 @@ def test_shared_stage_uses_exact_same_transformer_for_both_passes() -> None:
     assert len(outputs) == 2
     assert stage_context.call_count == 1
     assert forwarded == [model, model]
+    assert image_conditionings.call_count == 2
+    assert image_inputs_seen == [[first_image_conditioning], [second_image_conditioning]]
 
 
 def test_stage_reuse_oom_retries_approved_true_b2_before_any_b1(tmp_path: Path) -> None:
