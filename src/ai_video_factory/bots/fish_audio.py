@@ -109,7 +109,9 @@ async def run_fish_director(
     """Send the exact same per-block JSON input shape used by B1.2."""
     block = payload.blocks[0]
     input_text = json.dumps(payload.model_dump(), ensure_ascii=False, separators=(",", ":"))
-    continued = bool(previous_response_id and getattr(provider, "supports_response_continuation", False))
+    continued = bool(
+        previous_response_id and getattr(provider, "supports_response_continuation", False)
+    )
     kwargs: dict[str, Any] = {
         "model": model,
         "instructions": fish_prompt_bytes().decode("utf-8") + _STRUCTURED_SUFFIX
