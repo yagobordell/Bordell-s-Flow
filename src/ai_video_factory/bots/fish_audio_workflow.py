@@ -712,6 +712,26 @@ async def _generate_block(
                 else None
             )
             feedback = ""
+            if director_attempts and state.get("status") == "director_invalid":
+                # A resume after a saved validation failure continues the same
+                # conversation and spends only the remaining block attempts.
+                rejected_path = directory / f"rejected_attempt_{director_attempts}.json"
+                rejected = _read_json(rejected_path)
+                previous = rejected.get("response")
+                if not isinstance(previous, dict) or previous.get("unparsed_response"):
+                    previous = None
+                feedback = validation_feedback(
+                    "Fish Audio",
+                    FishAudioScriptError(str(rejected["validation_error"])),
+                    block_id=block.block_id,
+                    previous=previous,
+                    continued=bool(previous_response_id),
+                    instructions=(
+                        "Repair this one directed block. Preserve all source words "
+                        "and their order; insert only correctly positioned Fish "
+                        "tags, never inside words or after the final spoken word."
+                    ),
+                )
             while director_attempts < MAX_VALIDATION_RETRIES + 1:
                 director_attempts += 1
                 candidate: dict[str, Any] | None = None
