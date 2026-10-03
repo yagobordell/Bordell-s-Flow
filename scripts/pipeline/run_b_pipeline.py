@@ -960,22 +960,29 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
                 + ". Re-run --images-only to finish without paying for the originals again."
             )
         # Start or reuse Salad only AFTER original GPT images are safely saved.
-        await asyncio.to_thread(
-            ensure_image_upscaler_ready,
-            api_key=settings.salad_api_key,
-            gateway_url=settings.image_upscaler_url,
-            auto_start=settings.image_upscaler_auto_start,
-        )
-        upscaler = await asyncio.to_thread(
-            create_optium_image_upscaler,
-            base_url=settings.image_upscaler_url,
-            salad_api_key=settings.salad_api_key,
-            r2_endpoint_url=settings.r2_endpoint_url,
-            r2_bucket=settings.r2_bucket,
-            r2_access_key_id=settings.r2_access_key_id,
-            r2_secret_access_key=settings.r2_secret_access_key,
-            temp_dir=Path(settings.temp_dir) / "professional-image-finishing",
-        )
+        try:
+            await asyncio.to_thread(
+                ensure_image_upscaler_ready,
+                api_key=settings.salad_api_key,
+                gateway_url=settings.image_upscaler_url,
+                auto_start=settings.image_upscaler_auto_start,
+            )
+            upscaler = await asyncio.to_thread(
+                create_optium_image_upscaler,
+                base_url=settings.image_upscaler_url,
+                salad_api_key=settings.salad_api_key,
+                r2_endpoint_url=settings.r2_endpoint_url,
+                r2_bucket=settings.r2_bucket,
+                r2_access_key_id=settings.r2_access_key_id,
+                r2_secret_access_key=settings.r2_secret_access_key,
+                temp_dir=Path(settings.temp_dir) / "professional-image-finishing",
+            )
+        except Exception as exc:
+            raise ImageGenerationError(
+                "GPT originals are saved; professional x2 is pending Salad readiness. "
+                "Re-run --images-only to finish without regenerating paid originals. "
+                f"Startup error: {exc}"
+            ) from exc
     final_assets = (
         await asyncio.to_thread(
             finish_professional_images, output, plan, manifest,
