@@ -100,6 +100,7 @@ def run_trial(args: argparse.Namespace, item: dict[str, object], log) -> subproc
         "--timings", str(inputs / "shot_timings.json"),
         "--output-dir", str(output),
         "--seed-base", str(item["seed"]),
+        "--width", "1280", "--height", "720",
         "--i2v-profile", "default",
         "--no-retry-terminal",
         "--timeout-seconds", str(args.timeout_seconds),
