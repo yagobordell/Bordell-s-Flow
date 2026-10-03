@@ -127,6 +127,21 @@ def _collect(
             if item.is_file():
                 rel = item.relative_to(work).as_posix()
                 add("Bots/" + rel, rel)
+    for stage in ("V1", "V2", "V3"):
+        canonical = work / stage
+        legacy = work / "voice_direction" / stage
+        if canonical.exists() and legacy.exists():
+            raise PublicationError(f"Ambiguous {stage} voice checkpoint roots")
+        folder = canonical if canonical.exists() else legacy
+        if folder.exists():
+            if not folder.is_dir() or folder.is_symlink() or folder.is_junction():
+                raise PublicationError(f"Linked voice checkpoint root: {stage}")
+            for item in sorted(folder.rglob("*")):
+                if item.is_symlink() or item.is_junction():
+                    raise PublicationError(f"Linked voice checkpoint: {item}")
+                if item.is_file():
+                    rel = item.relative_to(folder).as_posix()
+                    add(f"Bots/{stage}/{rel}", item.relative_to(work).as_posix())
     cta_folder = work / "CTA"
     if cta_folder.exists():
         if cta_folder.is_symlink() or not cta_folder.is_dir():
