@@ -312,3 +312,34 @@ def test_completed_legacy_cta_only_bills_new_motion_bot_not_old_media(
     assert len(rendered) == 2
     assert provider.calls == 1
     assert old.read_bytes() == b"old final"
+
+
+def test_motion_stage_is_counted_in_api_costs_and_wall_clock() -> None:
+    from types import SimpleNamespace
+
+    from ai_video_factory.bots.billing import ApiCostLedger
+    from scripts.pipeline.run_b_pipeline import TimingLedger
+
+    usage = SimpleNamespace(
+        input_tokens=200, output_tokens=50,
+        input_tokens_details=SimpleNamespace(cached_tokens=0, cache_write_tokens=0),
+        output_tokens_details=SimpleNamespace(reasoning_tokens=0),
+    )
+    response = SimpleNamespace(
+        id="motion-response", model="gpt-6-luna", service_tier="default",
+        usage=usage,
+    )
+    ledger = ApiCostLedger()
+    ledger.record("CTA Motion", None, response)
+    report = ledger.report(blocks=0, run_status="completed", expected_calls={
+        "B1.1": 0, "CTA": 0, "CTA Ebook": 0, "CTA Motion": 1,
+        "B1.2": 0, "B2": 0,
+    })
+    assert report["stages"]["CTA Motion"]["recorded_calls"] == 1
+    assert report["requests"][0]["stage"] == "CTA Motion"
+    timers = TimingLedger()
+    timers.record_call("CTA Motion", None, 0.5)
+    assert timers.call_count("CTA Motion") == 1
+    assert timers.report(run_seconds=1.0, status="completed")[
+        "stages"
+    ]["CTA Motion"]["elapsed_seconds"] is None
