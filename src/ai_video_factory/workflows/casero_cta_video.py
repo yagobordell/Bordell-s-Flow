@@ -27,6 +27,13 @@ from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_TASK,
 )
 from ai_video_factory.workers.ltx25.jobs import ltx_a2v_application_job_id
+from ai_video_factory.video_resolution import (
+    DEFAULT_VIDEO_HEIGHT,
+    DEFAULT_VIDEO_WIDTH,
+    LEGACY_VIDEO_HEIGHT,
+    LEGACY_VIDEO_WIDTH,
+    validate_video_size,
+)
 
 _FPS = 24
 _PROMPT = "A Person speaking to the camera."
@@ -92,13 +99,31 @@ def cta_assets(directory: Path) -> dict[str, Any]:
             "duration_seconds": float(tts["duration_seconds"])}
 
 
-def _cta_request(directory: Path, assets: dict[str, Any]) -> InferenceJobRequest:
+def _assert_cta_size(record: dict[str, Any], expected: tuple[int, int]) -> None:
+    """Old CTA caches without size markers are legacy 720p, never Full HD."""
+    actual = (
+        int(record.get("width", LEGACY_VIDEO_WIDTH)),
+        int(record.get("height", LEGACY_VIDEO_HEIGHT)),
+    )
+    if actual != expected:
+        raise CTACompositionError(
+            f"Existing CTA cache is {actual[0]}x{actual[1]}, not "
+            f"{expected[0]}x{expected[1]}; use a fresh CTA asset directory"
+        )
+
+
+def _cta_request(
+    directory: Path, assets: dict[str, Any],
+    *, video_size: tuple[int, int] = (DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT),
+) -> InferenceJobRequest:
+    width, height = video_size
+    validate_video_size(width, height, _FPS)
     image_sha = sha256_file(assets["files"]["image"])
     audio_sha = sha256_file(assets["files"]["first_half"])
     job_id = ltx_a2v_application_job_id(
         segment_id="casero-ebook-cta", prompt=_PROMPT,
         image_sha256=image_sha, audio_sha256=audio_sha, seed=4242,
-        width=1280, height=720, fps=_FPS,
+        width=width, height=height, fps=_FPS,
         generation_profile=LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
     )
     return InferenceJobRequest(
@@ -114,7 +139,7 @@ def _cta_request(directory: Path, assets: dict[str, Any]) -> InferenceJobRequest
             key=f"jobs/{job_id}/metadata.json",content_type="application/json")},
         parameters={
             "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
-            "prompt": _PROMPT, "seed": 4242, "width": 1280, "height": 720,
+            "prompt": _PROMPT, "seed": 4242, "width": width, "height": height,
             "fps": _FPS,
         },
     )
@@ -122,16 +147,18 @@ def _cta_request(directory: Path, assets: dict[str, Any]) -> InferenceJobRequest
 
 def submit_cta_first(
     directory: Path, executor: InferenceJobExecutor, queue: Any,
+    *, video_size: tuple[int, int] = (DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT),
 ) -> tuple[Any, Any] | None:
     """Submit before ALL normal B2 queue.submit calls, not merely wait first."""
     if (directory/"completed.json").is_file():
         ready = _read(directory/"completed.json")
+        _assert_cta_size(ready, video_size)
         file = directory/ready.get("final", {}).get("file", "")
         if not file.is_file() or sha256_file(file) != ready["final"]["sha256"]:
             raise CTACompositionError("Stored reusable CTA is missing or modified")
         return None
     assets = cta_assets(directory)
-    request = _cta_request(directory, assets)
+    request = _cta_request(directory, assets, video_size=video_size)
     state_file = directory/"a2v_state.json"
     if state_file.is_file():
         state = _read(state_file)
@@ -156,12 +183,18 @@ def submit_cta_first(
     return request, assets
 
 
-def finish_cta(directory: Path, submitted: tuple[Any, Any] | None,
-               executor: InferenceJobExecutor) -> Path:
+def finish_cta(
+    directory: Path, submitted: tuple[Any, Any] | None,
+    executor: InferenceJobExecutor,
+    *, video_size: tuple[int, int] = (DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT),
+) -> Path:
     if submitted is None:
         record = _read(directory/"completed.json")
+        _assert_cta_size(record, video_size)
         return directory/record["final"]["file"]
     request, assets = submitted
+    if (int(request.parameters["width"]), int(request.parameters["height"])) != video_size:
+        raise CTACompositionError("CTA A2V job resolution differs from main video")
     video = directory/"avatar_a2v.mp4"
     a2v_state = directory/"a2v_state.json"
     if not video.is_file():
@@ -202,12 +235,18 @@ def finish_cta(directory: Path, submitted: tuple[Any, Any] | None,
         saved = _read(a2v_state)
         if saved.get("status") != "completed" or saved.get("sha256") != sha256_file(video):
             raise CTACompositionError("Saved CTA A2V clip lacks a validated checkpoint")
-    return compose_reusable_cta(directory, assets)
+    return compose_reusable_cta(directory, assets, video_size=video_size)
 
 
-def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None) -> Path:
+def compose_reusable_cta(
+    directory: Path, assets: dict[str, Any] | None = None,
+    *, video_size: tuple[int, int] = (DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT),
+) -> Path:
+    width, height = video_size
+    validate_video_size(width, height, _FPS)
     if (directory/"completed.json").is_file():
         record = _read(directory/"completed.json")
+        _assert_cta_size(record, video_size)
         path = directory/record["final"]["file"]
         if sha256_file(path) != record["final"]["sha256"]:
             raise CTACompositionError("Reusable CTA digest changed")
@@ -231,9 +270,9 @@ def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None) 
         "-i", str(assets["files"]["motion"]),
         "-i", str(assets["files"]["master"]),
         "-filter_complex",
-        f"[0:v]fps={_FPS},scale=1280:720,tpad=stop_mode=clone:stop_duration=0.3,"
+        f"[0:v]fps={_FPS},scale={width}:{height},tpad=stop_mode=clone:stop_duration=0.3,"
         f"trim=end_frame={first_frames},setpts=N/({_FPS}*TB)[a];"
-        f"[1:v]fps={_FPS},scale=1280:720,tpad=stop_mode=clone:stop_duration=0.3,"
+        f"[1:v]fps={_FPS},scale={width}:{height},tpad=stop_mode=clone:stop_duration=0.3,"
         f"trim=end_frame={tail_frames},setpts=N/({_FPS}*TB)[m];"
         "[a][m]concat=n=2:v=1:a=0,format=yuv420p[v];"
         "[2:a]apad=pad_dur=1.5[audio]",
@@ -246,6 +285,7 @@ def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None) 
     _atomic(directory/"completed.json",{
         "schema_version":"casero-cta-final-v1","status":"completed",
         "duration_seconds":duration,"speech_seconds":assets["duration_seconds"],
+        "width": width, "height": height,
         "first_half_seconds":half,"trailing_silence_seconds":1.5,
         "final":{"file":destination.name,"sha256":sha256_file(destination)},
     })
@@ -297,6 +337,7 @@ def insertion_second(
 def insert_cta(
     output: Path, source_script: str, plan: dict[str, Any], audio: dict[str, Any],
     main_video: Path, directory: Path, destination: Path,
+    *, video_size: tuple[int, int] = (DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT),
 ) -> dict[str, Any]:
     placement_data = _read(output/"CTA"/"output.json")
     placement = CTAPlacement.model_validate({
@@ -311,7 +352,7 @@ def insert_cta(
     if frame <= 0 or frame >= round(main_duration*_FPS):
         raise CTACompositionError("CTA speech boundary lies outside main video")
     snapped = frame/_FPS
-    clip = compose_reusable_cta(directory)
+    clip = compose_reusable_cta(directory, video_size=video_size)
     cache = _read(directory/"completed.json")
     cta_duration = float(cache["duration_seconds"])
     temp = destination.with_suffix(".part.mp4")
