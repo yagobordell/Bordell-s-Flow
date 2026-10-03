@@ -123,19 +123,18 @@ def test_triton_unavailable_is_reported_instead_of_claimed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _seed_model_files(tmp_path)
-    bindings = replace(
-        make_a2v_bindings({
-            "builds": 0, "calls": [], "encodes": [], "conditionings": [],
-            "inference_depth": 0, "inference_entries": 1,
-        }),
-        triton_probe=lambda: False,
-    )
+    state: dict[str, Any] = {
+        "builds": 0, "calls": [], "encodes": [], "conditionings": [],
+        "inference_depth": 0, "inference_entries": 0,
+    }
+    bindings = replace(make_a2v_bindings(state), triton_probe=lambda: False)
     backend = a2v.DirectLTX25AudioToVideoBackend(model_root=tmp_path)
     backend._bindings = bindings
     backend._pipeline_params = bindings.detect_params("")
-    backend._get_or_build_pipeline(
-        bindings, generation_profile=a2v.LTX_A2V_BENCH_CPU_TRITON_PROFILE
-    )
+    with bindings.torch.inference_mode():
+        backend._get_or_build_pipeline(
+            bindings, generation_profile=a2v.LTX_A2V_BENCH_CPU_TRITON_PROFILE
+        )
     assert backend._pipeline_effective_backend == "eager"
 
 
