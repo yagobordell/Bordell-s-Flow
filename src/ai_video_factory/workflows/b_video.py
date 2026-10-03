@@ -784,11 +784,12 @@ def generate_b2_ltx_video(
     _reconcile_prior_failed_video_runs(
         output, new_digest=digest, audio_sha256=audio["sha256"], queue=queue
     )
-    _inherit_completed_v4_clips(
-        output, timeline=timeline, audio=audio, images=images, plan=plan,
-        jobs=jobs, run_dir=run_dir, digest=digest,
-        manifest=manifest, manifest_path=manifest_path,
-    )
+    if not worker_images:
+        _inherit_completed_v4_clips(
+            output, timeline=timeline, audio=audio, images=images, plan=plan,
+            jobs=jobs, run_dir=run_dir, digest=digest,
+            manifest=manifest, manifest_path=manifest_path,
+        )
     executor = InferenceJobExecutor(
         queue=queue, storage=storage,
         poll_seconds=poll_seconds, timeout_seconds=timeout_seconds,
