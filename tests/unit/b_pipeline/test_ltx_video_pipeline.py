@@ -275,9 +275,19 @@ def test_new_memory_safe_a2v_requires_exact_deployed_image_digest(
     with pytest.raises(RuntimeError, match="SALAD_LTX25_PAGEABLE_A2V_IMAGE"):
         runner._require_ltx_safe_a2v_worker()
 
-    pinned = "docker.io/test/factory@sha256:" + "a" * 64
+    # A digest from a different repository must never be deployed,
+    # even when its SHA syntax is otherwise valid.
+    untrusted = "docker.io/test/factory@sha256:" + "a" * 64
+    monkeypatch.setenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", untrusted)
+    with pytest.raises(RuntimeError, match="different Docker repository"):
+        runner._require_ltx_safe_a2v_worker()
+
+    # Test the authorized repo with a live mismatched group. The runner
+    # must reject the mismatch without attempting to replace a live worker.
+    repo = "docker.io/yagobordell/ai-video-factory@sha256:"
+    pinned = repo + "a" * 64
     monkeypatch.setenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", pinned)
-    deployed = {"image": "docker.io/test/factory@sha256:" + "b" * 64}
+    deployed = {"image": repo + "b" * 64}
 
     class FakeSaladClient:
         def __init__(self, config: object) -> None:
@@ -286,10 +296,14 @@ def test_new_memory_safe_a2v_requires_exact_deployed_image_digest(
             )
 
         def describe_container_group(self) -> dict:
-            return {"container": deployed}
+            return {
+                "container": deployed,
+                "current_state": {"status": "running"},
+                "pending_change": False,
+            }
 
     monkeypatch.setattr(runner, "SaladClient", FakeSaladClient)
-    with pytest.raises(RuntimeError, match="worker image mismatch"):
+    with pytest.raises(RuntimeError, match="image mismatch"):
         runner._require_ltx_safe_a2v_worker()
 
     deployed["image"] = pinned
