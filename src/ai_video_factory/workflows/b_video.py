@@ -372,7 +372,6 @@ def build_b2_video_plan(
                     "generation_profile": LTX_PRODUCTION_I2V_PROFILE,
                     "prompt": prompt, "seed": seed,
                     "width": 1280, "height": 720, "fps": _FPS,
-                    **({"required_worker_image": worker_image} if worker_image else {}),
                     "num_frames": num_frames,
                     **({"required_worker_image": required_image} if required_image else {}),
                 },
@@ -436,6 +435,7 @@ def build_b2_video_plan(
                     "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
                     "prompt": a2v_prompt, "seed": seed,
                     "width": 1280, "height": 720, "fps": _FPS,
+                    **({"required_worker_image": worker_image} if worker_image else {}),
                 },
             )
         jobs.append(B2VideoJob(
