@@ -20,11 +20,11 @@ from PIL import Image
 from ai_video_factory.bots import run_b_pipeline
 from ai_video_factory.bots.billing import ApiCostLedger
 from ai_video_factory.bots.contracts import (
-    B11Output,
-    B12Output,
     B2Input,
     B2InputBlock,
     B2Output,
+    B11Output,
+    B12Output,
     ProfessionalB2Output,
 )
 from ai_video_factory.bots.fish_audio_workflow import (
