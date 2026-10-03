@@ -93,7 +93,10 @@ def _collect(
     images = _json(work, "images/manifest.json")
     if images.get("status") != "completed":
         raise PublicationError("Publication requires verified completed image generation")
-    final_assets = images.get("final_assets", []) if plan.get("visual_style") == "profesional" else []
+    final_assets = (
+        images.get("final_assets", [])
+        if plan.get("visual_style") == "profesional" else []
+    )
     if plan.get("visual_style") == "profesional":
         if images.get("finishing_status") != "completed":
             raise PublicationError("Publication requires finished professional image sources")
