@@ -195,7 +195,10 @@ def test_free_powershell_preflight_validates_real_images_and_env(tmp_path: Path)
     env = tmp_path / "batch2-test.env"
     env.write_text("BATCH2_PREFLIGHT_TEST=1\n", encoding="utf-8")
     manifest = json.loads((ROOT / "deploy" / "salad" / "services.json").read_text())
-    assert manifest["services"]["ltx25_i2v"]["environment"]["LTX_EXPERIMENTAL_I2V_BATCH2_ENABLED"] == "true"
+    assert (
+        manifest["services"]["ltx25_i2v"]["environment"]["LTX_EXPERIMENTAL_I2V_BATCH2_ENABLED"]
+        == "true"
+    )
     repo = manifest["services"]["ltx25_i2v"]["image"].rsplit(":", 1)[0]
     cmd = [
         "pwsh", "-NoProfile", "-File", str(SCRIPT),
