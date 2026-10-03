@@ -456,7 +456,6 @@ def test_legacy_professional_voice_checkpoints_are_reused_without_paid_repost(
     tmp_path,
 ) -> None:
     legacy = tmp_path / "voice_direction"
-    legacy.mkdir()
     provider = FakeProvider()
     kwargs = {
         "core": {"central_question": "Why?", "final_answer": "Because."},
@@ -466,6 +465,7 @@ def test_legacy_professional_voice_checkpoints_are_reused_without_paid_repost(
     asyncio.run(pv.plan_professional_voice(**kwargs))
     # Move only the completed V checkpoints to the old layout as if a prior
     # version produced them; no model calls should be needed afterwards.
+    legacy.mkdir()
     for stage in ("V1", "V2", "V3"):
         (tmp_path / stage).rename(legacy / stage)
     asyncio.run(pv.plan_professional_voice(**kwargs))
