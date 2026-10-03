@@ -231,9 +231,16 @@ class ApiCostLedger:
             planned = _tokens(manifest.get("total_generation_jobs"))
             if planned is None and "total_generation_jobs" in manifest:
                 raise ValueError("Invalid planned image request count")
+            additional = _tokens(manifest.get("native_grid_video_calls", 0))
+            if additional is None:
+                raise ValueError("Invalid native professional grid-video request count")
+            if planned is not None:
+                planned += additional
 
         active = sorted(root.glob("block_*/*.json")) + sorted(
             (root / "grids").glob("*.json")
+        ) + sorted(
+            (root / "professional_finished").glob("block_*/*-native_grid_video.json")
         )
         replaced = sorted(archive.glob("block_*/*.json"))
         active_count = 0
@@ -242,7 +249,9 @@ class ApiCostLedger:
             if path.is_symlink() or path.parent.is_symlink():
                 raise ValueError(f"Refusing linked image accounting state: {path}")
             state = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(state, dict) or state.get("schema_version") != "openai-image-v1":
+            if not isinstance(state, dict) or state.get("schema_version") not in {
+                "openai-image-v1", "professional-image-finishing-v1",
+            }:
                 raise ValueError(f"Invalid image accounting state: {path}")
             status = state.get("status")
             if status not in ("completed", "direct_submitting_unknown"):
