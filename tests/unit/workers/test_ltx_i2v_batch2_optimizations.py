@@ -83,8 +83,9 @@ def test_gemma_build_once_but_forward_and_connector_remain_independent() -> None
 
 def test_image_encoder_build_once_per_stage_with_two_b1_image_forwards() -> None:
     torch = pytest.importorskip("torch")
-    from ai_video_factory.workers.ltx25.paired_i2v import PairInput, _batch_conditionings
     from ltx_core.conditioning.types.latent_cond import VideoConditionByLatentIndex
+
+    from ai_video_factory.workers.ltx25.paired_i2v import PairInput, _batch_conditionings
 
     image_calls = []
 
@@ -130,7 +131,6 @@ def test_image_encoder_build_once_per_stage_with_two_b1_image_forwards() -> None
 def test_shared_stage_uses_exact_same_transformer_for_both_passes() -> None:
     torch = pytest.importorskip("torch")
     import ai_video_factory.workers.ltx25.paired_i2v as paired
-
     from ai_video_factory.workers.ltx25.paired_i2v import (
         PairInput,
         generate_paired_fast_distilled,
