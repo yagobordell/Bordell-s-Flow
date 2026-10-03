@@ -2799,6 +2799,32 @@ async def main() -> None:
                     visual_plan = result.visual_plan()
                     visual_plan["avatar"] = avatar_metadata
                     _write(output / "visual_plan.json", visual_plan)
+                    if professional_audio_enabled:
+                        # This B2 block changed after professional V/audio ran.
+                        # Re-direct from the corrected whole B2 plan. Identical
+                        # paid Gemini fragments are reused by verified block SHA.
+                        run_metadata["audio_generation"] = {"status": "running"}
+                        save_report("running", len(result.b12))
+                        run_metadata["audio_generation"] = await generate_professional_audio(
+                            core=result.b11.narrative_core.model_dump(mode="json"),
+                            blocks=[
+                                item.blocks[0].model_dump(mode="json")
+                                for item in result.b2
+                            ],
+                            output=output,
+                            provider=provider,
+                            model=settings.openai_model,
+                            gemini_api_key=settings.gemini_api_key,
+                            voice_id=_run_voice_id(output),
+                            source_sha256=script_sha256,
+                            on_response=ledger.record,
+                            on_timing=timings.record_call,
+                            max_parallel_calls=args.max_parallel_calls,
+                        )
+                        await _preflight_saved_run_audio(
+                            output, visual_plan, run_metadata,
+                        )
+                        save_report("running", len(result.b12))
             run_metadata["image_generation"] = _image_summary(image_manifest)
             image_costs, _ = save_report("running", len(result.b12))
             if getattr(args, "managed_target", None) is not None:
