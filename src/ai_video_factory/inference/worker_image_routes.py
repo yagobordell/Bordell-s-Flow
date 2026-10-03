@@ -25,6 +25,16 @@ class WorkerImageRoute:
     def stage(self) -> str:
         return self.service + "_" + self.image.rsplit(":", 1)[-1][:16]
 
+    @property
+    def task_name(self) -> str:
+        # Crucial migration safety: an unpatched legacy worker only polls the
+        # *base* task and therefore cannot steal any image-pinned work.
+        base = (
+            "video.ltx25.audio_to_video" if self.service == "ltx25"
+            else "video.ltx25.generate"
+        )
+        return base + ".v" + self.image.rsplit(":", 1)[-1][:16]
+
 
 def route_for_image(service: Service, image: str) -> WorkerImageRoute:
     if service not in {"ltx25", "ltx25_i2v"}:
