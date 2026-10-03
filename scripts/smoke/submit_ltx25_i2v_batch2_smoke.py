@@ -1,0 +1,224 @@
+"""Run the experimental atomic 2-video/1-GPU task via Postgres/R2.
+
+Keep this OUTSIDE production Phase 8. Both outputs and the mode report must
+be committed and SHA-verified before this client claims success.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import mimetypes
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any
+
+from PIL import Image
+
+from ai_video_factory.config import settings
+from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
+from ai_video_factory.inference.storage import sha256_file
+from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
+from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
+from ai_video_factory.providers.r2 import create_r2_storage
+from ai_video_factory.workers.ltx25.experimental_batch2 import LTX_I2V_BATCH2_TASK
+from ai_video_factory.workers.ltx25.model import LTX_PRODUCTION_I2V_PROFILE
+
+
+def parser() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Explicit experimental FP8 I2V B=2 comparison")
+    p.add_argument("--image-a", type=Path, required=True)
+    p.add_argument("--prompt-a", required=True)
+    p.add_argument("--image-b", type=Path, required=True)
+    p.add_argument("--prompt-b", required=True)
+    p.add_argument("--seed-a", type=int, default=5242)
+    p.add_argument("--seed-b", type=int, default=5243)
+    p.add_argument("--run-id", required=True)
+    p.add_argument("--output-dir", type=Path, required=True)
+    p.add_argument("--reference-a", type=Path)
+    p.add_argument("--reference-b", type=Path)
+    p.add_argument("--allow-sequential-fallback", action="store_true")
+    p.add_argument("--check-inputs-only", action="store_true")
+    p.add_argument("--timeout-seconds", type=float, default=10800)
+    return p.parse_args()
+
+
+def validate_media(path: Path) -> None:
+    if not path.is_file():
+        raise ValueError(f"Missing input image: {path}")
+    with Image.open(path) as image:
+        if image.size != (1280, 720):
+            raise ValueError(f"Batch2 requires native 1280x720 PNG images; {path}={image.size}")
+        if image.format != "PNG":
+            raise ValueError(f"Expected lossless PNG input: {path}")
+
+
+def validate_video(path: Path) -> dict[str, Any]:
+    executable = shutil.which("ffprobe")
+    decoder = shutil.which("ffmpeg")
+    if not executable or not decoder:
+        raise RuntimeError("ffprobe and ffmpeg are mandatory for artifact validation")
+    result = subprocess.run(
+        [executable, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)],
+        capture_output=True, text=True, check=True,
+    )
+    probe = json.loads(result.stdout)
+    video = [s for s in probe["streams"] if s["codec_type"] == "video"]
+    audio = [s for s in probe["streams"] if s["codec_type"] == "audio"]
+    if len(video) != 1 or audio:
+        raise ValueError("Each I2V artifact must contain exactly one VIDEO stream and no audio")
+    if (int(video[0]["width"]), int(video[0]["height"])) != (1280, 720):
+        raise ValueError("Batch2 output geometry does not match the B=1 reference")
+    fps = video[0]["avg_frame_rate"]
+    if fps != "24/1" or int(video[0].get("nb_frames") or 0) != 121:
+        raise ValueError(f"Batch2 output fps/frame count invalid: {fps}, {video[0].get('nb_frames')}")
+    duration = float(probe["format"]["duration"])
+    if abs(duration - 121 / 24) > 0.1:
+        raise ValueError(f"Batch2 duration mismatch: {duration}")
+    subprocess.run(
+        [decoder, "-v", "error", "-i", str(path), "-map", "0:v:0", "-f", "null", "-"],
+        check=True, capture_output=True,
+    )
+    return {"width": 1280, "height": 720, "fps": 24, "frames": 121, "duration": duration}
+
+
+def required(name: str, value: str | None) -> str:
+    if not value or not value.strip():
+        raise RuntimeError(f"{name} must be configured before the paid batch2 trial")
+    return value.strip()
+
+
+def main() -> None:
+    a = parser()
+    if not a.run_id.replace("-", "").replace("_", "").isalnum() or len(a.run_id) > 70:
+        raise ValueError("Run ID must have 1-70 safe characters")
+    if a.seed_a == a.seed_b or not 0 <= a.seed_a <= 2**31 - 1 or not 0 <= a.seed_b <= 2**31 - 1:
+        raise ValueError("Use two distinct valid seeds")
+    if not a.prompt_a.strip() or not a.prompt_b.strip():
+        raise ValueError("Both prompts are mandatory")
+    for item in (a.image_a, a.image_b):
+        validate_media(item)
+    if sha256_file(a.image_a) == sha256_file(a.image_b) and a.prompt_a == a.prompt_b:
+        raise ValueError("Batch2 requires distinct images or prompts")
+    references = []
+    for path in (a.reference_a, a.reference_b):
+        if path is None:
+            references.append(None)
+            continue
+        if not path.is_file():
+            raise ValueError(f"Existing reference video not found: {path}")
+        references.append({"path": str(path), "sha256": sha256_file(path)})
+    if a.check_inputs_only:
+        print("Batch2 inputs valid: two native 1280x720 PNGs, separate seeds and fixed 5s recipe")
+        return
+    if a.output_dir.exists():
+        raise ValueError("Run directory already exists; choose a new run ID")
+    a.output_dir.mkdir(parents=True)
+    plan = {
+        "generation_profile": LTX_PRODUCTION_I2V_PROFILE,
+        "width": 1280, "height": 720, "fps": 24, "num_frames": 121,
+    }
+    inputs = (
+        ("keyframe_a", a.image_a, a.prompt_a, a.seed_a),
+        ("keyframe_b", a.image_b, a.prompt_b, a.seed_b),
+    )
+    spec = {
+        "run_id": a.run_id,
+        "inputs": [
+            {"name": name, "sha256": sha256_file(path), "prompt": prompt, "seed": seed}
+            for name, path, prompt, seed in inputs
+        ],
+        "allow_sequential_fallback": a.allow_sequential_fallback,
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(spec, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:12]
+    job_id = f"ltx-batch2-{a.run_id}-{fingerprint}"
+    object_inputs = []
+    for name, path, _, _ in inputs:
+        digest = sha256_file(path)
+        object_inputs.append(ObjectInput(
+            name=name,
+            key=f"ltx25-i2v/batch2/{digest}.png",
+            sha256=digest,
+            content_type=mimetypes.guess_type(path.name)[0] or "image/png",
+        ))
+    req = InferenceJobRequest(
+        job_id=job_id,
+        task=LTX_I2V_BATCH2_TASK,
+        inputs=object_inputs,
+        output=ObjectOutput(key=f"jobs/{job_id}/batch2-a.mp4", content_type="video/mp4"),
+        sidecar_outputs={
+            "video_b": ObjectOutput(key=f"jobs/{job_id}/batch2-b.mp4", content_type="video/mp4"),
+            "report": ObjectOutput(key=f"jobs/{job_id}/batch2-report.json", content_type="application/json"),
+        },
+        max_attempts=1,  # No accidental paid reruns of an experimental OOM
+        parameters={
+            "a": {**plan, "prompt": a.prompt_a, "seed": a.seed_a},
+            "b": {**plan, "prompt": a.prompt_b, "seed": a.seed_b},
+            "allow_sequential_fallback": a.allow_sequential_fallback,
+        },
+    )
+    (a.output_dir / "job-request.json").write_text(req.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    (a.output_dir / "reference-provenance.json").write_text(
+        json.dumps({"inputs": spec, "reference_videos": references}, indent=2) + "\n", encoding="utf-8"
+    )
+    storage = create_r2_storage(
+        endpoint_url=required("R2_ENDPOINT_URL", settings.r2_endpoint_url),
+        bucket=required("R2_BUCKET", settings.r2_bucket),
+        access_key_id=required("R2_ACCESS_KEY_ID", settings.r2_access_key_id),
+        secret_access_key=required("R2_SECRET_ACCESS_KEY", settings.r2_secret_access_key),
+    )
+    executor = InferenceJobExecutor(
+        queue=PostgresJobQueueClient(dsn=required("POSTGRES_DSN", settings.postgres_dsn)),
+        storage=storage,
+        poll_seconds=15,
+        timeout_seconds=a.timeout_seconds,
+        pending_timeout_seconds=1800,
+    )
+    for item, (_, path, _, _) in zip(object_inputs, inputs, strict=True):
+        executor.ensure_input(
+            path, key=item.key, sha256=item.sha256,
+            content_type=item.content_type or "image/png",
+            metadata={"purpose": "ltx25-experimental-batch2"},
+        )
+    response = executor.execute(req, metadata={"purpose": "ltx25-experimental-batch2"})
+    if response.replayed:
+        raise RuntimeError("Experiment reused an old result; metrics would be invalid")
+    outputs = {
+        "video_a": (req.output.key, a.output_dir / "batch2-a.mp4", response.output.sha256),
+    }
+    for name, key, filename in (
+        ("video_b", req.sidecar_outputs["video_b"].key, "batch2-b.mp4"),
+        ("report", req.sidecar_outputs["report"].key, "batch2-report.json"),
+    ):
+        obj = storage.stat(key)
+        if obj is None:
+            raise RuntimeError(f"Batch2 sidecar was not committed: {name}")
+        outputs[name] = (key, a.output_dir / filename, obj.metadata.get("artifact-sha256"))
+    for name, (key, path, digest) in outputs.items():
+        storage.download(key, path)
+        if not digest or sha256_file(path) != digest:
+            raise RuntimeError(f"Batch2 R2 digest mismatch for {name}")
+    report = json.loads((a.output_dir / "batch2-report.json").read_text(encoding="utf-8"))
+    if report["mode"] not in ("batch2", "sequential_oom_fallback"):
+        raise RuntimeError("Unknown execution mode; cannot claim batch2 succeeded")
+    if not a.allow_sequential_fallback and report["mode"] != "batch2":
+        raise RuntimeError("No-fallback experiment silently used sequential generation")
+    report["technical_video_validation"] = {
+        key: validate_video(a.output_dir / f"batch2-{suffix}.mp4")
+        for key, suffix in (("a", "a"), ("b", "b"))
+    }
+    report["replayed"] = response.replayed
+    report["quality_status"] = "REFERENCE_VIDEO_SIDE_BY_SIDE_REVIEW_REQUIRED"
+    (a.output_dir / "experiment-summary.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(json.dumps(report, indent=2, sort_keys=True))
+    print(f"Output directory: {a.output_dir}")
+
+
+if __name__ == "__main__":
+    main()
