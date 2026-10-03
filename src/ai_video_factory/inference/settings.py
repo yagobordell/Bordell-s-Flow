@@ -28,6 +28,9 @@ class InferenceWorkerSettings(BaseSettings):
     worker_mode: Literal["production", "local"] = "production"
     worker_id: str = Field(default_factory=_default_worker_id)
     salad_instance_id: str | None = Field(default=None, validation_alias="SALAD_INSTANCE_ID")
+    required_worker_image: str | None = Field(
+        default=None, validation_alias="INFERENCE_WORKER_IMAGE"
+    )
     worker_temp_dir: Path = Path("/tmp/ai-video-factory")
     worker_lease_seconds: int = Field(default=90, ge=30, le=3600)
     worker_heartbeat_seconds: int = Field(default=30, ge=5, le=1200)
