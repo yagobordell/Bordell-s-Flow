@@ -70,5 +70,8 @@ def validation_feedback(
             json.dumps(previous, ensure_ascii=False, separators=(",", ":")),
         ))
     if previous is None:
-        lines.append("The previous response could not be parsed; rebuild the full object from the original input.")
+        lines.append(
+            "The previous response could not be parsed; "
+            "rebuild the full object from the original input."
+        )
     return "\n".join(lines)
