@@ -1028,6 +1028,7 @@ class DirectLTX25Backend:
         for index, (forward_batch, shared_stages) in enumerate(candidates):
             label = "batch2" if forward_batch == 2 else "stage_shared_sequential_forward"
             attempt_started = time.monotonic()
+            retry_after_oom = False
             try:
                 peak = self._pair_attempt(
                     keyframe_a=keyframe_a, keyframe_b=keyframe_b,
@@ -1059,11 +1060,10 @@ class DirectLTX25Backend:
                 })
                 for output in outputs:
                     output.unlink(missing_ok=True)
-                if failure == "oom":
-                    # Scope of _pair_attempt has exited. Release the GPU
-                    # allocator and invalidate lazy iterators BEFORE reload.
-                    self.invalidate_pipeline()
-                    cleanup_cuda_memory()
+                # Do not run gc.collect()/empty_cache while the live
+                # exception traceback still owns stage locals and potentially
+                # the previous GPU transformer. Cleanup after the except
+                # scope ends, before starting any smaller-memory retry.
                 if failure != "oom":
                     raise
                 logger.warning(
@@ -1076,6 +1076,7 @@ class DirectLTX25Backend:
                 # preserves the previously validated GPU-parallel algorithm.
                 if index + 1 == len(candidates) and not allow_sequential_fallback:
                     raise
+                retry_after_oom = True
             else:
                 report = {
                     "mode": label,
@@ -1091,6 +1092,9 @@ class DirectLTX25Backend:
                 }
                 logger.info("LTX25_I2V_PAIR_METRICS %s", json.dumps(report, sort_keys=True))
                 return report
+            if retry_after_oom:
+                self.invalidate_pipeline()
+                cleanup_cuda_memory()
 
         # Last-resort fallback: EXACTLY the previously visually approved B=1
         # generator. At no point does one batch clip mix with one reference clip.
