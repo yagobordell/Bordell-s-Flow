@@ -29,6 +29,7 @@ from ltx_pipelines.utils.types import ModalitySpec, PipelineOutput
 
 from ai_video_factory.inference.gpu_diagnostics import diagnostic_checkpoint
 
+from .a2v_prompt_cache import A2VBenchmarkPromptCache
 from .a2v_prompt_metrics import profile_a2v_prompt_encoder
 from .i2v_metrics import I2VPhaseMetrics
 from .reference_recipe import LTX_A2V_REFERENCE_RECIPE
@@ -136,17 +137,38 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
         # opt-in static variant encodes a *separate* negative; positive text is
         # passed unchanged and the prompt enhancer is explicitly disabled.
         diagnostic_checkpoint("reference.gemma.prompt_encode.start")
-        prompt_profiler = (
-            profile_a2v_prompt_encoder(self.prompt_encoder, metrics)
-            if metrics is not None else nullcontext()
-        )
-        with phase("prompt_encode_seconds"), prompt_profiler:
-            contexts = self.prompt_encoder(
-                [prompt] if negative_prompt is None else [prompt, negative_prompt],
-                enhance_first_prompt=enhance_prompt,
-                enhance_static_cache=enhance_static_cache,
-                enhance_prompt_image=stage_1_images[0][0] if stage_1_images else None,
-            )
+        prompts = (prompt,) if negative_prompt is None else (prompt, negative_prompt)
+        # Cache only post-connector tensors and only for controlled, unchanged
+        # experimental prompts. The original production path is untouched.
+        use_cache = metrics is not None and not enhance_prompt and not enhance_static_cache
+        cache = None
+        if use_cache:
+            cache = getattr(self, "_benchmark_prompt_cache", None)
+            if cache is None:
+                cache = A2VBenchmarkPromptCache()
+                self._benchmark_prompt_cache = cache
+        with phase("prompt_encode_seconds"):
+            contexts = None
+            if cache is not None:
+                with phase("prompt_cache_restore_seconds"):
+                    contexts = cache.restore(prompts, device=self.device)
+            if metrics is not None:
+                metrics.timings["prompt_cache_hit"] = float(contexts is not None)
+            if contexts is None:
+                prompt_profiler = (
+                    profile_a2v_prompt_encoder(self.prompt_encoder, metrics)
+                    if metrics is not None else nullcontext()
+                )
+                with prompt_profiler:
+                    contexts = self.prompt_encoder(
+                        list(prompts),
+                        enhance_first_prompt=enhance_prompt,
+                        enhance_static_cache=enhance_static_cache,
+                        enhance_prompt_image=stage_1_images[0][0] if stage_1_images else None,
+                    )
+                if cache is not None:
+                    with phase("prompt_cache_store_seconds"):
+                        cache.store(prompts, contexts)
         if metrics is not None:
             metrics.timings["prompt_other_execution_seconds"] = max(
                 0.0,
