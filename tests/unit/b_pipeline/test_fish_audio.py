@@ -422,4 +422,9 @@ def test_rejected_fish_director_persists_billed_response_before_tts(
     assert state["director_usage"]["output_tokens"] == 25
     ledger = runner.ApiCostLedger()
     ledger.sync_fish_director_usage(tmp_path)
-    assert ledger.records[0]["estimated_cost_usd"] == "0.00002250"
+    assert len(ledger.records) == 3
+    assert all(record["estimated_cost_usd"] == "0.00002250" for record in ledger.records)
+    assert [record["director_state_file"].rsplit("#", 1)[-1]
+            for record in ledger.records] == ["1", "2", "3"]
+    ledger.sync_fish_director_usage(tmp_path)
+    assert len(ledger.records) == 3
