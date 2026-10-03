@@ -420,7 +420,7 @@ def build_b2_video_plan(
                 parameters={
                     "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
                     "prompt": a2v_prompt, "seed": seed,
-                    "width": 1280, "height": 720, "fps": _FPS,
+                    "width": width, "height": height, "fps": _FPS,
                 },
             )
         jobs.append(B2VideoJob(
