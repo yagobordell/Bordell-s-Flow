@@ -8,8 +8,8 @@ import pytest
 from ai_video_factory.inference.capacity_controller import (
     A2V_EXPERIMENTAL_ADVISORY_LOCK_KEY,
     CapacityControllerLeadershipError,
-    PostgresCapacityControllerOperationLock,
     PostgresCapacityControllerLeadership,
+    PostgresCapacityControllerOperationLock,
     read_capacity_controller_health,
     resolve_capacity_controller_dsn,
     validate_capacity_controller_dsn,
