@@ -73,7 +73,8 @@ def validate_video(path: Path) -> dict[str, Any]:
         raise ValueError("Batch2 output geometry does not match the B=1 reference")
     fps = video[0]["avg_frame_rate"]
     if fps != "24/1" or int(video[0].get("nb_frames") or 0) != 121:
-        raise ValueError(f"Batch2 output fps/frame count invalid: {fps}, {video[0].get('nb_frames')}")
+        frames = video[0].get("nb_frames")
+        raise ValueError(f"Batch2 output fps/frame count invalid: {fps}, {frames}")
     duration = float(probe["format"]["duration"])
     if abs(duration - 121 / 24) > 0.1:
         raise ValueError(f"Batch2 duration mismatch: {duration}")
@@ -152,7 +153,9 @@ def main() -> None:
         output=ObjectOutput(key=f"jobs/{job_id}/batch2-a.mp4", content_type="video/mp4"),
         sidecar_outputs={
             "video_b": ObjectOutput(key=f"jobs/{job_id}/batch2-b.mp4", content_type="video/mp4"),
-            "report": ObjectOutput(key=f"jobs/{job_id}/batch2-report.json", content_type="application/json"),
+            "report": ObjectOutput(
+                key=f"jobs/{job_id}/batch2-report.json", content_type="application/json"
+            ),
         },
         max_attempts=1,  # No accidental paid reruns of an experimental OOM
         parameters={
@@ -161,9 +164,13 @@ def main() -> None:
             "allow_sequential_fallback": a.allow_sequential_fallback,
         },
     )
-    (a.output_dir / "job-request.json").write_text(req.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    (a.output_dir / "job-request.json").write_text(
+        req.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
     (a.output_dir / "reference-provenance.json").write_text(
-        json.dumps({"inputs": spec, "reference_videos": references}, indent=2) + "\n", encoding="utf-8"
+        json.dumps({"inputs": spec, "reference_videos": references}, indent=2)
+        + "\n",
+        encoding="utf-8",
     )
     storage = create_r2_storage(
         endpoint_url=required("R2_ENDPOINT_URL", settings.r2_endpoint_url),
