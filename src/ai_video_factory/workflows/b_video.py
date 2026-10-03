@@ -28,6 +28,7 @@ from ai_video_factory.inference.gpu_failures import (
 )
 from ai_video_factory.inference.ports import ObjectStorage
 from ai_video_factory.inference.storage import sha256_file
+from ai_video_factory.inference.worker_image_routes import route_for_image
 from ai_video_factory.providers.inference_jobs import (
     InferenceJobExecutor,
     cached_inference_response,
@@ -354,7 +355,11 @@ def build_b2_video_plan(
                 job_id += "-im" + required_image.rsplit(":", 1)[-1][:12]
             key = f"b2-ltx/inputs/images/{image_sha}.png"
             request = InferenceJobRequest(
-                job_id=job_id, task=LTX_VIDEO_TASK,
+                job_id=job_id,
+                task=(
+                    route_for_image("ltx25_i2v", required_image).task_name
+                    if required_image else LTX_VIDEO_TASK
+                ),
                 inputs=[ObjectInput(
                     name="keyframe", key=key, sha256=image_sha,
                     content_type="image/png",
@@ -403,7 +408,12 @@ def build_b2_video_plan(
             if worker_image:
                 job_id += "-im" + worker_image.rsplit(":", 1)[-1][:12]
             request = InferenceJobRequest(
-                job_id=job_id, task=LTX_A2V_TASK, max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
+                job_id=job_id,
+                task=(
+                    route_for_image("ltx25", worker_image).task_name
+                    if worker_image else LTX_A2V_TASK
+                ),
+                max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
                 inputs=[
                     ObjectInput(
                         name="image", key=f"b2-ltx/inputs/avatars/{image_sha}.png",
