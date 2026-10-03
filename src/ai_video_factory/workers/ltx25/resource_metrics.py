@@ -39,7 +39,8 @@ def _stats(path: Path) -> dict[str, int]:
         if len(parts) != 2:
             continue
         try:
-            values[parts[0]] = int(parts[1])
+            # /proc/self/io uses "read_bytes: N"; cgroup memory.stat uses "key N".
+            values[parts[0].removesuffix(":")] = int(parts[1])
         except ValueError:
             continue
     return values
