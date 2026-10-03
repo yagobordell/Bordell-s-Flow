@@ -267,7 +267,7 @@ def test_completed_legacy_cta_only_bills_new_motion_bot_not_old_media(
         "status": "completed", "sha256": _sha(directory / "avatar_a2v.mp4"),
     })
     _save(directory / "script.json", {"cta": "Read the book to learn."})
-    for key, filename in (("master", "cta.wav"), ("first_half", "first_half.wav")):
+    for filename in ("cta.wav", "first_half.wav"):
         (directory / filename).write_bytes(b"saved speech")
     _save(directory / "tts_state.json", {
         "status": "completed",
