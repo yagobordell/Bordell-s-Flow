@@ -343,17 +343,23 @@ def generate_paired_fast_distilled(
         diffvae_optimization=pipeline.video_decoder.diffvae_optimization,
         device=pipeline.device,
     )
+    # Both image conditionings depend solely on the two input frames. Resolve
+    # them BEFORE acquiring the optional shared 22-GiB GPU transformer: the
+    # VideoEncoder must not compete for VRAM with resident transformer weights.
+    # Same two independent B=1 encodes, strengths and values as before.
+    stage1_images = _batch_conditionings(pipeline, resolved, width // 2, height // 2)
+    stage2_images = _batch_conditionings(pipeline, resolved, width, height)
+
     def run_stages(shared_transformer: Any | None) -> tuple[Any, Any]:
         seeds = (pair[0].seed, pair[1].seed)
         noiser = _IndependentGaussianNoiser(seeds, pipeline.device)
         stage1 = DISTILLED_SIGMAS.to(dtype=torch.float32, device=pipeline.device)
         stage2 = STAGE_2_DISTILLED_SIGMAS.to(dtype=torch.float32, device=pipeline.device)
-        conditionings = _batch_conditionings(pipeline, resolved, width // 2, height // 2)
         first_video, first_audio = _paired_stage(
             pipeline.stage,
             video_context=video_ctx,
             audio_context=audio_ctx,
-            conditionings=conditionings,
+            conditionings=stage1_images,
             noiser=noiser,
             seeds=seeds,
             sigmas=stage1,
@@ -369,12 +375,11 @@ def generate_paired_fast_distilled(
             [pipeline.upsampler(first_video.latent[i : i + 1]) for i in range(2)],
             dim=0,
         )
-        conditionings = _batch_conditionings(pipeline, resolved, width, height)
         second_video, _ = _paired_stage(
             pipeline.stage,
             video_context=video_ctx,
             audio_context=audio_ctx,
-            conditionings=conditionings,
+            conditionings=stage2_images,
             noiser=noiser,
             seeds=seeds,
             sigmas=stage2,
