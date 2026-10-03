@@ -33,6 +33,11 @@ from ai_video_factory.providers.job_queue import (
     QueueJobStatus,
     TransientQueueError,
 )
+from ai_video_factory.video_resolution import (
+    DEFAULT_VIDEO_HEIGHT,
+    DEFAULT_VIDEO_WIDTH,
+    validate_video_size,
+)
 from ai_video_factory.workers.ltx25.jobs import ltx_video_application_job_id
 from ai_video_factory.workers.ltx25.model import (
     LTX_PRODUCTION_I2V_PROFILE,
@@ -95,8 +100,8 @@ def build_video_generation_plan(
     timings: list[ShotTiming],
     *,
     keyframe_base_dir: Path,
-    width: int = 1280,
-    height: int = 720,
+    width: int = DEFAULT_VIDEO_WIDTH,
+    height: int = DEFAULT_VIDEO_HEIGHT,
     fps: int = 24,
     seed_base: int = 42,
     generation_profile: str = LTX_PRODUCTION_I2V_PROFILE,
@@ -104,8 +109,7 @@ def build_video_generation_plan(
     """Build deterministic LTX queue requests for every canonical shot."""
 
     _validate_inputs(keyframes, prompts, timings)
-    if (width, height, fps) != (1280, 720, 24):
-        raise ValueError("Production LTX output must be exactly 1280x720 at 24 fps")
+    validate_video_size(width, height, fps)
     if generation_profile not in LTX_SUPPORTED_I2V_PROFILES:
         raise ValueError("Unsupported I2V generation profile")
 
@@ -134,9 +138,13 @@ def build_video_generation_plan(
                 f"Shot {keyframe.shot_id} keyframe must be native 16:9 or "
                 f"Qwen 1280x736; found {keyframe_width}x{keyframe_height}"
             )
-        if keyframe_width < width or keyframe_height < height:
+        # Existing Qwen / original 720p keyframes remain valid starting frames
+        # for native Full HD LTX inference. LTX enlarges the CONDITIONING image,
+        # not the completed video: output pixels are generated at 1920x1088.
+        # A 720p source cannot guarantee genuine 1080p source-image detail.
+        if keyframe_width < 1280 or keyframe_height < 720:
             raise ValueError(
-                f"Shot {keyframe.shot_id} keyframe is below the 1280x720 LTX input contract: "
+                f"Shot {keyframe.shot_id} keyframe is below minimum 1280x720: "
                 f"found {keyframe_width}x{keyframe_height}"
             )
 
