@@ -26,6 +26,7 @@ from ai_video_factory.workflows.casero_cta_video import (
     CTACompositionError,
     _assert_cta_size,
     _cta_request,
+    compose_reusable_cta,
 )
 
 
@@ -118,3 +119,33 @@ def test_compositor_checks_full_hd_or_explicit_legacy_dimensions(
     with pytest.raises(compositor.B2VideoCompositionError, match="1280x720"):
         compositor._probe_final(Path("dummy.mp4"), 1.0, 24, width=1280, height=720)
     assert "scale=960:1080:" in compositor._fit(960)
+
+
+def test_casero_cta_full_hd_composition_preserves_exact_1080p(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ai_video_factory.workflows.casero_cta_video as cta
+
+    recorded = []
+
+    def fake_encode(command: list[str]) -> None:
+        recorded.append(command)
+        Path(command[-1]).write_bytes(b"full-hd-cta-test-video")
+
+    monkeypatch.setattr(cta, "_ffmpeg", fake_encode)
+    assets = {
+        "half_seconds": 2.0,
+        "duration_seconds": 4.0,
+        "files": {
+            "motion": tmp_path / "motion.mp4",
+            "master": tmp_path / "speech.wav",
+        },
+    }
+    output = compose_reusable_cta(tmp_path, assets)
+    assert output.is_file()
+    filters = recorded[0][recorded[0].index("-filter_complex") + 1]
+    assert filters.count("scale=1920:1080") == 2
+    receipt = json.loads((tmp_path / "completed.json").read_text(encoding="utf-8"))
+    assert (receipt["width"], receipt["height"]) == (1920, 1080)
+    with pytest.raises(CTACompositionError, match="1280x720"):
+        compose_reusable_cta(tmp_path, video_size=(1280, 720))
