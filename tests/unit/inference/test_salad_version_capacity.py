@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -65,8 +66,14 @@ def test_singleton_adds_both_a2v_versions_without_modifying_default_groups(monke
     monkeypatch.setattr(
         salad_capacity, "list_routes",
         lambda _dsn: [
-            route_for_image("ltx25", PREFIX + "a" * 64),
-            route_for_image("ltx25", PREFIX + "b" * 64),
+            replace(
+                route_for_image("ltx25", PREFIX + "a" * 64),
+                routing_contract="v1",
+            ),
+            replace(
+                route_for_image("ltx25", PREFIX + "b" * 64),
+                routing_contract="v1",
+            ),
         ],
     )
     FakeProvisioner.created = []
