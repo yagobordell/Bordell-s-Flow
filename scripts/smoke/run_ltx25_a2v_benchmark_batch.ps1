@@ -98,7 +98,7 @@ try {
             $logPath = Join-Path $OutputDir "$segment.log"
             & $Python $Submit @args 2>&1 | Tee-Object -FilePath $logPath
             if ($LASTEXITCODE -ne 0) { throw "Benchmark failed: $segment; see $logPath" }
-            $metadata = @(Get-ChildItem -LiteralPath $out -Filter 'metadata-*.json')
+            $metadata = @(Get-ChildItem -LiteralPath $out -Filter 'metadata.json')
             $video = @(Get-ChildItem -LiteralPath $out -Filter '*.mp4')
             if ($metadata.Count -ne 1 -or $video.Count -ne 1) {
                 throw "Missing or ambiguous benchmark artifacts for $segment"
@@ -124,8 +124,10 @@ try {
 finally {
     # Always attempt cleanup; never touch the separate ltx25_i2v group.
     try {
-        & $Manager -Action Stop -Service ltx25 -EnvFile $EnvFile -NonInteractive
-        if (-not $?) { throw "A2V Stop failed; manually verify stopped/replicas=0/pending=False" }
+        if ($Started) {
+            & $Manager -Action Stop -Service ltx25 -EnvFile $EnvFile -NonInteractive
+            if (-not $?) { throw "A2V Stop failed; manually verify stopped/replicas=0/pending=False" }
+        }
     }
     finally {
         $Manifest.lifecycle.end_to_end_seconds = $Clock.Elapsed.TotalSeconds
