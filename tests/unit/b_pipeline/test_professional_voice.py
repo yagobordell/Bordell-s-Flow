@@ -180,6 +180,8 @@ def test_plan_validation_retries_only_v3_and_persists_outputs(tmp_path):
     assert (tmp_path / "V1/pass_1/input.json").is_file()
     assert (tmp_path / "V2/pass_1/block_1/output.json").is_file()
     assert (tmp_path / "V3/block_1/input_attempt_2.json").is_file()
+    for stage in ("V1", "V2", "V3"):
+        assert (tmp_path / stage / "merged_output.json").is_file()
     # The second invocation reuses validated V1/V2/V3 files without paid text calls.
     asyncio.run(pv.plan_professional_voice(
         core={"central_question": "Why?", "final_answer": "Because."},
