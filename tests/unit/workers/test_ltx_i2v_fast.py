@@ -63,7 +63,7 @@ def test_fast_profiles_have_immutable_distinct_replay_identities(tmp_path: Path)
     plans = [
         build_video_generation_plan(
             *inputs, keyframe_base_dir=tmp_path, seed_base=4242,
-            generation_profile=p,
+            generation_profile=p, width=1280, height=720,
         )[0]
         for p in (LTX_GENERATION_PROFILE, *LTX_FAST_PROFILES)
     ]
