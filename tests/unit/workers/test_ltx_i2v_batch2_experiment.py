@@ -33,11 +33,11 @@ SCRIPT = ROOT / "scripts" / "smoke" / "run_ltx25_i2v_batch2_trial.ps1"
 CLIENT = ROOT / "scripts" / "smoke" / "submit_ltx25_i2v_batch2_smoke.py"
 
 
-def parameters(seed: int, *, width: int = 1280) -> dict:
+def parameters(seed: int, *, width: int = 1280, height: int = 720) -> dict:
     return {
         "generation_profile": LTX_PRODUCTION_I2V_PROFILE,
         "prompt": "The subject takes one small step.",
-        "seed": seed, "width": width, "height": 720,
+        "seed": seed, "width": width, "height": height,
         "fps": 24, "num_frames": 121,
     }
 
@@ -84,6 +84,62 @@ def test_batch2_validation_rejects_profile_geometry_and_seed_drift() -> None:
     bad["b"] = {**parameters(5244), "generation_profile": "ltx25-not-a-profile"}
     with pytest.raises(ValueError):
         Batch2Parameters.model_validate(bad)
+
+
+def test_full_hd_batch2_requires_explicit_gpu_risk_without_any_hidden_fallback() -> None:
+    full_hd = {
+        "a": parameters(5243, width=1920, height=1080),
+        "b": parameters(5244, width=1920, height=1080),
+    }
+    with pytest.raises(ValueError, match="explicitly accept"):
+        Batch2Parameters.model_validate(full_hd)
+    accepted = Batch2Parameters.model_validate({
+        **full_hd, "accept_full_hd_batch2_oom_risk": True,
+    })
+    assert accepted.a.width == 1920
+    assert accepted.a.height == 1080
+    assert accepted.allow_sequential_fallback is False
+    assert accepted.reuse_transformer_across_stages is False
+    for unsafe in (
+        {"allow_sequential_fallback": True},
+        {"reuse_transformer_across_stages": True},
+    ):
+        with pytest.raises(ValueError, match="forbids"):
+            Batch2Parameters.model_validate({
+                **full_hd, "accept_full_hd_batch2_oom_risk": True, **unsafe,
+            })
+    with pytest.raises(ValueError, match="matching"):
+        Batch2Parameters.model_validate({
+            **full_hd, "b": parameters(5244), "accept_full_hd_batch2_oom_risk": True,
+        })
+
+
+def test_full_hd_batch2_backend_only_admits_true_parallel_with_consent(tmp_path: Path) -> None:
+    backend = object.__new__(DirectLTX25Backend)
+    backend._pair_attempt = Mock(return_value=27)
+    first, second = tmp_path / "a.png", tmp_path / "b.png"
+    first.write_bytes(b"a")
+    second.write_bytes(b"b")
+    job = dict(
+        keyframe_a=first, keyframe_b=second,
+        output_a=tmp_path / "a.mp4", output_b=tmp_path / "b.mp4",
+        parameters_a=LTXVideoParameters.model_validate(
+            parameters(5243, width=1920, height=1080)
+        ),
+        parameters_b=LTXVideoParameters.model_validate(
+            parameters(5244, width=1920, height=1080)
+        ),
+    )
+    with pytest.raises(ValueError, match="explicitly accept"):
+        backend.generate_pair(**job)
+    backend._pair_attempt.assert_not_called()
+    report = backend.generate_pair(**job, accept_full_hd_batch2_oom_risk=True)
+    assert (report["requested_width"], report["requested_height"]) == (1920, 1080)
+    assert report["actual_gpu_batch_size"] == 2
+    assert report["mode"] == "batch2"
+    assert report["full_hd_gpu_validation_pending"] is True
+    backend._pair_attempt.assert_called_once()
+    assert backend._pair_attempt.call_args.kwargs["forward_batch_size"] == 2
 
 
 def test_batch2_outputs_are_one_atomic_primary_plus_two_named_sidecars(tmp_path: Path) -> None:
