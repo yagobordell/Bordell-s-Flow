@@ -157,6 +157,40 @@ def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     assert len(list((first.audio.parent).glob("*.wav"))) == 2
 
 
+
+def test_same_plan_uses_independent_immutable_a2v_and_i2v_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.inference.worker_image_routes import route_for_image
+
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    prefix = "docker.io/yagobordell/ai-video-factory@sha256:"
+    worker_images = {"a2v": prefix + "a" * 64, "i2v": prefix + "b" * 64}
+    _, jobs, first_run = b_video.build_b2_video_plan(
+        tmp_path, plan, audio, images, worker_images=worker_images,
+    )
+    assert [job.request.task for job in jobs] == [
+        route_for_image("ltx25", worker_images["a2v"]).task_name,
+        route_for_image("ltx25_i2v", worker_images["i2v"]).task_name,
+        route_for_image("ltx25", worker_images["a2v"]).task_name,
+    ]
+    assert all("-im" in job.request.job_id for job in jobs)
+    assert jobs[1].image.is_file()  # Actual keyframe Path, not Docker image string.
+    assert all(
+        job.request.parameters["required_worker_image"] == (
+            worker_images[job.kind]
+        ) for job in jobs
+    )
+    _, others, other_run = b_video.build_b2_video_plan(
+        tmp_path, plan, audio, images,
+        worker_images={"a2v": prefix + "c" * 64, "i2v": worker_images["i2v"]},
+    )
+    assert first_run != other_run
+    assert jobs[0].request.job_id != others[0].request.job_id
+    assert jobs[1].request.job_id == others[1].request.job_id
+    assert jobs[1].request.fingerprint() == others[1].request.fingerprint()
+
+
 def test_long_consecutive_avatar_run_fails_before_paid_jobs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
