@@ -7,7 +7,7 @@ Only the singleton Capacity Controller provisions/routes new versions.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 REPOSITORY = "docker.io/yagobordell/ai-video-factory"
@@ -20,6 +20,7 @@ class WorkerImageRoute:
     service: Service
     image: str
     group_name: str
+    routing_contract: str = "unverified"
 
     @property
     def stage(self) -> str:
@@ -65,13 +66,33 @@ def register_route(dsn: str, *, service: Service, image: str) -> WorkerImageRout
             VALUES (%s, %s, %s)
             ON CONFLICT (service, image) DO UPDATE
             SET image = EXCLUDED.image
-            RETURNING group_name
+            RETURNING group_name, routing_contract
             """,
             (route.service, route.image, route.group_name),
         ).fetchone()
     if row is None or row[0] != route.group_name:
         raise RuntimeError("LTX image route registration conflicted with its group identity")
-    return route
+    return replace(route, routing_contract=str(row[1]))
+
+
+def approve_route(dsn: str, *, service: Service, image: str) -> WorkerImageRoute:
+    """Operator attests the Docker digest was built with routing contract v1."""
+    import psycopg
+
+    route = register_route(dsn, service=service, image=image)
+    with psycopg.connect(dsn, connect_timeout=10) as connection:
+        row = connection.execute(
+            """
+            UPDATE gpu.worker_image_routes
+            SET routing_contract = 'v1'
+            WHERE service = %s AND image = %s AND group_name = %s
+            RETURNING routing_contract
+            """,
+            (route.service, route.image, route.group_name),
+        ).fetchone()
+    if row is None or row[0] != "v1":
+        raise RuntimeError("LTX routing compatibility approval was not persisted")
+    return replace(route, routing_contract="v1")
 
 
 def list_routes(dsn: str) -> list[WorkerImageRoute]:
@@ -79,10 +100,13 @@ def list_routes(dsn: str) -> list[WorkerImageRoute]:
 
     with psycopg.connect(dsn, connect_timeout=10) as connection:
         rows = connection.execute(
-            "SELECT service, image, group_name FROM gpu.worker_image_routes "
+            "SELECT service, image, group_name, routing_contract FROM gpu.worker_image_routes "
             "ORDER BY registered_at ASC, service, image"
         ).fetchall()
-    routes = [route_for_image(row[0], row[1]) for row in rows]
+    routes = [
+        replace(route_for_image(row[0], row[1]), routing_contract=str(row[3]))
+        for row in rows
+    ]
     if any(route.group_name != row[2] for route, row in zip(routes, rows, strict=True)):
         raise RuntimeError("Shared LTX route registry contains a forged group name")
     return routes
