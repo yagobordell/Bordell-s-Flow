@@ -44,6 +44,8 @@ $SourceModule = Join-Path $Root 'src\ai_video_factory\workers\ltx25\__init__.py'
 if ($LASTEXITCODE -ne 0) { throw "Wrong Python worktree; run uv sync --locked --extra dev --python 3.12" }
 & $Python $Preflight
 if ($LASTEXITCODE -ne 0) { throw "R2 preflight failed; no GPU allocated" }
+& $Python $Isolation --env-file $EnvFile
+if ($LASTEXITCODE -ne 0) { throw "A2V benchmark isolation preflight failed" }
 
 $RunId = Get-Date -Format 'yyyyMMddHHmmss'
 if (-not $OutputDir) {
@@ -69,7 +71,7 @@ $Started = $false
 try {
     $startArgs = @{
         Action = 'Start'
-        Service = 'ltx25'
+        Service = 'ltx25_a2v_experimental'
         Replicas = 1
         EnvFile = $EnvFile
         AllowBootstrappingInstance = $true
@@ -80,7 +82,7 @@ try {
     $Started = $true
     $Manifest.lifecycle.capacity_seconds = $Clock.Elapsed.TotalSeconds
 
-    & $Python $Ready --env-file $EnvFile --timeout-seconds $BootstrapTimeoutSeconds --poll-seconds 15 --expected-image $ExpectedPinnedImage
+    & $Python $Ready --env-file $EnvFile --timeout-seconds $BootstrapTimeoutSeconds --poll-seconds 15 --expected-image $ExpectedPinnedImage --service ltx25_a2v_experimental
     if ($LASTEXITCODE -ne 0) { throw "Expected pinned A2V image never reached readiness" }
     $Manifest.lifecycle.ready_seconds = $Clock.Elapsed.TotalSeconds
 
@@ -125,7 +127,7 @@ finally {
     # Always attempt cleanup; never touch the separate ltx25_i2v group.
     try {
         if ($Started) {
-            & $Manager -Action Stop -Service ltx25 -EnvFile $EnvFile -NonInteractive
+            & $Manager -Action Stop -Service ltx25_a2v_experimental -EnvFile $EnvFile -NonInteractive
             if (-not $?) { throw "A2V Stop failed; manually verify stopped/replicas=0/pending=False" }
         }
     }
