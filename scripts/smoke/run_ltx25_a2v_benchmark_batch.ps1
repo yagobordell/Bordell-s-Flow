@@ -148,7 +148,7 @@ try {
             if ($details.pipeline_reused -ne ($iteration -gt 1)) {
                 throw "Incorrect cold/warm classification for $segment"
             }
-            if ($details.prompt_cache_hit -ne ($iteration -gt 1)) {
+            if ([bool]$details.prompt_cache_hit -ne [bool]($iteration -gt 1)) {
                 throw "Gemma embedding cache failed to hit on the controlled warm prompt: $segment"
             }
             $Manifest.runs += [ordered]@{
