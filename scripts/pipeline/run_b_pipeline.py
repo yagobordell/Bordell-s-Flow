@@ -911,15 +911,28 @@ def _image_options() -> ImageOptions:
 
 async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, object]:
     professional = plan.get("visual_style") == "profesional"
-    # Preflight required image-upscaler configuration before *paid* GPT image
-    # submissions. A missing service must never produce a partial-cost run.
     needs_x2 = professional and any(
         beat.get("prompt") is not None
         and beat.get("visual_type") in {"media_image", "avatar_media"}
         for block in plan["blocks"] for beat in block["beats"]
     )
+    # GPT originals have their own durable per-job state. Never gate paid
+    # generation on transient Salad startup or R2 connectivity.
+    manifest = await asyncio.to_thread(
+        generate_b2_images,
+        output,
+        plan,
+        api_key=settings.openai_api_key,
+        options=_image_options(),
+    )
+    # Crop saved grids before remote finishing; no new paid API work here.
+    panel_assets = await asyncio.to_thread(crop_grid_assets, output, manifest)
     upscaler = None
     if needs_x2:
+        # Persist a resumable, explicitly unfinished checkpoint while waiting
+        # for Salad. A readiness/config failure leaves all paid originals intact.
+        manifest["finishing_status"] = "pending_upscaler"
+        _write(output / "images" / "manifest.json", manifest)
         required = {
             "IMAGE_UPSCALER_URL": settings.image_upscaler_url,
             "SALAD_API_KEY": settings.salad_api_key,
@@ -931,11 +944,11 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
         missing = [name for name, value in required.items() if not value]
         if missing:
             raise ImageGenerationError(
-                "Professional image x2 requires configured OptiumLabs Salad/R2: "
-                + ", ".join(missing)
+                "GPT originals are saved. Professional image x2 is pending "
+                "OptiumLabs Salad/R2 configuration: " + ", ".join(missing)
+                + ". Re-run --images-only to finish without paying for the originals again."
             )
-        # Start only after validated B2 planning and before any paid GPT images.
-        # The existing independent group is reused if another run has it ready.
+        # Start or reuse Salad only AFTER original GPT images are safely saved.
         await asyncio.to_thread(
             ensure_image_upscaler_ready,
             api_key=settings.salad_api_key,
@@ -952,15 +965,6 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
             r2_secret_access_key=settings.r2_secret_access_key,
             temp_dir=Path(settings.temp_dir) / "professional-image-finishing",
         )
-    manifest = await asyncio.to_thread(
-        generate_b2_images,
-        output,
-        plan,
-        api_key=settings.openai_api_key,
-        options=_image_options(),
-    )
-    # Crop only saved grid PNGs; this step cannot make a new paid API call.
-    panel_assets = await asyncio.to_thread(crop_grid_assets, output, manifest)
     final_assets = (
         await asyncio.to_thread(
             finish_professional_images, output, plan, manifest,
@@ -1431,6 +1435,27 @@ async def _preflight_saved_run_audio(
     return True
 
 
+def _resume_unfinished_images(output: Path, plan: dict[str, object]) -> bool:
+    """Preserve paid GPT originals when image generation/finishing is unfinished."""
+    manifest_path = output / "images" / "manifest.json"
+    if manifest_path.is_symlink() or manifest_path.parent.is_symlink():
+        raise ImageGenerationError("Refusing linked saved image manifest")
+    if not manifest_path.is_file():
+        return False
+    try:
+        saved = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ImageGenerationError("Saved image manifest is unreadable; reconcile it") from exc
+    if not isinstance(saved, dict) or saved.get("schema_version") != "openai-b2-images-v1":
+        raise ImageGenerationError("Saved image manifest has an unexpected schema")
+    if saved.get("status") != "completed":
+        return True
+    return (
+        plan.get("visual_style") == "profesional"
+        and saved.get("finishing_status") != "completed"
+    )
+
+
 async def _run_images_only(
     script_file: Path, output_root: Path, *, no_video: bool = False,
     results_root: Path = Path("data/results"),
@@ -1485,9 +1510,15 @@ async def _run_images_only(
     _refresh_audio_costs(report, output)
     _write(report_path, report)
     try:
-        removed_images = await asyncio.to_thread(clear_b2_images_for_rerun, output)
-        if removed_images:
-            print(f"Removed {removed_images} previous B2 image(s).", flush=True)
+        if _resume_unfinished_images(output, plan):
+            print(
+                "  Resuming unfinished images: keeping previously paid GPT originals.",
+                flush=True,
+            )
+        else:
+            removed_images = await asyncio.to_thread(clear_b2_images_for_rerun, output)
+            if removed_images:
+                print(f"Removed {removed_images} previous B2 image(s).", flush=True)
         manifest = await _generate_images(output, plan)
     except Exception:
         report["run"]["image_generation"] = {"status": "incomplete"}
