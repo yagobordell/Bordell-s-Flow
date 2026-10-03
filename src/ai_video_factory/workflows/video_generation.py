@@ -115,6 +115,13 @@ def build_video_generation_plan(
         raise ValueError("Unsupported I2V generation profile")
     if generation_profile in LTX_FAST_LOWRES_PROFILES and (width, height) != (1280, 720):
         raise ValueError("Experimental fast 576p profiles require public 1280x720 delivery")
+    if generation_profile != LTX_PRODUCTION_I2V_PROFILE and (width, height) != (
+        1280, 720,
+    ):
+        raise ValueError(
+            "Only the unchanged production FP8 I2V recipe is admitted for "
+            "experimental Full HD; legacy/benchmark profiles require explicit 720p"
+        )
 
     base_dir = keyframe_base_dir.resolve()
     plan: list[VideoGenerationPlanItem] = []
