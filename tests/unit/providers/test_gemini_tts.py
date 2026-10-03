@@ -348,7 +348,7 @@ def test_custom_voice_in_professional_v3_preserves_individual_part_styles() -> N
 
 def test_studio_pcm16_is_converted_to_valid_canonical_wav(monkeypatch) -> None:
     # The Studio export may return audio/L16 instead of an AUDIO_WAV container.
-    raw_pcm = b"\\x00\\x00\\x20\\x00" * 1200
+    raw_pcm = b"\x00\x00\x20\x00" * 1200
     sent = []
 
     def fake_post(**kwargs):
@@ -373,17 +373,17 @@ def test_studio_pcm16_is_converted_to_valid_canonical_wav(monkeypatch) -> None:
 )
 def test_studio_pcm_wrong_format_is_rejected(mime) -> None:
     with pytest.raises(gemini.GeminiTtsError, match="unsupported PCM"):
-        gemini._decode_audio(answer(b"\\x00\\x00" * 120, mime))
+        gemini._decode_audio(answer(b"\x00\x00" * 120, mime))
 
 
 def test_studio_pcm_with_odd_sample_bytes_is_rejected() -> None:
     with pytest.raises(gemini.GeminiTtsError, match="incomplete PCM16"):
-        gemini._decode_audio(answer(b"\\x00\\x00\\x01", "audio/L16;rate=24000"))
+        gemini._decode_audio(answer(b"\x00\x00\x01", "audio/L16;rate=24000"))
 
 
 @pytest.mark.parametrize(
     "name",
-    ["Uncle Enzo 3\\n", " Uncle Enzo 3", "Uncle  Enzo 3", "Uncle/Enzo", "3;", "x"],
+    ["Uncle Enzo 3\n", " Uncle Enzo 3", "Uncle  Enzo 3", "Uncle/Enzo", "3;", "x"],
 )
 def test_invalid_custom_voice_never_posts(name, monkeypatch) -> None:
     monkeypatch.setattr(
