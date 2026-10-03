@@ -23,6 +23,7 @@ from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.workers.ltx25 import (
     LTX_A2V_DEFAULT_PROMPT,
+    LTX_A2V_EXPERIMENTAL_TASK,
     LTX_A2V_DEV_GENERATION_PROFILE,
     LTX_A2V_GENERATION_PROFILE,
     LTX_A2V_GUIDED_GENERATION_PROFILE,
@@ -322,7 +323,11 @@ def main() -> None:
 
     request = InferenceJobRequest(
         job_id=job_id,
-        task=LTX_A2V_TASK,
+        task=(
+            LTX_A2V_EXPERIMENTAL_TASK
+            if profile in a2v.LTX_A2V_EXPERIMENTS
+            else LTX_A2V_TASK
+        ),
         inputs=[
             ObjectInput(name="image", key=image_key, sha256=image_sha, content_type=image_type),
             ObjectInput(name="audio", key=audio_key, sha256=audio_sha, content_type=audio_type),
