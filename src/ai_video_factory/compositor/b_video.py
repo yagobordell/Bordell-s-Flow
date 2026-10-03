@@ -199,7 +199,7 @@ def render_b2_ltx_video(
                 frame = stills / f"{index:04d}_{beat['beat_id']}.png"
                 if frame.is_symlink():
                     raise B2VideoCompositionError("Refusing linked B2 still frame")
-                _beat_frame(avatar, source, kind, frame)
+                _beat_frame(avatar, source, kind, frame, size=(width, height))
                 command = [
                     "-loop", "1", "-framerate", str(_FPS), "-i", str(frame),
                     "-vf", _motion_filter(
