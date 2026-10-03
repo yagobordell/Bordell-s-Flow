@@ -8,16 +8,17 @@ from types import SimpleNamespace
 import pytest
 
 from ai_video_factory.inference.contracts import (
-    InferenceJobRequest, ObjectOutput,
+    InferenceJobRequest,
+    ObjectOutput,
 )
 from ai_video_factory.inference.errors import UnsupportedTaskError
 from ai_video_factory.inference.repository import InMemoryJobRepository
 from ai_video_factory.inference.salad import SaladRequestError
-from ai_video_factory.inference.worker import InferenceWorker
 from ai_video_factory.inference.salad_version_provision import (
-    WorkerVersionProvisionError,
     WorkerVersionProvisioner,
+    WorkerVersionProvisionError,
 )
+from ai_video_factory.inference.worker import InferenceWorker
 from ai_video_factory.inference.worker_image_routes import (
     route_for_image,
 )
