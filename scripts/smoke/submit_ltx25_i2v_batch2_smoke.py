@@ -210,7 +210,9 @@ def main() -> None:
         if not digest or sha256_file(path) != digest:
             raise RuntimeError(f"Batch2 R2 digest mismatch for {name}")
     report = json.loads((a.output_dir / "batch2-report.json").read_text(encoding="utf-8"))
-    if report["mode"] not in ("batch2", "sequential_oom_fallback"):
+    if report["mode"] not in (
+        "batch2", "stage_shared_sequential_forward", "reference_sequential_oom_fallback"
+    ):
         raise RuntimeError("Unknown execution mode; cannot claim batch2 succeeded")
     if not a.allow_sequential_fallback and report["mode"] != "batch2":
         raise RuntimeError("No-fallback experiment silently used sequential generation")
