@@ -1,7 +1,7 @@
 """Fail-closed Postgres gate for controlled A2V Salad experiments.
 
-Both A2V services claim the same task, so an unexpected pending/retryable or
-leased job can run on the experimental GPU. This gate is deliberately read-only
+Only jobs explicitly addressed to the experimental A2V task can run on its
+GPU. This gate is deliberately read-only
 and NEVER cancels an unrelated job. Use --terminal-failure-dir only after a
 single submitted smoke job exits unsuccessfully; all A2V jobs must be terminal.
 """
@@ -19,7 +19,7 @@ import psycopg
 from dotenv import load_dotenv
 
 _ROOT = Path(__file__).resolve().parents[2]
-_A2V_TASK = "video.ltx25.audio_to_video"
+_A2V_TASK = "video.ltx25.audio_to_video_experimental"
 _ACTIVE_STATUSES = frozenset({"pending", "retryable_failed", "running"})
 
 
@@ -64,8 +64,8 @@ def main() -> int:
     try:
         with psycopg.connect(dsn, connect_timeout=10) as connection:
             with connection.cursor() as cursor:
-                # Never LIMIT a mixed terminal/active query: 200 recent
-                # failures must not mask a runnable older production job.
+                # Never LIMIT a mixed terminal/active query: many failures
+                # must not mask any runnable experimental job.
                 cursor.execute(
                     """
                     SELECT job_id, status, lease_expires_at
