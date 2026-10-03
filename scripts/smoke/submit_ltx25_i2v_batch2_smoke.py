@@ -164,7 +164,7 @@ def main() -> None:
             "a": {**plan, "prompt": a.prompt_a, "seed": a.seed_a},
             "b": {**plan, "prompt": a.prompt_b, "seed": a.seed_b},
             "allow_sequential_fallback": a.allow_sequential_fallback,
-        "reuse_transformer_across_stages": not a.disable_stage_reuse,
+            "reuse_transformer_across_stages": not a.disable_stage_reuse,
         },
     )
     (a.output_dir / "job-request.json").write_text(
