@@ -73,6 +73,55 @@ def _choose(candidates: list[str], kind: str) -> str:
     return candidates[int(selected) - 1]
 
 
+def _managed_avatar_names(data: Path) -> list[str]:
+    """Ignore registered ebook cover PNGs when presenting managed avatar choices."""
+    covers: set[str] = set()
+    for folder in data.iterdir():
+        if not folder.is_dir() or folder.is_symlink() or folder.is_junction():
+            continue
+        record = folder / "meta" / "ebook_covers.json"
+        if record.is_symlink() or not record.is_file():
+            continue
+        try:
+            import json
+
+            payload = json.loads(record.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # The cover reader will validate its persisted record when needed.
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for item in payload.get("covers", []):
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                covers.add(item["name"].casefold())
+
+    avatars = available_avatars(data)
+    return sorted({
+        avatar.stem for avatar in avatars
+        if not (
+            avatar.parent == data and avatar.stem.casefold() in covers
+        )
+    }, key=str.casefold)
+
+
+def _script_avatar_candidates(
+    data: Path, script: str, *, resume: bool, avatar_names: list[str],
+) -> list[str]:
+    """A script inside one avatar folder already declares its owner."""
+    matches: list[str] = []
+    for avatar in avatar_names:
+        folder = data / avatar
+        if folder.is_symlink() or folder.is_junction():
+            continue
+        source = (
+            folder / script / (script + ".txt")
+            if resume else folder / (script + ".txt")
+        )
+        if source.is_file() and not source.is_symlink():
+            matches.append(avatar)
+    return matches
+
+
 def _flags(argv: Sequence[str]) -> tuple[str | None, str | None, Path, list[str]]:
     args = list(argv)
     data = Path("data")
@@ -225,8 +274,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if any(flag in flags for flag in ("--output", "--avatars-dir", "--scripts-dir", "--script")):
         raise SystemExit("Managed layout controls paths. Use --data-root or --legacy-layout.")
     data.mkdir(parents=True, exist_ok=True)
-    available_avatars_found = available_avatars(data)
-    avatar_names = sorted({item.stem for item in available_avatars_found}, key=str.casefold)
+    avatar_names = _managed_avatar_names(data)
     if "--list-avatars" in flags:
         print("\n".join(avatar_names) if avatar_names else "No PNG avatars found in data/")
         return 0
@@ -256,10 +304,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             sys.executable, str(CORE), "--qr-only",
             "--avatars-dir", str(data), "--avatar", qr_avatar, *flags,
         ])
-    avatar = _name(avatar_arg, ".png") if avatar_arg else _choose(avatar_names, "avatars")
+    resume = _is_resume(flags)
+    if avatar_arg:
+        avatar = _name(avatar_arg, ".png")
+    elif script_arg:
+        # Resuming a managed script must not ask about unrelated data/*.png
+        # (for example, a book cover used by its casero CTA).
+        script_name = _name(script_arg, ".txt")
+        matches = _script_avatar_candidates(
+            data, script_name, resume=resume, avatar_names=avatar_names,
+        )
+        if resume and not matches:
+            raise SystemExit(
+                f"No started script folder for {script_name}. "
+                "Check the script name or provide its avatar explicitly."
+            )
+        avatar = _choose(matches or avatar_names, "avatars")
+    else:
+        avatar = _choose(avatar_names, "avatars")
     if avatar not in avatar_names:
         raise SystemExit(f"No PNG avatar found for {avatar}")
-    resume = _is_resume(flags)
     if "--list-scripts" in flags:
         print("\n".join(_script_options(data, avatar, resume)) or "No pending .txt scripts")
         return 0
