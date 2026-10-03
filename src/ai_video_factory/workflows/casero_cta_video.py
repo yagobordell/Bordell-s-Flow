@@ -17,6 +17,7 @@ from ai_video_factory.compositor.static_preview import (
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
 from ai_video_factory.inference.gpu_failures import DEFAULT_GPU_MAX_ATTEMPTS
 from ai_video_factory.inference.storage import sha256_file
+from ai_video_factory.inference.worker_image_routes import route_for_image
 from ai_video_factory.providers.inference_jobs import (
     InferenceJobExecutor,
     cached_inference_response,
@@ -107,7 +108,11 @@ def _cta_request(
     if worker_image:
         job_id += "-im" + worker_image.rsplit(":", 1)[-1][:12]
     return InferenceJobRequest(
-        job_id=job_id, task=LTX_A2V_TASK, max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
+        job_id=job_id,
+        task=(
+            route_for_image("ltx25", worker_image).task_name
+            if worker_image else LTX_A2V_TASK
+        ), max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
         inputs=[
             ObjectInput(name="image", key=f"cta/inputs/images/{image_sha}.png",
                         sha256=image_sha, content_type="image/png"),
