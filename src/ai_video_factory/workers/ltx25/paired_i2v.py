@@ -41,43 +41,37 @@ logger = logging.getLogger(__name__)
 
 
 def _encode_pair_prompts(pipeline: Any, pair: tuple[PairInput, PairInput]) -> tuple[Any, Any]:
-    """Load Gemma/embedding processor ONCE, but run each sample in B=1.
+    """Return to the successful visually reviewed B=2 prompt memory lifetime.
 
-    This preserves the reference prompt tokenizer's one-prompt padding, its
-    original Gemma forward size and the connector's per-sample arithmetic.
-    The checkpoints, ops, dtype, device and output tensors are unchanged.
-    Only module residency/build count changes. Never mix unrelated prompts.
+    Each prompt uses the *exact* upstream PromptEncoder.__call__, including
+    Gemma disposal and allocator trimming BEFORE the next prompt starts.
+    The new shared-Gemma fast path failed at weight transfer on both internal
+    attempts in Salad; avoid keeping its GPU weights/outputs live across clips.
     """
-    from ltx_pipelines.utils.gpu_model import gpu_model
-
-    encoder = pipeline.prompt_encoder
-    started = time.perf_counter()
-    logger.info("LTX25_I2V_PAIR_PROMPT_SHARED_START count=2")
-    with encoder._text_encoder_ctx() as gemma:
-        raw = []
-        for sample in pair:
-            (encoded,) = gemma.encode([sample.prompt])
-            raw.append(encoded)
-    gemma_seconds = time.perf_counter() - started
-    with gpu_model(
-        encoder._build_embeddings_processor(),
-        alloc_trim_strategy=encoder._alloc_trim_strategy,
-    ) as processor:
-        contexts = tuple(
-            processor.process_hidden_states(hidden_states, mask)
-            for hidden_states, mask in raw
+    results = []
+    for index, sample in enumerate(pair):
+        started = time.perf_counter()
+        logger.info(
+            "LTX25_I2V_PAIR_PROMPT_BASELINE_START index=%d memory=%s",
+            index, json.dumps(_memory_pressure(), sort_keys=True),
         )
-    logger.info(
-        "LTX25_I2V_PAIR_PROMPT_SHARED_METRICS %s",
-        json.dumps({
-            "gemma_build_and_two_independent_encodes_seconds": gemma_seconds,
-            "embeddings_and_total_seconds": time.perf_counter() - started,
-            "gemma_builds": 1,
-            "embeddings_processor_builds": 1,
-            "batch_size_per_prompt": 1,
-        }, sort_keys=True),
-    )
-    return contexts
+        (context,) = pipeline.prompt_encoder(
+            [sample.prompt],
+            enhance_first_prompt=False,
+            enhance_static_cache=False,
+            enhance_prompt_image=sample.image[0],
+        )
+        results.append(context)
+        logger.info(
+            "LTX25_I2V_PAIR_PROMPT_BASELINE_METRICS %s",
+            json.dumps({
+                "index": index,
+                "separate_text_encoder_build": True,
+                "elapsed_seconds": time.perf_counter() - started,
+                "memory": _memory_pressure(),
+            }, sort_keys=True),
+        )
+    return results[0], results[1]
 
 
 @dataclass(frozen=True)
@@ -308,8 +302,8 @@ def generate_paired_fast_distilled(
     require_num_frames_source(num_frames, pipeline.duration_predictor)
     # Preserve per-video Gemma tokenization/padding by encoding ONE prompt at a
     # time. Attempting combined text encoding could change text-conditioning.
-    # The validated recipe does not enhance prompts. Keep one-prompt forwards
-    # exactly as before, but avoid building Gemma and connectors twice.
+    # Explicitly restore upstream per-prompt Gemma and connector disposal.
+    # The unverified shared-Gemma attempt OOMed while transferring weights.
     contexts = _encode_pair_prompts(pipeline, pair)
     prepared = [
         (
