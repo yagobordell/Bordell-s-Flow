@@ -147,11 +147,11 @@ class LTXAudioToVideoParameters(BaseModel):
 
     @model_validator(mode="after")
     def validate_shape(self) -> LTXAudioToVideoParameters:
-        if (self.width, self.height) != (1280, 720):
+        if (self.width, self.height) not in ((1280, 720), (1920, 1080)):
             if self.width % 64 != 0 or self.height % 64 != 0:
                 raise ValueError(
-                    "LTX-2.5 two-stage dimensions must be divisible by 64, except the "
-                    "canonical 1280x720 profile which uses deterministic internal grid padding"
+                    "LTX-2.5 two-stage dimensions must be divisible by 64, except "
+                    "1280x720 and experimental 1920x1080, which use internal grid padding"
                 )
         return self
 
