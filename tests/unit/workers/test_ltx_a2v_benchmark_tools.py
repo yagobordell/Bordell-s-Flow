@@ -96,6 +96,7 @@ def _write_fake_benchmark(
                         "height": 720,
                         "generation_profile": _PROFILES[profile],
                         "pipeline_reused": iteration > 1,
+                        "prompt_cache_hit": iteration > 1,
                         "total_elapsed_seconds": 100 - (iteration * 5),
                         "stage1_diffusion_seconds": 50,
                         "stage2_diffusion_seconds": 12,
@@ -165,3 +166,47 @@ def test_comparison_rejects_incomplete_or_replayed_benchmark(
     manifest.write_text(json.dumps(document), encoding="utf-8")
     with pytest.raises(ValueError, match="labeling"):
         analyze_manifest(manifest, hash_media=False)
+
+
+def test_partial_comparison_cannot_pass_without_explicit_opt_in(tmp_path: Path) -> None:
+    manifest = _write_fake_benchmark(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    document["runs"] = [row for row in document["runs"] if row["iteration"] == 1]
+    document["skipped_profiles"] = list(document["profiles"])
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ValueError, match="--allow-partial"):
+        analyze_manifest(manifest, hash_media=False)
+    report = analyze_manifest(manifest, hash_media=False, allow_partial=True)
+    assert report["complete"] is False
+    assert report["promotion_status"] == "UNVALIDATED"
+    assert report["profiles"]["reference-bench-cpu"]["warm_median_seconds"] is None
+    assert report["profiles"]["reference-fp8none"]["warm_samples"] == 0
+
+
+def test_hashes_compare_to_correct_control_regardless_of_execution_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Run FP8 NONE before its control. Static must never use reference
+    # guidance as its video-parity baseline.
+    import scripts.smoke.compare_ltx_a2v_benchmarks as comparator
+
+    manifest = _write_fake_benchmark(
+        tmp_path,
+        profiles=("reference-fp8none", "reference-bench-cpu"),
+    )
+    def decoded(path: Path, *, audio: bool) -> str:
+        if audio:
+            return "matching-original-audio"
+        return (
+            "reference-video"
+            if path.parent.name.startswith("reference-bench-cpu")
+            else "none-video"
+        )
+
+    monkeypatch.setattr(comparator, "_decoded_stream_sha", decoded)
+    report = comparator.analyze_manifest(manifest, hash_media=True)
+    row = report["decoded_media"][0]
+    assert row["profile"] == "reference-fp8none"
+    assert row["comparison_control"] == "reference-bench-cpu"
+    assert row["matches_cpu_decoded_video"] is False
+    assert row["matches_cpu_decoded_audio"] is True
