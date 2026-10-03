@@ -65,6 +65,34 @@ combined experimental PR still contains prior A2V changes and has diverged
 from the concurrently optimized A2V base; it must NOT be merged wholesale.
 Reconcile/split I2V-only work after the A2V work is complete.
 
+## Full-HD VRAM mitigation — NOT YET GPU VALIDATED
+
+The 1080p paid B=2 trial OOMed **inside the second transformer stage**
+after Gemma, first-stage B=2 diffusion and independent upsampling
+succeeded. The latest I2V-only follow-up therefore runs full-HD B=2
+with LTX's upstream FP8_CAST-compatible DISK block-streaming stage
+(`DISK_CPU_SLOTS=2` for bounded pinned host RAM). Full GPU
+weight residency remains the DEFAULT for the successful 720p test.
+
+For full HD, obsolete stage1 conditioning, independent prompt-output
+contexts and original stage1 video latent are explicitly released
+before full-size stage2 construction. The required original stage1
+audio latent and independent upscaled video latents stay intact.
+The code trims only dead CUDA allocator cache and emits
+`LTX25_I2V_PAIR_MEMORY_POLICY`,
+`LTX25_I2V_PAIR_GPU_CHECKPOINT` (including before, after and failed
+stage2 B=2 forwards) and the existing error snapshot. No denoising
+equation, model dtype, seed, FPS, frame count, video resolution, or
+GPU forward batch size is reduced. Disk streaming may greatly
+increase read I/O and generation wall time.
+
+The mitigation is a source-level candidate, **not** a proven 32-GiB
+VRAM fit. Before another paid test, require free smoke preflight
+and targeted I2V CI on the NEW immutable Docker digest. Do not
+repeat the failed image, activate shared-stage transformer reuse
+or enable sequential fallback. Keep A2V optimization and files
+in their independent work branch.
+
 ## Quality-preserving latency changes (experimental, NOT approved without GPU trial)
 
 **Important October 3 OOM postmortem:** the NEW shared-Gemma implementation
