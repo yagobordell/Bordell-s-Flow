@@ -47,6 +47,7 @@ class AutoscalerServiceBinding:
     autoscaler_env_prefix: str
     fallback_runtime_seconds: float
     max_replicas: int
+    required_worker_image: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -195,10 +196,11 @@ class PostgresAutoscalerStore:
                     started_at
                 FROM gpu.jobs
                 WHERE task = ANY(%s)
+                  AND request #>> '{parameters,required_worker_image}' IS NOT DISTINCT FROM %s
                   AND status = ANY(%s)
                 ORDER BY created_at ASC, job_id ASC
                 """,
-                (list(binding.task_names), list(statuses)),
+                (list(binding.task_names), binding.required_worker_image, list(statuses)),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -214,6 +216,7 @@ class PostgresAutoscalerStore:
                 SELECT EXTRACT(EPOCH FROM (finished_at - started_at)) AS runtime_seconds
                 FROM gpu.jobs
                 WHERE task = ANY(%s)
+                  AND request #>> '{parameters,required_worker_image}' IS NOT DISTINCT FROM %s
                   AND status = 'succeeded'
                   AND started_at IS NOT NULL
                   AND finished_at IS NOT NULL
@@ -221,7 +224,7 @@ class PostgresAutoscalerStore:
                 ORDER BY finished_at DESC
                 LIMIT %s
                 """,
-                (list(binding.task_names), limit),
+                (list(binding.task_names), binding.required_worker_image, limit),
             ).fetchall()
         return [float(row["runtime_seconds"]) for row in rows]
 
