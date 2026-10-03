@@ -113,8 +113,8 @@ class LTXAudioToVideoParameters(BaseModel):
     generation_profile: str = LTX_A2V_GENERATION_PROFILE
     prompt: str = Field(default=LTX_A2V_DEFAULT_PROMPT, min_length=1, max_length=8000)
     seed: int = Field(default=42, ge=0, le=2**63 - 1)
-    width: int = Field(default=1280, gt=0, le=8192)
-    height: int = Field(default=720, gt=0, le=8192)
+    width: int = Field(default=1920, gt=0, le=8192)
+    height: int = Field(default=1080, gt=0, le=8192)
     fps: int = Field(default=24, gt=0, le=120)
 
     @field_validator("generation_profile")
