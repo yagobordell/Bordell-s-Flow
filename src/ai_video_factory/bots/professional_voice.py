@@ -528,10 +528,15 @@ async def generate_professional_audio(
                     f"Gemini block {bid} may have incurred charges; reconcile {state_path}"
                 )
             if state["status"] == "planned":
-                reused_digest = _reuse_verified_block(
-                    output=output, current_run=run_dir, block_id=bid,
-                    fingerprint=_fingerprint(turns), model=DEFAULT_GEMINI_TTS_MODEL,
-                    voice_id=voice_id, folder=folder,
+                # Explicit --regenerate-audio uses a new nonce and must generate
+                # fresh audio; normal B2 correction may reuse identical speech.
+                reused_digest = (
+                    _reuse_verified_block(
+                        output=output, current_run=run_dir, block_id=bid,
+                        fingerprint=_fingerprint(turns), model=DEFAULT_GEMINI_TTS_MODEL,
+                        voice_id=voice_id, folder=folder,
+                    )
+                    if not generation_nonce else None
                 )
                 if reused_digest is not None:
                     state["status"] = "tts_completed"
