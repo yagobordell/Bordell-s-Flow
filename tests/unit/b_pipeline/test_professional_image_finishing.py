@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import io
-import json
 
 import pytest
 from PIL import Image, ImageDraw
 
+from ai_video_factory.compositor.static_preview import _verified_asset
 from ai_video_factory.providers import openai_batch_images as gpt
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.image_grids import plan_image_jobs
@@ -16,10 +16,7 @@ from ai_video_factory.providers.professional_image_finishing import (
     ProfessionalImageFinishingError,
     finish_professional_images,
 )
-from ai_video_factory.compositor.static_preview import _verified_asset
-
-
-def png(size: tuple[int, int]) -> bytes:
+\n\ndef png(size: tuple[int, int]) -> bytes:
     out = io.BytesIO()
     Image.new("RGB", size, (80, 110, 145)).save(out, "PNG")
     return out.getvalue()
