@@ -69,3 +69,46 @@ uv run --locked --extra dev python scripts/smoke/run_image_upscaler_smoke.py --c
 The real validated cases are `640x360 -> 1920x1080` and
 `1280x720 -> 3840x2160`. Both exercise the full R2 signed-URL flow through
 `POST /v1/execute`.
+
+## Professional B2 image finishing (new opt-in by visual style)
+
+Professional B2 `media_image` and `avatar_media` beats keep their original
+GPT Image generation size, quality, prompt and original paid PNG. **Only after**
+individual generation or verified grid-panel cropping, the OptiumLabs Salad
+image service runs **exact 2x** on each such beat:
+`1280x720 -> 2560x1440` and `768x864 -> 1536x1728` respectively.
+The service is mandatory for professional photo beats: missing
+`IMAGE_UPSCALER_URL`, `SALAD_API_KEY`, or existing R2 credentials makes the
+new run fail **before any paid GPT image work**. This never affects Casero.
+
+Images destined for professional I2V or newly generated speaking A2V source
+frames (`media_video` and generated `avatar`) are **native GPT Image**
+`1920x1088`, medium quality. Both values are divisible by 16. The final image
+is deterministically center-cropped, not resized, by four rows on each side
+to **1920x1080**. The supplied, reused avatar PNG is not a newly generated
+frame and remains the user's original. A2V and I2V **video inference and
+final montage remain 1280x720**; only their source images have changed.
+
+A professional grid (including a mixed image/video grid) keeps the current
+controlled canvas and medium-quality GPT generation. After cropping, photo
+panels are upscaled x2 through OptiumLabs. Each video panel is additionally
+rendered as a **separate paid native 1920x1088 GPT edit**, with its verified
+grid crop as the first strict composition/continuity reference. If that panel
+references an avatar, the original verified avatar is included as a second
+reference. The native output is center-cropped to 1920x1080. This avoids
+pretending that a 720p grid panel merely resized to 1080p is natively detailed,
+and avoids giant 5760x3240 grids. The video requirement governs the final
+video-panel dimensions. Paid edit costs are included once in B2 image billing.
+
+Original GPT PNGs, original full grids and derived crops remain immutable.
+Finishing uses per-beat JSON state, SHA-256 input/output verification and
+distinct derived paths under `images/professional_finished/`; uncertain
+remote outcomes are never resubmitted blindly. LTX and the preview consume
+**only** the verified finished assets for professional runs. No video
+Real-ESRGAN/upscaler is used.
+
+To validate a deployed OptiumLabs service, use the real `small` and `real`
+smokes above. Separately, perform a controlled new **professional B2**
+end-to-end run and visually inspect mixed-grid continuity and the two
+high-resolution video references before releasing to production. Offline CI
+cannot prove visual fidelity or service availability.

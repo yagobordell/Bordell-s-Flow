@@ -23,10 +23,14 @@ _MAX_PNG_BYTES = 40 * 1024 * 1024
 _DEFAULT_SIZE = "1280x720"
 _AVATAR_MEDIA_SIZE = "768x864"
 _GRID_SIZES = {"2560x1440", "3840x1440", "3840x2160"}
+# 1920x1080 is not divisible by 16. Request native 1920x1088 from
+# GPT Image and deterministically center-crop only the eight extra rows.
+_PRO_VIDEO_SIZE = "1920x1088"
 _AVATAR_MEDIA_GRID_SIZES = {"1536x1728", "2304x1728", "2304x2592"}
 _SUPPORTED_SIZES = {
     _DEFAULT_SIZE,
     _AVATAR_MEDIA_SIZE,
+    _PRO_VIDEO_SIZE,
     *_GRID_SIZES,
     *_AVATAR_MEDIA_GRID_SIZES,
 }

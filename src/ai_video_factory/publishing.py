@@ -93,6 +93,22 @@ def _collect(
     images = _json(work, "images/manifest.json")
     if images.get("status") != "completed":
         raise PublicationError("Publication requires verified completed image generation")
+    final_assets = (
+        images.get("final_assets", [])
+        if plan.get("visual_style") == "profesional" else []
+    )
+    if plan.get("visual_style") == "profesional":
+        if images.get("finishing_status") != "completed":
+            raise PublicationError("Publication requires finished professional image sources")
+        expected = {
+            (block["block_id"], beat["beat_id"])
+            for block in plan["blocks"] for beat in block["beats"]
+            if beat.get("prompt") is not None
+        }
+        if (not isinstance(final_assets, list)
+            or len(final_assets) != len(expected)
+            or {(entry["block_id"], entry["beat_id"]) for entry in final_assets} != expected):
+            raise PublicationError("Finished professional image assets differ from B2")
     avatar = plan.get("avatar")
     if not isinstance(avatar, dict):
         raise PublicationError("The visual plan has no saved avatar")
@@ -169,7 +185,7 @@ def _collect(
         add("Media/imagenes/qr.png", qr.get("file"), qr.get("sha256"))
 
     image_assets: dict[str, str] = {}
-    for item in [*images.get("items", []), *images.get("panel_assets", [])]:
+    for item in [*images.get("items", []), *images.get("panel_assets", []), *final_assets]:
         if not isinstance(item, dict):
             raise PublicationError("Invalid image manifest item")
         name, sha = item.get("file"), item.get("sha256")

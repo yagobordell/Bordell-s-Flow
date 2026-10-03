@@ -81,8 +81,10 @@ from ai_video_factory.providers.openai_batch_images import (
     generate_b2_images,
 )
 from ai_video_factory.providers.openai_stt import OpenAISttClient
+from ai_video_factory.providers.optium_image_upscaler import create_optium_image_upscaler
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.professional_avatar_voice import ensure_professional_avatar_voice
+from ai_video_factory.providers.professional_image_finishing import finish_professional_images
 from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.publishing import publish_completed_run
 from ai_video_factory.workflows.b_video import (
@@ -907,6 +909,40 @@ def _image_options() -> ImageOptions:
 
 
 async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, object]:
+    professional = plan.get("visual_style") == "profesional"
+    # Preflight required image-upscaler configuration before *paid* GPT image
+    # submissions. A missing service must never produce a partial-cost run.
+    needs_x2 = professional and any(
+        beat.get("prompt") is not None
+        and beat.get("visual_type") in {"media_image", "avatar_media"}
+        for block in plan["blocks"] for beat in block["beats"]
+    )
+    upscaler = None
+    if needs_x2:
+        required = {
+            "IMAGE_UPSCALER_URL": settings.image_upscaler_url,
+            "SALAD_API_KEY": settings.salad_api_key,
+            "R2_ENDPOINT_URL": settings.r2_endpoint_url,
+            "R2_BUCKET": settings.r2_bucket,
+            "R2_ACCESS_KEY_ID": settings.r2_access_key_id,
+            "R2_SECRET_ACCESS_KEY": settings.r2_secret_access_key,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise ImageGenerationError(
+                "Professional image x2 requires configured OptiumLabs Salad/R2: "
+                + ", ".join(missing)
+            )
+        upscaler = await asyncio.to_thread(
+            create_optium_image_upscaler,
+            base_url=settings.image_upscaler_url,
+            salad_api_key=settings.salad_api_key,
+            r2_endpoint_url=settings.r2_endpoint_url,
+            r2_bucket=settings.r2_bucket,
+            r2_access_key_id=settings.r2_access_key_id,
+            r2_secret_access_key=settings.r2_secret_access_key,
+            temp_dir=Path(settings.temp_dir) / "professional-image-finishing",
+        )
     manifest = await asyncio.to_thread(
         generate_b2_images,
         output,
@@ -916,6 +952,12 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
     )
     # Crop only saved grid PNGs; this step cannot make a new paid API call.
     panel_assets = await asyncio.to_thread(crop_grid_assets, output, manifest)
+    final_assets = (
+        await asyncio.to_thread(
+            finish_professional_images, output, plan, manifest,
+            upscaler=upscaler, api_key=settings.openai_api_key,
+        ) if professional else None
+    )
     plan["image_assets"] = [
         {
             "block_id": item["block_id"],
@@ -925,8 +967,8 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
             "provider": item.get("provider", "ai33"),
         }
         for item in (
-            [job for job in manifest["items"] if job.get("grid") is None]
-            + panel_assets
+            final_assets if final_assets is not None else
+            [job for job in manifest["items"] if job.get("grid") is None] + panel_assets
         )
     ]
     # Keep the original full-resolution grid and panel coordinates for audit.
@@ -963,6 +1005,9 @@ def _image_summary(manifest: dict[str, object]) -> dict[str, object]:
             item.get("provider") == "openai_direct" for item in items
         ),
     }
+    if manifest.get("finishing_status") == "completed":
+        summary["professional_finished_count"] = len(manifest["final_assets"])
+        summary["native_grid_video_edits"] = manifest.get("native_grid_video_calls", 0)
     if any(item.get("grid") is not None for item in items):
         summary["grid_count"] = sum(
             item.get("grid") is not None for item in items
@@ -1028,6 +1073,10 @@ async def _preview_if_ready(
         images = json.loads(manifest_path.read_text(encoding="utf-8"))
     if images.get("status") != "completed":
         return None
+    if plan.get("visual_style") == "profesional" and (
+        images.get("finishing_status") != "completed"
+    ):
+        return {"status": "deferred", "reason": "professional_images_not_finished"}
     if missing_panels(images):
         return {
             "status": "deferred",
@@ -1193,6 +1242,12 @@ async def _video_if_ready(
         if require:
             raise RuntimeError("LTX requires completed B2 images")
         return None
+    if plan.get("visual_style") == "profesional" and (
+        images.get("finishing_status") != "completed"
+    ):
+        if require:
+            raise RuntimeError("Professional LTX requires completed image x2/1080 finishing")
+        return {"status": "deferred", "reason": "professional_images_not_finished"}
     if not _ltx_transport_configured():
         if require:
             raise RuntimeError("POSTGRES_DSN and all R2 credentials are required for LTX")

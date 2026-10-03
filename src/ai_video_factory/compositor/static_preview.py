@@ -477,6 +477,10 @@ def generate_static_preview(
         raise StaticPreviewError("ffmpeg and ffprobe are required for the static preview")
     if image_manifest.get("status") != "completed":
         raise StaticPreviewError("Static preview requires the completed B2 image manifest")
+    if plan.get("visual_style") == "profesional" and (
+        image_manifest.get("finishing_status") != "completed"
+    ):
+        raise StaticPreviewError("Professional images must finish before preview")
     grids = [
         item for item in image_manifest.get("items", [])
         if item.get("grid") is not None
@@ -502,13 +506,14 @@ def generate_static_preview(
         raise StaticPreviewError("Static preview requires the saved avatar")
     avatar = _verified_asset(output, avatar_meta.get("file"), avatar_meta.get("sha256"))
     assets: dict[tuple[int, str], Path] = {}
-    for item in [
-        *(
-            item for item in image_manifest.get("items", [])
-            if item.get("grid") is None
-        ),
-        *cropped,
-    ]:
+    for item in (
+        image_manifest["final_assets"]
+        if plan.get("visual_style") == "profesional"
+        else [
+            *(item for item in image_manifest.get("items", []) if item.get("grid") is None),
+            *cropped,
+        ]
+    ):
         key = item.get("block_id"), item.get("beat_id")
         if key in assets:
             raise StaticPreviewError("Duplicate generated PNG for one B2 beat")

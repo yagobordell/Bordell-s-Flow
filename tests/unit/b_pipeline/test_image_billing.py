@@ -238,3 +238,52 @@ def test_unsubmitted_or_missing_usage_is_not_assumed_free(
 
     assert report["estimated_total_usd"] is None
     assert report["stages"]["B2 images"]["priced_calls"] == 0
+
+
+def test_professional_mixed_grid_native_edits_are_accounted_once(tmp_path: Path) -> None:
+    _manifest(tmp_path, 1)
+    original = _state(tmp_path, "block_1_1B", folder="grids", usage=_usage())
+    manifest = tmp_path / "images" / "manifest.json"
+    doc = json.loads(manifest.read_text())
+    doc["native_grid_video_calls"] = 1
+    manifest.write_text(json.dumps(doc))
+    state = tmp_path / "images" / "professional_finished" / "block_1" / "1C-native_grid_video.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(json.dumps({
+        "schema_version": "professional-image-finishing-v1",
+        "block_id": 1, "beat_id": "1C", "model_id": "gpt-image-2.5-flare",
+        "status": "completed",
+        "artifact": {"openai_usage": _usage(text=200, image=100, output=500)},
+    }))
+    ledger = ApiCostLedger()
+    ledger.sync_image_usage(tmp_path)
+    ledger.sync_image_usage(tmp_path)
+    report = _report(ledger)
+    assert report["stages"]["B2 images"]["expected_calls"] == 2
+    assert report["stages"]["B2 images"]["priced_calls"] == 2
+    assert len(report["requests"]) == 2
+    assert original.is_file()
+    assert any("professional_finished" in r["image_state_file"] for r in report["requests"])
+
+
+def test_professional_native_unknown_edit_is_never_counted_as_free(tmp_path: Path) -> None:
+    _manifest(tmp_path, 1)
+    doc_path = tmp_path / "images" / "manifest.json"
+    doc = json.loads(doc_path.read_text())
+    doc["native_grid_video_calls"] = 1
+    doc_path.write_text(json.dumps(doc))
+    _state(tmp_path, "block_1_1B", folder="grids", usage=_usage())
+    state = tmp_path / "images" / "professional_finished" / "block_1" / "1C-native_grid_video.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(json.dumps({
+        "schema_version": "professional-image-finishing-v1",
+        "block_id": 1, "beat_id": "1C", "model_id": "gpt-image-2.5-flare",
+        "status": "direct_submitting_unknown",
+    }))
+    ledger = ApiCostLedger()
+    ledger.sync_image_usage(tmp_path)
+    report = _report(ledger)
+    assert report["stages"]["B2 images"]["expected_calls"] == 2
+    assert report["estimated_total_usd"] is None
+    assert any(r["image_request_status"] == "direct_submitting_unknown"
+               for r in report["requests"])

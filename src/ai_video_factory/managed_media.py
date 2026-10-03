@@ -97,8 +97,33 @@ def _image_sources(
         )
     ):
         raise PublicationError("Completed image manifest does not match its generated items")
+    final = manifest.get("final_assets", [])
+    if not isinstance(final, list):
+        raise PublicationError("Invalid professional finished-image list")
+    visual_for_finishing = work / "visual_plan.json"
+    if visual_for_finishing.is_file() and not visual_for_finishing.is_symlink():
+        selected_style = _json(work, "visual_plan.json").get("visual_style")
+    else:
+        selected_style = None
+    if selected_style == "profesional":
+        if claim is not None and manifest.get("finishing_status") != "completed":
+            raise PublicationError("Professional images are not finished")
+        if manifest.get("finishing_status") == "completed":
+            visual_data = _json(work, "visual_plan.json")
+            expected = {
+                (block["block_id"], beat["beat_id"])
+                for block in visual_data["blocks"] for beat in block["beats"]
+                if beat.get("prompt") is not None
+            }
+            keys = {(item.get("block_id"), item.get("beat_id")) for item in final}
+            if keys != expected or len(final) != len(expected):
+                raise PublicationError("Professional finished images do not match B2")
+        else:
+            final = []
+    else:
+        final = []
     entries: dict[str, tuple[Path, str]] = {}
-    for item in [*items, *panels]:
+    for item in [*items, *panels, *final]:
         if not isinstance(item, dict):
             raise PublicationError("Invalid saved image record")
         name = item.get("file")
