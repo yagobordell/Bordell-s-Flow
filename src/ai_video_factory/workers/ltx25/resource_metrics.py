@@ -132,3 +132,34 @@ def memory_pressure(
                 result[f"cgroup_{target}"] = info[source]
         break
     return result
+
+
+
+def cuda_memory_snapshot() -> dict[str, Any]:
+    """Best-effort read-only CUDA telemetry, including when an OOM was raised.
+
+    Failures obtaining metrics must never mask the actual inference exception.
+    Import torch only on GPU workers so lightweight CI remains torch-free.
+    """
+    try:
+        import torch
+    except ImportError:
+        return {"cuda_available": False}
+    try:
+        if not torch.cuda.is_available():
+            return {"cuda_available": False}
+        free, total = torch.cuda.mem_get_info()
+        return {
+            "cuda_available": True,
+            "free_bytes": free,
+            "total_bytes": total,
+            "allocated_bytes": torch.cuda.memory_allocated(),
+            "reserved_bytes": torch.cuda.memory_reserved(),
+            "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
+            "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
+        }
+    except Exception as exc:
+        return {
+            "cuda_available": True,
+            "telemetry_error": type(exc).__name__,
+        }
