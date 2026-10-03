@@ -212,7 +212,10 @@ class InferenceWorker:
             # Permit one clean-pipeline retry; keep the global five-attempt
             # budget for unrelated tasks and non-memory failures.
             budget = request.effective_max_attempts
-            if request.task == "video.ltx25.audio_to_video":
+            if request.task in {
+                "video.ltx25.audio_to_video",
+                "video.ltx25.audio_to_video_experimental",
+            }:
                 if gpu_failure_kind == "oom":
                     budget = min(budget, 2)
                 elif gpu_failure_kind == "decoder_budget":
@@ -491,7 +494,10 @@ class InferenceWorker:
                     request.job_id,
                     attempt_count,
                 )
-                if request.task == "video.ltx25.audio_to_video":
+                if request.task in {
+                "video.ltx25.audio_to_video",
+                "video.ltx25.audio_to_video_experimental",
+            }:
                     diagnostics = GpuJobDiagnostics(
                         storage=self.storage,
                         work_dir=work_dir,
