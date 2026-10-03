@@ -308,3 +308,46 @@ def test_b2_rerun_refuses_unresolved_native_video_edit_without_deletion(tmp_path
     assert paid_grid.read_bytes() == paid_bytes
     assert (tmp_path / "images" / "professional_finished" / "block_1"
             / "1C-native_grid_video.json").is_file()
+
+
+def test_managed_partial_publication_contains_verified_professional_finished_images(tmp_path):
+    from ai_video_factory.managed_media import _image_sources
+
+    plan = professional(
+        beat("1B", "media_image", "A still"),
+        beat("1C", "media_video", "A moving scene"),
+    )
+    avatar = png((64, 64))
+    (tmp_path / "avatar.png").write_bytes(avatar)
+    plan["avatar"] = {
+        "file": "avatar.png", "sha256": hashlib.sha256(avatar).hexdigest(),
+    }
+    (tmp_path / "visual_plan.json").write_text(
+        __import__("json").dumps(plan), encoding="utf-8",
+    )
+    direct = RecordingGPT()
+    generated = gpt.generate_b2_images(
+        tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
+    )
+    finished = finish_professional_images(
+        tmp_path, plan, generated, upscaler=RecordingUpscaler(),
+        api_key=None, direct_client=direct,
+    )
+    run = {"image_generation": {"status": "completed", "count": len(generated["items"])}}
+    status, files = _image_sources(tmp_path, run)
+    assert status == "completed"
+    for asset in finished:
+        rel = asset["file"].removeprefix("images/")
+        assert rel in files
+        assert files[rel][1] == asset["sha256"]
+    assert "avatar.png" in files
+    # Publishing refuses a fake completed image report for a partially
+    # finished professional run, rather than quietly exporting 720p originals.
+    generated["finishing_status"] = "incomplete"
+    (tmp_path / "images" / "manifest.json").write_text(
+        __import__("json").dumps(generated), encoding="utf-8",
+    )
+    from ai_video_factory.publishing import PublicationError
+
+    with pytest.raises(PublicationError, match="not finished"):
+        _image_sources(tmp_path, run)
