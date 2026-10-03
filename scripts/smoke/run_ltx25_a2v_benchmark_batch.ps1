@@ -6,7 +6,8 @@ param(
     [Parameter(Mandatory)][string]$ExpectedPinnedImage,
     [ValidateSet(
         "reference-bench-cpu", "reference-fp8none",
-        "reference-cpu-triton", "reference-none-triton", "static-fp8none"
+        "reference-cpu-triton", "reference-none-triton",
+        "static-bench-cpu", "static-fp8none"
     )][string[]]$Profiles = @("reference-bench-cpu", "reference-fp8none"),
     [ValidateRange(3, 10)][int]$Repetitions = 4,
     [long]$Seed = 4242,
