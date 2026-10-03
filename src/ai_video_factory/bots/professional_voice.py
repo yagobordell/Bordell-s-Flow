@@ -13,9 +13,8 @@ from importlib.resources import files
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable, Literal
-from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ai_video_factory.bots.audio_join import join_audio_blocks
 from ai_video_factory.bots.fish_audio_workflow import _transcribe_block
@@ -224,6 +223,16 @@ async def _direct(
     prompt = files("ai_video_factory.bots.prompts").joinpath(stage.lower() + ".md").read_text(
         encoding="utf-8"
     )
+    cached = folder / "output.json"
+    initial = folder / "input.json"
+    if cached.exists() and initial.exists() and _read(initial).get("payload") == payload:
+        try:
+            prior = output_type.model_validate(_read(cached))
+            check(prior)
+            return prior
+        except (ValueError, ValidationError):
+            # A corrupt saved result cannot silently be used as model authority.
+            raise VoicePlanError(f"{stage} block {block_id}: saved result no longer validates")
     previous_id = None
     for attempt in range(3):
         instructions = prompt
@@ -242,9 +251,20 @@ async def _direct(
                 input_text=json.dumps(data, ensure_ascii=False),
                 output_type=output_type, previous_response_id=previous_id,
             )
+        except ValidationError as exc:
+            # A provider response reached schema validation but could not be parsed.
+            # Give the text bot a clear correction message; no paid speech is involved.
+            _json(folder / f"rejected_attempt_{attempt + 1}.json", {
+                "attempt": attempt + 1, "error": f"JSON schema validation: {exc}",
+                "response": {"unparsed": "Provider parsed no valid output"},
+            })
+            if attempt == 2:
+                raise VoicePlanError(
+                    f"{stage} block {block_id}: provider schema validation exhausted"
+                ) from exc
+            continue
         except Exception as exc:
-            # No returned parsed response: the POST may have been billed; don't
-            # silently replay uncertain provider transport failures.
+            # Transport or unknown POST outcomes must not silently be replayed.
             raise VoicePlanError(f"{stage} block {block_id}: provider failed: {exc}") from exc
         if on_response:
             on_response(stage, block_id, raw)
@@ -398,6 +418,7 @@ async def generate_professional_audio(
                     hashlib.sha256(source.read_bytes()).hexdigest() != item["sha256"]
                 ):
                     raise VoicePlanError("Cached professional audio differs from saved SHA-256")
+            _json(output / "audio" / "latest.json", artifact)
             return artifact
     else:
         _json(manifest, {"fingerprint": fingerprint, "status": "planned",
