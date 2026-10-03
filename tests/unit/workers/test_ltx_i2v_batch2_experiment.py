@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -79,7 +80,7 @@ def test_batch2_validation_rejects_profile_geometry_and_seed_drift() -> None:
     with pytest.raises(ValueError, match="distinct|seeds"):
         Batch2Parameters.model_validate(bad)
     bad["b"] = {**parameters(5244, width=1024), "height": 768}
-    with pytest.raises(ValueError, match="restricted|720p"):
+    with pytest.raises(ValueError, match="restricted|720p|matching"):
         Batch2Parameters.model_validate(bad)
     bad["b"] = {**parameters(5244), "generation_profile": "ltx25-not-a-profile"}
     with pytest.raises(ValueError):
@@ -179,6 +180,33 @@ def test_invalid_sidecars_are_rejected_before_gpu_work(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="content types"):
         runner.run(request(bad_sidecar=True), inputs, tmp_path)
     backend.generate_pair.assert_not_called()
+
+
+def test_full_hd_cli_preflight_is_free_and_requires_explicit_risk(
+    tmp_path: Path,
+) -> None:
+    first, second = tmp_path / "full-hd-a.png", tmp_path / "full-hd-b.png"
+    Image.new("RGB", (1920, 1080), (110, 120, 130)).save(first)
+    Image.new("RGB", (1920, 1080), (140, 150, 160)).save(second)
+    cmd = [
+        sys.executable, str(CLIENT),
+        "--image-a", str(first), "--prompt-a", "A small step",
+        "--image-b", str(second), "--prompt-b", "A slow head turn",
+        "--width", "1920", "--height", "1080",
+        "--run-id", "full-hd-free-preflight",
+        "--output-dir", str(tmp_path / "never-publish"),
+        "--check-inputs-only",
+    ]
+    refused = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
+    assert refused.returncode != 0
+    assert "accept-full-hd-batch2-oom-risk" in refused.stdout + refused.stderr
+    allowed = subprocess.run(
+        [*cmd, "--accept-full-hd-batch2-oom-risk"],
+        cwd=ROOT, text=True, capture_output=True,
+    )
+    assert allowed.returncode == 0, allowed.stdout + allowed.stderr
+    assert "1920x1080" in allowed.stdout
+    assert not (tmp_path / "never-publish").exists()
 
 
 def test_gpu_oom_downgrades_to_shared_stage_without_hiding_the_mode(tmp_path: Path) -> None:
