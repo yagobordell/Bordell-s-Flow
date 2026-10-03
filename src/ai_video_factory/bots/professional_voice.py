@@ -159,7 +159,9 @@ def _check_v1(result: V1, blocks: list[dict[str, Any]], contested: list[dict[str
 def _check_v2(result: V2, block: dict[str, Any], rhythm: BlockRhythm) -> None:
     beat_ids = [beat["beat_id"] for beat in block["beats"]]
     if result.block_id != block["block_id"] or [x.beat_id for x in result.beat_intents] != beat_ids:
-        raise VoicePlanError(f"V2 block {block['block_id']}: beat_ids must exactly match {beat_ids}")
+        raise VoicePlanError(
+            f"V2 block {block['block_id']}: beat_ids must exactly match {beat_ids}"
+        )
     if result.landing_beat_id not in beat_ids:
         raise VoicePlanError("V2 landing_beat_id is not a beat in this block")
     for axis, scale in (("tempo", _TEMPO), ("pressure", _PRESSURE)):
@@ -241,9 +243,13 @@ async def _direct(
             rejected = _read(folder / f"rejected_attempt_{attempt}.json")
             data["validation_feedback"] = {
                 "error": rejected["error"], "rejected_response": rejected["response"],
-                "task": "Correct only the stated contract violations; all source strings and IDs are immutable.",
+                "task": (
+                    "Correct only the stated contract violations; "
+                    "all source strings and IDs are immutable."
+                ),
             }
-        _json(folder / ("input.json" if attempt == 0 else f"input_attempt_{attempt + 1}.json"), data)
+        input_name = "input.json" if attempt == 0 else f"input_attempt_{attempt + 1}.json"
+        _json(folder / input_name, data)
         start = perf_counter()
         try:
             response_obj, raw = await provider.generate_structured_with_response(
@@ -279,7 +285,9 @@ async def _direct(
                 "response": response_obj.model_dump(mode="json"),
             })
             if attempt == 2:
-                raise VoicePlanError(f"{stage} block {block_id}: validation failed after 2 retries: {exc}") from exc
+                raise VoicePlanError(
+                    f"{stage} block {block_id}: validation failed after 2 retries: {exc}"
+                ) from exc
             continue
         _json(folder / "output.json", response_obj.model_dump(mode="json"))
         return response_obj
@@ -451,7 +459,9 @@ async def generate_professional_audio(
                 _json(state_path, state)
             audio_path = folder / "audio.wav"
             if state["status"] in {"tts_submitting_unknown", "tts_invalid"}:
-                raise VoicePlanError(f"Gemini block {bid} may have incurred charges; reconcile {state_path}")
+                raise VoicePlanError(
+                    f"Gemini block {bid} may have incurred charges; reconcile {state_path}"
+                )
             if state["status"] == "planned":
                 state["status"] = "tts_submitting_unknown"
                 _json(state_path, state)
@@ -490,8 +500,13 @@ async def generate_professional_audio(
         _json(manifest, {"fingerprint": fingerprint, "status": "incomplete",
                          "run_id": run_dir.name, "source_sha256": source_sha256,
                          "generation_nonce": generation_nonce,
-                         "error": f"{len(failures)} block(s) incomplete; inspect block task states"})
-        raise VoicePlanError(f"Professional Gemini audio has {len(failures)} incomplete blocks; inspect {manifest}") from failures[0]
+                         "error": (
+                             f"{len(failures)} block(s) incomplete; inspect block task states"
+                         )})
+        raise VoicePlanError(
+            f"Professional Gemini audio has {len(failures)} incomplete blocks; "
+            f"inspect {manifest}"
+        ) from failures[0]
     items = [x for x in results if isinstance(x, dict)]
     joined = await asyncio.to_thread(
         join_audio_blocks, [output / x["file"] for x in items], run_dir / "narration.wav",
