@@ -40,6 +40,7 @@ def parser() -> argparse.Namespace:
     p.add_argument("--reference-a", type=Path)
     p.add_argument("--reference-b", type=Path)
     p.add_argument("--allow-sequential-fallback", action="store_true")
+    p.add_argument("--disable-stage-reuse", action="store_true")
     p.add_argument("--check-inputs-only", action="store_true")
     p.add_argument("--timeout-seconds", type=float, default=10800)
     return p.parse_args()
@@ -132,6 +133,7 @@ def main() -> None:
             for name, path, prompt, seed in inputs
         ],
         "allow_sequential_fallback": a.allow_sequential_fallback,
+        "reuse_transformer_across_stages": not a.disable_stage_reuse,
     }
     fingerprint = hashlib.sha256(
         json.dumps(spec, sort_keys=True).encode("utf-8")
@@ -162,6 +164,7 @@ def main() -> None:
             "a": {**plan, "prompt": a.prompt_a, "seed": a.seed_a},
             "b": {**plan, "prompt": a.prompt_b, "seed": a.seed_b},
             "allow_sequential_fallback": a.allow_sequential_fallback,
+        "reuse_transformer_across_stages": not a.disable_stage_reuse,
         },
     )
     (a.output_dir / "job-request.json").write_text(
