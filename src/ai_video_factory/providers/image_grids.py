@@ -265,6 +265,11 @@ def plan_image_jobs(
                 "numbered_beat_ids": [beat["beat_id"] for beat in run],
             },
             "panels": panels,
+            **({"video_panel_ids": [
+                p["beat_id"] for p in panels
+                if p.get("source") != BLACK_PANEL_SOURCE
+                and p["visual_type"] in {"media_video", "avatar"}
+            ]} if visual_style == "profesional" else {}),
         })
     individuals = [*available.values(), *standalone.values()]
     jobs = [
@@ -272,7 +277,11 @@ def plan_image_jobs(
             **beat,
             **(
                 {"size": f"{_AVATAR_MEDIA_PANEL_WIDTH}x{_AVATAR_MEDIA_PANEL_HEIGHT}"}
-                if beat["visual_type"] == "avatar_media" else {}
+                if beat["visual_type"] == "avatar_media"
+                else {"size": "1920x1088", "video_source": True}
+                if visual_style == "profesional"
+                and beat["visual_type"] in {"media_video", "avatar"}
+                else {}
             ),
         }
         for beat in individuals
