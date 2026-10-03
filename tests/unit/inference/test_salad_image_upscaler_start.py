@@ -187,7 +187,7 @@ def test_missing_salad_account_fails_before_network(monkeypatch, manifest):
         )
 
 
-def test_pipeline_integrates_start_before_paid_images_only_for_professional_x2():
+def test_pipeline_generates_paid_originals_before_waiting_for_salad():
     from pathlib import Path
 
     runner = Path("scripts/pipeline/run_b_pipeline.py").read_text(encoding="utf-8")
@@ -196,6 +196,12 @@ def test_pipeline_integrates_start_before_paid_images_only_for_professional_x2()
     )[0]
     assert "needs_x2 = professional and any(" in function
     assert "if needs_x2:" in function
-    assert function.index("if missing:") < function.index(
-        "ensure_image_upscaler_ready,"
-    ) < function.index("generate_b2_images,")
+    assert function.index("generate_b2_images,") < function.index(
+        "crop_grid_assets,"
+    ) < function.index("ensure_image_upscaler_ready,")
+    assert function.index('manifest["finishing_status"] = "pending_upscaler"') < (
+        function.index("ensure_image_upscaler_ready,")
+    )
+    assert function.index("ensure_image_upscaler_ready,") < function.index(
+        "finish_professional_images,"
+    )
