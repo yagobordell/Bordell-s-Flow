@@ -718,6 +718,7 @@ async def run_b_pipeline(
                         previous=candidate.model_dump() if candidate else None,
                         continued=previous_response_id is not None,
                         instructions=(
+                            "B1.2 automatic beat-length correction when lengths are invalid. "
                             "Previous invalid B1.2 response: correct this block only. "
                             "Keep every source word in the same order without insertion, "
                             "deletion or replacement. Return consecutive beat IDs. "
