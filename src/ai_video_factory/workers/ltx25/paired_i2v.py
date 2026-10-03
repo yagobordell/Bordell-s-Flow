@@ -8,6 +8,7 @@ This module is *never* selected by the existing single-video task.
 
 from __future__ import annotations
 
+import gc
 import json
 import logging
 import time
@@ -35,9 +36,60 @@ from ltx_pipelines.utils.helpers import (
 )
 from ltx_pipelines.utils.samplers import euler_ancestral_denoising_loop, euler_denoising_loop
 
+from .resource_metrics import cuda_memory_snapshot as _cuda_memory_snapshot
 from .resource_metrics import memory_pressure as _memory_pressure
 
 logger = logging.getLogger(__name__)
+
+
+def _log_gpu_checkpoint(phase: str, *, trim: bool = False) -> None:
+    """Record true CUDA allocator pressure at B=2 stage boundaries.
+
+    In Full HD only, a boundary trim releases CACHED memory once no longer
+    reachable stage-1 tensors have been discarded; it does not evict live
+    tensors, modify latents, sampler arithmetic or offload model weights.
+    """
+    if trim:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    logger.info(
+        "LTX25_I2V_PAIR_GPU_CHECKPOINT %s",
+        json.dumps({
+            "phase": phase,
+            "trimmed_unused_cache": trim,
+            "cuda": _cuda_memory_snapshot(),
+            "system": _memory_pressure(),
+        }, sort_keys=True),
+    )
+
+
+class _ProfiledBatchTransformer(torch.nn.Module):
+    """Read-only per-forward diagnostics around the *unchanged* true B=2 model."""
+
+    def __init__(self, model: torch.nn.Module, stage_label: str) -> None:
+        super().__init__()
+        self.model = model
+        self.stage_label = stage_label
+        self.forwards = 0
+
+    @property
+    def num_blocks(self) -> int:
+        return self.model.num_blocks
+
+    def forward(self, video: Any, audio: Any, perturbations: Any) -> Any:
+        self.forwards += 1
+        prefix = f"{self.stage_label}_forward_{self.forwards}"
+        _log_gpu_checkpoint(prefix + "_before")
+        try:
+            output = self.model(
+                video=video, audio=audio, perturbations=perturbations,
+            )
+        except Exception:
+            _log_gpu_checkpoint(prefix + "_failed")
+            raise
+        _log_gpu_checkpoint(prefix + "_after")
+        return output
 
 
 def _encode_pair_prompts(pipeline: Any, pair: tuple[PairInput, PairInput]) -> tuple[Any, Any]:
@@ -154,6 +206,7 @@ def _paired_stage(
     max_forward_batch_size: int = 2,
     stage_label: str = "unknown",
     shared_transformer: Any | None = None,
+    monitor_full_hd: bool = False,
 ) -> tuple[Any, Any]:
     """Pinned DiffusionStage.__call__ semantics with VideoPixelShape(batch=2).
 
@@ -211,6 +264,10 @@ def _paired_stage(
         )
         # This is genuinely a single B=2 model forward, NOT two serialized jobs.
         batched_transformer = BatchSplitAdapter(transformer, max_batch_size=max_forward_batch_size)
+        if monitor_full_hd:
+            batched_transformer = _ProfiledBatchTransformer(
+                batched_transformer, stage_label,
+            )
         denoiser = SimpleDenoiser(video_context, audio_context)
         kwargs = {
             "sigmas": sigmas,
@@ -286,6 +343,7 @@ def generate_paired_fast_distilled(
     num_frames: int,
     max_forward_batch_size: int = 2,
     reuse_transformer_across_stages: bool = False,
+    full_hd_memory_cleanup: bool = False,
 ) -> tuple[Any, Any]:
     """Generate two clips in B=2 transformer forwards with B=1 quality semantics.
 
@@ -296,6 +354,8 @@ def generate_paired_fast_distilled(
 
     if max_forward_batch_size not in (1, 2):
         raise ValueError("Experimental transformer forward batch size must be 1 or 2")
+    if full_hd_memory_cleanup and (width, height) != (1920, 1088):
+        raise ValueError("Full HD memory profile requires internal 1920x1088 model grid")
     if len(pair) != 2 or pair[0].seed == pair[1].seed:
         raise ValueError("Batch2 needs two independent seeds")
     assert_resolution(height=height, width=width, is_two_stage=True)
@@ -319,6 +379,10 @@ def generate_paired_fast_distilled(
     )
     if duration != (num_frames, num_frames):
         raise ValueError("Batch2 requires identical fixed frame counts")
+    # The concatenated independent contexts are now the only tensors used by
+    # denoising. Do not retain both individual GPU encoder outputs as well.
+    del prepared
+    _log_gpu_checkpoint("prompt_contexts_released")
     scale = tiling_scale_factors_for_vae(pipeline.video_decoder.checkpoint_path)
     tiling = ensure_tiling_config(
         AUTO_TILING, scale_factors=scale,
@@ -343,6 +407,7 @@ def generate_paired_fast_distilled(
     )
 
     def run_stages(shared_transformer: Any | None) -> tuple[Any, Any]:
+        nonlocal stage1_images, stage2_images_prepared, resolved
         seeds = (pair[0].seed, pair[1].seed)
         noiser = _IndependentGaussianNoiser(seeds, pipeline.device)
         logger.info(
@@ -367,6 +432,10 @@ def generate_paired_fast_distilled(
             stage_label="stage1",
             shared_transformer=shared_transformer,
         )
+        # Stage1 image conditioning is never consulted again. Release its
+        # concatenated GPU latent BEFORE upsampling and loading stage2 weights.
+        stage1_images = None
+        _log_gpu_checkpoint("stage1_conditioning_released")
         # Upscale individually, preserving baseline's B=1 arithmetic and peak VRAM.
         logger.info(
             "LTX25_I2V_PAIR_UPSAMPLE_START shared_transformer=%s memory=%s",
@@ -377,12 +446,25 @@ def generate_paired_fast_distilled(
             [pipeline.upsampler(first_video.latent[i : i + 1]) for i in range(2)],
             dim=0,
         )
+        # First-stage video latent is not the second-stage input: only its
+        # individually upscaled result is. The audio latent remains unchanged.
+        initial_audio = first_audio.latent
+        del first_video, first_audio
+        _log_gpu_checkpoint(
+            "stage1_outputs_released_after_upsample",
+            trim=full_hd_memory_cleanup,
+        )
         stage2_images = stage2_images_prepared
+        stage2_images_prepared = None
         if stage2_images is None:
             # A pure two-build batch2 reconstructs stage2 conditioning at
             # precisely the earlier post-upsampling point, preventing both
             # stage image latent sets from staying GPU-resident throughout.
             stage2_images = _batch_conditionings(pipeline, resolved, width, height)
+        # The CRF/image references are CPU-only and no longer needed for either
+        # denoising stage. A Full HD boundary trim runs only on dead GPU cache.
+        resolved = None
+        _log_gpu_checkpoint("stage2_conditioning_ready", trim=full_hd_memory_cleanup)
         logger.info(
             "LTX25_I2V_PAIR_STAGE_START stage=stage2 shared_transformer=%s memory=%s",
             shared_transformer is not None,
@@ -399,11 +481,14 @@ def generate_paired_fast_distilled(
             width=width, height=height,
             frames=num_frames, fps=frame_rate,
             initial_video=upscaled,
-            initial_audio=first_audio.latent,
+            initial_audio=initial_audio,
             max_forward_batch_size=max_forward_batch_size,
             stage_label="stage2",
             shared_transformer=shared_transformer,
+            monitor_full_hd=full_hd_memory_cleanup,
         )
+        del upscaled, initial_audio, stage2_images
+        _log_gpu_checkpoint("stage2_inputs_released_before_decode")
         # Decode separately: both latents are independent; never decode one clip
         # with the other's seed, or create two live VAE models.
         results = []
