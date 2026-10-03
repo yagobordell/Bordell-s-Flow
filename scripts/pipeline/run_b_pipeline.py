@@ -13,6 +13,7 @@ from io import BytesIO
 from pathlib import Path
 from time import perf_counter
 from typing import Literal
+from uuid import uuid4
 
 from dotenv import load_dotenv
 from PIL import Image
@@ -1803,7 +1804,7 @@ async def _run_audio_only(
                 if pending and not resume:
                     raise RuntimeError("An incomplete paid audio task exists; reconcile before regeneration")
                 nonce = (
-                    _read_json(pending[0]).get("generation_nonce", "")
+                    json.loads(pending[0].read_text(encoding="utf-8")).get("generation_nonce", "")
                     if resume else uuid4().hex
                 )
                 if resume and not pending[0].parent.name.startswith("gemini-"):
