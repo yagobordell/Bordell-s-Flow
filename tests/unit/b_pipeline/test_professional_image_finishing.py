@@ -351,3 +351,56 @@ def test_managed_partial_publication_contains_verified_professional_finished_ima
 
     with pytest.raises(PublicationError, match="not finished"):
         _image_sources(tmp_path, run)
+
+
+
+def test_ltx_selects_finished_professional_png_not_original_grid_or_crop(tmp_path):
+    from ai_video_factory.workflows.b_video import _source_assets
+
+    avatar = png((64, 64))
+    original = png((1280, 720))
+    finished = png((2560, 1440))
+    (tmp_path / "avatar.png").write_bytes(avatar)
+    old = tmp_path / "images" / "block_1" / "1B.png"
+    new = tmp_path / "images" / "professional_finished" / "block_1" / "1B-image_x2.png"
+    old.parent.mkdir(parents=True)
+    new.parent.mkdir(parents=True)
+    old.write_bytes(original)
+    new.write_bytes(finished)
+    plan = {
+        "visual_style": "profesional",
+        "avatar": {"file": "avatar.png", "sha256": hashlib.sha256(avatar).hexdigest()},
+    }
+    images = {
+        "status": "completed", "finishing_status": "completed",
+        "items": [{
+            "block_id": 1, "beat_id": "1B", "file": "images/block_1/1B.png",
+            "sha256": hashlib.sha256(original).hexdigest(),
+        }],
+        "final_assets": [{
+            "block_id": 1, "beat_id": "1B",
+            "file": new.relative_to(tmp_path).as_posix(),
+            "sha256": hashlib.sha256(finished).hexdigest(),
+        }],
+    }
+    _, assets = _source_assets(tmp_path, plan, images)
+    assert assets[(1, "1B")] == new
+    assert assets[(1, "1B")] != old
+    images["finishing_status"] = "incomplete"
+    with pytest.raises(Exception, match="requires finished"):
+        _source_assets(tmp_path, plan, images)
+
+
+def test_professional_upscaler_preflight_occurs_before_paid_gpt(monkeypatch, tmp_path):
+    import asyncio
+
+    from scripts.pipeline import run_b_pipeline as runner
+
+    monkeypatch.setattr(runner.settings, "image_upscaler_url", None)
+    monkeypatch.setattr(
+        runner, "generate_b2_images",
+        lambda *args, **kwargs: pytest.fail("Paid GPT images were submitted"),
+    )
+    plan = professional(beat("1B", "media_image", "Forest"))
+    with pytest.raises(gpt.ImageGenerationError, match="IMAGE_UPSCALER_URL"):
+        asyncio.run(runner._generate_images(tmp_path, plan))
