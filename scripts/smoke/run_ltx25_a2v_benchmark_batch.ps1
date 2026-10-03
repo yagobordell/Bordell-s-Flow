@@ -21,8 +21,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# This runner changes only the stopped A2V group. Shut down the singleton
-# capacity controller and ensure nobody else owns the group before starting.
+# This runner starts/stops only its own isolated experimental group.
+# Production and experiment use distinct Postgres task names.
 if ($ExpectedPinnedImage -notmatch '^[^\s@]+@sha256:[0-9a-fA-F]{64}$') {
     throw "ExpectedPinnedImage must be the reviewed immutable repository@sha256:digest"
 }
