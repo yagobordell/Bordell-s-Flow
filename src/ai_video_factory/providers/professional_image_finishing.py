@@ -146,23 +146,34 @@ def _materialize(
             if _digest(finished) != saved.get("sha256"):
                 raise ProfessionalImageFinishingError("Finished PNG SHA mismatch")
             _check_png(finished, target)
-            return _record(
+            record = _record(
                 item, file=png.relative_to(output).as_posix(), content=finished,
                 output_size=target, recipe=recipe,
             )
+            if recipe == "native_grid_video":
+                record["openai_usage"] = saved.get("artifact", {}).get("openai_usage")
+            return record
         if saved.get("status") != "pending":
             raise ProfessionalImageFinishingError(
                 f"Unknown outcome for {beat} ({recipe}); reconcile before any resubmission"
             )
     else:
-        saved = {"identity": identity_hash, "status": "pending", "source": item["file"]}
+        saved = {
+            "schema_version": "professional-image-finishing-v1",
+            "identity": identity_hash, "status": "pending",
+            "source": item["file"], "block_id": block, "beat_id": beat,
+            "model_id": model if recipe == "native_grid_video" else None,
+        }
         _save_json(state, saved)
     if png.exists():
         raise ProfessionalImageFinishingError("Untracked professional finished image exists")
     if recipe == "native_video_crop":
         finished = _video_crop(source)
     else:
-        saved["status"] = "submitting_unknown"
+        saved["status"] = (
+            "direct_submitting_unknown" if recipe == "native_grid_video"
+            else "upscale_submitting_unknown"
+        )
         _save_json(state, saved)
         if recipe == "image_x2":
             if upscaler is None:
@@ -195,7 +206,7 @@ def _materialize(
             raw = folder / f"{beat}-{recipe}.native.png"
             if raw.is_symlink() or raw.exists():
                 raise ProfessionalImageFinishingError("Untracked native GPT source exists")
-            direct.generate_png(
+            generated = direct.generate_png(
                 prompt=text, model=model, destination=raw,
                 size="1920x1088", quality="medium", output_format="png",
                 reference_image_urls=refs,
@@ -203,6 +214,11 @@ def _materialize(
             raw_data = raw.read_bytes()
             _check_png(raw_data, _VIDEO_SOURCE)
             finished = _video_crop(raw_data)
+            saved["artifact"] = {
+                "model_id": model, "quality": "medium",
+                "openai_usage": generated.get("usage"),
+                "openai_created": generated.get("created"),
+            }
         else:
             raise ProfessionalImageFinishingError(f"Unknown finishing recipe: {recipe}")
     _check_png(finished, target)
@@ -214,10 +230,13 @@ def _materialize(
     part.replace(png)
     saved.update({"status": "completed", "sha256": _digest(finished)})
     _save_json(state, saved)
-    return _record(
+    record = _record(
         item, file=png.relative_to(output).as_posix(), content=finished,
         output_size=target, recipe=recipe,
     )
+    if recipe == "native_grid_video":
+        record["openai_usage"] = saved.get("artifact", {}).get("openai_usage")
+    return record
 
 
 def finish_professional_images(
@@ -260,6 +279,11 @@ def finish_professional_images(
     final: list[dict[str, Any]] = []
     manifest_path = output / "images" / "manifest.json"
     manifest["finishing_profile"] = _PROFILE
+    manifest["native_grid_video_calls"] = sum(
+        item.get("provider") == "grid_crop"
+        and item["visual_type"] in {"media_video", "avatar"}
+        for item in originals
+    )
     manifest["finishing_status"] = "running"
     manifest["final_assets"] = []
     _save_json(manifest_path, manifest)
