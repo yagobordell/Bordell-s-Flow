@@ -35,6 +35,9 @@ def parser() -> argparse.Namespace:
     p.add_argument("--prompt-b", required=True)
     p.add_argument("--seed-a", type=int, default=5243)
     p.add_argument("--seed-b", type=int, default=5244)
+    p.add_argument("--width", type=int, default=1280)
+    p.add_argument("--height", type=int, default=720)
+    p.add_argument("--accept-full-hd-batch2-oom-risk", action="store_true")
     p.add_argument("--run-id", required=True)
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--reference-a", type=Path)
@@ -47,17 +50,20 @@ def parser() -> argparse.Namespace:
     return p.parse_args()
 
 
-def validate_media(path: Path) -> None:
+def validate_media(path: Path, *, width: int, height: int) -> None:
     if not path.is_file():
         raise ValueError(f"Missing input image: {path}")
     with Image.open(path) as image:
-        if image.size != (1280, 720):
-            raise ValueError(f"Batch2 requires native 1280x720 PNG images; {path}={image.size}")
+        if image.size != (width, height):
+            raise ValueError(
+                f"Batch2 requires native {width}x{height} PNG images; "
+                f"{path}={image.size}"
+            )
         if image.format != "PNG":
             raise ValueError(f"Expected lossless PNG input: {path}")
 
 
-def validate_video(path: Path) -> dict[str, Any]:
+def validate_video(path: Path, *, width: int, height: int) -> dict[str, Any]:
     executable = shutil.which("ffprobe")
     decoder = shutil.which("ffmpeg")
     if not executable or not decoder:
@@ -71,7 +77,7 @@ def validate_video(path: Path) -> dict[str, Any]:
     audio = [s for s in probe["streams"] if s["codec_type"] == "audio"]
     if len(video) != 1 or audio:
         raise ValueError("Each I2V artifact must contain exactly one VIDEO stream and no audio")
-    if (int(video[0]["width"]), int(video[0]["height"])) != (1280, 720):
+    if (int(video[0]["width"]), int(video[0]["height"])) != (width, height):
         raise ValueError("Batch2 output geometry does not match the B=1 reference")
     fps = video[0]["avg_frame_rate"]
     if fps != "24/1" or int(video[0].get("nb_frames") or 0) != 121:
@@ -84,7 +90,7 @@ def validate_video(path: Path) -> dict[str, Any]:
         [decoder, "-v", "error", "-i", str(path), "-map", "0:v:0", "-f", "null", "-"],
         check=True, capture_output=True,
     )
-    return {"width": 1280, "height": 720, "fps": 24, "frames": 121, "duration": duration}
+    return {"width": width, "height": height, "fps": 24, "frames": 121, "duration": duration}
 
 
 def required(name: str, value: str | None) -> str:
@@ -97,6 +103,20 @@ def main() -> None:
     a = parser()
     if not a.run_id.replace("-", "").replace("_", "").isalnum() or len(a.run_id) > 70:
         raise ValueError("Run ID must have 1-70 safe characters")
+    size = (a.width, a.height)
+    if size not in {(1280, 720), (1920, 1080)}:
+        raise ValueError("Batch2 smoke only supports native 1280x720 or 1920x1080")
+    if size == (1920, 1080):
+        if not a.accept_full_hd_batch2_oom_risk:
+            raise ValueError(
+                "1080p batch2 is unvalidated on 32-GiB RTX 5090; "
+                "explicitly pass --accept-full-hd-batch2-oom-risk"
+            )
+        if a.allow_sequential_fallback or a.enable_stage_reuse:
+            raise ValueError(
+                "Full HD B2 trial forbids sequential fallback and "
+                "unvalidated transformer stage reuse"
+            )
     if a.enable_stage_reuse and a.disable_stage_reuse:
         raise ValueError("Stage reuse flags are mutually exclusive")
     if a.seed_a == a.seed_b or not 0 <= a.seed_a <= 2**31 - 1 or not 0 <= a.seed_b <= 2**31 - 1:
@@ -104,7 +124,7 @@ def main() -> None:
     if not a.prompt_a.strip() or not a.prompt_b.strip():
         raise ValueError("Both prompts are mandatory")
     for item in (a.image_a, a.image_b):
-        validate_media(item)
+        validate_media(item, width=a.width, height=a.height)
     if sha256_file(a.image_a) == sha256_file(a.image_b) and a.prompt_a == a.prompt_b:
         raise ValueError("Batch2 requires distinct images or prompts")
     references = []
@@ -116,14 +136,14 @@ def main() -> None:
             raise ValueError(f"Existing reference video not found: {path}")
         references.append({"path": str(path), "sha256": sha256_file(path)})
     if a.check_inputs_only:
-        print("Batch2 inputs valid: two native 1280x720 PNGs, separate seeds and fixed 5s recipe")
+        print(f"Batch2 inputs valid: two native {a.width}x{a.height} PNGs, separate seeds and fixed 5s recipe")
         return
     if a.output_dir.exists():
         raise ValueError("Run directory already exists; choose a new run ID")
     a.output_dir.mkdir(parents=True)
     plan = {
         "generation_profile": LTX_PRODUCTION_I2V_PROFILE,
-        "width": 1280, "height": 720, "fps": 24, "num_frames": 121,
+        "width": a.width, "height": a.height, "fps": 24, "num_frames": 121,
     }
     inputs = (
         ("keyframe_a", a.image_a, a.prompt_a, a.seed_a),
@@ -137,6 +157,9 @@ def main() -> None:
         ],
         "allow_sequential_fallback": a.allow_sequential_fallback,
         "reuse_transformer_across_stages": a.enable_stage_reuse and not a.disable_stage_reuse,
+        "accept_full_hd_batch2_oom_risk": a.accept_full_hd_batch2_oom_risk,
+        "video_width": a.width,
+        "video_height": a.height,
     }
     fingerprint = hashlib.sha256(
         json.dumps(spec, sort_keys=True).encode("utf-8")
@@ -168,6 +191,7 @@ def main() -> None:
             "b": {**plan, "prompt": a.prompt_b, "seed": a.seed_b},
             "allow_sequential_fallback": a.allow_sequential_fallback,
             "reuse_transformer_across_stages": a.enable_stage_reuse and not a.disable_stage_reuse,
+        "accept_full_hd_batch2_oom_risk": a.accept_full_hd_batch2_oom_risk,
         },
     )
     (a.output_dir / "job-request.json").write_text(
@@ -223,7 +247,9 @@ def main() -> None:
     if not a.allow_sequential_fallback and report["mode"] != "batch2":
         raise RuntimeError("No-fallback experiment silently used sequential generation")
     report["technical_video_validation"] = {
-        key: validate_video(a.output_dir / f"batch2-{suffix}.mp4")
+        key: validate_video(
+            a.output_dir / f"batch2-{suffix}.mp4", width=a.width, height=a.height,
+        )
         for key, suffix in (("a", "a"), ("b", "b"))
     }
     report["replayed"] = response.replayed
