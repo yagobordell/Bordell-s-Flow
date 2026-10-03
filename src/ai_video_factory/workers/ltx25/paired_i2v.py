@@ -15,11 +15,11 @@ from typing import Any
 
 import torch
 from ltx_core.batch_split import BatchSplitAdapter
-from ltx_core.components.noisers import GaussianNoiser
 from ltx_core.components.patchifiers import AudioPatchifier, VideoLatentPatchifier
 from ltx_core.conditioning.types.latent_cond import VideoConditionByLatentIndex
 from ltx_core.tools import AudioLatentTools, VideoLatentTools
 from ltx_core.types import AudioLatentShape, VideoLatentShape, VideoPixelShape
+from ltx_core.model.video_vae import AUTO_TILING
 from ltx_pipelines.utils.blocks import require_num_frames_source, resolve_num_frames
 from ltx_pipelines.utils.constants import DISTILLED_SIGMAS, STAGE_2_DISTILLED_SIGMAS
 from ltx_pipelines.utils.denoisers import SimpleDenoiser
@@ -31,7 +31,6 @@ from ltx_pipelines.utils.helpers import (
     tiling_scale_factors_for_vae,
 )
 from ltx_pipelines.utils.samplers import euler_ancestral_denoising_loop, euler_denoising_loop
-from ltx_pipelines.utils.types import ModalitySpec
 
 logger = logging.getLogger(__name__)
 
@@ -232,7 +231,7 @@ def generate_paired_fast_distilled(
             [item.prompt],
             enhance_first_prompt=False,
             enhance_static_cache=False,
-            enhance_prompt_image=None,
+            enhance_prompt_image=item.image[0],
         )
         prepared.append((PairInput(item.prompt, item.seed, image), context))
     resolved = tuple(x[0] for x in prepared)
@@ -251,7 +250,7 @@ def generate_paired_fast_distilled(
         raise ValueError("Batch2 requires identical fixed frame counts")
     scale = tiling_scale_factors_for_vae(pipeline.video_decoder.checkpoint_path)
     tiling = ensure_tiling_config(
-        None, scale_factors=scale,
+        AUTO_TILING, scale_factors=scale,
         vae_checkpoint_path=pipeline.video_decoder.checkpoint_path,
         video_shape=VideoPixelShape(1, num_frames, height, width, frame_rate),
         diffvae_optimization=pipeline.video_decoder.diffvae_optimization,
