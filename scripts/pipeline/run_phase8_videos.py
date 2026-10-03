@@ -187,6 +187,16 @@ def main() -> None:
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
+    # Non-default profiles are historical 720p visual/speed experiments.
+    # Do not silently run a low-resolution or unverified profile at 1080p
+    # because the operator omitted --width/--height.
+    if args.i2v_profile != "default" and (args.width, args.height) != (1280, 720):
+        raise SystemExit(
+            "Non-default experimental I2V profiles require explicit "
+            "--width 1280 --height 720; only the default FP8 I2V recipe "
+            "currently offers experimental Full HD delivery"
+        )
+
     environment = _environment()
 
     keyframes = _read_models(args.keyframes, StoryboardKeyframe)
