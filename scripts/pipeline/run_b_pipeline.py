@@ -36,6 +36,7 @@ from ai_video_factory.bots.fish_audio_workflow import (
     retranscribe_audio_block,
     unfinished_audio_runs,
 )
+from ai_video_factory.bots.professional_voice import generate_professional_audio
 from ai_video_factory.bots.workflow import (
     materialize_blocks,
     validate_beats,
@@ -69,8 +70,6 @@ from ai_video_factory.providers.avatar_library import (
 )
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.avatar_style import ensure_avatar_style
-from ai_video_factory.providers.professional_avatar_voice import ensure_professional_avatar_voice
-from ai_video_factory.bots.professional_voice import generate_professional_audio
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice, valid_voice_provider
 from ai_video_factory.providers.ebook_covers import ensure_ebook_covers
 from ai_video_factory.providers.grid_crops import crop_grid_assets
@@ -83,6 +82,7 @@ from ai_video_factory.providers.openai_batch_images import (
 )
 from ai_video_factory.providers.openai_stt import OpenAISttClient
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
+from ai_video_factory.providers.professional_avatar_voice import ensure_professional_avatar_voice
 from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.publishing import publish_completed_run
 from ai_video_factory.workflows.b_video import (
@@ -1800,9 +1800,13 @@ async def _run_audio_only(
                     })
                 pending = unfinished_audio_runs(output)
                 if resume and len(pending) != 1:
-                    raise RuntimeError("Professional --resume-audio requires one pending Gemini task")
+                    raise RuntimeError(
+                        "Professional --resume-audio requires one pending Gemini task"
+                    )
                 if pending and not resume:
-                    raise RuntimeError("An incomplete paid audio task exists; reconcile before regeneration")
+                    raise RuntimeError(
+                        "An incomplete paid audio task exists; reconcile before regeneration"
+                    )
                 nonce = (
                     json.loads(pending[0].read_text(encoding="utf-8")).get("generation_nonce", "")
                     if resume else uuid4().hex
