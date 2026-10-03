@@ -163,6 +163,20 @@ def test_racing_start_tolerated_without_duplicate_request(manifest):
     assert salad.start_calls == 1
 
 
+def test_racing_start_does_not_repeat_post_if_get_is_eventually_consistent(manifest):
+    salad = FakeSalad(
+        states=[
+            ("stopped", False), ("stopped", False), ("stopped", False),
+            ("deploying", False), ("running", False),
+        ],
+        instances=[READY],
+        start_result=False,
+    )
+    started, _ = check(salad, manifest)
+    assert started is False
+    assert salad.start_calls == 1
+
+
 def test_missing_salad_account_fails_before_network(monkeypatch, manifest):
     monkeypatch.setattr(startup, "_account_settings", lambda: (None, "project"))
     with pytest.raises(startup.ImageUpscalerStartupError, match="SALAD_ORGANIZATION"):
