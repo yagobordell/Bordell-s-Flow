@@ -56,7 +56,7 @@ def _create_fake_checkout(tmp_path: Path, *, fail_ready: bool) -> tuple[Path, Pa
         "[string]$EnvFile, [switch]$AllowBootstrappingInstance, "
         "[switch]$NonInteractive)\n"
         "Add-Content -LiteralPath (Join-Path $PSScriptRoot 'events.txt') "
-        "-Value \"$Action:$Service\"\n"
+        "-Value \"${Action}:$Service\"\n"
     )
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     subprocess.run(
