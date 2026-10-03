@@ -2575,8 +2575,14 @@ async def main() -> None:
             stop_after=stop_stage or "B2",
             previous_b11=previous_b11,
             previous_b12=previous_b12,
-            previous_partial_b12=previous_partial_b12,
-            previous_partial_b2=previous_partial_b2,
+            **(
+                {"previous_partial_b12": previous_partial_b12}
+                if previous_partial_b12 else {}
+            ),
+            **(
+                {"previous_partial_b2": previous_partial_b2}
+                if previous_partial_b2 else {}
+            ),
             on_input=artifacts.input,
             on_output=output_and_start_audio,
             on_rejected_output=artifacts.rejected_b11,
