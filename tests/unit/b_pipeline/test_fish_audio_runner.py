@@ -118,7 +118,7 @@ def test_full_b_run_starts_fish_concurrently_and_no_audio_skips_it(
     monkeypatch.setattr(runner, "ensure_avatar_qr", _fake_avatar_qr)
     monkeypatch.setattr(
         runner, "ensure_ebook_covers",
-        lambda *, avatar_file, **_kw: _fake_ebook_covers(avatar_file),
+        lambda avatar_file, **_kw: _fake_ebook_covers(avatar_file),
     )
     monkeypatch.setattr(runner.settings, "openai_api_key", "test-openai-key")
     monkeypatch.setattr(runner.settings, "ai33_api_key", "test-ai33-key")
@@ -201,7 +201,7 @@ def test_audio_only_mode_preserves_b_artifacts_and_skips_avatar_images(
     monkeypatch.setattr(runner, "ensure_avatar_qr", _fake_avatar_qr)
     monkeypatch.setattr(
         runner, "ensure_ebook_covers",
-        lambda *, avatar_file, **_kw: _fake_ebook_covers(avatar_file),
+        lambda avatar_file, **_kw: _fake_ebook_covers(avatar_file),
     )
     monkeypatch.setattr(runner.settings, "openai_api_key", "test-openai-key")
     monkeypatch.setattr(runner.settings, "ai33_api_key", "test-ai33-key")
