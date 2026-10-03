@@ -98,7 +98,9 @@ class SaladCostMeter:
             self._unavailable = "Salad API credentials or organization/project are missing"
         document = json.loads(services_path.read_text(encoding="utf-8"))
         definitions = document["services"]
-        self._definitions = {name: definitions[name] for name in _SERVICES}
+        self._definitions = (
+            {} if worker_images else {name: definitions[name] for name in _SERVICES}
+        )
         # This is observed group cost, not a per-user allocation.
         for kind, image in (worker_images or {}).items():
             service = "ltx25" if kind == "a2v" else "ltx25_i2v"
