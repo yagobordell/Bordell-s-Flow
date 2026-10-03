@@ -107,6 +107,7 @@ def ensure_image_upscaler_ready(
     say = notify or (lambda message: print(message, flush=True))
     deadline = clock() + timeout_seconds
     started = False
+    start_attempted = False
     previous_status: tuple[str, bool] | None = None
     status = "unknown"
 
@@ -137,7 +138,7 @@ def ensure_image_upscaler_ready(
                 say("  Salad image upscaler: instance ready.")
                 return started
 
-        if status == "stopped" and not pending and not started:
+        if status == "stopped" and not pending and not start_attempted:
             if not auto_start:
                 raise ImageUpscalerStartupError(
                     "Salad image upscaler is stopped and IMAGE_UPSCALER_AUTO_START=false. "
@@ -145,6 +146,7 @@ def ensure_image_upscaler_ready(
                 )
             say("  Salad image upscaler: starting one existing container-group replica...")
             # Also tolerates another runner that started it between GET and POST.
+            start_attempted = True
             started = client.start_container_group_if_needed(warning_logger=say)
 
         if status in {"failed", "error"}:
