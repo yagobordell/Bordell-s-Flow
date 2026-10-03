@@ -8,7 +8,7 @@ param(
         "reference-bench-cpu", "reference-fp8none",
         "reference-cpu-triton", "reference-none-triton", "static-fp8none"
     )][string[]]$Profiles = @("reference-bench-cpu", "reference-fp8none"),
-    [ValidateRange(2, 10)][int]$Repetitions = 2,
+    [ValidateRange(3, 10)][int]$Repetitions = 4,
     [long]$Seed = 4242,
     [string]$OutputDir = "",
     [string]$EnvFile = ".env",
