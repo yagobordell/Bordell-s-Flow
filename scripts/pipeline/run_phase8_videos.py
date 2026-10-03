@@ -9,6 +9,11 @@ from pathlib import Path
 from ai_video_factory.domain import ShotTiming, StoryboardKeyframe, VideoPrompt
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.r2 import create_r2_storage
+from ai_video_factory.video_resolution import (
+    DEFAULT_VIDEO_HEIGHT,
+    DEFAULT_VIDEO_WIDTH,
+    validate_video_size,
+)
 from ai_video_factory.workers.ltx25.model import (
     LTX_CFG_BATCH2_PROFILE,
     LTX_CFG_BATCH2_SILENT_PROFILE,
@@ -25,11 +30,6 @@ from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
     LTX_PRODUCTION_I2V_PROFILE,
     LTX_STATIC_CAMERA_GENERATION_PROFILE,
-)
-from ai_video_factory.video_resolution import (
-    DEFAULT_VIDEO_HEIGHT,
-    DEFAULT_VIDEO_WIDTH,
-    validate_video_size,
 )
 from ai_video_factory.workflows.video_generation import (
     VideoGenerationManifest,
