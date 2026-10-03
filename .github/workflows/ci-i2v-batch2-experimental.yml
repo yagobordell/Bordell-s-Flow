@@ -38,10 +38,14 @@ jobs:
             src/ai_video_factory/workers/ltx25/model.py \
             scripts/smoke/submit_ltx25_i2v_batch2_smoke.py \
             tests/unit/workers/test_ltx_i2v_batch2_optimizations.py \
-            tests/unit/workers/test_ltx_i2v_batch2_experiment.py
+            tests/unit/workers/test_ltx_i2v_batch2_experiment.py \
+            tests/unit/workers/test_ltx_salad_readiness.py \
+            tests/integration/salad/test_salad_shared_helpers.py
       - name: I2V batch2 and Full HD regression (CPU only)
         run: |
           uv run --no-sync pytest -q \
             tests/unit/workers/test_ltx_i2v_batch2_optimizations.py \
             tests/unit/workers/test_ltx_i2v_batch2_experiment.py \
-            tests/unit/workflows/test_video_full_hd_defaults.py
+            tests/unit/workflows/test_video_full_hd_defaults.py \
+            tests/unit/workers/test_ltx_salad_readiness.py \
+            tests/integration/salad/test_salad_shared_helpers.py
