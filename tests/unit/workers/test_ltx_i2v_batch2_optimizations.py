@@ -7,18 +7,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import torch
+import pytest
 
 from ai_video_factory.workers.ltx25.model import (
     LTX_PRODUCTION_I2V_PROFILE,
     DirectLTX25Backend,
     LTXVideoParameters,
-)
-from ai_video_factory.workers.ltx25.paired_i2v import (
-    PairInput,
-    _batch_conditionings,
-    _encode_pair_prompts,
-    generate_paired_fast_distilled,
 )
 from ai_video_factory.workers.ltx25.resource_metrics import memory_pressure
 
@@ -36,6 +30,11 @@ def _parameters(seed: int) -> LTXVideoParameters:
 
 
 def test_gemma_build_once_but_forward_and_connector_remain_independent() -> None:
+    # Lightweight CI omits the large GPU-only torch / LTX wheel set.
+    # This mock parity test also runs on local LTX-enabled dev environments.
+    pytest.importorskip("torch")
+    from ai_video_factory.workers.ltx25.paired_i2v import PairInput, _encode_pair_prompts
+
     calls = {"gemma_builds": 0, "processor_builds": 0, "prompts": []}
 
     class Gemma:
@@ -83,6 +82,8 @@ def test_gemma_build_once_but_forward_and_connector_remain_independent() -> None
 
 
 def test_image_encoder_build_once_per_stage_with_two_b1_image_forwards() -> None:
+    torch = pytest.importorskip("torch")
+    from ai_video_factory.workers.ltx25.paired_i2v import PairInput, _batch_conditionings
     from ltx_core.conditioning.types.latent_cond import VideoConditionByLatentIndex
 
     image_calls = []
@@ -127,7 +128,13 @@ def test_image_encoder_build_once_per_stage_with_two_b1_image_forwards() -> None
 
 
 def test_shared_stage_uses_exact_same_transformer_for_both_passes() -> None:
+    torch = pytest.importorskip("torch")
     import ai_video_factory.workers.ltx25.paired_i2v as paired
+
+    from ai_video_factory.workers.ltx25.paired_i2v import (
+        PairInput,
+        generate_paired_fast_distilled,
+    )
 
     model = object()
     first_image_conditioning = object()
