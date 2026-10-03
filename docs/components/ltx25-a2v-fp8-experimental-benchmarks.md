@@ -172,3 +172,53 @@ are *not* lip-sync certification. No merge, production profile change,
 experimental profile deletion or default dispatch switch is permitted until
 real RTX 5090 evidence and human review establish a configuration worth
 selecting. A draft PR may collect static checks without changing production.
+
+
+## October 3 real-GPU findings and corrected retest
+
+The first reference CPU/eager generation finished 137 frames (5.708s video)
+from 5.460s real speech on the 32-GB Salad RTX 5090. It needed 1305.157s
+overall, including 468.828s prompt (403.282s Gemma acquisition), 301.483s
+Stage 1, 480.652s Stage 2 and 24.165s lazy video decode. Peak CUDA reserved
+was 20438 MiB. A second generation began rebuilding Gemma although the
+Python pipeline object was reused. The operator stopped the benchmark and
+must resolve the second Postgres lease before any new GPU allocation.
+
+The pinned upstream intentionally rebuilds/frees Gemma, diffusion models and
+VAE models after each invocation. Pipeline reuse does NOT imply weight
+residency. The experimental pipeline now caches only final Gemma connector
+embeddings as bounded CPU tensors for identical, non-enhanced prompts within
+one profile. It never retains the 12B Gemma model or the 22B transformer on
+the GPU. First/cold samples still perform original encoding; true repeated
+prompts skip Gemma on warm runs, with explicit cache-hit metadata. These warm
+prompt timings are NOT representative of novel prompts in regular production.
+Neither the measured peak nor the embedding cache establishes that FP8
+no-offload fits the RTX 5090: a real test remains mandatory. Transformer
+Stage 1/2 builds have different possible LoRA recipes; do not force weight
+residency without an independent VRAM and output-parity test.
+
+The batch runner now refuses to allocate or submit while ANY shared A2V
+Postgres job is pending, retryable or running (even if its lease has expired).
+Use the existing documented safe cancellation procedure for the interrupted
+attempt; never cancel someone else's job. The opt-in
+-ContinueOnTerminalFailure switch skips a failed profile only when its exact
+persisted job is terminal failed and the entire A2V task queue is idle.
+Active/expired leases, retryable failures, local media-validation errors and
+inconclusive queue inspection must stop the batch. The
+-MaxProfileTotalSeconds switch stops only remaining repetitions of an
+already completed over-budget sample: it cannot terminate a running task.
+Partial manifests require the comparator's --allow-partial flag and never
+qualify for promotion.
+
+Cost-controlled next run: after building a NEW experimental image, use a
+new digest and one allocation. Test profiles in this order:
+reference-fp8none, reference-bench-cpu, static-fp8none, static-bench-cpu,
+reference-none-triton, reference-cpu-triton. Keep seed, WAV, image, literal
+prompt, 1280x720/24fps fixed, ideally three repetitions. Opt-in switches
+-MaxProfileTotalSeconds 360 and -ContinueOnTerminalFailure skip only safely
+settled slow/failed profiles. An FP8 NONE OOM that remains retryable is NOT
+safe to bypass; stop and settle its Postgres row instead of keeping the GPU
+allocated. The comparator now matches static ONLY to static CPU and
+reference ONLY to reference CPU, even when NONE tests run first.
+Manual voice-tail, phoneme, identity and naturalness reviews remain mandatory.
+This work stays on the draft experimental PR; NO production or I2V change.
