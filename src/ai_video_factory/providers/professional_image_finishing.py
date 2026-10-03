@@ -190,7 +190,7 @@ def _materialize(
                 refs.append(
                     "data:image/png;base64," + base64.b64encode(avatar_reference).decode("ascii")
                 )
-            description = re.sub(r"^[1-9]\\.\\s+", "", item.get("description", "")).strip()
+            description = re.sub(r"^[1-9]\.\s+", "", item.get("description", "")).strip()
             text = (
                 "Render the first reference scene as an authentic high-end iPhone 16/17 "
                 "Pro Max photograph in instagram rhode style at native high resolution. "
