@@ -47,7 +47,7 @@ Only use `Prepare` with both groups idle and the controller stopped. The A2V pin
 
 The script verifies distinct avatar images, valid speech files and durations, image pinning, R2, Python worktree and stopped group isolation **before starting Salad**. Reusing identical speech is permitted and recorded in the campaign summary.
 
-First verify the local inputs without any Salad/R2 calls. Both MP3 paths deliberately point to the **same** file:
+First verify the local inputs **and that the local `.env` can be loaded**, without any Salad/R2 calls. Both MP3 paths deliberately point to the **same** file:
 
 ```powershell
 .\scripts\smoke\run_ltx25_a2v_resolution_batch.ps1 `
