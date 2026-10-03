@@ -75,7 +75,7 @@ def main() -> int:
                     (_A2V_TASK,),
                 )
                 rows = [
-                    dict(zip(("job_id", "status", "lease_expires_at"), record))
+                    dict(zip(("job_id", "status", "lease_expires_at"), record, strict=True))
                     for record in cursor.fetchall()
                 ]
                 failed_job_id = (
