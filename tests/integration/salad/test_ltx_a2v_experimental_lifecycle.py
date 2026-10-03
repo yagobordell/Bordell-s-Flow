@@ -113,3 +113,32 @@ def test_isolated_runner_never_mutates_production_or_i2v(
         assert len(manifest["runs"]) == 3
         assert [row["iteration"] for row in manifest["runs"]] == [1, 2, 3]
         assert all(Path(row["metadata"]).is_file() for row in manifest["runs"])
+
+
+def test_benchmark_budget_skips_repetitions_but_always_stops(
+    tmp_path: Path,
+) -> None:
+    root, events = _create_fake_checkout(tmp_path, fail_ready=False)
+    output = tmp_path / "budget"
+    completed = subprocess.run(
+        [
+            _PWSH or "pwsh", "-NoProfile", "-NonInteractive", "-File",
+            str(root / "scripts" / "smoke" / _WRAPPER.name),
+            "-Audio", str(root / "monje.wav"),
+            "-AvatarImage", str(root / "monje.png"),
+            "-Prompt", "The unchanged avatar speaks.",
+            "-ExpectedPinnedImage", _PIN,
+            "-Profiles", "reference-bench-cpu",
+            "-Repetitions", "3",
+            "-MaxProfileTotalSeconds", "30",
+            "-OutputDir", str(output), "-NonInteractive",
+        ],
+        cwd=tmp_path, capture_output=True, text=True, check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "Start:ltx25_a2v_experimental", "Stop:ltx25_a2v_experimental",
+    ]
+    manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8-sig"))
+    assert len(manifest["runs"]) == 1
+    assert manifest["skipped_profiles"] == ["reference-bench-cpu"]
