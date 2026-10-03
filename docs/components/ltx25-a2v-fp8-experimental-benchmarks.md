@@ -48,10 +48,11 @@ The experiment service is intentionally **not** in the normal Salad stack servic
 | `reference-fp8none` | reference, unchanged | FP8_CAST | NONE | eager |
 | `reference-cpu-triton` | reference, unchanged | FP8_CAST | CPU | Triton |
 | `reference-none-triton` | reference, unchanged | FP8_CAST | NONE | Triton |
+| `static-bench-cpu` | static-reference **not equivalent to reference** | FP8_CAST | CPU | eager |
 | `static-fp8none` | static-reference **not equivalent to reference** | FP8_CAST | NONE | eager |
 
-The `static-fp8none` profile must be compared with the existing
-`static-reference` control, not with the non-static reference. Never interpret
+The `static-fp8none` profile must be compared with the **instrumented**
+`static-bench-cpu` control, not with the non-static reference. Never interpret
 differences in static versus standard facial guidance as an offload effect.
 
 The profiler is active only for these experimental identifiers. Metrics in
