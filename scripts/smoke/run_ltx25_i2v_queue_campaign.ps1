@@ -10,6 +10,7 @@ param(
     [string]$RunId = ("i2v-queue-" + [DateTime]::UtcNow.ToString("yyyyMMddHHmmss")),
     [ValidateRange(0.5,12)][double]$DurationSeconds = 5,
     [string]$EnvFile = ".env",
+    [switch]$CheckEnvironmentOnly,
     [string]$OutputDir = "data/output/deployment-validation/ltx25-i2v-queue",
     [ValidateRange(120,21600)][int]$BootstrapTimeoutSeconds = 7200,
     [ValidateRange(60,43200)][int]$JobTimeoutSeconds = 10800
@@ -17,6 +18,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $Root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
+# scripts/salad/_env_file.ps1 resolves this variable in the caller scope.
+$RepoRoot = $Root
 $Manager = Join-Path $Root "scripts\salad\manage_salad_worker.ps1"
 $Ready = Join-Path $PSScriptRoot "wait_salad_ltx25_ready.py"
 $Campaign = Join-Path $PSScriptRoot "ltx25_i2v_queue_campaign.py"
@@ -35,6 +38,10 @@ $ArgsShared = @(
 )
 . (Join-Path $Root "scripts\salad\_env_file.ps1")
 Import-EnvFile -Path $EnvFile
+if ($CheckEnvironmentOnly) {
+    Write-Host "Local I2V environment preflight passed. No Salad or R2 operations were performed."
+    return
+}
 & $Python (Join-Path $PSScriptRoot "check_ltx25_python_source.py") (Join-Path $Root "src\ai_video_factory\workers\ltx25\__init__.py")
 if ($LASTEXITCODE -ne 0) { throw "Wrong Python worktree." }
 & $Python $Ready --service ltx25_i2v --env-file $EnvFile --expected-image $ExpectedPinnedImage --check-config-only
