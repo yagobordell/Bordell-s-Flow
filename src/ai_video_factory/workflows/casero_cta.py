@@ -395,6 +395,24 @@ async def prepare_casero_cta(
             from ai_video_factory.workflows.casero_cta_video import cta_assets
             cta_assets(directory)
             return {**ready, "directory": str(directory)}
+        if ready.get("schema_version") != "casero-cta-final-v1":
+            raise CaseroCTAError("Unknown finished CTA schema")
+        # Before billing even the new text bot, ensure migration can run locally.
+        # A v1 clip must not be silently replaced or reconstructed by a paid job.
+        if not (directory / "script.json").is_file():
+            raise CaseroCTAError("Legacy CTA speech script missing; keep original CTA")
+        original_a2v = directory / "avatar_a2v.mp4"
+        state_path = directory / "a2v_state.json"
+        if not state_path.is_file():
+            raise CaseroCTAError("Legacy CTA A2V checkpoint missing; keep original CTA")
+        saved_a2v = _read(state_path)
+        if (saved_a2v.get("status") != "completed"
+                or original_a2v.is_symlink() or not original_a2v.is_file()
+                or _sha(original_a2v) != saved_a2v.get("sha256")):
+            raise CaseroCTAError(
+                "Legacy CTA A2V cannot be verified locally; "
+                "reconcile before requesting new motion copy"
+            )
 
     from time import perf_counter
     cached_ebook_script = (directory / "script.json").is_file()
