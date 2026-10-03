@@ -480,7 +480,7 @@ class PredictiveSaladAutoscaler:
             return {}
         if self.route_refresher is not None:
             self.route_refresher()
-        self._assert_project_inventory_owned()
+        external_replicas = self._assert_project_inventory_owned()
         rows_by_stage = {
             stage: self.store.list_stage_jobs(
                 binding=self.bindings[stage],
@@ -506,7 +506,9 @@ class PredictiveSaladAutoscaler:
         )
         targets = allocate_project_quota(
             demands=demands,
-            project_max_replicas=self.config.project_max_replicas,
+            project_max_replicas=max(
+                self.config.project_max_replicas - external_replicas, 0
+            ),
         )
         groups = {
             stage: self.clients[stage].describe_container_group() for stage in self.clients
@@ -700,7 +702,7 @@ class PredictiveSaladAutoscaler:
             )
 
         available = max(
-            self.config.project_max_replicas - sum(current.values()),
+            self.config.project_max_replicas - external_replicas - sum(current.values()),
             0,
         )
         for stage in self.clients:
@@ -764,22 +766,53 @@ class PredictiveSaladAutoscaler:
             )
         return results
 
-    def _assert_project_inventory_owned(self) -> None:
+    def _assert_project_inventory_owned(self) -> int:
+        """Reserve quota for explicitly allowlisted external test groups.
+
+        Never modify external groups. An unknown group remains a hard failure
+        so the autoscaler cannot silently oversubscribe unaccounted GPU spend.
+        """
         if self.managed_group_names is None:
-            return
+            return 0
         inventory_client = next(iter(self.clients.values()))
         groups = inventory_client.list_project_container_groups()
-        remote_names = {
-            str(group.get("name") or "").strip()
-            for group in groups
-            if str(group.get("name") or "").strip()
+        allowlisted = {
+            value.strip() for value in os.getenv(
+                "SALAD_EXTERNAL_GROUP_ALLOWLIST", ""
+            ).split(",") if value.strip()
         }
-        unmanaged = sorted(remote_names - self.managed_group_names)
-        if unmanaged:
+        unknown: list[str] = []
+        external_replicas = 0
+        for group in groups:
+            name = str(group.get("name") or "").strip()
+            if not name or name in self.managed_group_names:
+                continue
+            if name not in allowlisted:
+                unknown.append(name)
+                continue
+            status = _group_status(group)
+            if group.get("pending_change") or status in _PROVIDER_TRANSITION_STATUSES:
+                raise AutoscalerReconciliationError(
+                    "Allowlisted external group " + name
+                    + " is transitioning; holding automatic allocation until "
+                    "its actual GPU consumption is stable"
+                )
+            if status == "running":
+                external_replicas += max(int(group.get("replicas") or 0), 0)
+            elif status != "stopped":
+                raise AutoscalerReconciliationError(
+                    "Unknown state of allowlisted external group "
+                    + name + ": " + status
+                )
+        if unknown:
             raise AutoscalerReconciliationError(
                 "Salad project contains unmanaged container groups outside "
-                f"deploy/salad/services.json: {', '.join(unmanaged)}"
+                "deploy/salad/services.json and registered immutable routes: "
+                + ", ".join(sorted(unknown))
+                + ". Explicitly whitelist intentional external tests via "
+                "SALAD_EXTERNAL_GROUP_ALLOWLIST."
             )
+        return external_replicas
 
     def _record_provider_bootstrap_progress(
         self,
