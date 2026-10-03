@@ -76,6 +76,7 @@ def analyze_manifest(manifest_path: Path, *, hash_media: bool = True) -> dict[st
             "reference-fp8none": "ltx25-a2v-reference-bench-fp8none-eager-a95ab-v1",
             "reference-cpu-triton": "ltx25-a2v-reference-bench-fp8cpu-triton-a95ab-v1",
             "reference-none-triton": "ltx25-a2v-reference-bench-fp8none-triton-a95ab-v1",
+            "static-bench-cpu": "ltx25-a2v-static-bench-fp8cpu-eager-a95ab-v1",
             "static-fp8none": "ltx25-a2v-static-bench-fp8none-eager-a95ab-v1",
         }[run["profile"]]:
             raise ValueError("Generation profile mismatch")
