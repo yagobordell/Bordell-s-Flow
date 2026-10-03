@@ -20,7 +20,7 @@ class LTX25WorkerSettings(InferenceWorkerSettings):
         validation_alias="LTX_MODEL_REPOSITORY",
     )
     device: str = Field(default="cuda", validation_alias="LTX_DEVICE")
-    task_mode: Literal["both", "i2v", "a2v"] = Field(
+    task_mode: Literal["both", "i2v", "a2v", "a2v_experimental"] = Field(
         default="both", validation_alias="LTX_WORKER_TASK_MODE"
     )
 
@@ -31,5 +31,5 @@ class LTX25WorkerSettings(InferenceWorkerSettings):
         if not self.device.strip():
             raise ValueError("LTX_DEVICE must be non-empty")
         if self.worker_mode == "production" and self.worker_poll_jobs and self.task_mode == "both":
-            raise ValueError("Production LTX polling requires LTX_WORKER_TASK_MODE=i2v or a2v")
+            raise ValueError("Production LTX polling requires an explicit i2v, a2v, or a2v_experimental mode")
         return self
