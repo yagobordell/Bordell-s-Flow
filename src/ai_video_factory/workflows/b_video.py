@@ -218,6 +218,7 @@ def _fingerprint(
     assets: dict[tuple[int, str], Path], avatar: Path,
     *, profile: str | None = None,
     i2v_profile: str | None = LTX_PRODUCTION_I2V_PROFILE,
+    worker_images: dict[str, str] | None = None,
 ) -> str:
     relevant = {
         "schema": _SCHEMA,
@@ -240,13 +241,15 @@ def _fingerprint(
         for beat in timeline["beats"]
     ):
         relevant["i2v_profile"] = i2v_profile
+    if worker_images:
+        relevant["required_worker_images"] = worker_images
     canonical = json.dumps(relevant, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def build_b2_video_plan(
     output: Path, plan: dict[str, Any], audio: dict[str, Any],
-    images: dict[str, Any],
+    images: dict[str, Any], *, worker_images: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], list[B2VideoJob], Path]:
     """Validate all sources and durations BEFORE queuing any paid inference."""
     timeline = build_stt_beat_timeline(output, plan, audio)
@@ -280,7 +283,8 @@ def build_b2_video_plan(
                 raise B2VideoError(
                     f"Missing media_video video_prompt for {beat['beat_id']}"
                 )
-    digest = _fingerprint(timeline, audio, assets, avatar)
+    worker_images = worker_images or {}
+    digest = _fingerprint(timeline, audio, assets, avatar, worker_images=worker_images)
     run_dir = output / "video" / "runs" / digest[:20]
     if run_dir.is_symlink() or run_dir.parent.is_symlink():
         raise B2VideoError("Refusing linked B2 LTX run directory")
@@ -344,6 +348,9 @@ def build_b2_video_plan(
                 seed=seed, width=1280, height=720, fps=_FPS,
                 num_frames=num_frames, generation_profile=LTX_PRODUCTION_I2V_PROFILE,
             )
+            image = worker_images.get("i2v")
+            if image:
+                job_id += "-im" + image.rsplit(":", 1)[-1][:12]
             key = f"b2-ltx/inputs/images/{image_sha}.png"
             request = InferenceJobRequest(
                 job_id=job_id, task=LTX_VIDEO_TASK,
@@ -359,7 +366,9 @@ def build_b2_video_plan(
                     "generation_profile": LTX_PRODUCTION_I2V_PROFILE,
                     "prompt": prompt, "seed": seed,
                     "width": 1280, "height": 720, "fps": _FPS,
+                    **({"required_worker_image": worker_image} if worker_image else {}),
                     "num_frames": num_frames,
+                    **({"required_worker_image": image} if image else {}),
                 },
             )
             audio_path = None
@@ -389,6 +398,9 @@ def build_b2_video_plan(
                 audio_sha256=audio_sha, seed=seed, width=1280, height=720,
                 fps=_FPS, generation_profile=LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
             )
+            worker_image = worker_images.get("a2v")
+            if worker_image:
+                job_id += "-im" + worker_image.rsplit(":", 1)[-1][:12]
             request = InferenceJobRequest(
                 job_id=job_id, task=LTX_A2V_TASK, max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
                 inputs=[
@@ -721,6 +733,7 @@ def generate_b2_ltx_video(
     check_a2v_worker: Callable[[], None] | None = None,
     check_i2v_worker: Callable[[], None] | None = None,
     casero_cta_dir: Path | None = None,
+    worker_images: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Durably submit exactly one LTX request per video beat/avatar group, then mux.
 
@@ -735,7 +748,9 @@ def generate_b2_ltx_video(
         submit_cta_first,
     )
 
-    timeline, jobs, run_dir = build_b2_video_plan(output, plan, audio, images)
+    timeline, jobs, run_dir = build_b2_video_plan(
+        output, plan, audio, images, worker_images=worker_images,
+    )
     digest = run_dir.name
     manifest_path = run_dir / "manifest.json"
     expected = _new_manifest(jobs, audio, digest)
@@ -811,7 +826,10 @@ def generate_b2_ltx_video(
         check_a2v_worker()
     # Submit CTA first on the shared Postgres A2V queue, BEFORE normal B2 jobs.
     cta_submitted = (
-        submit_cta_first(casero_cta_dir, executor, queue)
+        submit_cta_first(
+            casero_cta_dir, executor, queue,
+            worker_image=(worker_images or {}).get("a2v"),
+        )
         if casero_cta_dir is not None else None
     )
 
