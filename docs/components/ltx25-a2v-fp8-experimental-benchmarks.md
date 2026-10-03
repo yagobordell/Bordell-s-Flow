@@ -40,6 +40,33 @@ The experiment service is intentionally **not** in the normal Salad stack servic
   have not been demonstrated. Do not silently substitute the I2V checkpoint
   or promote it without an independent study.
 
+## Dedicated queue: current instructions (supersede older stop-production guidance)
+
+The benchmark and production now use **different** PostgreSQL task names:
+`video.ltx25.audio_to_video_experimental` versus
+`video.ltx25.audio_to_video`. Existing `gpu.jobs.task` is TEXT, so **no SQL
+migration and no cancellation of production B2 jobs** is necessary. The
+experimental worker advertises `LTX_WORKER_TASK_MODE=a2v_experimental`; its
+registry accepts only the experimental task, and its request validator rejects
+non-experimental profiles. The smoke client submits experimental profiles
+only to that task. Normal A2V is unchanged.
+
+The production group and capacity controller **may keep running**, and
+production's pending/running jobs are intentionally ignored by the experiment's
+queue gate. The preflight requires **only** the experimental group to be
+stopped and quiescent, and checks only runnable experimental jobs. Other
+experiments in progress **cannot** share the same experimental group. This
+isolates task ownership, not the physical Salad cost: simultaneous production
+and experimental groups allocate independent GPUs. Do not start a separate
+capacity controller.
+
+**Required order:** update to this branch, build/push the experimental image
+from this commit, `Prepare` to recreate the missing experimental Salad group
+and pin the freshly published digest, then verify Status, isolation and
+experimental queue gate before running the benchmark. The previously published
+digest is unsafe because it still polls production A2V jobs. Do not apply the
+historical "production must be stopped" steps elsewhere in this document.
+
 ## Experimental profiles
 
 | CLI profile | Original recipe | Transformer | Offload | DiffVAE |
@@ -78,13 +105,10 @@ adds benchmark overhead and must be consistent between CPU and NONE.
 
 ## GPU validation gates (not satisfied by offline tests)
 
-1. Before touching Salad, check no active A2V job, turn off the singleton
-   capacity controller using the existing operational procedure, and ensure
-   the **production A2V group** is already stably stopped. Schedule a
-   maintenance window if production normally needs A2V; never interrupt
-   another user's job. The benchmark's read-only isolation gate refuses
-   active/pending production groups and active/pending experimental groups.
-   I2V is never stopped or reconfigured by these scripts.
+1. Leave normal production A2V and its capacity controller untouched.
+   Confirm the experimental group is stably stopped and its **dedicated**
+   PostgreSQL task has no runnable jobs. The isolation gate does not stop,
+   mutate, or require stopping production. I2V is also unchanged.
 2. Publish and pin **only** the new experimental image/group below. Ensure
    Salad and your local sources refer to this branch/commit and that the
    container has one 32-GB RTX 5090. No GPU tests were performed while
@@ -126,9 +150,8 @@ uv run --no-sync python -m pytest tests/unit/workers/test_ltx_a2v_experiments.py
 .\scripts\salad\manage_salad_worker.ps1 -Action Validate -Service ltx25_a2v_experimental
 ```
 
-After separately confirming no A2V jobs are active, the production A2V group
-is already stopped and the capacity controller is stopped, prepare only the
-experimental service. This builds and pushes the new image using the
+After confirming no **experimental** A2V jobs are active, prepare only the
+experimental service. Production B2 jobs and its capacity controller are independent. This builds and pushes the new image using the
 branch's Docker source, then prepares the experimental group **stopped**:
 
 ```powershell
@@ -197,8 +220,9 @@ no-offload fits the RTX 5090: a real test remains mandatory. Transformer
 Stage 1/2 builds have different possible LoRA recipes; do not force weight
 residency without an independent VRAM and output-parity test.
 
-The batch runner now refuses to allocate or submit while ANY shared A2V
+The batch runner now refuses to allocate or submit while ANY experimental A2V
 Postgres job is pending, retryable or running (even if its lease has expired).
+Production B2 jobs do not block the independent experimental queue.
 Use the existing documented safe cancellation procedure for the interrupted
 attempt; never cancel someone else's job. The opt-in
 -ContinueOnTerminalFailure switch skips a failed profile only when its exact
