@@ -186,8 +186,12 @@ def test_plan_validation_retries_only_v3_and_persists_outputs(tmp_path):
 
 def test_professional_audio_paid_block_is_reused(tmp_path, monkeypatch):
     """A completed paid block is not re-posted while the state is verifiably intact."""
+    revision = {"value": 0}
+
     async def plan(**_):
-        return _v1(), [_v2()], [_v3()]
+        rhythm = _v1()
+        rhythm.curve += str(revision["value"])
+        return rhythm, [_v2()], [_v3()]
 
     async def transcribe(item, *, output, run_dir, stt_client):
         folder = run_dir / "blocks" / "block_1"
@@ -228,3 +232,10 @@ def test_professional_audio_paid_block_is_reused(tmp_path, monkeypatch):
     assert first == second
     assert speech.calls == 1
     assert second["stt_complete"] and second["provider"] == "gemini"
+    # A new B2-derived global curve changes the run fingerprint while
+    # unchanged individual text/style still reuses the paid Gemini WAV.
+    revision["value"] = 1
+    third = asyncio.run(pv.generate_professional_audio(**args))
+    assert third["run_id"] != first["run_id"]
+    assert speech.calls == 1
+    assert third["blocks"][0]["sha256"] == first["blocks"][0]["sha256"]
