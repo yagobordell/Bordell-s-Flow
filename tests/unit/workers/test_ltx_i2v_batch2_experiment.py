@@ -77,7 +77,7 @@ def test_batch2_validation_rejects_profile_geometry_and_seed_drift() -> None:
     bad = {"a": parameters(5242), "b": parameters(5242)}
     with pytest.raises(ValueError, match="distinct|seeds"):
         Batch2Parameters.model_validate(bad)
-    bad["b"] = parameters(5243, width=1024)
+    bad["b"] = {**parameters(5243, width=1024), "height": 768}
     with pytest.raises(ValueError, match="restricted|720p"):
         Batch2Parameters.model_validate(bad)
     bad["b"] = {**parameters(5243), "generation_profile": "ltx25-not-a-profile"}
