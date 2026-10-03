@@ -34,6 +34,7 @@ from ai_video_factory.inference.gpu_failures import (
 from ai_video_factory.inference.ports import LocalArtifact, LocalSidecarArtifact
 
 from .bootstrap import require_runtime_bootstrap_complete
+from .i2v_metrics import I2VPhaseMetrics
 from .model import (
     _CANONICAL_LANDSCAPE_SIZE,
     LTXModelFiles,
@@ -43,7 +44,6 @@ from .model import (
     _force_diffvae_eager_sdpa,
     _pipeline_dimensions,
 )
-from .i2v_metrics import I2VPhaseMetrics
 from .reference_recipe import (
     LTX25_MODEL_REVISION,
     LTX_A2V_REFERENCE_RECIPE,
