@@ -45,7 +45,17 @@ Only use `Prepare` with both groups idle and the controller stopped. The A2V pin
 
 ## A2V paid session: 720p B, then 1080p A (same one GPU)
 
-The script verifies distinct avatar images, valid speech files and durations, image pinning, R2, Python worktree and stopped group isolation **before starting Salad**. Reusing identical speech is permitted and recorded in the campaign summary. It starts A2V once, waits for `/ready`, runs 720p first and then experimental 1080p, preserving each result. A failure aborts remaining paid trials and still attempts `Stop` in a `finally` block.
+The script verifies distinct avatar images, valid speech files and durations, image pinning, R2, Python worktree and stopped group isolation **before starting Salad**. Reusing identical speech is permitted and recorded in the campaign summary.
+
+First verify the local inputs without any Salad/R2 calls. Both MP3 paths deliberately point to the **same** file:
+
+```powershell
+.\scripts\smoke\run_ltx25_a2v_resolution_batch.ps1 `
+    -Avatar720 ".\data\input\avatar_b.png" -Audio720 ".\data\input\speech.mp3" `
+    -Avatar1080 ".\data\input\avatar_a.png" -Audio1080 ".\data\input\speech.mp3" `
+    -ExpectedPinnedImage $A2VPinnedImage -Accept1080pOomRisk -CheckInputsOnly
+```
+ It starts A2V once, waits for `/ready`, runs 720p first and then experimental 1080p, preserving each result. A failure aborts remaining paid trials and still attempts `Stop` in a `finally` block.
 
 ```powershell
 $RunA2V = "a2v-resolutions-$(Get-Date -Format yyyyMMddHHmmss)"
@@ -57,7 +67,7 @@ $RunA2V = "a2v-resolutions-$(Get-Date -Format yyyyMMddHHmmss)"
     -RunId $RunA2V -EnvFile .env
 ```
 
-Inspect `data/output/deployment-validation/ltx25-a2v-resolutions/<RunId>/campaign.json`, both MP4s, `metadata.json` and ffprobe files. Check lip-sync, visual integrity and speech tail independently for both avatars; codec/metadata success does not imply good lip-sync. Record inference time, total generation time, wall time, peak VRAM whether identical speech was used, and whether 1080p failed OOM. Confirm `ltx25` is stopped afterwards.
+Inspect `data/output/deployment-validation/ltx25-a2v-resolutions/<RunId>/campaign.json`, both MP4s, `metadata.json` and ffprobe files. Check lip-sync, visual integrity and speech tail independently for both avatars; codec/metadata success does not imply good lip-sync. Record inference time, total generation time, wall time, peak VRAM, whether identical speech was used, and whether 1080p failed OOM. Confirm `ltx25` is stopped afterwards.
 
 ## I2V: pin the reviewed production FP8 image (no GPU yet)
 
