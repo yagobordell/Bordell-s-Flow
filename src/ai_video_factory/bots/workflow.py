@@ -34,6 +34,7 @@ from .contracts import (
     ProfessionalB2Output,
 )
 from .cta import CTAPlacement, validate_placement
+from .validation_retries import MAX_VALIDATION_RETRIES, is_schema_failure, validation_feedback
 
 # Transport adaptation to Responses API Structured Outputs.
 _STRUCTURED_TRANSPORT = (
@@ -381,18 +382,31 @@ async def _call_stage[OutputT: BaseModel](
     on_api_response: Callable[[str, int | None, object], None] | None,
     on_call_duration: Callable[[str, int | None, float], None] | None,
     input_image_url: str | None = None,
+    previous_response_id: str | None = None,
+    correction_feedback: str | None = None,
+    on_response_id: Callable[[str], None] | None = None,
 ) -> OutputT:
     """Record exactly the submitted input and meter the returned API response."""
+    continued = bool(previous_response_id and getattr(provider, "supports_response_continuation", False))
     if on_input is not None:
-        on_input(stage, block_id, payload)
+        submitted = dict(payload)
+        if correction_feedback:
+            submitted = {
+                **submitted,
+                "_validation_correction": correction_feedback,
+                "_previous_response_id": previous_response_id if continued else None,
+            }
+        on_input(stage, block_id, submitted)
     kwargs = {
         "model": model,
         "instructions": _instructions(prompt) + instructions_suffix,
-        "input_text": _payload(payload),
+        "input_text": correction_feedback if continued and correction_feedback else _payload(payload),
         "output_type": output_type,
     }
-    if input_image_url is not None:
+    if input_image_url is not None and not continued:
         kwargs["input_image_url"] = input_image_url
+    if continued:
+        kwargs["previous_response_id"] = previous_response_id
     started = perf_counter()
     try:
         metered = getattr(provider, "generate_structured_with_response", None)
@@ -400,6 +414,9 @@ async def _call_stage[OutputT: BaseModel](
             output, response = await metered(**kwargs)
             if on_api_response is not None:
                 on_api_response(stage, block_id, response)
+            response_id = getattr(response, "id", None)
+            if isinstance(response_id, str) and response_id and on_response_id is not None:
+                on_response_id(response_id)
             return output
         return await provider.generate_structured(**kwargs)
     finally:
@@ -465,26 +482,31 @@ async def run_b_pipeline(
     if ("B1.1", "B1.2", "B2").index(stop_after) < ("B1.1", "B1.2", "B2").index(start_from):
         raise ValueError("--stop cannot be earlier than --from")
 
-    async def call_b11(instructions_suffix: str = "") -> B11Output:
-        output = await _call_stage(
+    b11_response_id: str | None = None
+
+    def remember_b11_response(response_id: str) -> None:
+        nonlocal b11_response_id
+        b11_response_id = response_id
+
+    async def call_b11(
+        feedback: str = "", previous_response_id: str | None = None,
+    ) -> B11Output:
+        return await _call_stage(
             "B1.1",
             None,
             {"plain_script_for_recording": script},
             provider=provider,
             model=model,
             prompt="b1_1.md",
-            instructions_suffix=instructions_suffix,
+            instructions_suffix="\n\n" + feedback if feedback else "",
             output_type=B11Output,
+            previous_response_id=previous_response_id,
+            correction_feedback=feedback or None,
+            on_response_id=remember_b11_response,
             on_input=on_input,
             on_api_response=on_api_response,
             on_call_duration=on_call_duration,
         )
-        _require_success("B1.1", output.error)
-        if output.narrative_core is None or output.blocks is None:
-            raise BPipelineValidationError(
-                "B1.1 did not provide required successful fields"
-            )
-        return output
 
     async def call_cta() -> None:
         started = perf_counter()
@@ -522,35 +544,53 @@ async def run_b_pipeline(
             cta_task = asyncio.create_task(call_cta())
         b11_started = perf_counter()
         try:
-            b11 = await call_b11()
-            try:
-                materialized = materialize_blocks(script, b11.blocks)
-            except BPipelineValidationError as first_error:
-                if on_rejected_output is not None:
-                    on_rejected_output(1, str(first_error), b11.model_dump())
-                retry_suffix = (
-                    "\n\nB1.1 automatic correction attempt. The previous response failed "
-                    f"deterministic source-anchor validation: {first_error}\n"
-                    "Return a corrected complete B1.1 object. Preserve the previous block "
-                    "architecture and narrative metadata; correct the anchors so each is "
-                    "copied verbatim from the script and identifies the intended boundary "
-                    "uniquely. Make an anchor longer when a phrase occurs more than once. "
-                    "The ordered blocks must cover the complete script exactly once.\n"
-                    "Previous B1.1 response:\n"
-                    f"{_payload(b11.model_dump())}"
-                )
-                retry_b11: B11Output | None = None
+            feedback = ""
+            previous_response_id: str | None = None
+            for attempt in range(1, MAX_VALIDATION_RETRIES + 2):
+                candidate: B11Output | None = None
                 try:
-                    retry_b11 = await call_b11(retry_suffix)
-                    materialized = materialize_blocks(script, retry_b11.blocks)
-                    b11 = retry_b11
-                except BPipelineValidationError as retry_error:
-                    if on_rejected_output is not None and retry_b11 is not None:
-                        on_rejected_output(2, str(retry_error), retry_b11.model_dump())
-                    raise BPipelineValidationError(
-                        "B1.1 source-anchor validation failed after one automatic retry: "
-                        f"{retry_error}"
-                    ) from retry_error
+                    candidate = await call_b11(feedback, previous_response_id)
+                    _require_success("B1.1", candidate.error)
+                    materialized = materialize_blocks(script, candidate.blocks)
+                    b11 = candidate
+                    break
+                except (ValidationError, BPipelineValidationError, RuntimeError) as error:
+                    if isinstance(error, RuntimeError) and not is_schema_failure(error):
+                        raise
+                    if candidate is not None and candidate.error is not None:
+                        if candidate.error.code == "UNSUPPORTED_INPUT":
+                            raise
+                    rejected = (
+                        candidate.model_dump()
+                        if candidate is not None else {
+                            "unparsed_response": True,
+                            "validation_error": str(error),
+                        }
+                    )
+                    if on_rejected_output is not None:
+                        on_rejected_output(attempt, str(error), rejected)
+                    if attempt > MAX_VALIDATION_RETRIES:
+                        raise BPipelineValidationError(
+                            f"B1.1 failed validation after {MAX_VALIDATION_RETRIES} retries: {error}"
+                        ) from error
+                    previous_response_id = (
+                        b11_response_id
+                        if getattr(provider, "supports_response_continuation", False)
+                        else None
+                    )
+                    feedback = validation_feedback(
+                        "B1.1", error, previous=candidate.model_dump() if candidate else None,
+                        continued=previous_response_id is not None,
+                        source_script=script,
+                        instructions=(
+                            "Correct the specified invalid fields. Retain valid narrative "
+                            "metadata and the intended block structure, except when the "
+                            "validator proves that structure is invalid. Copy anchors "
+                            "verbatim from the original script, ensure consecutive IDs, "
+                            "and ensure precisely one full, ordered tiling without missing "
+                            "or duplicated source characters."
+                        ),
+                    )
             if on_output is not None:
                 on_output("B1.1", None, b11.model_dump())
         finally:
