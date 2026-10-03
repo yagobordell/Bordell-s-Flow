@@ -815,29 +815,42 @@ def test_only_i2v_runs_get_new_fp8_run_fingerprint(tmp_path: Path) -> None:
     )
 
 
-def test_promoted_i2v_deployment_guard_fails_closed(
+def test_i2v_registers_its_own_approved_docker_lane(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    expected = "docker.io/yagobordell/ai-video-factory@sha256:" + "a" * 64
+    from dataclasses import replace
+
+    prefix = "docker.io/yagobordell/ai-video-factory@sha256:"
+    one, two = prefix + "a" * 64, prefix + "b" * 64
     monkeypatch.setattr(pipeline_cli, "load_dotenv", lambda *args, **kwargs: False)
+    monkeypatch.setattr(pipeline_cli.settings, "postgres_dsn", "postgres://shared")
+    monkeypatch.setattr(
+        pipeline_cli.settings, "salad_capacity_controller_postgres_dsn", None,
+    )
     monkeypatch.delenv("SALAD_LTX25_FP8_I2V_IMAGE", raising=False)
     with pytest.raises(RuntimeError, match="SALAD_LTX25_FP8_I2V_IMAGE"):
         pipeline_cli._require_ltx_safe_i2v_worker()
-    monkeypatch.setenv("SALAD_LTX25_FP8_I2V_IMAGE", expected)
+
+    calls: list[str] = []
     monkeypatch.setattr(
-        pipeline_cli, "SaladClient",
-        lambda config: SimpleNamespace(
-            describe_container_group=lambda: {
-                "container": {"image": expected[:-1] + "b"}
-            },
+        pipeline_cli, "register_route",
+        lambda _dsn, *, service, image: (
+            calls.append(image)
+            or replace(pipeline_cli.route_for_image(service, image), routing_contract="v1")
         ),
     )
-    with pytest.raises(RuntimeError, match="image mismatch"):
-        pipeline_cli._require_ltx_safe_i2v_worker()
-    monkeypatch.setattr(
-        pipeline_cli, "SaladClient",
-        lambda config: SimpleNamespace(
-            describe_container_group=lambda: {"container": {"image": expected}},
-        ),
-    )
+    monkeypatch.setenv("SALAD_LTX25_FP8_I2V_IMAGE", one)
     pipeline_cli._require_ltx_safe_i2v_worker()
+    monkeypatch.setenv("SALAD_LTX25_FP8_I2V_IMAGE", two)
+    pipeline_cli._require_ltx_safe_i2v_worker()
+    assert calls == [one, two]
+    assert pipeline_cli.route_for_image("ltx25_i2v", one).group_name != (
+        pipeline_cli.route_for_image("ltx25_i2v", two).group_name
+    )
+
+    monkeypatch.setattr(
+        pipeline_cli, "register_route",
+        lambda _dsn, *, service, image: pipeline_cli.route_for_image(service, image),
+    )
+    with pytest.raises(RuntimeError, match="routing contract v1"):
+        pipeline_cli._require_ltx_safe_i2v_worker()
