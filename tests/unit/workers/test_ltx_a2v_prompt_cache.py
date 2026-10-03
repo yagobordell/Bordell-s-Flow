@@ -8,7 +8,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-import torch
 
 from ai_video_factory.workers.ltx25.a2v_prompt_cache import A2VBenchmarkPromptCache
 from scripts.smoke.check_ltx_a2v_benchmark_jobs import (
@@ -19,11 +18,38 @@ from scripts.smoke.check_ltx_a2v_benchmark_jobs import (
 Context = namedtuple("Context", ("video_encoding", "audio_encoding", "attention_mask"))
 
 
+class FakeTensor:
+    """Minimal tensor contract so offline CI needs no actual GPU/PyTorch install."""
+
+    def __init__(self, values: list[float], dtype: str) -> None:
+        self.values = values
+        self.dtype = dtype
+
+    def detach(self) -> FakeTensor:
+        return self
+
+    def to(self, *, device: str, copy: bool = False) -> FakeTensor:
+        assert device == "cpu"
+        return FakeTensor(self.values.copy() if copy else self.values, self.dtype)
+
+    def numel(self) -> int:
+        return len(self.values)
+
+    def element_size(self) -> int:
+        return 2 if self.dtype == "bfloat16" else 8
+
+    def data_ptr(self) -> int:
+        return id(self.values)
+
+    def zero_(self) -> None:
+        self.values[:] = [0.0] * len(self.values)
+
+
 def _context() -> Context:
     return Context(
-        video_encoding=torch.tensor([[[1.125, -2.5]]], dtype=torch.bfloat16),
-        audio_encoding=torch.tensor([[[3.0, -4.25]]], dtype=torch.bfloat16),
-        attention_mask=torch.tensor([[1, 0]], dtype=torch.int64),
+        video_encoding=FakeTensor([1.125, -2.5], "bfloat16"),
+        audio_encoding=FakeTensor([3.0, -4.25], "bfloat16"),
+        attention_mask=FakeTensor([1.0, 0.0], "int64"),
     )
 
 
@@ -38,12 +64,12 @@ def test_prompt_cache_reuses_exact_fp16_bf16_embeddings_without_gpu_retention() 
     for name in Context._fields:
         a, b = getattr(original[0], name), getattr(reused[0], name)
         assert a.dtype == b.dtype
-        assert torch.equal(a, b)
+        assert a.values == b.values
         assert a.data_ptr() != b.data_ptr()
     reused[0].video_encoding.zero_()
     still_valid = cache.restore(("prompt",), device="cpu")
     assert still_valid is not None
-    assert torch.equal(still_valid[0].video_encoding, original[0].video_encoding)
+    assert still_valid[0].video_encoding.values == original[0].video_encoding.values
     assert cache.restore(("different prompt",), device="cpu") is None
 
 
