@@ -134,7 +134,12 @@ function Enter-ManualCapacityMutationLock {
 
     $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
     $StartInfo.FileName = $Python
-    $StartInfo.Arguments = '"' + $LockScript + '"'
+    $StartInfo.Arguments = '"' + $LockScript + '"' 
+    if ($Service -eq "ltx25_a2v_experimental") {
+        # Independent experimental capacity domain; production retains its
+        # own advisory lock and can keep running without a global override.
+        $StartInfo.Arguments += " --experimental-a2v"
+    }
     $StartInfo.WorkingDirectory = $RepoRoot
     $StartInfo.UseShellExecute = $false
     $StartInfo.RedirectStandardInput = $true
