@@ -62,12 +62,14 @@ LTX_A2V_BENCH_CPU_PROFILE = "ltx25-a2v-reference-bench-fp8cpu-eager-a95ab-v1"
 LTX_A2V_BENCH_NONE_PROFILE = "ltx25-a2v-reference-bench-fp8none-eager-a95ab-v1"
 LTX_A2V_BENCH_CPU_TRITON_PROFILE = "ltx25-a2v-reference-bench-fp8cpu-triton-a95ab-v1"
 LTX_A2V_BENCH_NONE_TRITON_PROFILE = "ltx25-a2v-reference-bench-fp8none-triton-a95ab-v1"
+LTX_A2V_BENCH_STATIC_CPU_PROFILE = "ltx25-a2v-static-bench-fp8cpu-eager-a95ab-v1"
 LTX_A2V_BENCH_STATIC_NONE_PROFILE = "ltx25-a2v-static-bench-fp8none-eager-a95ab-v1"
 LTX_A2V_EXPERIMENTS = {
     LTX_A2V_BENCH_CPU_PROFILE: ("cpu", "eager"),
     LTX_A2V_BENCH_NONE_PROFILE: ("none", "eager"),
     LTX_A2V_BENCH_CPU_TRITON_PROFILE: ("cpu", "triton"),
     LTX_A2V_BENCH_NONE_TRITON_PROFILE: ("none", "triton"),
+    LTX_A2V_BENCH_STATIC_CPU_PROFILE: ("cpu", "eager"),
     LTX_A2V_BENCH_STATIC_NONE_PROFILE: ("none", "eager"),
 }
 LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v5"
@@ -978,6 +980,7 @@ class DirectLTX25AudioToVideoBackend:
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+            LTX_A2V_BENCH_STATIC_CPU_PROFILE,
             LTX_A2V_BENCH_STATIC_NONE_PROFILE,
         )
         reference = parameters.generation_profile in (
