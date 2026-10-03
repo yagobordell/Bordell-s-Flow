@@ -154,6 +154,15 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
                     contexts = cache.restore(prompts, device=self.device)
             if metrics is not None:
                 metrics.timings["prompt_cache_hit"] = float(contexts is not None)
+                # The smoke contract expects every instrumented phase; an
+                # intentional cache hit has zero Gemma load/release/build.
+                if contexts is not None:
+                    for name in (
+                        "prompt_model_acquire_seconds",
+                        "prompt_model_release_seconds",
+                        "prompt_embeddings_processor_build_seconds",
+                    ):
+                        metrics.timings[name] = 0.0
             if contexts is None:
                 prompt_profiler = (
                     profile_a2v_prompt_encoder(self.prompt_encoder, metrics)
