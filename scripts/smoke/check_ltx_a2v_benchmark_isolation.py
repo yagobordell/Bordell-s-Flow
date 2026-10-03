@@ -26,7 +26,8 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 
 def assert_quiescent_group(
-    group: Mapping[str, Any], *, expected_group_name: str
+    group: Mapping[str, Any], *, expected_group_name: str,
+    instances: list[Mapping[str, Any]] | None = None,
 ) -> None:
     if group.get("name") != expected_group_name:
         raise RuntimeError("Salad returned an unexpected A2V group")
@@ -35,7 +36,10 @@ def assert_quiescent_group(
     if (
         status != "stopped"
         or group.get("pending_change") is not False
-        or group.get("replicas") != 0
+        or any(
+            instance.get("state") in {"running", "allocating", "downloading", "creating"}
+            for instance in (instances or [])
+        )
     ):
         raise RuntimeError(
             f"Refusing A2V benchmark: {expected_group_name} is not quiescent "
@@ -91,7 +95,10 @@ def main() -> int:
                 )
             )
             group = client.describe_container_group()
-            assert_quiescent_group(group, expected_group_name=service["group_name"])
+            assert_quiescent_group(
+                group, expected_group_name=service["group_name"],
+                instances=client.list_container_group_instances(),
+            )
     except Exception as exc:
         print(
             "A2V isolation failed. Prepare the separate experimental group "
