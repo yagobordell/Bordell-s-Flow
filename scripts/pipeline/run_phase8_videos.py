@@ -26,6 +26,11 @@ from ai_video_factory.workers.ltx25.model import (
     LTX_PRODUCTION_I2V_PROFILE,
     LTX_STATIC_CAMERA_GENERATION_PROFILE,
 )
+from ai_video_factory.video_resolution import (
+    DEFAULT_VIDEO_HEIGHT,
+    DEFAULT_VIDEO_WIDTH,
+    validate_video_size,
+)
 from ai_video_factory.workflows.video_generation import (
     VideoGenerationManifest,
     build_video_generation_plan,
@@ -130,8 +135,8 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("data/output/phase5/shot_timings.json"),
     )
-    parser.add_argument("--width", type=int, default=1280)
-    parser.add_argument("--height", type=int, default=720)
+    parser.add_argument("--width", type=int, default=DEFAULT_VIDEO_WIDTH)
+    parser.add_argument("--height", type=int, default=DEFAULT_VIDEO_HEIGHT)
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--seed-base", type=int, default=42)
     parser.add_argument(
@@ -177,8 +182,10 @@ def main() -> None:
     args = parse_args()
     if args.progress_seconds < 0:
         raise SystemExit("--progress-seconds must be >= 0")
-    if (args.width, args.height, args.fps) != (1280, 720, 24):
-        raise SystemExit("Phase 8 production video contract is exactly 1280x720 at 24 fps")
+    try:
+        validate_video_size(args.width, args.height, args.fps)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     environment = _environment()
 
