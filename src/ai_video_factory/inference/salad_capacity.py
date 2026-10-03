@@ -22,15 +22,15 @@ from ai_video_factory.workers.realesrgan.model import REALESRGAN_TASK
 from ai_video_factory.workers.whisper.model import WHISPER_TRANSCRIPTION_TASK
 
 from .salad import DEFAULT_SALAD_API_BASE_URL, SaladClient, SaladDispatchConfig
-from .salad_autoscaler import ACTIVE_STATUSES
-from .salad_version_provision import WorkerVersionProvisioner
-from .worker_image_routes import list_routes
 from .salad_autoscaler import (
+    ACTIVE_STATUSES,
     AutoscalerServiceBinding,
     PostgresAutoscalerStore,
     PredictiveSaladAutoscaler,
     load_predictive_autoscaler_config,
 )
+from .salad_version_provision import WorkerVersionProvisioner
+from .worker_image_routes import list_routes
 
 
 @dataclass(frozen=True, slots=True)
