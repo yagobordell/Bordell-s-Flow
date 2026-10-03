@@ -8,6 +8,9 @@ param(
     [Parameter(Mandatory)][string]$ExpectedPinnedImage,
     [string]$RunId = ("i2v-batch2-" + [DateTime]::UtcNow.ToString("yyyyMMddHHmmss")),
     [int]$SeedA = 5243, [int]$SeedB = 5244,
+    [ValidateSet(1280,1920)][int]$Width = 1280,
+    [ValidateSet(720,1080)][int]$Height = 720,
+    [switch]$AcceptFullHdBatch2OomRisk,
     [string]$ReferenceA = "", [string]$ReferenceB = "",
     [string]$EnvFile = ".env",
     [switch]$CheckInputsOnly, [switch]$AllowSequentialFallback,
@@ -25,6 +28,16 @@ if (-not (Test-Path -LiteralPath $Python)) { $Python = (Get-Command python -Erro
 $Manager = Join-Path $Root "scripts\salad\manage_salad_worker.ps1"
 $Ready = Join-Path $PSScriptRoot "wait_salad_ltx25_ready.py"
 $Submit = Join-Path $PSScriptRoot "submit_ltx25_i2v_batch2_smoke.py"
+if (($Width -eq 1920 -and $Height -ne 1080) -or
+    ($Width -eq 1280 -and $Height -ne 720)) {
+    throw "Only matching 1280x720 or 1920x1080 is supported."
+}
+if ($Width -eq 1920 -and -not $AcceptFullHdBatch2OomRisk) {
+    throw "Full HD B2 is GPU-unverified; pass -AcceptFullHdBatch2OomRisk explicitly."
+}
+if ($Width -eq 1920 -and ($AllowSequentialFallback -or $EnableStageReuse)) {
+    throw "Full HD trial must remain real B=2 with independent stage builds."
+}
 if ($RunId -notmatch '^[A-Za-z0-9_-]{1,70}$') { throw "Use a new 1-70 character safe RunId." }
 if ($ExpectedPinnedImage -notmatch '^[^\s@]+@sha256:[0-9a-fA-F]{64}$') {
     throw "ExpectedPinnedImage must be your newly BUILT experimental repo@sha256 digest."
@@ -42,6 +55,7 @@ $ArgsSubmit = @(
     "--image-a", $ImageA, "--prompt-a", $PromptA,
     "--image-b", $ImageB, "--prompt-b", $PromptB,
     "--seed-a", [string]$SeedA, "--seed-b", [string]$SeedB,
+    "--width", [string]$Width, "--height", [string]$Height,
     "--run-id", $RunId, "--output-dir", $Folder,
     "--timeout-seconds", [string]$JobTimeoutSeconds
 )
@@ -50,6 +64,7 @@ if ($ReferenceB) { $ArgsSubmit += @("--reference-b", $ReferenceB) }
 if ($AllowSequentialFallback) { $ArgsSubmit += "--allow-sequential-fallback" }
 if ($DisableStageReuse) { $ArgsSubmit += "--disable-stage-reuse" }
 if ($EnableStageReuse) { $ArgsSubmit += "--enable-stage-reuse" }
+if ($AcceptFullHdBatch2OomRisk) { $ArgsSubmit += "--accept-full-hd-batch2-oom-risk" }
 . (Join-Path $Root "scripts\salad\_env_file.ps1")
 Import-EnvFile -Path $EnvFile
 & $Python $Submit @ArgsSubmit --check-inputs-only
