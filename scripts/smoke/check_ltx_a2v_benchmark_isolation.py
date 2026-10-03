@@ -1,7 +1,7 @@
-"""Read-only A2V experiment gate: never compete with normal A2V in Postgres.
+"""Read-only A2V experiment gate: production may run on its separate task.
 
-Prepare the separate group first, stop the capacity controller, then verify
-the production A2V group is completely stopped. No Salad mutations here.
+Prepare the separate group first; its own Salad group must be stopped and
+quiescent. Production A2V can run because the job task names are isolated.
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ def main() -> int:
         raise RuntimeError("Experimental A2V group must not be production")
     if production["environment"]["LTX_WORKER_TASK_MODE"] != "a2v":
         raise RuntimeError("Unexpected production A2V task mode")
-    if experiment["environment"]["LTX_WORKER_TASK_MODE"] != "a2v":
+    if experiment["environment"]["LTX_WORKER_TASK_MODE"] != "a2v_experimental":
         raise RuntimeError("Unexpected experimental A2V task mode")
     if experiment["capacity"] != {"start_replicas": 1, "max_replicas": 1}:
         raise RuntimeError("Experimental A2V must have one-replica capacity")
@@ -87,27 +87,24 @@ def main() -> int:
         project_name=_required("SALAD_PROJECT"),
     )
     try:
-        for service in (production, experiment):
-            client = SaladClient(
-                SaladDispatchConfig(
-                    **common,
-                    container_group_name=service["group_name"],
-                )
+        client = SaladClient(
+            SaladDispatchConfig(
+                **common, container_group_name=experiment["group_name"]
             )
-            group = client.describe_container_group()
-            assert_quiescent_group(
-                group, expected_group_name=service["group_name"],
-                instances=client.list_container_group_instances(),
-            )
+        )
+        group = client.describe_container_group()
+        assert_quiescent_group(
+            group, expected_group_name=experiment["group_name"],
+            instances=client.list_container_group_instances(),
+        )
     except Exception as exc:
         print(
-            "A2V isolation failed. Prepare the separate experimental group "
-            "and stop the normal A2V group and capacity controller. "
+            "A2V isolation failed. Prepare and stop the separate experimental group. "
             f"Details: {exc}",
             file=sys.stderr,
         )
         return 1
-    print("A2V_ISOLATION_OK production=stopped experiment=stopped")
+    print("A2V_ISOLATION_OK production=independent experiment=stopped")
     return 0
 
 
