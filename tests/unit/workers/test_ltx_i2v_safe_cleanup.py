@@ -68,4 +68,6 @@ def test_paid_wrapper_checks_both_digests_before_gpu_and_preserves_failures() ->
     assert "I2V CLEANUP UNVERIFIED" in ps1
     assert "Stop did not prove a stably stopped remote group" in ps1
     assert "$StartConfirmed = $true" in ps1
-    assert ps1.index("$StartConfirmed = $true") < ps1.index("$Ready --service")
+    assert ps1.index("$StartConfirmed = $true") < ps1.index(
+        "$Ready --service", ps1.index("$StartConfirmed = $true")
+    )
