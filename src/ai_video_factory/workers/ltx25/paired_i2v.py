@@ -12,11 +12,11 @@ import gc
 import json
 import logging
 import time
+from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass
 from functools import partial
 from typing import Any
-from collections.abc import Callable
 
 import torch
 from ltx_core.batch_split import BatchSplitAdapter
