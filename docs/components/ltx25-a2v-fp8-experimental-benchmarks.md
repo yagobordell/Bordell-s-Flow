@@ -147,6 +147,8 @@ backend change. Non-experimental profiles and I2V are untouched.
 
 If the exact structural `FeedForward` failure still occurs, the experimental
 task is terminal without an automatic retry in the same CUDA process. The
+worker then quarantines its experimental poller and returns HTTP 503 on
+`/ready`, preventing new jobs from being claimed by that process. The
 batch runner records the stderr traceback, saves an explicit failed attempt
 in `manifest.json`, and refuses to continue when the terminal row lacks a
 reliable error detail or reports structural corruption. **The mitigation is
