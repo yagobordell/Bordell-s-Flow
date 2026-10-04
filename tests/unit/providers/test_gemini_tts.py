@@ -276,6 +276,10 @@ def test_decode_rejects_invalid_audio(response, message) -> None:
         (make_wav(frames=0), "invalid WAV|empty WAV"),
         (make_wav()[:-30], "truncated WAV|incomplete WAV"),
     ],
+    ids=[
+        "not-wav", "wrong-sample-rate", "stereo-not-mono",
+        "not-pcm16", "empty-wav", "truncated-wav",
+    ],
 )
 def test_rejects_invalid_wav(wav_bytes, message) -> None:
     with pytest.raises(gemini.GeminiTtsError, match=message):
