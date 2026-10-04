@@ -63,6 +63,8 @@ def create_app(
             return
 
     def poll_repository_jobs() -> None:
+        nonlocal preparation_error
+
         while not job_poll_stop.is_set():
             if not preparation_complete.is_set():
                 job_poll_stop.wait(min(job_poll_seconds, 1.0))
@@ -85,7 +87,22 @@ def create_app(
                 worker.process(request, transport_job_id=request.job_id)
             except JobBusyError:
                 job_poll_stop.wait(job_poll_seconds)
-            except NonRetryableTaskError:
+            except NonRetryableTaskError as exc:
+                if (
+                    request.task == "video.ltx25.audio_to_video_experimental"
+                    and "A2V_EXPERIMENTAL_STREAMING_STRUCTURE_INVALID" in str(exc)
+                ):
+                    # A malformed live transformer may make subsequent jobs
+                    # unsafe. Advertise /ready=503 and halt this poller instead
+                    # of claiming another experiment on the same CUDA process.
+                    preparation_error = exc
+                    job_poll_stop.set()
+                    logger.critical(
+                        "A2V_EXPERIMENTAL_WORKER_QUARANTINED job_id=%s",
+                        request.job_id,
+                        exc_info=True,
+                    )
+                    return
                 logger.warning(
                     "terminal inference rejection persisted job_id=%s",
                     request.job_id,
