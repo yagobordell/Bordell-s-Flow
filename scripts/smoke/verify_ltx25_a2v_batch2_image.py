@@ -33,7 +33,11 @@ print("LTX25_A2V_B2_DOCKER_ABI_OK torch=" + torch.__version__, flush=True)
 
 
 def verify(image: str) -> None:
-    if not re.fullmatch(r"[^\\s@]+@sha256:[a-fA-F0-9]{64}", image):
+    repo, separator, digest = image.partition("@sha256:")
+    if (
+        not separator or not repo or any(char.isspace() for char in repo)
+        or "@" in repo or not re.fullmatch(r"[0-9a-fA-F]{64}", digest)
+    ):
         raise ValueError("Only an immutable digest-pinned Docker image is accepted")
     result = subprocess.run(
         ["docker", "run", "--rm", "--entrypoint", "python", image, "-c", _IMAGE_PROBE],
