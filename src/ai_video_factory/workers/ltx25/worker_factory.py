@@ -35,4 +35,13 @@ def build_ltx25_runners(settings: LTX25WorkerSettings) -> TaskRunnerRegistry:
                 experimental=settings.task_mode == "a2v_experimental",
             )
         )
+    if settings.experimental_a2v_batch2_enabled:
+        from .experimental_a2v_batch2 import ExperimentalA2VBatch2TaskRunner
+
+        # Register on the SAME isolated backend/lock used by this A2V worker.
+        # Never co-serve B2 in the production a2v or I2V service.
+        if settings.task_mode != "a2v_experimental":
+            raise ValueError("A2V GPU B2 requires its dedicated experimental service")
+        backend = runners[-1]._backend
+        runners.append(ExperimentalA2VBatch2TaskRunner(backend=backend))
     return TaskRunnerRegistry(runners)
