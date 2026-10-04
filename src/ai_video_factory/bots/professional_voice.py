@@ -619,11 +619,10 @@ async def _direct(
     stage: str, payload: dict[str, Any], output_type: type[Strict], check: Callable[[Any], None],
     provider: Any, model: str, folder: Path, on_response: Callable[..., None] | None,
     on_timing: Callable[..., None] | None, block_id: int | None,
-    prompt_name: str | None = None,
 ) -> Any:
     """Exactly two LOCAL validation correction retries, never paid-TTS retries."""
     prompt_path = files("ai_video_factory.bots.prompts").joinpath(
-        prompt_name or stage.lower() + ".md"
+        stage.lower() + ".md"
     )
     prompt = prompt_path.read_text(encoding="utf-8")
     cached = folder / "output.json"
@@ -750,7 +749,7 @@ async def plan_professional_voice(
     on_timing: Callable[..., None] | None = None,
     on_stage_duration: Callable[..., None] | None = None,
     max_parallel_calls: int = 8,
-) -> tuple[V1, list[V2], list[V3 | LegacyV3], list[V4]]:
+) -> tuple[V1, list[V2], list[V3], list[V4]]:
     """No paid speech request starts before all V contracts validate."""
     legacy = output / "voice_direction"
     if legacy.is_symlink() or any((output / stage).is_symlink()
@@ -763,6 +762,24 @@ async def plan_professional_voice(
         )
     root = output
     voice_blocks = _voice_blocks_for_plan(blocks, root)
+    # Legacy V3 had a second independent Gemini-tag compiler. Disable it;
+    # protect existing paid WAVs by failing before any new model/API call.
+    for block in voice_blocks:
+        checkpoint = root / "V3" / f"block_{block['block_id']}" / "output.json"
+        if not checkpoint.is_file():
+            continue
+        saved = _read(checkpoint)
+        deliveries = saved.get("beat_deliveries")
+        if not isinstance(deliveries, list) or not deliveries:
+            raise VoicePlanError(f"Invalid saved V3 checkpoint: {checkpoint}")
+        if any(isinstance(beat, dict) and "segments" in beat
+               for beat in deliveries):
+            raise VoicePlanError(
+                "Legacy V3 checkpoint has obsolete Gemini tag generation; "
+                f"preserved at {checkpoint}. Start a new professional voice "
+                "run with modern V3→V4. Existing paid audio is not touched "
+                "or automatically replayed."
+            )
     contested: list[dict[str, Any]] = []
     v1: V1 | None = None
     v2s: list[V2] = []
@@ -838,24 +855,6 @@ async def plan_professional_voice(
     if v1 is None:
         raise VoicePlanError("V1 failed to produce global rhythm")
     rhythms = {r.block_id: r for r in v1.block_rhythms}
-    # Legacy V3 had a second independent Gemini-tag compiler. Disable it;
-    # protect existing paid WAVs by failing before any new model/API call.
-    for block in voice_blocks:
-        checkpoint = root / "V3" / f"block_{block['block_id']}" / "output.json"
-        if not checkpoint.is_file():
-            continue
-        saved = _read(checkpoint)
-        deliveries = saved.get("beat_deliveries")
-        if not isinstance(deliveries, list) or not deliveries:
-            raise VoicePlanError(f"Invalid saved V3 checkpoint: {checkpoint}")
-        if any(isinstance(beat, dict) and "segments" in beat
-               for beat in deliveries):
-            raise VoicePlanError(
-                "Legacy V3 checkpoint has obsolete Gemini tag generation; "
-                f"preserved at {checkpoint}. Start a new professional voice "
-                "run with modern V3→V4. Existing paid audio is not touched "
-                "or automatically replayed."
-            )
     semaphore = asyncio.Semaphore(max_parallel_calls)
 
     async def perform(block: dict[str, Any], v2: V2) -> V3:
@@ -1150,7 +1149,7 @@ async def generate_professional_audio(
             return item
 
     results = await asyncio.gather(
-        *(one(block, v3, v4s[index] if v4s else None)
+        *(one(block, v3, v4s[index])
           for index, (block, v3) in enumerate(zip(voice_blocks, v3s, strict=True))),
         return_exceptions=True,
     )
