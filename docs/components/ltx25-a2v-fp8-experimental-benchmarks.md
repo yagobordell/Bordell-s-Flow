@@ -124,6 +124,37 @@ This operation is never automatic under the normal service stack. Do not
 promote the experiment or merge this branch based on timing alone; a separate
 lip-sync and decoded-media validation is still required.
 
+## October 4 CPU warm-run fault and experimental mitigation
+
+The controlled production-group reuse test completed its first two identical
+reference CPU videos, then the third iteration failed during Stage 2 transformer
+construction: upstream `X0Model(streaming_wrapper).eval()` raised
+`TypeError: cannot unpack non-iterable FeedForward object`. A generic automatic
+retry then segfaulted during the next attempt's CUDA cleanup. There was no
+recorded CUDA OOM in the first failure. The third task has since been
+operator-cancelled; do not resubmit its immutable ID.
+
+The **experimental CPU-streaming profiles only** now use a narrow alternative
+context: upstream `StreamingModelBuilder.build()` has already recursively put
+the raw meta model in eval mode before installing streaming hooks, so the
+experimental context does **not** traverse the complete live module tree
+a second time. It preserves the original upstream builder and
+`_streaming_model` teardown and sets only the outer wrapper's and `X0Model`'s
+training flags to false. If upstream ever changes the meta-model eval
+contract, the experimental guard refuses to proceed. No generation settings,
+checkpoint, stage sigmas, seed, audio freezing, image strengths or decoder
+backend change. Non-experimental profiles and I2V are untouched.
+
+If the exact structural `FeedForward` failure still occurs, the experimental
+task is terminal without an automatic retry in the same CUDA process. The
+batch runner records the stderr traceback, saves an explicit failed attempt
+in `manifest.json`, and refuses to continue when the terminal row lacks a
+reliable error detail or reports structural corruption. **The mitigation is
+not yet proof of GPU stability.** Rebuild and repin the experimental image
+from the new branch commit before any new GPU comparison. Retain the two
+original CPU MP4s and metadata separately; a new controlled batch should use
+fresh run IDs and the same input image/audio/prompt/seed.
+
 ## Experimental profiles
 
 | CLI profile | Original recipe | Transformer | Offload | DiffVAE |
