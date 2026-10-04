@@ -35,7 +35,6 @@ from .i2v_metrics import I2VPhaseMetrics
 from .reference_recipe import LTX_A2V_REFERENCE_RECIPE
 
 
-
 def _with_strength(
     images: Sequence[ImageConditioningInput],
     strength: float,
