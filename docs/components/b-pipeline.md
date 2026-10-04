@@ -819,11 +819,8 @@ comprueba el guion, los hashes de imágenes y audio y el MP4 antes de crear el
 elegidos por los manifiestos actuales, no generaciones descartadas. Publicar
 dos veces el mismo resultado verifica y reutiliza los archivos ya presentes;
 si un archivo publicado fue modificado o falta, falla sin regenerar ni
-sobrescribirlo. Se conserva `--legacy-layout` para ejecutar directamente
-el runner previo con `data/avatar`, `data/input/scripts`, `data/output`
-y `data/results` como antes.
-
-Los ejemplos anteriores de este documento que citan `data/input/scripts` o
-`data/output/<script>` corresponden al runner **histórico**:
-usa `uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py`
-o `.\run.ps1 --legacy-layout ...` para reproducir exactamente esos comandos.
+sobrescribirlo. El único acceso directo admitido por `run.ps1` es el directorio
+administrado `data/<avatar>/<guion>/`. Para probar el motor directamente
+sin el lanzador, `scripts/pipeline/run_b_pipeline.py` conserva su interfaz
+técnica de checkpoints y rutas explícitas; no constituye otro flujo público
+ni ofrece el antiguo modo `--legacy-layout`.
