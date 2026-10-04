@@ -56,6 +56,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--guidance-forward-batch-size", type=int, choices=(2, 4), default=2,
     )
+    p.add_argument("--max-stage1-major-page-faults", type=int, default=0)
+    p.add_argument("--performance-target-seconds", type=float, default=0.0)
     p.add_argument("--check-inputs-only", action="store_true")
     p.add_argument("--timeout-seconds", type=float, default=10800)
     return p
@@ -74,6 +76,10 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
         ch.isascii() and (ch.isalnum() or ch in "-_") for ch in a.run_id
     ):
         raise ValueError("Run ID must contain 1-65 ASCII letters, digits, - or _")
+    if not 0 <= a.max_stage1_major_page_faults <= 1000000:
+        raise ValueError("Invalid experimental major-page-fault limit")
+    if not 0 <= a.performance_target_seconds <= 10800:
+        raise ValueError("Invalid experimental wall-time target")
     if a.seed_a == a.seed_b:
         raise ValueError("Separate A2V B2 seeds are mandatory")
     if bool(a.reference_a) != bool(a.reference_b):
@@ -119,6 +125,7 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
         "stage2_mode": "cpu",
         "vae_backend": a.vae_backend,
         "guidance_forward_batch_size": a.guidance_forward_batch_size,
+        "max_stage1_major_page_faults": a.max_stage1_major_page_faults,
         "accept_full_hd_oom_risk": a.accept_full_hd_oom_risk,
     })
     provenance = {
@@ -131,6 +138,8 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
         "geometry": [1920, 1080, 24],
         "vae_backend": a.vae_backend,
         "guidance_forward_batch_size": a.guidance_forward_batch_size,
+        "max_stage1_major_page_faults": a.max_stage1_major_page_faults,
+        "performance_target_seconds": a.performance_target_seconds,
     }
     for path in (a.reference_a, a.reference_b):
         if path is not None and (not path.is_file() or path.stat().st_size == 0):
@@ -336,6 +345,8 @@ def main() -> None:
     )
     if report.get("guidance_forward_batch_size") != a.guidance_forward_batch_size:
         raise RuntimeError("A2V reported a different guidance forward batch")
+    if report.get("max_stage1_major_page_faults") != a.max_stage1_major_page_faults:
+        raise RuntimeError("A2V reported a different host paging guard")
     if report.get("video_vae_backend") != expected_backend:
         raise RuntimeError("A2V reported a different decoder backend: silent fallback")
     report["technical_validation"] = {}
@@ -359,17 +370,33 @@ def main() -> None:
         )
         if a.vae_backend == "triton_experimental":
             report["eager_backend_comparison"] = comparison
-            report["promotion_status"] = "HUMAN_EAGER_TRITON_VISUAL_LIPSYNC_APPROVAL_REQUIRED"
+            report["promotion_status"] = (
+                "HUMAN_COMBINED_B4_TRITON_APPROVAL_REQUIRED"
+                if a.guidance_forward_batch_size == 4
+                else "HUMAN_EAGER_TRITON_VISUAL_LIPSYNC_APPROVAL_REQUIRED"
+            )
         elif a.guidance_forward_batch_size == 4:
             report["split_b2_guidance_comparison"] = comparison
             report["promotion_status"] = "HUMAN_SPLIT2_FUSED4_VISUAL_LIPSYNC_APPROVAL_REQUIRED"
         else:
             report["b1_comparison"] = comparison
+    if a.performance_target_seconds:
+        report["performance_target_seconds"] = a.performance_target_seconds
+        report["performance_target_met"] = (
+            report["elapsed_seconds"] < a.performance_target_seconds
+        )
+        report["performance_target_status"] = (
+            "MET" if report["performance_target_met"] else "MISSED"
+        )
+        # Never discard paid videos on a performance miss: we need the
+        # complete phase trace and frame comparison to investigate safely.
     (a.output_dir / "experiment-summary.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
     )
     print(json.dumps(report, indent=2, sort_keys=True))
     print("Output directory: " + str(a.output_dir))
+    if a.performance_target_seconds:
+        print("A2V_B2_PERFORMANCE_TARGET_" + report["performance_target_status"])
 
 
 if __name__ == "__main__":
