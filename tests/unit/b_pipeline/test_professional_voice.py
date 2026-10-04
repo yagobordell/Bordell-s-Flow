@@ -77,19 +77,20 @@ def _v4():
         pipeline_stage="V4", block_id=1,
         audio_profile="Consistent intimate documentary narrator",
         directors_notes=["Measured beginning, then deliberate recognition."],
-        beat_deliveries=[
-            {"beat_id": "1A", "segments": [
-                {"source_item_index": 0, "speak": "Hola, mundo. ",
-                 "style": "Measured conversational delivery; emphasize mundo; keep open",
-                 "ending_behavior": "carry", "stress": ["mundo"],
-                 "events": [{"at": 6, "tag": "breath", "source_kind": "vocal_intent",
-                             "source_item_index": 0, "source_at": 6}]},
+        spoken_directions=[
+            {"beat_id": "1A", "source_item_index": 0, "locator": "mundo",
+             "instruction": "Measured conversational delivery; emphasize mundo; keep open",
+             "ending_behavior": "carry", "stress": ["mundo"]},
+            {"beat_id": "1B", "source_item_index": 0, "locator": "realidad",
+             "instruction": "Warm deliberate delivery; land decisively",
+             "ending_behavior": "land", "stress": []},
+        ],
+        beat_tags=[
+            {"beat_id": "1A", "text": "", "inserts": [
+                {"at": 6, "tag": "breath", "text": "Hola, <breath>mundo",
+                 "source_kind": "vocal_intent", "source_item_index": 0, "source_at": 6},
             ]},
-            {"beat_id": "1B", "segments": [
-                {"source_item_index": 0, "speak": "Esa es la realidad.",
-                 "style": "Warm deliberate delivery; land decisively",
-                 "ending_behavior": "land", "stress": [], "events": []},
-            ]},
+            {"beat_id": "1B", "text": "", "inserts": []},
         ],
     )
 
@@ -110,7 +111,7 @@ def test_v3_artistic_contract_and_v4_source_bound_tags():
     pv._check_v3(result, block)
     compiler = _v4()
     pv._check_v4(compiler, block, result)
-    assert pv._tagged_v4(compiler.beat_deliveries[0].segments[0]) == (
+    assert pv._tagged_v4(block["beats"][0]["text"], compiler.beat_tags[0]) == (
         "Hola, <breath>mundo. "
     )
     result.beat_deliveries[0].delivery[0].speak = "Hola mundo."
@@ -158,18 +159,20 @@ def test_v1_reconsideration_contract():
         pv._check_v1(_v1(), [_block()], contested)
 
 
-def test_gemini_part_styles_not_spoken_and_only_allowlisted_tags():
+def test_gemini_one_style_and_one_transcript_per_complete_group():
     direction = _v4()
-    turns = pv._v4_turns(direction)
+    turns = pv._v4_turns(direction, _block(), _v3())
+    assert len(turns) == 1
     payload = gemini_tts._build_directed_payload(turns=turns, voice="Algenib")
     parts = payload["contents"][0]["parts"]
-    assert parts[0]["text"] == "Hola, <breath>mundo. "
-    assert "Measured conversational" in parts[0]["speech_metadata"]["style"]
-    assert "verbatim transcript" in parts[0]["speech_metadata"]["style"]
-    assert parts[1]["speech_metadata"]["style"].startswith("Warm deliberate")
+    assert len(parts) == 1
+    assert parts[0]["text"] == "Hola, <breath>mundo. Esa es la realidad."
+    style = parts[0]["speech_metadata"]["style"]
+    assert "Measured conversational" in style
+    assert "Warm deliberate" in style
+    assert "Consistent intimate" in style
+    assert "verbatim transcript" in style
     assert "Measured" not in parts[0]["text"]
-    assert "Consistent intimate" in parts[0]["speech_metadata"]["style"]
-    assert "Consistent intimate" not in parts[1]["speech_metadata"]["style"]
 
 
 def test_professional_voice_is_separate_and_persistent(tmp_path):
@@ -261,7 +264,10 @@ def test_professional_audio_paid_block_is_reused(tmp_path, monkeypatch):
         calls = 0
         async def generate_directed_speech(self, **kwargs):
             self.calls += 1
-            assert kwargs["turns"][0]["text"] == "Hola, <breath>mundo. "
+            assert len(kwargs["turns"]) == 1
+            assert kwargs["turns"][0]["text"] == (
+                "Hola, <breath>mundo. Esa es la realidad."
+            )
             return SimpleNamespace(content=_wav())
 
     monkeypatch.setattr(pv, "plan_professional_voice", plan)

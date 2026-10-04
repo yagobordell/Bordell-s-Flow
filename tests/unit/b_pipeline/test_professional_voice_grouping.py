@@ -149,15 +149,18 @@ class GroupAwareProvider:
                 pipeline_stage="V4", block_id=direction.block_id,
                 audio_profile="Clear documentary narrator",
                 directors_notes=["Measured, subtly increasing focus."],
-                beat_deliveries=[
-                    {"beat_id": beat.beat_id, "segments": [
-                        {"source_item_index": i, "speak": item.speak,
-                         "style": "Natural delivery; keep cadence open",
-                         "ending_behavior": item.ending_behavior,
-                         "stress": item.stress, "events": []}
-                        for i, item in enumerate(beat.delivery)
-                        if isinstance(item, pv.Speak)
-                    ]}
+                spoken_directions=[
+                    {"beat_id": beat.beat_id, "source_item_index": i,
+                     "locator": item.speak.strip(),
+                     "instruction": "Natural delivery; keep cadence open",
+                     "ending_behavior": item.ending_behavior,
+                     "stress": item.stress}
+                    for beat in direction.beat_deliveries
+                    for i, item in enumerate(beat.delivery)
+                    if isinstance(item, pv.Speak)
+                ],
+                beat_tags=[
+                    {"beat_id": beat.beat_id, "text": "", "inserts": []}
                     for beat in direction.beat_deliveries
                 ],
             )
@@ -306,7 +309,8 @@ def test_gemini_generates_one_paid_wav_per_group_and_reuses_it(tmp_path, monkeyp
         [beat["beat_id"] for block in source[:3] for beat in block["beats"]],
         [beat["beat_id"] for beat in source[3]["beats"]],
     ]
-    assert sorted(map(len, speech.calls)) == [8, 10]
+    assert [len(call) for call in speech.calls] == [1, 1]
+    assert sorted(len(call[0].split()) for call in speech.calls) == [8, 10]
     assert len(director.calls) == 7
     second = asyncio.run(pv.generate_professional_audio(**kwargs))
     assert second == artifact
