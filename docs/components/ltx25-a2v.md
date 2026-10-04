@@ -41,7 +41,7 @@ are not silently replayed with different generation semantics.
 The worker still claims the normal `video.ltx25.audio_to_video` queue;
 `a2v_experimental` remains isolated.
 
-RTX 5090 acceptance run on 2026-10-04: 3/3 successful productions of
+RTX 5090 acceptance run on 2026-10-04: 3/3 successful experimental samples of
 this exact no-offload reference recipe, 3/3 CPU-reference controls, decoded
 audio and decoded video hashes matching across all six, approved human
 lip-sync. For a ~5.71 s clip, observed no-offload warm inference averaged
