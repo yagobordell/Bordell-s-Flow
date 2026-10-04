@@ -14,8 +14,8 @@ from ai_video_factory.inference.gpu_failures import is_retryable_gpu_failure
 from ai_video_factory.inference.ports import LocalArtifact, LocalSidecarArtifact
 
 from .a2v import (
-    DirectLTX25AudioToVideoBackend,
     LTX_A2V_RUN_STATIC_FAST_PROFILE,
+    DirectLTX25AudioToVideoBackend,
     LTXAudioToVideoParameters,
 )
 
