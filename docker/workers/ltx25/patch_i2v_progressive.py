@@ -24,6 +24,8 @@ def _replace_once(source: str, original: str, replacement: str, label: str) -> s
 
 
 def patch_builder_source(source: str) -> str:
+    if "_i2v_progressive_pinned_blocks_supported = True" in source:
+        raise RuntimeError("pinned LTX progressive I2V patch already installed")
     # Immutable builder copies made during FP8 policy preparation inherit both
     # this class marker and the opt-in flag on their copied instance.
     source = _replace_once(
