@@ -185,7 +185,16 @@ def _collect(
         add("Media/imagenes/qr.png", qr.get("file"), qr.get("sha256"))
 
     image_assets: dict[str, str] = {}
-    for item in [*images.get("items", []), *images.get("panel_assets", []), *final_assets]:
+    # Professional beat PNGs are replaced in place: never package the source
+    # metadata alongside a different final SHA for the very same file.
+    if plan.get("visual_style") == "profesional":
+        selected_images = [
+            *(item for item in images.get("items", []) if item.get("grid") is not None),
+            *final_assets,
+        ]
+    else:
+        selected_images = [*images.get("items", []), *images.get("panel_assets", [])]
+    for item in selected_images:
         if not isinstance(item, dict):
             raise PublicationError("Invalid image manifest item")
         name, sha = item.get("file"), item.get("sha256")
