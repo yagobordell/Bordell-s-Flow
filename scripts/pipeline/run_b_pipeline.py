@@ -1174,24 +1174,34 @@ def _require_ltx_capacity_controller() -> None:
 
 
 def _require_ltx_safe_a2v_worker() -> None:
-    """Reject paid A2V v5 until its patched host-memory image is actually deployed."""
+    """Refuse paid run A2V until the NEW static-FP8 image is pinned in Salad."""
     repo_root = Path(__file__).resolve().parents[2]
     load_dotenv(repo_root / "config" / "app.env", override=False)
     load_dotenv(repo_root / "config" / "salad.env", override=False)
     load_dotenv(repo_root / ".env", override=False)
-    expected = os.getenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", "").strip()
+    expected = os.getenv("SALAD_LTX25_RUN_STATIC_FP8_IMAGE", "").strip()
     if not re.fullmatch(r"[^ ]+@sha256:[0-9a-fA-F]{64}", expected):
         raise RuntimeError(
-            "Pinned-host fallback LTX A2V v5 requires SALAD_LTX25_PAGEABLE_A2V_IMAGE="
+            "Fast static A2V run requires SALAD_LTX25_RUN_STATIC_FP8_IMAGE="
             "<repository>@sha256:<64-hex-digest> in config/salad.env. "
-            "Build, publish and Prepare the new LTX worker first; "
-            "do not resubmit the failed v4 job to an unpatched Docker image."
+            "Build and publish this feature branch as a NEW worker image, "
+            "then Prepare the stopped ltx25 group with that exact digest."
+        )
+    legacy = os.getenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", "").strip()
+    if legacy and legacy == expected:
+        raise RuntimeError(
+            "Fast static A2V cannot reuse the older disk-streamed worker digest. "
+            "Publish a new image containing LTX_A2V_RUN_STATIC_FAST_PROFILE."
         )
     document = json.loads(
         (Path(__file__).resolve().parents[2] / "deploy" / "salad" / "services.json")
         .read_text(encoding="utf-8")
     )
-    group_name = document["services"]["ltx25"]["group_name"]
+    definition = document["services"]["ltx25"]
+    reviewed_repo = re.sub(r":[^/:]+$", "", definition["image"])
+    if not expected.startswith(f"{reviewed_repo}@sha256:"):
+        raise RuntimeError("Fast static A2V image must use the configured worker repository")
+    group_name = definition["group_name"]
     client = SaladClient(
         SaladDispatchConfig(
             api_key=settings.salad_api_key,

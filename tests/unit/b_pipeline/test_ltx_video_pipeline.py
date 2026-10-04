@@ -16,6 +16,7 @@ import pytest
 from PIL import Image
 
 from ai_video_factory.workers.ltx25.a2v import (
+    LTX_A2V_RUN_STATIC_FAST_PROFILE,
     LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
     LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
 )
@@ -134,7 +135,7 @@ def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     assert first.request.parameters["prompt"] == "A Person speaking to the camera."
     assert last.request.parameters["prompt"] == first.request.parameters["prompt"]
     assert first.request.parameters["generation_profile"] == (
-        LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
+        LTX_A2V_RUN_STATIC_FAST_PROFILE
     )
     assert b_video.AVATAR_NEGATIVE_PROMPT == (
         "camera zoom, zoom in, push in, dolly in, camera drift, camera shake, "
@@ -270,14 +271,21 @@ def test_new_memory_safe_a2v_requires_exact_deployed_image_digest(
     monkeypatch.setattr(runner.settings, "salad_api_key", "test-key")
     monkeypatch.setenv("SALAD_ORGANIZATION", "org")
     monkeypatch.setenv("SALAD_PROJECT", "project")
+    monkeypatch.delenv("SALAD_LTX25_RUN_STATIC_FP8_IMAGE", raising=False)
     monkeypatch.delenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", raising=False)
 
-    with pytest.raises(RuntimeError, match="SALAD_LTX25_PAGEABLE_A2V_IMAGE"):
+    with pytest.raises(RuntimeError, match="SALAD_LTX25_RUN_STATIC_FP8_IMAGE"):
         runner._require_ltx_safe_a2v_worker()
 
-    pinned = "docker.io/test/factory@sha256:" + "a" * 64
+    pinned = "docker.io/yagobordell/ai-video-factory@sha256:" + "a" * 64
+    old_image = "docker.io/yagobordell/ai-video-factory@sha256:" + "b" * 64
+    monkeypatch.setenv("SALAD_LTX25_RUN_STATIC_FP8_IMAGE", pinned)
     monkeypatch.setenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", pinned)
-    deployed = {"image": "docker.io/test/factory@sha256:" + "b" * 64}
+    with pytest.raises(RuntimeError, match="cannot reuse"):
+        runner._require_ltx_safe_a2v_worker()
+
+    monkeypatch.setenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", old_image)
+    deployed = {"image": old_image}
 
     class FakeSaladClient:
         def __init__(self, config: object) -> None:
@@ -436,9 +444,14 @@ def test_all_ltx_jobs_are_published_before_first_wait(
     events: list[tuple[str, str]] = []
     metadata_file = tmp_path / "worker-metadata.json"
     metadata_file.write_text(json.dumps({
-        "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+        "generation_profile": LTX_A2V_RUN_STATIC_FAST_PROFILE,
         "negative_prompt_applied": True,
         "positive_prompt_enhanced": False,
+        "quantization": "fp8_cast",
+        "offload_mode": "none",
+        "diffvae_backend_effective": "eager",
+        "stage_1_image_strength": 0.8,
+        "video_cfg_scale": 1.25,
     }), encoding="utf-8")
 
     class FakeQueue:
@@ -603,7 +616,7 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
         return new_fingerprint(*args, **kwargs)
 
     monkeypatch.setattr(
-        b_video, "LTX_A2V_STATIC_SAFE_GENERATION_PROFILE",
+        b_video, "LTX_A2V_RUN_STATIC_FAST_PROFILE",
         LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
     )
     monkeypatch.setattr(
@@ -640,7 +653,7 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
                 "positive_prompt_enhanced": False,
             }), encoding="utf-8")
     b_video._save_json(old_run / "manifest.json", previous)
-    monkeypatch.setattr(b_video, "LTX_A2V_STATIC_SAFE_GENERATION_PROFILE", v5)
+    monkeypatch.setattr(b_video, "LTX_A2V_RUN_STATIC_FAST_PROFILE", v5)
     monkeypatch.setattr(b_video, "LTX_PRODUCTION_I2V_PROFILE", selected_i2v)
     monkeypatch.setattr(b_video, "_fingerprint", new_fingerprint)
     monkeypatch.setattr(
@@ -671,6 +684,11 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
         "generation_profile": v5,
         "negative_prompt_applied": True,
         "positive_prompt_enhanced": False,
+        "quantization": "fp8_cast",
+        "offload_mode": "none",
+        "diffvae_backend_effective": "eager",
+        "stage_1_image_strength": 0.8,
+        "video_cfg_scale": 1.25,
     }), encoding="utf-8")
 
     class FakeStorage:
@@ -762,9 +780,14 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     ], check=True, capture_output=True)
     metadata = tmp_path / "worker-metadata.json"
     metadata.write_text(json.dumps({
-        "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+        "generation_profile": LTX_A2V_RUN_STATIC_FAST_PROFILE,
         "negative_prompt_applied": True,
         "positive_prompt_enhanced": False,
+        "quantization": "fp8_cast",
+        "offload_mode": "none",
+        "diffvae_backend_effective": "eager",
+        "stage_1_image_strength": 0.8,
+        "video_cfg_scale": 1.25,
     }), encoding="utf-8")
     submitted: list[str] = []
     input_names: list[str] = []
@@ -844,3 +867,49 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     )
     assert again["sha256"] == result["sha256"]
     assert len(submitted) == 3
+
+
+def test_fast_static_run_never_inherits_old_disk_offload_clips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    timeline, jobs, _run_dir = b_video.build_b2_video_plan(
+        tmp_path, plan, audio, images
+    )
+    first = next(job for job in jobs if job.kind == "a2v")
+    image_sha = next(item.sha256 for item in first.request.inputs if item.name == "image")
+    audio_sha = next(item.sha256 for item in first.request.inputs if item.name == "audio")
+    old_job_id = b_video.ltx_a2v_application_job_id(
+        segment_id=f"b2-{first.beats[0]}-{first.beats[-1]}",
+        prompt=first.request.parameters["prompt"], image_sha256=image_sha,
+        audio_sha256=audio_sha, seed=int(first.request.parameters["seed"]),
+        width=1280, height=720, fps=b_video._FPS,
+        generation_profile=LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+    )
+    assert first.request.job_id != old_job_id
+    avatar, assets = b_video._source_assets(tmp_path, plan, images)
+    assert b_video._fingerprint(timeline, audio, assets, avatar) != b_video._fingerprint(
+        timeline, audio, assets, avatar,
+        profile=LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+    )
+
+    monkeypatch.setattr(
+        b_video, "_reconcile_prior_failed_video_runs",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        b_video, "_inherit_completed_v4_clips",
+        lambda *_args, **_kwargs: pytest.fail(
+            "Never inherit disk-streamed A2V clips into a fast static run"
+        ),
+    )
+
+    def before_paid_submission() -> None:
+        raise RuntimeError("stopped before paid inference")
+
+    with pytest.raises(RuntimeError, match="stopped before paid inference"):
+        b_video.generate_b2_ltx_video(
+            tmp_path, plan, audio, images,
+            queue=SimpleNamespace(), storage=SimpleNamespace(),
+            check_i2v_worker=before_paid_submission,
+        )

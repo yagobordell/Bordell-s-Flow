@@ -39,6 +39,7 @@ from ai_video_factory.providers.job_queue import (
 )
 from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_RECOMMENDED_MAX_SECONDS,
+    LTX_A2V_RUN_STATIC_FAST_PROFILE,
     LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
     LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
     LTX_A2V_TASK,
@@ -231,7 +232,7 @@ def _fingerprint(
             [block_id, beat_id, sha256_file(path)]
             for (block_id, beat_id), path in sorted(assets.items())
         ],
-        "profile": profile or LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+        "profile": profile or LTX_A2V_RUN_STATIC_FAST_PROFILE,
         "positive_prompt": AVATAR_PROMPT,
         "negative_prompt": AVATAR_NEGATIVE_PROMPT,
         "fps": _FPS,
@@ -390,7 +391,7 @@ def build_b2_video_plan(
                 segment_id=f"b2-{beat_ids[0]}-{beat_ids[-1]}",
                 prompt=a2v_prompt, image_sha256=image_sha,
                 audio_sha256=audio_sha, seed=seed, width=1280, height=720,
-                fps=_FPS, generation_profile=LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+                fps=_FPS, generation_profile=LTX_A2V_RUN_STATIC_FAST_PROFILE,
             )
             request = InferenceJobRequest(
                 job_id=job_id, task=LTX_A2V_TASK, max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
@@ -413,7 +414,7 @@ def build_b2_video_plan(
                     content_type="application/json",
                 )},
                 parameters={
-                    "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+                    "generation_profile": LTX_A2V_RUN_STATIC_FAST_PROFILE,
                     "prompt": a2v_prompt, "seed": seed,
                     "width": 1280, "height": 720, "fps": _FPS,
                 },
@@ -772,11 +773,19 @@ def generate_b2_ltx_video(
     _reconcile_prior_failed_video_runs(
         output, new_digest=digest, audio_sha256=audio["sha256"], queue=queue
     )
-    _inherit_completed_v4_clips(
-        output, timeline=timeline, audio=audio, images=images, plan=plan,
-        jobs=jobs, run_dir=run_dir, digest=digest,
-        manifest=manifest, manifest_path=manifest_path,
-    )
+    # Legacy v4->v5 clip inheritance is only valid for its original
+    # disk-streamed recipe. FP8 no-offload has a different immutable recipe,
+    # so never relabel old v4 pixels as a freshly validated fast A2V result.
+    if all(
+        job.kind != "a2v" or job.request.parameters["generation_profile"]
+        == LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
+        for job in jobs
+    ):
+        _inherit_completed_v4_clips(
+            output, timeline=timeline, audio=audio, images=images, plan=plan,
+            jobs=jobs, run_dir=run_dir, digest=digest,
+            manifest=manifest, manifest_path=manifest_path,
+        )
     executor = InferenceJobExecutor(
         queue=queue, storage=storage,
         poll_seconds=poll_seconds, timeout_seconds=timeout_seconds,
@@ -889,9 +898,14 @@ def generate_b2_ltx_video(
                 values = json.loads(meta.read_text(encoding="utf-8"))
                 if (
                     values.get("generation_profile") !=
-                    LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
+                    LTX_A2V_RUN_STATIC_FAST_PROFILE
                     or values.get("negative_prompt_applied") is not True
                     or values.get("positive_prompt_enhanced") is not False
+                    or values.get("quantization") != "fp8_cast"
+                    or values.get("offload_mode") != "none"
+                    or values.get("diffvae_backend_effective") != "eager"
+                    or values.get("stage_1_image_strength") != 0.8
+                    or values.get("video_cfg_scale") != 1.25
                 ):
                     raise B2VideoError("A2V did not apply the pinned static camera guidance")
             part.replace(clip)

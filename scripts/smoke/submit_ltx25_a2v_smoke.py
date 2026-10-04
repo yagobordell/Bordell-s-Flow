@@ -234,7 +234,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--profile",
         choices=(
-            "fast", "legacy-fast", "reference", "static-reference", "dev", "guided",
+            "fast", "legacy-fast", "reference", "static-reference",
+            "run-static-fast", "dev", "guided",
             "reference-bench-cpu", "reference-fp8none",
             "reference-cpu-triton", "reference-none-triton",
             "static-bench-cpu", "static-fp8none",
@@ -265,6 +266,7 @@ def main() -> None:
         "legacy-fast": LTX_A2V_GENERATION_PROFILE,
         "reference": LTX_A2V_REFERENCE_GENERATION_PROFILE,
         "static-reference": LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
+        "run-static-fast": a2v.LTX_A2V_RUN_STATIC_FAST_PROFILE,
         "dev": LTX_A2V_DEV_GENERATION_PROFILE,
         "guided": LTX_A2V_GUIDED_GENERATION_PROFILE,
         "reference-bench-cpu": a2v.LTX_A2V_BENCH_CPU_PROFILE,
@@ -468,7 +470,9 @@ def main() -> None:
     if metadata["generation_profile"] != profile:
         raise RuntimeError("A2V worker used a mismatched generation profile")
 
-    static_reference = args.profile in {"static-reference", "static-bench-cpu", "static-fp8none"}
+    static_reference = args.profile in {
+        "static-reference", "run-static-fast", "static-bench-cpu", "static-fp8none"
+    }
     experimental_profiles = {
         "reference-bench-cpu": ("cpu", "eager"),
         "reference-fp8none": ("none", "eager"),
@@ -478,7 +482,8 @@ def main() -> None:
         "static-fp8none": ("none", "eager"),
     }
     distilled_profile = args.profile in {
-        "fast", "legacy-fast", "reference", "static-reference", *experimental_profiles,
+        "fast", "legacy-fast", "reference", "static-reference",
+        "run-static-fast", *experimental_profiles,
     }
     expected_variant = "distilled" if distilled_profile else "dev"
     expected_steps = 8 if distilled_profile else 30
@@ -524,7 +529,10 @@ def main() -> None:
         raise RuntimeError("A2V metadata/output duration mismatch")
     if abs(effective_audio_duration - output_duration) > tolerance:
         raise RuntimeError("A2V conditioned audio/video duration mismatch")
-    if args.profile in {"reference", "static-reference", "guided", *experimental_profiles}:
+    if args.profile in {
+        "reference", "static-reference", "run-static-fast", "guided",
+        *experimental_profiles,
+    }:
         reference_required = {
             "generation_recipe",
             "stage_1_sampler",
@@ -559,7 +567,10 @@ def main() -> None:
         )
         expected_sampler = (
             "euler_ancestral"
-            if args.profile in {"reference", "static-reference", *experimental_profiles}
+            if args.profile in {
+                "reference", "static-reference", "run-static-fast",
+                *experimental_profiles,
+            }
             else "euler"
         )
         if metadata["generation_recipe"] != expected_recipe:
@@ -576,6 +587,12 @@ def main() -> None:
             raise RuntimeError("A2V worker used the wrong Stage 1 image strength")
         if float(metadata["stage_2_image_strength"]) != 1.0:
             raise RuntimeError("reference A2V Stage 2 image strength is not 1.0")
+        if args.profile == "run-static-fast" and (
+            metadata.get("quantization") != "fp8_cast"
+            or metadata.get("offload_mode") != "none"
+            or metadata.get("diffvae_backend_effective") != "eager"
+        ):
+            raise RuntimeError("run static A2V did not use FP8/no-offload/Eager")
         if not bool(metadata["audio_frozen_stage_1"]) or not bool(
             metadata["audio_frozen_stage_2"]
         ):
