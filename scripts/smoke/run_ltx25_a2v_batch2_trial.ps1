@@ -14,6 +14,7 @@ param(
     [string]$ReferenceA = "",
     [string]$ReferenceB = "",
     [ValidateSet("eager", "triton_experimental")][string]$VaeBackend = "eager",
+    [ValidateSet(2, 4)][int]$GuidanceForwardBatchSize = 2,
     [switch]$CheckInputsOnly,
     [switch]$AllowPaidTrial,
     [ValidateRange(120, 21600)][int]$BootstrapTimeoutSeconds = 7200,
@@ -48,13 +49,17 @@ if ([bool]$ReferenceA -ne [bool]$ReferenceB) {
 if ($VaeBackend -eq "triton_experimental" -and -not $ReferenceA) {
     throw "Strict Triton requires exact approved Eager batch2 references for both clips."
 }
+if ($GuidanceForwardBatchSize -eq 4 -and -not $ReferenceA) {
+    throw "Fused B4 guidance requires exact approved Eager/split-B2 references."
+}
 
 $ArgsList = @(
     "--image-a", $ImageA, "--audio-a", $AudioA, "--prompt-a", $PromptA,
     "--image-b", $ImageB, "--audio-b", $AudioB, "--prompt-b", $PromptB,
     "--seed-a", [string]$SeedA, "--seed-b", [string]$SeedB,
     "--run-id", $RunId, "--output-dir", $Destination,
-    "--accept-full-hd-oom-risk", "--vae-backend", $VaeBackend
+    "--accept-full-hd-oom-risk", "--vae-backend", $VaeBackend,
+    "--guidance-forward-batch-size", [string]$GuidanceForwardBatchSize
 )
 if ($ReferenceA) { $ArgsList += @("--reference-a", $ReferenceA) }
 if ($ReferenceB) { $ArgsList += @("--reference-b", $ReferenceB) }
