@@ -303,7 +303,7 @@ def main() -> None:
     report["replayed"] = response.replayed
     report["quality_status"] = "REFERENCE_VIDEO_SIDE_BY_SIDE_REVIEW_REQUIRED"
     if a.vae_backend == "triton_experimental":
-        from scripts.smoke.compare_ltx25_i2v_backend_trial import compare
+        from compare_ltx25_i2v_backend_trial import compare
 
         report["backend_comparison"] = compare(a.reference_a.parent, a.output_dir)
         report["quality_status"] = "HUMAN_SIDE_BY_SIDE_REVIEW_REQUIRED"
