@@ -3,7 +3,7 @@
 The measured October 4 all-DISK 1080p true-B2 run succeeded (3,407.85s)
 with ~17.0 GiB peak GPU allocated but unacceptable repeated disk reads.
 The NEXT, **unverified** I2V-only trial now uses a GPU-resident FP8 stage1
-and full-block pinned-RAM FP8 stage2, provisioned with **64 GiB RAM**
+and full-block pinned-RAM FP8 stage2, currently requesting **61440 MB host RAM** from Salad. This reduction from the original 65536-MB budget is unvalidated; RAM pressure must be verified.
 for the I2V Salad service **only**. Existing 720p remains unchanged.
 The older all-DISK performance notes further down record historical
 experiments, not the current selected mode.
