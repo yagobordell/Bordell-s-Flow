@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from ai_video_factory.workers.ltx25 import triton_na_probe
 from ai_video_factory.workers.ltx25.experimental_batch2 import Batch2Parameters
 from ai_video_factory.workers.ltx25.model import (
     LTX_PRODUCTION_I2V_PROFILE,
@@ -16,7 +17,6 @@ from ai_video_factory.workers.ltx25.model import (
     LTXVideoParameters,
     _select_diffvae_backend,
 )
-from ai_video_factory.workers.ltx25 import triton_na_probe
 from scripts.smoke import compare_ltx25_i2v_backend_trial as comparison
 from scripts.smoke import verify_ltx25_i2v_hybrid_image as abi
 
