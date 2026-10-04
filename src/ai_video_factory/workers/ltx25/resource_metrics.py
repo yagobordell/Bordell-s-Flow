@@ -46,26 +46,80 @@ def _stats(path: Path) -> dict[str, int]:
     return values
 
 
-def _cgroup_paths(proc_root: Path, cgroup_root: Path) -> list[tuple[str, Path]]:
-    """Try explicitly mounted cgroup paths then the root mount as fallback."""
-    discovered: list[tuple[str, Path]] = []
-    proc_cgroup = _text(proc_root / "cgroup") or ""
-    for line in proc_cgroup.splitlines():
+def _cgroup_paths(proc_root: Path, cgroup_root: Path) -> list[tuple[str, Path, str]]:
+    """Resolve cgroup namespaces through mountinfo; retain safe conventional fallbacks.
+
+    /proc/self/cgroup paths refer to the cgroup filesystem root, not necessarily
+    the container's visible mount root. Linux mountinfo gives BOTH the mount
+    point and the mounted subtree root needed to map a nested path correctly.
+    """
+    memberships: list[tuple[str, str]] = []
+    for line in (_text(proc_root / "cgroup") or "").splitlines():
         parts = line.split(":", 2)
         if len(parts) != 3:
             continue
-        _, subsystem, path = parts
-        if subsystem == "" or "memory" in subsystem.split(","):
-            if subsystem == "":
-                discovered.append(("v2", cgroup_root / path.lstrip("/")))
+        _, subsystems, path = parts
+        if not subsystems:
+            memberships.append(("v2", path))
+        elif "memory" in subsystems.split(","):
+            memberships.append(("v1", path))
+
+    candidates: list[tuple[str, Path, str]] = []
+    # Prefer the explicitly mounted hierarchy, accounting for cgroupns roots
+    # and a bind mount whose hierarchy is deeper than '/'. Mountinfo uses
+    # escaped spaces in paths (\\040) -- not material for the normal cgroup
+    # mount but handle them to avoid misparsing valid Linux mountinfo.
+    for line in (_text(proc_root / "mountinfo") or "").splitlines():
+        left, separator, right = line.partition(" - ")
+        if not separator:
+            continue
+        fields, after = left.split(), right.split()
+        if len(fields) < 5 or len(after) < 3:
+            continue
+        mounted_root = fields[3].replace("\\040", " ")
+        mount = fields[4].replace("\\040", " ")
+        fs_type = after[0]
+        for version, member in memberships:
+            if (version == "v2" and fs_type != "cgroup2") or (
+                version == "v1" and (
+                    fs_type != "cgroup" or "memory" not in after[2].split(",")
+                )
+            ):
+                continue
+            # A container may expose only a subtree of the host hierarchy.
+            root = mounted_root.rstrip("/") or "/"
+            if member == root:
+                relative = ""
+            elif root == "/":
+                relative = member.lstrip("/")
+            elif member.startswith(root + "/"):
+                relative = member[len(root):].lstrip("/")
             else:
-                discovered.append(("v1", cgroup_root / "memory" / path.lstrip("/")))
-    discovered.extend([
-        ("v2", cgroup_root),
-        ("v1", cgroup_root / "memory"),
-        ("v1", cgroup_root),
+                continue
+            mountpoint = Path(mount)
+            # Support alternate proc/cgroup fixtures without accessing
+            # the host cgroup mount in unit tests.
+            if cgroup_root != Path("/sys/fs/cgroup"):
+                try:
+                    mountpoint = cgroup_root / mountpoint.relative_to("/sys/fs/cgroup")
+                except ValueError:
+                    continue
+            candidates.append((version, mountpoint / relative, "mountinfo"))
+
+    for version, member in memberships:
+        if version == "v2":
+            candidates.append((version, cgroup_root / member.lstrip("/"), "membership"))
+        else:
+            candidates.append((
+                version, cgroup_root / "memory" / member.lstrip("/"), "membership",
+            ))
+    candidates.extend([
+        ("v2", cgroup_root, "root_fallback"),
+        ("v1", cgroup_root / "memory", "root_fallback"),
+        ("v1", cgroup_root, "root_fallback"),
     ])
-    return discovered
+    # Avoid redundant filesystem reads during continuous sampling.
+    return list(dict.fromkeys(candidates))
 
 
 def memory_pressure(
@@ -106,13 +160,14 @@ def memory_pressure(
             result[f"process_{key}"] = io_stats[key]
             result["process_available"] = True
 
-    for version, base in _cgroup_paths(proc_root, cgroup_root):
+    for version, base, source in _cgroup_paths(proc_root, cgroup_root):
         current_file = "memory.current" if version == "v2" else "memory.usage_in_bytes"
         usage = _integer(base / current_file)
         if usage is None:
             continue
         result["cgroup_available"] = True
         result["cgroup_version"] = version
+        result["cgroup_resolution"] = source
         result["cgroup_memory_current_bytes"] = usage
         # Current RSS alone is not enough to evaluate Salad placement.
         # Read the container's own cgroup limits/peaks when exposed;
@@ -152,6 +207,8 @@ def memory_pressure(
             if source in info:
                 result[f"cgroup_{target}"] = info[source]
         break
+    if not result["cgroup_available"]:
+        result["cgroup_unavailable_reason"] = "memory_cgroup_files_not_exposed_or_unreadable"
     return result
 
 
