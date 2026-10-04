@@ -731,11 +731,14 @@ def clear_b2_images_for_rerun(output: Path) -> int:
     paid_states = [
         *image_root.glob("block_*/*.json"),
         *(image_root / "grids").glob("*.json"),
+        *((image_root / "replaced_states").glob("block_*/*.json")),
     ]
     if paid_states:
         destination = historical_archive / ("run-" + uuid.uuid4().hex)
         for state_path in paid_states:
-            saved_path = destination / state_path.parent.name / state_path.name
+            if state_path.is_symlink() or state_path.parent.is_symlink():
+                raise ImageGenerationError("Refusing linked historical paid image state")
+            saved_path = destination / state_path.relative_to(image_root)
             saved_path.parent.mkdir(parents=True, exist_ok=True)
             state_path.replace(saved_path)
     for finished_root in finished_roots:
