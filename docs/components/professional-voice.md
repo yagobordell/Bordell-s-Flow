@@ -148,10 +148,10 @@ live paid Gemini API smoke is implied by offline tests; verify the selected
 voice and tagged multilingual style with a controlled real test before
 production deployment.
 
-## V1 / V2 / V3 metrics and cost accounting
+## V1 / V2 / V3 / V4 metrics and cost accounting
 
 `run_report.json` reports individual V API call durations and the actual
-wall-clock total for each stage. V2/V3 block calls execute concurrently:
+wall-clock total for each stage. V2/V3/V4 block calls execute concurrently:
 their stage wall time is measured once, **not** the sum of per-block durations.
 If V2 evidence sends V1 through another iteration, both V1 and V2 elapsed
 times accumulate for their respective stages. A resumed cached response
