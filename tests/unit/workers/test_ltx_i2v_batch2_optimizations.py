@@ -349,10 +349,10 @@ def test_full_hd_boundary_trim_only_evicts_unreachable_cuda_cache() -> None:
         empty.assert_called_once_with()
 
 
-def test_full_hd_pair_selects_disk_streaming_but_720p_keeps_gpu_resident(
+def test_full_hd_pair_uses_gpu_stage1_and_lazy_cpu_or_disk_stage2(
     tmp_path: Path,
 ) -> None:
-    """Exercise real backend branch selection without torch, GPU or model weights."""
+    """The B2 forward remains two-video; no second stage loads before called."""
     import ai_video_factory.workers.ltx25.model as model
 
     backend = object.__new__(DirectLTX25Backend)
@@ -375,34 +375,37 @@ def test_full_hd_pair_selects_disk_streaming_but_720p_keeps_gpu_resident(
         encode_video=lambda **kwargs: calls.append(kwargs),
         get_video_chunks_number=lambda *_args: 1,
     )
-    fake_pair_module = SimpleNamespace(
-        PairInput=lambda prompt, seed, image: (prompt, seed, image),
-        generate_paired_fast_distilled=Mock(return_value=(
+    stage2 = object()
+
+    def generate(**kwargs):
+        factory = kwargs["stage2_factory"]
+        if factory is not None:
+            assert factory() is stage2
+        return (
             SimpleNamespace(video="a", num_frames=121, tiling_config=None),
             SimpleNamespace(video="b", num_frames=121, tiling_config=None),
-        )),
+        )
+
+    fake_pair_module = SimpleNamespace(
+        PairInput=lambda prompt, seed, image: (prompt, seed, image),
+        generate_paired_fast_distilled=Mock(side_effect=generate),
     )
-    orig_pair_module = sys.modules.get(
-        "ai_video_factory.workers.ltx25.paired_i2v",
-    )
+    orig_pair_module = sys.modules.get("ai_video_factory.workers.ltx25.paired_i2v")
     fake_name = "ai_video_factory.workers.ltx25.paired_i2v"
     try:
         sys.modules[fake_name] = fake_pair_module
-        for width, height, expected_mode in (
-            (1280, 720, "none"), (1920, 1080, "disk"),
+        for width, height, stage2_mode in (
+            (1280, 720, None), (1920, 1080, "cpu"), (1920, 1080, "disk"),
         ):
-            policy = SimpleNamespace(fuse_rule=object())
-            pipeline = SimpleNamespace(
-                stage=SimpleNamespace(
-                    _is_streaming=expected_mode == "disk",
-                    _quantization=policy,
-                ),
-            )
+            pipeline = SimpleNamespace(stage=object())
             with (
                 patch.object(backend, "ready"),
                 patch.object(backend, "_get_bindings", return_value=fake_bindings),
                 patch.object(backend, "_validate_runtime"),
                 patch.object(backend, "_get_or_build_pipeline", return_value=pipeline) as loader,
+                patch.object(
+                    backend, "_full_hd_streaming_stage2", return_value=stage2,
+                ) as alternate,
                 patch.object(model, "_torch_inference_context", return_value=nullcontext()),
                 patch.object(model, "_prepare_grid_keyframe", side_effect=lambda p, *_a, **_kw: p),
                 patch.object(model, "_crop_video_to_requested", side_effect=lambda v, **_kw: v),
@@ -418,21 +421,67 @@ def test_full_hd_pair_selects_disk_streaming_but_720p_keeps_gpu_resident(
                     output_a=tmp_path / "a.mp4", output_b=tmp_path / "b.mp4",
                     parameters_a=first, parameters_b=second,
                     forward_batch_size=2,
+                    full_hd_stage2_mode=stage2_mode or "cpu",
                 ) == 27
-                assert loader.call_args.kwargs["requested_offload_mode"] == expected_mode
-                assert fake_pair_module.generate_paired_fast_distilled.call_args.kwargs[
-                    "max_forward_batch_size"
-                ] == 2
-                assert fake_pair_module.generate_paired_fast_distilled.call_args.kwargs[
-                    "full_hd_memory_cleanup"
-                ] is (expected_mode == "disk")
+                assert loader.call_args.kwargs["requested_offload_mode"] == "none"
+                kwargs = fake_pair_module.generate_paired_fast_distilled.call_args.kwargs
+                assert kwargs["max_forward_batch_size"] == 2
+                assert kwargs["full_hd_memory_cleanup"] is (stage2_mode is not None)
+                if stage2_mode is None:
+                    assert kwargs["stage2_factory"] is None
+                    alternate.assert_not_called()
+                else:
+                    alternate.assert_called_once_with(
+                        pipeline, fake_bindings, mode=stage2_mode,
+                    )
             fake_pair_module.generate_paired_fast_distilled.reset_mock()
     finally:
         if orig_pair_module is None:
             sys.modules.pop(fake_name, None)
         else:
             sys.modules[fake_name] = orig_pair_module
-    assert len(calls) == 4
+    assert len(calls) == 6
+
+
+def test_hybrid_stage2_build_reuses_identical_fp8_policy_and_cpu_slots() -> None:
+    backend = object.__new__(DirectLTX25Backend)
+    backend._model_files = SimpleNamespace(transformer=Path("/fake/model.safetensors"))
+    policy = SimpleNamespace(fuse_rule=object())
+    seen = []
+
+    class Stage:
+        _is_streaming = False
+        _quantization = policy
+        _dtype = "bf16"
+        _device = "cuda"
+        _alloc_trim_strategy = "trim"
+        video_scale_factors = "unchanged"
+
+        @classmethod
+        def from_checkpoint(cls, **kwargs):
+            seen.append(kwargs)
+            mode = kwargs["offload_mode"]
+            slots = None if mode == "cpu_enum" else 2
+            return SimpleNamespace(
+                _is_streaming=True,
+                _transformer_builder=SimpleNamespace(cpu_slots_count=slots),
+            )
+
+    bindings = SimpleNamespace(
+        offload_mode=SimpleNamespace(CPU="cpu_enum", DISK="disk_enum"),
+    )
+    pipeline = SimpleNamespace(stage=Stage())
+    for mode in ("cpu", "disk"):
+        result = backend._full_hd_streaming_stage2(
+            pipeline, bindings, mode=mode,
+        )
+        assert result._is_streaming
+        assert seen[-1]["quantization"] is policy
+        assert seen[-1]["checkpoint_path"] == "/fake/model.safetensors"
+        assert seen[-1]["scale_factors"] == "unchanged"
+        assert result._transformer_builder.cpu_slots_count == (
+            None if mode == "cpu" else 2
+        )
 
 
 def test_stage_reuse_oom_retries_approved_true_b2_before_any_b1(tmp_path: Path) -> None:
