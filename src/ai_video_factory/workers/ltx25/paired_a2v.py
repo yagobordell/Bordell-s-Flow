@@ -179,9 +179,34 @@ def _stage(
         initial_latent=frozen_audio,
     )
     # Pinned upstream DiffusionStage builds the model BEFORE sampling noise.
+    build_cpu_start = time.process_time()
+    build_io_before = memory_pressure()
     start = time.perf_counter()
     with stage._transformer_ctx(video_tools=video_tools) as built:
         build = time.perf_counter() - start
+        build_cpu_seconds = time.process_time() - build_cpu_start
+        build_io_after = memory_pressure()
+        build_trace = {
+            "stage": label,
+            "wall_seconds": round(build, 3),
+            "process_cpu_seconds": round(build_cpu_seconds, 3),
+            "before": build_io_before,
+            "after": build_io_after,
+            "disk_read_bytes_delta": (
+                build_io_after["process_read_bytes"] - build_io_before["process_read_bytes"]
+                if "process_read_bytes" in build_io_before
+                and "process_read_bytes" in build_io_after else None
+            ),
+            "major_faults_delta": (
+                build_io_after["process_major_page_faults"]
+                - build_io_before["process_major_page_faults"]
+                if "process_major_page_faults" in build_io_before
+                and "process_major_page_faults" in build_io_after else None
+            ),
+        }
+        logger.info("LTX25_A2V_B2_BUILD_TRACE %s", json.dumps(build_trace))
+        if phase_metrics is not None:
+            phase_metrics[label + "_build_trace"] = build_trace
         if phase_metrics is not None:
             phase_metrics[label + "_transformer_build_seconds"] = build
         if max_transformer_build_seconds and build > max_transformer_build_seconds:
