@@ -183,21 +183,6 @@ def plan_image_jobs(
         avatar_media_grid = all(
             beat["visual_type"] == "avatar_media" for beat in run
         )
-        # Only 2x2 landscape grids can fit native 1920x1080 video panels
-        # within the supported GPT canvas. Larger 3-column grids retain
-        # 1280x720 panels; avatar_media grids keep their separate 8:9 ratio.
-        has_video = any(
-            beat["visual_type"] in {"media_video", "avatar"} for beat in run
-        ) or any(
-            available[key]["visual_type"] in {"media_video", "avatar"}
-            for key in forward + backward
-        )
-        panel_width, panel_height = (
-            (_AVATAR_MEDIA_PANEL_WIDTH, _AVATAR_MEDIA_PANEL_HEIGHT)
-            if avatar_media_grid else (1920, 1080)
-            if visual_style == "profesional" and has_video and (columns, rows) == (2, 2)
-            else (_PANEL_WIDTH, _PANEL_HEIGHT)
-        )
 
         first = positions[run[0]["block_id"], run[0]["beat_id"]]
         last = positions[run[-1]["block_id"], run[-1]["beat_id"]]
@@ -231,6 +216,17 @@ def plan_image_jobs(
         for key in forward + backward:
             del available[key]
         selected.sort(key=lambda b: positions[b["block_id"], b["beat_id"]])
+        # Size the canvas from the ACTUAL selected panels, including fillers.
+        # Only 2x2 landscape grids can reach native 1920x1080 per video panel.
+        has_video = any(
+            beat["visual_type"] in {"media_video", "avatar"} for beat in selected
+        )
+        panel_width, panel_height = (
+            (_AVATAR_MEDIA_PANEL_WIDTH, _AVATAR_MEDIA_PANEL_HEIGHT)
+            if avatar_media_grid else (1920, 1080)
+            if visual_style == "profesional" and has_video and (columns, rows) == (2, 2)
+            else (_PANEL_WIDTH, _PANEL_HEIGHT)
+        )
         black_panel_count = count - len(selected)
         selected.extend(
             {
