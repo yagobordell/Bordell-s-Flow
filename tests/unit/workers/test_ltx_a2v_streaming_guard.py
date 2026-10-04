@@ -1,76 +1,89 @@
-"""Experimental-only A2V streaming workaround for the redundant recursive eval.
-
-These tests use a small torch model, no CUDA or downloaded checkpoints.
-"""
+"""Opt-in streaming guard tested without installed LTX, torch, CUDA or checkpoints."""
 from __future__ import annotations
 
+import sys
 from contextlib import contextmanager
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
-import torch
 
-import ltx_pipelines.utils.blocks as upstream_blocks
-
-import ai_video_factory.workers.ltx25.reference_a2v as reference_a2v
+from ai_video_factory.workers.ltx25 import a2v_streaming_guard as guard
 
 
-class _FakeStream(torch.nn.Module):
-    def __init__(self, model: torch.nn.Module) -> None:
-        super().__init__()
+class _FakeX0:
+    def __init__(self, wrapper: object) -> None:
+        self.velocity_model = wrapper
+        self.training = True
+
+    def eval(self) -> None:
+        raise AssertionError("X0Model.eval() must not traverse the streaming wrapper")
+
+
+class _FakeStream:
+    def __init__(self, model: object) -> None:
         self._model = model
+        self.training = True
         self.teardown_called = False
-
-    def teardown(self) -> None:
-        self.teardown_called = True
 
 
 class _FakeStage:
     _is_streaming = True
-    _device = torch.device("cpu")
-    _dtype = torch.bfloat16
+    _device = "cpu"
+    _dtype = "fake"
     _alloc_trim_strategy = "fake"
 
     def _prepared_builder(self) -> object:
         return object()
 
 
-def test_experimental_cpu_streaming_avoids_redundant_recursive_eval(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    raw_model = torch.nn.Sequential(torch.nn.Linear(2, 2))
-    raw_model.eval()  # StreamingModelBuilder.build() does this upstream.
-    wrapped = _FakeStream(raw_model)
-    created: list[tuple[object, ...]] = []
+def _install_fake_upstream(
+    monkeypatch: pytest.MonkeyPatch, stream: _FakeStream
+) -> list[tuple[object, ...]]:
+    calls: list[tuple[object, ...]] = []
 
     @contextmanager
     def fake_streaming_model(*args: object):
-        created.append(args)
+        calls.append(args)
         try:
-            yield wrapped
+            yield stream
         finally:
-            wrapped.teardown()
+            stream.teardown_called = True
 
-    monkeypatch.setattr(upstream_blocks, "_streaming_model", fake_streaming_model)
+    ltx_core = ModuleType("ltx_core")
+    ltx_core.__path__ = []  # type: ignore[attr-defined]
+    ltx_model = ModuleType("ltx_core.model")
+    ltx_model.__path__ = []  # type: ignore[attr-defined]
+    transformer = ModuleType("ltx_core.model.transformer")
+    transformer.X0Model = _FakeX0  # type: ignore[attr-defined]
+    ltx_pipelines = ModuleType("ltx_pipelines")
+    ltx_pipelines.__path__ = []  # type: ignore[attr-defined]
+    utils = ModuleType("ltx_pipelines.utils")
+    utils.__path__ = []  # type: ignore[attr-defined]
+    blocks = ModuleType("ltx_pipelines.utils.blocks")
+    blocks._streaming_model = fake_streaming_model  # type: ignore[attr-defined]
+    for module in (ltx_core, ltx_model, transformer, ltx_pipelines, utils, blocks):
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+    return calls
 
-    def fail_second_eval(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("recursive eval must not run twice")
 
-    # If the original upstream X0Model(wrapper).eval() executes, it traverses
-    # this model a second time and the test fails.
-    monkeypatch.setattr(raw_model, "train", fail_second_eval)
+def test_experimental_cpu_streaming_avoids_redundant_recursive_eval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = SimpleNamespace(training=False)
+    stream = _FakeStream(raw)
+    calls = _install_fake_upstream(monkeypatch, stream)
     first, second = _FakeStage(), _FakeStage()
     pipeline = SimpleNamespace(stage_1=first, stage_2=second)
-    reference_a2v.configure_experimental_a2v_streaming(pipeline)
+    guard.configure_experimental_a2v_streaming(pipeline)
 
     for stage in (first, second):
         with stage._streaming_transformer_ctx() as model:
             assert model.training is False
-            assert wrapped.training is False
-            assert raw_model.training is False
-            assert model.velocity_model is wrapped
-        assert wrapped.teardown_called
-    assert len(created) == 2
+            assert stream.training is False
+            assert raw.training is False
+            assert model.velocity_model is stream
+        assert stream.teardown_called
+    assert len(calls) == 2
 
 
 def test_experimental_guard_rejects_partial_patch() -> None:
@@ -78,26 +91,18 @@ def test_experimental_guard_rejects_partial_patch() -> None:
     second = SimpleNamespace(_is_streaming=False)
     pipeline = SimpleNamespace(stage_1=first, stage_2=second)
     with pytest.raises(RuntimeError, match="refusing partial patch"):
-        reference_a2v.configure_experimental_a2v_streaming(pipeline)
+        guard.configure_experimental_a2v_streaming(pipeline)
     assert "_streaming_transformer_ctx" not in vars(first)
 
 
 def test_experimental_guard_rejects_non_eval_meta_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    wrapped = _FakeStream(torch.nn.Linear(2, 2))  # Still training
-
-    @contextmanager
-    def fake_streaming_model(*_args: object):
-        try:
-            yield wrapped
-        finally:
-            wrapped.teardown()
-
-    monkeypatch.setattr(upstream_blocks, "_streaming_model", fake_streaming_model)
+    stream = _FakeStream(SimpleNamespace(training=True))
+    _install_fake_upstream(monkeypatch, stream)
     pipeline = SimpleNamespace(stage_1=_FakeStage(), stage_2=_FakeStage())
-    reference_a2v.configure_experimental_a2v_streaming(pipeline)
+    guard.configure_experimental_a2v_streaming(pipeline)
     with pytest.raises(RuntimeError, match="must already be in eval mode"):
         with pipeline.stage_1._streaming_transformer_ctx():
             pass
-    assert wrapped.teardown_called
+    assert stream.teardown_called
