@@ -504,6 +504,81 @@ def test_interrupted_atomic_replacement_recovers_without_second_paid_call(
     assert not (tmp_path / "images" / "professional_finished").exists()
 
 
+def test_legacy_finished_image_migrates_without_another_paid_call(tmp_path):
+    import json
+
+    from ai_video_factory.providers import professional_image_finishing as finishing
+
+    plan = professional(beat("1B", "media_image", "Legacy photo"))
+    direct = RecordingGPT()
+    original = gpt.generate_b2_images(
+        tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
+    )
+    source = original["items"][0]
+    identity = {
+        "profile": finishing._PROFILE, "recipe": "image_x2",
+        "source_sha256": source["sha256"], "target": (2560, 1440),
+        "model": None, "avatar_reference_sha256": None,
+        "prompt_sha256": "exact-image-x2",
+    }
+    identity_hash = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    legacy = tmp_path / "images" / "professional_finished" / "block_1"
+    legacy.mkdir(parents=True)
+    old_png = legacy / "1B-image_x2.png"
+    old_png.write_bytes(png((2560, 1440)))
+    (legacy / "1B-image_x2.json").write_text(json.dumps({
+        "schema_version": "professional-image-finishing-v1",
+        "identity": identity_hash, "status": "completed",
+        "source": source["file"], "block_id": 1, "beat_id": "1B",
+        "sha256": hashlib.sha256(old_png.read_bytes()).hexdigest(),
+    }), encoding="utf-8")
+
+    upscaler = RecordingUpscaler()
+    finished = finish_professional_images(
+        tmp_path, plan, original, upscaler=upscaler, api_key=None,
+    )
+    assert finished[0]["file"] == "images/block_1/1B.png"
+    assert (tmp_path / finished[0]["file"]).read_bytes() == png((2560, 1440))
+    assert not (tmp_path / "images" / "professional_finished").exists()
+    assert upscaler.calls == []
+    assert len(direct.calls) == 1
+
+
+def test_managed_partial_image_checkpoint_uses_recovered_final_sha(tmp_path, monkeypatch):
+    import json
+
+    from ai_video_factory.managed_media import _image_sources
+    from ai_video_factory.providers import professional_image_finishing as finishing
+
+    plan = professional(beat("1B", "media_image", "A partial photo"))
+    avatar = png((64, 64))
+    (tmp_path / "avatar.png").write_bytes(avatar)
+    plan["avatar"] = {
+        "file": "avatar.png", "sha256": hashlib.sha256(avatar).hexdigest(),
+    }
+    (tmp_path / "visual_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    original = gpt.generate_b2_images(
+        tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=RecordingGPT(),
+    )
+    saved_json = finishing._save_json
+
+    def interrupted(path, data):
+        if path.name == "1B-image_x2.json" and data.get("status") == "completed":
+            raise OSError("interrupted final-state write")
+        return saved_json(path, data)
+
+    monkeypatch.setattr(finishing, "_save_json", interrupted)
+    with pytest.raises(OSError, match="interrupted"):
+        finish_professional_images(
+            tmp_path, plan, original, upscaler=RecordingUpscaler(), api_key=None,
+        )
+    status, files = _image_sources(tmp_path, {})
+    assert status == "incomplete"
+    image = tmp_path / "images" / "block_1" / "1B.png"
+    assert files["block_1/1B.png"][1] == hashlib.sha256(image.read_bytes()).hexdigest()
+    assert files["block_1/1B.png"][1] != original["items"][0]["sha256"]
+
+
 def test_professional_paid_originals_survive_transient_salad_start_error(
     monkeypatch, tmp_path,
 ):
