@@ -71,7 +71,9 @@ def test_missing_cgroup_never_fakes_container_ram(
     assert record["cgroup_unavailable_reason"]
 
 
-def test_ram_timeline_samples_phases_headroom_and_kernel_peaks(caplog: pytest.LogCaptureFixture) -> None:
+def test_ram_timeline_samples_phases_headroom_and_kernel_peaks(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     readings = iter((
         {
             "process_available": True, "cgroup_available": True,
@@ -115,7 +117,10 @@ def test_ram_timeline_samples_phases_headroom_and_kernel_peaks(caplog: pytest.Lo
     assert report["process_major_fault_delta"] == 17
     assert report["cgroup_oom_event_delta"] == 1
     assert report["per_phase_sampled_peaks"]["stage1_denoise"]["process_vmrss_bytes"] == 300
-    assert report["per_phase_sampled_peaks"]["stage2_transformer_build"]["process_vmrss_bytes"] == 150
+    assert (
+        report["per_phase_sampled_peaks"]["stage2_transformer_build"]["process_vmrss_bytes"]
+        == 150
+    )
     assert [s["phase"] for s in report["samples"]] == [
         "start", "stage1_denoise", "stage2_transformer_build",
     ]
