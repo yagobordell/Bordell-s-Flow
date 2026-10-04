@@ -416,3 +416,29 @@ def test_saved_low_quality_grid_cannot_be_silently_resubmitted_as_medium(
         )
     assert direct.calls == []
     assert not (tmp_path / "images/manifest.json").exists()
+
+
+def test_explicit_b2_rerun_preserves_paid_current_and_replaced_request_states(
+    tmp_path: Path,
+) -> None:
+    direct = FakeDirect()
+    images.generate_b2_images(
+        tmp_path, _plan("The latest scene"), api_key=None,
+        options=_opts(), direct_client=direct,
+    )
+    historical = tmp_path / "images/replaced_states/block_1/1C.previous.json"
+    historical.parent.mkdir(parents=True)
+    historical.write_text(json.dumps({
+        "schema_version": "openai-image-v1",
+        "status": "completed",
+        "block_id": 1, "beat_id": "1C",
+        "model_id": _opts().model_id,
+    }))
+    removed = images.clear_b2_images_for_rerun(tmp_path)
+    assert removed == 1
+    archive = tmp_path / "images_replaced_b2"
+    assert len(list(archive.glob("run-*/block_1/1B.json"))) == 1
+    assert len(list(archive.glob(
+        "run-*/replaced_states/block_1/1C.previous.json"
+    ))) == 1
+    assert not (tmp_path / "images").exists()
