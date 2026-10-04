@@ -252,28 +252,6 @@ Keep identity, clothing, objects, setting, shot size, angle and framing
 consistent with the supplied starting image. Show one natural continuous
 real-time take.
 
-When the narration mentions an app, website, message, chart, report,
-document or any other screen/page content, use that information to fully
-understand the action being animated.
-
-Choose the movements, gestures, timing and camera behavior that best
-communicate the beat from the starting frame.
-
-When specific content details provide useful narrative context, include
-them in a short, separate parenthetical note in video_prompt:
-
-(For context: [relevant information].)
-
-Apply the same For context principle used by the image prompt to the
-video animation prompt, adapting its scene description to movement.
-The image prompt and video_prompt are separate generation instructions,
-so include relevant context in each when useful.
-
-Example:
-video_prompt: "From the starting frame, the presenter makes a few natural
-keystrokes and a small trackpad movement while looking at the laptop.
-(For context: he is opening the delivery company's website directly.)"
-
 When audio=false, video_prompt is sent DIRECTLY to I2V as the positive
 animation instruction. Give concrete, visual, physically plausible
 motion: e.g. an applicator gently touches the cheek, blends the product
@@ -293,8 +271,7 @@ remains secondary to reliable speech. The canonical
 speaking-to-camera prompt and static-camera recipe remain controlled
 by application code; video_prompt adds beat-specific details to it.
 
-video_prompt MUST describe beat-specific animation, with a separate
-(For context: ...) note when specific narrative details are useful.
+video_prompt MUST be a pure beat-specific animation instruction.
 Describe movement developing from the image and use the pinned,
 static-camera composition for A2V. Downstream Ken Burns handles
 slight zoom effects on static images.
