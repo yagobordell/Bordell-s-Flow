@@ -72,49 +72,55 @@ The real validated cases are `640x360 -> 1920x1080` and
 
 ## Professional B2 image finishing (new opt-in by visual style)
 
-Professional B2 `media_image` and `avatar_media` beats keep their original
-GPT Image generation size, quality, prompt and original paid PNG. **Only after**
-individual generation or verified grid-panel cropping, the OptiumLabs Salad
-image service runs **exact 2x** on each such beat:
-`1280x720 -> 2560x1440` and `768x864 -> 1536x1728` respectively.
-The service is mandatory to **finish** professional photo beats, but Salad
-availability does not gate original GPT Image generation. Paid original PNGs and
-verified grid crops are saved first; then Salad is started/reused and the x2
-finishing runs. If Salad/R2 is unavailable, the manifest records
-`finishing_status=pending_upscaler` and `--images-only` reuses the saved paid
-originals instead of charging for them again. Preview/video publishing still
-requires completed professional finishing. This never affects Casero.
+Professional B2 `media_image` and `avatar_media` beats are generated
+at their selected B2 size and quality; then OptiumLabs runs exact **2x**
+on static beats, including verified static grid crops. Thus a normal
+`1280x720` still becomes `2560x1440`, while a static panel extracted
+from a high-resolution mixed 2x2 grid (`1920x1080`) becomes
+`3840x2160`. The `768x864` avatar_media support panels preserve their
+separate 8:9 geometry and become `1536x1728`.
 
-Images destined for professional I2V or newly generated speaking A2V source
-frames (`media_video` and generated `avatar`) are **native GPT Image**
-`1920x1088`, medium quality. Both values are divisible by 16. The final image
-is deterministically center-cropped, not resized, by four rows on each side
-to **1920x1080**. The supplied, reused avatar PNG is not a newly generated
-frame and remains the user's original. A2V and I2V **video inference and
-final montage remain 1280x720**; only their source images have changed.
+The generation quality policy is uniform across professional and Casero:
+**medium for full grids and individual prompts containing a case-insensitive
+`(For context` marker with optional whitespace; low otherwise.** In
+particular, independently generated professional I2V/A2V keyframes
+(`media_video` and regenerated `avatar`) use `1920x1088` at **low**
+unless they include `For context`. These independent keyframes are
+center-cropped by four rows per side to `1920x1080`; reused user-avatar
+PNGs remain unchanged.
 
-A professional grid (including a mixed image/video grid) keeps the current
-controlled canvas and medium-quality GPT generation. After cropping, photo
-panels are upscaled x2 through OptiumLabs. Each video panel is additionally
-rendered as a **separate paid native 1920x1088 GPT edit**, with its verified
-grid crop as the first strict composition/continuity reference. If that panel
-references an avatar, the original verified avatar is included as a second
-reference. The native output is center-cropped to 1920x1080. This avoids
-pretending that a 720p grid panel merely resized to 1080p is natively detailed,
-and avoids giant 5760x3240 grids. The video requirement governs the final
-video-panel dimensions. Paid edit costs are included once in B2 image billing.
+**No grid panel is ever regenerated with GPT.** A professional grid
+containing only still images retains its normal 16:9 panel geometry:
+2x2 `2560x1440`, 3x2 `3840x1440`, 3x3 `3840x2160`; each panel
+is nominally `1280x720`. When **any** participating panel is intended
+for video (including an unnumbered filler), a 2x2 grid uses
+`3840x2160` so each panel is nominally `1920x1080`. Larger 3x2 and
+3x3 grids are already at the supported canvas limit and therefore retain
+`1280x720` panels. All grids use medium. Exclusive avatar_media grids
+retain their special 8:9 sizes.
 
-Original GPT per-beat PNGs and derived grid panels remain unchanged until
-their individual finishing is verified. The resulting 2x or 1920x1080 PNG
-**atomically replaces that beat's original path** (`images/block_N/BEAT.png`).
-Only original full GPT grids remain separate and immutable. Durable SHA-256
-recovery metadata lives under `images/finishing_state/`; no separate folder of
-finished images is created. For native video edits, transient paid 1920x1088
-inputs are removed from this state folder after successful replacement.
-A crash during replacement is recoverable without repeating paid calls.
-Uncertain remote outcomes still require reconciliation. LTX and the preview consume
-**only** the verified finished assets for professional runs. No video
-Real-ESRGAN/upscaler is used.
+After cropping, grid-video panels are used directly as the video source,
+**at the cropped size**: `1920x1080` for supported mixed 2x2 grids and
+`1280x720` for larger grids. They receive neither an independent GPT
+edit nor upscaling to disguise a lower resolution. Only grid-photo panels
+receive the regular exact-2x OptiumLabs finishing. The source full grid
+remains immutable. No new `native_grid_video` paid request or finishing
+state is created. Older ambiguous native-edit states are rejected and
+retained for manual reconciliation, never silently resubmitted or deleted;
+historical finished states remain available for cost auditing.
+
+The professional finishing stage keeps exact 2x and standalone-video crop
+results in their original beat paths (`images/block_N/BEAT.png`), with
+SHA-verified recovery metadata under `images/finishing_state/`.
+Grid-video images already occupy their final per-beat paths and are
+verified, not overwritten. The source full grids are preserved unchanged.
+If Salad/R2 is unavailable, static-image finishing stays pending without
+regenerating paid originals. Professional preview/publication requires all
+finishing to complete. Existing experimental video inference and output
+geometry remain independent of these source-image dimensions. Explicit B2
+reruns now archive original paid GPT request JSON as well as paid finishing
+metadata, preserving historical billing even when no native grid edit is
+created.
 
 To validate a deployed OptiumLabs service, use the real `small` and `real`
 smokes above. Separately, perform a controlled new **professional B2**
