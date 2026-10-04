@@ -137,8 +137,20 @@ try {
             )
             Write-Host "Running $segment" -ForegroundColor Cyan
             $logPath = Join-Path $OutputDir "$segment.log"
-            & $Python $Submit @args 2>&1 | Tee-Object -FilePath $logPath
-            if ($LASTEXITCODE -ne 0) {
+            # Windows PowerShell 5.1 turns native stderr into ErrorRecords.
+            # With Stop set globally, a Python traceback used to bypass this
+            # branch entirely and omit the failed attempt from manifest.json.
+            $PreviousErrorAction = $ErrorActionPreference
+            $SubmissionExitCode = 1
+            try {
+                $ErrorActionPreference = 'Continue'
+                & $Python $Submit @args 2>&1 | Tee-Object -FilePath $logPath
+                $SubmissionExitCode = $LASTEXITCODE
+            }
+            finally {
+                $ErrorActionPreference = $PreviousErrorAction
+            }
+            if ($SubmissionExitCode -ne 0) {
                 $Failure = [ordered]@{
                     profile = $profile
                     iteration = $iteration
@@ -148,6 +160,11 @@ try {
                 }
                 $Manifest.failures += $Failure
                 $Manifest | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $OutputDir 'manifest.json') -Encoding UTF8
+                # A structural streaming failure means this CUDA process may
+                # be corrupted, even if Postgres has a terminal failed row.
+                if (Select-String -LiteralPath $logPath -Pattern 'A2V_EXPERIMENTAL_STREAMING_STRUCTURE_INVALID' -Quiet) {
+                    throw "Unsafe A2V streaming failure; refusing to reuse this worker: $segment"
+                }
                 if (-not $ContinueOnTerminalFailure) {
                     throw "Benchmark failed: $segment; see $logPath"
                 }
