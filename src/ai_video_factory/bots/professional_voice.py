@@ -497,10 +497,12 @@ def _minimal_tag_excerpt(text: str, at: int, tag: str) -> str:
 def _v4_style(direction: V4, source: V3) -> str:
     """Compile ALL directions for a group into exactly one Gemini style."""
     lines = [direction.audio_profile, *direction.directors_notes]
-    totals: dict[str, int] = {}
+    all_speaks = [
+        item.speak for beat in source.beat_deliveries
+        for item in beat.delivery if isinstance(item, Speak)
+    ]
     for item in direction.spoken_directions:
-        totals[item.locator] = totals.get(item.locator, 0) + 1
-    for item in direction.spoken_directions:
+        matches = sum(speak.count(item.locator) for speak in all_speaks)
         label = (
             f"occurrence {item.occurrence} of '{item.locator}'"
             if totals[item.locator] > 1 else f"'{item.locator}'"
@@ -544,10 +546,9 @@ def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
         (bid, index) for bid, index, _ in expected_spoken
     ]:
         raise VoicePlanError("V4 omitted, duplicated or reordered V3 spoken occurrences")
-    ordinal: dict[str, int] = {}
-    for entry, (_, _, original) in zip(
+    for position, (entry, (_, _, original)) in enumerate(zip(
         result.spoken_directions, expected_spoken, strict=True
-    ):
+    )):
         if (not entry.instruction.strip() or entry.locator not in original.speak
             or original.speak.count(entry.locator) != 1
             or entry.ending_behavior != original.ending_behavior
@@ -555,9 +556,12 @@ def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
             or any(word not in entry.instruction for word in original.stress)
             or re.search(r"<[^>]+>", entry.instruction)):
             raise VoicePlanError("V4 lost exact spoken locator, stress or ending")
-        ordinal[entry.locator] = ordinal.get(entry.locator, 0) + 1
-        if entry.occurrence != ordinal[entry.locator]:
-            raise VoicePlanError("V4 repeated locator lacks exact occurrence ordinal")
+        occurrence = 1 + sum(
+            earlier.speak.count(entry.locator)
+            for _, _, earlier in expected_spoken[:position]
+        )
+        if entry.occurrence != occurrence:
+            raise VoicePlanError("V4 locator lacks exact group-wide occurrence ordinal")
     voice_tags = {
         "inhale": "breath", "exhale": "exhales", "sigh": "sigh",
         "chuckle": "chuckle", "gasp": "gasp",
