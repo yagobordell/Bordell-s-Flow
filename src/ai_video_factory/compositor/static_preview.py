@@ -248,9 +248,9 @@ def build_stt_beat_timeline(
     total = audio.get("duration_seconds")
     if (
         not isinstance(blocks, list) or not blocks
-        or not isinstance(recorded, list) or len(blocks) != len(recorded)
-        or not isinstance(starts, list) or len(starts) != len(blocks)
-        or not isinstance(durations, list) or len(durations) != len(blocks)
+        or not isinstance(recorded, list) or not recorded
+        or not isinstance(starts, list) or len(starts) != len(recorded)
+        or not isinstance(durations, list) or len(durations) != len(recorded)
         or not isinstance(total, (int, float)) or not math.isfinite(total)
         or total <= 0 or audio.get("stt_complete") is not True
     ):
@@ -264,9 +264,51 @@ def build_stt_beat_timeline(
         ):
             raise StaticPreviewError("Preview WAV differs from recorded PCM sample count")
 
+    # Professional speech may merge contiguous short B2 blocks. The original
+    # source blocks/beat IDs remain authoritative for every visual and LTX job.
+    # Older Gemini and all Casero artifacts have no grouping manifest.
+    audio_groups = audio.get("block_groups")
+    source_groups: list[list[dict[str, Any]]] = []
+    if audio_groups is None:
+        if len(blocks) != len(recorded):
+            raise StaticPreviewError("B2 block count differs from the TTS block count")
+        source_groups = [[block] for block in blocks]
+    else:
+        if not isinstance(audio_groups, list) or len(audio_groups) != len(recorded):
+            raise StaticPreviewError("Invalid professional audio block grouping")
+        cursor = 0
+        for specification, recording in zip(audio_groups, recorded, strict=True):
+            if not isinstance(specification, dict) or not isinstance(recording, dict):
+                raise StaticPreviewError("Invalid professional audio group record")
+            ids = specification.get("source_block_ids")
+            if not isinstance(ids, list) or not ids or any(
+                not isinstance(identifier, int) or isinstance(identifier, bool)
+                for identifier in ids
+            ):
+                raise StaticPreviewError("Invalid professional audio source block IDs")
+            members = blocks[cursor:cursor + len(ids)]
+            if (
+                len(members) != len(ids)
+                or [member.get("block_id") for member in members] != ids
+                or specification.get("block_id") != ids[0]
+                or recording.get("block_id") != ids[0]
+                or recording.get("source_block_ids", ids) != ids
+                or specification.get("beat_ids") != [
+                    beat.get("beat_id") for member in members for beat in member.get("beats", [])
+                ]
+            ):
+                raise StaticPreviewError("Professional audio groups differ from original B2 order")
+            source_groups.append(members)
+            cursor += len(ids)
+        if cursor != len(blocks):
+            raise StaticPreviewError("Professional audio grouping does not cover every B2 block")
+
     timeline: list[dict[str, Any]] = []
-    for index, (block, recording) in enumerate(zip(blocks, recorded, strict=True)):
-        if block.get("block_id") != recording.get("block_id"):
+    for index, (source_group, recording) in enumerate(
+        zip(source_groups, recorded, strict=True)
+    ):
+        block = source_group[0]
+        if not isinstance(recording, dict) or block.get("block_id") != recording.get("block_id"):
             raise StaticPreviewError("B2 block order differs from the TTS block order")
         if (
             isinstance(starts[index], bool) or isinstance(durations[index], bool)
@@ -317,10 +359,13 @@ def build_stt_beat_timeline(
                 for token in word_tokens
             )
             last_start = begin
-        beats = block.get("beats")
-        if not isinstance(beats, list) or not beats:
-            raise StaticPreviewError("B2 block has no beats")
-        expected_tokens = [_tokens(beat.get("text", "")) for beat in beats]
+        beats = [
+            (source_block, beat)
+            for source_block in source_group for beat in source_block["beats"]
+        ]
+        if not beats:
+            raise StaticPreviewError("B2 voice group has no beats")
+        expected_tokens = [_tokens(beat.get("text", "")) for _, beat in beats]
         flat_expected = [token for words in expected_tokens for token in words]
         if not all(expected_tokens):
             raise StaticPreviewError(
@@ -332,11 +377,13 @@ def build_stt_beat_timeline(
             block_id=block["block_id"],
         )
         cursor = 0
-        for beat_index, (beat, tokens) in enumerate(zip(beats, expected_tokens, strict=True)):
+        for beat_index, ((source_block, beat), tokens) in enumerate(
+            zip(beats, expected_tokens, strict=True)
+        ):
             beat_id = beat.get("beat_id")
             if (
                 not isinstance(beat_id, str) or not _BEAT_ID.fullmatch(beat_id)
-                or not beat_id.startswith(str(block["block_id"]))
+                or not beat_id.startswith(str(source_block["block_id"]))
             ):
                 raise StaticPreviewError("Unsafe or mismatched B2 beat identifier")
             mapped_words = [
@@ -354,7 +401,7 @@ def build_stt_beat_timeline(
                 starts[index] + aligned_words[first_word_index]["start"]
             )
             timeline.append({
-                "block_id": block["block_id"],
+                "block_id": source_block["block_id"],
                 "beat_id": beat_id,
                 "visual_type": beat.get("visual_type"),
                 "description": beat.get("description", beat.get("prompt")),
