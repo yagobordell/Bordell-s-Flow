@@ -89,6 +89,15 @@ if (-not (Get-Command ffprobe -ErrorAction SilentlyContinue) -or
     -not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     throw "ffprobe and ffmpeg are required."
 }
+if ($Width -eq 1920) {
+    # A syntactically pinned digest does NOT prove its installed Python
+    # schema contains the new hybrid field. This offline container check
+    # blocks a costly Salad bootstrap with the wrong historical image.
+    & $Python (Join-Path $PSScriptRoot "verify_ltx25_i2v_hybrid_image.py") --image $ExpectedPinnedImage
+    if ($LASTEXITCODE -ne 0) {
+        throw "STOP: pinned Docker lacks the hybrid I2V API; rebuild before paid Salad startup."
+    }
+}
 $AvatarStatus = (& $Manager -Action Status -Service ltx25 -EnvFile $EnvFile -NonInteractive | Out-String)
 $I2VStatus = (& $Manager -Action Status -Service ltx25_i2v -EnvFile $EnvFile -NonInteractive | Out-String)
 if ($AvatarStatus -notmatch 'status=(stopped|missing)(\s|$)') {
