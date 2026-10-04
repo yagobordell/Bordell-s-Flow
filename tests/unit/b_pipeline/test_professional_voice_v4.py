@@ -97,8 +97,6 @@ def test_compiler_preserves_distinct_pause_spoken_time_and_exact_stress():
 
 
 @pytest.mark.parametrize(("change", "error"), [
-    (lambda value: value.beat_tags[0].inserts.pop(),
-     "lost one or more"),
     (lambda value: value.spoken_directions[1].stress.clear(),
      "exact spoken locator, stress"),
     (lambda value: setattr(value.beat_tags[0].inserts[1], "tag", "gasp"),
@@ -111,7 +109,7 @@ def test_compiler_preserves_distinct_pause_spoken_time_and_exact_stress():
                         source_item_index=0, source_at=0)
     ), "invented, duplicated or moved"),
 ])
-def test_compiler_rejects_lost_or_invented_decisions(change, error):
+def test_compiler_rejects_invalid_or_invented_decisions(change, error):
     result = copy.deepcopy(_compiled())
     change(result)
     with pytest.raises(pv.VoicePlanError, match=error):
@@ -129,7 +127,7 @@ def test_v3_rejects_unjustified_stress_or_invented_words():
         pv._check_v3(result, _block())
 
 
-def test_existing_legacy_v3_checkpoint_skips_new_v4_without_new_paid_calls(tmp_path):
+def test_legacy_v3_checkpoint_is_rejected_without_new_paid_calls(tmp_path):
     core, block = {"central_question": "Why?", "final_answer": "Because."}, _block()
     rhythm = pv.V1(
         pipeline_stage="V1", curve="A recognition follows the greeting",
@@ -149,15 +147,17 @@ def test_existing_legacy_v3_checkpoint_skips_new_v4_without_new_paid_calls(tmp_p
             for beat in block["beats"]
         ], landing_beat_id="1B", baseline_misfit=[],
     )
-    old_direction = pv.LegacyV3(
-        pipeline_stage="V3", block_id=1, beat_deliveries=[
-            {"beat_id": beat["beat_id"], "segments": [
-                {"speak": beat["text"], "style": "Original professional style",
-                 "ending_behavior": "carry", "events": []},
-            ]}
+    old_direction = {
+        "pipeline_stage": "V3", "block_id": 1, "beat_deliveries": [
+            {"beat_id": beat["beat_id"], "segments": [{
+                "speak": beat["text"], "style": "Obsolete Gemini style",
+                "ending_behavior": "carry", "events": [{
+                    "at": 0, "tag": "breath",
+                }],
+            }]}
             for beat in block["beats"]
         ],
-    )
+    }
     inputs = {
         "narrative_core": core, "curve": rhythm.curve,
         "current_block": block,
@@ -170,7 +170,7 @@ def test_existing_legacy_v3_checkpoint_skips_new_v4_without_new_paid_calls(tmp_p
     checkpoint = tmp_path / "V3" / "block_1"
     checkpoint.mkdir(parents=True)
     (checkpoint / "input.json").write_text(json.dumps({"payload": inputs}))
-    (checkpoint / "output.json").write_text(old_direction.model_dump_json())
+    (checkpoint / "output.json").write_text(json.dumps(old_direction))
     class Provider:
         calls = []
         async def generate_structured_with_response(self, *, output_type, **_):
@@ -178,11 +178,12 @@ def test_existing_legacy_v3_checkpoint_skips_new_v4_without_new_paid_calls(tmp_p
             value = rhythm if output_type is pv.V1 else intent
             return value, SimpleNamespace(id=str(len(self.calls)), model="test", usage=None)
     provider = Provider()
-    v1, v2, v3, v4 = asyncio.run(pv.plan_professional_voice(
-        core=core, blocks=[block], output=tmp_path, provider=provider, model="test",
-    ))
-    assert (v1, v2, v3, v4) == (rhythm, [intent], [old_direction], [])
-    assert provider.calls == ["V1", "V2"]
+    with pytest.raises(pv.VoicePlanError, match="Legacy V3 checkpoint"):
+        asyncio.run(pv.plan_professional_voice(
+            core=core, blocks=[block], output=tmp_path, provider=provider, model="test",
+        ))
+    assert provider.calls == []  # Reject before any text or paid audio API call.
+    assert json.loads((checkpoint / "output.json").read_text()) == old_direction
     assert not (tmp_path / "V4").exists()
 
 
@@ -211,7 +212,7 @@ def test_v3_coincident_human_behavior_and_explicit_pause_preserve_source_order()
     )
 
 
-def test_legacy_checkpoint_detection_is_structural_not_prose_substring(tmp_path):
+def test_modern_checkpoint_detection_is_structural_not_prose_substring(tmp_path):
     # A new-format delivery quality mentioning 'segments' is NOT old V3.
     direction = _artistic()
     direction.beat_deliveries[0].delivery[0].delivery_quality = (
@@ -220,7 +221,7 @@ def test_legacy_checkpoint_detection_is_structural_not_prose_substring(tmp_path)
     saved = tmp_path / "V3" / "block_1"
     saved.mkdir(parents=True)
     (saved / "output.json").write_text(direction.model_dump_json())
-    # A saved new V3 result must not force the whole run onto LegacyV3.
+    # Modern V3 stays on the modern V3/V4 contract regardless of its prose.
     snapshot = json.loads((saved / "output.json").read_text())
     assert "segments" in (saved / "output.json").read_text()
     assert "delivery" in snapshot["beat_deliveries"][0]
@@ -380,3 +381,23 @@ def test_v4_refuses_to_compile_or_render_contaminated_v3_prose():
         pv._check_v4(_compiled(), _block(), direction)
     with pytest.raises(pv.VoicePlanError, match="V3 inline-tag leakage"):
         pv._v4_turns(_compiled(), _block(), direction)
+
+
+def test_v4_can_omit_all_inline_tags_without_losing_authored_silence():
+    block, direction, compiler = _block(), _artistic(), _compiled()
+    compiler.beat_tags[0].inserts.clear()
+    pv._check_v4(compiler, block, direction)
+    turns = pv._v4_turns(compiler, block, direction)
+    assert len(turns) == 1
+    assert turns[0]["text"] == "Hola, mundo. Esa es la realidad."
+    assert "Let the greeting register" in turns[0]["style"]
+    assert "pause class: beat" in turns[0]["style"]
+
+
+def test_v4_can_choose_only_one_of_multiple_authorized_events():
+    compiler = _compiled()
+    compiler.beat_tags[0].inserts = compiler.beat_tags[0].inserts[:1]
+    pv._check_v4(compiler, _block(), _artistic())
+    turns = pv._v4_turns(compiler, _block(), _artistic())
+    assert turns[0]["text"] == "<breath>Hola, mundo. Esa es la realidad."
+    assert "Let the greeting register" in turns[0]["style"]
