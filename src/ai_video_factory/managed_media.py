@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ai_video_factory.providers.professional_image_state import finished_in_place_sha
 from ai_video_factory.publishing import PublicationError, _digest, _json, _safe_file
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -118,8 +119,6 @@ def _image_sources(
             keys = {(item.get("block_id"), item.get("beat_id")) for item in final}
             if keys != expected or len(final) != len(expected):
                 raise PublicationError("Professional finished images do not match B2")
-        else:
-            final = []
     else:
         final = []
     entries: dict[str, tuple[Path, str]] = {}
@@ -145,7 +144,23 @@ def _image_sources(
         destination = name[len("images/"):]
         if destination in entries:
             raise PublicationError(f"Duplicate image publication: {destination}")
-        entries[destination] = _source(work, name, item.get("sha256"))
+        digest = item.get("sha256")
+        if (selected_style == "profesional" and item not in final
+            and item.get("grid") is None and item.get("visual_type") in {
+                "media_image", "avatar_media", "media_video", "avatar",
+            }):
+            recipe = (
+                "image_x2" if item["visual_type"] in {"media_image", "avatar_media"}
+                else "native_grid_video" if item.get("provider") == "grid_crop"
+                else "native_video_crop"
+            )
+            finished_sha = finished_in_place_sha(
+                work, file=name, source_sha256=digest,
+                block=item["block_id"], beat=item["beat_id"], recipes=(recipe,),
+            )
+            if finished_sha is not None:
+                digest = finished_sha
+        entries[destination] = _source(work, name, digest)
     visual = work / "visual_plan.json"
     if status == "completed":
         if not visual.is_file() or visual.is_symlink():
