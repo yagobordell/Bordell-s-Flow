@@ -235,30 +235,37 @@ Apply this rule consistently to phones, tablets, laptops, desktop monitors,
 televisions, other electronic screens, printed papers and documents. When the
 narration mentions an app, website, message, chart, report, document text or
 any other screen/page content, use that information to understand the scene.
-Write the visible scene primarily as a person naturally holding, using,
-looking at or handling the device or document, with the device/page oriented
-naturally toward that person. Describe the camera viewpoint from the
-observer's side of this ordinary interaction.
+Choose the visible scene, subject, shot size and camera viewpoint from what
+best communicates the beat. A person handling or looking at a device/document
+is ONE possible scene, not a requirement. The screen, device, page or its
+surroundings may instead be the primary subject, including an object-only
+detail shot. Never add a person, require natural handling, turn the surface
+toward a user or force an observer-side camera angle merely because screen
+or document content is mentioned.
 
 Place specific content details in a short, separate parenthetical CONTEXT
 note when they matter for the narrative, rather than describing them as
-visible text, interface layouts, graphics or a camera-facing surface.
-Examples:
+visible text, interface layouts or graphics. Preserve the same relevant
+information in that note regardless of the scene composition; do not turn
+the note into a request to render legible text or an exact interface.
+Examples (different valid compositions for the same context rule):
 - "A man relaxing on his sofa, holding his smartphone naturally in one
   hand and looking down at it, viewed from across the room.
   (For context: he is scrolling through Instagram.)"
 - "A woman seated at her desk, reading a printed document held naturally
   in both hands, viewed from a three-quarter side angle.
   (For context: she is reviewing a financial report about declining revenue.)"
-- "A student working at a laptop at a cafe, typing while looking at the
-  laptop in a natural seated position.
+- "A laptop open on a quiet cafe table, viewed in a tight three-quarter shot.
   (For context: the student is reading an online article about the topic.)"
+- "A close-up of a television on a wall in an otherwise empty room.
+  (For context: the television is showing a news report on the current event.)"
 
-Apply the same separation in video_prompt: describe the visible hand, body
-and device/document movement from the starting image, with the specific
-app, page or document content retained only as parenthetical context when
-needed. A screen or document remains oriented naturally toward its user
-through the action. Preserve the upstream narration unchanged.
+Apply the same separation in video_prompt: describe the visible action and
+movement developing naturally from the chosen starting image, whether that
+involves a person, a device/document alone or the surrounding scene. Retain
+the specific app, page or document content only as parenthetical context
+when needed. Do not impose human interaction or device/page orientation.
+Preserve the upstream narration unchanged.
 
 Video animation prompt (video_prompt)
 
@@ -571,10 +578,10 @@ Before output, review the block for:
 - prompt discipline: image and video prompts use affirmative, scene-specific
   descriptions of the intended result, free of exclusion clauses and stock
   negative-prompt lists;
-- screens/documents: naturally oriented phones, other screens and documents
-  are described as the person uses them, with specific app/page/document
-  content separated into a brief parenthetical context note; apply this
-  rule to still frames and video animation;
+- screens/documents: choose the beat's most useful scene freely, with or
+  without a person; keep specific app/page/document content in the SAME
+  brief parenthetical context note, not in the visible-scene description;
+  apply this rule to still frames and video animation;
 - reference correctness: every dependency on the supplied image is explicit and
   unrelated source-image style, expression, background or pose are not copied;
 - referenced visible faces: a natural beat-specific expression and relevant
@@ -671,9 +678,10 @@ Before emitting success, verify:
   instructions (for example, objects or hands-only details);
 - reference-only object/environment prompts describe the intended
   object-only or environment-only scene positively;
-- prompts involving phones, other screens or documents focus on natural use
-  and orientation, separating the specific on-screen/on-page content
-  into parenthetical context rather than a visible-content description;
+- prompts involving phones, other screens or documents choose their scene
+  and viewpoint for the beat, without requiring a person or a particular
+  device/page orientation; the specific on-screen/on-page content remains
+  in parenthetical context rather than a visible-content description;
 - both image and animation prompts follow affirmative scene writing,
   with video_prompt describing only beat-specific movement;
 - image and animation instructions are separate; media_video has a
