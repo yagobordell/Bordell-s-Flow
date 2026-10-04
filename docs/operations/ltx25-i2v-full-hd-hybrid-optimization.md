@@ -147,3 +147,57 @@ after a fresh build from this reviewed commit, full I2V CI green, a clean
 offline Docker ABI verification and remote read-only image/RAM match. Use a
 new job RunId and operator approval. Stage2 CPU RAM/VRAM fit and end-to-end
 runtime remain unproven.
+
+## 2026-10-04: progressive host-RAM optimization (isolated experimental I2V)
+
+The corrected 1080p hybrid trial generated **two genuine B=2 videos** in
+`297.762588s` inference, peak CUDA allocated `24,786,865,664 bytes`,
+using unchanged FP8 stage1 on GPU and all-block CPU streaming for stage2.
+Salad stopped the I2V group afterwards. Stage2 denoising was ~53 seconds;
+the peak process VmHWM was ~60.9 GiB and swap was observed. The two uploaded
+source keyframes have the *same* SHA256 despite distinct seeds and prompts.
+Visual parity with separately generated B=1 controls is still unverified.
+
+The pinned upstream StreamingModelBuilder allocates the final per-block CPU
+buffers *and then loads every raw checkpoint block into a second state dict*
+before filling those buffers. This doubles transient model weight residency
+at the stage2 construction boundary. The opt-in Docker-only
+`patch_i2v_progressive.py` keeps all of the original upstream pinned buffers,
+block layouts, FP8 quantization policy and GPU streamer, but substitutes
+a per-block `load_state_dict` using the **same restricted upstream SD ops**.
+Each raw block's tensors are cleared after copying their exact bytes into
+the original destination views. It refuses mismatched transformed keys,
+weight-retaining registries or the presence of unapproved LoRAs; there is
+no silent DISK or sequential downgrade.
+
+Only `DirectLTX25Backend._full_hd_streaming_stage2(mode="cpu")` enables this
+mode. The default builder and other modalities/profiles retain the original
+code path, including 720p I2V, I2V DISK and all A2V. The original second-stage
+denoising loop, all-block CPU residency, H2D buffers, batch=2 and exact
+FP8 model arithmetic remain unchanged. Startup block reads may have
+additional metadata/header overhead; the effect on **total** latency must
+be measured, not assumed away. There is no theoretical change to the
+stage2 *forward* computation.
+
+**Free acceptance:** pass the scoped CI including byte-for-byte target-buffer
+unit checks, per-block raw-weight lifetime checks, default-off/A2V isolation,
+the patch's exact application to pinned upstream LTX commit
+`a95ab856bf29407b6b066ede0abe1846050db56c`, and Python syntax compilation.
+The paid smoke's offline exact-Docker-digest probe rejects the *previous*
+working hybrid image: only a NEW immutable image including the progressive
+builder patch and I2V-only opt-in is admissible.
+
+**Paid hardware acceptance only after explicit operator approval:**
+confirm image digest and remote 61440 MB, both group statuses and controller
+ownership, then run one controlled experiment with different native Full HD
+images and meaningful prompts. Record all existing phase timings and now
+the cgroup `memory.max`, `memory.peak`, swap peak, OOM/high events when
+readable, process VmHWM and major page faults. A candidate RAM goal is
+**VmHWM <=48 GiB**, with no uncontrolled swap or cgroup OOM; this is a goal,
+not a guarantee. Compare stage2 denoising (~53s) and pair inference total
+(297.76s) against this baseline on matching inputs/hardware, and verify
+neither regresses beyond run-to-run noise. Compare both resulting videos
+against **B=1 runs with matching seeds/prompts/original images** before
+promoting outside the isolated experiment. If any quality or latency gate
+fails, keep the original pinned hybrid image as the known reference; do not
+silently activate the memory change.
