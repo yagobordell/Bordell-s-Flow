@@ -518,10 +518,27 @@ OPENAI_IMAGE_QUALITY=low
 El pipeline utiliza **GPT Image 2.5**, con el ID `gpt-image-2.5-flare`
 por defecto o `gpt-image-2.5-sunburst` si se selecciona explícitamente.
 `gpt-image-2.5` sin variante no es un identificador válido para la API.
-La generación estándar usa el modelo, PNG, 16:9,
-calidad low y 1280×720. Actualiza también `config/app.env` si todavía
-contiene `OPENAI_IMAGE_MODEL=gpt-image-2`; un `git pull` no edita ese
-archivo privado. Las generaciones independientes se ejecutan en paralelo según la
+La generación individual usa calidad `low` por defecto, incluida la
+imagen inicial destinada a vídeo (1920×1088 en Profesional). Solo pasa a
+`medium` cuando su prompt contiene una variante de `(For context`
+(independientemente de mayúsculas, espacios, dos puntos o cierre de
+paréntesis). **Todas las rejillas usan `medium`.** El campo global
+`quality=low` del manifiesto indica el valor por defecto; la calidad
+real se registra por solicitud y forma parte del fingerprint que impide
+repetir inadvertidamente generaciones de pago. Actualiza también
+`config/app.env` si todavía contiene `OPENAI_IMAGE_MODEL=gpt-image-2`;
+un `git pull` no edita ese archivo privado.
+
+Las rejillas 16:9 solo de imágenes estáticas generan paneles nominales
+de 1280×720: 2×2 (2560×1440), 3×2 (3840×1440) y 3×3
+(3840×2160). Si incluyen al menos un panel para vídeo, las 2×2 pasan
+a 3840×2160 para paneles nominales de 1920×1080. Las 3×2 y 3×3
+ya están en el tamaño máximo admitido y conservan paneles de 1280×720.
+Los grids exclusivos `avatar_media` mantienen su geometría 8:9.
+**Nunca se regenera un panel de rejilla con GPT**: los paneles de vídeo
+se usan directamente a la resolución obtenida del recorte, sin
+reescalado posterior. Solo los paneles estáticos profesionales reciben
+el upscaler 2× previsto. Las generaciones independientes se ejecutan en paralelo según la
 cantidad de jobs; `ImageOptions.max_parallel_images` permite
 establecer un límite explícito cuando se invoca el proveedor.
 Cada solicitud contiene exactamente una imagen. El manifiesto
