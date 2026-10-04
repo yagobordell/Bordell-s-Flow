@@ -140,7 +140,7 @@ Generated visuals should feel like persuasive, natural documentary coverage, gui
 
 Choose the most expressive, narratively grounded people, locations, objects, environments, visual details, evidence, actions or creative composition for the beat. For emotional and reflective moments, a contextual scene or detail can convey the underlying experience naturally.
 
-Prompts describe the chosen subject, moment, composition and relevant lighting or mood. The application injects its canonical image style later, directly before generation.
+Prompts describe the chosen subject, moment, composition and relevant lighting or mood. The application injects the canonical image style later, directly before generation.
 
 Global shot composition and camera-angle freedom
 
