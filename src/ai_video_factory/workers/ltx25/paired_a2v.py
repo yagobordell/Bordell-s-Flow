@@ -145,9 +145,17 @@ def _stage(
     seeds: tuple[int, int],
     label: str,
     phase_metrics: dict[str, Any] | None = None,
+    max_transformer_forward_batch_size: int = 2,
 ) -> Any:
-    """Faithful pinned DiffusionStage._build_state + frozen modality semantics."""
-    
+    """Pinned stage with optional fused CFG forward only.
+
+    Forward batch 4 preserves the exact upstream [cond(B=2), uncond(B=2)]
+    tensors and only prevents BatchSplitAdapter from serializing that B=4
+    transformer call into two B=2 calls. Guidance arithmetic is unchanged.
+    """
+    if max_transformer_forward_batch_size not in (2, 4):
+        raise ValueError("A2V transformer forward batch must be 2 or 4")
+
     shape = VideoPixelShape(batch=2, frames=frames, width=width, height=height, fps=fps)
     video_tools = VideoLatentTools(
         VideoLatentPatchifier(patch_size=1),
@@ -209,17 +217,21 @@ def _stage(
         video, audio = loop(
             sigmas=sigmas, video_state=video, audio_state=audio,
             stepper=stepper, transformer=BatchSplitAdapter(
-                transformer, max_batch_size=2,
+                transformer, max_batch_size=max_transformer_forward_batch_size,
             ), denoiser=denoiser, **loop_options,
         )
         seconds = time.perf_counter() - started
         if phase_metrics is not None:
             phase_metrics[label + "_transformer_build_seconds"] = build
             phase_metrics[label + "_denoise_seconds"] = seconds
+            phase_metrics[label + "_max_transformer_forward_batch_size"] = (
+                max_transformer_forward_batch_size
+            )
         video = video_tools.unpatchify(video_tools.clear_conditioning(video))
         audio = audio_tools.unpatchify(audio_tools.clear_conditioning(audio))
         logger.info("LTX25_A2V_B2_STAGE %s", json.dumps({
             "stage": label, "actual_gpu_batch_size": 2,
+            "max_transformer_forward_batch_size": max_transformer_forward_batch_size,
             "transformer_build_seconds": round(build, 3),
             "denoise_seconds": round(seconds, 3),
         }, sort_keys=True))
@@ -272,6 +284,7 @@ def generate_paired_static_a2v(
     width: int, height: int, fps: int, frames: int,
     stage2_factory: Any,
     phase_metrics: dict[str, Any] | None = None,
+    max_transformer_forward_batch_size: int = 2,
 ) -> tuple[PipelineOutput, PipelineOutput]:
     """Generate paired A/V with independent frozen PCM and no silent B1 fallback."""
     if len(samples) != 2 or samples[0].seed == samples[1].seed:
@@ -354,6 +367,7 @@ def generate_paired_static_a2v(
         initial_video=None, frozen_audio=frozen,
         negative_ctx=negative, seeds=(samples[0].seed, samples[1].seed),
         label="stage1", phase_metrics=phase_metrics,
+        max_transformer_forward_batch_size=max_transformer_forward_batch_size,
     )
     if phase_metrics is not None:
         phase_metrics["memory_after_stage1"] = memory_pressure()
@@ -393,6 +407,7 @@ def generate_paired_static_a2v(
         frozen_audio=frozen,
         seeds=(samples[0].seed, samples[1].seed), label="stage2",
         phase_metrics=phase_metrics,
+        max_transformer_forward_batch_size=max_transformer_forward_batch_size,
     )
     if phase_metrics is not None:
         phase_metrics["memory_after_stage2"] = memory_pressure()
