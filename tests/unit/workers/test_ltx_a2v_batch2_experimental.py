@@ -230,10 +230,10 @@ def test_cli_contains_lipsync_and_four_input_gates() -> None:
 
 
 def test_host_paging_guard_rejects_slow_instance_without_gpu_fallback() -> None:
-    from ai_video_factory.workers.ltx25.paired_a2v import _check_stage1_host_pressure
+    from ai_video_factory.workers.ltx25.resource_metrics import check_stage1_host_pressure
 
     metrics: dict[str, Any] = {}
-    _check_stage1_host_pressure(
+    check_stage1_host_pressure(
         {"process_major_page_faults": 1000},
         {"process_major_page_faults": 3000},
         20000, metrics,
@@ -241,21 +241,21 @@ def test_host_paging_guard_rejects_slow_instance_without_gpu_fallback() -> None:
     assert metrics["stage1_major_page_faults_delta"] == 2000
     assert metrics["stage1_major_page_faults_limit"] == 20000
     with pytest.raises(RuntimeError, match="No stage2 or VAE was started"):
-        _check_stage1_host_pressure(
+        check_stage1_host_pressure(
             {"process_major_page_faults": 1000},
             {"process_major_page_faults": 171000},
             20000, {},
         )
     with pytest.raises(RuntimeError, match="monotonic"):
-        _check_stage1_host_pressure({}, {}, 20000, {})
+        check_stage1_host_pressure({}, {}, 20000, {})
     with pytest.raises(RuntimeError, match="monotonic"):
-        _check_stage1_host_pressure(
+        check_stage1_host_pressure(
             {"process_major_page_faults": 100},
             {"process_major_page_faults": 99},
             20000, {},
         )
     with pytest.raises(ValueError, match="explicitly enabled"):
-        _check_stage1_host_pressure(
+        check_stage1_host_pressure(
             {"process_major_page_faults": 0},
             {"process_major_page_faults": 0},
             0, {},
