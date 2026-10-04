@@ -57,13 +57,14 @@ def _compiled():
         beat_deliveries=[
             {"beat_id": "1A", "segments": [
                 {"source_item_index": 0, "speak": "Hola, ",
-                 "style": "Warm opening; keep the thought open",
+                 "style": "Warm opening; keep the thought open; Let the greeting register",
                  "ending_behavior": "carry", "stress": [],
                  "events": [
                      {"at": 0, "tag": "breath", "source_kind": "vocal_intent",
                       "source_item_index": 0, "source_at": 0},
                      {"at": 6, "tag": "short pause", "source_kind": "pause",
-                      "source_item_index": 1, "source_at": None},
+                      "source_item_index": 1, "source_at": None,
+                      "pause_direction": "Let the greeting register"},
                  ]},
                 {"source_item_index": 2, "speak": "mundo. ",
                  "style": "Emphasize mundo, resolve naturally",
@@ -88,6 +89,7 @@ def test_compiler_preserves_distinct_pause_spoken_time_and_exact_stress():
     assert "mundo" in turns[1]["style"]
     assert "Broadly" in turns[0]["style"] or "broadly" in turns[0]["style"]
     assert turns[2]["text"] == "Esa es la realidad."
+    assert "Let the greeting register" in turns[0]["style"]
     assert "Grounded conversational" not in turns[1]["style"]
 
 
@@ -182,3 +184,49 @@ def test_existing_legacy_v3_checkpoint_skips_new_v4_without_new_paid_calls(tmp_p
     assert (v1, v2, v3, v4) == (rhythm, [intent], [old_direction], [])
     assert provider.calls == ["V1", "V2"]
     assert not (tmp_path / "V4").exists()
+
+
+def test_v4_rejects_pause_without_artistic_function_in_gemini_style():
+    compiler = _compiled()
+    event = compiler.beat_deliveries[0].segments[0].events[1]
+    event.pause_direction = None
+    with pytest.raises(pv.VoicePlanError, match="audible purpose"):
+        pv._check_v4(compiler, _block(), _artistic())
+    compiler = _compiled()
+    compiler.beat_deliveries[0].segments[0].style = "Warm opening; keep open"
+    with pytest.raises(pv.VoicePlanError, match="audible purpose"):
+        pv._check_v4(compiler, _block(), _artistic())
+
+
+def test_v3_coincident_human_behavior_and_explicit_pause_preserve_source_order():
+    direction = _artistic()
+    direction.beat_deliveries[0].delivery[0].vocal_intents = [
+        pv.VocalIntent(at=0, behavior="inhale"),
+        pv.VocalIntent(at=6, behavior="exhale"),
+    ]
+    compiler = _compiled()
+    compiler.beat_deliveries[0].segments[0].events.insert(1, pv.V4Event(
+        at=6, tag="exhales", source_kind="vocal_intent",
+        source_item_index=0, source_at=6,
+    ))
+    pv._check_v3(direction, _block())
+    pv._check_v4(compiler, _block(), direction)
+    assert pv._v4_turns(compiler)[0]["text"] == (
+        "<breath>Hola, <exhales><short pause>"
+    )
+
+
+def test_legacy_checkpoint_detection_is_structural_not_prose_substring(tmp_path):
+    # A new-format delivery quality mentioning 'segments' is NOT old V3.
+    direction = _artistic()
+    direction.beat_deliveries[0].delivery[0].delivery_quality = (
+        "Join the segments naturally"
+    )
+    saved = tmp_path / "V3" / "block_1"
+    saved.mkdir(parents=True)
+    (saved / "output.json").write_text(direction.model_dump_json())
+    # A saved new V3 result must not force the whole run onto LegacyV3.
+    snapshot = json.loads((saved / "output.json").read_text())
+    assert "segments" in (saved / "output.json").read_text()
+    assert "delivery" in snapshot["beat_deliveries"][0]
+    assert "segments" not in snapshot["beat_deliveries"][0]
