@@ -45,13 +45,16 @@ RUN git clone --filter=blob:none https://github.com/Lightricks/LTX-2.git /opt/lt
     && git -C /opt/ltx checkout "${LTX_SOURCE_COMMIT}" \
     && test "$(git -C /opt/ltx rev-parse HEAD)" = "${LTX_SOURCE_COMMIT}"
 
-# Patch only the pinned upstream revision: fall back to pageable host buffers
-# on pinned-allocation CUDA OOM and force blocking H2D for pageable buffers.
+# Strict pinned-upstream patches. The extra progressive builder stays default OFF
+# and is explicitly selected only by experimental Full HD I2V CPU stage2.
 COPY docker/workers/ltx25/patch_host_memory.py /usr/local/bin/patch-ltx-host-memory
+COPY docker/workers/ltx25/patch_i2v_progressive.py /usr/local/bin/patch-ltx-i2v-progressive
 RUN python3 /usr/local/bin/patch-ltx-host-memory --ltx-root /opt/ltx \
+    && python3 /usr/local/bin/patch-ltx-i2v-progressive --ltx-root /opt/ltx \
     && python3 -m compileall -q \
         /opt/ltx/packages/ltx-core/src/ltx_core/block_streaming/utils.py \
-        /opt/ltx/packages/ltx-core/src/ltx_core/block_streaming/provider.py
+        /opt/ltx/packages/ltx-core/src/ltx_core/block_streaming/provider.py \
+        /opt/ltx/packages/ltx-core/src/ltx_core/block_streaming/builder.py
 
 RUN printf '%s\n' \
         'torch==2.11.0' \
