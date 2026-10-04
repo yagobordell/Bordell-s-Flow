@@ -11,6 +11,7 @@ param(
     [ValidateSet(1280,1920)][int]$Width = 1280,
     [ValidateSet(720,1080)][int]$Height = 720,
     [switch]$AcceptFullHdBatch2OomRisk,
+    [ValidateSet("cpu","disk")][string]$FullHdStage2Mode = "cpu",
     [string]$ReferenceA = "", [string]$ReferenceB = "",
     [string]$EnvFile = ".env",
     [switch]$CheckInputsOnly, [switch]$AllowSequentialFallback,
@@ -47,6 +48,10 @@ $RepoImage = $Manifest.services.ltx25_i2v.image -replace ':[^/:]+$',''
 if (-not $ExpectedPinnedImage.StartsWith($RepoImage + "@sha256:")) {
     throw "Pinned repository does not match the I2V Salad manifest."
 }
+if ($Width -eq 1920 -and $FullHdStage2Mode -eq "cpu" -and
+    [int64]$Manifest.services.ltx25_i2v.resources.memory -lt 65536) {
+    throw "Full HD CPU streaming needs the dedicated I2V worker provisioned with at least 64 GiB host memory."
+}
 if ([string]$Manifest.services.ltx25_i2v.environment.LTX_EXPERIMENTAL_I2V_BATCH2_ENABLED -ne "true") {
     throw "Wrong checkout: this experimental I2V manifest has no batch2 flag."
 }
@@ -56,6 +61,7 @@ $ArgsSubmit = @(
     "--image-b", $ImageB, "--prompt-b", $PromptB,
     "--seed-a", [string]$SeedA, "--seed-b", [string]$SeedB,
     "--width", [string]$Width, "--height", [string]$Height,
+    "--full-hd-stage2-mode", $FullHdStage2Mode,
     "--run-id", $RunId, "--output-dir", $Folder,
     "--timeout-seconds", [string]$JobTimeoutSeconds
 )
