@@ -213,6 +213,55 @@ def test_grid_video_finishing_requires_no_second_gpt_call_or_api_key(tmp_path):
         tmp_path, plan, original, upscaler=None, api_key=None,
     ) == finished
 
+@pytest.mark.parametrize(("count", "canvas"), [
+    (5, "3840x1440"),
+    (7, "3840x2160"),
+])
+def test_large_grid_video_panels_stay_at_native_720p_without_gpt_edits(
+    tmp_path, count, canvas,
+):
+    plan = professional(*[
+        beat(f"1{chr(ord('B') + i)}", "media_video", f"{i+1}. Scene {i+1}")
+        for i in range(count)
+    ])
+    direct = RecordingGPT(fail_native=True)
+    manifest = gpt.generate_b2_images(
+        tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
+    )
+    assert len(direct.calls) == 1
+    assert direct.calls[0]["size"] == canvas
+    assert direct.calls[0]["quality"] == "medium"
+    panels = crop_grid_assets(tmp_path, manifest)
+    assert len(panels) == count
+    assert all((p["width"], p["height"]) == (1280, 720) for p in panels)
+    finished = finish_professional_images(
+        tmp_path, plan, manifest, upscaler=None, api_key=None,
+    )
+    assert len(direct.calls) == 1
+    assert [f["sha256"] for f in finished] == [p["sha256"] for p in panels]
+    assert all((p["width"], p["height"]) == (1280, 720) for p in finished)
+    assert manifest["native_grid_video_calls"] == 0
+
+
+def test_professional_standalone_video_uses_context_dependent_quality(tmp_path):
+    plan = professional(
+        beat("1B", "media_video", "An ordinary street view"),
+        beat("1C", "media_video",
+             "A laptop on a table. ( For context : quarterly results.)"),
+    )
+    direct = RecordingGPT()
+    manifest = gpt.generate_b2_images(
+        tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
+    )
+    by_beat = {call["destination"].stem: call for call in direct.calls}
+    assert by_beat["1B"]["quality"] == "low"
+    assert by_beat["1C"]["quality"] == "medium"
+    assert all(call["size"] == "1920x1088" for call in direct.calls)
+    assert {item["beat_id"]: item["quality"] for item in manifest["items"]} == {
+        "1B": "low", "1C": "medium",
+    }
+
+
 def test_casero_image_jobs_do_not_acquire_new_resolution_or_finishing(tmp_path):
     plan = {"blocks": [{"block_id": 1, "beats": [
         {"beat_id": "1A", "visual_type": "avatar", "description": None},
