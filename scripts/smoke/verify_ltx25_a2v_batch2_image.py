@@ -29,10 +29,17 @@ assert "stage2_factory" in inspect.signature(generate_paired_static_a2v).paramet
 assert "max_transformer_forward_batch_size" in inspect.signature(
     generate_paired_static_a2v
 ).parameters
+assert "max_stage1_major_page_faults" in inspect.signature(
+    generate_paired_static_a2v
+).parameters
+assert "max_stage1_major_page_faults" in inspect.signature(
+    DirectLTX25AudioToVideoBackend.generate_pair
+).parameters
 assert hasattr(SharedA2VDecoder, "close")
 assert A2VBatch2Parameters.model_fields["stage2_mode"].default == "cpu"
 assert A2VBatch2Parameters.model_fields["vae_backend"].default == "eager"
 assert A2VBatch2Parameters.model_fields["guidance_forward_batch_size"].default == 2
+assert A2VBatch2Parameters.model_fields["max_stage1_major_page_faults"].default == 0
 assert callable(ensure_triton_gpu_probe)
 assert "requested_pair_vae_backend" in inspect.signature(
     DirectLTX25AudioToVideoBackend._get_or_build_pipeline
