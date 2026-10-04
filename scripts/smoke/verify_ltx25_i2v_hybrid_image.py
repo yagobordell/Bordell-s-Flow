@@ -25,6 +25,7 @@ from ai_video_factory.workers.ltx25.experimental_batch2 import Batch2Parameters
 from ai_video_factory.workers.ltx25.paired_i2v import STAGE2_SIGMAS_SAFE_ABI
 from ai_video_factory.workers.ltx25.model import DirectLTX25Backend
 from ai_video_factory.workers.ltx25.paired_i2v import generate_paired_fast_distilled
+from ltx_core.block_streaming.builder import StreamingModelBuilder
 
 assert "full_hd_stage2_mode" in Batch2Parameters.model_fields, "old batch2 request schema"
 assert "full_hd_stage2_mode" in inspect.signature(
@@ -63,6 +64,23 @@ assert any(
     is_second_stage(node) and has_keyword(node, "sigmas", "stage2_sigmas")
     for node in paired_calls
 ), "old hybrid image: stage2 must consume independent sigma tensor"
+# The image must contain the progressive per-block loader, and the factory
+# must activate it ONLY for the CPU alternative. An older working hybrid
+# Docker is not the same memory-optimized image.
+assert getattr(
+    StreamingModelBuilder, "_i2v_progressive_pinned_blocks_supported", False
+), "image lacks progressive I2V upstream builder patch"
+assert hasattr(
+    StreamingModelBuilder, "_load_i2v_progressive_pinned_blocks"
+), "image lacks progressive I2V loader implementation"
+builder_source = inspect.getsource(StreamingModelBuilder._build_pinned_source)
+assert 'getattr(self, "_i2v_progressive_pinned_blocks", False)' in builder_source, (
+    "image does not gate progressive loader behind opt-in"
+)
+stage2_source = inspect.getsource(DirectLTX25Backend._full_hd_streaming_stage2)
+assert 'builder._i2v_progressive_pinned_blocks = True' in stage2_source, (
+    "I2V hybrid factory does not enable progressive stage2"
+)
 print("I2V_HYBRID_DOCKER_ABI_OK")
 """
 
