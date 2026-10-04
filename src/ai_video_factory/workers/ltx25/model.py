@@ -1119,6 +1119,7 @@ class DirectLTX25Backend:
             cleanup_cuda_memory,
         )
 
+        from .memory_trace import I2VMemoryTrace
         from .resource_metrics import cuda_memory_snapshot, memory_pressure
 
         for path in (keyframe_a, keyframe_b):
@@ -1190,8 +1191,11 @@ class DirectLTX25Backend:
             label = "batch2" if forward_batch == 2 else "stage_shared_sequential_forward"
             attempt_started = time.monotonic()
             retry_after_oom = False
+            memory_trace = I2VMemoryTrace()
             try:
-                peak = self._pair_attempt(
+                with memory_trace:
+                    memory_trace.mark("pair_attempt")
+                    peak = self._pair_attempt(
                     keyframe_a=keyframe_a, keyframe_b=keyframe_b,
                     output_a=output_a, output_b=output_b,
                     parameters_a=parameters_a, parameters_b=parameters_b,
@@ -1199,9 +1203,9 @@ class DirectLTX25Backend:
                     reuse_transformer_across_stages=shared_stages,
                     **({"full_hd_stage2_mode": full_hd_stage2_mode}
                        if dimensions[1] == 1080 else {}),
-                    **({"vae_backend": vae_backend}
-                       if vae_backend != "eager" else {}),
-                )
+                        **({"vae_backend": vae_backend}
+                           if vae_backend != "eager" else {}),
+                    )
             except Exception as exc:
                 failure = classify_gpu_failure(exc)
                 logger.warning(
@@ -1214,6 +1218,7 @@ class DirectLTX25Backend:
                         "elapsed_seconds": time.monotonic() - attempt_started,
                         "cuda": cuda_memory_snapshot(),
                         "system": memory_pressure(),
+                        "memory_trace_summary": memory_trace.summary(),
                     }, sort_keys=True),
                 )
                 failed_attempts.append({
@@ -1222,6 +1227,7 @@ class DirectLTX25Backend:
                     "gpu_failure": failure,
                     "error_type": type(exc).__name__,
                     "elapsed_seconds": time.monotonic() - attempt_started,
+                    "memory_trace_summary": memory_trace.summary(),
                 })
                 for output in outputs:
                     output.unlink(missing_ok=True)
@@ -1262,9 +1268,16 @@ class DirectLTX25Backend:
                     "individual_seeds": [parameters_a.seed, parameters_b.seed],
                     "elapsed_seconds": time.monotonic() - started,
                     "peak_vram_bytes": peak,
+                    "memory_trace": memory_trace.report(),
                     "failed_attempts": failed_attempts,
                 }
-                logger.info("LTX25_I2V_PAIR_METRICS %s", json.dumps(report, sort_keys=True))
+                # Full sampled timeline belongs in the durable JSON report,
+                # not the one-line metrics log (which would duplicate hundreds
+                # of samples and may be truncated by Salad).
+                summary_log = {**report, "memory_trace": memory_trace.summary()}
+                logger.info(
+                    "LTX25_I2V_PAIR_METRICS %s", json.dumps(summary_log, sort_keys=True),
+                )
                 return report
             if retry_after_oom:
                 self.invalidate_pipeline()
