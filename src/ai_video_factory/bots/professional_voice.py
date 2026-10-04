@@ -437,7 +437,12 @@ def _check_v3(result: V3, block: dict[str, Any]) -> None:
         beat.beat_id for beat in result.beat_deliveries
     ] != [beat["beat_id"] for beat in beats]:
         raise VoicePlanError("V3 changed original beat identity or order")
+    previous_outgoing_pause = False
     for source, delivery in zip(beats, result.beat_deliveries, strict=True):
+        if (previous_outgoing_pause and delivery.delivery
+            and isinstance(delivery.delivery[0], Pause)):
+            raise VoicePlanError("V3 adjacent pauses across original beat boundary")
+        previous_outgoing_pause = isinstance(delivery.delivery[-1], Pause)
         spoken = [item for item in delivery.delivery if isinstance(item, Speak)]
         if not spoken or "".join(item.speak for item in spoken) != source["text"]:
             raise VoicePlanError(f"V3 altered verbatim narration in beat {source['beat_id']}")

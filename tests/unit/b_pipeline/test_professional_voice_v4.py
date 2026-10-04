@@ -264,3 +264,15 @@ def test_empty_whitespace_prose_cannot_bypass_v3_v4_validations():
     compiler.beat_deliveries[0].segments[0].events[1].pause_direction = " "
     with pytest.raises(pv.VoicePlanError, match="audible purpose"):
         pv._check_v4(compiler, _block(), _artistic())
+
+
+def test_v3_collapses_duplicate_explicit_silence_across_beat_boundary():
+    direction = _artistic()
+    direction.beat_deliveries[0].delivery.append(pv.Pause(
+        pause="hold", pause_function="Leave the claim unresolved"
+    ))
+    direction.beat_deliveries[1].delivery.insert(0, pv.Pause(
+        pause="beat", pause_function="Allow the next statement to register"
+    ))
+    with pytest.raises(pv.VoicePlanError, match="across original beat boundary"):
+        pv._check_v3(direction, _block())
