@@ -142,6 +142,40 @@ def main() -> None:
         if not path.is_file():
             raise ValueError(f"Existing reference video not found: {path}")
         references.append({"path": str(path), "sha256": sha256_file(path)})
+    if a.vae_backend == "triton_experimental":
+        if (
+            a.reference_a is None or a.reference_b is None
+            or a.reference_a.parent.resolve() != a.reference_b.parent.resolve()
+            or a.reference_a.name != "batch2-a.mp4"
+            or a.reference_b.name != "batch2-b.mp4"
+        ):
+            raise ValueError(
+                "Triton trial requires BOTH matching prior eager B2 videos "
+                "via --reference-a/b from the same baseline output directory"
+            )
+        baseline = a.reference_a.parent
+        baseline_request = json.loads(
+            (baseline / "job-request.json").read_text(encoding="utf-8")
+        )["parameters"]
+        baseline_inputs = json.loads(
+            (baseline / "reference-provenance.json").read_text(encoding="utf-8")
+        )["inputs"]["inputs"]
+        if baseline_request.get("vae_backend", "eager") != "eager":
+            raise ValueError("Triton baseline must use the original eager VAE")
+        for key, path, prompt, seed in (
+            ("keyframe_a", a.image_a, a.prompt_a, a.seed_a),
+            ("keyframe_b", a.image_b, a.prompt_b, a.seed_b),
+        ):
+            reference = next(
+                (item for item in baseline_inputs if item["name"] == key), None
+            )
+            old = baseline_request[key[-1]]
+            if (
+                reference is None or reference["sha256"] != sha256_file(path)
+                or reference["prompt"] != prompt or reference["seed"] != seed
+                or old["prompt"] != prompt or old["seed"] != seed
+            ):
+                raise ValueError("Triton trial input differs from eager reference")
     if a.check_inputs_only:
         print(
             f"Batch2 inputs valid: two native {a.width}x{a.height} PNGs, "
@@ -268,6 +302,11 @@ def main() -> None:
     }
     report["replayed"] = response.replayed
     report["quality_status"] = "REFERENCE_VIDEO_SIDE_BY_SIDE_REVIEW_REQUIRED"
+    if a.vae_backend == "triton_experimental":
+        from scripts.smoke.compare_ltx25_i2v_backend_trial import compare
+
+        report["backend_comparison"] = compare(a.reference_a.parent, a.output_dir)
+        report["quality_status"] = "HUMAN_SIDE_BY_SIDE_REVIEW_REQUIRED"
     (a.output_dir / "experiment-summary.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
