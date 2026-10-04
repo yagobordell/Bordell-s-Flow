@@ -35,7 +35,10 @@ def verify_matched_inputs(baseline: Path, candidate: Path) -> dict[str, Any]:
         request = _read(directory / "job-request.json")["parameters"]
         if request.get("vae_backend", "eager") != backend:
             raise ValueError(f"Invalid reference: expected {backend} backend in {directory}")
-        if request.get("allow_sequential_fallback") or request.get("reuse_transformer_across_stages"):
+        if (
+            request.get("allow_sequential_fallback")
+            or request.get("reuse_transformer_across_stages")
+        ):
             raise ValueError("Backend comparison requires real independent-stage true B2")
         for field in ("a", "b"):
             expected = next(x for x in old["inputs"] if x["name"] == f"keyframe_{field}")
@@ -46,7 +49,10 @@ def verify_matched_inputs(baseline: Path, candidate: Path) -> dict[str, Any]:
                 sample["width"], sample["height"], sample["fps"], sample["num_frames"]
             ) != (1920, 1080, 24, 121):
                 raise ValueError("Backend comparison requires identical Full HD video recipe")
-    return {"matching_inputs": True, "baseline_backend": "eager", "candidate_backend": "triton_experimental"}
+    return {
+        "matching_inputs": True, "baseline_backend": "eager",
+        "candidate_backend": "triton_experimental",
+    }
 
 
 def _ffmpeg_scores(
@@ -107,7 +113,8 @@ def compare(baseline: Path, candidate: Path) -> dict[str, Any]:
         ),
     }
     output = candidate / "backend-quality-comparison.json"
-    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "
+", encoding="utf-8")
     return report
 
 
