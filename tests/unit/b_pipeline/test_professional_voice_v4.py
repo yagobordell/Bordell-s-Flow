@@ -245,3 +245,22 @@ def test_silent_breath_class_never_creates_unrequested_audible_inhale():
     destination.events[1].tag = "breath"
     with pytest.raises(pv.VoicePlanError, match="changed an explicit pause class"):
         pv._check_v4(compiler, _block(), direction)
+
+
+def test_empty_whitespace_prose_cannot_bypass_v3_v4_validations():
+    direction = _artistic()
+    direction.block_performance.register = "   "
+    with pytest.raises(pv.VoicePlanError, match="empty prose"):
+        pv._check_v3(direction, _block())
+    direction = _artistic()
+    direction.beat_deliveries[0].delivery[1].pause_function = " "
+    with pytest.raises(pv.VoicePlanError, match="audible purpose"):
+        pv._check_v3(direction, _block())
+    compiler = _compiled()
+    compiler.audio_profile = "   "
+    with pytest.raises(pv.VoicePlanError, match="stable speaker"):
+        pv._check_v4(compiler, _block(), _artistic())
+    compiler = _compiled()
+    compiler.beat_deliveries[0].segments[0].events[1].pause_direction = " "
+    with pytest.raises(pv.VoicePlanError, match="audible purpose"):
+        pv._check_v4(compiler, _block(), _artistic())

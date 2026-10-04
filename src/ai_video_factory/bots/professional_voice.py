@@ -427,6 +427,11 @@ def _tagged(piece: LegacySpeak) -> str:
 
 
 def _check_v3(result: V3, block: dict[str, Any]) -> None:
+    performance = result.block_performance
+    if any(not text.strip() for text in (
+        performance.register, performance.pace_character, performance.intensity_arc,
+    )):
+        raise VoicePlanError("V3 block performance cannot contain empty prose")
     beats = block["beats"]
     if result.block_id != block["block_id"] or [
         beat.beat_id for beat in result.beat_deliveries
@@ -440,11 +445,15 @@ def _check_v3(result: V3, block: dict[str, Any]) -> None:
             raise VoicePlanError("Ambiguous literal Gemini tags in source narration")
         for index, item in enumerate(delivery.delivery):
             if isinstance(item, Pause):
+                if not item.pause_function.strip():
+                    raise VoicePlanError("V3 explicit pause needs an audible purpose")
                 if (index and isinstance(delivery.delivery[index - 1], Pause)
                     or index == len(delivery.delivery) - 1
                     and item.pause == "breath"):
                     raise VoicePlanError("V3 adjacent pauses or trailing breath pause")
                 continue
+            if not item.delivery_quality.strip():
+                raise VoicePlanError("V3 spoken delivery needs an audible direction")
             if len(item.vocal_intents) > 2:
                 raise VoicePlanError("V3 excessive vocal intents in spoken unit")
             if len(set(item.stress)) != len(item.stress) or any(
@@ -469,6 +478,8 @@ def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
         item.beat_id for item in result.beat_deliveries
     ] != [item.beat_id for item in direction.beat_deliveries]:
         raise VoicePlanError("V4 changed V3 beat identity or order")
+    if not result.audio_profile.strip():
+        raise VoicePlanError("V4 must compile a nonempty stable speaker identity")
     if any(not note.strip() or len(note) > 350 for note in result.directors_notes):
         raise VoicePlanError("V4 directors_notes must be compact and nonempty")
     for source, compiled in zip(
@@ -485,6 +496,8 @@ def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
         expected_events: set[tuple[str, int, int | None, int]] = set()
         for segment_index, (source_index, original) in enumerate(expected):
             destination = compiled.segments[segment_index]
+            if not destination.style.strip():
+                raise VoicePlanError("V4 spoken fragment needs an audible style")
             if (destination.speak != original.speak
                 or destination.ending_behavior != original.ending_behavior
                 or destination.stress != original.stress):
@@ -549,7 +562,7 @@ def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
                     ) else None
                     if not isinstance(pause, Pause) or event.source_at is not None:
                         raise VoicePlanError("V4 invented a pause")
-                    if (not event.pause_direction
+                    if (not event.pause_direction or not event.pause_direction.strip()
                         or event.pause_direction not in destination.style):
                         raise VoicePlanError(
                             "V4 omitted the audible purpose of a V3 explicit pause"
