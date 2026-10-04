@@ -16,9 +16,12 @@ _ORIGINAL = "registry.example.com/original@sha256:" + "a" * 64
 _EXPERIMENT = "registry.example.com/experiment@sha256:" + "b" * 64
 
 
-@pytest.mark.parametrize("fail_ready", [False, True])
+@pytest.mark.parametrize(
+    ("fail_ready", "fail_submit"),
+    [(False, False), (True, False), (False, True)],
+)
 def test_reuse_restores_production_even_when_bootstrap_fails(
-    tmp_path: Path, fail_ready: bool
+    tmp_path: Path, fail_ready: bool, fail_submit: bool
 ) -> None:
     checkout = tmp_path / "checkout"
     smoke = checkout / "scripts" / "smoke"
@@ -60,7 +63,9 @@ def test_reuse_restores_production_even_when_bootstrap_fails(
     )
     (smoke / "submit_ltx25_a2v_smoke.py").write_text(
         "import json, pathlib, sys\n"
-        "args = sys.argv\n"
+        + ("sys.stderr.write('simulated Python traceback on stderr\\n'); sys.exit(2)\n"
+           if fail_submit else "")
+        + "args = sys.argv\n"
         "out = pathlib.Path(args[args.index('--output-dir') + 1])\n"
         "out.mkdir(parents=True, exist_ok=True)\n"
         "n = int(out.name.rsplit('-', 1)[-1])\n"
@@ -147,8 +152,17 @@ $s | ConvertTo-Json | Set-Content $p
     )
     assert (out / "recovery.txt").is_file()
     assert "CAPACITY_CONTROLLER_DSN_OK" in run.stdout, run.stdout + run.stderr
-    if fail_ready:
+    if fail_ready or fail_submit:
         assert run.returncode != 0
+        if fail_submit:
+            assert "simulated Python traceback" in run.stdout or (
+                "simulated Python traceback" in run.stderr
+            )
+            manifest = json.loads(
+                (out / "manifest.json").read_text(encoding="utf-8-sig")
+            )
+            assert len(manifest["failures"]) == 1
+            assert manifest["failures"][0]["reason"] == "submit_failed"
     else:
         assert run.returncode == 0, run.stdout + run.stderr
         assert len(json.loads((out / "manifest.json").read_text(encoding="utf-8-sig"))["runs"]) == 3
