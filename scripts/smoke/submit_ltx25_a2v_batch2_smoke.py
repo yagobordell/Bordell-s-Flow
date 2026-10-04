@@ -258,9 +258,15 @@ def main() -> None:
     report["audio_tail_validation"] = "PASSED_BOTH_OUTPUTS"
     report["lipsync_status"] = "B1_FRAME_BY_FRAME_HUMAN_REVIEW_REQUIRED"
     if a.reference_a is not None:
-        report["reference_videos"] = {
-            "a": str(a.reference_a), "b": str(a.reference_b),
-        }
+        from compare_ltx25_a2v_b2_vs_b1 import compare
+
+        report["b1_comparison"] = compare(
+            audio_a=a.audio_a, audio_b=a.audio_b,
+            baseline_a=a.reference_a, baseline_b=a.reference_b,
+            candidate_a=a.output_dir / "batch2-a.mp4",
+            candidate_b=a.output_dir / "batch2-b.mp4",
+            destination=a.output_dir,
+        )
     (a.output_dir / "experiment-summary.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
     )
