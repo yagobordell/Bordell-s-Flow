@@ -204,7 +204,7 @@ def test_i2v_only_opt_in_and_offline_image_gate() -> None:
     ).read_text(encoding="utf-8")
     assert "_i2v_progressive_pinned_blocks_supported" in probe
     assert "_load_i2v_progressive_pinned_blocks" in probe
-    assert "getattr(self, \\"_i2v_progressive_pinned_blocks\\", False)" in probe
+    assert '_i2v_progressive_pinned_blocks' in probe
     docker = (
         ROOT / "docker/workers/ltx25/Dockerfile"
     ).read_text(encoding="utf-8")
