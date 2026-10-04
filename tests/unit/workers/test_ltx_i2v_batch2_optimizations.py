@@ -471,8 +471,24 @@ def test_full_hd_pair_uses_gpu_stage1_and_lazy_cpu_or_disk_stage2(
         for width, height, stage2_mode in (
             (1280, 720, None), (1920, 1080, "cpu"), (1920, 1080, "disk"),
         ):
-            pipeline = SimpleNamespace(stage=object())
+            pipeline = SimpleNamespace(stage=object(), video_decoder=object())
+            # Existing mock encode_video records requests without consuming
+            # real lazy video iterators; isolate the new session here, and
+            # test its actual two-output lifecycle in the dedicated unit file.
+            class _Shared:
+                completed = 2
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return None
+
             with (
+                patch(
+                    "ai_video_factory.workers.ltx25.shared_i2v_decoder."
+                    "SharedSequentialVideoDecoder", return_value=_Shared(),
+                ),
                 patch.object(backend, "ready"),
                 patch.object(backend, "_get_bindings", return_value=fake_bindings),
                 patch.object(backend, "_validate_runtime"),
