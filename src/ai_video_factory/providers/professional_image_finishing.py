@@ -147,7 +147,9 @@ def _materialize(
         )):
             raise ProfessionalImageFinishingError("Linked migrated legacy output")
         previous = json.loads(old_state.read_text(encoding="utf-8"))
-        if (previous.get("identity") != identity_hash
+        if (previous.get("schema_version") != "professional-image-finishing-v1"
+            or previous.get("identity") != identity_hash
+            or previous.get("source") != item["file"]
             or previous.get("status") != "completed"
             or previous.get("sha256") != saved["sha256"]
             or not old_png.is_file()
@@ -229,7 +231,10 @@ def _materialize(
             )):
                 raise ProfessionalImageFinishingError("Linked legacy professional output")
             old = json.loads(legacy_state.read_text(encoding="utf-8"))
-            if old.get("identity") != identity_hash or old.get("status") != "completed":
+            if (old.get("schema_version") != "professional-image-finishing-v1"
+                or old.get("source") != item["file"]
+                or old.get("identity") != identity_hash
+                or old.get("status") != "completed"):
                 raise ProfessionalImageFinishingError(
                     f"Legacy paid finishing state for {beat} requires reconciliation"
                 )
