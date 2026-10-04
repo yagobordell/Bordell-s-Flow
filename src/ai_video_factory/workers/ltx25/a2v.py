@@ -69,6 +69,11 @@ LTX_A2V_BENCH_STATIC_NONE_PROFILE = "ltx25-a2v-static-bench-fp8none-eager-a95ab-
 # RTX 5090 (three CPU + three FP8/no-offload videos; decoded A/V identical).
 # Preserve all historical profile strings for already-submitted jobs.
 LTX_A2V_PRODUCTION_FAST_PROFILE = "ltx25-a2v-reference-distilled-fp8none-eager-a95ab-prod-v1"
+# New immutable B2/run identity. Preserves the currently pinned static camera
+# recipe; only the measured experimental offload strategy changes to NONE.
+LTX_A2V_RUN_STATIC_FAST_PROFILE = (
+    "ltx25-a2v-static-reference-distilled-fp8none-eager-a95ab-run-v1"
+)
 LTX_A2V_EXPERIMENTS = {
     LTX_A2V_BENCH_CPU_PROFILE: ("cpu", "eager"),
     LTX_A2V_BENCH_NONE_PROFILE: ("none", "eager"),
@@ -82,6 +87,7 @@ LTX_A2V_EXPERIMENTS = {
 LTX_A2V_RESIDENCY_PROFILES = {
     **LTX_A2V_EXPERIMENTS,
     LTX_A2V_PRODUCTION_FAST_PROFILE: ("none", "eager"),
+    LTX_A2V_RUN_STATIC_FAST_PROFILE: ("none", "eager"),
 }
 LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v5"
 LTX_A2V_REFERENCE_GENERATION_PROFILE = (
@@ -151,6 +157,7 @@ class LTXAudioToVideoParameters(BaseModel):
         if value not in (
             LTX_A2V_GENERATION_PROFILE,
             LTX_A2V_PRODUCTION_FAST_PROFILE,
+            LTX_A2V_RUN_STATIC_FAST_PROFILE,
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
@@ -975,7 +982,10 @@ class DirectLTX25AudioToVideoBackend:
         experimental = parameters.generation_profile in LTX_A2V_EXPERIMENTS
         # The validated production path retains benchmark phase diagnostics,
         # allowing comparable operational timings and VRAM telemetry.
-        profiled = experimental or parameters.generation_profile == LTX_A2V_PRODUCTION_FAST_PROFILE
+        profiled = experimental or parameters.generation_profile in (
+            LTX_A2V_PRODUCTION_FAST_PROFILE,
+            LTX_A2V_RUN_STATIC_FAST_PROFILE,
+        )
         # CUDA synchronization is deliberately opt-in: it changes benchmark
         # overhead but neither tensors nor the original production execution.
         metrics: I2VPhaseMetrics | None = None
@@ -990,6 +1000,7 @@ class DirectLTX25AudioToVideoBackend:
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
         static_reference = parameters.generation_profile in (
+            LTX_A2V_RUN_STATIC_FAST_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
@@ -1001,6 +1012,7 @@ class DirectLTX25AudioToVideoBackend:
         reference = parameters.generation_profile in (
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_PRODUCTION_FAST_PROFILE,
+            LTX_A2V_RUN_STATIC_FAST_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
@@ -1470,6 +1482,7 @@ class DirectLTX25AudioToVideoBackend:
         reference = generation_profile in (
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_PRODUCTION_FAST_PROFILE,
+            LTX_A2V_RUN_STATIC_FAST_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
