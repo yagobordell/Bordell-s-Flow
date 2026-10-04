@@ -1455,9 +1455,6 @@ class DirectLTX25AudioToVideoBackend:
         as B1. The two frozen audio latents are aligned on the SAME 8k+1
         frame grid before any transformer weights enter the GPU.
         """
-        from .paired_a2v import A2VSample, generate_paired_static_a2v
-        from .shared_a2v_decoder import SharedA2VDecoder
-
         if any(
             p.generation_profile != LTX_A2V_RUN_STATIC_FAST_PROFILE
             or (p.width, p.height, p.fps) != (1920, 1080, 24)
@@ -1486,6 +1483,11 @@ class DirectLTX25AudioToVideoBackend:
                 "A2V true B2 requires matching audio-driven 8k+1 frame counts; "
                 f"received {plans[0].num_frames} and {plans[1].num_frames}"
             )
+        # Load the GPU-only paired module only after BOTH CPU audio grids
+        # match; malformed inputs must not even require CUDA dependencies.
+        from .paired_a2v import A2VSample, generate_paired_static_a2v
+        from .shared_a2v_decoder import SharedA2VDecoder
+
         audio_prepared_seconds = time.monotonic() - start
         results = ()
         build_seconds = 0.0
