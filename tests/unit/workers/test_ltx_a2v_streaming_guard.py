@@ -10,8 +10,9 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-import ai_video_factory.workers.ltx25.reference_a2v as reference_a2v
 import ltx_pipelines.utils.blocks as upstream_blocks
+
+import ai_video_factory.workers.ltx25.reference_a2v as reference_a2v
 
 
 class _FakeStream(torch.nn.Module):
