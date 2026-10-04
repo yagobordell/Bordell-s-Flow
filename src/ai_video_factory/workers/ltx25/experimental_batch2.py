@@ -30,10 +30,13 @@ class Batch2Parameters(BaseModel):
     allow_sequential_fallback: bool = False
     reuse_transformer_across_stages: bool = False
     accept_full_hd_batch2_oom_risk: bool = False
+    full_hd_stage2_mode: str = "cpu"
 
     @model_validator(mode="after")
     def check_pair(self) -> Batch2Parameters:
         a, b = self.a, self.b
+        if self.full_hd_stage2_mode not in ("cpu", "disk"):
+            raise ValueError("Full HD stage2 mode must be cpu or disk")
         if (a.generation_profile, b.generation_profile) != (
             LTX_PRODUCTION_I2V_PROFILE, LTX_PRODUCTION_I2V_PROFILE,
         ):
@@ -113,6 +116,7 @@ class ExperimentalBatch2TaskRunner:
                 allow_sequential_fallback=params.allow_sequential_fallback,
                 reuse_transformer_across_stages=params.reuse_transformer_across_stages,
                 accept_full_hd_batch2_oom_risk=params.accept_full_hd_batch2_oom_risk,
+                full_hd_stage2_mode=params.full_hd_stage2_mode,
             )
         except Exception as exc:
             if is_retryable_gpu_failure(exc):
