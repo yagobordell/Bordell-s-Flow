@@ -124,7 +124,10 @@ class Speak(Strict):
     speak: str = Field(min_length=1)
     delivery_quality: str = Field(
         min_length=1,
-        description="Natural-language artistic delivery only. No technical tags, markup or Gemini commands.",
+        description=(
+            "Natural-language artistic delivery only. "
+            "No technical tags, markup or Gemini commands."
+        ),
     )
     ending_behavior: Ending
     stress: list[str]
@@ -135,7 +138,10 @@ class Pause(Strict):
     pause: PauseClass
     pause_function: str = Field(
         min_length=1,
-        description="Artistic purpose of deliberate silence, in prose only. No tags or technical syntax.",
+        description=(
+            "Artistic purpose of deliberate silence, in prose only. "
+            "No tags or technical syntax."
+        ),
     )
 
 
