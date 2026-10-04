@@ -1528,14 +1528,13 @@ class DirectLTX25AudioToVideoBackend:
             offload_mode=offload_mode,
         )
         if generation_profile in LTX_A2V_EXPERIMENTS and selected_offload == "cpu":
-            # Upstream streaming meta_model.eval() already ran. Avoid repeating
-            # the recursive traversal of live streaming hooks in benchmark only.
-            from .reference_a2v import (
-                DistilledReferenceA2VPipeline,
-                configure_experimental_a2v_streaming,
+            # An explicit hook exists only on our reference pipeline; fake
+            # CPU-only test pipelines deliberately do not import LTX or torch.
+            install_guard = getattr(
+                self._pipeline, "configure_experimental_streaming_guard", None
             )
-            if isinstance(self._pipeline, DistilledReferenceA2VPipeline):
-                configure_experimental_a2v_streaming(self._pipeline)
+            if callable(install_guard):
+                install_guard()
                 logger.info("LTX25_A2V_EXPERIMENTAL_STREAMING_EVAL_GUARD enabled=true")
         self._pipeline_profile = generation_profile
         self._pipeline_effective_backend = effective_backend
