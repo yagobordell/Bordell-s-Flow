@@ -445,7 +445,7 @@ def test_full_hd_pair_uses_gpu_stage1_and_lazy_cpu_or_disk_stage2(
     )
     stage2 = object()
 
-    def generate(**kwargs):
+    def generate(_pipeline, **kwargs):
         factory = kwargs["stage2_factory"]
         if factory is not None:
             assert factory() is stage2
