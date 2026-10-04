@@ -25,7 +25,11 @@ def setup(tmp_path: Path, monkeypatch, **metadata) -> tuple[Path, Path]:
         "scopes": [YOUTUBE_UPLOAD_SCOPE],
     })
     monkeypatch.setattr(
-        cli, "settings", Settings(_env_file=None, youtube_keystore_dir=key_dir)
+        cli, "settings", Settings(
+            _env_file=None,
+            youtube_keystore_dir=key_dir,
+            youtube_state_dir=tmp_path / "isolated-publication-state",
+        )
     )
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"\x00\x00\x00\x18ftypisom" + b"\x00" * 40)
