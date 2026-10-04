@@ -35,6 +35,8 @@ jobs:
         run: |
           uv run --no-sync ruff check \
             src/ai_video_factory/workers/ltx25/paired_i2v.py \
+            docker/workers/ltx25/patch_i2v_progressive.py \
+            tests/unit/workers/test_ltx_i2v_progressive_loader.py \
             src/ai_video_factory/workers/ltx25/model.py \
             scripts/smoke/submit_ltx25_i2v_batch2_smoke.py \
             tests/unit/workers/test_ltx_i2v_batch2_optimizations.py \
@@ -49,10 +51,23 @@ jobs:
             tests/integration/salad/test_salad_shared_helpers.py \
             tests/contracts/test_salad_deployment_profiles.py \
             tests/integration/salad/test_ltx_bootstrap_start.py
+      - name: Verify patch applies to exact pinned upstream LTX builder (offline, no GPU)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pinned-ltx/packages/ltx-core/src/ltx_core/block_streaming"
+          curl --fail --location --retry 3 --retry-all-errors \
+            https://raw.githubusercontent.com/Lightricks/LTX-2/a95ab856bf29407b6b066ede0abe1846050db56c/packages/ltx-core/src/ltx_core/block_streaming/builder.py \
+            -o "$RUNNER_TEMP/pinned-ltx/packages/ltx-core/src/ltx_core/block_streaming/builder.py"
+          uv run --no-sync python docker/workers/ltx25/patch_i2v_progressive.py \
+            --ltx-root "$RUNNER_TEMP/pinned-ltx"
+          uv run --no-sync python -m py_compile \
+            "$RUNNER_TEMP/pinned-ltx/packages/ltx-core/src/ltx_core/block_streaming/builder.py"
       - name: I2V batch2 and Full HD regression (CPU only)
         run: |
           uv run --no-sync pytest -q \
             tests/unit/workers/test_ltx_i2v_batch2_optimizations.py \
+            tests/unit/workers/test_ltx_i2v_progressive_loader.py \
             tests/unit/workers/test_ltx_i2v_batch2_experiment.py \
             tests/unit/workflows/test_video_full_hd_defaults.py \
             tests/unit/workers/test_ltx_salad_readiness.py \
