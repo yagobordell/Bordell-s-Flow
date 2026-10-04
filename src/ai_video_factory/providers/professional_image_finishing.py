@@ -247,20 +247,21 @@ def _materialize(
             _source(output, item)  # Keep the paid original identity verifiable.
             saved = {
                 "schema_version": "professional-image-finishing-v1",
-                "identity": identity_hash, "status": "pending",
+                "identity": identity_hash, "status": "ready_to_replace",
                 "source": item["file"], "source_sha256": item["sha256"],
                 "block_id": block, "beat_id": beat,
                 "model_id": model if recipe == "native_grid_video" else None,
                 "artifact": old.get("artifact", {}),
+                "sha256": old["sha256"], "output_file": item["file"],
             }
-            _save_json(state, saved)
             if staged.exists() or staged.is_symlink():
-                raise ProfessionalImageFinishingError("Unreconciled staged legacy copy")
-            staged.write_bytes(legacy_bytes)
-            saved.update({
-                "status": "ready_to_replace", "sha256": old["sha256"],
-                "output_file": item["file"],
-            })
+                if (staged.is_symlink()
+                    or _digest(staged.read_bytes()) != old["sha256"]):
+                    raise ProfessionalImageFinishingError("Unreconciled staged legacy copy")
+            else:
+                staged.write_bytes(legacy_bytes)
+            # Persist only ready-to-replace; a crash before this checkpoint
+            # leaves the legacy paid result intact and never resubmits it.
             _save_json(state, saved)
             if _digest(png.read_bytes()) != item["sha256"]:
                 raise ProfessionalImageFinishingError("Legacy original changed during migration")
