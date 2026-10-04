@@ -140,7 +140,10 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
         image_path=image,
         audio_path=audio,
         output_path=tmp_path / "output.mp4",
-        parameters=LTXAudioToVideoParameters(prompt="A stable talking head."),
+        parameters=LTXAudioToVideoParameters(
+            generation_profile=a2v.LTX_A2V_GENERATION_PROFILE,
+            prompt="A stable talking head.",
+        ),
     )
     reuse_metadata = None
     for index in range(1, 5):
@@ -148,7 +151,10 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
             image_path=image,
             audio_path=audio,
             output_path=tmp_path / f"healthy-{index}.mp4",
-            parameters=LTXAudioToVideoParameters(prompt="A stable talking head."),
+            parameters=LTXAudioToVideoParameters(
+            generation_profile=a2v.LTX_A2V_GENERATION_PROFILE,
+            prompt="A stable talking head.",
+        ),
         )
 
     assert state["builds"] == 1
@@ -221,7 +227,10 @@ def test_direct_a2v_uses_official_pipeline_audio_duration_and_mux(
         image_path=image,
         audio_path=audio,
         output_path=tmp_path / "fast-again.mp4",
-        parameters=LTXAudioToVideoParameters(prompt="A stable talking head."),
+        parameters=LTXAudioToVideoParameters(
+            generation_profile=a2v.LTX_A2V_GENERATION_PROFILE,
+            prompt="A stable talking head.",
+        ),
     )
     assert state["builds"] == 3
     assert state["pipeline_inits"][2]["distilled_lora"] == []
