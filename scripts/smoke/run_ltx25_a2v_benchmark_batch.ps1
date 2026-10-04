@@ -13,6 +13,7 @@ param(
     [long]$Seed = 4242,
     [ValidateRange(0, 21600)][int]$MaxProfileTotalSeconds = 0,
     [switch]$ContinueOnTerminalFailure,
+    [switch]$ReuseProductionGroup,
     [string]$OutputDir = "",
     [string]$EnvFile = ".env",
     [ValidateRange(120, 21600)][int]$BootstrapTimeoutSeconds = 7200,
@@ -21,8 +22,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# This runner starts/stops only its own isolated experimental group.
-# Production and experiment use distinct Postgres task names.
+# By default this runner uses only the separate experimental group.
+# ReuseProductionGroup requires the guarded production-restore wrapper.
 if ($ExpectedPinnedImage -notmatch '^[^\s@]+@sha256:[0-9a-fA-F]{64}$') {
     throw "ExpectedPinnedImage must be the reviewed immutable repository@sha256:digest"
 }
@@ -44,14 +45,24 @@ $Ready = Join-Path $PSScriptRoot 'wait_salad_ltx25_ready.py'
 $Submit = Join-Path $PSScriptRoot 'submit_ltx25_a2v_smoke.py'
 $SourceCheck = Join-Path $PSScriptRoot 'check_ltx25_python_source.py'
 $Preflight = Join-Path $Root 'scripts\pipeline\check_r2_ready.py'
+$TargetService = if ($ReuseProductionGroup) { 'ltx25' } else { 'ltx25_a2v_experimental' }
+$QueueArgs = @()
+$IsolationArgs = @('--env-file', $EnvFile)
+if ($ReuseProductionGroup) {
+    $QueueArgs += '--include-production'
+    $IsolationArgs += @(
+        '--reuse-production', '--expected-production-image', $ExpectedPinnedImage,
+        '--expected-task-mode', 'a2v_experimental'
+    )
+}
 $SourceModule = Join-Path $Root 'src\ai_video_factory\workers\ltx25\__init__.py'
 & $Python $SourceCheck $SourceModule
 if ($LASTEXITCODE -ne 0) { throw "Wrong Python worktree; run uv sync --locked --extra dev --python 3.12" }
 & $Python $Preflight
 if ($LASTEXITCODE -ne 0) { throw "R2 preflight failed; no GPU allocated" }
-& $Python $Isolation --env-file $EnvFile
+& $Python $Isolation @IsolationArgs
 if ($LASTEXITCODE -ne 0) { throw "A2V benchmark isolation preflight failed" }
-& $Python $QueueGate
+& $Python $QueueGate @QueueArgs
 if ($LASTEXITCODE -ne 0) { throw "A2V Postgres queue is not idle; no GPU allocated" }
 
 $RunId = Get-Date -Format 'yyyyMMddHHmmss'
@@ -74,13 +85,14 @@ $Manifest = [ordered]@{
     failures = @()
     skipped_profiles = @()
     lifecycle = [ordered]@{}
+    salad_service = $TargetService
 }
 $Clock = [Diagnostics.Stopwatch]::StartNew()
 $Started = $false
 try {
     $startArgs = @{
         Action = 'Start'
-        Service = 'ltx25_a2v_experimental'
+        Service = $TargetService
         Replicas = 1
         EnvFile = $EnvFile
         AllowBootstrappingInstance = $true
@@ -91,16 +103,14 @@ try {
     if (-not $?) { throw "A2V Salad allocation failed" }
     $Manifest.lifecycle.capacity_seconds = $Clock.Elapsed.TotalSeconds
 
-    & $Python $Ready --env-file $EnvFile --timeout-seconds $BootstrapTimeoutSeconds --poll-seconds 15 --expected-image $ExpectedPinnedImage --service ltx25_a2v_experimental
+    & $Python $Ready --env-file $EnvFile --timeout-seconds $BootstrapTimeoutSeconds --poll-seconds 15 --expected-image $ExpectedPinnedImage --service $TargetService
     if ($LASTEXITCODE -ne 0) { throw "Expected pinned A2V image never reached readiness" }
     $Manifest.lifecycle.ready_seconds = $Clock.Elapsed.TotalSeconds
 
     foreach ($profile in $Profiles) {
         for ($iteration = 1; $iteration -le $Repetitions; $iteration++) {
-            # A2V production and experiment share the Postgres task. Even
-            # after the initial preflight, never claim a new sample if an
-            # unrelated job appears or the previous sample remains retryable.
-            & $Python $QueueGate
+            # Recheck queues before each sample. Reuse mode blocks new production jobs.
+            & $Python $QueueGate @QueueArgs
             if ($LASTEXITCODE -ne 0) {
                 throw "A2V queue not idle before next sample; stopping experimental group"
             }
@@ -131,7 +141,7 @@ try {
                 # A timeout, retryable GPU OOM, active lease, queue contention
                 # or local media-validation failure is NOT safe to skip. Only
                 # a confirmed terminal 'failed' row with an idle A2V queue is.
-                & $Python $QueueGate --terminal-failure-dir $out --expected-segment $segment
+                & $Python $QueueGate @QueueArgs --terminal-failure-dir $out --expected-segment $segment
                 if ($LASTEXITCODE -ne 0) {
                     throw "Failed job is not safely terminal; stopping group: $segment"
                 }
@@ -175,7 +185,7 @@ finally {
     # Always attempt cleanup; never touch the separate ltx25_i2v group.
     try {
         if ($Started) {
-            & $Manager -Action Stop -Service ltx25_a2v_experimental -EnvFile $EnvFile -NonInteractive
+            & $Manager -Action Stop -Service $TargetService -EnvFile $EnvFile -NonInteractive
             if (-not $?) { throw "A2V Stop failed; manually verify stopped/no live instances/pending=False" }
         }
     }
