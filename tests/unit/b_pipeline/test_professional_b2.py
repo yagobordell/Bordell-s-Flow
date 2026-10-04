@@ -103,23 +103,14 @@ def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions()
     assert "skip discretionary steps 3-12" in prompt
     assert "Write every image prompt as an affirmative description" in prompt
     assert "omit\nnegative prompt clauses, preventive exclusions" in prompt
-    assert "Screens and documents: narrative context" in prompt
-    assert "Choose the visible scene, subjects, actions, composition" in prompt
-    assert "(For context: [relevant information].)" in prompt
-    assert "Apply the same principle to image prompts and video animation prompts" in prompt
-    assert "include useful narrative details in a brief, separate" in prompt
-    assert "screen and document beats use narrative context" in prompt
-    # Screen/document context explains the narrative but does not dictate
-    # whether a person appears, an orientation, or what content may be depicted.
-    for old_rule in (
-        "is ONE possible scene, not a requirement.",
-        "Never add a person, require natural handling",
-        "Do not impose human interaction or device/page orientation.",
-        "without requiring a person or a particular",
-        "do not turn the note into a request to render legible text",
-        "Examples (different valid compositions for the same context rule)",
-    ):
-        assert old_rule not in prompt
+    # Keep these assertions synchronized with main's current screen/document
+    # context section. B2 prompt policy itself is out of scope for this A2V PR.
+    assert "Screens and documents: context belongs outside the visible scene" in prompt
+    assert "Choose the visible scene, subject, shot size and camera viewpoint" in prompt
+    assert "(For context:" in prompt
+    assert "Apply the same separation in video_prompt" in prompt
+    assert "Preserve the same relevant" in prompt
+    assert "specific app, page or document content only as parenthetical context" in prompt
     # Avoid replacing one brand rule with another, including in this correction.
     for word in ("brands", "branding", "logos", "packaging"):
         assert word not in prompt.lower()
