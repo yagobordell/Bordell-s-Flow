@@ -556,7 +556,7 @@ def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
                             "V4 omitted the audible purpose of a V3 explicit pause"
                         )
                     allowed = {
-                        "breath": {"breath", "short pause"},
+                        "breath": {"short pause"},
                         "beat": {"short pause", "long pause"},
                         "hold": {"short pause", "long pause"},
                     }

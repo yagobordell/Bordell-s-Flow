@@ -230,3 +230,18 @@ def test_legacy_checkpoint_detection_is_structural_not_prose_substring(tmp_path)
     assert "segments" in (saved / "output.json").read_text()
     assert "delivery" in snapshot["beat_deliveries"][0]
     assert "segments" not in snapshot["beat_deliveries"][0]
+
+
+def test_silent_breath_class_never_creates_unrequested_audible_inhale():
+    direction = _artistic()
+    direction.beat_deliveries[0].delivery[1] = pv.Pause(
+        pause="breath", pause_function="Silently re-gather before resuming"
+    )
+    compiler = _compiled()
+    destination = compiler.beat_deliveries[0].segments[0]
+    destination.events[1].pause_direction = "Silently re-gather before resuming"
+    destination.style = "Warm opening; Silently re-gather before resuming"
+    pv._check_v4(compiler, _block(), direction)
+    destination.events[1].tag = "breath"
+    with pytest.raises(pv.VoicePlanError, match="changed an explicit pause class"):
+        pv._check_v4(compiler, _block(), direction)
