@@ -146,6 +146,7 @@ def _stage(
     label: str,
     phase_metrics: dict[str, Any] | None = None,
     max_transformer_forward_batch_size: int = 2,
+    max_transformer_build_seconds: float = 0.0,
 ) -> Any:
     """Pinned stage with optional fused CFG forward only.
 
@@ -155,6 +156,8 @@ def _stage(
     """
     if max_transformer_forward_batch_size not in (2, 4):
         raise ValueError("A2V transformer forward batch must be 2 or 4")
+    if not 0 <= max_transformer_build_seconds <= 3600:
+        raise ValueError("Invalid experimental A2V transformer build cap")
 
     shape = VideoPixelShape(batch=2, frames=frames, width=width, height=height, fps=fps)
     video_tools = VideoLatentTools(
@@ -179,6 +182,19 @@ def _stage(
     start = time.perf_counter()
     with stage._transformer_ctx(video_tools=video_tools) as built:
         build = time.perf_counter() - start
+        if phase_metrics is not None:
+            phase_metrics[label + "_transformer_build_seconds"] = build
+        if max_transformer_build_seconds and build > max_transformer_build_seconds:
+            logger.error(
+                "LTX25_A2V_B2_BUILD_TOO_SLOW stage=%s build_seconds=%.3f "
+                "limit_seconds=%.3f: skipping denoise and subsequent stages",
+                label, build, max_transformer_build_seconds,
+            )
+            raise RuntimeError(
+                f"A2V {label} transformer build exceeded latency cap: "
+                f"{build:.1f}s > {max_transformer_build_seconds:.1f}s. "
+                "Do not continue on a slow checkpoint instance."
+            )
         transformer = built if stage._model_wrapper is None else stage._model_wrapper(
             built, video_tools
         )
@@ -286,6 +302,7 @@ def generate_paired_static_a2v(
     phase_metrics: dict[str, Any] | None = None,
     max_transformer_forward_batch_size: int = 2,
     max_stage1_major_page_faults: int = 0,
+    max_stage1_build_seconds: float = 0.0,
 ) -> tuple[PipelineOutput, PipelineOutput]:
     """Generate paired A/V with independent frozen PCM and no silent B1 fallback."""
     if len(samples) != 2 or samples[0].seed == samples[1].seed:
@@ -374,6 +391,7 @@ def generate_paired_static_a2v(
         negative_ctx=negative, seeds=(samples[0].seed, samples[1].seed),
         label="stage1", phase_metrics=phase_metrics,
         max_transformer_forward_batch_size=max_transformer_forward_batch_size,
+        max_transformer_build_seconds=max_stage1_build_seconds,
     )
     stage1_memory = memory_pressure()
     if phase_metrics is not None:
