@@ -15,6 +15,8 @@ param(
     [string]$ReferenceB = "",
     [ValidateSet("eager", "triton_experimental")][string]$VaeBackend = "eager",
     [ValidateSet(2, 4)][int]$GuidanceForwardBatchSize = 2,
+    [ValidateRange(0, 1000000)][int]$MaxStage1MajorPageFaults = 0,
+    [ValidateRange(0, 10800)][double]$PerformanceTargetSeconds = 0,
     [switch]$CheckInputsOnly,
     [switch]$AllowPaidTrial,
     [ValidateRange(120, 21600)][int]$BootstrapTimeoutSeconds = 7200,
@@ -59,7 +61,9 @@ $ArgsList = @(
     "--seed-a", [string]$SeedA, "--seed-b", [string]$SeedB,
     "--run-id", $RunId, "--output-dir", $Destination,
     "--accept-full-hd-oom-risk", "--vae-backend", $VaeBackend,
-    "--guidance-forward-batch-size", [string]$GuidanceForwardBatchSize
+    "--guidance-forward-batch-size", [string]$GuidanceForwardBatchSize,
+    "--max-stage1-major-page-faults", [string]$MaxStage1MajorPageFaults,
+    "--performance-target-seconds", [string]$PerformanceTargetSeconds
 )
 if ($ReferenceA) { $ArgsList += @("--reference-a", $ReferenceA) }
 if ($ReferenceB) { $ArgsList += @("--reference-b", $ReferenceB) }
