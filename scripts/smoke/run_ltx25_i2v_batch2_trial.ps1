@@ -108,22 +108,80 @@ if ($I2VStatus -notmatch 'status=stopped(\s|$)' -or
     $I2VStatus -notmatch 'pending=False(\s|$)') {
     throw "Prepare STOPPED I2V with NEW experimental image first: $I2VStatus"
 }
+# Remote read-only proof complements the offline probe: both must refer
+# to the identical immutable image digest, and the remote RAM must be real.
+if ($Width -eq 1920) {
+    & $Python (Join-Path $PSScriptRoot "verify_ltx25_i2v_remote_config.py") --image $ExpectedPinnedImage --env-file $EnvFile --minimum-memory-mb 61440
+    if ($LASTEXITCODE -ne 0) {
+        throw "STOP: remote I2V image, batch2 flag or RAM do not match the inspected Docker."
+    }
+}
 if (Test-Path -LiteralPath $Folder) { throw "Run folder already exists: $Folder" }
-$Started = $false
+$StartRequested = $false
+$StartConfirmed = $false
+$JobFailure = $null
+$CleanupFailure = ""
 try {
-    $Started = $true
+    $StartRequested = $true
     & $Manager -Action Start -Service ltx25_i2v -Replicas 1 -AllowBootstrappingInstance -EnvFile $EnvFile -NonInteractive
     if (-not $?) { throw "I2V start failed." }
+    $StartConfirmed = $true
     & $Python $Ready --service ltx25_i2v --env-file $EnvFile --expected-image $ExpectedPinnedImage --timeout-seconds $BootstrapTimeoutSeconds
     if ($LASTEXITCODE -ne 0) { throw "I2V instance did not become ready." }
     & $Python $Submit @ArgsSubmit
     if ($LASTEXITCODE -ne 0) { throw "Experimental batch2 job failed; no quality claims. Review Salad logs." }
 }
+catch {
+    $JobFailure = $_
+}
 finally {
-    if ($Started) {
-        & $Manager -Action Stop -Service ltx25_i2v -EnvFile $EnvFile -NonInteractive
-        if (-not $?) { throw "I2V stop failed: verify no pending jobs and stop manually." }
+    if ($StartConfirmed) {
+        # Do not override shared controller ownership if another operator took
+        # over. A failed Stop MUST NOT mask the original inference failure.
+        try {
+            & $Manager -Action Stop -Service ltx25_i2v -EnvFile $EnvFile -NonInteractive
+            if (-not $?) { throw "Stop returned an unsuccessful PowerShell status." }
+            $StoppedStatus = (& $Manager -Action Status -Service ltx25_i2v -EnvFile $EnvFile -NonInteractive | Out-String)
+            if ($StoppedStatus -notmatch 'status=stopped(\\s|$)' -or
+                $StoppedStatus -notmatch 'pending=False(\\s|$)') {
+                throw "Stop did not prove a stably stopped remote group: $StoppedStatus"
+            }
+        }
+        catch {
+            $CleanupFailure = $_.Exception.Message
+        }
     }
+    elseif ($StartRequested) {
+        # Start may have failed AFTER Salad accepted a mutation, so the state
+        # is unknown. Never blindly Stop a group we have not established ours.
+        $CleanupFailure = "Start did not confirm ownership; remote group state requires inspection."
+    }
+    if ($CleanupFailure) {
+        Write-Warning "I2V CLEANUP UNVERIFIED: $CleanupFailure"
+        Write-Warning "Check the I2V group and shared controller; do NOT override its lock or start another GPU."
+        try {
+            & $Manager -Action Status -Service ltx25_i2v -EnvFile $EnvFile -NonInteractive
+        }
+        catch {
+            Write-Warning "I2V read-only Salad Status unavailable: $($_.Exception.Message)"
+        }
+        try {
+            & $Python (Join-Path $Root "scripts\salad\inspect_capacity_lock.py")
+            if ($LASTEXITCODE -ne 0) { Write-Warning "Capacity lock inspection unavailable." }
+        }
+        catch {
+            Write-Warning "Capacity lock inspection unavailable: $($_.Exception.Message)"
+        }
+    }
+}
+if ($JobFailure) {
+    if ($CleanupFailure) {
+        Write-Warning "Original job error follows; cleanup requires separate operator action."
+    }
+    throw $JobFailure
+}
+if ($CleanupFailure) {
+    throw "I2V experiment finished, but cleanup is UNVERIFIED: $CleanupFailure"
 }
 Write-Host "Batch2 experiment: $Folder"
 Write-Warning "Compare BOTH outputs with B=1 references before using batching outside experiments."
