@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import ast
-import mmap
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -44,10 +43,9 @@ class StreamingModelBuilder:
     helper = next(x for x in builder.body
                   if isinstance(x, ast.FunctionDef)
                   and x.name == "_load_i2v_progressive_pinned_blocks")
-    class_type = ast.ClassDef(
-        name="Builder", bases=[], keywords=[], body=[helper], decorator_list=[],
-    )
-    mod = ast.fix_missing_locations(ast.Module(body=[class_type], type_ignores=[]))
+    mod = ast.parse("class Builder:\n    pass\n")
+    mod.body[0].body = [helper]
+    ast.fix_missing_locations(mod)
     loads: list[set[str]] = []
 
     class FakeTensor:
@@ -107,7 +105,7 @@ def test_grouped_progressive_loads_the_exact_original_bytes(
                for key in views)
 
 
-def test_grouped_progressive_refuses_missing_weight() -> None:
+def test_grouped_progressive_refuses_invalid_group_size() -> None:
     builder_type, view_type, _ = _patched_helper()
     obj = builder_type()
     obj.registry = SimpleNamespace(_cache_weights=False)
@@ -121,7 +119,6 @@ def test_direct_io_probe_uses_distant_aligned_reads_without_cached_fallback(
 ) -> None:
     path = tmp_path / "model.safetensors"
     path.touch()
-    original_open = os.open
     calls: list[int] = []
     closed: list[int] = []
 
@@ -147,7 +144,7 @@ def test_direct_io_probe_uses_distant_aligned_reads_without_cached_fallback(
     assert closed == [42]
 
 
-def test_direct_io_probe_rejects_missing_capability_or_slow_read(
+def test_direct_io_probe_rejects_unsupported_direct_reads(
     tmp_path: Path,
 ) -> None:
     model = tmp_path / "model.safetensors"
