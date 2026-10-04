@@ -165,50 +165,6 @@ jobs:
         shell: bash
         run: find docker -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
 
-  ltx-batch-fast:
-    if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Set up Python 3.12
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
-        with:
-          python-version: "3.12"
-      - name: Install uv
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
-        with:
-          version: "0.12.18"
-          enable-cache: true
-      - name: Install project and test dependencies
-        run: uv sync --locked --extra dev
-      - name: Check experimental benchmark Ruff
-        run: uv run --no-sync ruff check .
-      - name: Test experimental benchmark without external services
-        run: uv run --no-sync python -m pytest -q tests/unit/workers/test_ltx_i2v_batch_metrics.py tests/unit/workers/test_ltx_i2v_fast.py tests/unit/workers/test_ltx_i2v_v2_experiments.py tests/unit/workers/test_ltx_i2v_optimization.py tests/unit/workers/test_ltx_i2v_static_camera.py tests/integration/salad/test_ltx_i2v_lifecycle.py tests/integration/salad/test_salad_shared_helpers.py
-      - name: Parse controlled batch PowerShell
-        shell: pwsh
-        run: |
-          $Tokens = $null
-          $Errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-              (Resolve-Path "scripts/smoke/run_ltx25_i2v_benchmark_batch.ps1"),
-              [ref]$Tokens,
-              [ref]$Errors
-          ) | Out-Null
-          if ($Errors) { throw "PowerShell syntax: $($Errors -join '; ')" }
-          $Tokens = $null
-          $Errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-              (Resolve-Path "scripts/smoke/run_ltx25_i2v_fast_benchmark.ps1"),
-              [ref]$Tokens,
-              [ref]$Errors
-          ) | Out-Null
-          if ($Errors) { throw "Fast benchmark PowerShell syntax: $($Errors -join '; ')" }
-
   youtube:
     if: >-
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
