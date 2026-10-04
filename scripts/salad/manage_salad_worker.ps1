@@ -5,6 +5,10 @@ param(
     [string]$Service = "ltx25",
     [string]$Image = "",
     [string]$PinnedImage = "",
+    [string]$ExpectedCurrentImage = "",
+    [ValidateSet("", "a2v", "a2v_experimental")][string]$TaskModeOverride = "",
+    [switch]$PreserveExistingEnvironment,
+    [string]$ExpectedCurrentTaskMode = "",
     [string]$EnvFile = ".env",
     [ValidateRange(10, 180)][int]$PrepareTimeoutMinutes = 120,
     [ValidateRange(0, 64)][int]$Replicas = 0,
@@ -134,7 +138,12 @@ function Enter-ManualCapacityMutationLock {
 
     $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
     $StartInfo.FileName = $Python
-    $StartInfo.Arguments = '"' + $LockScript + '"'
+    $StartInfo.Arguments = '"' + $LockScript + '"' 
+    if ($Service -eq "ltx25_a2v_experimental") {
+        # Independent experimental capacity domain; production retains its
+        # own advisory lock and can keep running without a global override.
+        $StartInfo.Arguments += " --experimental-a2v"
+    }
     $StartInfo.WorkingDirectory = $RepoRoot
     $StartInfo.UseShellExecute = $false
     $StartInfo.RedirectStandardInput = $true
@@ -282,6 +291,22 @@ function Assert-ServiceDefinition {
     if ($Image -notmatch '^[^\s]+:[^\s/:]+$') { throw "Image must include an explicit tag: $Image" }
     if (-not [string]::IsNullOrWhiteSpace($PinnedImage) -and $PinnedImage -notmatch '^[^\s]+@sha256:[0-9a-fA-F]{64}$') {
         throw "-PinnedImage must be an immutable sha256 reference."
+    }
+    if ($ExpectedCurrentImage -and $ExpectedCurrentImage -notmatch '^[^\s]+@sha256:[0-9a-fA-F]{64}$') {
+        throw "-ExpectedCurrentImage must be an immutable image reference."
+    }
+    if ($TaskModeOverride) {
+        if ($Action -ne "Prepare" -or $Service -ne "ltx25" -or -not $SkipBuild -or
+            -not $PinnedImage -or -not $ExpectedCurrentImage -or -not $PreserveExistingEnvironment -or
+            $ExpectedCurrentTaskMode -notin @("a2v", "a2v_experimental") -or $Recreate) {
+            throw "Task-mode override requires guarded ltx25 Prepare with pinned image and no recreation."
+        }
+    }
+    if ($ExpectedCurrentImage -and ($Action -ne "Prepare" -or $Service -ne "ltx25")) {
+        throw "-ExpectedCurrentImage may only guard ltx25 Prepare."
+    }
+    if ($PreserveExistingEnvironment -and -not $TaskModeOverride) {
+        throw "-PreserveExistingEnvironment requires a guarded task-mode override."
     }
     if ($ContainerPort -ne 8080) { throw "Shared worker container port must remain 8080." }
     if ($RestartPolicy -notin @("always", "on_failure", "never")) { throw "Unsupported restart policy '$RestartPolicy'." }
@@ -616,6 +641,23 @@ function New-Probe {
 }
 
 function Get-WorkerEnvironment {
+    param([object]$ExistingContainer)
+    if ($PreserveExistingEnvironment) {
+        if ($null -eq $ExistingContainer -or $null -eq $ExistingContainer.environment_variables) {
+            throw "Cannot preserve environment: existing group has no environment variables."
+        }
+        $Environment = @{}
+        foreach ($Property in $ExistingContainer.environment_variables.PSObject.Properties) {
+            $Environment[$Property.Name] = [string]$Property.Value
+        }
+        foreach ($Name in Get-RequiredEnvironmentNames) {
+            if ([string]::IsNullOrWhiteSpace($Environment[[string]$Name])) {
+                throw "Cannot reuse group: original environment is missing $Name."
+            }
+        }
+        $Environment["LTX_WORKER_TASK_MODE"] = $TaskModeOverride
+        return $Environment
+    }
     $Environment = @{}
     foreach ($Property in @($Stack.shared_environment.PSObject.Properties) + @($Definition.environment.PSObject.Properties)) {
         $Environment[$Property.Name] = [string]$Property.Value
@@ -623,6 +665,7 @@ function Get-WorkerEnvironment {
     foreach ($Name in Get-RequiredEnvironmentNames) {
         $Environment[[string]$Name] = Get-Setting -Name ([string]$Name) -Prompt ([string]$Name) -Secret:($SecretNames -contains [string]$Name)
     }
+    if ($TaskModeOverride) { $Environment["LTX_WORKER_TASK_MODE"] = $TaskModeOverride }
     return $Environment
 }
 
@@ -736,7 +779,7 @@ function Show-Status {
 Assert-ServiceDefinition
 Set-Location $RepoRoot
 if ($Recreate -and $Action -ne "Prepare") { throw "-Recreate is only valid with Prepare." }
-if ($AllowBootstrappingInstance -and ($Action -ne "Start" -or $Service -notin @("ltx25", "ltx25_i2v") -or
+if ($AllowBootstrappingInstance -and ($Action -ne "Start" -or $Service -notin @("ltx25", "ltx25_i2v", "ltx25_a2v_experimental") -or
     $DesiredReplicas -ne 1)) {
     throw "-AllowBootstrappingInstance is only valid for LTX Start with one replica."
 }
@@ -796,6 +839,13 @@ try {
             if ((Get-GroupStatus -Group $Existing) -ne "stopped" -or [bool]$Existing.pending_change) {
                 throw "'$GroupName' must be stably stopped before Prepare."
             }
+            if ($ExpectedCurrentImage -and [string]$Existing.container.image -ne $ExpectedCurrentImage) {
+                throw "Refusing Prepare: actual group image differs from -ExpectedCurrentImage."
+            }
+            if ($TaskModeOverride -and
+                [string]$Existing.container.environment_variables.LTX_WORKER_TASK_MODE -ne $ExpectedCurrentTaskMode) {
+                throw "Refusing Prepare: unexpected current task mode; another operator may have changed this group."
+            }
             if ($Recreate -or (Test-LegacyQueueAttachment -Group $Existing)) {
                 if (Test-LegacyQueueAttachment -Group $Existing) {
                     Write-Host "Recreating '$GroupName' to remove Salad Job Queue/autoscaler state." -ForegroundColor Cyan
@@ -805,6 +855,9 @@ try {
             }
         }
 
+        if ($ExpectedCurrentImage -and $null -eq $Existing) {
+            throw "Refusing guarded Prepare: production group does not exist."
+        }
         if (-not [string]::IsNullOrWhiteSpace($PinnedImage)) {
             $ResolvedImage = $PinnedImage.Trim()
         }
@@ -822,7 +875,7 @@ try {
             $ResolvedImage = Resolve-PinnedImage -MutableImage $Image
         }
 
-        $WorkerEnvironment = Get-WorkerEnvironment
+        $WorkerEnvironment = Get-WorkerEnvironment -ExistingContainer $(if ($null -ne $Existing) { $Existing.container } else { $null })
         $GpuClassIds = @(Resolve-GpuClassIds -Headers $Headers)
         if ($null -eq $Existing) {
             New-ContainerGroup -Headers $Headers -ResolvedImage $ResolvedImage -WorkerEnvironment $WorkerEnvironment -GpuClassIds $GpuClassIds
@@ -835,6 +888,10 @@ try {
         if ((Get-GroupStatus -Group $Prepared) -ne "stopped") { throw "Prepared group must remain stopped." }
         $Prepared = Wait-ForStoppedGroup -Headers $Headers
         Assert-PreparedGroup -Group $Prepared -ResolvedImage $ResolvedImage
+        if ($TaskModeOverride -and
+            [string]$Prepared.container.environment_variables.LTX_WORKER_TASK_MODE -ne $TaskModeOverride) {
+            throw "Salad did not activate the experimental task mode."
+        }
         Write-Host ("{0} prepared without Salad queue/autoscaler; stopped with configured replicas={1}." -f $Service, [int]$Prepared.replicas) -ForegroundColor Green
         exit 0
     }

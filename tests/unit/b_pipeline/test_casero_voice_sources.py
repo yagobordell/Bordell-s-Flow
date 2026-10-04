@@ -195,7 +195,7 @@ def test_other_voice_sources_never_call_director(
     assert artifact["voice_source"] == provider
     assert artifact["director_model"] is None
     block = tmp_path / "audio" / "runs" / artifact["run_id"] / "blocks" / "block_1"
-    assert json.loads((block / "output.json").read_text()) == {
+    assert json.loads((block / "output.json").read_text(encoding="utf-8")) == {
         "plain_script_for_recording": SCRIPT,
     }
     assert "director_usage" not in json.loads((block / "task.json").read_text())

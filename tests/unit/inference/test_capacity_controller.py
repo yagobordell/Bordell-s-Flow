@@ -6,8 +6,10 @@ import psycopg
 import pytest
 
 from ai_video_factory.inference.capacity_controller import (
+    A2V_EXPERIMENTAL_ADVISORY_LOCK_KEY,
     CapacityControllerLeadershipError,
     PostgresCapacityControllerLeadership,
+    PostgresCapacityControllerOperationLock,
     read_capacity_controller_health,
     resolve_capacity_controller_dsn,
     validate_capacity_controller_dsn,
@@ -180,3 +182,64 @@ def test_dedicated_capacity_controller_dsn_overrides_worker_dsn(
     monkeypatch.setenv("SALAD_CAPACITY_CONTROLLER_POSTGRES_DSN", dedicated)
 
     assert resolve_capacity_controller_dsn() == dedicated
+
+
+def test_experimental_lock_can_coexist_with_controller_but_blocks_its_peers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The experiment has its own lock key, so two manual operators still
+    # cannot mutate its one Salad group while production runs independently.
+    owned: set[int] = set()
+
+    class TupleResult:
+        def __init__(self, value: bool) -> None:
+            self.value = value
+
+        def fetchone(self) -> tuple[bool]:
+            return (self.value,)
+
+    class Connection:
+        def __init__(self) -> None:
+            self.closed = False
+            self.keys: set[int] = set()
+
+        def execute(self, sql: str, params: tuple[int, int]) -> TupleResult:
+            key = int(params[1])
+            if "pg_try_advisory_lock" in sql:
+                acquired = key not in owned
+                if acquired:
+                    self.keys.add(key)
+                    owned.add(key)
+                return TupleResult(acquired)
+            if "FROM pg_locks" in sql:
+                return TupleResult(key in self.keys)
+            if "pg_advisory_unlock" in sql:
+                owned.remove(key)
+                self.keys.remove(key)
+                return TupleResult(True)
+            raise AssertionError("unexpected query")
+
+        def close(self) -> None:
+            for key in self.keys:
+                owned.remove(key)
+            self.keys.clear()
+            self.closed = True
+
+    monkeypatch.setattr(psycopg, "connect", lambda *_a, **_kw: Connection())
+    prod = PostgresCapacityControllerOperationLock("postgresql://example")
+    exp = PostgresCapacityControllerOperationLock(
+        "postgresql://example", lock_key=A2V_EXPERIMENTAL_ADVISORY_LOCK_KEY
+    )
+    prod.assert_held()
+    exp.assert_held()
+    with pytest.raises(CapacityControllerLeadershipError, match="already owns"):
+        PostgresCapacityControllerOperationLock(
+            "postgresql://example", lock_key=A2V_EXPERIMENTAL_ADVISORY_LOCK_KEY
+        )
+    exp.close()
+    replacement = PostgresCapacityControllerOperationLock(
+        "postgresql://example", lock_key=A2V_EXPERIMENTAL_ADVISORY_LOCK_KEY
+    )
+    replacement.close()
+    prod.assert_held()
+    prod.close()

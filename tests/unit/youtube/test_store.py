@@ -65,7 +65,9 @@ def test_case_insensitive_lookup_preserves_original_filename(tmp_path: Path) -> 
     store.save_token("canal principal", {"token": "FAKE_EXAMPLE_ONLY_2"})
     assert store.list_channels() == ("Canal Principal",)
     assert store.load_token("CANAL PRINCIPAL")["token"] == "FAKE_EXAMPLE_ONLY_2"
-    assert not (store.directory / "canal principal.json").exists()
+    # Windows resolves differently cased names to the same on-disk file.
+    # Compare directory entry spelling rather than case-insensitive exists().
+    assert "canal principal.json" not in {p.name for p in store.directory.iterdir()}
 
 
 def test_duplicate_casefold_names_are_rejected(tmp_path: Path) -> None:

@@ -34,6 +34,7 @@ from ai_video_factory.inference.gpu_failures import (
 from ai_video_factory.inference.ports import LocalArtifact, LocalSidecarArtifact
 
 from .bootstrap import require_runtime_bootstrap_complete
+from .i2v_metrics import I2VPhaseMetrics
 from .model import (
     _CANONICAL_LANDSCAPE_SIZE,
     LTXModelFiles,
@@ -55,6 +56,33 @@ from .reference_recipe import (
 logger = logging.getLogger(__name__)
 
 LTX_A2V_TASK = "video.ltx25.audio_to_video"
+LTX_A2V_EXPERIMENTAL_TASK = "video.ltx25.audio_to_video_experimental"
+# Each experimental profile is an immutable request identity. None replaces an
+# existing A2V profile or the separately deployed I2V service.
+LTX_A2V_BENCH_CPU_PROFILE = "ltx25-a2v-reference-bench-fp8cpu-eager-a95ab-v1"
+LTX_A2V_BENCH_NONE_PROFILE = "ltx25-a2v-reference-bench-fp8none-eager-a95ab-v1"
+LTX_A2V_BENCH_CPU_TRITON_PROFILE = "ltx25-a2v-reference-bench-fp8cpu-triton-a95ab-v1"
+LTX_A2V_BENCH_NONE_TRITON_PROFILE = "ltx25-a2v-reference-bench-fp8none-triton-a95ab-v1"
+LTX_A2V_BENCH_STATIC_CPU_PROFILE = "ltx25-a2v-static-bench-fp8cpu-eager-a95ab-v1"
+LTX_A2V_BENCH_STATIC_NONE_PROFILE = "ltx25-a2v-static-bench-fp8none-eager-a95ab-v1"
+# New immutable production identity for the exact reference recipe validated on
+# RTX 5090 (three CPU + three FP8/no-offload videos; decoded A/V identical).
+# Preserve all historical profile strings for already-submitted jobs.
+LTX_A2V_PRODUCTION_FAST_PROFILE = "ltx25-a2v-reference-distilled-fp8none-eager-a95ab-prod-v1"
+LTX_A2V_EXPERIMENTS = {
+    LTX_A2V_BENCH_CPU_PROFILE: ("cpu", "eager"),
+    LTX_A2V_BENCH_NONE_PROFILE: ("none", "eager"),
+    LTX_A2V_BENCH_CPU_TRITON_PROFILE: ("cpu", "triton"),
+    LTX_A2V_BENCH_NONE_TRITON_PROFILE: ("none", "triton"),
+    LTX_A2V_BENCH_STATIC_CPU_PROFILE: ("cpu", "eager"),
+    LTX_A2V_BENCH_STATIC_NONE_PROFILE: ("none", "eager"),
+}
+# This map is for pipeline residency/decoder choice; only EXPERIMENTS may be
+# submitted to the separate experimental task queue.
+LTX_A2V_RESIDENCY_PROFILES = {
+    **LTX_A2V_EXPERIMENTS,
+    LTX_A2V_PRODUCTION_FAST_PROFILE: ("none", "eager"),
+}
 LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v5"
 LTX_A2V_REFERENCE_GENERATION_PROFILE = (
     "ltx25-a2v-reference-distilled-a95ab856-model6c7e5e5-fp8cpu-eagersdpa-v1"
@@ -110,7 +138,7 @@ class LTXAudioToVideoParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    generation_profile: str = LTX_A2V_GENERATION_PROFILE
+    generation_profile: str = LTX_A2V_PRODUCTION_FAST_PROFILE
     prompt: str = Field(default=LTX_A2V_DEFAULT_PROMPT, min_length=1, max_length=8000)
     seed: int = Field(default=42, ge=0, le=2**63 - 1)
     width: int = Field(default=1280, gt=0, le=8192)
@@ -122,6 +150,7 @@ class LTXAudioToVideoParameters(BaseModel):
     def validate_generation_profile(cls, value: str) -> str:
         if value not in (
             LTX_A2V_GENERATION_PROFILE,
+            LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
@@ -130,6 +159,7 @@ class LTXAudioToVideoParameters(BaseModel):
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
             LTX_A2V_DEV_GENERATION_PROFILE,
             LTX_A2V_GUIDED_GENERATION_PROFILE,
+            *LTX_A2V_EXPERIMENTS,
         ):
             raise ValueError(
                 "generation_profile must be fast, reference, static-reference, "
@@ -268,6 +298,7 @@ class _A2VBindings:
     distilled_sigmas: Any
     stage_2_sigmas: Any
     default_negative_prompt: str
+    triton_probe: Any = None
 
 
 def _load_a2v_bindings() -> _A2VBindings:
@@ -280,6 +311,7 @@ def _load_a2v_bindings() -> _A2VBindings:
         )
         from ltx_core.model.video_vae import get_video_chunks_number
         from ltx_core.model.video_vae.transformer import apply as diffvae_apply
+        from ltx_core.model.video_vae.transformer.fallback_na import triton_na_available
         from ltx_pipelines.a2vid_two_stage import A2VidPipelineTwoStage
         from ltx_pipelines.utils import helpers as tiling_helpers
         from ltx_pipelines.utils.args import ImageConditioningInput
@@ -319,6 +351,7 @@ def _load_a2v_bindings() -> _A2VBindings:
         distilled_sigmas=DISTILLED_SIGMAS,
         stage_2_sigmas=STAGE_2_DISTILLED_SIGMAS,
         default_negative_prompt=DEFAULT_NEGATIVE_PROMPT,
+        triton_probe=triton_na_available,
     )
 
 
@@ -892,6 +925,7 @@ class DirectLTX25AudioToVideoBackend:
         self._prepared = False
         self._pipeline: Any | None = None
         self._pipeline_profile: str | None = None
+        self._pipeline_effective_backend: str | None = None
         self._pipeline_params: Any | None = None
         self._mode_controller.register("audio_to_video", self._release_pipeline_locked)
 
@@ -938,6 +972,14 @@ class DirectLTX25AudioToVideoBackend:
         parameters: LTXAudioToVideoParameters,
     ) -> dict[str, Any]:
         generation_started = time.monotonic()
+        experimental = parameters.generation_profile in LTX_A2V_EXPERIMENTS
+        # The validated production path retains benchmark phase diagnostics,
+        # allowing comparable operational timings and VRAM telemetry.
+        profiled = experimental or parameters.generation_profile == LTX_A2V_PRODUCTION_FAST_PROFILE
+        # CUDA synchronization is deliberately opt-in: it changes benchmark
+        # overhead but neither tensors nor the original production execution.
+        metrics: I2VPhaseMetrics | None = None
+        audio_prepare_started = time.monotonic()
         diagnostic_checkpoint("a2v.audio.prepare.start")
         audio_probe = probe_audio(audio_path)
         _validate_audio_duration(audio_probe, fps=parameters.fps)
@@ -953,14 +995,18 @@ class DirectLTX25AudioToVideoBackend:
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+            LTX_A2V_BENCH_STATIC_CPU_PROFILE,
+            LTX_A2V_BENCH_STATIC_NONE_PROFILE,
         )
         reference = parameters.generation_profile in (
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+            *LTX_A2V_EXPERIMENTS,
         )
         guided = parameters.generation_profile == LTX_A2V_GUIDED_GENERATION_PROFILE
         reference_audio_plan: ReferenceAudioPlan | None = None
@@ -994,6 +1040,7 @@ class DirectLTX25AudioToVideoBackend:
             )
 
         diagnostic_checkpoint("a2v.audio.prepare.done")
+        audio_prepare_seconds = time.monotonic() - audio_prepare_started
         with self._lock:
             diagnostic_checkpoint("a2v.avatar.prepare.start")
             bindings = self._get_bindings()
@@ -1020,9 +1067,13 @@ class DirectLTX25AudioToVideoBackend:
             )
 
             cuda = getattr(bindings.torch, "cuda", None)
-            reset_peak = getattr(cuda, "reset_peak_memory_stats", None)
-            if reset_peak is not None:
-                reset_peak()
+            if profiled:
+                metrics = I2VPhaseMetrics(bindings.torch, self._device)
+                metrics.begin_generation()
+            else:
+                reset_peak = getattr(cuda, "reset_peak_memory_stats", None)
+                if reset_peak is not None:
+                    reset_peak()
 
             diagnostic_checkpoint("a2v.pipeline.build.start")
             with bindings.torch.inference_mode():
@@ -1121,6 +1172,7 @@ class DirectLTX25AudioToVideoBackend:
                             images=[conditioning],
                             audio_path=str(pipeline_audio_path.resolve()),
                             enhance_prompt=False,
+                            **({"metrics": metrics} if metrics is not None else {}),
                             **(
                                 {
                                     "negative_prompt": LTX_A2V_STATIC_NEGATIVE_PROMPT,
@@ -1168,7 +1220,9 @@ class DirectLTX25AudioToVideoBackend:
                 diagnostic_checkpoint("a2v.pipeline.inference.done", sync_cuda=True)
                 inference_seconds = time.monotonic() - inference_started
 
-                output_video = result.video
+                # Decoder yields video tiles lazily: measure consumption rather
+                # than the almost free call returning the iterator.
+                output_video = metrics.video_chunks(result.video) if metrics else result.video
                 if (pipeline_width, pipeline_height) != (
                     parameters.width,
                     parameters.height,
@@ -1194,6 +1248,11 @@ class DirectLTX25AudioToVideoBackend:
                 )
                 diagnostic_checkpoint("a2v.video.encode.done", sync_cuda=True)
                 encode_seconds = time.monotonic() - encode_started
+                if metrics is not None:
+                    metrics.timings["encode_mux_excluding_video_decode_seconds"] = max(
+                        0.0, encode_seconds
+                        - metrics.timings.get("video_decode_seconds", 0.0)
+                    )
 
                 peak_vram_bytes = None
                 max_memory = getattr(cuda, "max_memory_allocated", None)
@@ -1203,6 +1262,29 @@ class DirectLTX25AudioToVideoBackend:
         effective_audio_duration = _result_audio_duration(result.audio)
         output_video_duration = _output_duration(output_path)
         generation_elapsed_seconds = model_load_seconds + inference_seconds + encode_seconds
+        experimental_timings = metrics.timings if metrics is not None else {}
+        if metrics is not None:
+            experimental_timings["audio_prepare_seconds"] = audio_prepare_seconds
+            experimental_timings["pipeline_build_seconds"] = model_load_seconds
+            experimental_timings["pipeline_inference_seconds"] = inference_seconds
+            experimental_timings["audio_output_decode_seconds"] = 0.0  # Original PCM, no decoder
+            logger.info(
+                "LTX25_A2V_PHASE_METRICS %s",
+                json.dumps(
+                    {
+                        "generation_profile": parameters.generation_profile,
+                        "offload_mode": LTX_A2V_RESIDENCY_PROFILES[
+                            parameters.generation_profile
+                        ][0],
+                        "diffvae_backend_effective": self._pipeline_effective_backend,
+                        "pipeline_reused": not built_now,
+                        "cuda_peak_reset": metrics.cuda_peak_reset,
+                        **experimental_timings,
+                        **metrics.cuda_peak(),
+                    },
+                    sort_keys=True,
+                ),
+            )
         total_elapsed_seconds = time.monotonic() - generation_started
         logger.info(
             "LTX25_A2V_INFERENCE_METRIC input_audio_seconds=%.3f "
@@ -1270,7 +1352,17 @@ class DirectLTX25AudioToVideoBackend:
             "audio_frozen_stage_1": True,
             "audio_frozen_stage_2": True,
             "quantization": "fp8_cast",
-            "offload_mode": "disk" if guided or memory_safe else "cpu",
+            "offload_mode": (
+                LTX_A2V_RESIDENCY_PROFILES[parameters.generation_profile][0]
+                if parameters.generation_profile in LTX_A2V_RESIDENCY_PROFILES
+                else "disk" if guided or memory_safe else "cpu"
+            ),
+            "diffvae_backend_requested": (
+                LTX_A2V_RESIDENCY_PROFILES[parameters.generation_profile][1]
+                if parameters.generation_profile in LTX_A2V_RESIDENCY_PROFILES
+                else "eager"
+            ),
+            "diffvae_backend_effective": self._pipeline_effective_backend,
             "activation_budget_cap_bytes": (
                 LTX_A2V_SAFE_TILING_BUDGET_BYTES
                 if parameters.generation_profile
@@ -1332,6 +1424,8 @@ class DirectLTX25AudioToVideoBackend:
             "peak_vram_bytes": peak_vram_bytes,
             "pipeline_reused": not built_now,
             "recommended_max_duration_seconds": LTX_A2V_RECOMMENDED_MAX_SECONDS,
+            **experimental_timings,
+            **(metrics.cuda_peak() if metrics is not None else {}),
         }
 
     def _get_bindings(self) -> _A2VBindings:
@@ -1356,6 +1450,7 @@ class DirectLTX25AudioToVideoBackend:
             return
         self._pipeline = None
         self._pipeline_profile = None
+        self._pipeline_effective_backend = None
         gc.collect()
         if self._bindings is not None:
             empty_cache = getattr(self._bindings.torch.cuda, "empty_cache", None)
@@ -1374,11 +1469,13 @@ class DirectLTX25AudioToVideoBackend:
         fast = generation_profile == LTX_A2V_GENERATION_PROFILE
         reference = generation_profile in (
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+            *LTX_A2V_EXPERIMENTS,
         )
         distilled = fast or reference
         if not distilled:
@@ -1409,6 +1506,14 @@ class DirectLTX25AudioToVideoBackend:
             ]
         )
         _force_diffvae_eager_sdpa(bindings.diffvae_apply)
+        requested_backend = LTX_A2V_RESIDENCY_PROFILES.get(generation_profile, ("cpu", "eager"))[1]
+        effective_backend = "eager"
+        if requested_backend == "triton":
+            if callable(bindings.triton_probe) and bindings.triton_probe():
+                bindings.diffvae_apply.triton_na_available = bindings.triton_probe
+                effective_backend = "triton"
+            else:
+                logger.warning("LTX25_A2V_TRITON_UNAVAILABLE fallback=eager")
         pipeline_cls = (
             bindings.reference_a2v_pipeline if reference else bindings.a2v_pipeline
         )
@@ -1422,14 +1527,16 @@ class DirectLTX25AudioToVideoBackend:
             LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
+        selected_offload = LTX_A2V_RESIDENCY_PROFILES.get(generation_profile, ("cpu", "eager"))[0]
         offload_mode = (
-            bindings.offload_mode.DISK
-            if guided or memory_safe else bindings.offload_mode.CPU
+            bindings.offload_mode.DISK if guided or memory_safe
+            else bindings.offload_mode.NONE if selected_offload == "none"
+            else bindings.offload_mode.CPU
         )
         logger.info(
             "LTX25_A2V_OFFLOAD generation_profile=%s mode=%s",
             generation_profile,
-            "disk" if guided or memory_safe else "cpu",
+            "disk" if guided or memory_safe else selected_offload,
         )
         self._pipeline = pipeline_cls(
             model_paths=model_paths,
@@ -1440,7 +1547,17 @@ class DirectLTX25AudioToVideoBackend:
             quantization=quantization,
             offload_mode=offload_mode,
         )
+        if generation_profile in LTX_A2V_EXPERIMENTS and selected_offload == "cpu":
+            # An explicit hook exists only on our reference pipeline; fake
+            # CPU-only test pipelines deliberately do not import LTX or torch.
+            install_guard = getattr(
+                self._pipeline, "configure_experimental_streaming_guard", None
+            )
+            if callable(install_guard):
+                install_guard()
+                logger.info("LTX25_A2V_EXPERIMENTAL_STREAMING_EVAL_GUARD enabled=true")
         self._pipeline_profile = generation_profile
+        self._pipeline_effective_backend = effective_backend
         self._pipeline_params = bindings.detect_params(str(transformer))
         return self._pipeline, True
 
@@ -1448,8 +1565,11 @@ class DirectLTX25AudioToVideoBackend:
 class LTXAudioToVideoTaskRunner:
     task_name = LTX_A2V_TASK
 
-    def __init__(self, *, backend: LTXAudioToVideoBackend) -> None:
+    def __init__(
+        self, *, backend: LTXAudioToVideoBackend, experimental: bool = False
+    ) -> None:
         self._backend = backend
+        self.task_name = LTX_A2V_EXPERIMENTAL_TASK if experimental else LTX_A2V_TASK
 
     def prepare(self) -> None:
         self._backend.prepare()
@@ -1477,6 +1597,22 @@ class LTXAudioToVideoTaskRunner:
             # Record the OOM with its original allocator state, before cleanup
             # invalidates resident models and obscures the failing allocation.
             diagnostic_failure(exc)
+            if (
+                request.task == LTX_A2V_EXPERIMENTAL_TASK
+                and isinstance(exc, TypeError)
+                and "cannot unpack non-iterable FeedForward object" in str(exc)
+            ):
+                # A malformed live PyTorch module hierarchy is not transient.
+                # Never retry in the same CUDA process after this failure.
+                logger.error(
+                    "A2V_EXPERIMENTAL_STREAMING_STRUCTURE_INVALID job_id=%s",
+                    request.job_id,
+                )
+                raise NonRetryableTaskError(
+                    "A2V_EXPERIMENTAL_STREAMING_STRUCTURE_INVALID: "
+                    "streaming module traversal failed; keep the GPU worker stopped "
+                    "and inspect its original diagnostic traceback"
+                ) from exc
             if is_retryable_gpu_failure(exc) or classify_gpu_failure(exc) == "decoder_budget":
                 invalidator = getattr(self._backend, "invalidate_pipeline", None)
                 if callable(invalidator):
@@ -1516,6 +1652,14 @@ class LTXAudioToVideoTaskRunner:
             raise _input_error(
                 "INVALID_REQUEST",
                 f"LTXAudioToVideoTaskRunner cannot execute task {request.task!r}",
+            )
+        if (
+            self.task_name == LTX_A2V_EXPERIMENTAL_TASK
+            and request.parameters.get("generation_profile") not in LTX_A2V_EXPERIMENTS
+        ):
+            raise _input_error(
+                "INVALID_REQUEST",
+                "Experimental A2V task requires an immutable experimental profile",
             )
         if request.max_attempts != DEFAULT_GPU_MAX_ATTEMPTS:
             raise _input_error(

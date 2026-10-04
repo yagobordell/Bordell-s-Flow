@@ -8,6 +8,7 @@ from dataclasses import dataclass
 CONTROLLER_NAME = "salad-project"
 _ADVISORY_LOCK_NAMESPACE = 1_497_450_319
 _ADVISORY_LOCK_KEY = 1
+A2V_EXPERIMENTAL_ADVISORY_LOCK_KEY = 2
 
 
 class CapacityControllerLeadershipError(RuntimeError):
@@ -65,20 +66,20 @@ class CapacityControllerHealth:
 class PostgresCapacityControllerOperationLock:
     """Session-scoped guard for manual capacity mutations.
 
-    It uses the exact same advisory lock as controller leadership, so a live
-    controller and an operator mutation can never own Salad capacity authority
-    concurrently.
+    The default lock excludes the production controller. An explicit,
+    distinct key protects the isolated A2V experimental group independently.
     """
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, lock_key: int = _ADVISORY_LOCK_KEY) -> None:
         import psycopg
 
+        self._lock_key = lock_key
         resolved = validate_capacity_controller_dsn(dsn)
         self._connection = psycopg.connect(resolved, autocommit=True)
         try:
             row = self._connection.execute(
                 "SELECT pg_try_advisory_lock(%s, %s)",
-                (_ADVISORY_LOCK_NAMESPACE, _ADVISORY_LOCK_KEY),
+                (_ADVISORY_LOCK_NAMESPACE, self._lock_key),
             ).fetchone()
             if row is None or not bool(row[0]):
                 raise CapacityControllerLeadershipError(
@@ -108,7 +109,7 @@ class PostgresCapacityControllerOperationLock:
                       AND granted
                 )
                 """,
-                (_ADVISORY_LOCK_NAMESPACE, _ADVISORY_LOCK_KEY),
+                (_ADVISORY_LOCK_NAMESPACE, self._lock_key),
             ).fetchone()
         except Exception as error:
             raise CapacityControllerLeadershipError(
@@ -138,7 +139,7 @@ class PostgresCapacityControllerOperationLock:
         try:
             self._connection.execute(
                 "SELECT pg_advisory_unlock(%s, %s)",
-                (_ADVISORY_LOCK_NAMESPACE, _ADVISORY_LOCK_KEY),
+                (_ADVISORY_LOCK_NAMESPACE, self._lock_key),
             )
         except Exception:
             # A lost PostgreSQL session releases session-scoped advisory locks

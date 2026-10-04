@@ -53,7 +53,8 @@ def test_independent_salad_control_plane_and_all_workers_are_preserved() -> None
         "qwen_image_21", "ltx25", "ltx25_i2v", "realesrgan",
     }
     assert manifest["stack"]["job_transport"] == "postgres"
-    assert set(manifest["services"]) == required_services
+    assert required_services <= set(manifest["services"])
+    assert set(manifest["services"]) - required_services <= {"ltx25_a2v_experimental"}
     assert set(manifest["stack"]["service_order"]) == required_services
     for service in manifest["services"].values():
         assert (ROOT / service["dockerfile"]).is_file()

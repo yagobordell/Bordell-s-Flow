@@ -5,11 +5,34 @@ function Import-EnvFile {
     if (-not [IO.Path]::IsPathRooted($Resolved)) {
         $Resolved = Join-Path $RepoRoot $Resolved
     }
+    # Mirror the Python smoke tools, which also read the checkout's .env.
     $ConfigFiles = @(
         (Join-Path $RepoRoot "config\app.env"),
         (Join-Path $RepoRoot "config\salad.env"),
-        $Resolved
+        (Join-Path $RepoRoot ".env")
     )
+
+    # A caller operating in a worktree may explicitly select the main
+    # checkout's config/salad.env. Read its sibling app.env and root .env as
+    # well, so the capacity-lock helper sees the same PostgreSQL DSN.
+    $Resolved = [IO.Path]::GetFullPath($Resolved)
+    $ConfigDir = Split-Path -Parent $Resolved
+    if ((Split-Path -Leaf $Resolved) -eq "salad.env" -and
+        (Split-Path -Leaf $ConfigDir) -eq "config") {
+        $ExternalRoot = Split-Path -Parent $ConfigDir
+        if (-not [string]::Equals(
+            [IO.Path]::GetFullPath($ExternalRoot).TrimEnd('\', '/'),
+            [IO.Path]::GetFullPath($RepoRoot).TrimEnd('\', '/'),
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+            $ConfigFiles += @(
+                (Join-Path $ConfigDir "app.env"),
+                (Join-Path $ExternalRoot ".env")
+            )
+        }
+    }
+    $ConfigFiles += $Resolved
+    $ConfigFiles = @($ConfigFiles | Select-Object -Unique)
 
     foreach ($ConfigFile in $ConfigFiles) {
         if (-not (Test-Path -LiteralPath $ConfigFile -PathType Leaf)) {

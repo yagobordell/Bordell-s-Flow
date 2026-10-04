@@ -237,11 +237,23 @@ def main() -> int:
     parser.add_argument("--poll-seconds", type=float, default=15.0)
     parser.add_argument("--expected-image", default="")
     parser.add_argument(
+        "--reuse-production",
+        action="store_true",
+        help=(
+            "Only with --service ltx25 and a pinned image: accept the explicitly "
+            "prepared experimental A2V task mode instead of normal production mode."
+        ),
+    )
+    parser.add_argument(
         "--check-config-only",
         action="store_true",
         help="Validate local account, service and image configuration without contacting Salad.",
     )
-    parser.add_argument("--service", choices=("ltx25", "ltx25_i2v"), default="ltx25")
+    parser.add_argument(
+        "--service",
+        choices=("ltx25", "ltx25_i2v", "ltx25_a2v_experimental"),
+        default="ltx25",
+    )
     args = parser.parse_args()
 
     env_file = Path(args.env_file)
@@ -258,8 +270,23 @@ def main() -> int:
     )
     ltx = manifest["services"][args.service]
     task_mode = ltx["environment"]["LTX_WORKER_TASK_MODE"]
-    if task_mode not in {"i2v", "a2v"}:
-        raise SystemExit("LTX worker must be dedicated to i2v or a2v")
+    if task_mode not in {"i2v", "a2v", "a2v_experimental"}:
+        raise SystemExit("Unsupported LTX worker task mode in the service manifest")
+    expected_task_mode = task_mode
+    if args.reuse_production:
+        if args.service != "ltx25" or task_mode != "a2v" or not args.expected_image:
+            raise SystemExit(
+                "--reuse-production requires --service ltx25, the normal "
+                "production a2v manifest mode and --expected-image"
+            )
+        experimental_mode = manifest["services"]["ltx25_a2v_experimental"][
+            "environment"
+        ]["LTX_WORKER_TASK_MODE"]
+        if experimental_mode != "a2v_experimental":
+            raise SystemExit(
+                "Experimental task mode in the manifest changed; refusing shared group"
+            )
+        expected_task_mode = experimental_mode
     image = ltx["image"]
     image_repository = image.rsplit(":", maxsplit=1)[0]
     if args.expected_image:
@@ -275,7 +302,7 @@ def main() -> int:
     if args.check_config_only:
         print(
             f"LTX readiness configuration OK service={args.service} "
-            "account selected from environment"
+            f"mode={expected_task_mode} account selected from environment"
         )
         return 0
 
@@ -296,7 +323,7 @@ def main() -> int:
             group_name=ltx["group_name"],
             image_repository=image_repository,
             expected_image=args.expected_image,
-            expected_task_mode=task_mode,
+            expected_task_mode=expected_task_mode,
             timeout_seconds=args.timeout_seconds,
             poll_seconds=args.poll_seconds,
         )

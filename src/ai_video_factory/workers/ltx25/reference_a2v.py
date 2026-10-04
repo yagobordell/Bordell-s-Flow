@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from contextlib import nullcontext
 from functools import partial
 
 import torch
@@ -28,6 +29,9 @@ from ltx_pipelines.utils.types import ModalitySpec, PipelineOutput
 
 from ai_video_factory.inference.gpu_diagnostics import diagnostic_checkpoint
 
+from .a2v_prompt_cache import A2VBenchmarkPromptCache
+from .a2v_prompt_metrics import profile_a2v_prompt_encoder
+from .i2v_metrics import I2VPhaseMetrics
 from .reference_recipe import LTX_A2V_REFERENCE_RECIPE
 
 
@@ -55,6 +59,11 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
     differ by stage, and padded audio is checked before frozen conditioning.
     """
 
+    def configure_experimental_streaming_guard(self) -> None:
+        from .a2v_streaming_guard import configure_experimental_a2v_streaming
+
+        configure_experimental_a2v_streaming(self)
+
     def __call__(  # noqa: PLR0913
         self,
         prompt: str,
@@ -76,7 +85,9 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
         negative_prompt: str | None = None,
         stage_1_image_strength: float | None = None,
         video_cfg_scale: float = 1.0,
+        metrics: I2VPhaseMetrics | None = None,
     ) -> PipelineOutput:
+        phase = metrics.phase if metrics is not None else lambda _: nullcontext()
         if num_frames < 1 or (num_frames - 1) % 8 != 0:
             raise ValueError(
                 "reference A2V num_frames must satisfy the LTX 8k+1 temporal grid"
@@ -112,7 +123,8 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
             vae_dtype = dtype
 
         diagnostic_checkpoint("reference.audio.decode.start")
-        decoded_audio = decode_audio_from_file(audio_path, self.device, 0.0, None)
+        with phase("audio_input_decode_seconds"):
+            decoded_audio = decode_audio_from_file(audio_path, self.device, 0.0, None)
         if decoded_audio is None:
             raise ValueError(
                 f"Failed to decode audio from {audio_path}. Please check the file and try again."
@@ -130,12 +142,55 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
         # opt-in static variant encodes a *separate* negative; positive text is
         # passed unchanged and the prompt enhancer is explicitly disabled.
         diagnostic_checkpoint("reference.gemma.prompt_encode.start")
-        contexts = self.prompt_encoder(
-            [prompt] if negative_prompt is None else [prompt, negative_prompt],
-            enhance_first_prompt=enhance_prompt,
-            enhance_static_cache=enhance_static_cache,
-            enhance_prompt_image=stage_1_images[0][0] if stage_1_images else None,
-        )
+        prompts = (prompt,) if negative_prompt is None else (prompt, negative_prompt)
+        # Cache only post-connector tensors and only for controlled, unchanged
+        # experimental prompts. The original production path is untouched.
+        use_cache = metrics is not None and not enhance_prompt and not enhance_static_cache
+        cache = None
+        if use_cache:
+            cache = getattr(self, "_benchmark_prompt_cache", None)
+            if cache is None:
+                cache = A2VBenchmarkPromptCache()
+                self._benchmark_prompt_cache = cache
+        with phase("prompt_encode_seconds"):
+            contexts = None
+            if cache is not None:
+                with phase("prompt_cache_restore_seconds"):
+                    contexts = cache.restore(prompts, device=self.device)
+            if metrics is not None:
+                metrics.timings["prompt_cache_hit"] = float(contexts is not None)
+                # The smoke contract expects every instrumented phase; an
+                # intentional cache hit has zero Gemma load/release/build.
+                if contexts is not None:
+                    for name in (
+                        "prompt_model_acquire_seconds",
+                        "prompt_model_release_seconds",
+                        "prompt_embeddings_processor_build_seconds",
+                    ):
+                        metrics.timings[name] = 0.0
+            if contexts is None:
+                prompt_profiler = (
+                    profile_a2v_prompt_encoder(self.prompt_encoder, metrics)
+                    if metrics is not None else nullcontext()
+                )
+                with prompt_profiler:
+                    contexts = self.prompt_encoder(
+                        list(prompts),
+                        enhance_first_prompt=enhance_prompt,
+                        enhance_static_cache=enhance_static_cache,
+                        enhance_prompt_image=stage_1_images[0][0] if stage_1_images else None,
+                    )
+                if cache is not None:
+                    with phase("prompt_cache_store_seconds"):
+                        cache.store(prompts, contexts)
+        if metrics is not None:
+            metrics.timings["prompt_other_execution_seconds"] = max(
+                0.0,
+                metrics.timings["prompt_encode_seconds"]
+                - metrics.timings.get("prompt_model_acquire_seconds", 0.0)
+                - metrics.timings.get("prompt_model_release_seconds", 0.0)
+                - metrics.timings.get("prompt_embeddings_processor_build_seconds", 0.0),
+            )
         diagnostic_checkpoint("reference.gemma.prompt_encode.done", sync_cuda=True)
         ctx_p = contexts[0]
         v_context_p = ctx_p.video_encoding
@@ -178,9 +233,10 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
         )
 
         diagnostic_checkpoint("reference.audio_vae.encode.start")
-        encoded_audio_latent = self.audio_conditioner(
-            lambda enc: vae_encode_audio(decoded_audio, enc, None)
-        )
+        with phase("audio_vae_encode_seconds"):
+            encoded_audio_latent = self.audio_conditioner(
+                lambda enc: vae_encode_audio(decoded_audio, enc, None)
+            )
         audio_shape = AudioLatentShape.from_duration(
             batch=1,
             duration=video_duration,
@@ -204,17 +260,18 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
             fps=frame_rate,
         )
         diagnostic_checkpoint("reference.image_conditioning.stage1.start")
-        stage_1_conditionings = self.image_conditioner(
-            lambda enc: combined_image_conditionings(
-                images=stage_1_images,
-                height=stage_1_output_shape.height,
-                width=stage_1_output_shape.width,
-                video_encoder=enc,
-                dtype=dtype,
-                device=self.device,
-                color_space=color_space,
+        with phase("image_conditioning_stage1_seconds"):
+            stage_1_conditionings = self.image_conditioner(
+                lambda enc: combined_image_conditionings(
+                    images=stage_1_images,
+                    height=stage_1_output_shape.height,
+                    width=stage_1_output_shape.width,
+                    video_encoder=enc,
+                    dtype=dtype,
+                    device=self.device,
+                    color_space=color_space,
+                )
             )
-        )
 
         stage_1_sampler = {
             "stepper": EulerAncestralDiffusionStep(
@@ -229,31 +286,33 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
             ),
         }
         diagnostic_checkpoint("reference.diffusion.stage1.start")
-        video_state, _ = self.stage_1(
-            denoiser=stage_1_denoiser,
-            sigmas=stage_1_sigmas.to(dtype=torch.float32, device=self.device),
-            noiser=noiser,
-            width=stage_1_output_shape.width,
-            height=stage_1_output_shape.height,
-            frames=num_frames,
-            fps=frame_rate,
-            video=ModalitySpec(
-                context=v_context_p,
-                conditionings=stage_1_conditionings,
-            ),
-            audio=ModalitySpec(
-                context=a_context_p,
-                frozen=LTX_A2V_REFERENCE_RECIPE.audio_frozen_stage_1,
-                noise_scale=0.0,
-                initial_latent=encoded_audio_latent,
-            ),
-            max_batch_size=max_batch_size,
-            **stage_1_sampler,
-        )
+        with phase("stage1_diffusion_seconds"):
+            video_state, _ = self.stage_1(
+                denoiser=stage_1_denoiser,
+                sigmas=stage_1_sigmas.to(dtype=torch.float32, device=self.device),
+                noiser=noiser,
+                width=stage_1_output_shape.width,
+                height=stage_1_output_shape.height,
+                frames=num_frames,
+                fps=frame_rate,
+                video=ModalitySpec(
+                    context=v_context_p,
+                    conditionings=stage_1_conditionings,
+                ),
+                audio=ModalitySpec(
+                    context=a_context_p,
+                    frozen=LTX_A2V_REFERENCE_RECIPE.audio_frozen_stage_1,
+                    noise_scale=0.0,
+                    initial_latent=encoded_audio_latent,
+                ),
+                max_batch_size=max_batch_size,
+                **stage_1_sampler,
+            )
 
         diagnostic_checkpoint("reference.diffusion.stage1.done", sync_cuda=True)
         diagnostic_checkpoint("reference.latent.upsample.start")
-        upscaled_video_latent = self.upsampler(video_state.latent[:1])
+        with phase("spatial_upsample_seconds"):
+            upscaled_video_latent = self.upsampler(video_state.latent[:1])
         stage_2_output_shape = VideoPixelShape(
             batch=1,
             frames=num_frames,
@@ -262,43 +321,47 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
             fps=frame_rate,
         )
         diagnostic_checkpoint("reference.image_conditioning.stage2.start")
-        stage_2_conditionings = self.image_conditioner(
-            lambda enc: combined_image_conditionings(
-                images=stage_2_images,
-                height=stage_2_output_shape.height,
-                width=stage_2_output_shape.width,
-                video_encoder=enc,
-                dtype=dtype,
-                device=self.device,
-                color_space=color_space,
+        with phase("image_conditioning_stage2_seconds"):
+            stage_2_conditionings = self.image_conditioner(
+                lambda enc: combined_image_conditionings(
+                    images=stage_2_images,
+                    height=stage_2_output_shape.height,
+                    width=stage_2_output_shape.width,
+                    video_encoder=enc,
+                    dtype=dtype,
+                    device=self.device,
+                    color_space=color_space,
+                )
             )
-        )
 
         diagnostic_checkpoint("reference.diffusion.stage2.start")
-        video_state, _ = self.stage_2(
-            denoiser=SimpleDenoiser(v_context_p, a_context_p),
-            sigmas=stage_2_sigmas.to(dtype=torch.float32, device=self.device),
-            noiser=noiser,
-            width=width,
-            height=height,
-            frames=num_frames,
-            fps=frame_rate,
-            video=ModalitySpec(
-                context=v_context_p,
-                conditionings=stage_2_conditionings,
-                noise_scale=stage_2_sigmas[0].item(),
-                initial_latent=upscaled_video_latent,
-            ),
-            audio=ModalitySpec(
-                context=a_context_p,
-                frozen=LTX_A2V_REFERENCE_RECIPE.audio_frozen_stage_2,
-                noise_scale=0.0,
-                initial_latent=encoded_audio_latent,
-            ),
-        )
+        with phase("stage2_diffusion_seconds"):
+            video_state, _ = self.stage_2(
+                denoiser=SimpleDenoiser(v_context_p, a_context_p),
+                sigmas=stage_2_sigmas.to(dtype=torch.float32, device=self.device),
+                noiser=noiser,
+                width=width,
+                height=height,
+                frames=num_frames,
+                fps=frame_rate,
+                video=ModalitySpec(
+                    context=v_context_p,
+                    conditionings=stage_2_conditionings,
+                    noise_scale=stage_2_sigmas[0].item(),
+                    initial_latent=upscaled_video_latent,
+                ),
+                audio=ModalitySpec(
+                    context=a_context_p,
+                    frozen=LTX_A2V_REFERENCE_RECIPE.audio_frozen_stage_2,
+                    noise_scale=0.0,
+                    initial_latent=encoded_audio_latent,
+                ),
+            )
 
         diagnostic_checkpoint("reference.diffusion.stage2.done", sync_cuda=True)
         diagnostic_checkpoint("reference.diffvae.decode.start")
+        # Video decoder returns a lazy iterator; actual kernel time is timed
+        # in the worker as encode_video consumes it, not in this call.
         decoded_video = self.video_decoder(
             video_state.latent,
             tiling_config,

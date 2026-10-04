@@ -475,6 +475,65 @@
         "start_replicas": 1,
         "max_replicas": 1
       }
+    },
+    "ltx25_a2v_experimental": {
+      "display_name": "AI Video Factory LTX A2V FP8 EXPERIMENT ONLY",
+      "group_name": "ai-video-factory-ltx25-a2v-fp8-experiment-v1",
+      "dockerfile": "docker/workers/ltx25/Dockerfile",
+      "image": "docker.io/yagobordell/ai-video-factory:ltx25-a2v-fp8-experiment-v1",
+      "priority": "high",
+      "resources": {
+        "cpu": 8,
+        "memory": 40960,
+        "shm_size": 8192,
+        "storage_amount": 171798691840,
+        "gpu_class_names": [
+          "RTX 5090 (32 GB)"
+        ]
+      },
+      "environment": {
+        "INFERENCE_WORKER_LEASE_SECONDS": "900",
+        "LTX_MODEL_ROOT": "/workspace/models/ltx-2.5",
+        "LTX_MODEL_REPOSITORY": "Lightricks/LTX-2.5",
+        "LTX_MODEL_REVISION": "6c7e5e573ac1667efc83407806fe9b0b93730e60",
+        "LTX_INCLUDE_A2V_DEV_ASSETS": "false",
+        "LTX_DEVICE": "cuda",
+        "PYTHONFAULTHANDLER": "1",
+        "SALAD_NETWORK_MIN_DOWNLOAD_MBPS": "100",
+        "SALAD_NETWORK_TEST_BYTES": "25000000",
+        "SALAD_NETWORK_TEST_ATTEMPTS": "3",
+        "SALAD_NETWORK_TEST_DELAY_SECONDS": "5",
+        "LTX_MODEL_DOWNLOAD_MIN_PROGRESS_RESET_BYTES": "67108864",
+        "LTX_MODEL_DOWNLOAD_MIN_THROUGHPUT_MIBPS": "8",
+        "LTX_MODEL_DOWNLOAD_THROUGHPUT_GRACE_SECONDS": "300",
+        "LTX_MODEL_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS": "180",
+        "SALAD_NETWORK_TEST_URL": "https://huggingface.co/Lightricks/LTX-2.5/resolve/6c7e5e573ac1667efc83407806fe9b0b93730e60/diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+        "HF_XET_CLIENT_ENABLE_ADAPTIVE_CONCURRENCY": "true",
+        "HF_HUB_DOWNLOAD_TIMEOUT": "60",
+        "HF_HUB_ETAG_TIMEOUT": "15",
+        "LTX_WORKER_TASK_MODE": "a2v_experimental"
+      },
+      "required_environment": [
+        "HF_TOKEN"
+      ],
+      "probes": {
+        "startup": {
+          "path": "/health",
+          "period_seconds": 15,
+          "timeout_seconds": 5,
+          "failure_threshold": 20
+        },
+        "readiness": {
+          "path": "/ready",
+          "period_seconds": 10,
+          "timeout_seconds": 5,
+          "failure_threshold": 6
+        }
+      },
+      "capacity": {
+        "start_replicas": 1,
+        "max_replicas": 1
+      }
     }
   }
 }

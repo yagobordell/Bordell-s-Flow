@@ -30,6 +30,34 @@ aligned with the 16:9 LTX pipeline and downstream composition.
 Request identity includes the inputs and generation-defining parameters so a repeated segment can use
 the shared replay/idempotency path.
 
+## Validated fast reference production profile
+
+`LTX_A2V_PRODUCTION_FAST_PROFILE` (`ltx25-a2v-reference-distilled-fp8none-eager-a95ab-prod-v1`)
+is the default for **new direct A2V requests** and the smoke CLI's `--profile fast`.
+It runs the unchanged distilled two-stage **reference** recipe using FP8 CAST,
+no CPU weight offload and Eager DiffVAE. Its immutable identity is new:
+existing production, static-camera and experimental job IDs remain valid and
+are not silently replayed with different generation semantics.
+The worker still claims the normal `video.ltx25.audio_to_video` queue;
+`a2v_experimental` remains isolated.
+
+RTX 5090 acceptance run on 2026-10-04: 3/3 successful experimental samples of
+this exact no-offload reference recipe, 3/3 CPU-reference controls, decoded
+audio and decoded video hashes matching across all six, approved human
+lip-sync. For a ~5.71 s clip, observed no-offload warm inference averaged
+~73.73 s and total generation ~101.55 s (two warm samples). GPU stability
+beyond this six-generation run and startup improvements are not established.
+
+**Professional B2 uses its separately pinned static-camera
+`LTX_A2V_STATIC_SAFE_GENERATION_PROFILE` (disk streaming with negative
+camera guidance).** That different recipe has NOT had equivalent no-offload
+lip-sync approval; it remains unchanged. Do not claim the new timing for B2
+until its own profile is benchmarked and approved. No Triton promotion.
+
+To deploy new code to Salad, publish a new Docker digest from `main`, then
+follow the stopped-group/lock checks before changing the production group
+image. Merging this source profile does not update a running Salad image.
+
 ## Runtime
 
 A2V uses the existing Salad service `ltx25` with `LTX_WORKER_TASK_MODE=a2v`.

@@ -6,6 +6,7 @@ import sys
 import threading
 
 from ai_video_factory.inference.capacity_controller import (
+    A2V_EXPERIMENTAL_ADVISORY_LOCK_KEY,
     CapacityControllerLeadershipError,
     PostgresCapacityControllerOperationLock,
     resolve_capacity_controller_dsn,
@@ -19,6 +20,11 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=1.0,
         help="How often to verify that the PostgreSQL advisory lock is still held.",
+    )
+    parser.add_argument(
+        "--experimental-a2v",
+        action="store_true",
+        help="Use the dedicated A2V experiment lock rather than production controller lock",
     )
     return parser.parse_args()
 
@@ -39,7 +45,11 @@ def main() -> int:
     lock: PostgresCapacityControllerOperationLock | None = None
     try:
         lock = PostgresCapacityControllerOperationLock(
-            resolve_capacity_controller_dsn()
+            resolve_capacity_controller_dsn(),
+            **(
+                {"lock_key": A2V_EXPERIMENTAL_ADVISORY_LOCK_KEY}
+                if args.experimental_a2v else {}
+            ),
         )
     except CapacityControllerLeadershipError as error:
         print("LOCK_HELD", flush=True)
