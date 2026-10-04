@@ -21,6 +21,7 @@ from ai_video_factory.workers.ltx25.i2v_metrics import I2VPhaseMetrics
     [
         (a2v.LTX_A2V_BENCH_CPU_PROFILE, "cpu", "eager", False),
         (a2v.LTX_A2V_BENCH_NONE_PROFILE, "none", "eager", False),
+        (a2v.LTX_A2V_PRODUCTION_FAST_PROFILE, "none", "eager", False),
         (a2v.LTX_A2V_BENCH_CPU_TRITON_PROFILE, "cpu", "triton", False),
         (a2v.LTX_A2V_BENCH_NONE_TRITON_PROFILE, "none", "triton", False),
         (a2v.LTX_A2V_BENCH_STATIC_CPU_PROFILE, "cpu", "eager", True),
@@ -170,6 +171,8 @@ def test_prompt_profiler_restores_methods_and_propagates_failures() -> None:
 
 
 def test_default_profiles_are_not_reassigned() -> None:
-    assert a2v.LTXAudioToVideoParameters().generation_profile == a2v.LTX_A2V_GENERATION_PROFILE
+    assert a2v.LTXAudioToVideoParameters().generation_profile == a2v.LTX_A2V_PRODUCTION_FAST_PROFILE
+    assert a2v.LTX_A2V_PRODUCTION_FAST_PROFILE not in a2v.LTX_A2V_EXPERIMENTS
+    assert a2v.LTX_A2V_RESIDENCY_PROFILES[a2v.LTX_A2V_PRODUCTION_FAST_PROFILE] == ("none", "eager")
     assert a2v.LTX_A2V_REFERENCE_GENERATION_PROFILE not in a2v.LTX_A2V_EXPERIMENTS
     assert a2v.LTX_A2V_STATIC_SAFE_GENERATION_PROFILE not in a2v.LTX_A2V_EXPERIMENTS
