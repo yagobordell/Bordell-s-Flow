@@ -205,3 +205,8 @@ there is no longer a forced one-tag-per-V3-event validation. Original
 V3 artistic pause functions still appear once in the group style, with or
 without a technical tag. Completed historical audio stays untouched,
 but obsolete legacy checkpoints cannot run through the active pipeline.
+
+
+## V4 is final authority (sovereign contract v4)
+
+V3 is advisory artistic context only, not a set of requirements. V4 has final authority to include, ignore or contradict every V3 direction, including stresses, endings, silent pauses, human vocalizations and their positions. The compiler NEVER compares a V4 decision to V3, NEVER retries because V4 diverged from V3, and NEVER injects fallback pauses or style prose from V3. V4 outputs one final style per entire B2 voice group plus optional local notes and independently selected inline tags. Its sparse per-beat text fields always remain empty, with only optional short, B2-offset-anchored snippets for selected tags. Validations are exclusively technical: match B2 beats/words, supported Gemini tags, exact boundary and minimal excerpt, no duplicate identical tag at a boundary, and provider size limits. Compiler fingerprint v4 prevents recycling audio built under the superseded contract.
