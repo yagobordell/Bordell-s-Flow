@@ -190,7 +190,7 @@ def test_cli_contains_lipsync_and_four_input_gates() -> None:
         "_validate_reference_voice_tail",
         "_validate_decodable_video",
         "audio_a", "audio_b",
-        "num_frames", "max_attempts=1", "matching",
+        "num_frames", "max_attempts=1", "frames[0] != frames[1]",
     ):
         assert marker in source
     wrapper = (root / "scripts/smoke/run_ltx25_a2v_batch2_trial.ps1").read_text()
