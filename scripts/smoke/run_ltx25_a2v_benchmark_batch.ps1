@@ -45,6 +45,9 @@ $Ready = Join-Path $PSScriptRoot 'wait_salad_ltx25_ready.py'
 $Submit = Join-Path $PSScriptRoot 'submit_ltx25_a2v_smoke.py'
 $SourceCheck = Join-Path $PSScriptRoot 'check_ltx25_python_source.py'
 $Preflight = Join-Path $Root 'scripts\pipeline\check_r2_ready.py'
+if ($ReuseProductionGroup -and $env:A2V_REUSE_WRAPPER_ACTIVE -ne "1") {
+    throw "Production-group reuse must run through the guarded restore wrapper."
+}
 $TargetService = if ($ReuseProductionGroup) { 'ltx25' } else { 'ltx25_a2v_experimental' }
 $QueueArgs = @()
 $IsolationArgs = @('--env-file', $EnvFile)
