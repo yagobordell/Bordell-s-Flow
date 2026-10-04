@@ -1025,28 +1025,52 @@ class DirectLTX25Backend:
                     full_hd_memory_cleanup=is_full_hd,
                     stage2_factory=stage2_factory,
                 )
-                for result, output, params in zip(
-                    results, (output_a, output_b),
-                    (parameters_a, parameters_b), strict=True,
-                ):
-                    video = (
-                        _crop_video_to_requested(
-                            result.video,
-                            requested_width=params.width,
-                            requested_height=params.height,
-                        )
-                        if (pipeline_width, pipeline_height)
-                        != (params.width, params.height)
-                        else result.video
-                    )
-                    output.parent.mkdir(parents=True, exist_ok=True)
-                    bindings.encode_video(
-                        video=video, fps=params.fps, audio=None,
-                        output_path=str(output),
-                        video_chunks_number=bindings.get_video_chunks_number(
-                            result.num_frames, result.tiling_config,
-                        ),
-                    )
+                # Keep B=1 VAE arithmetic and independent ADVANCED generators:
+                # the lazy result.video iterators resolve pipeline.video_decoder
+                # only as each MP4 encoder actually consumes them. For Full HD
+                # exclusively, share its upstream model/context, but NOT decoder
+                # outputs, tiling, or RNG state between the two videos.
+                from contextlib import nullcontext
+
+                from .shared_i2v_decoder import SharedSequentialVideoDecoder
+
+                original_decoder = pipeline.video_decoder
+                session = (
+                    SharedSequentialVideoDecoder(original_decoder)
+                    if is_full_hd else nullcontext()
+                )
+                with session as shared:
+                    if is_full_hd:
+                        pipeline.video_decoder = shared
+                    try:
+                        for result, output, params in zip(
+                            results, (output_a, output_b),
+                            (parameters_a, parameters_b), strict=True,
+                        ):
+                            video = (
+                                _crop_video_to_requested(
+                                    result.video,
+                                    requested_width=params.width,
+                                    requested_height=params.height,
+                                )
+                                if (pipeline_width, pipeline_height)
+                                != (params.width, params.height)
+                                else result.video
+                            )
+                            output.parent.mkdir(parents=True, exist_ok=True)
+                            bindings.encode_video(
+                                video=video, fps=params.fps, audio=None,
+                                output_path=str(output),
+                                video_chunks_number=bindings.get_video_chunks_number(
+                                    result.num_frames, result.tiling_config,
+                                ),
+                            )
+                        if is_full_hd and shared.completed != 2:
+                            raise RuntimeError(
+                                "I2V shared VAE output iterators must be fully consumed"
+                            )
+                    finally:
+                        pipeline.video_decoder = original_decoder
                 peak = (
                     cuda.max_memory_allocated() if self._device.startswith("cuda") else None
                 )
