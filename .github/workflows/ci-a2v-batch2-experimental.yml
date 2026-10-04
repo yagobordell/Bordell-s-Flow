@@ -1,0 +1,73 @@
+name: Experimental A2V 1080p B2 isolated CI
+
+on:
+  push:
+    branches:
+      - feature/ltx25-a2v-b2-1080-lipsync
+    paths:
+      - "src/ai_video_factory/workers/ltx25/**"
+      - "docker/workers/ltx25/**"
+      - "scripts/smoke/*a2v_batch2*"
+      - "tests/unit/workers/test_ltx_a2v*"
+      - "deploy/salad/services.json"
+      - ".github/workflows/ci-a2v-batch2-experimental.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: a2v-b2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  a2v-b2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.18"
+      - run: uv sync --locked --extra dev
+      - name: Scoped Ruff
+        run: |
+          uv run --no-sync ruff check \
+            src/ai_video_factory/workers/ltx25/a2v.py \
+            src/ai_video_factory/workers/ltx25/paired_a2v.py \
+            src/ai_video_factory/workers/ltx25/experimental_a2v_batch2.py \
+            src/ai_video_factory/workers/ltx25/shared_a2v_decoder.py \
+            src/ai_video_factory/workers/ltx25/settings.py \
+            src/ai_video_factory/workers/ltx25/worker_factory.py \
+            scripts/smoke/submit_ltx25_a2v_batch2_smoke.py \
+            scripts/smoke/verify_ltx25_a2v_batch2_image.py \
+            tests/unit/workers/test_ltx_a2v_batch2_experimental.py \
+            tests/unit/workers/test_ltx_a2v_shared_decoder.py
+      - name: CPU-only A2V and existing audio regressions
+        run: |
+          uv run --no-sync python -m pytest -q \
+            tests/unit/workers/test_ltx_a2v_batch2_experimental.py \
+            tests/unit/workers/test_ltx_a2v_shared_decoder.py \
+            tests/unit/workers/test_ltx_a2v_task.py
+      - name: PowerShell syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path scripts/smoke/run_ltx25_a2v_batch2_trial.ps1),
+              [ref]$tokens, [ref]$errors
+          ) | Out-Null
+          if ($errors) { throw ($errors -join '; ') }
+      - name: Strict source and pinned patch compile
+        run: |
+          uv run --no-sync python -m compileall -q \
+            src/ai_video_factory/workers/ltx25/a2v.py \
+            src/ai_video_factory/workers/ltx25/paired_a2v.py \
+            src/ai_video_factory/workers/ltx25/experimental_a2v_batch2.py \
+            scripts/smoke/submit_ltx25_a2v_batch2_smoke.py \
+            scripts/smoke/verify_ltx25_a2v_batch2_image.py \
+            docker/workers/ltx25/patch_i2v_progressive.py
