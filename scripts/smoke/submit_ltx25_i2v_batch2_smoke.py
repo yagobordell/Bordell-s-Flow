@@ -328,7 +328,15 @@ def main() -> None:
     (a.output_dir / "experiment-summary.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    print(json.dumps(report, indent=2, sort_keys=True))
+    # Keep the terminal readable; the durable and local JSON files retain
+    # every sample, while the CLI prints just the run's memory summary.
+    display_report = dict(report)
+    if isinstance(display_report.get("memory_trace"), dict):
+        display_report["memory_trace"] = {
+            key: value for key, value in display_report["memory_trace"].items()
+            if key != "samples"
+        }
+    print(json.dumps(display_report, indent=2, sort_keys=True))
     print(f"Output directory: {a.output_dir}")
 
 
