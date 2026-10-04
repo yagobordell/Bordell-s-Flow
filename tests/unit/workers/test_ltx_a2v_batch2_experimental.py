@@ -43,6 +43,10 @@ def test_pair_accepts_full_hd_but_rejects_unvalidated_recipe_or_shape() -> None:
     }
     assert A2VBatch2Parameters.model_validate(valid).a.seed == 7
     assert A2VBatch2Parameters.model_validate(valid).vae_backend == "eager"
+    assert A2VBatch2Parameters.model_validate(valid).guidance_forward_batch_size == 2
+    assert A2VBatch2Parameters.model_validate({
+        **valid, "guidance_forward_batch_size": 4,
+    }).guidance_forward_batch_size == 4
     assert A2VBatch2Parameters.model_validate({
         **valid, "vae_backend": "triton_experimental",
     }).vae_backend == "triton_experimental"
@@ -50,6 +54,7 @@ def test_pair_accepts_full_hd_but_rejects_unvalidated_recipe_or_shape() -> None:
         {"accept_full_hd_oom_risk": False},
         {"stage2_mode": "disk"},
         {"vae_backend": "unknown"},
+        {"guidance_forward_batch_size": 3},
         {"b": _params(7)},
         {"b": _params(8, width=1280, height=720)},
         {"b": {**_params(8), "generation_profile": LTX_A2V_PRODUCTION_FAST_PROFILE}},
@@ -79,6 +84,7 @@ class FakeBackend:
             kwargs[name].write_bytes(b"valid-test-mp4")
         return {
             "mode": "batch2", "actual_gpu_batch_size": self.batch,
+            "guidance_forward_batch_size": kwargs.get("guidance_forward_batch_size", 2),
             "video_vae_backend": (
                 "triton" if kwargs.get("vae_backend") == "triton_experimental"
                 else "eager"
@@ -130,6 +136,7 @@ def test_atomic_four_input_contract_and_independent_audio(tmp_path: Path) -> Non
     assert {s.name for s in artifact.sidecars} == {"video_b", "report"}
     assert backend.calls[0]["audio_a"] != backend.calls[0]["audio_b"]
     assert backend.calls[0]["vae_backend"] == "eager"
+    assert backend.calls[0]["guidance_forward_batch_size"] == 2
     assert backend.calls[0]["parameters_a"].seed == 7
     assert backend.calls[0]["parameters_b"].seed == 8
     assert json.loads((tmp_path / "batch2-report.json").read_text())["actual_gpu_batch_size"] == 2
