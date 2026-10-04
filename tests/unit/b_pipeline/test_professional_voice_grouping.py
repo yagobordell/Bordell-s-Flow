@@ -125,19 +125,44 @@ class GroupAwareProvider:
                     for beat in beats
                 ], landing_beat_id=beats[-1]["beat_id"], baseline_misfit=[],
             )
-        else:
+        elif output_type is pv.V3:
             block = payload["current_block"]
             value = pv.V3(
                 pipeline_stage="V3", block_id=block["block_id"],
+                block_performance={
+                    "register": "Clear documentary narrator",
+                    "pace_character": "Measured progression",
+                    "intensity_arc": "Subtle progression through the block",
+                },
                 beat_deliveries=[
                     {"beat_id": beat["beat_id"],
-                     "segments": [
-                         {"speak": beat["text"], "style": "Natural delivery",
-                          "ending_behavior": "carry", "events": []}
+                     "delivery": [
+                         {"speak": beat["text"], "delivery_quality": "Natural delivery",
+                          "ending_behavior": "carry", "stress": [], "vocal_intents": []}
                      ]}
                     for beat in block["beats"]
                 ],
             )
+        elif output_type is pv.V4:
+            direction = pv.V3.model_validate(payload["v3"])
+            value = pv.V4(
+                pipeline_stage="V4", block_id=direction.block_id,
+                audio_profile="Clear documentary narrator",
+                directors_notes=["Measured, subtly increasing focus."],
+                beat_deliveries=[
+                    {"beat_id": beat.beat_id, "segments": [
+                        {"source_item_index": i, "speak": item.speak,
+                         "style": "Natural delivery; keep cadence open",
+                         "ending_behavior": item.ending_behavior,
+                         "stress": item.stress, "events": []}
+                        for i, item in enumerate(beat.delivery)
+                        if isinstance(item, pv.Speak)
+                    ]}
+                    for beat in direction.beat_deliveries
+                ],
+            )
+        else:
+            raise AssertionError(output_type)
         return value, SimpleNamespace(id=str(len(self.calls)), model="test", usage=None)
 
 
@@ -148,17 +173,18 @@ def test_full_v1_v2_v3_receive_same_premerged_units_and_resume(tmp_path):
         core={"central_question": "Why?", "final_answer": "Because"},
         blocks=source, output=tmp_path, provider=provider, model="test",
     )
-    v1, v2, v3 = asyncio.run(pv.plan_professional_voice(**kwargs))
+    v1, v2, v3, v4 = asyncio.run(pv.plan_professional_voice(**kwargs))
     assert [r.block_id for r in v1.block_rhythms] == [1, 4]
     assert [r.block_id for r in v2] == [1, 4]
     assert [r.block_id for r in v3] == [1, 4]
+    assert [r.block_id for r in v4] == [1, 4]
     assert len(v2[0].beat_intents) == 10
     assert len(v3[0].beat_deliveries) == 10
     assert provider.inputs[0]["blocks"][0]["source_block_ids"] == [1, 2, 3]
-    assert sorted(provider.calls) == ["V1", "V2", "V2", "V3", "V3"]
+    assert sorted(provider.calls) == ["V1", "V2", "V2", "V3", "V3", "V4", "V4"]
     assert (tmp_path / "V1" / "voice_block_plan.json").is_file()
     asyncio.run(pv.plan_professional_voice(**kwargs))
-    assert len(provider.calls) == 5  # all cached; no repeat paid V calls
+    assert len(provider.calls) == 7  # all cached; no repeat paid V calls
 
 
 def _wav(seconds: float) -> bytes:
@@ -281,8 +307,8 @@ def test_gemini_generates_one_paid_wav_per_group_and_reuses_it(tmp_path, monkeyp
         [beat["beat_id"] for beat in source[3]["beats"]],
     ]
     assert sorted(map(len, speech.calls)) == [8, 10]
-    assert len(director.calls) == 5
+    assert len(director.calls) == 7
     second = asyncio.run(pv.generate_professional_audio(**kwargs))
     assert second == artifact
     assert len(speech.calls) == 2
-    assert len(director.calls) == 5
+    assert len(director.calls) == 7

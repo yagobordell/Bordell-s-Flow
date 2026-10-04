@@ -51,17 +51,47 @@ def _v2():
 
 
 def _v3():
-    return pv.V3(pipeline_stage="V3", block_id=1, beat_deliveries=[
-        {"beat_id": "1A", "segments": [
-            {"speak": "Hola, mundo. ", "style": "Measured, conversational",
-             "ending_behavior": "carry",
-             "events": [{"at": 6, "tag": "breath"}]},
-        ]},
-        {"beat_id": "1B", "segments": [
-            {"speak": "Esa es la realidad.", "style": "Warm, deliberate",
-             "ending_behavior": "land", "events": []},
-        ]},
-    ])
+    return pv.V3(
+        pipeline_stage="V3", block_id=1,
+        block_performance={
+            "register": "Consistent intimate documentary narration",
+            "pace_character": "Measured, then deliberate",
+            "intensity_arc": "Curiosity gives way to recognition",
+        },
+        beat_deliveries=[
+            {"beat_id": "1A", "delivery": [
+                {"speak": "Hola, mundo. ", "delivery_quality": "Measured, conversational",
+                 "ending_behavior": "carry", "stress": ["mundo"],
+                 "vocal_intents": [{"at": 6, "behavior": "inhale"}]},
+            ]},
+            {"beat_id": "1B", "delivery": [
+                {"speak": "Esa es la realidad.", "delivery_quality": "Warm, deliberate",
+                 "ending_behavior": "land", "stress": [], "vocal_intents": []},
+            ]},
+        ],
+    )
+
+
+def _v4():
+    return pv.V4(
+        pipeline_stage="V4", block_id=1,
+        audio_profile="Consistent intimate documentary narrator",
+        directors_notes=["Measured beginning, then deliberate recognition."],
+        beat_deliveries=[
+            {"beat_id": "1A", "segments": [
+                {"source_item_index": 0, "speak": "Hola, mundo. ",
+                 "style": "Measured conversational delivery; emphasize mundo; keep open",
+                 "ending_behavior": "carry", "stress": ["mundo"],
+                 "events": [{"at": 6, "tag": "breath", "source_kind": "vocal_intent",
+                             "source_item_index": 0, "source_at": 6}]},
+            ]},
+            {"beat_id": "1B", "segments": [
+                {"source_item_index": 0, "speak": "Esa es la realidad.",
+                 "style": "Warm deliberate delivery; land decisively",
+                 "ending_behavior": "land", "stress": [], "events": []},
+            ]},
+        ],
+    )
 
 
 def _wav(rate=24000):
@@ -74,29 +104,34 @@ def _wav(rate=24000):
     return stream.getvalue()
 
 
-def test_v3_verbatim_and_human_events():
+def test_v3_artistic_contract_and_v4_source_bound_tags():
     block = _block()
     result = _v3()
     pv._check_v3(result, block)
-    assert pv._tagged(result.beat_deliveries[0].segments[0]) == "Hola, <breath>mundo. "
-    result.beat_deliveries[0].segments[0].speak = "Hola mundo."
+    compiler = _v4()
+    pv._check_v4(compiler, block, result)
+    assert pv._tagged_v4(compiler.beat_deliveries[0].segments[0]) == (
+        "Hola, <breath>mundo. "
+    )
+    result.beat_deliveries[0].delivery[0].speak = "Hola mundo."
     with pytest.raises(pv.VoicePlanError, match="verbatim"):
         pv._check_v3(result, block)
 
 
-def test_v3_rejects_split_word_and_extra_events():
+def test_v3_rejects_split_word_and_excess_humanization():
     direction = _v3()
-    direction.beat_deliveries[0].segments[0].events = [
-        pv.VocalEvent(at=2, tag="sigh"),
+    direction.beat_deliveries[0].delivery[0].vocal_intents = [
+        pv.VocalIntent(at=2, behavior="sigh"),
     ]
     with pytest.raises(pv.VoicePlanError, match="splits a word"):
         pv._check_v3(direction, _block())
     direction = _v3()
-    direction.beat_deliveries[0].segments[0].events = [
-        pv.VocalEvent(at=0, tag="sigh"), pv.VocalEvent(at=6, tag="breath"),
-        pv.VocalEvent(at=12, tag="long pause"),
+    direction.beat_deliveries[0].delivery[0].vocal_intents = [
+        pv.VocalIntent(at=0, behavior="sigh"),
+        pv.VocalIntent(at=6, behavior="inhale"),
+        pv.VocalIntent(at=12, behavior="exhale"),
     ]
-    with pytest.raises(pv.VoicePlanError, match="too many events"):
+    with pytest.raises(pv.VoicePlanError, match="excessive vocal intents"):
         pv._check_v3(direction, _block())
 
 
@@ -124,16 +159,17 @@ def test_v1_reconsideration_contract():
 
 
 def test_gemini_part_styles_not_spoken_and_only_allowlisted_tags():
-    direction = _v3()
-    turns = [{"text": pv._tagged(segment), "style": segment.style}
-             for beat in direction.beat_deliveries for segment in beat.segments]
+    direction = _v4()
+    turns = pv._v4_turns(direction)
     payload = gemini_tts._build_directed_payload(turns=turns, voice="Algenib")
     parts = payload["contents"][0]["parts"]
     assert parts[0]["text"] == "Hola, <breath>mundo. "
-    assert parts[0]["speech_metadata"]["style"].startswith("Measured, conversational")
+    assert "Measured conversational" in parts[0]["speech_metadata"]["style"]
     assert "verbatim transcript" in parts[0]["speech_metadata"]["style"]
-    assert parts[1]["speech_metadata"]["style"].startswith("Warm, deliberate")
+    assert parts[1]["speech_metadata"]["style"].startswith("Warm deliberate")
     assert "Measured" not in parts[0]["text"]
+    assert "Consistent intimate" in parts[0]["speech_metadata"]["style"]
+    assert "Consistent intimate" not in parts[1]["speech_metadata"]["style"]
 
 
 def test_professional_voice_is_separate_and_persistent(tmp_path):
@@ -161,10 +197,14 @@ class FakeProvider:
             result = _v1()
         elif output_type is pv.V2:
             result = _v2()
-        else:
+        elif output_type is pv.V3:
             result = _v3()
             if self.invalid_v3 and self.calls.count("V3") == 1:
-                result.beat_deliveries[0].segments[0].speak = "incorrect"
+                result.beat_deliveries[0].delivery[0].speak = "incorrect"
+        elif output_type is pv.V4:
+            result = _v4()
+        else:
+            raise AssertionError(output_type)
         return result, SimpleNamespace(id=str(len(self.calls)), usage=None, model="mock")
 
 
@@ -174,20 +214,20 @@ def test_plan_validation_retries_only_v3_and_persists_outputs(tmp_path):
         core={"central_question": "Why?", "final_answer": "Because."},
         blocks=[_block()], output=tmp_path, provider=provider, model="test",
     ))
-    assert [type(item).__name__ for item in result] == ["V1", "list", "list"]
-    assert provider.calls == ["V1", "V2", "V3", "V3"]
+    assert [type(item).__name__ for item in result] == ["V1", "list", "list", "list"]
+    assert provider.calls == ["V1", "V2", "V3", "V3", "V4"]
     assert (tmp_path / "V3/block_1/rejected_attempt_1.json").is_file()
     assert (tmp_path / "V1/pass_1/input.json").is_file()
     assert (tmp_path / "V2/pass_1/block_1/output.json").is_file()
     assert (tmp_path / "V3/block_1/input_attempt_2.json").is_file()
-    for stage in ("V1", "V2", "V3"):
+    for stage in ("V1", "V2", "V3", "V4"):
         assert (tmp_path / stage / "merged_output.json").is_file()
     # The second invocation reuses validated V1/V2/V3 files without paid text calls.
     asyncio.run(pv.plan_professional_voice(
         core={"central_question": "Why?", "final_answer": "Because."},
         blocks=[_block()], output=tmp_path, provider=provider, model="test",
     ))
-    assert provider.calls == ["V1", "V2", "V3", "V3"]
+    assert provider.calls == ["V1", "V2", "V3", "V3", "V4"]
 
 
 def test_professional_audio_paid_block_is_reused(tmp_path, monkeypatch):
@@ -197,7 +237,7 @@ def test_professional_audio_paid_block_is_reused(tmp_path, monkeypatch):
     async def plan(**_):
         rhythm = _v1()
         rhythm.curve += str(revision["value"])
-        return rhythm, [_v2()], [_v3()]
+        return rhythm, [_v2()], [_v3()], [_v4()]
 
     async def transcribe(item, *, output, run_dir, stt_client):
         folder = run_dir / "blocks" / "block_1"
@@ -256,7 +296,7 @@ def test_professional_audio_paid_block_is_reused(tmp_path, monkeypatch):
 
 def test_failed_gemini_block_is_retryable_without_unknown_state(tmp_path, monkeypatch):
     async def plan(**_):
-        return _v1(), [_v2()], [_v3()]
+        return _v1(), [_v2()], [_v3()], [_v4()]
 
     async def transcribe(item, *, output, run_dir, stt_client):
         folder = run_dir / "blocks" / "block_1"
@@ -506,15 +546,15 @@ def test_professional_voice_stage_wall_times_are_separate_from_parallel_call_tim
         "on_stage_duration": lambda stage, elapsed: stage_times.append((stage, elapsed)),
     }
     asyncio.run(pv.plan_professional_voice(**kwargs))
-    assert [stage for stage, _ in stage_times] == ["V1", "V2", "V3"]
-    assert [stage for stage, _, _ in call_times] == ["V1", "V2", "V3"]
+    assert [stage for stage, _ in stage_times] == ["V1", "V2", "V3", "V4"]
+    assert [stage for stage, _, _ in call_times] == ["V1", "V2", "V3", "V4"]
     assert all(seconds >= 0 for _, seconds in stage_times)
     assert all(seconds >= 0 for _, _, seconds in call_times)
     # Existing checkpoints never trigger paid V calls a second time.
     asyncio.run(pv.plan_professional_voice(**kwargs))
-    assert len(provider.calls) == 3
-    assert len(call_times) == 3
-    assert len(stage_times) == 6
+    assert len(provider.calls) == 4
+    assert len(call_times) == 4
+    assert len(stage_times) == 8
     assert (tmp_path / "V1/pass_1/api_call_1.json").is_file()
 
 
@@ -532,10 +572,10 @@ def test_legacy_professional_voice_checkpoints_are_reused_without_paid_repost(
     # Move only the completed V checkpoints to the old layout as if a prior
     # version produced them; no model calls should be needed afterwards.
     legacy.mkdir()
-    for stage in ("V1", "V2", "V3"):
+    for stage in ("V1", "V2", "V3", "V4"):
         (tmp_path / stage).rename(legacy / stage)
     asyncio.run(pv.plan_professional_voice(**kwargs))
-    assert provider.calls == ["V1", "V2", "V3"]
+    assert provider.calls == ["V1", "V2", "V3", "V4"]
     assert not (tmp_path / "V1").exists()
 
 
