@@ -36,7 +36,9 @@ from ai_video_factory.workers.ltx25.experimental_a2v_batch2 import (
 from ai_video_factory.workers.ltx25.reference_recipe import (
     reference_num_frames_for_samples,
 )
-\n\ndef parser() -> argparse.ArgumentParser:
+
+
+def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     for suffix in ("a", "b"):
         p.add_argument("--image-" + suffix, type=Path, required=True)
