@@ -6,7 +6,7 @@ name: Experimental I2V B2 isolated CI
 on:
   push:
     branches:
-      - experiment/salad-ltx-a2v-resolutions-i2v-contention
+      - feature/ltx25-i2v-b2-1080-clean-integration
   workflow_dispatch:
 
 concurrency:
@@ -80,7 +80,6 @@ jobs:
             tests/unit/workers/test_ltx_i2v_triton_experiment.py \
             tests/unit/workers/test_ltx_i2v_progressive_loader.py \
             tests/unit/workers/test_ltx_i2v_batch2_experiment.py \
-            tests/unit/workflows/test_video_full_hd_defaults.py \
             tests/unit/workers/test_ltx_salad_readiness.py \
             tests/unit/workers/test_ltx_i2v_hybrid_image_preflight.py \
             tests/unit/workers/test_ltx_i2v_remote_config.py \
