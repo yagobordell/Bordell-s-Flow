@@ -10,9 +10,9 @@ import pytest
 
 from ai_video_factory.inference.errors import NonRetryableTaskError
 from ai_video_factory.workers.ltx25.a2v import (
-    LTX_A2V_PRODUCTION_FAST_PROFILE,
     LTX_A2V_BENCH_NONE_PROFILE,
     LTX_A2V_EXPERIMENTAL_TASK,
+    LTX_A2V_PRODUCTION_FAST_PROFILE,
     LTX_A2V_TASK,
     LTXAudioToVideoTaskRunner,
 )
