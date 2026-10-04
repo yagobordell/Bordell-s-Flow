@@ -239,7 +239,10 @@ def test_professional_b2_global_framing_sequence_progression_and_still_audio() -
     )
     assert "Global shot composition and camera-angle freedom" in instructions
     assert "For EVERY generated beat, deliberately choose" in instructions
-    assert "Let the current beat and neighboring visual progression guide composition" in instructions
+    assert (
+        "Let the current beat and neighboring visual progression guide composition"
+        in instructions
+    )
     assert "downstream Ken Burns handles still-image movement" in instructions
     assert "Design adjoining images to communicate the progression" in instructions
     assert "media_image: audio=false" in instructions
