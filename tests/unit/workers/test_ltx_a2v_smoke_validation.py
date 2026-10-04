@@ -60,6 +60,13 @@ def test_a2v_smoke_defaults_to_reference_and_fast_is_explicit(
     assert static_args.prompt == "A woman whispering to the microphone"
 
     monkeypatch.setattr(
+        sys, "argv",
+        ["submit_ltx25_a2v_smoke.py", "--audio", "speech.wav",
+         "--profile", "run-static-fast"],
+    )
+    assert parse_args().profile == "run-static-fast"
+
+    monkeypatch.setattr(
         sys,
         "argv",
         ["submit_ltx25_a2v_smoke.py", "--audio", "speech.wav", "--profile", "guided"],
