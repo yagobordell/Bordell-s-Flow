@@ -100,7 +100,10 @@ def patch_builder_source(source: str) -> str:
         group_size = getattr(self, "_a2v_progressive_block_group_size", 1)
         if not isinstance(group_size, int) or not 1 <= group_size <= 8:
             raise ValueError("A2V progressive group size must be 1..8")
-        block_items = sorted(block_key_map.items())
+        block_items = (
+            sorted(block_key_map.items()) if group_size > 1
+            else list(block_key_map.items())
+        )
         for start in range(0, len(block_items), group_size):
             group = block_items[start:start + group_size]
             names = frozenset(
