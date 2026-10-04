@@ -16,6 +16,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from functools import partial
 from typing import Any
+from collections.abc import Callable
 
 import torch
 from ltx_core.batch_split import BatchSplitAdapter
@@ -344,6 +345,7 @@ def generate_paired_fast_distilled(
     max_forward_batch_size: int = 2,
     reuse_transformer_across_stages: bool = False,
     full_hd_memory_cleanup: bool = False,
+    stage2_factory: Callable[[], Any] | None = None,
 ) -> tuple[Any, Any]:
     """Generate two clips in B=2 transformer forwards with B=1 quality semantics.
 
@@ -356,6 +358,8 @@ def generate_paired_fast_distilled(
         raise ValueError("Experimental transformer forward batch size must be 1 or 2")
     if full_hd_memory_cleanup and (width, height) != (1920, 1088):
         raise ValueError("Full HD memory profile requires internal 1920x1088 model grid")
+    if stage2_factory is not None and (not full_hd_memory_cleanup or reuse_transformer_across_stages):
+        raise ValueError("Alternate stage2 requires separate Full HD stage residency")
     if len(pair) != 2 or pair[0].seed == pair[1].seed:
         raise ValueError("Batch2 needs two independent seeds")
     assert_resolution(height=height, width=width, is_two_stage=True)
@@ -465,13 +469,19 @@ def generate_paired_fast_distilled(
         # denoising stage. A Full HD boundary trim runs only on dead GPU cache.
         resolved = None
         _log_gpu_checkpoint("stage2_conditioning_ready", trim=full_hd_memory_cleanup)
+        # The stage1 GPU-resident 22B transformer is already disposed here.
+        # Build the streaming stage2 wrapper only AFTER stage1 latents and the
+        # image encoder have been released. Never instantiate a second live
+        # transformer or reload Gemma / VAE for this mode.
+        stage2 = stage2_factory() if stage2_factory is not None else pipeline.stage
+        _log_gpu_checkpoint("stage2_transformer_factory_ready")
         logger.info(
             "LTX25_I2V_PAIR_STAGE_START stage=stage2 shared_transformer=%s memory=%s",
             shared_transformer is not None,
             json.dumps(_memory_pressure(), sort_keys=True),
         )
         second_video, _ = _paired_stage(
-            pipeline.stage,
+            stage2,
             video_context=video_ctx,
             audio_context=audio_ctx,
             conditionings=stage2_images,
