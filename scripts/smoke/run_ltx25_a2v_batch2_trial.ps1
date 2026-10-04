@@ -13,6 +13,7 @@ param(
     [string]$EnvFile = ".env",
     [string]$ReferenceA = "",
     [string]$ReferenceB = "",
+    [ValidateSet("eager", "triton_experimental")][string]$VaeBackend = "eager",
     [switch]$CheckInputsOnly,
     [switch]$AllowPaidTrial,
     [ValidateRange(120, 21600)][int]$BootstrapTimeoutSeconds = 7200,
@@ -44,13 +45,16 @@ if (-not $CheckInputsOnly -and -not $AllowPaidTrial) {
 if ([bool]$ReferenceA -ne [bool]$ReferenceB) {
     throw "ReferenceA and ReferenceB must be supplied together."
 }
+if ($VaeBackend -eq "triton_experimental" -and -not $ReferenceA) {
+    throw "Strict Triton requires exact approved Eager batch2 references for both clips."
+}
 
 $ArgsList = @(
     "--image-a", $ImageA, "--audio-a", $AudioA, "--prompt-a", $PromptA,
     "--image-b", $ImageB, "--audio-b", $AudioB, "--prompt-b", $PromptB,
     "--seed-a", [string]$SeedA, "--seed-b", [string]$SeedB,
     "--run-id", $RunId, "--output-dir", $Destination,
-    "--accept-full-hd-oom-risk"
+    "--accept-full-hd-oom-risk", "--vae-backend", $VaeBackend
 )
 if ($ReferenceA) { $ArgsList += @("--reference-a", $ReferenceA) }
 if ($ReferenceB) { $ArgsList += @("--reference-b", $ReferenceB) }
@@ -59,7 +63,9 @@ if ($ReferenceB) { $ArgsList += @("--reference-b", $ReferenceB) }
 if ($LASTEXITCODE -ne 0) { throw "Wrong Python source/worktree; synchronize uv first." }
 & $Python $Smoke @ArgsList --check-inputs-only
 if ($LASTEXITCODE -ne 0) { throw "A2V B2 local media/audio preflight FAILED. No GPU started." }
-& $Python $Probe --image $ExpectedPinnedImage
+$ImageProbeArgs = @("--image", $ExpectedPinnedImage)
+if ($VaeBackend -eq "triton_experimental") { $ImageProbeArgs += "--require-triton" }
+& $Python $Probe @ImageProbeArgs
 if ($LASTEXITCODE -ne 0) { throw "Docker ABI is invalid. No GPU started." }
 if ($CheckInputsOnly) {
     Write-Host "A2V_B2_FREE_PREFLIGHT_OK -- no Salad GPU was started"
