@@ -43,6 +43,8 @@ _PROFESSIONAL_IMAGE_PREFIX = (
 )
 _NUMBERED_PROFESSIONAL_PROMPT = re.compile(r"^([1-9]\.\s+)(.+)$", flags=re.DOTALL)
 _GRID_IMAGE_QUALITY = "medium"
+# Tolerate spaces, punctuation after the marker, case and line breaks.
+_FOR_CONTEXT = re.compile(r"\(\s*for\s+context\b", flags=re.IGNORECASE)
 _AVATAR_REFERENCE_PROMPT_SUFFIX = (
     "set the reference image ONLY to preserve the avatar's general identity and appearance. "
     "Do NOT copy the reference image's lighting, camera quality, composition, background, "
@@ -105,11 +107,11 @@ class ImageOptions:
 
 
 def _job_quality(job: dict[str, Any], options: ImageOptions) -> str:
-    """Only composite grids use medium; individual image jobs keep the configured low."""
+    """Use medium only for grids or a beat's own (For context...) marker."""
     return (
         _GRID_IMAGE_QUALITY
         if job.get("grid") is not None
-        or (job.get("visual_style") == "profesional" and job.get("video_source"))
+        or _FOR_CONTEXT.search(job["description"]) is not None
         else options.quality
     )
 
