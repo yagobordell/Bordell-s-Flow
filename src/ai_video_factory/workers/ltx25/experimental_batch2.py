@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -31,6 +31,7 @@ class Batch2Parameters(BaseModel):
     reuse_transformer_across_stages: bool = False
     accept_full_hd_batch2_oom_risk: bool = False
     full_hd_stage2_mode: str = "cpu"
+    vae_backend: Literal["eager", "triton_experimental"] = "eager"
 
     @model_validator(mode="after")
     def check_pair(self) -> Batch2Parameters:
@@ -44,6 +45,10 @@ class Batch2Parameters(BaseModel):
         geometry = (a.width, a.height, a.fps, a.num_frames)
         if geometry != (b.width, b.height, b.fps, b.num_frames):
             raise ValueError("Batch2 requires matching video geometries and frame counts")
+        if self.vae_backend == "triton_experimental" and (
+            geometry != (1920, 1080, 24, 121) or self.full_hd_stage2_mode != "cpu"
+        ):
+            raise ValueError("Experimental Triton VAE requires 1080p batch2 with CPU stage2")
         if geometry == (1920, 1080, 24, 121):
             if not self.accept_full_hd_batch2_oom_risk:
                 raise ValueError(
@@ -117,6 +122,8 @@ class ExperimentalBatch2TaskRunner:
                 reuse_transformer_across_stages=params.reuse_transformer_across_stages,
                 accept_full_hd_batch2_oom_risk=params.accept_full_hd_batch2_oom_risk,
                 full_hd_stage2_mode=params.full_hd_stage2_mode,
+                **({"vae_backend": params.vae_backend}
+                   if params.vae_backend != "eager" else {}),
             )
         except Exception as exc:
             if is_retryable_gpu_failure(exc):
