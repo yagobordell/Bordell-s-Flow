@@ -260,3 +260,79 @@ reference outputs; a stable-looking pair by itself cannot establish B=1
 visual equality. Do not promote to production or assert speedup until
 measured. Treat Triton NA and kernel/compile changes as a **different
 explicitly gated** experiment, not part of this quality-preserving change.
+
+
+## Experimental Triton DiffVAE acceleration (NOT production-approved)
+
+The last RTX 5090 shared-VAE + progressive-RAM 1080p true-B2 run took
+**253.765606s** for two videos (vs a non-identical-prompt prior baseline
+297.762588s). Its output decoder/MP4 segment took about **88.23s**.
+This is an optimization target, not evidence that Triton will be faster.
+
+**Native NATTEN stays explicitly disabled.** It previously segfaulted on the
+RTX 5090. Instead, test only upstream LTX's existing
+`fallback_na.triton_na.na3d` with upstream `CHUNKED_EAGER` DiffVAE. This
+keeps every model weight, sigma, image-conditioning, sampler, RNG generator,
+stage1/stage2 policy, tiling, individual-clip decoding and shared VAE lifecycle
+unchanged. It changes *only* the neighborhood attention implementation
+used by the DiffVAE and therefore its numerical results are not guaranteed
+pixel identical until tested.
+
+The task request field `vae_backend` defaults to `eager`. Only the
+explicit `triton_experimental` value on 1920x1080, 24fps, 121-frame true B2
+with all-block CPU stage2 is accepted. B1, 720p and A2V are unaffected.
+The strict setting is threaded through the dedicated CLI, PowerShell
+wrapper, Pydantic task model and backend. It is recorded in the submitted
+job fingerprint, output report and provenance. No implicit fallback is
+permitted if Triton is unavailable or fails; this keeps the result truthful.
+
+**Safety before billed startup:** The exact immutable Docker digest is
+inspected offline with `--require-triton`. The image must import the Triton
+NA kernel and contain the strict API and per-request GPU probe. Before
+beginning the timed B2 inference, the worker launches a bounded independent
+CUDA subprocess testing Triton against the pinned eager reference for
+three BF16 3D-attention shapes, including shifted-boundary windows. It checks
+finite outputs and tensor closeness (absolute/relative tolerances 0.04).
+An import failure, kernel fault, timeout or disagreement aborts the
+experiment without submitting inference; only the child can segfault.
+The probe's duration is reported separately from B2 elapsed time and
+may still incur Salad billing after startup. Small-kernel agreement cannot
+prove full-video equivalence or long-run stability.
+
+**Mandatory controlled eager comparison:** Triton trials must supply two
+existing baseline EAGER B2 MP4s (`-ReferenceA`, `-ReferenceB`), from
+the *same directory* with original job-request.json and
+reference-provenance.json. Preflight checks their exact input image hashes,
+prompts, seeds and original eager backend before any GPU starts. Once
+both Triton videos have been produced, the client compares all 121 decoded
+frames independently with `ffmpeg` PSNR and SSIM and writes
+`backend-quality-comparison.json` plus per-frame stats to the candidate
+run directory. No arbitrary threshold auto-approves perceptual quality:
+the result remains `HUMAN_SIDE_BY_SIDE_REVIEW_REQUIRED`.
+Visual side-by-side inspection is indispensable to validate human motion
+and any temporal artifacts beyond frame metrics. Compare paired stage
+forward seconds, output time, peak VRAM/RAM and potential kernel
+initial-compilation latency as well.
+
+Example local free checks, after building and publishing a NEW immutable
+Docker from the current green experiment branch:
+
+~~~powershell
+$Trial.ExpectedPinnedImage = $Pinned
+$Trial.ReferenceA = "data/output/deployment-validation/ltx25-i2v-batch2/i2v-optimized-20261004133012/batch2-a.mp4"
+$Trial.ReferenceB = "data/output/deployment-validation/ltx25-i2v-batch2/i2v-optimized-20261004133012/batch2-b.mp4"
+$Trial.RunId = "i2v-triton-$(Get-Date -Format yyyyMMddHHmmss)"
+.\scripts\smoke\run_ltx25_i2v_batch2_trial.ps1 @Trial -Width 1920 -Height 1080 `
+    -FullHdStage2Mode cpu -AcceptFullHdBatch2OomRisk -DisableStageReuse `
+    -VaeBackend triton_experimental -CheckInputsOnly
+python scripts/smoke/verify_ltx25_i2v_hybrid_image.py --image $Pinned --require-triton
+~~~
+
+Only after the free gates pass, the user explicitly chooses to start the
+paid test with the same PowerShell command WITHOUT `-CheckInputsOnly`.
+This wrapper retains its stopped-group, remote RAM, capacity-controller
+locking and automatic owner-checked cleanup requirements.
+
+If the Triton results fail stability, exceed eager runtime, or display
+any quality regression, leave the approved eager configuration unchanged.
+Do not promote this branch to main on an unverified video comparison.
