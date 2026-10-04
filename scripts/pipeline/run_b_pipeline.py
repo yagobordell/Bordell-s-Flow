@@ -60,6 +60,7 @@ from ai_video_factory.inference.salad import (
     SaladDispatchConfig,
 )
 from ai_video_factory.inference.salad_billing import SaladCostMeter, read_salad_costs
+from ai_video_factory.inference.salad_image_upscaler_start import ensure_image_upscaler_ready
 from ai_video_factory.managed_layout import publish_managed_run, sync_managed_outputs
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
@@ -81,8 +82,10 @@ from ai_video_factory.providers.openai_batch_images import (
     generate_b2_images,
 )
 from ai_video_factory.providers.openai_stt import OpenAISttClient
+from ai_video_factory.providers.optium_image_upscaler import create_optium_image_upscaler
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.professional_avatar_voice import ensure_professional_avatar_voice
+from ai_video_factory.providers.professional_image_finishing import finish_professional_images
 from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.publishing import publish_completed_run
 from ai_video_factory.workflows.b_video import (
@@ -94,7 +97,7 @@ from ai_video_factory.workflows.casero_cta import prepare_casero_cta
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
 _STAGES = ("B1.1", "B1.2", "B2")
-_METRIC_STAGES = ("B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "V1", "V2", "V3")
+_METRIC_STAGES = ("B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "V1", "V2", "V3", "V4")
 
 
 def parse_args() -> argparse.Namespace:
@@ -895,6 +898,22 @@ def _clear_outputs_from(output: Path, start_from: str) -> None:
         if not visual_plan.is_file():
             raise SystemExit(f"Visual plan path is not a file: {visual_plan}")
         visual_plan.unlink()
+    if start_from == "B2":
+        # B2 corrections invalidate the complete professional voice plan.
+        # V1-V4 use the same clean checkpoint layout as B: input/output only.
+        for root in (output, output / "voice_direction"):
+            if root.is_symlink() or root.is_junction():
+                raise SystemExit(f"Refusing to clear linked voice output: {root}")
+            for stage in ("V1", "V2", "V3", "V4"):
+                target = root / stage
+                if target.is_symlink() or target.is_junction():
+                    raise SystemExit(f"Refusing to clear linked voice stage: {target}")
+                if target.exists():
+                    if not target.is_dir():
+                        raise SystemExit(f"Voice stage output is not a directory: {target}")
+                    shutil.rmtree(target)
+            if root.name == "voice_direction" and root.exists():
+                root.rmdir()
 
 
 
@@ -907,6 +926,14 @@ def _image_options() -> ImageOptions:
 
 
 async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, object]:
+    professional = plan.get("visual_style") == "profesional"
+    needs_x2 = professional and any(
+        beat.get("prompt") is not None
+        and beat.get("visual_type") in {"media_image", "avatar_media"}
+        for block in plan["blocks"] for beat in block["beats"]
+    )
+    # GPT originals have their own durable per-job state. Never gate paid
+    # generation on transient Salad startup or R2 connectivity.
     manifest = await asyncio.to_thread(
         generate_b2_images,
         output,
@@ -914,8 +941,70 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
         api_key=settings.openai_api_key,
         options=_image_options(),
     )
-    # Crop only saved grid PNGs; this step cannot make a new paid API call.
+    # Crop saved grids before remote finishing; no new paid API work here.
     panel_assets = await asyncio.to_thread(crop_grid_assets, output, manifest)
+    upscaler = None
+    if needs_x2:
+        # Persist a resumable, explicitly unfinished checkpoint while waiting
+        # for Salad. A readiness/config failure leaves all paid originals intact.
+        manifest["finishing_status"] = "pending_upscaler"
+        manifest_path = output / "images" / "manifest.json"
+        temporary = manifest_path.with_name(manifest_path.name + ".tmp")
+        if any(path.is_symlink() for path in (manifest_path.parent, manifest_path, temporary)):
+            raise ImageGenerationError("Refusing linked professional image checkpoint")
+        try:
+            temporary.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(manifest_path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        required = {
+            "IMAGE_UPSCALER_URL": settings.image_upscaler_url,
+            "SALAD_API_KEY": settings.salad_api_key,
+            "R2_ENDPOINT_URL": settings.r2_endpoint_url,
+            "R2_BUCKET": settings.r2_bucket,
+            "R2_ACCESS_KEY_ID": settings.r2_access_key_id,
+            "R2_SECRET_ACCESS_KEY": settings.r2_secret_access_key,
+        }
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise ImageGenerationError(
+                "GPT originals are saved. Professional image x2 is pending "
+                "OptiumLabs Salad/R2 configuration: " + ", ".join(missing)
+                + ". Re-run --images-only to finish without paying for the originals again."
+            )
+        # Start or reuse Salad only AFTER original GPT images are safely saved.
+        try:
+            await asyncio.to_thread(
+                ensure_image_upscaler_ready,
+                api_key=settings.salad_api_key,
+                gateway_url=settings.image_upscaler_url,
+                auto_start=settings.image_upscaler_auto_start,
+            )
+            upscaler = await asyncio.to_thread(
+                create_optium_image_upscaler,
+                base_url=settings.image_upscaler_url,
+                salad_api_key=settings.salad_api_key,
+                r2_endpoint_url=settings.r2_endpoint_url,
+                r2_bucket=settings.r2_bucket,
+                r2_access_key_id=settings.r2_access_key_id,
+                r2_secret_access_key=settings.r2_secret_access_key,
+                temp_dir=Path(settings.temp_dir) / "professional-image-finishing",
+            )
+        except Exception as exc:
+            raise ImageGenerationError(
+                "GPT originals are saved; professional x2 is pending Salad readiness. "
+                "Re-run --images-only to finish without regenerating paid originals. "
+                f"Startup error: {exc}"
+            ) from exc
+    final_assets = (
+        await asyncio.to_thread(
+            finish_professional_images, output, plan, manifest,
+            upscaler=upscaler, api_key=settings.openai_api_key,
+        ) if professional else None
+    )
     plan["image_assets"] = [
         {
             "block_id": item["block_id"],
@@ -925,8 +1014,8 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
             "provider": item.get("provider", "ai33"),
         }
         for item in (
-            [job for job in manifest["items"] if job.get("grid") is None]
-            + panel_assets
+            final_assets if final_assets is not None else
+            [job for job in manifest["items"] if job.get("grid") is None] + panel_assets
         )
     ]
     # Keep the original full-resolution grid and panel coordinates for audit.
@@ -963,6 +1052,9 @@ def _image_summary(manifest: dict[str, object]) -> dict[str, object]:
             item.get("provider") == "openai_direct" for item in items
         ),
     }
+    if manifest.get("finishing_status") == "completed":
+        summary["professional_finished_count"] = len(manifest["final_assets"])
+        summary["native_grid_video_edits"] = manifest.get("native_grid_video_calls", 0)
     if any(item.get("grid") is not None for item in items):
         summary["grid_count"] = sum(
             item.get("grid") is not None for item in items
@@ -1028,6 +1120,10 @@ async def _preview_if_ready(
         images = json.loads(manifest_path.read_text(encoding="utf-8"))
     if images.get("status") != "completed":
         return None
+    if plan.get("visual_style") == "profesional" and (
+        images.get("finishing_status") != "completed"
+    ):
+        return {"status": "deferred", "reason": "professional_images_not_finished"}
     if missing_panels(images):
         return {
             "status": "deferred",
@@ -1193,6 +1289,12 @@ async def _video_if_ready(
         if require:
             raise RuntimeError("LTX requires completed B2 images")
         return None
+    if plan.get("visual_style") == "profesional" and (
+        images.get("finishing_status") != "completed"
+    ):
+        if require:
+            raise RuntimeError("Professional LTX requires completed image x2/1080 finishing")
+        return {"status": "deferred", "reason": "professional_images_not_finished"}
     if not _ltx_transport_configured():
         if require:
             raise RuntimeError("POSTGRES_DSN and all R2 credentials are required for LTX")
@@ -1280,6 +1382,7 @@ def _preflight_stt_alignment(
     return {
         "status": "completed",
         "block_count": len(plan.get("blocks", [])),
+        "audio_block_count": len(audio.get("blocks", [])),
         "beat_count": len(timeline["beats"]),
     }
 
@@ -1367,6 +1470,27 @@ async def _preflight_saved_run_audio(
     return True
 
 
+def _resume_unfinished_images(output: Path, plan: dict[str, object]) -> bool:
+    """Preserve paid GPT originals when image generation/finishing is unfinished."""
+    manifest_path = output / "images" / "manifest.json"
+    if manifest_path.is_symlink() or manifest_path.parent.is_symlink():
+        raise ImageGenerationError("Refusing linked saved image manifest")
+    if not manifest_path.is_file():
+        return False
+    try:
+        saved = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ImageGenerationError("Saved image manifest is unreadable; reconcile it") from exc
+    if not isinstance(saved, dict) or saved.get("schema_version") != "openai-b2-images-v1":
+        raise ImageGenerationError("Saved image manifest has an unexpected schema")
+    if saved.get("status") != "completed":
+        return True
+    return (
+        plan.get("visual_style") == "profesional"
+        and saved.get("finishing_status") != "completed"
+    )
+
+
 async def _run_images_only(
     script_file: Path, output_root: Path, *, no_video: bool = False,
     results_root: Path = Path("data/results"),
@@ -1421,9 +1545,15 @@ async def _run_images_only(
     _refresh_audio_costs(report, output)
     _write(report_path, report)
     try:
-        removed_images = await asyncio.to_thread(clear_b2_images_for_rerun, output)
-        if removed_images:
-            print(f"Removed {removed_images} previous B2 image(s).", flush=True)
+        if _resume_unfinished_images(output, plan):
+            print(
+                "  Resuming unfinished images: keeping previously paid GPT originals.",
+                flush=True,
+            )
+        else:
+            removed_images = await asyncio.to_thread(clear_b2_images_for_rerun, output)
+            if removed_images:
+                print(f"Removed {removed_images} previous B2 image(s).", flush=True)
         manifest = await _generate_images(output, plan)
     except Exception:
         report["run"]["image_generation"] = {"status": "incomplete"}
@@ -1651,6 +1781,7 @@ def _refresh_audio_costs(report: dict[str, object], output: Path) -> None:
         return
     ledger = ApiCostLedger()
     ledger.restore_requests(previous["requests"])
+    ledger.sync_professional_voice_usage(output)
     ledger.sync_fish_director_usage(output)
     ledger.sync_image_usage(output)
     stages = previous.get("stages")
@@ -1781,6 +1912,23 @@ async def _run_audio_only(
     except (ValueError, OSError) as exc:
         raise SystemExit(f"Invalid B1.1 audio checkpoint: {exc}") from exc
 
+    # Audio-only runs must restore and extend the same V timing ledger as
+    # complete B runs. Paid token usage is reconciled from durable V states.
+    audio_started = perf_counter()
+    prior_timing = TimingLedger()
+    prior_elapsed = prior_timing.restore(report["timings"]) if is_professional else 0.0
+
+    def finish_audio_timing() -> None:
+        if not is_professional:
+            return
+        status = report["run"].get("status", "running")
+        if status not in {"running", "completed", "failed"}:
+            status = "running"
+        report["timings"] = prior_timing.report(
+            run_seconds=prior_elapsed + perf_counter() - audio_started,
+            status=status,
+        )
+
     previous_audio = report["run"].get("audio_generation")
     previous_sha = (
         previous_audio.get("sha256") if isinstance(previous_audio, dict) else None
@@ -1840,6 +1988,8 @@ async def _run_audio_only(
                     voice_id=_run_voice_id(output),
                     source_sha256=hashlib.sha256(raw).hexdigest(),
                     generation_nonce=nonce,
+                    on_timing=prior_timing.record_call,
+                    on_stage_duration=prior_timing.record_stage,
                     max_parallel_calls=8,
                 )
             else:
@@ -1848,6 +1998,8 @@ async def _run_audio_only(
                 )
     except Exception:
         report["run"]["audio_generation"] = {"status": "incomplete"}
+        report["run"]["status"] = "failed"
+        finish_audio_timing()
         _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
@@ -1856,6 +2008,7 @@ async def _run_audio_only(
         report["run"]["video_preview"] = {"status": "stale_audio_regeneration"}
         report["run"]["video_generation"] = {"status": "stale_audio_regeneration"}
     report["run"]["audio_generation"] = artifact
+    finish_audio_timing()
     _refresh_audio_costs(report, output)
     _write(report_path, report)
     if managed_target is not None:
@@ -1915,11 +2068,20 @@ async def _run_audio_only(
             raise
         if video is not None:
             report["run"]["video_generation"] = video
+    finish_audio_timing()
     _refresh_audio_costs(report, output)
     _write(report_path, report)
     await asyncio.to_thread(
         _publish_if_ready, output, script_file, results_root, managed_target
     )
+    if is_professional and not reused_audio:
+        for voice_stage in ("V1", "V2", "V3", "V4"):
+            duration = report["timings"]["stages"][voice_stage]["elapsed_seconds"]
+            if duration is not None:
+                _print_metric(
+                    voice_stage, duration,
+                    report["api_costs"]["stages"][voice_stage]["estimated_cost_usd"],
+                )
     display_path = (
         managed_target / "media" / "audio" / "narracion.wav"
         if managed_target is not None else output / artifact["file"]
@@ -2352,6 +2514,7 @@ async def main() -> None:
                 input_voice_id=getattr(args, "voice_id", None),
                 use_default=bool(getattr(args, "default_voice", False)),
                 allow_replace=bool(getattr(args, "replace_professional_voice", False)),
+                gemini_api_key=settings.gemini_api_key,
             )
         else:
             voice = ensure_avatar_voice(
@@ -2426,6 +2589,7 @@ async def main() -> None:
                 avatar_file=avatar_file,
                 input_voice_id=getattr(args, "voice_id", None),
                 use_default=bool(getattr(args, "default_voice", False)),
+                gemini_api_key=settings.gemini_api_key,
             )
         else:
             voice = ensure_avatar_voice(
@@ -2542,6 +2706,7 @@ async def main() -> None:
                     expected_calls["B2"] = max(
                         expected_calls["B2"] or 0, report_blocks, timings.call_count("B2")
                     )
+        ledger.sync_professional_voice_usage(output)
         ledger.sync_fish_director_usage(output)
         ledger.sync_image_usage(output)
         costs = ledger.report(
@@ -2731,10 +2896,18 @@ async def main() -> None:
                 source_sha256=script_sha256,
                 on_response=ledger.record,
                 on_timing=timings.record_call,
+                on_stage_duration=timings.record_stage,
                 max_parallel_calls=args.max_parallel_calls,
             )
             audio_joined = True
-            save_report("running", len(result.b12))
+            voice_costs, voice_times = save_report("running", len(result.b12))
+            for voice_stage in ("V1", "V2", "V3", "V4"):
+                seconds = voice_times["stages"][voice_stage]["elapsed_seconds"]
+                if seconds is not None:
+                    _print_metric(
+                        voice_stage, seconds,
+                        voice_costs["stages"][voice_stage]["estimated_cost_usd"],
+                    )
             if getattr(args, "managed_target", None) is not None:
                 await asyncio.to_thread(sync_managed_outputs, output, args.managed_target)
 
@@ -2849,6 +3022,7 @@ async def main() -> None:
                             source_sha256=script_sha256,
                             on_response=ledger.record,
                             on_timing=timings.record_call,
+                            on_stage_duration=timings.record_stage,
                             max_parallel_calls=args.max_parallel_calls,
                         )
                         await _preflight_saved_run_audio(

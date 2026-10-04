@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ai_video_factory.providers.professional_image_state import finished_in_place_sha
 from ai_video_factory.publishing import PublicationError, _digest, _json, _safe_file
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -97,8 +98,44 @@ def _image_sources(
         )
     ):
         raise PublicationError("Completed image manifest does not match its generated items")
+    final = manifest.get("final_assets", [])
+    if not isinstance(final, list):
+        raise PublicationError("Invalid professional finished-image list")
+    visual_for_finishing = work / "visual_plan.json"
+    if visual_for_finishing.is_file() and not visual_for_finishing.is_symlink():
+        selected_style = _json(work, "visual_plan.json").get("visual_style")
+    else:
+        selected_style = None
+    if selected_style == "profesional":
+        if claim is not None and manifest.get("finishing_status") != "completed":
+            raise PublicationError("Professional images are not finished")
+        if manifest.get("finishing_status") == "completed":
+            visual_data = _json(work, "visual_plan.json")
+            expected = {
+                (block["block_id"], beat["beat_id"])
+                for block in visual_data["blocks"] for beat in block["beats"]
+                if beat.get("prompt") is not None
+            }
+            keys = {(item.get("block_id"), item.get("beat_id")) for item in final}
+            if keys != expected or len(final) != len(expected):
+                raise PublicationError("Professional finished images do not match B2")
+    else:
+        final = []
     entries: dict[str, tuple[Path, str]] = {}
-    for item in [*items, *panels]:
+    if selected_style == "profesional" and manifest.get("finishing_status") == "completed":
+        selected_images = [
+            *(item for item in items if item.get("grid") is not None),
+            *final,
+        ]
+    else:
+        # A partially finished run may contain a mix of source and finished
+        # beat PNGs. Prefer finished records for paths already replaced.
+        finished_paths = {item.get("file") for item in final}
+        selected_images = [
+            *(item for item in [*items, *panels] if item.get("file") not in finished_paths),
+            *final,
+        ]
+    for item in selected_images:
         if not isinstance(item, dict):
             raise PublicationError("Invalid saved image record")
         name = item.get("file")
@@ -107,7 +144,23 @@ def _image_sources(
         destination = name[len("images/"):]
         if destination in entries:
             raise PublicationError(f"Duplicate image publication: {destination}")
-        entries[destination] = _source(work, name, item.get("sha256"))
+        digest = item.get("sha256")
+        if (selected_style == "profesional" and item not in final
+            and item.get("grid") is None and item.get("visual_type") in {
+                "media_image", "avatar_media", "media_video", "avatar",
+            }):
+            recipe = (
+                "image_x2" if item["visual_type"] in {"media_image", "avatar_media"}
+                else "native_grid_video" if item.get("provider") == "grid_crop"
+                else "native_video_crop"
+            )
+            finished_sha = finished_in_place_sha(
+                work, file=name, source_sha256=digest,
+                block=item["block_id"], beat=item["beat_id"], recipes=(recipe,),
+            )
+            if finished_sha is not None:
+                digest = finished_sha
+        entries[destination] = _source(work, name, digest)
     visual = work / "visual_plan.json"
     if status == "completed":
         if not visual.is_file() or visual.is_symlink():

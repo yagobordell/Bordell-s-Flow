@@ -69,3 +69,61 @@ uv run --locked --extra dev python scripts/smoke/run_image_upscaler_smoke.py --c
 The real validated cases are `640x360 -> 1920x1080` and
 `1280x720 -> 3840x2160`. Both exercise the full R2 signed-URL flow through
 `POST /v1/execute`.
+
+## Professional B2 image finishing (new opt-in by visual style)
+
+Professional B2 `media_image` and `avatar_media` beats are generated
+at their selected B2 size and quality; then OptiumLabs runs exact **2x**
+on static beats, including verified static grid crops. Thus a normal
+`1280x720` still becomes `2560x1440`, while a static panel extracted
+from a high-resolution mixed 2x2 grid (`1920x1080`) becomes
+`3840x2160`. The `768x864` avatar_media support panels preserve their
+separate 8:9 geometry and become `1536x1728`.
+
+The generation quality policy is uniform across professional and Casero:
+**medium for full grids and individual prompts containing a case-insensitive
+`(For context` marker with optional whitespace; low otherwise.** In
+particular, independently generated professional I2V/A2V keyframes
+(`media_video` and regenerated `avatar`) use `1920x1088` at **low**
+unless they include `For context`. These independent keyframes are
+center-cropped by four rows per side to `1920x1080`; reused user-avatar
+PNGs remain unchanged.
+
+**No grid panel is ever regenerated with GPT.** A professional grid
+containing only still images retains its normal 16:9 panel geometry:
+2x2 `2560x1440`, 3x2 `3840x1440`, 3x3 `3840x2160`; each panel
+is nominally `1280x720`. When **any** participating panel is intended
+for video (including an unnumbered filler), a 2x2 grid uses
+`3840x2160` so each panel is nominally `1920x1080`. Larger 3x2 and
+3x3 grids are already at the supported canvas limit and therefore retain
+`1280x720` panels. All grids use medium. Exclusive avatar_media grids
+retain their special 8:9 sizes.
+
+After cropping, grid-video panels are used directly as the video source,
+**at the cropped size**: `1920x1080` for supported mixed 2x2 grids and
+`1280x720` for larger grids. They receive neither an independent GPT
+edit nor upscaling to disguise a lower resolution. Only grid-photo panels
+receive the regular exact-2x OptiumLabs finishing. The source full grid
+remains immutable. No new `native_grid_video` paid request or finishing
+state is created. Older ambiguous native-edit states are rejected and
+retained for manual reconciliation, never silently resubmitted or deleted;
+historical finished states remain available for cost auditing.
+
+The professional finishing stage keeps exact 2x and standalone-video crop
+results in their original beat paths (`images/block_N/BEAT.png`), with
+SHA-verified recovery metadata under `images/finishing_state/`.
+Grid-video images already occupy their final per-beat paths and are
+verified, not overwritten. The source full grids are preserved unchanged.
+If Salad/R2 is unavailable, static-image finishing stays pending without
+regenerating paid originals. Professional preview/publication requires all
+finishing to complete. Existing experimental video inference and output
+geometry remain independent of these source-image dimensions. Explicit B2
+reruns now archive original paid GPT request JSON as well as paid finishing
+metadata, preserving historical billing even when no native grid edit is
+created.
+
+To validate a deployed OptiumLabs service, use the real `small` and `real`
+smokes above. Separately, perform a controlled new **professional B2**
+end-to-end run and visually inspect mixed-grid continuity and the two
+high-resolution video references before releasing to production. Offline CI
+cannot prove visual fidelity or service availability.

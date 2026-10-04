@@ -306,6 +306,36 @@ def test_async_provider_yields_to_event_loop(monkeypatch) -> None:
     assert asyncio.run(run_both()).extension == "wav"
 
 
+def test_voice_display_name_resolves_to_voice_library_id(monkeypatch) -> None:
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "voices": [{
+                    "id": "voice_0da4kq24ctjr",
+                    "display_name": "Uncle Enzo 3",
+                }],
+            }).encode()
+
+    requests = []
+
+    def fake_get(request, *, timeout):
+        requests.append((request, timeout))
+        return Response()
+
+    monkeypatch.setattr(gemini, "urlopen", fake_get)
+    assert gemini.resolve_gemini_voice_id(
+        "Uncle Enzo 3", api_key="test-key"
+    ) == "voice_0da4kq24ctjr"
+    assert requests[0][0].full_url.endswith("/voices?pageSize=1000")
+    assert requests[0][0].get_header("X-goog-api-key") == "test-key"
+
+
 def test_custom_studio_voice_uses_exported_name_not_legacy_id(monkeypatch) -> None:
     """Google Studio's `Uncle Enzo 3` is a name with spaces, not voice_... ID."""
     requests = []

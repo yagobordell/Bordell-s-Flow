@@ -23,21 +23,10 @@ venv/
 .idea/
 .DS_Store
 
-# Local runtime data; keep only the avatar folder's instructions in Git
+# Managed local scripts, avatar media and checkpoint state are never tracked
 .video_factory_work/
-data/*
-!data/input/
-data/input/*
-!data/avatar/
-data/avatar/*
-!data/avatar/README.md
+data/
 
-# Remotion / Node
-remotion/node_modules/
-remotion/.cache/
-remotion/out/
-remotion/public/media/*
-!remotion/public/media/.gitkeep
 
 # Model caches / large artifacts
 models/

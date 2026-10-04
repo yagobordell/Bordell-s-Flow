@@ -23,6 +23,14 @@ DEFAULT_SAMPLE_RATE_HZ = 24_000
 DEFAULT_CHANNELS = 1
 MAX_STYLE_PROMPT_BYTES = 4_000
 
+_KNOWN_PREBUILT_VOICES = frozenset({
+    "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede",
+    "Callirrhoe", "Autonoe", "Enceladus", "Iapetus", "Umbriel", "Algieba",
+    "Despina", "Erinome", "Algenib", "Rasalgethi", "Laomedeia", "Achernar",
+    "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
+    "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
+})
+
 _VERBATIM = "The text is the verbatim transcript. Do not add, omit, or rewrite words."
 
 
@@ -71,6 +79,82 @@ def validate_gemini_voice_name(value: str) -> str:
     return value
 
 
+def resolve_gemini_voice_id(
+    value: str,
+    *,
+    api_key: str | None,
+    api_base_url: str = DEFAULT_GEMINI_API_BASE_URL,
+    timeout_seconds: float = 30.0,
+) -> str:
+    """Resolve a Voice Library display name to the ID accepted by Gemini.
+
+    Existing voice IDs and offline/test calls remain unchanged.  When an API
+    key is available, display names are looked up through the same REST
+    ``GET /v1beta/voices`` endpoint used by the operator tooling.
+    """
+    selected = validate_gemini_voice_name(value)
+    if (
+        not api_key
+        or selected.startswith(("voice_", "voicekey_"))
+        or selected in _KNOWN_PREBUILT_VOICES
+    ):
+        return selected
+
+    page_token: str | None = None
+    for _ in range(20):
+        query = "pageSize=1000"
+        if page_token:
+            query += "&pageToken=" + quote(page_token, safe="")
+        request = Request(
+            f"{api_base_url.rstrip('/')}/voices?{query}",
+            headers={"x-goog-api-key": api_key.strip()},
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                raw = response.read()
+        except HTTPError as exc:
+            raise GeminiTtsError(
+                f"Gemini voice lookup returned HTTP {exc.code}"
+            ) from None
+        except (URLError, TimeoutError, OSError) as exc:
+            raise GeminiTtsError("Gemini voice lookup failed") from exc
+        try:
+            payload = json.loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise GeminiTtsError("Gemini voice lookup returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise GeminiTtsError("Gemini voice lookup returned an invalid response")
+        voices = payload.get("voices")
+        if not isinstance(voices, list):
+            raise GeminiTtsError("Gemini voice lookup returned no voice list")
+        for voice in voices:
+            if not isinstance(voice, dict):
+                continue
+            identifier = voice.get("id")
+            display_name = voice.get("display_name", voice.get("displayName"))
+            if (
+                isinstance(identifier, str)
+                and isinstance(display_name, str)
+                and display_name == selected
+            ):
+                return identifier
+            if isinstance(identifier, str) and identifier == selected:
+                return identifier
+        page_token = payload.get("next_page_token", payload.get("nextPageToken"))
+        if not isinstance(page_token, str) or not page_token:
+            break
+
+    # Keep the established built-in voice path working even if the list
+    # endpoint is unavailable or omits a standard voice from its response.
+    if " " not in selected:
+        return selected
+    raise GeminiTtsError(
+        f"Gemini voice display name not found: {selected!r}; "
+        "use the matching voice_... ID"
+    )
+
+
 def _voice_config(voice: str) -> dict[str, Any]:
     name = validate_gemini_voice_name(voice)
     # Preserve the existing ID-based wire contract for Algenib, Kore and
@@ -117,7 +201,7 @@ def _build_payload(
 
 
 def _build_directed_payload(*, turns: list[dict[str, str]], voice: str) -> dict[str, Any]:
-    """One Gemini 3.8 request per B2 block, style per text part, tags only inline."""
+    """One Gemini request per voice group; V4 sends one part and one style."""
     if not turns:
         raise ValueError("Gemini directed TTS needs at least one speech turn")
     parts: list[dict[str, Any]] = []
@@ -126,7 +210,8 @@ def _build_directed_payload(*, turns: list[dict[str, str]], voice: str) -> dict[
         if not isinstance(spoken, str) or not spoken.strip():
             raise ValueError("Gemini directed TTS requires non-empty transcript turns")
         if (not isinstance(style, str) or not style.strip()
-            or len((style.strip() + "\n" + _VERBATIM).encode("utf-8")) > 1500):
+            or len((style.strip() + "\n" + _VERBATIM).encode("utf-8"))
+            > (6000 if len(turns) == 1 else 1500)):
             raise ValueError("Gemini directed TTS requires a concise style on each turn")
         parts.append({
             "text": spoken,
@@ -279,7 +364,7 @@ class GeminiTtsSpeechProvider:
     async def generate_directed_speech(
         self, *, turns: list[dict[str, str]], model: str, voice: str
     ) -> GeneratedSpeech:
-        """Generate one directed professional B2 block without re-voicing the transcript."""
+        """Generate one directed professional voice block without re-voicing it."""
         if not model.strip() or not voice.strip():
             raise ValueError("Gemini directed TTS requires a model and voice")
         voice = validate_gemini_voice_name(voice)

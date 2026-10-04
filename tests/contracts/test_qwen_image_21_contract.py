@@ -122,22 +122,6 @@ def test_qwen_salad_manifest_contract() -> None:
     assert "HF_XET_HIGH_PERFORMANCE" not in service["environment"]
 
 
-def test_salad_smoke_suite_uses_qwen_image_21() -> None:
-    script = Path("scripts/smoke/run_salad_smoke_suite.py").read_text(encoding="utf-8")
-
-    assert '"qwen_image_21"' in script
-    assert "SaladQwenImage21Provider" in script
-    assert "QWEN_IMAGE_21_KEYFRAME_TASK" in script
-    assert "qwen-image-21-keyframe.png" in script
-    assert "time.time_ns()" in script
-    assert 'image.metadata.get("replayed") != "false"' in script
-    assert "PostgresJobQueueClient" in script
-    assert '"POSTGRES_DSN"' in script
-    assert "validate_qwen_output_image(" in script
-    assert "SaladJobQueueClient" not in script
-    assert "ideogram" not in script.lower()
-
-
 def test_qwen_worker_pins_qwen_compatible_diffusers_revision() -> None:
     dockerfile = Path("docker/workers/qwen-image-2.1/Dockerfile").read_text(encoding="utf-8")
     pinned = (

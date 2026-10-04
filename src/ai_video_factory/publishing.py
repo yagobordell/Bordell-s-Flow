@@ -93,6 +93,22 @@ def _collect(
     images = _json(work, "images/manifest.json")
     if images.get("status") != "completed":
         raise PublicationError("Publication requires verified completed image generation")
+    final_assets = (
+        images.get("final_assets", [])
+        if plan.get("visual_style") == "profesional" else []
+    )
+    if plan.get("visual_style") == "profesional":
+        if images.get("finishing_status") != "completed":
+            raise PublicationError("Publication requires finished professional image sources")
+        expected = {
+            (block["block_id"], beat["beat_id"])
+            for block in plan["blocks"] for beat in block["beats"]
+            if beat.get("prompt") is not None
+        }
+        if (not isinstance(final_assets, list)
+            or len(final_assets) != len(expected)
+            or {(entry["block_id"], entry["beat_id"]) for entry in final_assets} != expected):
+            raise PublicationError("Finished professional image assets differ from B2")
     avatar = plan.get("avatar")
     if not isinstance(avatar, dict):
         raise PublicationError("The visual plan has no saved avatar")
@@ -127,6 +143,21 @@ def _collect(
             if item.is_file():
                 rel = item.relative_to(work).as_posix()
                 add("Bots/" + rel, rel)
+    for stage in ("V1", "V2", "V3", "V4"):
+        canonical = work / stage
+        legacy = work / "voice_direction" / stage
+        if canonical.exists() and legacy.exists():
+            raise PublicationError(f"Ambiguous {stage} voice checkpoint roots")
+        folder = canonical if canonical.exists() else legacy
+        if folder.exists():
+            if not folder.is_dir() or folder.is_symlink() or folder.is_junction():
+                raise PublicationError(f"Linked voice checkpoint root: {stage}")
+            for item in sorted(folder.rglob("*")):
+                if item.is_symlink() or item.is_junction():
+                    raise PublicationError(f"Linked voice checkpoint: {item}")
+                if item.is_file():
+                    rel = item.relative_to(folder).as_posix()
+                    add(f"Bots/{stage}/{rel}", item.relative_to(work).as_posix())
     cta_folder = work / "CTA"
     if cta_folder.exists():
         if cta_folder.is_symlink() or not cta_folder.is_dir():
@@ -154,7 +185,16 @@ def _collect(
         add("Media/imagenes/qr.png", qr.get("file"), qr.get("sha256"))
 
     image_assets: dict[str, str] = {}
-    for item in [*images.get("items", []), *images.get("panel_assets", [])]:
+    # Professional beat PNGs are replaced in place: never package the source
+    # metadata alongside a different final SHA for the very same file.
+    if plan.get("visual_style") == "profesional":
+        selected_images = [
+            *(item for item in images.get("items", []) if item.get("grid") is not None),
+            *final_assets,
+        ]
+    else:
+        selected_images = [*images.get("items", []), *images.get("panel_assets", [])]
+    for item in selected_images:
         if not isinstance(item, dict):
             raise PublicationError("Invalid image manifest item")
         name, sha = item.get("file"), item.get("sha256")

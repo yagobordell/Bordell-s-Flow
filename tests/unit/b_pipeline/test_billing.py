@@ -196,3 +196,82 @@ def test_medium_reasoning_tokens_are_already_inside_billed_output() -> None:
     ))
     assert ledger.records[0]["estimated_cost_usd"] == "0.00065000"
     assert ledger.records[0]["reasoning_tokens_included_in_output"] == 1000
+
+
+
+def test_professional_v_usage_restored_from_saved_calls_once_across_resumes(tmp_path):
+    for stage, rel in (
+        ("V1", "V1/pass_1"),
+        ("V2", "V2/pass_1/block_1"),
+        ("V3", "V3/block_1"),
+    ):
+        path = tmp_path / rel / "api_call_1.json"
+        path.parent.mkdir(parents=True)
+        obj = response()
+        obj.id = "resp_" + stage
+        path.write_text(json.dumps({
+            "stage": stage, "block_id": None if stage == "V1" else 1,
+            "request_sha256": "a" * 64, "outcome": "received",
+            "elapsed_seconds": 0.03,
+            "response": {
+                "id": obj.id, "model": obj.model, "service_tier": obj.service_tier,
+                "usage": {
+                    "input_tokens": obj.usage.input_tokens,
+                    "output_tokens": obj.usage.output_tokens,
+                    "input_tokens_details": {
+                        "cached_tokens": obj.usage.input_tokens_details.cached_tokens,
+                        "cache_write_tokens": obj.usage.input_tokens_details.cache_write_tokens,
+                    },
+                    "output_tokens_details": {
+                        "reasoning_tokens": obj.usage.output_tokens_details.reasoning_tokens,
+                    },
+                },
+            },
+        }))
+    ledger = ApiCostLedger()
+    ledger.record("B1.1", None, response())
+    # The full runner receives V usage in memory and later reconciles the
+    # same checkpoint records. Both paths must price precisely once.
+    already = response()
+    already.id = "resp_V1"
+    ledger.record("V1", None, already)
+    ledger.sync_professional_voice_usage(tmp_path)
+    ledger.sync_professional_voice_usage(tmp_path)
+    result = ledger.report(
+        blocks=0, run_status="completed",
+        expected_calls={"B1.1": 1, "B1.2": 0, "B2": 0},
+    )
+    assert all(result["stages"][stage]["recorded_calls"] == 1
+               for stage in ("V1", "V2", "V3"))
+    assert all(result["stages"][stage]["estimated_cost_usd"] == "0.00013450"
+               for stage in ("V1", "V2", "V3"))
+    assert result["estimated_total_usd"] == "0.00053800"
+    resumed = ApiCostLedger()
+    resumed.restore_requests(result["requests"])
+    resumed.sync_professional_voice_usage(tmp_path)
+    assert resumed.report(
+        blocks=0, run_status="completed",
+        expected_calls={"B1.1": 1, "B1.2": 0, "B2": 0},
+    )["estimated_total_usd"] == result["estimated_total_usd"]
+
+
+def test_professional_v_unknown_api_response_is_unpriced_not_free(tmp_path):
+    path = tmp_path / "voice_direction/V3/block_1/api_call_1.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "stage": "V3", "block_id": 1, "outcome": "schema_invalid",
+        "response": {
+            "id": None, "model": "gpt-6-luna",
+            "service_tier": "default", "usage": None,
+        },
+    }))
+    ledger = ApiCostLedger()
+    ledger.sync_professional_voice_usage(tmp_path)
+    ledger.sync_professional_voice_usage(tmp_path)
+    result = ledger.report(
+        blocks=0, run_status="completed",
+        expected_calls={"B1.1": 0, "B1.2": 0, "B2": 0},
+    )
+    assert result["stages"]["V3"]["recorded_calls"] == 1
+    assert result["stages"]["V3"]["estimated_cost_usd"] is None
+    assert result["estimated_total_usd"] is None

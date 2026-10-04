@@ -20,6 +20,16 @@ RETIRED = (
     "scripts/pipeline/run_phase8_video_prompts.py",
     "scripts/pipeline/run_production.py",
     "scripts/pipeline/run_video_factory.ps1",
+    "scripts/pipeline/run_phase4_assets.py",
+    "scripts/pipeline/run_phase5_audio.py",
+    "scripts/pipeline/run_phase6_keyframes.py",
+    "scripts/pipeline/run_phase8_videos.py",
+    "scripts/pipeline/run_phase9_compositor.py",
+    "src/ai_video_factory/workflows/video_generation.py",
+    "src/ai_video_factory/workflows/video_upscale.py",
+    "src/ai_video_factory/compositor/remotion.py",
+    "src/ai_video_factory/domain/models.py",
+    "remotion/package.json",
 )
 
 
@@ -27,6 +37,7 @@ def test_retired_bot_paths_are_absent() -> None:
     assert all(not (ROOT / path).exists() for path in RETIRED)
     assert (ROOT / "src/ai_video_factory/bots/workflow.py").is_file()
     assert (ROOT / "scripts/pipeline/run_b_pipeline.py").is_file()
+    assert (ROOT / "scripts/pipeline/run_managed.py").is_file()
 
 
 def test_active_application_has_no_retired_bot_imports() -> None:
@@ -42,11 +53,8 @@ def test_independent_salad_control_plane_and_all_workers_are_preserved() -> None
         "qwen_image_21", "ltx25", "ltx25_i2v", "realesrgan",
     }
     assert manifest["stack"]["job_transport"] == "postgres"
-    all_services = set(manifest["services"])
-    assert required_services <= all_services
-    # A2V performance trials may register a stopped, opt-in Salad group, but
-    # never alter or expand the production stack's automatically managed set.
-    assert all_services - required_services <= {"ltx25_a2v_experimental"}
+    assert required_services <= set(manifest["services"])
+    assert set(manifest["services"]) - required_services <= {"ltx25_a2v_experimental"}
     assert set(manifest["stack"]["service_order"]) == required_services
     for service in manifest["services"].values():
         assert (ROOT / service["dockerfile"]).is_file()

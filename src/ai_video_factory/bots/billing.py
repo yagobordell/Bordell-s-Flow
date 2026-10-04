@@ -28,7 +28,7 @@ _IMAGE_PRICING = {
 }
 _STAGES = (
     "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2",
-    "V1", "V2", "V3", "Fish director", _IMAGE_STAGE, "CTA image",
+    "V1", "V2", "V3", "V4", "Fish director", _IMAGE_STAGE, "CTA image",
 )
 
 
@@ -123,6 +123,49 @@ class ApiCostLedger:
 
         self._records.append(record)
 
+    def sync_professional_voice_usage(self, output: Path) -> None:
+        """Reconcile all paid V calls from durable checkpoints without double billing.
+
+        Prior reports without new checkpoints retain their original V records.
+        A missing/unknown API response stays unpriced rather than becoming $0.
+        """
+        states: list[Path] = []
+        for root in (output / "voice_direction", output):
+            for stage in ("V1", "V2", "V3", "V4"):
+                stage_root = root / stage
+                if stage_root.is_symlink():
+                    raise ValueError("Linked professional voice billing directory")
+                states.extend(sorted(stage_root.rglob("api_call_*.json")))
+        seen = {
+            (item["stage"], item.get("response_id"), item.get("source_state_file"))
+            for item in self._records if item["stage"] in {"V1", "V2", "V3", "V4"}
+        }
+        response_ids = {
+            (item["stage"], item.get("response_id"))
+            for item in self._records
+            if item["stage"] in {"V1", "V2", "V3", "V4"} and item.get("response_id") is not None
+        }
+        for path in states:
+            if path.is_symlink() or path.parent.is_symlink():
+                raise ValueError(f"Linked professional voice billing state: {path}")
+            item = json.loads(path.read_text(encoding="utf-8"))
+            stage, block_id, response = (
+                item.get("stage"), item.get("block_id"), item.get("response"),
+            )
+            if (stage not in {"V1", "V2", "V3", "V4"} or not isinstance(response, dict)
+                or (block_id is not None and (type(block_id) is not int or block_id < 1))):
+                raise ValueError(f"Malformed professional voice API call: {path}")
+            relative = path.relative_to(output).as_posix()
+            response_id = response.get("id")
+            if ((stage, response_id, relative) in seen
+                or (response_id is not None and (stage, response_id) in response_ids)):
+                continue
+            self.record(stage, block_id, response)
+            self._records[-1]["source_state_file"] = relative
+            seen.add((stage, response_id, relative))
+            if response_id is not None:
+                response_ids.add((stage, response_id))
+
     def sync_fish_director_usage(self, output: Path) -> None:
         """Reconcile durable Fish director responses without double-counting resumes."""
         runs = output / "audio" / "runs"
@@ -132,7 +175,7 @@ class ApiCostLedger:
             raise ValueError("Fish audio runs directory is invalid or linked")
         for path in sorted(runs.glob("*/blocks/block_*/task.json")):
             # Professional Gemini blocks are not Fish directors; their V-stage
-            # Responses usage is recorded separately as V1/V2/V3.
+            # Responses usage is recorded separately as V1/V2/V3/V4.
             if path.parent.parent.parent.name.startswith("gemini-"):
                 continue
             parents = (path, path.parent, path.parent.parent, path.parent.parent.parent)
@@ -231,23 +274,49 @@ class ApiCostLedger:
             planned = _tokens(manifest.get("total_generation_jobs"))
             if planned is None and "total_generation_jobs" in manifest:
                 raise ValueError("Invalid planned image request count")
+            additional = _tokens(manifest.get("native_grid_video_calls", 0))
+            if additional is None:
+                raise ValueError("Invalid native professional grid-video request count")
+            if planned is not None:
+                planned += additional
 
+        finished_archive = output / "images_replaced_professional_finishing"
+        if finished_archive.is_symlink():
+            raise ValueError("Refusing linked professional finishing billing archive")
         active = sorted(root.glob("block_*/*.json")) + sorted(
             (root / "grids").glob("*.json")
+        ) + sorted(
+            (root / "finishing_state").glob("block_*/*-native_grid_video.json")
+        ) + sorted(
+            (root / "professional_finished").glob("block_*/*-native_grid_video.json")
         )
-        replaced = sorted(archive.glob("block_*/*.json"))
+        historical_b2 = output / "images_replaced_b2"
+        if historical_b2.is_symlink():
+            raise ValueError("Refusing linked B2 billing archive")
+        replaced = sorted(archive.glob("block_*/*.json")) + sorted(
+            historical_b2.glob("run-*/block_*/*.json")
+        ) + sorted(
+            historical_b2.glob("run-*/grids/*.json")
+        ) + sorted(
+            historical_b2.glob("run-*/replaced_states/block_*/*.json")
+        ) + sorted(
+            finished_archive.glob("run-*/block_*/*-native_grid_video.json")
+        )
         active_count = 0
         replaced_count = 0
         for path in (*active, *replaced):
             if path.is_symlink() or path.parent.is_symlink():
                 raise ValueError(f"Refusing linked image accounting state: {path}")
             state = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(state, dict) or state.get("schema_version") != "openai-image-v1":
+            if not isinstance(state, dict) or state.get("schema_version") not in {
+                "openai-image-v1", "professional-image-finishing-v1",
+            }:
                 raise ValueError(f"Invalid image accounting state: {path}")
             status = state.get("status")
             if status not in ("completed", "direct_submitting_unknown"):
                 continue  # direct_pending has not been submitted to the paid API.
-            if path.is_relative_to(archive):
+            if (path.is_relative_to(archive) or path.is_relative_to(finished_archive)
+                or path.is_relative_to(historical_b2)):
                 replaced_count += 1
             else:
                 active_count += 1
@@ -363,11 +432,11 @@ class ApiCostLedger:
         )
         expected["CTA image"] = sum(item["stage"] == "CTA image" for item in ordered)
         fish_count = sum(item["stage"] == "Fish director" for item in ordered)
-        for v_stage in ("V1", "V2", "V3"):
-            expected[v_stage] = (
-                sum(item["stage"] == v_stage for item in ordered)
-                if expected_calls is None
-                else expected_calls.get(v_stage, sum(item["stage"] == v_stage for item in ordered))
+        for v_stage in ("V1", "V2", "V3", "V4"):
+            actual = sum(item["stage"] == v_stage for item in ordered)
+            reported = expected_calls.get(v_stage) if expected_calls is not None else None
+            expected[v_stage] = max(
+                actual, reported if type(reported) is int and reported >= 0 else 0,
             )
         expected["Fish director"] = (
             fish_count if expected_calls is None

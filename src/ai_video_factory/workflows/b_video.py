@@ -116,10 +116,20 @@ def _source_assets(
         raise B2VideoError("LTX requires the saved run avatar")
     avatar = _verified_asset(output, avatar_meta.get("file"), avatar_meta.get("sha256"))
     assets: dict[tuple[int, str], Path] = {}
-    for item in [
-        *(entry for entry in images.get("items", []) if entry.get("grid") is None),
-        *images.get("panel_assets", []),
-    ]:
+    if plan.get("visual_style") == "profesional" and (
+        images.get("finishing_status") != "completed"
+    ):
+        raise B2VideoError(
+            "Professional LTX requires finished still images "
+            "and verified video sources"
+        )
+    for item in (
+        images["final_assets"] if plan.get("visual_style") == "profesional"
+        else [
+            *(entry for entry in images.get("items", []) if entry.get("grid") is None),
+            *images.get("panel_assets", []),
+        ]
+    ):
         key = item["block_id"], item["beat_id"]
         if key in assets:
             raise B2VideoError(f"Duplicate B2 image for {key}")

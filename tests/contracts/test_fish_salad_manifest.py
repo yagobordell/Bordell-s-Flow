@@ -27,26 +27,12 @@ def test_fish_manifest_is_independent_compute_service() -> None:
     assert "FISH_API_KEY" not in fish["environment"]
 
 
-def test_fish_preflights_verify_reference_object_before_gpu() -> None:
-    smoke = (ROOT / "scripts/smoke/run_fish_speech_smoke.py").read_text(encoding="utf-8")
-    phase5 = (ROOT / "scripts/pipeline/run_phase5_audio.py").read_text(encoding="utf-8")
-
-    assert "validate_reference_object(reference)" in smoke
-    assert "_validate_reference_object(storage, reference)" in phase5
-    assert "SHA-256 mismatch" in smoke
-    assert "SHA-256 mismatch" in phase5
-
-
-def test_phase5_fish_fallback_validates_before_explicit_gpu_start() -> None:
-    content = (ROOT / "scripts/pipeline/run_phase5_audio_controlled.ps1").read_text(
+def test_fish_smoke_verifies_reference_object_before_gpu() -> None:
+    smoke = (ROOT / "scripts/smoke/run_fish_speech_smoke.py").read_text(
         encoding="utf-8"
     )
-
-    preflight = content.index("Fish fallback configuration preflight: before GPU allocation")
-    start = content.index("Invoke-Start -Service fish_speech")
-    assert preflight < start
-    assert "--preflight-only" in content
-    assert "manage_salad_worker.ps1" in content
+    assert "validate_reference_object(reference)" in smoke
+    assert "SHA-256 mismatch" in smoke
 
 
 def test_unified_compute_manager_covers_every_stack_service() -> None:

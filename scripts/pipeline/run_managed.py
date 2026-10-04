@@ -4,7 +4,7 @@ Examples:
   data/Jorge.png + data/guion.txt -> data/Jorge/guion/guion.txt on start
   data/Jorge/otro.txt            -> data/Jorge/otro/otro.txt on start
   .\\run.ps1 guion Jorge --generate-video resumes an already started folder.
-The audited B pipeline itself retains its legacy CLI and separate recovery files.
+The B pipeline retains verified checkpoints and safe paid-request recovery.
 """
 from __future__ import annotations
 
@@ -44,7 +44,6 @@ Options include --no-image, --no-video, --style, --from B2, --rerun,
 --sync-only exports existing verified media without API or GPU calls.
 For opted-in YouTube publication set YOUTUBE_ENABLED=true and provide per-run youtube.json.
 Use scripts/youtube/publish_run.py to retry distribution without regenerating.
-Use --legacy-layout to call the previous B-pipeline interface unchanged.
 """
 
 
@@ -328,20 +327,15 @@ def _archive_managed_run(
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if "--legacy-layout" in args:
-        args.remove("--legacy-layout")
-        # Preserve the previous run.ps1 positional shortcut, not only the
-        # Python runner's legacy flag interface.
-        legacy: list[str] = ["--scripts-dir", "data/input/scripts"]
-        while args and not args[0].startswith("-") and len(legacy) < 6:
-            key = "--script" if "--script" not in legacy else "--avatar"
-            legacy.extend([key, args.pop(0)])
-        return subprocess.call([sys.executable, str(CORE), *legacy, *args])
+        raise SystemExit(
+            "--legacy-layout has been retired; use the managed data/<avatar>/ layout."
+        )
     if "-h" in args or "--help" in args:
         print(_HELP)
         return 0
     script_arg, avatar_arg, data, flags = _flags(args)
     if any(flag in flags for flag in ("--output", "--avatars-dir", "--scripts-dir", "--script")):
-        raise SystemExit("Managed layout controls paths. Use --data-root or --legacy-layout.")
+        raise SystemExit("Managed layout controls paths. Use --data-root.")
     data.mkdir(parents=True, exist_ok=True)
     avatar_names = _managed_avatar_names(data)
     if "--list-avatars" in flags:
