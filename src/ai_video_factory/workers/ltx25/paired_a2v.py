@@ -279,6 +279,38 @@ def _prepare_independent_prompt_contexts(
     }
 
 
+def _check_stage1_host_pressure(
+    initial: dict[str, Any], after: dict[str, Any], limit: int,
+    metrics: dict[str, Any] | None,
+) -> None:
+    """Fail closed on extreme host paging BEFORE the costly second stage.
+
+    Process major faults are cumulative; compare the stage1 increment on
+    this exact worker. This is an operator-selected latency/placement gate,
+    NOT a change to the generated tensors or an estimate of container RAM.
+    """
+    if limit <= 0:
+        raise ValueError("A2V stage1 page-fault gate must be explicitly enabled")
+    before_faults = initial.get("process_major_page_faults")
+    after_faults = after.get("process_major_page_faults")
+    if (
+        not isinstance(before_faults, int)
+        or not isinstance(after_faults, int)
+        or after_faults < before_faults
+    ):
+        raise RuntimeError("A2V latency guard cannot read monotonic major-page faults")
+    fault_delta = after_faults - before_faults
+    if metrics is not None:
+        metrics["stage1_major_page_faults_delta"] = fault_delta
+        metrics["stage1_major_page_faults_limit"] = limit
+    if fault_delta > limit:
+        raise RuntimeError(
+            "A2V latency guard: host paging exceeded limit after stage1 "
+            f"({fault_delta}>{limit}). "
+            "No stage2 or VAE was started; inspect Salad host memory."
+        )
+
+
 def generate_paired_static_a2v(
     pipeline: Any, samples: tuple[A2VSample, A2VSample], *,
     width: int, height: int, fps: int, frames: int,
@@ -379,20 +411,10 @@ def generate_paired_static_a2v(
     if phase_metrics is not None:
         phase_metrics["memory_after_stage1"] = stage1_memory
     if initial_memory is not None:
-        before_faults = initial_memory.get("process_major_page_faults")
-        after_faults = stage1_memory.get("process_major_page_faults")
-        if before_faults is None or after_faults is None or after_faults < before_faults:
-            raise RuntimeError("A2V latency guard cannot read monotonic major-page faults")
-        fault_delta = after_faults - before_faults
-        if phase_metrics is not None:
-            phase_metrics["stage1_major_page_faults_delta"] = fault_delta
-            phase_metrics["stage1_major_page_faults_limit"] = max_stage1_major_page_faults
-        if fault_delta > max_stage1_major_page_faults:
-            raise RuntimeError(
-                "A2V latency guard: host paging exceeded limit after stage1 "
-                f"({fault_delta}>{max_stage1_major_page_faults}). "
-                "No stage2 or VAE was started; inspect Salad host memory."
-            )
+        _check_stage1_host_pressure(
+            initial_memory, stage1_memory, max_stage1_major_page_faults,
+            phase_metrics,
+        )
     del stage1_images, stage1_audio
     upsample_start = time.perf_counter()
     upscaled = torch.cat([
