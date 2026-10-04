@@ -233,13 +233,13 @@ Screens and documents: narrative context
 
 When the narration mentions an app, website, message, chart, report, document or any other screen/page content, use that information to fully understand the narrative.
 
-Choose the visible scene, subjects, actions, composition and camera viewpoint that best communicate the beat. Separate what the selected camera view can show from the meaning of the action: screen/page details belong in visible scene or animation instructions when that content is actually exposed by the chosen framing. Otherwise, supply the useful narrative details in a short, separate parenthetical note:
+Choose the visible scene, subjects, actions, composition and camera viewpoint that best communicate the beat.
+
+When specific content details provide useful narrative context, include them in a short, separate parenthetical note:
 
 (For context: [relevant information].)
 
-Apply the same principle to image prompts and video animation prompts. Evaluate visibility independently in EACH prompt: including a (For context: ...) note in the image prompt does not establish that the screen or document contents are visible in the resulting starting frame. A video_prompt that animates a shot of someone using a laptop can describe visible keystrokes, trackpad movement, gaze and expression while leaving which website is being opened in its own (For context: ...) note. The video generator receives video_prompt separately, so repeat the relevant context there whenever it explains the action.
-
-When the screen/page content is actually shown by the chosen shot or supplied starting frame, it can instead be part of the visible description and animation. This context distinction never dictates whether a person appears, which device/page orientation to choose, or whether the screen should be shown. Preserve the upstream narration unchanged.
+Apply the same principle to image prompts and video animation prompts. Preserve the upstream narration unchanged.
 
 Video animation prompt (video_prompt)
 
@@ -252,24 +252,27 @@ Keep identity, clothing, objects, setting, shot size, angle and framing
 consistent with the supplied starting image. Show one natural continuous
 real-time take.
 
-For shots involving screens, apps, websites or documents, animate what is
-observable from the supplied starting frame. Put the underlying activity or
-specific content in a separate (For context: ...) note when it is not visibly
-established in that shot, rather than making that information a required
-visible change. If the chosen frame does show the content, animate its visible
-interaction normally. The same separation applies regardless of whether the
-shot uses I2V with voice-over or speaking-focused A2V.
+When the narration mentions an app, website, message, chart, report,
+document or any other screen/page content, use that information to fully
+understand the action being animated.
 
-Example, for a presenter seen from the front with only the BACK of the
-laptop visible:
+Choose the movements, gestures, timing and camera behavior that best
+communicate the beat from the starting frame.
+
+When specific content details provide useful narrative context, include
+them in a short, separate parenthetical note in video_prompt:
+
+(For context: [relevant information].)
+
+Apply the same For context principle used by the image prompt to the
+video animation prompt, adapting its scene description to movement.
+The image prompt and video_prompt are separate generation instructions,
+so include relevant context in each when useful.
+
+Example:
 video_prompt: "From the starting frame, the presenter makes a few natural
-keystrokes and a small trackpad movement while looking at the laptop with
-a focused, relaxed expression. One steady observational take; the narration
-plays as voice-over. (For context: he is opening the delivery company's
-website directly.)"
-This example illustrates the distinction between visible movement and
-narrative context; it does not prescribe a presenter or a front-facing
-camera for other beats.
+keystrokes and a small trackpad movement while looking at the laptop.
+(For context: he is opening the delivery company's website directly.)"
 
 When audio=false, video_prompt is sent DIRECTLY to I2V as the positive
 animation instruction. Give concrete, visual, physically plausible
@@ -290,10 +293,9 @@ remains secondary to reliable speech. The canonical
 speaking-to-camera prompt and static-camera recipe remain controlled
 by application code; video_prompt adds beat-specific details to it.
 
-video_prompt MUST contain beat-specific animation instructions;
-when screen/page content helps explain an action without being visibly
-established, add the information only in its separate (For context: ...)
-note. Describe movement developing from the image and use the pinned,
+video_prompt MUST describe beat-specific animation, with a separate
+(For context: ...) note when specific narrative details are useful.
+Describe movement developing from the image and use the pinned,
 static-camera composition for A2V. Downstream Ken Burns handles
 slight zoom effects on static images.
 
@@ -574,10 +576,8 @@ Before output, review the block for:
   descriptions of the intended result, free of exclusion clauses and stock
   negative-prompt lists;
 - screens/documents: use relevant app, page and document information to
-  understand the beat; in BOTH image and video prompts, describe that content
-  directly only when it is exposed by the selected framing/starting image;
-  otherwise include useful narrative details in a brief, separate
-  parenthetical (For context: ...) note;
+  understand the beat; include useful narrative details in a brief, separate
+  parenthetical (For context: ...) note for image and video prompts;
 - reference correctness: every dependency on the supplied image is explicit and
   unrelated source-image style, expression, background or pose are not copied;
 - referenced visible faces: a natural beat-specific expression and relevant
@@ -675,9 +675,8 @@ Before emitting success, verify:
 - reference-only object/environment prompts describe the intended
   object-only or environment-only scene positively;
 - screen and document beats use narrative context to inform their selected
-  scene; image prompt and video_prompt each decide independently what is
-  actually shown by the chosen view, with other useful content details in a
-  separate (For context: ...) note in EACH relevant prompt;
+  scene; useful content details are included in a separate (For context: ...)
+  note for relevant image and animation prompts;
 - both image and animation prompts follow affirmative scene writing,
   with video_prompt describing only beat-specific movement;
 - image and animation instructions are separate; media_video has a
