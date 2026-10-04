@@ -19,6 +19,37 @@ For the subsequent *successful* DISK-streaming full-HD pair, the attached 2026-1
 
 The pipeline does not change the transformer checkpoint, FP8_CAST recipe, final 1920×1080 geometry (internal 1920×1088 padded/cropped grid), 121 frames, 24fps, sampler schedules, independent random seeds, conditioning arithmetic or VAE. CPU versus DISK loading should not change numerical model weights; generated videos still require direct quality verification.
 
+## Failure postmortem: old Docker rejected hybrid mode before inference
+
+A 60-GiB hybrid attempt on 2026-10-04 spent 775 seconds downloading models
+(`cache_hit=false`), reached worker ready and claimed its Postgres job, then
+failed in `Batch2Parameters.model_validate`: the installed Docker rejected
+`full_hd_stage2_mode=cpu` as an unknown field. The host's newer smoke
+client cannot update Python code in an old immutable Docker digest.
+**No GPU denoising happened**, and this does not measure hybrid performance.
+Afterwards the PowerShell finally Stop was blocked by a Capacity Controller
+advisory lock, so the group's real state must be verified immediately
+through a read-only Salad API request or the Salad console. Never use an
+override without confirming exclusive operator control and no other runs.
+
+To prevent this expensive mistake, the I2V-only PowerShell 1080p smoke
+now runs `scripts/smoke/verify_ltx25_i2v_hybrid_image.py --image <digest>`
+**before** its paid Salad Start. This executes Python with
+`docker run --rm --network none --entrypoint python` inside the **exact
+pinned image** and verifies the hybrid Pydantic schema, backend and lazy
+stage2 pipeline signatures. Docker may pull the image locally if absent,
+so the check can take time/bandwidth but uses **no paid Salad GPU**. A
+previous all-DISK image MUST fail. The `-CheckInputsOnly` path remains
+fast and never starts Docker; it alone does not certify the image.
+
+Fix procedure: check that the group is really stopped and the singleton
+controller is out of the way; build/push the immutable Docker **from the
+reviewed hybrid branch** if needed; use the offline exact-image ABI check;
+Prepare ONLY the stopped I2V group at the existing 61440-MB experiment
+budget; verify its remote image and RAM; then submit a NEW RunId. Failed
+transport jobs are not reused. A2V must not be stopped or mutated merely
+to recover this experiment.
+
 ## Free validation and next paid decision
 
 - Use the branch-scoped I2V CI first: Ruff, paired worker contracts, lazy-stage build ordering, exact FP8 policy, no hidden B1, Full-HD geometry and PowerShell safe preflight.
