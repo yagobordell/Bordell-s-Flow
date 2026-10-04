@@ -7,7 +7,6 @@ not user-facing image outputs; uncertain paid outcomes are never retried.
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import re
@@ -114,23 +113,20 @@ def _materialize(
     output: Path, item: dict[str, Any], *, recipe: str,
     target: tuple[int, int], fingerprint: str,
     upscaler: ImageUpscaler | None,
-    direct: OpenAIImageClient | None, model: str,
-    avatar_reference: bytes | None = None,
 ) -> dict[str, Any]:
     block, beat = _asset_key(item)
     png = output / item["file"]
     state = finishing_state_path(output, block, beat, recipe)
     folder = state.parent
     staged = png.with_name(png.name + ".finishing.part")
-    raw = folder / f"{beat}-{recipe}.native.png"
     if any(p.is_symlink() for p in (
-        output / "images", png.parent, png, folder, state, staged, raw,
+        output / "images", png.parent, png, folder, state, staged,
     )):
         raise ProfessionalImageFinishingError("Linked professional finishing output")
     identity = {
         "profile": _PROFILE, "recipe": recipe, "source_sha256": item["sha256"],
-        "target": target, "model": model if recipe == "native_grid_video" else None,
-        "avatar_reference_sha256": _digest(avatar_reference) if avatar_reference else None,
+        "target": target, "model": None,
+        "avatar_reference_sha256": None,
         "prompt_sha256": fingerprint,
     }
     identity_hash = _digest(json.dumps(identity, sort_keys=True).encode("utf-8"))
@@ -176,8 +172,6 @@ def _materialize(
             item, file=item["file"], content=finished,
             output_size=target, recipe=recipe,
         )
-        if recipe == "native_grid_video":
-            record["openai_usage"] = saved.get("artifact", {}).get("openai_usage")
         return record
 
     if state.is_file():
@@ -213,8 +207,6 @@ def _materialize(
                 )
             saved["status"] = "completed"
             _save_json(state, saved)
-            if raw.exists():
-                raw.unlink()
             return completed_record(saved)
         if saved.get("status") != "pending":
             raise ProfessionalImageFinishingError(
@@ -250,7 +242,7 @@ def _materialize(
                 "identity": identity_hash, "status": "ready_to_replace",
                 "source": item["file"], "source_sha256": item["sha256"],
                 "block_id": block, "beat_id": beat,
-                "model_id": model if recipe == "native_grid_video" else None,
+                "model_id": None,
                 "artifact": old.get("artifact", {}),
                 "sha256": old["sha256"], "output_file": item["file"],
             }
@@ -286,7 +278,7 @@ def _materialize(
             "identity": identity_hash, "status": "pending",
             "source": item["file"], "source_sha256": item["sha256"],
             "block_id": block, "beat_id": beat,
-            "model_id": model if recipe == "native_grid_video" else None,
+            "model_id": None,
         }
         _save_json(state, saved)
 
@@ -297,55 +289,16 @@ def _materialize(
         raise ProfessionalImageFinishingError("Unreconciled partial finished PNG")
     if recipe == "native_video_crop":
         finished = _video_crop(source)
-    else:
-        saved["status"] = (
-            "direct_submitting_unknown" if recipe == "native_grid_video"
-            else "upscale_submitting_unknown"
-        )
+    elif recipe == "image_x2":
+        saved["status"] = "upscale_submitting_unknown"
         _save_json(state, saved)
-        if recipe == "image_x2":
-            if upscaler is None:
-                raise ProfessionalImageFinishingError("OptiumLabs image upscaler is not configured")
-            finished = upscaler.upscale(
-                source, target_width=target[0], target_height=target[1],
-            )
-        elif recipe == "native_grid_video":
-            if direct is None:
-                raise ProfessionalImageFinishingError("GPT Image client is unavailable")
-            refs = ["data:image/png;base64," + base64.b64encode(source).decode("ascii")]
-            if avatar_reference is not None:
-                refs.append(
-                    "data:image/png;base64," + base64.b64encode(avatar_reference).decode("ascii")
-                )
-            description = re.sub(r"^[1-9]\.\s+", "", item.get("description", "")).strip()
-            text = (
-                "Render the first reference scene as an authentic high-end iPhone 16/17 "
-                "Pro Max photograph in instagram rhode style at native high resolution. "
-                "Preserve its exact subject identities, viewpoint, composition, scene "
-                "relationships, lighting, color palette and continuity with the other "
-                "grid panels. Preserve the scene detail: " + description + ". "
-                "The first reference image defines the complete scene."
-            )
-            if avatar_reference is not None:
-                text += " The second reference preserves the avatar's facial identity."
-            folder.mkdir(parents=True, exist_ok=True)
-            if raw.exists() or raw.is_symlink():
-                raise ProfessionalImageFinishingError("Untracked native GPT source exists")
-            generated = direct.generate_png(
-                prompt=text, model=model, destination=raw,
-                size="1920x1088", quality="medium", output_format="png",
-                reference_image_urls=refs,
-            )
-            raw_data = raw.read_bytes()
-            _check_png(raw_data, _VIDEO_SOURCE)
-            finished = _video_crop(raw_data)
-            saved["artifact"] = {
-                "model_id": model, "quality": "medium",
-                "openai_usage": generated.get("usage"),
-                "openai_created": generated.get("created"),
-            }
-        else:
-            raise ProfessionalImageFinishingError(f"Unknown finishing recipe: {recipe}")
+        if upscaler is None:
+            raise ProfessionalImageFinishingError("OptiumLabs image upscaler is not configured")
+        finished = upscaler.upscale(
+            source, target_width=target[0], target_height=target[1],
+        )
+    else:
+        raise ProfessionalImageFinishingError(f"Unknown finishing recipe: {recipe}")
     _check_png(finished, target)
     # Stage and record the digest BEFORE swapping out the original PNG.
     staged.write_bytes(finished)
@@ -359,8 +312,6 @@ def _materialize(
     staged.replace(png)
     saved["status"] = "completed"
     _save_json(state, saved)
-    if raw.exists():
-        raw.unlink()
     return completed_record(saved)
 
 
@@ -386,28 +337,17 @@ def finish_professional_images(
     }
     if {_asset_key(item) for item in originals} != expected or len(originals) != len(expected):
         raise ProfessionalImageFinishingError("Professional original image assets are incomplete")
-    video_grid = any(
-        item.get("provider") == "grid_crop"
-        and item["visual_type"] in {"media_video", "avatar"}
-        for item in originals
-    )
-    # Require all credentials BEFORE attempting any new remote work.
+    # Static images still require exact x2 processing. Grid video panels do
+    # not require credentials: they are already paid images.
     if any(item["visual_type"] in {"media_image", "avatar_media"} for item in originals):
         if upscaler is None:
             raise ProfessionalImageFinishingError("IMAGE_UPSCALER_URL and Salad/R2 required")
-    if video_grid and direct_client is None:
-        if not api_key:
-            raise ProfessionalImageFinishingError("OPENAI_API_KEY required for native grid video")
-        direct_client = OpenAIImageClient(api_key)
-    avatar_bytes: bytes | None = None
     final: list[dict[str, Any]] = []
     manifest_path = output / "images" / "manifest.json"
     manifest["finishing_profile"] = _PROFILE
-    manifest["native_grid_video_calls"] = sum(
-        item.get("provider") == "grid_crop"
-        and item["visual_type"] in {"media_video", "avatar"}
-        for item in originals
-    )
+    # Preserve historical accounting for older saved runs, but never book a
+    # fresh paid per-panel edit.
+    manifest["native_grid_video_calls"] = manifest.get("native_grid_video_calls", 0)
     manifest["finishing_status"] = "running"
     manifest["final_assets"] = []
     _save_json(manifest_path, manifest)
@@ -418,34 +358,32 @@ def finish_professional_images(
                 result = _materialize(
                     output, item, recipe="image_x2",
                     target=(width * 2, height * 2), fingerprint="exact-image-x2",
-                    upscaler=upscaler, direct=None, model="",
+                    upscaler=upscaler,
                 )
             elif item["visual_type"] in {"media_video", "avatar"}:
                 if item.get("provider") == "grid_crop":
-                    if item.get("reference"):
-                        if avatar_bytes is None:
-                            meta = plan.get("avatar")
-                            path = output / "avatar.png"
-                            if (not isinstance(meta, dict) or path.is_symlink()
-                                or not path.is_file() or _digest(path.read_bytes())
-                                != meta.get("sha256")):
-                                raise ProfessionalImageFinishingError(
-                                    "Saved avatar reference is not verifiable"
-                                )
-                            avatar_bytes = path.read_bytes()
-                    description = next(
-                        (beat["prompt"] for block in plan["blocks"]
-                         for beat in block["beats"]
-                         if (block["block_id"], beat["beat_id"]) == _asset_key(item)), ""
+                    # A grid crop is the FINAL source for video. Do not upscale
+                    # it or create a second paid GPT image from it.
+                    prior_state = finishing_state_path(
+                        output, item["block_id"], item["beat_id"], "native_grid_video"
                     )
-                    # Include the original description and model in paid identity.
-                    annotated = {**item, "description": description}
-                    result = _materialize(
-                        output, annotated, recipe="native_grid_video", target=_VIDEO_TARGET,
-                        fingerprint=_digest(description.encode("utf-8")),
-                        upscaler=None, direct=direct_client,
-                        model=manifest["model_id"],
-                        avatar_reference=avatar_bytes if item.get("reference") else None,
+                    if prior_state.exists() or prior_state.is_symlink():
+                        # Do not silently discard a previously paid edit or an
+                        # unknown POST from an older pipeline version.
+                        raise ProfessionalImageFinishingError(
+                            f"Historical native grid-video finishing state for "
+                            f"{item['beat_id']} requires explicit reconciliation"
+                        )
+                    dimensions = item["width"], item["height"]
+                    if dimensions not in {_VIDEO_TARGET, (1280, 720)}:
+                        raise ProfessionalImageFinishingError(
+                            f"Unsupported grid-video panel geometry for {item['beat_id']}"
+                        )
+                    content = _source(output, item)
+                    _check_png(content, dimensions)
+                    result = _record(
+                        item, file=item["file"], content=content,
+                        output_size=dimensions, recipe="grid_video_crop",
                     )
                 else:
                     if (item.get("width"), item.get("height")) != _VIDEO_SOURCE:
@@ -455,7 +393,7 @@ def finish_professional_images(
                     result = _materialize(
                         output, item, recipe="native_video_crop",
                         target=_VIDEO_TARGET, fingerprint="center-crop-8px",
-                        upscaler=None, direct=None, model="",
+                        upscaler=None,
                     )
             else:
                 raise ProfessionalImageFinishingError(
