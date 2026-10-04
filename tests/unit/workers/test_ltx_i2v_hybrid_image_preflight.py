@@ -39,6 +39,9 @@ def test_image_probe_reads_installed_code_inside_exact_immutable_image() -> None
     assert "stage2_factory" in code
     assert "STAGE2_SIGMAS_SAFE_ABI" in code
     assert "stage2_sigmas" in code
+    assert "SharedSequentialVideoDecoder(original_decoder)" in code
+    assert "if is_full_hd else nullcontext()" in code
+    assert "selected_baseline=eager_sdpa" in code
     assert "I2V_HYBRID_DOCKER_ABI_OK" in code
     assert run.call_args.kwargs["timeout"] >= 300
     assert "gpus" not in argv
