@@ -73,6 +73,14 @@ $R2Probe = Join-Path $Root "scripts\pipeline\check_r2_ready.py"
 if ($LASTEXITCODE -ne 0) { throw "R2 unavailable; no GPU started." }
 # The operator MUST first Prepare precisely this digest and check no other
 # experimental capacity is running. Never override controller ownership.
+$RemoteStatus = (& $Manager -Action Status -Service $Service -EnvFile $EnvFile -NonInteractive) -join " "
+if ($RemoteStatus -notmatch "status=stopped" -or
+    $RemoteStatus -notmatch "pending=False" -or
+    $RemoteStatus -notmatch [regex]::Escape("image=$ExpectedPinnedImage")) {
+    throw ("Refusing to start or stop an unowned/existing experimental group. " +
+        "Prepare the exact digest and require status=stopped pending=False: " +
+        $RemoteStatus)
+}
 $Started = $false
 try {
     $Started = $true
