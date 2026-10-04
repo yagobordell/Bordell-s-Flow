@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 
-from .a2v import LTX_A2V_GENERATION_PROFILE
+from .a2v import LTX_A2V_PRODUCTION_FAST_PROFILE
 from .model import LTX_PRODUCTION_I2V_PROFILE, LTX_SUPPORTED_I2V_PROFILES
 
 
@@ -51,7 +51,7 @@ def ltx_a2v_application_job_id(
     width: int,
     height: int,
     fps: int,
-    generation_profile: str = LTX_A2V_GENERATION_PROFILE,
+    generation_profile: str = LTX_A2V_PRODUCTION_FAST_PROFILE,
 ) -> str:
     """Return a stable job ID for one audio-driven LTX segment."""
 
