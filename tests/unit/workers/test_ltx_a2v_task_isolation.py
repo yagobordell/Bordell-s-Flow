@@ -63,3 +63,50 @@ def test_salad_experiment_is_only_opt_in_task_mode() -> None:
     assert exp["environment"]["LTX_WORKER_TASK_MODE"] == "a2v_experimental"
     assert exp["group_name"] != prod["group_name"]
     assert "ltx25_a2v_experimental" not in cfg["stack"]["service_order"]
+
+
+def test_structural_streaming_failure_is_terminal_only_for_experiment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = []
+
+    def broken_generate(**_kwargs: object) -> None:
+        calls.append(True)
+        raise TypeError("cannot unpack non-iterable FeedForward object")
+
+    backend = SimpleNamespace(generate=broken_generate)
+    request = SimpleNamespace(
+        task=LTX_A2V_EXPERIMENTAL_TASK,
+        parameters={"generation_profile": LTX_A2V_BENCH_NONE_PROFILE},
+        job_id="test-structural-failure",
+    )
+    runner = LTXAudioToVideoTaskRunner(backend=backend, experimental=True)
+    monkeypatch.setattr(runner, "_validate_request", lambda *_args: None)
+    with pytest.raises(
+        NonRetryableTaskError,
+        match="A2V_EXPERIMENTAL_STREAMING_STRUCTURE_INVALID",
+    ):
+        runner.run(
+            request,
+            {"image": tmp_path / "image.png", "audio": tmp_path / "speech.wav"},
+            tmp_path,
+        )
+    assert len(calls) == 1
+
+    # Production behavior is unchanged, and other errors are not misclassified.
+    request.task = LTX_A2V_TASK
+    normal = LTXAudioToVideoTaskRunner(backend=backend)
+    monkeypatch.setattr(normal, "_validate_request", lambda *_args: None)
+    with pytest.raises(TypeError, match="FeedForward"):
+        normal.run(request, {"image": tmp_path, "audio": tmp_path}, tmp_path)
+
+    def other_error(**_kwargs: object) -> None:
+        raise TypeError("unrelated Python error")
+
+    experimental = LTXAudioToVideoTaskRunner(
+        backend=SimpleNamespace(generate=other_error), experimental=True
+    )
+    request.task = LTX_A2V_EXPERIMENTAL_TASK
+    monkeypatch.setattr(experimental, "_validate_request", lambda *_args: None)
+    with pytest.raises(TypeError, match="unrelated"):
+        experimental.run(request, {"image": tmp_path, "audio": tmp_path}, tmp_path)
