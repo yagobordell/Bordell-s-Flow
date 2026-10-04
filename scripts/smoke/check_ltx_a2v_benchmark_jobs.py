@@ -28,6 +28,11 @@ def find_unsettled(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [row for row in rows if row["status"] in _ACTIVE_STATUSES]
 
 
+def safe_terminal_failure_detail(detail: str | None) -> bool:
+    """Unknown or structurally corrupted CUDA state cannot be carried forward."""
+    return bool(detail and "A2V_EXPERIMENTAL_STREAMING_STRUCTURE_INVALID" not in detail)
+
+
 def validate_terminal_failed_attempt(
     folder: Path, rows: list[dict[str, Any]], *, expected_segment: str
 ) -> str:
@@ -125,7 +130,7 @@ def main() -> int:
         # A structural model failure can make the CUDA process unsafe even
         # when the job itself is terminal. Fail closed before the next sample.
         detail = failed_row[1] or ""
-        if not detail or "A2V_EXPERIMENTAL_STREAMING_STRUCTURE_INVALID" in detail:
+        if not safe_terminal_failure_detail(detail):
             print(
                 "A2V_UNSAFE_TERMINAL_FAILURE: missing or structural failure "
                 "detail; stop this worker before starting a different profile",
