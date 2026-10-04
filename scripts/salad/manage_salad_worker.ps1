@@ -6,7 +6,9 @@ param(
     [string]$Image = "",
     [string]$PinnedImage = "",
     [string]$ExpectedCurrentImage = "",
-    [ValidateSet("", "a2v_experimental")][string]$TaskModeOverride = "",
+    [ValidateSet("", "a2v", "a2v_experimental")][string]$TaskModeOverride = "",
+    [switch]$PreserveExistingEnvironment,
+    [string]$ExpectedCurrentTaskMode = "",
     [string]$EnvFile = ".env",
     [ValidateRange(10, 180)][int]$PrepareTimeoutMinutes = 120,
     [ValidateRange(0, 64)][int]$Replicas = 0,
@@ -295,12 +297,16 @@ function Assert-ServiceDefinition {
     }
     if ($TaskModeOverride) {
         if ($Action -ne "Prepare" -or $Service -ne "ltx25" -or -not $SkipBuild -or
-            -not $PinnedImage -or -not $ExpectedCurrentImage -or $Recreate) {
+            -not $PinnedImage -or -not $ExpectedCurrentImage -or -not $PreserveExistingEnvironment -or
+            $ExpectedCurrentTaskMode -notin @("a2v", "a2v_experimental") -or $Recreate) {
             throw "Task-mode override requires guarded ltx25 Prepare with pinned image and no recreation."
         }
     }
     if ($ExpectedCurrentImage -and ($Action -ne "Prepare" -or $Service -ne "ltx25")) {
         throw "-ExpectedCurrentImage may only guard ltx25 Prepare."
+    }
+    if ($PreserveExistingEnvironment -and -not $TaskModeOverride) {
+        throw "-PreserveExistingEnvironment requires a guarded task-mode override."
     }
     if ($ContainerPort -ne 8080) { throw "Shared worker container port must remain 8080." }
     if ($RestartPolicy -notin @("always", "on_failure", "never")) { throw "Unsupported restart policy '$RestartPolicy'." }
@@ -635,6 +641,23 @@ function New-Probe {
 }
 
 function Get-WorkerEnvironment {
+    param([object]$ExistingContainer)
+    if ($PreserveExistingEnvironment) {
+        if ($null -eq $ExistingContainer -or $null -eq $ExistingContainer.environment_variables) {
+            throw "Cannot preserve environment: existing group has no environment variables."
+        }
+        $Environment = @{}
+        foreach ($Property in $ExistingContainer.environment_variables.PSObject.Properties) {
+            $Environment[$Property.Name] = [string]$Property.Value
+        }
+        foreach ($Name in Get-RequiredEnvironmentNames) {
+            if ([string]::IsNullOrWhiteSpace($Environment[[string]$Name])) {
+                throw "Cannot reuse group: original environment is missing $Name."
+            }
+        }
+        $Environment["LTX_WORKER_TASK_MODE"] = $TaskModeOverride
+        return $Environment
+    }
     $Environment = @{}
     foreach ($Property in @($Stack.shared_environment.PSObject.Properties) + @($Definition.environment.PSObject.Properties)) {
         $Environment[$Property.Name] = [string]$Property.Value
@@ -819,6 +842,10 @@ try {
             if ($ExpectedCurrentImage -and [string]$Existing.container.image -ne $ExpectedCurrentImage) {
                 throw "Refusing Prepare: actual group image differs from -ExpectedCurrentImage."
             }
+            if ($TaskModeOverride -and
+                [string]$Existing.container.environment_variables.LTX_WORKER_TASK_MODE -ne $ExpectedCurrentTaskMode) {
+                throw "Refusing Prepare: unexpected current task mode; another operator may have changed this group."
+            }
             if ($Recreate -or (Test-LegacyQueueAttachment -Group $Existing)) {
                 if (Test-LegacyQueueAttachment -Group $Existing) {
                     Write-Host "Recreating '$GroupName' to remove Salad Job Queue/autoscaler state." -ForegroundColor Cyan
@@ -848,7 +875,7 @@ try {
             $ResolvedImage = Resolve-PinnedImage -MutableImage $Image
         }
 
-        $WorkerEnvironment = Get-WorkerEnvironment
+        $WorkerEnvironment = Get-WorkerEnvironment -ExistingContainer $(if ($null -ne $Existing) { $Existing.container } else { $null })
         $GpuClassIds = @(Resolve-GpuClassIds -Headers $Headers)
         if ($null -eq $Existing) {
             New-ContainerGroup -Headers $Headers -ResolvedImage $ResolvedImage -WorkerEnvironment $WorkerEnvironment -GpuClassIds $GpuClassIds
