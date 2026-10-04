@@ -512,7 +512,6 @@ def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
             expected_events.add(("pause", index, None, slot))
         observed: set[tuple[str, int, int | None, int]] = set()
         for slot, destination in enumerate(compiled.segments):
-            original = expected[slot][1]
             for event in destination.events:
                 key = (
                     event.source_kind, event.source_item_index, event.source_at, slot
