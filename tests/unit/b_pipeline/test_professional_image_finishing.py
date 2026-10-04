@@ -132,6 +132,11 @@ def test_professional_standalone_native_video_still_image_original_quality_uncha
         item["beat_id"]: (item["width"], item["height"]) for item in final
     } == {"1B": (2560, 1440), "1C": (1920, 1080), "1D": (1920, 1080)}
     assert [item["sha256"] for item in original["items"]] == original_hashes
+    assert all(asset["file"] == f"images/block_1/{asset['beat_id']}.png" for asset in final)
+    assert not (tmp_path / "images" / "professional_finished").exists()
+    for asset in final:
+        with Image.open(tmp_path / asset["file"]) as image:
+            assert image.size == (asset["width"], asset["height"])
     assert len(direct.calls) == 3
     assert finish_professional_images(
         tmp_path, plan, original, upscaler=upscaler,
@@ -177,8 +182,14 @@ def test_professional_mixed_grid_upscales_images_and_natively_regenerates_video(
     assert all(
         _verified_asset(tmp_path, p["file"], p["sha256"]).is_file() for p in finished
     )
-    # Crops and paid grids remain independently auditable.
+    # The paid grid stays intact; panel paths now hold only finished images.
     assert original["items"][0]["grid"]["width"] == 2560
+    assert all(p["file"] == f"images/block_1/{p['beat_id']}.png" for p in finished)
+    assert not (tmp_path / "images" / "professional_finished").exists()
+    crop_grid_assets(tmp_path, original)  # Resume must accept verified replaced panels.
+    gpt.generate_b2_images(
+        tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
+    )  # Reuse the original paid grid without any additional GPT request.
     again = finish_professional_images(
         tmp_path, plan, original, upscaler=upscaler,
         api_key=None, direct_client=direct,
@@ -267,12 +278,12 @@ def test_completed_professional_finishing_is_archived_on_b2_rerun(tmp_path):
     )
     assert not gpt.has_pending_image_tasks(tmp_path)
     removed = gpt.clear_b2_images_for_rerun(tmp_path)
-    assert removed >= 4
+    assert removed >= 3
     archived = list((tmp_path / "images_replaced_professional_finishing").glob(
         "run-*/block_1/1C-native_grid_video.json"
     ))
     assert len(archived) == 1
-    assert not (tmp_path / "images" / "professional_finished").exists()
+    assert not (tmp_path / "images" / "finishing_state").exists()
     ledger = ApiCostLedger()
     ledger.sync_image_usage(tmp_path)
     report = ledger.report(
@@ -306,7 +317,7 @@ def test_b2_rerun_refuses_unresolved_native_video_edit_without_deletion(tmp_path
     with pytest.raises(gpt.ImageGenerationError, match="finishing is unresolved"):
         gpt.clear_b2_images_for_rerun(tmp_path)
     assert paid_grid.read_bytes() == paid_bytes
-    assert (tmp_path / "images" / "professional_finished" / "block_1"
+    assert (tmp_path / "images" / "finishing_state" / "block_1"
             / "1C-native_grid_video.json").is_file()
 
 
@@ -362,11 +373,8 @@ def test_ltx_selects_finished_professional_png_not_original_grid_or_crop(tmp_pat
     finished = png((2560, 1440))
     (tmp_path / "avatar.png").write_bytes(avatar)
     old = tmp_path / "images" / "block_1" / "1B.png"
-    new = tmp_path / "images" / "professional_finished" / "block_1" / "1B-image_x2.png"
     old.parent.mkdir(parents=True)
-    new.parent.mkdir(parents=True)
-    old.write_bytes(original)
-    new.write_bytes(finished)
+    old.write_bytes(finished)  # In-place replaces the original 720p image.
     plan = {
         "visual_style": "profesional",
         "avatar": {"file": "avatar.png", "sha256": hashlib.sha256(avatar).hexdigest()},
@@ -379,13 +387,12 @@ def test_ltx_selects_finished_professional_png_not_original_grid_or_crop(tmp_pat
         }],
         "final_assets": [{
             "block_id": 1, "beat_id": "1B",
-            "file": new.relative_to(tmp_path).as_posix(),
+            "file": old.relative_to(tmp_path).as_posix(),
             "sha256": hashlib.sha256(finished).hexdigest(),
         }],
     }
     _, assets = _source_assets(tmp_path, plan, images)
-    assert assets[(1, "1B")] == new
-    assert assets[(1, "1B")] != old
+    assert assets[(1, "1B")] == old
     images["finishing_status"] = "incomplete"
     with pytest.raises(Exception, match="requires finished"):
         _source_assets(tmp_path, plan, images)
@@ -440,11 +447,61 @@ def test_professional_generates_paid_originals_before_salad_then_recovers(
     )
     result = asyncio.run(runner._generate_images(tmp_path, plan))
     assert calls == ["salad_ready"]
-    assert original.read_bytes() == paid_data
+    assert original.read_bytes() != paid_data
+    with Image.open(original) as image:
+        assert image.size == (2560, 1440)
     assert len(direct.calls) == 1
     assert upscaler.calls == [((1280, 720), (2560, 1440))]
     assert result["finishing_status"] == "completed"
     assert not runner._resume_unfinished_images(tmp_path, plan)
+
+
+
+def test_interrupted_atomic_replacement_recovers_without_second_paid_call(
+    tmp_path, monkeypatch,
+):
+    from ai_video_factory.providers import professional_image_finishing as finishing
+
+    plan = professional(beat("1B", "media_image", "A recovered photo"))
+    direct = RecordingGPT()
+    upscaler = RecordingUpscaler()
+    original = gpt.generate_b2_images(
+        tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
+    )
+    paid_sha = original["items"][0]["sha256"]
+    saved_json = finishing._save_json
+    failed = False
+
+    def fail_completed_state(path, data):
+        nonlocal failed
+        if (not failed and path.name == "1B-image_x2.json"
+            and data.get("status") == "completed"):
+            failed = True
+            raise OSError("crash after replacing the original PNG")
+        return saved_json(path, data)
+
+    monkeypatch.setattr(finishing, "_save_json", fail_completed_state)
+    with pytest.raises(OSError, match="crash after"):
+        finish_professional_images(
+            tmp_path, plan, original, upscaler=upscaler, api_key=None,
+        )
+    image_path = tmp_path / "images" / "block_1" / "1B.png"
+    assert hashlib.sha256(image_path.read_bytes()).hexdigest() != paid_sha
+    assert len(upscaler.calls) == 1
+
+    # The GPT resume must accept the SHA-approved ready-to-replace state.
+    regenerated = gpt.generate_b2_images(
+        tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
+    )
+    assert len(direct.calls) == 1
+    monkeypatch.setattr(finishing, "_save_json", saved_json)
+    finished = finish_professional_images(
+        tmp_path, plan, regenerated, upscaler=upscaler, api_key=None,
+    )
+    assert finished[0]["file"] == "images/block_1/1B.png"
+    assert len(upscaler.calls) == 1
+    assert len(direct.calls) == 1
+    assert not (tmp_path / "images" / "professional_finished").exists()
 
 
 def test_professional_paid_originals_survive_transient_salad_start_error(
