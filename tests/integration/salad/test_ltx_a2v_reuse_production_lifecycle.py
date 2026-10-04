@@ -28,7 +28,7 @@ def test_reuse_restores_production_even_when_bootstrap_fails(
     for folder in (smoke, salad, pipeline, source, checkout / "config"):
         folder.mkdir(parents=True)
     (checkout / "config" / "app.env").write_text(
-        "POSTGRES_DSN=postgresql://fixture.example.invalid/test\\n",
+        "POSTGRES_DSN=postgresql://fixture.example.invalid/test\n",
         encoding="utf-8",
     )
     (salad / "_env_file.ps1").write_text(
