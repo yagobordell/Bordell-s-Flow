@@ -234,7 +234,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--profile",
         choices=(
-            "fast", "reference", "static-reference", "dev", "guided",
+            "fast", "legacy-fast", "reference", "static-reference", "dev", "guided",
             "reference-bench-cpu", "reference-fp8none",
             "reference-cpu-triton", "reference-none-triton",
             "static-bench-cpu", "static-fp8none",
@@ -261,7 +261,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     profiles = {
-        "fast": LTX_A2V_GENERATION_PROFILE,
+        "fast": a2v.LTX_A2V_PRODUCTION_FAST_PROFILE,
+        "legacy-fast": LTX_A2V_GENERATION_PROFILE,
         "reference": LTX_A2V_REFERENCE_GENERATION_PROFILE,
         "static-reference": LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
         "dev": LTX_A2V_DEV_GENERATION_PROFILE,
@@ -477,7 +478,7 @@ def main() -> None:
         "static-fp8none": ("none", "eager"),
     }
     distilled_profile = args.profile in {
-        "fast", "reference", "static-reference", *experimental_profiles,
+        "fast", "legacy-fast", "reference", "static-reference", *experimental_profiles,
     }
     expected_variant = "distilled" if distilled_profile else "dev"
     expected_steps = 8 if distilled_profile else 30
