@@ -1,8 +1,9 @@
 # Salad deployment validation
 
 Use this runbook after changing a worker image, model bootstrap or Salad configuration.
-The former end-to-end video runner was retired with the old planning bots;
-these checks validate the independent Salad services and their Postgres/R2 jobs.
+The supported video-production entry point is `run.ps1`. These checks
+validate its independently deployed Salad services and their Postgres/R2 jobs,
+not the retired scene/shot phase runners.
 
 ## Prerequisites
 
