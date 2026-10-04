@@ -25,6 +25,7 @@ from PIL import Image
 
 from .image_grids import GridPlanError, plan_image_jobs
 from .openai_images import OpenAIImageClient
+from .professional_image_state import finished_in_place_sha
 
 _AVATAR_WORD = re.compile(r"\bavatar\b", flags=re.IGNORECASE)
 _MAX_AVATAR_PNG = 14 * 1024 * 1024
@@ -368,6 +369,18 @@ def _one_image(
             actual_sha = hashlib.sha256(image_path.read_bytes()).hexdigest()
             if actual_sha == state.get("sha256"):
                 return state["artifact"]
+            if job.get("visual_style") == "profesional" and job.get("grid") is None:
+                recipe = (
+                    "image_x2" if job["visual_type"] in {"media_image", "avatar_media"}
+                    else "native_video_crop"
+                )
+                accepted = finished_in_place_sha(
+                    output, file=image_path.relative_to(output).as_posix(),
+                    source_sha256=state["sha256"], block=job["block_id"],
+                    beat=job["beat_id"], recipes=(recipe,),
+                )
+                if accepted == actual_sha:
+                    return state["artifact"]
         raise ImageGenerationError(
             f"Completed PNG for {job['beat_id']} is missing or changed; "
             "do not automatically repeat a paid request."
@@ -632,24 +645,35 @@ def clear_b2_images_for_rerun(output: Path) -> int:
     if image_root.is_symlink() or image_root.is_junction():
         raise ImageGenerationError("Refusing linked image directory")
 
-    # Professional finishing includes additional paid GPT edits. A B2 rerun
-    # must never erase an unresolved or altered result, nor drop its billing.
-    finished_root = image_root / "professional_finished"
+    # New runs keep finished PNGs in their original beat paths and store only
+    # verification metadata under finishing_state. Accept legacy outputs too.
+    finished_roots = (
+        image_root / "finishing_state",
+        image_root / "professional_finished",
+    )
     finished_archive = output / "images_replaced_professional_finishing"
-    if (finished_root.is_symlink() or finished_archive.is_symlink()
-        or finished_archive.is_junction()):
-        raise ImageGenerationError("Refusing linked professional image finishing archive")
-    if finished_root.is_dir():
+    if (finished_archive.is_symlink() or finished_archive.is_junction()
+        or any(root.is_symlink() for root in finished_roots)):
+        raise ImageGenerationError("Refusing linked professional finishing state")
+    for finished_root in finished_roots:
         for finished_state in finished_root.glob("block_*/*.json"):
             if finished_state.is_symlink() or finished_state.parent.is_symlink():
                 raise ImageGenerationError("Linked professional finishing state")
             saved = json.loads(finished_state.read_text(encoding="utf-8"))
-            png = finished_state.with_suffix(".png")
+            if finished_root.name == "finishing_state":
+                relative = saved.get("output_file")
+                if not isinstance(relative, str) or not relative.startswith("images/"):
+                    raise ImageGenerationError("Invalid in-place finished image destination")
+                image_path = output / relative
+                if not image_path.is_relative_to(image_root):
+                    raise ImageGenerationError("Finished image escapes image directory")
+            else:
+                image_path = finished_state.with_suffix(".png")
             if (
                 saved.get("schema_version") != "professional-image-finishing-v1"
                 or saved.get("status") != "completed"
-                or not png.is_file() or png.is_symlink()
-                or hashlib.sha256(png.read_bytes()).hexdigest() != saved.get("sha256")
+                or not image_path.is_file() or image_path.is_symlink()
+                or hashlib.sha256(image_path.read_bytes()).hexdigest() != saved.get("sha256")
             ):
                 raise ImageGenerationError(
                     f"Professional image finishing is unresolved at {finished_state}; "
@@ -674,12 +698,12 @@ def clear_b2_images_for_rerun(output: Path) -> int:
             )
 
     removed = sum(1 for _ in image_root.rglob("*.png"))
-    if finished_root.is_dir():
-        # Keep the complete paid finishing evidence outside the image tree
-        # before its cleanup, so later runs do not silently erase charges.
-        finished_archive.mkdir(parents=True, exist_ok=True)
-        destination = finished_archive / ("run-" + uuid.uuid4().hex)
-        finished_root.replace(destination)
+    for finished_root in finished_roots:
+        if finished_root.is_dir():
+            # Preserve paid native-edit JSON evidence for future billing audits.
+            finished_archive.mkdir(parents=True, exist_ok=True)
+            destination = finished_archive / ("run-" + uuid.uuid4().hex)
+            finished_root.replace(destination)
     for child in image_root.iterdir():
         if child.is_symlink():
             raise ImageGenerationError(f"Refusing linked image asset: {child}")
@@ -698,22 +722,34 @@ def clear_b2_images_for_rerun(output: Path) -> int:
 
 def has_pending_image_tasks(output: Path) -> bool:
     """Protect durable image requests before a B1/B2 output replacement."""
-    root = output / "images" / "professional_finished"
-    if root.is_symlink() or (output / "images").is_symlink():
+    roots = (
+        output / "images" / "finishing_state",
+        output / "images" / "professional_finished",
+    )
+    if (output / "images").is_symlink() or any(root.is_symlink() for root in roots):
         return True
-    for path in root.glob("block_*/*.json"):
-        if path.is_symlink() or path.parent.is_symlink():
-            return True
-        try:
-            state = json.loads(path.read_text(encoding="utf-8"))
-            image = path.with_suffix(".png")
-            if (state.get("schema_version") != "professional-image-finishing-v1"
-                or state.get("status") != "completed"
-                or image.is_symlink() or not image.is_file()
-                or hashlib.sha256(image.read_bytes()).hexdigest() != state.get("sha256")):
+    for root in roots:
+        for path in root.glob("block_*/*.json"):
+            if path.is_symlink() or path.parent.is_symlink():
                 return True
-        except (OSError, ValueError, TypeError):
-            return True
+            try:
+                state = json.loads(path.read_text(encoding="utf-8"))
+                if root.name == "finishing_state":
+                    relative = state.get("output_file")
+                    if not isinstance(relative, str) or not relative.startswith("images/"):
+                        return True
+                    image = output / relative
+                    if not image.is_relative_to(output / "images"):
+                        return True
+                else:
+                    image = path.with_suffix(".png")
+                if (state.get("schema_version") != "professional-image-finishing-v1"
+                    or state.get("status") != "completed"
+                    or image.is_symlink() or not image.is_file()
+                    or hashlib.sha256(image.read_bytes()).hexdigest() != state.get("sha256")):
+                    return True
+            except (OSError, ValueError, TypeError):
+                return True
     for state_path in chain(
         (output / "images").glob("block_*/*.json"),
         (output / "images" / "grids").glob("*.json"),
