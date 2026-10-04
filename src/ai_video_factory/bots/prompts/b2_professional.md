@@ -252,13 +252,22 @@ Keep identity, clothing, objects, setting, shot size, angle and framing
 consistent with the supplied starting image. Show one natural continuous
 real-time take.
 
-For video_prompt, information about the content of a website, app, message,
-chart, report, document or any other screen/page ALWAYS belongs exclusively
-in a separate (For context: ...) note, whether the screen/page is visible
-in the shot or not. The animation instruction describes the action and
-movement; the (For context: ...) note supplies the screen/page information.
-Include that note in video_prompt independently of any context already
-present in the image prompt.
+When the narration mentions an app, website, message, chart, report,
+document or any other screen/page content, use that information to fully
+understand the action being animated.
+
+Choose the movements, gestures, timing and camera behavior that best
+communicate the beat from the starting frame.
+
+When specific content details provide useful narrative context, include
+them in a short, separate parenthetical note in video_prompt:
+
+(For context: [relevant information].)
+
+Apply the same For context principle used by the image prompt to the
+video animation prompt, adapting its scene description to movement.
+The image prompt and video_prompt are separate generation instructions,
+so include relevant context in each when useful.
 
 Example:
 video_prompt: "From the starting frame, the presenter makes a few natural
@@ -284,8 +293,8 @@ remains secondary to reliable speech. The canonical
 speaking-to-camera prompt and static-camera recipe remain controlled
 by application code; video_prompt adds beat-specific details to it.
 
-video_prompt MUST describe beat-specific animation, with screen/page
-content only in its separate (For context: ...) note when relevant.
+video_prompt MUST describe beat-specific animation, with a separate
+(For context: ...) note when specific narrative details are useful.
 Describe movement developing from the image and use the pinned,
 static-camera composition for A2V. Downstream Ken Burns handles
 slight zoom effects on static images.

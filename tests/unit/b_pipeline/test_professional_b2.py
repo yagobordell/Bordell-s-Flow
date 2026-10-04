@@ -125,8 +125,8 @@ def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions()
         assert word not in prompt.lower()
 
 
-def test_professional_video_prompt_keeps_screen_content_only_in_context() -> None:
-    """Video-only rule; the earlier image-prompt instructions remain intact."""
+def test_professional_video_prompt_mirrors_image_for_context_principle() -> None:
+    """Video uses the original image-prompt context principle, not stricter rules."""
     instructions = (
         files("ai_video_factory.bots.prompts")
         .joinpath("b2_professional.md")
@@ -139,16 +139,24 @@ def test_professional_video_prompt_keeps_screen_content_only_in_context() -> Non
         "Video animation prompt (video_prompt)", 1
     )[1].split("\nreference\n", 1)[0]
 
-    assert "Apply the same principle to image prompts and video animation prompts" in (
+    assert "Choose the visible scene, subjects, actions, composition" in image_rules
+    assert "When specific content details provide useful narrative context" in (
         image_rules
     )
-    assert "ALWAYS belongs exclusively" in video_rules
-    assert "whether the screen/page is visible" in video_rules
-    assert "Include that note in video_prompt independently" in video_rules
-    assert "a few natural" in video_rules and "keystrokes" in video_rules
+    assert "When specific content details provide useful narrative context" in (
+        video_rules
+    )
+    assert "Choose the movements, gestures, timing and camera behavior" in (
+        video_rules
+    )
+    assert "Apply the same For context principle used by the image prompt" in (
+        video_rules
+    )
+    assert "include relevant context in each when useful" in video_rules
     assert "(For context: he is opening the delivery company's" in video_rules
     assert "website directly.)" in video_rules
-    assert "content only in its separate (For context: ...) note" in video_rules
+    assert "ALWAYS belongs exclusively" not in video_rules
+    assert "whether the screen/page is visible" not in video_rules
 
 
 def _professional_anchor_output(
