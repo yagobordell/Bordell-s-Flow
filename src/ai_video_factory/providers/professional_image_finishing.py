@@ -1,10 +1,8 @@
 """Recoverable professional B2 postprocessing; never upscale video frames.
 
-Image beats retain their original paid GPT PNG and receive exact 2x OptiumLabs
-image inference. Video beats receive a *native GPT* 1920x1088 source, including
-individual high-resolution edits of controlled-grid video panels. The eight
-extra vertical pixels are center-cropped (not stretched) to 1920x1080.
-Casero never imports or calls this module through its run path.
+Only original per-beat PNGs are replaced, once finishing is verified. Full
+paid grids remain immutable. Recovery JSON and transient paid edit inputs are
+not user-facing image outputs; uncertain paid outcomes are never retried.
 """
 
 from __future__ import annotations
@@ -20,6 +18,7 @@ from typing import Any
 from PIL import Image
 
 from ai_video_factory.image_upscaling import ImageUpscaler
+from ai_video_factory.providers.professional_image_state import finishing_state_path
 from ai_video_factory.providers.openai_images import OpenAIImageClient
 
 _VIDEO_SOURCE = (1920, 1088)
@@ -114,16 +113,19 @@ def _record(
 def _materialize(
     output: Path, item: dict[str, Any], *, recipe: str,
     target: tuple[int, int], fingerprint: str,
-    source: bytes, upscaler: ImageUpscaler | None,
+    upscaler: ImageUpscaler | None,
     direct: OpenAIImageClient | None, model: str,
     avatar_reference: bytes | None = None,
 ) -> dict[str, Any]:
     block, beat = _asset_key(item)
-    folder = output / "images" / "professional_finished" / f"block_{block}"
-    filename = f"{beat}-{recipe}.png"
-    png = folder / filename
-    state = folder / f"{beat}-{recipe}.json"
-    if any(p.is_symlink() for p in (output / "images", folder, png, state)):
+    png = output / item["file"]
+    state = finishing_state_path(output, block, beat, recipe)
+    folder = state.parent
+    staged = png.with_name(png.name + ".finishing.part")
+    raw = folder / f"{beat}-{recipe}.native.png"
+    if any(p.is_symlink() for p in (
+        output / "images", png.parent, png, folder, state, staged, raw,
+    )):
         raise ProfessionalImageFinishingError("Linked professional finishing output")
     identity = {
         "profile": _PROFILE, "recipe": recipe, "source_sha256": item["sha256"],
@@ -132,26 +134,55 @@ def _materialize(
         "prompt_sha256": fingerprint,
     }
     identity_hash = _digest(json.dumps(identity, sort_keys=True).encode("utf-8"))
+
+    def completed_record(saved: dict[str, Any]) -> dict[str, Any]:
+        if not png.is_file() or png.is_symlink():
+            raise ProfessionalImageFinishingError("Completed finished PNG is missing")
+        finished = png.read_bytes()
+        if _digest(finished) != saved.get("sha256"):
+            raise ProfessionalImageFinishingError("Finished PNG SHA mismatch")
+        _check_png(finished, target)
+        record = _record(
+            item, file=item["file"], content=finished,
+            output_size=target, recipe=recipe,
+        )
+        if recipe == "native_grid_video":
+            record["openai_usage"] = saved.get("artifact", {}).get("openai_usage")
+        return record
+
     if state.is_file():
         saved = json.loads(state.read_text(encoding="utf-8"))
         if saved.get("identity") != identity_hash:
             raise ProfessionalImageFinishingError(
                 f"Changed professional image finishing recipe for {beat}; reconcile first"
             )
+        if saved.get("source_sha256") != item["sha256"] or (
+            saved.get("output_file") not in (None, item["file"])
+        ):
+            raise ProfessionalImageFinishingError("Invalid saved professional finishing source")
         if saved.get("status") == "completed":
-            if not png.is_file() or png.is_symlink():
-                raise ProfessionalImageFinishingError("Completed finished PNG is missing")
-            finished = png.read_bytes()
-            if _digest(finished) != saved.get("sha256"):
-                raise ProfessionalImageFinishingError("Finished PNG SHA mismatch")
-            _check_png(finished, target)
-            record = _record(
-                item, file=png.relative_to(output).as_posix(), content=finished,
-                output_size=target, recipe=recipe,
-            )
-            if recipe == "native_grid_video":
-                record["openai_usage"] = saved.get("artifact", {}).get("openai_usage")
-            return record
+            if saved.get("output_file") != item["file"]:
+                raise ProfessionalImageFinishingError("Missing finished image destination")
+            return completed_record(saved)
+        if saved.get("status") == "ready_to_replace":
+            # Resolve either side of an interrupted atomic replacement.
+            if png.is_file() and _digest(png.read_bytes()) == saved.get("sha256"):
+                pass
+            elif (
+                png.is_file() and _digest(png.read_bytes()) == item["sha256"]
+                and staged.is_file() and _digest(staged.read_bytes()) == saved.get("sha256")
+            ):
+                _check_png(staged.read_bytes(), target)
+                staged.replace(png)
+            else:
+                raise ProfessionalImageFinishingError(
+                    f"Unreconciled in-place image replacement for {beat}"
+                )
+            saved["status"] = "completed"
+            _save_json(state, saved)
+            if raw.exists():
+                raw.unlink()
+            return completed_record(saved)
         if saved.get("status") != "pending":
             raise ProfessionalImageFinishingError(
                 f"Unknown outcome for {beat} ({recipe}); reconcile before any resubmission"
@@ -160,12 +191,17 @@ def _materialize(
         saved = {
             "schema_version": "professional-image-finishing-v1",
             "identity": identity_hash, "status": "pending",
-            "source": item["file"], "block_id": block, "beat_id": beat,
+            "source": item["file"], "source_sha256": item["sha256"],
+            "block_id": block, "beat_id": beat,
             "model_id": model if recipe == "native_grid_video" else None,
         }
         _save_json(state, saved)
-    if png.exists():
-        raise ProfessionalImageFinishingError("Untracked professional finished image exists")
+
+    # The source exists only until its own finishing succeeds. A resumed,
+    # already finished beat returns above without requiring the old bytes.
+    source = _source(output, item)
+    if staged.exists() or staged.is_symlink():
+        raise ProfessionalImageFinishingError("Unreconciled partial finished PNG")
     if recipe == "native_video_crop":
         finished = _video_crop(source)
     else:
@@ -183,8 +219,6 @@ def _materialize(
         elif recipe == "native_grid_video":
             if direct is None:
                 raise ProfessionalImageFinishingError("GPT Image client is unavailable")
-            # This is a NEW native high-resolution GPT edit, not a resized 720p
-            # grid crop. The first image is the exact continuity anchor.
             refs = ["data:image/png;base64," + base64.b64encode(source).decode("ascii")]
             if avatar_reference is not None:
                 refs.append(
@@ -202,8 +236,7 @@ def _materialize(
             if avatar_reference is not None:
                 text += " The second reference preserves the avatar's facial identity."
             folder.mkdir(parents=True, exist_ok=True)
-            raw = folder / f"{beat}-{recipe}.native.png"
-            if raw.is_symlink() or raw.exists():
+            if raw.exists() or raw.is_symlink():
                 raise ProfessionalImageFinishingError("Untracked native GPT source exists")
             generated = direct.generate_png(
                 prompt=text, model=model, destination=raw,
@@ -221,21 +254,21 @@ def _materialize(
         else:
             raise ProfessionalImageFinishingError(f"Unknown finishing recipe: {recipe}")
     _check_png(finished, target)
-    folder.mkdir(parents=True, exist_ok=True)
-    part = png.with_name(png.name + ".part")
-    if part.exists() or part.is_symlink():
-        raise ProfessionalImageFinishingError("Unreconciled partial finished PNG")
-    part.write_bytes(finished)
-    part.replace(png)
-    saved.update({"status": "completed", "sha256": _digest(finished)})
+    # Stage and record the digest BEFORE swapping out the original PNG.
+    staged.write_bytes(finished)
+    saved.update({
+        "status": "ready_to_replace", "sha256": _digest(finished),
+        "output_file": item["file"],
+    })
     _save_json(state, saved)
-    record = _record(
-        item, file=png.relative_to(output).as_posix(), content=finished,
-        output_size=target, recipe=recipe,
-    )
-    if recipe == "native_grid_video":
-        record["openai_usage"] = saved.get("artifact", {}).get("openai_usage")
-    return record
+    if _digest(png.read_bytes()) != item["sha256"]:
+        raise ProfessionalImageFinishingError("Source changed before atomic replacement")
+    staged.replace(png)
+    saved["status"] = "completed"
+    _save_json(state, saved)
+    if raw.exists():
+        raw.unlink()
+    return completed_record(saved)
 
 
 def finish_professional_images(
@@ -243,10 +276,9 @@ def finish_professional_images(
     *, upscaler: ImageUpscaler | None,
     api_key: str | None, direct_client: OpenAIImageClient | None = None,
 ) -> list[dict[str, Any]]:
-    """Complete professional image outputs before any preview or paid LTX jobs.
+    """Replace each beat PNG only after verified and recoverable finishing.
 
-    Paid original GPT grids and unmodified crops always remain available.
-    Successful finishing is SHA-addressed; unknown paid outcomes fail closed.
+    Full paid grids and durable paid request metadata remain untouched.
     """
     if plan.get("visual_style") != "profesional" or manifest.get("status") != "completed":
         raise ProfessionalImageFinishingError("Requires completed professional GPT image inputs")
@@ -288,12 +320,11 @@ def finish_professional_images(
     _save_json(manifest_path, manifest)
     try:
         for item in originals:
-            source = _source(output, item)
             if item["visual_type"] in {"media_image", "avatar_media"}:
                 with Image.open(BytesIO(source)) as image:
                     width, height = image.size
                 result = _materialize(
-                    output, item, recipe="image_x2", source=source,
+                    output, item, recipe="image_x2",
                     target=(width * 2, height * 2), fingerprint="exact-image-x2",
                     upscaler=upscaler, direct=None, model="",
                 )
@@ -318,8 +349,7 @@ def finish_professional_images(
                     # Include the original description and model in paid identity.
                     annotated = {**item, "description": description}
                     result = _materialize(
-                        output, annotated, recipe="native_grid_video",
-                        source=source, target=_VIDEO_TARGET,
+                        output, annotated, recipe="native_grid_video", target=_VIDEO_TARGET,
                         fingerprint=_digest(description.encode("utf-8")),
                         upscaler=None, direct=direct_client,
                         model=manifest["model_id"],
@@ -331,7 +361,7 @@ def finish_professional_images(
                             "Professional standalone video GPT source is not native 1920x1088"
                         )
                     result = _materialize(
-                        output, item, recipe="native_video_crop", source=source,
+                        output, item, recipe="native_video_crop",
                         target=_VIDEO_TARGET, fingerprint="center-crop-8px",
                         upscaler=None, direct=None, model="",
                     )
