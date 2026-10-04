@@ -201,3 +201,62 @@ against **B=1 runs with matching seeds/prompts/original images** before
 promoting outside the isolated experiment. If any quality or latency gate
 fails, keep the original pinned hybrid image as the known reference; do not
 silently activate the memory change.
+
+
+## 2026-10-04: Full HD I2V pair output latency: one decoder build, safe backend
+
+**Confirmed root cause of the "missing NATTEN" warning:** this repository
+**deliberately** disables NATTEN for the RTX 5090 in
+`_force_diffvae_eager_sdpa`. A previous production-style landscape-grid
+NATTEN decode triggered a native segmentation fault, despite the library
+being installed in the Docker image. The slow eager-SDPA fallback is the
+current *safety-pinned baseline*. Do NOT delete this override or imply that
+installing/re-enabling NATTEN alone is a safe speed optimization. Triton
+remains a separately testable candidate; it is not selected for this
+experimental full-HD pair by this change because visual and hardware
+equivalence are unproven.
+
+**New safe latency change:** For the experimental 1920x1080 B2 task only,
+the output encoder temporarily installs a `SharedSequentialVideoDecoder`
+while it consumes the original pair of lazy video iterators. It constructs
+the *same prepared upstream VAE decoder and same eager-SDPA backend once*
+instead of rebuilding it separately for each output. Each independent
+decoder call still consumes its **original advanced seed-specific generator**,
+original 1-sample latent and original tiled configuration. The second clip
+does not start until the first iterator is entirely consumed, avoiding
+mixed VAE streams/frames. The identical `gpu_model` disposal context
+remains open only across these two sequential clip decodes; it is disposed
+and the pipeline's original decoder restored in `finally` on both success
+and error. The 720p pair, all single-video generation, all A2V and the
+transformer stage loops remain unchanged.
+
+**Free checks:** the no-GPU I2V workflow compares mock decoded bytes from
+the shared VAE against two independent original-style VAE constructions,
+including distinct advanced RNG streams; checks the lazy construction,
+interleaving rejection and exception cleanup. The offline exact-image
+preflight now additionally requires the shared I2V decoder and the
+`is_full_hd` guard while verifying eager backend safety is retained.
+An image without this optimization fails before billed Salad Start.
+Mock byte parity proves the plumbing and generator semantics, **not**
+real pixel identity after an actual DiffVAE decode.
+
+Logs now distinguish `LTX25_I2V_SHARED_VAE_BUILD` from
+`LTX25_I2V_SHARED_VAE_CLIP_DONE` and `LTX25_I2V_SHARED_VAE_RELEASE`.
+The per-clip wall time includes the downstream MP4 encoder's consumption,
+so do not misrepresent it as GPU-only decoder kernel time. Historical
+baseline was 297.762588s total for B=2 1920x1080 / 121 frames; the
+second VAE was previously loaded around the start of the second video.
+
+**Required real acceptance:** build a NEW immutable I2V Docker from the
+green exact branch HEAD; run its offline ABI probe, re-Prepare only a
+stopped I2V group with a verified digest and >=61440 MB, and obtain
+explicit operator authorization before a new paid trial. For a meaningful
+comparison, keep the same two full-HD PNGs, prompts, seeds, exact eager
+backend, stage2 CPU policy and image hardware as baseline. Compare
+`LTX25_I2V_SHARED_VAE_BUILD`, the two output decode/encode times,
+stage1/stage2 forward times, process/cgroup memory and full total against
+297.762588s. Decode both result videos next to corresponding matched B=1
+reference outputs; a stable-looking pair by itself cannot establish B=1
+visual equality. Do not promote to production or assert speedup until
+measured. Treat Triton NA and kernel/compile changes as a **different
+explicitly gated** experiment, not part of this quality-preserving change.
