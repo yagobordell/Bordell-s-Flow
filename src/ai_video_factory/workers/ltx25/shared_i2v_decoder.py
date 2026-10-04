@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ class SharedSequentialVideoDecoder:
     def completed(self) -> int:
         return self._completed
 
-    def __enter__(self) -> "SharedSequentialVideoDecoder":
+    def __enter__(self) -> SharedSequentialVideoDecoder:
         return self
 
     def __exit__(self, *_exc: Any) -> None:
