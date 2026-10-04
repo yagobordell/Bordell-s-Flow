@@ -94,9 +94,18 @@ def patch_builder_source(source: str) -> str:
                 "I2V progressive stage2 permits only the approved no-LoRA FP8 recipe"
             )
 
-        for block_idx, entries in block_key_map.items():
+        # A2V experimental groups nearby blocks to amortize repeated
+        # safetensors metadata/setup and improve sequential checkpoint I/O.
+        # I2V continues using the previous one-block-at-a-time default.
+        group_size = getattr(self, "_a2v_progressive_block_group_size", 1)
+        if not isinstance(group_size, int) or not 1 <= group_size <= 8:
+            raise ValueError("A2V progressive group size must be 1..8")
+        block_items = sorted(block_key_map.items())
+        for start in range(0, len(block_items), group_size):
+            group = block_items[start:start + group_size]
             names = frozenset(
                 make_block_key(self.blocks_prefix, block_idx, param_name)
+                for block_idx, entries in group
                 for _sft_key, param_name in entries
             )
             block_sd = load_state_dict(
@@ -104,14 +113,16 @@ def patch_builder_source(source: str) -> str:
                 self.model_loader,
                 self.registry,
                 torch.device("cpu"),
-                self._filtered_sd_ops(f"i2v_progressive_block_{block_idx}", names),
+                self._filtered_sd_ops(
+                    f"progressive_blocks_{group[0][0]}_{group[-1][0]}", names,
+                ),
             )
-            # Avoid success with missing/extra transformed keys; that could
-            # otherwise yield an incomplete or visually different model.
+            # Never silently omit, reorder or numerically transform a weight.
             if set(block_sd.sd) != names:
                 raise RuntimeError(
-                    f"I2V progressive block {block_idx}: checkpoint keys differ "
-                    f"from pinned FP8 layout (missing={sorted(names - set(block_sd.sd))}, "
+                    f"Progressive blocks {group[0][0]}-{group[-1][0]}: "
+                    f"checkpoint keys differ from original pinned FP8 layout "
+                    f"(missing={sorted(names - set(block_sd.sd))}, "
                     f"extra={sorted(set(block_sd.sd) - names)})"
                 )
             for key, fused in fuse_lora_weights(
@@ -119,24 +130,19 @@ def patch_builder_source(source: str) -> str:
                 fuse_rule=self.fuse_rule, preserve_input_device=False,
             ):
                 if key not in names:
-                    raise RuntimeError(
-                        f"I2V progressive block {block_idx}: unexpected fused key {key}"
-                    )
+                    raise RuntimeError(f"Unexpected progressive fused key {key}")
                 fill_views[key].copy_(fused, non_blocking=True)
                 block_sd.sd[key] = None
-            # Preserve original per-block tensor/view iteration order.
-            for _sft_key, param_name in entries:
-                key = make_block_key(self.blocks_prefix, block_idx, param_name)
-                original = block_sd.sd[key]
-                if original is not None:
-                    fill_views[key].copy_(original)
-                    block_sd.sd[key] = None
-            # Python loop variables retain their last value after iteration.
-            # Dispose the final temporary tensor explicitly as well.
-            del original
-            # Releasing the per-block raw tensors here is the sole memory
-            # optimization; final pinned blocks remain live for ALL forwards.
-            del block_sd
+            # Every destination view receives the original checkpoint tensor
+            # exactly once. No weights are retained after this group is filled.
+            for block_idx, entries in group:
+                for _sft_key, param_name in entries:
+                    key = make_block_key(self.blocks_prefix, block_idx, param_name)
+                    original = block_sd.sd[key]
+                    if original is not None:
+                        fill_views[key].copy_(original)
+                        block_sd.sd[key] = None
+            del original, block_sd
 
     def _build_disk_source(
         self,''',
