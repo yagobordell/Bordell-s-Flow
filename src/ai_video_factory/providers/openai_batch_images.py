@@ -722,6 +722,22 @@ def clear_b2_images_for_rerun(output: Path) -> int:
             )
 
     removed = sum(1 for _ in image_root.rglob("*.png"))
+    # Keep all original paid GPT request metadata for billing, not only the
+    # historical finishing metadata. A prior grid may now be the only paid
+    # request in a professional run.
+    historical_archive = output / "images_replaced_b2"
+    if historical_archive.is_symlink() or historical_archive.is_junction():
+        raise ImageGenerationError("Refusing linked B2 billing archive")
+    paid_states = [
+        *image_root.glob("block_*/*.json"),
+        *(image_root / "grids").glob("*.json"),
+    ]
+    if paid_states:
+        destination = historical_archive / ("run-" + uuid.uuid4().hex)
+        for state_path in paid_states:
+            saved_path = destination / state_path.parent.name / state_path.name
+            saved_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.replace(saved_path)
     for finished_root in finished_roots:
         if finished_root.is_dir():
             # Preserve paid native-edit JSON evidence for future billing audits.
@@ -736,11 +752,6 @@ def clear_b2_images_for_rerun(output: Path) -> int:
             shutil.rmtree(child)
         else:
             child.unlink()
-    legacy_archive = output / "images_replaced_b2"
-    if legacy_archive.exists():
-        if legacy_archive.is_symlink() or legacy_archive.is_junction():
-            raise ImageGenerationError("Refusing linked legacy B2 image archive")
-        shutil.rmtree(legacy_archive)
     return removed
 
 
