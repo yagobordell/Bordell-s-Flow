@@ -19,7 +19,7 @@ The four and only four visual strategies are:
 - media_image — one AI-generated still image is the primary visual; there is no talking-head presenter layer.
 - media_video — one AI-generated video is the primary visual; there is no talking-head presenter layer. B2 writes BOTH the source/key-image prompt (prompt) and a separate video_prompt that describes how that image should animate over this beat.
 
-No visual strategy has a quota, priority, preferred cadence or tie-breaking advantage. Choose the strategy that communicates the beat most naturally, clearly and faithfully.
+Every visual strategy is equally available. Choose the one that communicates each beat most naturally, clearly and faithfully.
 
 Input contract
 
@@ -253,13 +253,10 @@ and what the new image should show differently. Preserve only what the beat need
 When the prompt uses the avatar reference to depict a person whose FACE IS VISIBLE,
 explicitly specify a natural, beat-specific facial expression and visible demeanor.
 Describe where their eyes or attention are directed and their pose when this matters.
-Preserve the referenced identity, not the source photo's facial expression, emotion,
-gaze or pose. Never rely on the reference photo's fixed smile or neutral face: the
-new scene determines the expression. Allow meaningful natural variations across
-beats without inventing unsupported emotions or forcing theatrical expressions.
-If the face is not visible (hands-only or rear view), do not invent instructions
-for an unseen expression. This rule applies to any referenced visible person,
-not merely the presenter.
+Preserve the referenced identity while choosing the expression, emotion, gaze and
+pose that fit the new scene. Allow meaningful natural variation grounded in each beat.
+Expression guidance applies to visible faces, including referenced people other than
+the presenter.
 
 reference = true does not mean the presenter must appear. If the reference is
 used only for an object or environment, describe the intended object-only
@@ -331,13 +328,13 @@ Consecutive visual continuity
 
 Use continuity numbering when 2–9 consecutive generated assets form one narratively or physically continuous event and share meaningful identity, location, wardrobe, objects, time context or physical state.
 
-Prefix each participating non-null prompt literally with:
+Prefix each participating non-null prompt literally with the numeric marker plus a space:
 
-1.
-2.
-3.
+1. 
+2. 
+3. 
 ...
-9.
+9. 
 
 The sequence marker is the first token in the B2 prompt; the application injects canonical image style after it at generation time. Each numbered prompt is self-contained and explicitly carries forward the relevant established details.
 
@@ -390,8 +387,8 @@ and the beat needs an object-only shot:
   "audio": false
 }
 
-The application adds the global image-style prefix later. B2 must not include
-it here. This object-only scene has no facial-expression requirement.
+The application adds the global image-style prefix later. Facial-expression
+guidance applies when a referenced person's face is visible.
 
 Illustrative scene calibration
 
