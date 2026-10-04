@@ -478,7 +478,7 @@
     },
     "ltx25_a2v_experimental": {
       "display_name": "AI Video Factory LTX A2V FP8 EXPERIMENT ONLY",
-      "group_name": "ai-video-factory-ltx25-a2v-fp8-experiment-v1",
+      "group_name": "ai-video-factory-ltx25-a2v-b2-1080p-v1",
       "dockerfile": "docker/workers/ltx25/Dockerfile",
       "image": "docker.io/yagobordell/ai-video-factory:ltx25-a2v-fp8-experiment-v1",
       "priority": "high",
