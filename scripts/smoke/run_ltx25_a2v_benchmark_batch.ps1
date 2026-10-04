@@ -106,7 +106,17 @@ try {
     if (-not $?) { throw "A2V Salad allocation failed" }
     $Manifest.lifecycle.capacity_seconds = $Clock.Elapsed.TotalSeconds
 
-    & $Python $Ready --env-file $EnvFile --timeout-seconds $BootstrapTimeoutSeconds --poll-seconds 15 --expected-image $ExpectedPinnedImage --service $TargetService
+    $ReadyArgs = @(
+        '--env-file', $EnvFile,
+        '--timeout-seconds', [string]$BootstrapTimeoutSeconds,
+        '--poll-seconds', '15',
+        '--expected-image', $ExpectedPinnedImage,
+        '--service', $TargetService
+    )
+    if ($ReuseProductionGroup) {
+        $ReadyArgs += '--reuse-production'
+    }
+    & $Python $Ready @ReadyArgs
     if ($LASTEXITCODE -ne 0) { throw "Expected pinned A2V image never reached readiness" }
     $Manifest.lifecycle.ready_seconds = $Clock.Elapsed.TotalSeconds
 
