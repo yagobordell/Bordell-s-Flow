@@ -113,8 +113,7 @@ def compare(baseline: Path, candidate: Path) -> dict[str, Any]:
         ),
     }
     output = candidate / "backend-quality-comparison.json"
-    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "
-", encoding="utf-8")
+    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report
 
 
