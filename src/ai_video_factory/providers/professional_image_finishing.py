@@ -135,6 +135,33 @@ def _materialize(
     }
     identity_hash = _digest(json.dumps(identity, sort_keys=True).encode("utf-8"))
 
+    def clean_migrated_legacy(saved: dict[str, Any]) -> None:
+        legacy_folder = output / "images" / "professional_finished" / f"block_{block}"
+        old_state = legacy_folder / f"{beat}-{recipe}.json"
+        old_png = old_state.with_suffix(".png")
+        old_raw = legacy_folder / f"{beat}-{recipe}.native.png"
+        if not old_state.exists() and not old_state.is_symlink():
+            return
+        if any(path.is_symlink() for path in (
+            legacy_folder, old_state, old_png, old_raw,
+        )):
+            raise ProfessionalImageFinishingError("Linked migrated legacy output")
+        previous = json.loads(old_state.read_text(encoding="utf-8"))
+        if (previous.get("identity") != identity_hash
+            or previous.get("status") != "completed"
+            or previous.get("sha256") != saved["sha256"]
+            or not old_png.is_file()
+            or _digest(old_png.read_bytes()) != saved["sha256"]):
+            raise ProfessionalImageFinishingError("Unreconciled legacy finishing copy")
+        old_png.unlink()
+        old_state.unlink()
+        if old_raw.is_file():
+            old_raw.unlink()
+        if not any(legacy_folder.iterdir()):
+            legacy_folder.rmdir()
+        if not any(legacy_folder.parent.iterdir()):
+            legacy_folder.parent.rmdir()
+
     def completed_record(saved: dict[str, Any]) -> dict[str, Any]:
         if not png.is_file() or png.is_symlink():
             raise ProfessionalImageFinishingError("Completed finished PNG is missing")
@@ -142,6 +169,7 @@ def _materialize(
         if _digest(finished) != saved.get("sha256"):
             raise ProfessionalImageFinishingError("Finished PNG SHA mismatch")
         _check_png(finished, target)
+        clean_migrated_legacy(saved)
         record = _record(
             item, file=item["file"], content=finished,
             output_size=target, recipe=recipe,
@@ -221,6 +249,8 @@ def _materialize(
                 "artifact": old.get("artifact", {}),
             }
             _save_json(state, saved)
+            if staged.exists() or staged.is_symlink():
+                raise ProfessionalImageFinishingError("Unreconciled staged legacy copy")
             staged.write_bytes(legacy_bytes)
             saved.update({
                 "status": "ready_to_replace", "sha256": old["sha256"],
