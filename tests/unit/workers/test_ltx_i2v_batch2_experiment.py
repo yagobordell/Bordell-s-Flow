@@ -194,6 +194,16 @@ def test_invalid_sidecars_are_rejected_before_gpu_work(tmp_path: Path) -> None:
     backend.generate_pair.assert_not_called()
 
 
+def test_hybrid_pinned_ram_resources_are_isolated_to_i2v() -> None:
+    manifest = json.loads((ROOT / "deploy/salad/services.json").read_text())
+    assert manifest["services"]["ltx25_i2v"]["resources"]["memory"] >= 65536
+    assert manifest["services"]["ltx25"]["resources"]["memory"] == 40960
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert '$FullHdStage2Mode -eq "cpu"' in script
+    assert "65536" in script
+    assert '"--full-hd-stage2-mode", $FullHdStage2Mode' in script
+
+
 def test_full_hd_cli_preflight_is_free_and_requires_explicit_risk(
     tmp_path: Path,
 ) -> None:
