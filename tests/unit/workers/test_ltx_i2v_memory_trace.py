@@ -118,7 +118,7 @@ def test_ram_timeline_samples_phases_headroom_and_kernel_peaks(
         mark_i2v_ram_phase("stage2_transformer_build")
     report = monitor.report()
     assert report["sample_count"] == 4
-    assert len([r for r in caplog.records if "LTX25_I2V_RAM_SAMPLE {" in r.message]) == 3
+    assert len([r for r in caplog.records if "LTX25_I2V_RAM_SAMPLE {" in r.message]) == 4
     assert report["process_sampled_peak_rss_bytes"] == 300
     assert report["process_reported_peak_hwm_bytes"] == 330
     assert report["cgroup_sampled_peak_bytes"] == 410
