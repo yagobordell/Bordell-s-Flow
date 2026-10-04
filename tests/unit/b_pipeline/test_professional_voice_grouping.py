@@ -221,3 +221,68 @@ def test_grouped_stt_keeps_original_visual_ids_and_exact_pcm_offsets(tmp_path):
     corrupted["block_groups"][0]["beat_ids"] = ["1A", "3A"]
     with pytest.raises(StaticPreviewError, match="differ"):
         build_stt_beat_timeline(tmp_path, plan, corrupted)
+
+
+def test_gemini_generates_one_paid_wav_per_group_and_reuses_it(tmp_path, monkeypatch):
+    source = _blocks([6, 1, 3, 8])
+    director = GroupAwareProvider()
+
+    class Speech:
+        def __init__(self):
+            self.calls = []
+
+        async def generate_directed_speech(self, *, turns, **_kwargs):
+            self.calls.append([turn["text"] for turn in turns])
+            return SimpleNamespace(content=_wav(0.1))
+
+    async def transcribe(item, *, output, run_dir, stt_client):
+        folder = run_dir / "blocks" / f"block_{item['block_id']}"
+        path = folder / "stt.json"
+        data = json.dumps({
+            "model": stt_client.model, "source_audio_sha256": item["sha256"],
+            "words": [{"word": "word", "start": 0.0, "end": 0.05}],
+        }).encode()
+        path.write_bytes(data)
+        return {
+            **item, "stt": {"file": path.relative_to(output).as_posix(),
+                            "sha256": hashlib.sha256(data).hexdigest(),
+                            "model": stt_client.model, "word_count": 1},
+        }
+
+    def join(paths, destination):
+        assert len(paths) == 2
+        assert all(path.is_file() for path in paths)
+        wav = _wav(0.7)
+        destination.write_bytes(wav)
+        return {
+            "sha256": hashlib.sha256(wav).hexdigest(), "bytes": len(wav),
+            "duration_seconds": 0.7, "block_start_seconds": [0.0, 0.6],
+            "block_end_seconds": [0.1, 0.7],
+            "block_durations_seconds": [0.1, 0.1],
+        }
+
+    monkeypatch.setattr(pv, "_transcribe_block", transcribe)
+    monkeypatch.setattr(pv, "join_audio_blocks", join)
+    speech = Speech()
+    kwargs = dict(
+        core={"central_question": "Why?", "final_answer": "Because"},
+        blocks=source, output=tmp_path, provider=director, model="test",
+        gemini_api_key="test", voice_id="Algenib", source_sha256="a" * 64,
+        speech_provider=speech, stt_client=SimpleNamespace(model="whisper-1"),
+    )
+    artifact = asyncio.run(pv.generate_professional_audio(**kwargs))
+    assert artifact["status"] == "completed"
+    assert artifact["block_count"] == 2
+    assert [record["source_block_ids"] for record in artifact["blocks"]] == [
+        [1, 2, 3], [4],
+    ]
+    assert [group["beat_ids"] for group in artifact["block_groups"]] == [
+        [beat["beat_id"] for block in source[:3] for beat in block["beats"]],
+        [beat["beat_id"] for beat in source[3]["beats"]],
+    ]
+    assert sorted(map(len, speech.calls)) == [8, 10]
+    assert len(director.calls) == 5
+    second = asyncio.run(pv.generate_professional_audio(**kwargs))
+    assert second == artifact
+    assert len(speech.calls) == 2
+    assert len(director.calls) == 5
