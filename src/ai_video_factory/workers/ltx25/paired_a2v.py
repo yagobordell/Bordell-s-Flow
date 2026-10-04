@@ -285,17 +285,23 @@ def generate_paired_static_a2v(
     stage2_factory: Any,
     phase_metrics: dict[str, Any] | None = None,
     max_transformer_forward_batch_size: int = 2,
+    max_stage1_major_page_faults: int = 0,
 ) -> tuple[PipelineOutput, PipelineOutput]:
     """Generate paired A/V with independent frozen PCM and no silent B1 fallback."""
     if len(samples) != 2 or samples[0].seed == samples[1].seed:
         raise ValueError("Two independent A2V B2 seeds are mandatory")
     if (width, height, fps) != (1920, 1088, 24):
         raise ValueError("A2V B2 only supports internal 1920x1088 at 24fps")
+    if max_stage1_major_page_faults < 0:
+        raise ValueError("A2V stage1 major-page-fault limit cannot be negative")
     if (frames - 1) % 8 or frames < 9:
         raise ValueError("A2V pair must share the exact 8k+1 audio-driven frame count")
     assert_resolution(height=height, width=width, is_two_stage=True)
+    initial_memory = memory_pressure() if max_stage1_major_page_faults else None
     if phase_metrics is not None:
-        phase_metrics["memory_after_pipeline_acquire"] = memory_pressure()
+        phase_metrics["memory_after_pipeline_acquire"] = (
+            initial_memory if initial_memory is not None else memory_pressure()
+        )
     prepared, prompt_metrics = _prepare_independent_prompt_contexts(pipeline, samples)
     if phase_metrics is not None:
         phase_metrics.update(prompt_metrics)
@@ -369,14 +375,37 @@ def generate_paired_static_a2v(
         label="stage1", phase_metrics=phase_metrics,
         max_transformer_forward_batch_size=max_transformer_forward_batch_size,
     )
+    stage1_memory = memory_pressure()
     if phase_metrics is not None:
-        phase_metrics["memory_after_stage1"] = memory_pressure()
+        phase_metrics["memory_after_stage1"] = stage1_memory
+    if initial_memory is not None:
+        before_faults = initial_memory.get("process_major_page_faults")
+        after_faults = stage1_memory.get("process_major_page_faults")
+        if before_faults is None or after_faults is None or after_faults < before_faults:
+            raise RuntimeError("A2V latency guard cannot read monotonic major-page faults")
+        fault_delta = after_faults - before_faults
+        if phase_metrics is not None:
+            phase_metrics["stage1_major_page_faults_delta"] = fault_delta
+            phase_metrics["stage1_major_page_faults_limit"] = max_stage1_major_page_faults
+        if fault_delta > max_stage1_major_page_faults:
+            raise RuntimeError(
+                "A2V latency guard: host paging exceeded limit after stage1 "
+                f"({fault_delta}>{max_stage1_major_page_faults}). "
+                "No stage2 or VAE was started; inspect Salad host memory."
+            )
     del stage1_images, stage1_audio
     upsample_start = time.perf_counter()
     upscaled = torch.cat([
         pipeline.upsampler(stage1_video.latent[i:i + 1]) for i in range(2)
     ], dim=0)
     del stage1_video
+    # The resident stage1 and its temporary tensors are no longer needed.
+    # Collect at this existing between-stage boundary, before pinning stage2.
+    release_at = time.perf_counter()
+    gc.collect()
+    if phase_metrics is not None:
+        phase_metrics["stage1_release_gc_seconds"] = time.perf_counter() - release_at
+        phase_metrics["memory_before_stage2_build"] = memory_pressure()
     if phase_metrics is not None:
         phase_metrics["latent_upsampling_seconds"] = time.perf_counter() - upsample_start
     conditioning_start = time.perf_counter()
@@ -411,6 +440,14 @@ def generate_paired_static_a2v(
     )
     if phase_metrics is not None:
         phase_metrics["memory_after_stage2"] = memory_pressure()
+    # Stage2 streaming weights and temporary contexts must not remain live
+    # when the shared Triton/Eager VAE starts its two original lazy decodes.
+    del stage2, stage2_images, upscaled, frozen, v_context, a_context, negative
+    release_at = time.perf_counter()
+    gc.collect()
+    if phase_metrics is not None:
+        phase_metrics["stage2_release_gc_seconds"] = time.perf_counter() - release_at
+        phase_metrics["memory_before_vae"] = memory_pressure()
     result = []
     for i in range(2):
         latent = final.latent[i:i + 1]
