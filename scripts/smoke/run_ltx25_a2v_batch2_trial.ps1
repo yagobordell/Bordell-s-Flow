@@ -83,9 +83,14 @@ if ($RemoteStatus -notmatch "status=stopped" -or
 }
 $Started = $false
 try {
-    $Started = $true
     & $Manager -Action Start -Service $Service -Replicas 1 -EnvFile $EnvFile -AllowBootstrappingInstance -NonInteractive
-    if (-not $?) { throw "Isolated A2V experimental Start failed." }
+    if (-not $?) {
+        throw ("Isolated A2V experimental Start failed or returned ambiguous state. " +
+            "Inspect Salad status before any manual recovery.")
+    }
+    # Only a confirmed successful Start grants this invocation cleanup ownership.
+    # If remote Start failed ambiguously, do NOT stop someone else's group.
+    $Started = $true
     $WaitArgs = @(
         "--service", $Service, "--env-file", $EnvFile,
         "--expected-image", $ExpectedPinnedImage,
