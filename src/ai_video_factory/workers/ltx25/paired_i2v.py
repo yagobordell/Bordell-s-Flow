@@ -474,7 +474,8 @@ def generate_paired_fast_distilled(
         # image encoder have been released. Never instantiate a second live
         # transformer or reload Gemma / VAE for this mode.
         stage2 = stage2_factory() if stage2_factory is not None else pipeline.stage
-        _log_gpu_checkpoint("stage2_transformer_factory_ready")
+        if full_hd_memory_cleanup:
+            _log_gpu_checkpoint("stage2_transformer_factory_ready")
         logger.info(
             "LTX25_I2V_PAIR_STAGE_START stage=stage2 shared_transformer=%s memory=%s",
             shared_transformer is not None,
