@@ -71,7 +71,7 @@ def _experimental_streaming_transformer_context(stage):
         yield model
 
 
-def configure_experimental_a2v_streaming(pipeline: "DistilledReferenceA2VPipeline") -> None:
+def configure_experimental_a2v_streaming(pipeline: DistilledReferenceA2VPipeline) -> None:
     """Patch only an opt-in benchmark instance, never production or I2V."""
     for name in ("stage_1", "stage_2"):
         stage = getattr(pipeline, name)
