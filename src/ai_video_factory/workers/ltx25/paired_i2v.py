@@ -42,6 +42,10 @@ from .resource_metrics import memory_pressure as _memory_pressure
 
 logger = logging.getLogger(__name__)
 
+# ABI gate: the Full HD alternate DiffusionStage must never shadow its sigmas.
+# Read from INSIDE the pinned Docker by the paid smoke's offline preflight.
+STAGE2_SIGMAS_SAFE_ABI = "stage2-sigma-separated-v1"
+
 
 def _log_gpu_checkpoint(phase: str, *, trim: bool = False) -> None:
     """Record true CUDA allocator pressure at B=2 stage boundaries.
@@ -422,7 +426,9 @@ def generate_paired_fast_distilled(
             json.dumps(_memory_pressure(), sort_keys=True),
         )
         stage1 = DISTILLED_SIGMAS.to(dtype=torch.float32, device=pipeline.device)
-        stage2 = STAGE_2_DISTILLED_SIGMAS.to(dtype=torch.float32, device=pipeline.device)
+        stage2_sigmas = STAGE_2_DISTILLED_SIGMAS.to(
+            dtype=torch.float32, device=pipeline.device
+        )
         first_video, first_audio = _paired_stage(
             pipeline.stage,
             video_context=video_ctx,
@@ -490,7 +496,7 @@ def generate_paired_fast_distilled(
             conditionings=stage2_images,
             noiser=noiser,
             seeds=seeds,
-            sigmas=stage2,
+            sigmas=stage2_sigmas,
             width=width, height=height,
             frames=num_frames, fps=frame_rate,
             initial_video=upscaled,
