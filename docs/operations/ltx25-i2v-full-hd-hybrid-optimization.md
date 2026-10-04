@@ -58,3 +58,57 @@ to recover this experiment.
 - With the 61440-MB budget, CPU pinned weight startup may still exhaust host RAM or be affected by poor storage; **do not assert the time or memory problem is solved** until real hardware evidence supports it. Do not auto-retry expensive CPU failures in DISK mode and do not enable this experiment in the normal B2 dispatcher.
 
 **Quality gate:** visual review against matched 1080p B=1 reference frames and lipsync checks remain separate; the observed latest paired test used the SAME initial PNG hash for both outputs, so acquire two distinct sources for broader visual acceptance.
+
+
+## Extra fail-closed guards for the next 60-GiB trial
+
+The local source-only `-CheckInputsOnly` does not verify Docker or the
+remote group. Before **any paid Start**, the Full-HD PowerShell wrapper now:
+
+1. Executes `verify_ltx25_i2v_hybrid_image.py --image <immutable-digest>`
+   against the exact locally available or pulled Docker. It imports
+   `Batch2Parameters` from **inside** that image and checks the backend and
+   lazy-stage signatures. A historical DISK-only image fails here.
+2. Calls `Status` for both isolated groups, without changing them.
+3. Reads the **remote** I2V group through Salad's describe-only endpoint using
+   `verify_ltx25_i2v_remote_config.py`. Requires the same immutable digest,
+   batch2 task flag, I2V task mode, at least 61440 MB of remotely reported
+   memory, and stable stopped state with no pending change. If the remote
+   group is different, no GPU starts. The remote image digest matched to the
+   locally inspected digest is the deployment ABI proof; no unsupported
+   direct access to remote worker internals is assumed.
+
+Free explicit checks from the experimental checkout:
+
+~~~powershell
+$EnvFile = ".env"
+$Pinned = "<replace-with-real-docker.io/yagobordell/ai-video-factory@sha256:...>"
+python scripts/salad/inspect_capacity_lock.py
+.\scripts\salad\manage_salad_worker.ps1 -Action Status -Service ltx25_i2v -EnvFile $EnvFile -NonInteractive
+python scripts/smoke/verify_ltx25_i2v_hybrid_image.py --image $Pinned
+python scripts/smoke/verify_ltx25_i2v_remote_config.py --image $Pinned --env-file $EnvFile --minimum-memory-mb 61440
+~~~
+
+The lock inspection reports **only read-only** PostgreSQL lock-holder PID,
+application name when PostgreSQL exposes it, and the latest controller
+health record. The record may not identify the actual human or a currently
+active job; coordinate with the controller owner before any intervention.
+Never call `-AllowControllerOverride` merely because cleanup failed. Check
+the Salad console or use the two `Status` commands when actual account
+state is needed; repository code alone cannot determine live GPU charges.
+
+For a paid trial, the wrapper retains the original generation error if Stop
+fails. It performs a read-only I2V Status and capacity-lock inspection and
+prints **I2V CLEANUP UNVERIFIED** rather than claiming an idle GPU is stopped.
+When Start itself does not confirm success, cleanup refuses to blindly Stop a
+possibly foreign group and demands operator reconciliation. This is a
+fail-closed alarm, not a guarantee of automatic cleanup under a competing
+controller. A truly guaranteed owner-scoped automatic shutdown would require
+coordinated controller-issued per-run group leases; implement that in its
+separate concurrent multi-operator workstream, not this historical mixed PR.
+
+These client-side and operational changes do **not** change the LTX worker
+image. A previously published genuine hybrid Docker that passes the exact
+offline digest check can be reused. Never rebuild solely because the RAM
+manifest changed. If the installed immutable image fails the ABI probe, a
+new image from the reviewed hybrid source is necessary.
