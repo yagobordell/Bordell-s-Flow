@@ -63,6 +63,9 @@ def test_pair_accepts_full_hd_but_rejects_unvalidated_recipe_or_shape() -> None:
         {"guidance_forward_batch_size": 3},
         {"max_stage1_major_page_faults": -1},
         {"max_stage1_major_page_faults": 1000001},
+        {"progressive_block_group_size": 3},
+        {"min_checkpoint_direct_read_mibps": -1},
+        {"max_stage1_build_seconds": 3601},
         {"b": _params(7)},
         {"b": _params(8, width=1280, height=720)},
         {"b": {**_params(8), "generation_profile": LTX_A2V_PRODUCTION_FAST_PROFILE}},
@@ -96,6 +99,11 @@ class FakeBackend:
             "max_stage1_major_page_faults": kwargs.get(
                 "max_stage1_major_page_faults", 0,
             ),
+            "progressive_block_group_size": kwargs.get("progressive_block_group_size", 1),
+            "min_checkpoint_direct_read_mibps": kwargs.get(
+                "min_checkpoint_direct_read_mibps", 0.0,
+            ),
+            "max_stage1_build_seconds": kwargs.get("max_stage1_build_seconds", 0.0),
             "video_vae_backend": (
                 "triton" if kwargs.get("vae_backend") == "triton_experimental"
                 else "eager"
@@ -149,6 +157,9 @@ def test_atomic_four_input_contract_and_independent_audio(tmp_path: Path) -> Non
     assert backend.calls[0]["vae_backend"] == "eager"
     assert backend.calls[0]["guidance_forward_batch_size"] == 2
     assert backend.calls[0]["max_stage1_major_page_faults"] == 0
+    assert backend.calls[0]["progressive_block_group_size"] == 1
+    assert backend.calls[0]["min_checkpoint_direct_read_mibps"] == 0.0
+    assert backend.calls[0]["max_stage1_build_seconds"] == 0.0
     assert backend.calls[0]["parameters_a"].seed == 7
     assert backend.calls[0]["parameters_b"].seed == 8
     assert json.loads((tmp_path / "batch2-report.json").read_text())["actual_gpu_batch_size"] == 2
