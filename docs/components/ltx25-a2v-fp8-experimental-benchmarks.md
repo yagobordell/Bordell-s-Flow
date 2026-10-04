@@ -2,7 +2,7 @@
 
 Branch: `experiment/ltx25-a2v-fp8-residency-profiling-20261003` from
 `main` at `357d289a00f4f10c87028b969861099d03819115`.
-No production profile is reassigned; no production or I2V group image is changed.
+No production profile is reassigned; by default no production group image changes.\nAn explicit temporary reuse procedure below can change it and restore it.
 The experiment service is intentionally **not** in the normal Salad stack service order.
 
 ## Source audit and constraints
@@ -66,6 +66,63 @@ and pin the freshly published digest, then verify Status, isolation and
 experimental queue gate before running the benchmark. The previously published
 digest is unsafe because it still polls production A2V jobs. Do not apply the
 historical "production must be stopped" steps elsewhere in this document.
+
+## Temporary reuse of an existing stopped production group
+
+If the separate experimental group cannot be created, the guarded script
+`scripts/smoke/run_ltx25_a2v_benchmark_reusing_production.ps1` may temporarily
+reuse the **already stopped** `ltx25` group. This is a separate, opt-in path:
+normal benchmark execution continues to use the dedicated experimental group.
+
+**Preconditions:** the normal A2V group is stopped/quiescent and still has its
+expected immutable production image and `a2v` task mode; **both** production
+and experimental Postgres task queues are idle; the Capacity Controller is
+disabled and will remain disabled during the test; no other operator may
+modify/start `ltx25` during this interval. A temporarily free advisory lock
+is not proof that the controller cannot restart. This option temporarily
+interrupts normal production availability, even though it does not consume
+existing production tasks. Never use `-AllowControllerOverride`.
+
+This guarded path never rebuilds Docker. It calls `Prepare` with the
+already-published experimental digest, requires an exact expected original
+digest and original task mode, and **preserves all of the actual group's
+existing environment variables** while switching only `LTX_WORKER_TASK_MODE`
+to `a2v_experimental`. The modified batch runner verifies the temporary image
+and mode and rechecks **both** task queues before each experimental sample.
+Afterwards the wrapper runs stop/restore in `finally`, restoring the
+original image and `a2v` mode and verifying that the group is still stopped.
+If this shell is forcibly terminated, recovery instructions are written to
+`<OutputDir>/recovery.txt` before making any Salad changes. Never restart
+production until `RESTORE_OK` has been independently confirmed.
+
+Use the original production SHA actually reported by the read-only
+`manage_salad_worker.ps1 -Action Status -Service ltx25` command, not a
+hardcoded historical digest. For example, with the known pinned images:
+
+```powershell
+$Production = 'docker.io/yagobordell/ai-video-factory@sha256:08d7ee85fa24ec24d4e911c748156098f4c30d8b825dfeef2af0101af275d356'
+$Experiment = 'docker.io/yagobordell/ai-video-factory@sha256:8c648c9d1481150d123f751d3546c3621822717c168f2a4ae5d8d1d134d45a5f'
+uv run --no-sync python scripts/smoke/check_ltx_a2v_benchmark_jobs.py --include-production
+uv run --no-sync python scripts/smoke/check_ltx_a2v_benchmark_isolation.py --env-file config/salad.env --reuse-production --expected-production-image $Production --expected-task-mode a2v
+.\scripts\smoke\run_ltx25_a2v_benchmark_reusing_production.ps1 `
+    -Audio <local-audio.wav> -AvatarImage <local-avatar.png> `
+    -Prompt '<unchanged explicit prompt>' `
+    -OriginalProductionImage $Production -ExperimentalImage $Experiment `
+    -Profiles reference-bench-cpu,reference-fp8none -Repetitions 3 `
+    -EnvFile config/salad.env
+```
+
+The explicit recovery command also exists independently:
+
+```powershell
+.\scripts\smoke\restore_ltx25_a2v_production.ps1 `
+    -OriginalProductionImage $Production -ExperimentalImage $Experiment `
+    -EnvFile config/salad.env
+```
+
+This operation is never automatic under the normal service stack. Do not
+promote the experiment or merge this branch based on timing alone; a separate
+lip-sync and decoded-media validation is still required.
 
 ## Experimental profiles
 
