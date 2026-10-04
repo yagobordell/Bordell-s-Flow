@@ -93,7 +93,7 @@ def test_v4_can_ignore_every_v3_decision_including_stress_and_pause():
     turns = pv._v4_turns(compiled, source)
     assert turns == [{
         "text": "Hola, mundo. Esa es la realidad.",
-        "style": "Independent documentary voice\\nSpeak forward with NO designed silence.",
+        "style": "Independent documentary voice\nSpeak forward with NO designed silence.",
     }]
     assert "register" not in turns[0]["style"].lower()
 

@@ -502,7 +502,7 @@ def _tagged_v4(original_beat: str, sparse: V4BeatTags) -> str:
     rendered = original_beat
     # Reverse original insertion order at coincident offsets so the visible
     # tags retain V4's chosen ordering in the final reconstructed transcript.
-    for index, event in sorted(
+    for _index, event in sorted(
         enumerate(sparse.inserts), key=lambda pair: (pair[1].at, pair[0]),
         reverse=True,
     ):
