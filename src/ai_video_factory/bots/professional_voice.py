@@ -504,11 +504,11 @@ def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
             ]
             if preceding:
                 slot, _, speak = preceding[-1]
-                position = len(speak.speak)
+                # The exact placement is checked against V4's source index.
             else:
                 if not expected:
                     raise VoicePlanError("V3 pause without a spoken unit")
-                slot, position = 0, 0
+                slot = 0
             expected_events.add(("pause", index, None, slot))
         observed: set[tuple[str, int, int | None, int]] = set()
         for slot, destination in enumerate(compiled.segments):
@@ -659,9 +659,10 @@ async def _direct(
     prompt_name: str | None = None,
 ) -> Any:
     """Exactly two LOCAL validation correction retries, never paid-TTS retries."""
-    prompt = files("ai_video_factory.bots.prompts").joinpath(prompt_name or stage.lower() + ".md").read_text(
-        encoding="utf-8"
+    prompt_path = files("ai_video_factory.bots.prompts").joinpath(
+        prompt_name or stage.lower() + ".md"
     )
+    prompt = prompt_path.read_text(encoding="utf-8")
     cached = folder / "output.json"
     initial = folder / "input.json"
     if cached.exists() and initial.exists() and _read(initial).get("payload") == payload:
