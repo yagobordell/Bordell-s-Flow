@@ -194,3 +194,32 @@ def test_strict_gpu_probe_never_runs_in_the_main_process() -> None:
     argv = child.call_args.args[0]
     assert argv[1:3] == ["-m", triton_a2v_probe.__name__]
     assert argv[-1] == "--gpu-probe"
+
+
+def test_fused_guidance_changes_only_batch_split_limit_not_recipe() -> None:
+    root = Path(__file__).resolve().parents[3]
+    source = (
+        root / "src/ai_video_factory/workers/ltx25/paired_a2v.py"
+    ).read_text(encoding="utf-8")
+    assert "max_batch_size=max_transformer_forward_batch_size" in source
+    assert "max_transformer_forward_batch_size not in (2, 4)" in source
+    assert "LTX_A2V_STATIC_VIDEO_CFG_SCALE" in source
+    assert "DISTILLED_SIGMAS" in source
+    assert "STAGE_2_DISTILLED_SIGMAS" in source
+    assert "EulerAncestralDiffusionStep" in source
+    assert "EulerDiffusionStep" in source
+    assert "audio.frozen" in source
+
+
+def test_fused_guidance_trial_requires_original_split_b2_reference() -> None:
+    root = Path(__file__).resolve().parents[3]
+    smoke = (
+        root / "scripts/smoke/submit_ltx25_a2v_batch2_smoke.py"
+    ).read_text(encoding="utf-8")
+    wrapper = (
+        root / "scripts/smoke/run_ltx25_a2v_batch2_trial.ps1"
+    ).read_text(encoding="utf-8")
+    assert "guidance_forward_batch_size == 4" in smoke
+    assert "Optimization reference must be original Eager/split-B2 pair" in smoke
+    assert "HUMAN_SPLIT2_FUSED4_VISUAL_LIPSYNC_APPROVAL_REQUIRED" in smoke
+    assert "GuidanceForwardBatchSize -eq 4" in wrapper
