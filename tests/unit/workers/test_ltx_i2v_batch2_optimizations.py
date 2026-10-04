@@ -634,6 +634,11 @@ def test_memory_report_uses_cgroup_v2_and_process_counters(tmp_path: Path) -> No
     )
     (proc / "io").write_text("read_bytes: 7654321\nrchar: 111\n")
     (cg / "memory.current").write_text("78912345\n")
+    (cg / "memory.max").write_text("64424509440\n")
+    (cg / "memory.peak").write_text("45678912345\n")
+    (cg / "memory.swap.current").write_text("777000\n")
+    (cg / "memory.swap.peak").write_text("999000\n")
+    (cg / "memory.events").write_text("oom 0\noom_kill 0\nhigh 2\nmax 4\n")
     (cg / "memory.stat").write_text("pgmajfault 42\nfile 12345\nanon 67890\n")
     result = memory_pressure(proc_root=proc, cgroup_root=cg)
     assert result["process_available"] is True
@@ -643,6 +648,14 @@ def test_memory_report_uses_cgroup_v2_and_process_counters(tmp_path: Path) -> No
     assert result["process_major_page_faults"] == 34
     assert result["cgroup_available"] is True
     assert result["cgroup_memory_current_bytes"] == 78912345
+    assert result["cgroup_memory_limit_bytes"] == 64424509440
+    assert result["cgroup_memory_peak_bytes"] == 45678912345
+    assert result["cgroup_swap_counter_bytes"] == 777000
+    assert result["cgroup_swap_peak_bytes"] == 999000
+    assert result["cgroup_memory_events_oom"] == 0
+    assert result["cgroup_memory_events_oom_kill"] == 0
+    assert result["cgroup_memory_events_high"] == 2
+    assert result["cgroup_memory_events_max"] == 4
     assert result["cgroup_pgmajfault"] == 42
     assert result["cgroup_file"] == 12345
 
@@ -656,3 +669,23 @@ def test_memory_report_falls_back_to_proc_if_cgroup_hidden(tmp_path: Path) -> No
     assert result["cgroup_available"] is False
     assert result["process_available"] is True
     assert result["process_vmrss_bytes"] == 666 * 1024
+
+
+def test_v2_unlimited_cgroup_and_v1_peak_limits_are_optional(tmp_path: Path) -> None:
+    proc, cg = tmp_path / "proc", tmp_path / "cgroup"
+    proc.mkdir()
+    cg.mkdir()
+    (cg / "memory.current").write_text("1024\n")
+    (cg / "memory.max").write_text("max\n")
+    assert "cgroup_memory_limit_bytes" not in memory_pressure(
+        proc_root=proc, cgroup_root=cg,
+    )
+    (cg / "memory.current").unlink()
+    (cg / "memory").mkdir()
+    (cg / "memory/memory.usage_in_bytes").write_text("1024\n")
+    (cg / "memory/memory.limit_in_bytes").write_text("64424509440\n")
+    (cg / "memory/memory.max_usage_in_bytes").write_text("2048\n")
+    snap = memory_pressure(proc_root=proc, cgroup_root=cg)
+    assert snap["cgroup_version"] == "v1"
+    assert snap["cgroup_memory_limit_bytes"] == 64424509440
+    assert snap["cgroup_memory_peak_bytes"] == 2048
