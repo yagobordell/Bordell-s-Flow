@@ -1,4 +1,4 @@
-# Professional post-B2 voice: V1 → V2 → V3 → Gemini 3.8
+# Professional post-B2 voice: V1 → V2 → V3 → V4 → Gemini 3.8
 
 This is the **professional** audio path. Casero is unchanged and continues to offer
 Fish Audio, MiniMax and ElevenLabs. Professional no longer starts Fish at B1.1:
@@ -12,11 +12,12 @@ has fewer than five beats, one voice block remains. B2 and all its original
 beat identities stay unchanged for visuals/video.
 Even B2 beats with `audio: false` receive narration (voice-over).
 
-## Three stages and archived originals
+## Four stages and archived originals
 
-The initial B8.1, B8.2, B8.3 documents supplied for this feature are preserved
-under `docs/reference/professional-voice-original-b8-{1,2,3}.md`. The active
-adaptations live under `src/ai_video_factory/bots/prompts/v{1,2,3}.md`.
+The original B8.1/B8.2/B8.3 references and the later supplied B8.4
+are archived under `docs/reference/professional-voice-original-b8-*.md`.
+Adapted prompts live under `src/ai_video_factory/bots/prompts/v{1,2,3,4}.md`;
+`v3_legacy.md` preserves the old provider-specific prompt for old checkpoints.
 B3 canonical scenes and B7.2 depictions do not exist in this repository's B2
 contract; the active V2/V3 prompts instead operate on immutable B2 beat IDs.
 They never invent scenes, pictures, timing or narration.
@@ -28,57 +29,69 @@ They never invent scenes, pictures, timing or narration.
   If the baseline genuinely fails to represent the beats, V2 reports it and
   V1 re-evaluates the whole film. A repeated unchanged baseline settles the
   axis.
-- **V3** runs per grouped voice block, turns those intentions into spoken fragments with
-  sustained `style`, exact source `speak` substrings and optional point-in-time
-  **human vocal events**. It does not change a character of B2 narration.
+- **V3** is now the artistic director: block-wide vocal register, pace and
+  intensity movement, exact spoken substrings, endings, exact stress targets,
+  deliberate functional pauses and rare human vocal intentions. It emits
+  no Gemini bracket tags.
+- **V4** compiles those decisions into compact Gemini styles and exactly
+  sourced punctual tags. V4 cannot independently change the interpretation.
 
 New runs store the full structured requests and validated outputs beside the B
 stages: `V1/pass_<n>/`, `V2/pass_<n>/block_<id>/` and
-`V3/block_<id>/`. Each stage also exports its final
+`V3/block_<id>/` and `V4/block_<id>/`. Each stage also exports its final
 `merged_output.json`. These directories, including corrective inputs,
 rejected attempts and immutable per-API-call token/duration records, are
 published as `<avatar>/<script>/outputs/V1`, `outputs/V2` and
-`outputs/V3`, alongside B1.1/B1.2/B2. The final delivered publication
+`outputs/V3` and `outputs/V4`, alongside B1.1/B1.2/B2. The final delivered publication
 contains the same files. Existing unfinished runs without a grouping checkpoint retain their
 original one-to-one B2/audio mapping for safe recovery. Group plans
 are recomputed when a corrected B2 changes source beat counts. Existing
 unfinished runs still resume their
 `voice_direction/V*` checkpoints without an extra paid call; those files
 are mapped into the same public `outputs/V*` layout. A failed local response validation receives up to two explicitly
-described correction calls through OpenAI Responses API. One block's V2/V3
+described correction calls through OpenAI Responses API. One block's V2/V3/V4
 validation failure never reruns successfully validated adjacent blocks within
 that pass. Re-entry from V2's evidence may require reevaluating multiple
 blocks because V1 governs the global curve.
 
-## Gemini 3.8 style and vocal events
+## V4 Gemini 3.8 compilation and vocal events
 
-Google documents **sustained** delivery in `speech_metadata.style` and
-point-in-time **angle-bracket** vocal tags inside the transcript. Accordingly,
-V3 does not place whisper, pace, emotion, pitch or other acting instructions
-in the transcript. It can add only these allowlisted events at exact,
-validated character boundaries: `breath`, `exhales`, `sigh`, `chuckle`,
-`gasp`, `short pause`, `long pause`. Zero events is normal; there is no
-automatic breath quota. No filler words, ad-libbing, sound effects, arbitrary
-tags or mid-word insertions. Each fragment's `style` is short and attached
-to its own Gemini `speech_metadata`. The application inserts angle brackets
-by code after validating exact source reconstruction.
+V3 produces artistic decisions, not Gemini-specific payloads. Each beat's
+ordered delivery contains exact spoken fragments and optional designed
+pause items. The block performance defines register, qualitative pace
+and intensity movement. Each spoken unit defines delivery quality,
+one ending behavior, exact optional stress targets and optional justified
+punctual human vocal intentions. Explicit pauses have a class
+(breath, beat, hold) and a meaningful pause function.
+
+V4 preserves every decision and compiles them into one compact
+`audio_profile`, `directors_notes` for the block arc and a precise
+`speech_metadata.style` per spoken fragment. The identity and arc are
+included only in Gemini's first part; later parts contain only local
+instructions. Exact stress targets and ending behavior remain traceable.
+
+V4 translates punctual human actions and explicit pauses into only
+`breath`, `exhales`, `sigh`, `chuckle`, `gasp`,
+`short pause`, or `long pause`. Every event records the source V3
+item and its exact original character position. Code validates a
+one-to-one decision mapping and inserts angle brackets; model output
+never rewrites narration. V4 adds no silent-time or spoken-time
+decision of its own.
+
+A pre-feature run already checkpointed using the old V3 contract
+remains in that mode to avoid unnecessary paid regeneration, and
+its historic prompt is retained. New runs require validated V4
+before any paid Gemini request. V4 inputs/outputs and usage/timing
+are archived and published along with V1-V3. V4 follows the same
+two-feedback-retries policy per failed block and reuses validated
+blocks on resume.
+
+Gemini remains `gemini-3.8-flash-tts`; the provider, selected
+voice, grouped source mapping, STT and video beat identities remain
+unchanged. The existing join inserts 500 ms between resulting
+voice blocks only, never at original B2 boundaries.
 
 Reference: https://ai.google.dev/gemini-api/docs/speech-generation
-
-Gemini provider is `gemini-3.8-flash-tts` for professional runs.
-For multiword Studio voices, Google's exported prebuilt-voice request may
-return 24-kHz mono `audio/L16;rate=24000`; the adapter wraps that PCM16
-into a canonical WAV and retains its sample-rate/channel checks. Existing
-single-token voices retain their original `AUDIO_WAV` request path.
-One single-speaker GenerateContent request receives the styled parts for
-one resulting voice block. The resulting WAV is retained per voice block
-and Whisper-1 supplies word timestamps. The V1/voice_block_plan.json
-checkpoint records each voice block's ordered original B2 block IDs and
-beat IDs. The audio artifact publishes the same mapping in block_groups,
-allowing the sample-accurate join and STT→B2 timeline to map each word
-back to the original visual beat. The regular 500-ms join pause applies only
-between resulting voice blocks, not inside a newly merged one. Real LTX
-audio/video sync still uses measured STT timing, not V3 guesses.
 
 ## First run: choose a voice
 

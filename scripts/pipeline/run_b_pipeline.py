@@ -97,7 +97,7 @@ from ai_video_factory.workflows.casero_cta import prepare_casero_cta
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
 _STAGES = ("B1.1", "B1.2", "B2")
-_METRIC_STAGES = ("B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "V1", "V2", "V3")
+_METRIC_STAGES = ("B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "V1", "V2", "V3", "V4")
 
 
 def parse_args() -> argparse.Namespace:
@@ -2059,7 +2059,7 @@ async def _run_audio_only(
         _publish_if_ready, output, script_file, results_root, managed_target
     )
     if is_professional and not reused_audio:
-        for voice_stage in ("V1", "V2", "V3"):
+        for voice_stage in ("V1", "V2", "V3", "V4"):
             duration = report["timings"]["stages"][voice_stage]["elapsed_seconds"]
             if duration is not None:
                 _print_metric(
@@ -2885,7 +2885,7 @@ async def main() -> None:
             )
             audio_joined = True
             voice_costs, voice_times = save_report("running", len(result.b12))
-            for voice_stage in ("V1", "V2", "V3"):
+            for voice_stage in ("V1", "V2", "V3", "V4"):
                 seconds = voice_times["stages"][voice_stage]["elapsed_seconds"]
                 if seconds is not None:
                     _print_metric(

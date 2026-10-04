@@ -143,7 +143,7 @@ def _collect(
             if item.is_file():
                 rel = item.relative_to(work).as_posix()
                 add("Bots/" + rel, rel)
-    for stage in ("V1", "V2", "V3"):
+    for stage in ("V1", "V2", "V3", "V4"):
         canonical = work / stage
         legacy = work / "voice_direction" / stage
         if canonical.exists() and legacy.exists():
