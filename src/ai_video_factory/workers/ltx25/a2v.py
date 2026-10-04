@@ -68,7 +68,7 @@ LTX_A2V_BENCH_STATIC_NONE_PROFILE = "ltx25-a2v-static-bench-fp8none-eager-a95ab-
 # New immutable production identity for the exact reference recipe validated on
 # RTX 5090 (three CPU + three FP8/no-offload videos; decoded A/V identical).
 # Preserve all historical profile strings for already-submitted jobs.
-LTX_A2V_PRODUCTION_FAST_PROFILE = "ltx25-a2v-reference-fp8none-eager-a95ab-prod-v1"
+LTX_A2V_PRODUCTION_FAST_PROFILE = "ltx25-a2v-reference-distilled-fp8none-eager-a95ab-prod-v1"
 LTX_A2V_EXPERIMENTS = {
     LTX_A2V_BENCH_CPU_PROFILE: ("cpu", "eager"),
     LTX_A2V_BENCH_NONE_PROFILE: ("none", "eager"),
