@@ -18,8 +18,11 @@ _PINNED = re.compile(r"[^\s@]+@sha256:[a-fA-F0-9]{64}\Z")
 # Validate all interfaces needed by the hybrid flow, not merely the field
 # whose absence caused a previous paid job to fail during task validation.
 _IMAGE_PROBE = """
+import ast
 import inspect
+import textwrap
 from ai_video_factory.workers.ltx25.experimental_batch2 import Batch2Parameters
+from ai_video_factory.workers.ltx25.paired_i2v import STAGE2_SIGMAS_SAFE_ABI
 from ai_video_factory.workers.ltx25.model import DirectLTX25Backend
 from ai_video_factory.workers.ltx25.paired_i2v import generate_paired_fast_distilled
 
@@ -31,6 +34,35 @@ assert hasattr(DirectLTX25Backend, "_full_hd_streaming_stage2"), "no hybrid stre
 assert "stage2_factory" in inspect.signature(
     generate_paired_fast_distilled
 ).parameters, "old nonhybrid paired pipeline"
+assert STAGE2_SIGMAS_SAFE_ABI == "stage2-sigma-separated-v1", (
+    "old hybrid image: stage2 DiffusionStage may shadow its sigma tensor"
+)
+# Verify executable source inside this immutable image, not local checkout
+# signatures or a marker alone. This guards the exact bug behind the failed
+# October 4 Full-HD trial, before a billed remote start.
+tree = ast.parse(textwrap.dedent(inspect.getsource(generate_paired_fast_distilled)))
+paired_calls = [
+    node for node in ast.walk(tree)
+    if isinstance(node, ast.Call)
+    and isinstance(node.func, ast.Name)
+    and node.func.id == "_paired_stage"
+]
+def has_keyword(node, name, value):
+    return any(
+        item.arg == name and isinstance(item.value, ast.Name)
+        and item.value.id == value for item in node.keywords
+    )
+def is_second_stage(node):
+    return any(
+        item.arg == "stage_label"
+        and isinstance(item.value, ast.Constant)
+        and item.value.value == "stage2"
+        for item in node.keywords
+    )
+assert any(
+    is_second_stage(node) and has_keyword(node, "sigmas", "stage2_sigmas")
+    for node in paired_calls
+), "old hybrid image: stage2 must consume independent sigma tensor"
 print("I2V_HYBRID_DOCKER_ABI_OK")
 """
 
