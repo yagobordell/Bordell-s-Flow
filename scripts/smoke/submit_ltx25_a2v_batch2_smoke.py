@@ -50,6 +50,9 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--reference-a", type=Path)
     p.add_argument("--reference-b", type=Path)
     p.add_argument("--accept-full-hd-oom-risk", action="store_true")
+    p.add_argument(
+        "--vae-backend", choices=("eager", "triton_experimental"), default="eager",
+    )
     p.add_argument("--check-inputs-only", action="store_true")
     p.add_argument("--timeout-seconds", type=float, default=10800)
     return p
@@ -71,7 +74,9 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
     if a.seed_a == a.seed_b:
         raise ValueError("Separate A2V B2 seeds are mandatory")
     if bool(a.reference_a) != bool(a.reference_b):
-        raise ValueError("Supply both B1 references or neither")
+        raise ValueError("Supply both reference videos or neither")
+    if a.vae_backend == "triton_experimental" and a.reference_a is None:
+        raise ValueError("Triton requires both matching approved Eager B2 reference MP4s")
     pictures = (a.image_a, a.image_b)
     audios = (a.audio_a, a.audio_b)
     for image in pictures:
@@ -105,6 +110,7 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
         "a": {**plan, "prompt": a.prompt_a, "seed": a.seed_a},
         "b": {**plan, "prompt": a.prompt_b, "seed": a.seed_b},
         "stage2_mode": "cpu",
+        "vae_backend": a.vae_backend,
         "accept_full_hd_oom_risk": a.accept_full_hd_oom_risk,
     })
     provenance = {
@@ -115,11 +121,79 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
         "num_frames": frames[0],
         "profile": LTX_A2V_RUN_STATIC_FAST_PROFILE,
         "geometry": [1920, 1080, 24],
+        "vae_backend": a.vae_backend,
     }
     for path in (a.reference_a, a.reference_b):
         if path is not None and (not path.is_file() or path.stat().st_size == 0):
             raise ValueError(f"Missing B1 reference video: {path}")
+    if a.vae_backend == "triton_experimental":
+        provenance["eager_baseline"] = _require_matching_eager_baseline(
+            a.reference_a, a.reference_b, provenance,
+        )
     return {"params": params, "provenance": provenance}
+
+
+def _require_matching_eager_baseline(
+    video_a: Path, video_b: Path, candidate: dict[str, Any],
+) -> dict[str, Any]:
+    """Reject wrong-input videos BEFORE any billed GPU starts.
+
+    The two baseline MP4s must belong to ONE immutable eager B2 run with
+    original request, provenance and verified technical/audio output report.
+    """
+    directory = video_a.resolve().parent
+    if video_b.resolve().parent != directory:
+        raise ValueError("Both Eager reference MP4s must come from the same run")
+    if (video_a.name, video_b.name) != ("batch2-a.mp4", "batch2-b.mp4"):
+        raise ValueError("Use the original Eager batch2-a/b.mp4 from one run")
+    artifacts = (
+        directory / "job-request.json",
+        directory / "reference-provenance.json",
+        directory / "experiment-summary.json",
+    )
+    if any(not p.is_file() for p in artifacts):
+        raise ValueError("Eager baseline must include its original three JSON manifests")
+    request, source, report = (
+        json.loads(p.read_text(encoding="utf-8")) for p in artifacts
+    )
+    original_params = request["parameters"]
+    required = A2VBatch2Parameters.model_validate(original_params)
+    if required.vae_backend != "eager":
+        raise ValueError("Triton reference must be original Eager batch2")
+    if (
+        request.get("task") != LTX_A2V_BATCH2_TASK
+        or report.get("mode") != "batch2"
+        or report.get("actual_gpu_batch_size") != 2
+        or report.get("video_vae_backend") != "eager"
+        or report.get("audio_tail_validation") != "PASSED_BOTH_OUTPUTS"
+        or sorted(report.get("technical_validation", {})) != ["a", "b"]
+    ):
+        raise ValueError("Reference is not a fully verified Eager batch2 pair")
+    for key in ("images", "prompts", "seeds", "num_frames", "profile", "geometry"):
+        if source.get(key) != candidate.get(key):
+            raise ValueError(f"Eager B2 baseline mismatch: {key}")
+    if [
+        (x["sha256"], x["sample_rate"], x["sample_count"], x["num_frames"])
+        for x in source["audio"]
+    ] != [
+        (x["sha256"], x["sample_rate"], x["sample_count"], x["num_frames"])
+        for x in candidate["audio"]
+    ]:
+        raise ValueError("Eager B2 audio source does not match the new pair")
+    for label, video in (("a", video_a), ("b", video_b)):
+        if not video.is_file() or not video.stat().st_size:
+            raise ValueError(f"Missing full Eager baseline video {label}")
+        entry = report["technical_validation"][label]
+        if (
+            entry.get("width"), entry.get("height"), entry.get("fps"),
+            entry.get("num_frames"),
+        ) != (1920, 1080, 24, candidate["num_frames"]):
+            raise ValueError(f"Eager baseline MP4 technical mismatch {label}")
+    return {
+        "baseline_job_id": request["job_id"],
+        "baseline_video_sha256": [sha256_file(video_a), sha256_file(video_b)],
+        "baseline_report_sha256": sha256_file(artifacts[2]),
+    }
 
 
 def _required(name: str, value: str | None) -> str:
@@ -248,6 +322,11 @@ def main() -> None:
     report = json.loads((a.output_dir / "batch2-report.json").read_text())
     if report.get("actual_gpu_batch_size") != 2 or report.get("mode") != "batch2":
         raise RuntimeError("A2V B2 backend did not perform real paired GPU forwards")
+    expected_backend = (
+        "triton" if a.vae_backend == "triton_experimental" else "eager"
+    )
+    if report.get("video_vae_backend") != expected_backend:
+        raise RuntimeError("A2V reported a different decoder backend: silent fallback")
     report["technical_validation"] = {}
     for label, source in (("a", a.audio_a), ("b", a.audio_b)):
         video = a.output_dir / f"batch2-{label}.mp4"
@@ -260,13 +339,18 @@ def main() -> None:
     if a.reference_a is not None:
         from compare_ltx25_a2v_b2_vs_b1 import compare
 
-        report["b1_comparison"] = compare(
+        comparison = compare(
             audio_a=a.audio_a, audio_b=a.audio_b,
             baseline_a=a.reference_a, baseline_b=a.reference_b,
             candidate_a=a.output_dir / "batch2-a.mp4",
             candidate_b=a.output_dir / "batch2-b.mp4",
             destination=a.output_dir,
         )
+        if a.vae_backend == "triton_experimental":
+            report["eager_backend_comparison"] = comparison
+            report["promotion_status"] = "HUMAN_EAGER_TRITON_VISUAL_LIPSYNC_APPROVAL_REQUIRED"
+        else:
+            report["b1_comparison"] = comparison
     (a.output_dir / "experiment-summary.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
     )
