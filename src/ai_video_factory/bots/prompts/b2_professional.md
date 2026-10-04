@@ -112,7 +112,7 @@ For every NON-ANCHOR beat, choose the visual treatment that communicates its mea
 - media_image: one still image best conveys the selected scene or moment, including a photographed action state, person, object, environment, relationship or result. media_image uses audio=false with narration as voice-over.
 - media_video: seeing the selected scene unfold through motion adds material value, or a full-screen generated subject needs synchronized visible speech. Generated on-screen speech uses media_video with audio=true and A2V.
 
-Choose visual_type, scene, subjects, framing and movement together as an editorial decision. A media_image or media_video scene can feature any narratively appropriate person, including the referenced presenter, with cast determined by the story rather than visual_type. The chosen presentation can recur whenever it remains the most effective treatment.
+Visual format and human casting are independent decisions. Choose visual_type, scene, subjects, framing and movement together as an editorial decision. A media_image or media_video scene can feature any narratively appropriate person, including the referenced presenter, with cast determined by the story rather than visual_type. The chosen presentation can recur whenever it remains the most effective treatment.
 
 Mandatory intro/close presenter anchors
 
