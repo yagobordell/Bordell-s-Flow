@@ -29,6 +29,7 @@ class A2VBatch2Parameters(BaseModel):
     a: LTXAudioToVideoParameters
     b: LTXAudioToVideoParameters
     stage2_mode: Literal["cpu"] = "cpu"
+    vae_backend: Literal["eager", "triton_experimental"] = "eager"
     accept_full_hd_oom_risk: bool = False
 
     @model_validator(mode="after")
@@ -91,11 +92,16 @@ class ExperimentalA2VBatch2TaskRunner:
                 image_b=inputs["image_b"], audio_b=inputs["audio_b"],
                 output_a=first, output_b=second,
                 parameters_a=params.a, parameters_b=params.b,
+                vae_backend=params.vae_backend,
             )
         except Exception as exc:
             if is_retryable_gpu_failure(exc):
                 self._backend.invalidate_pipeline()
             raise
+        if report.get("video_vae_backend") != (
+            "triton" if params.vae_backend == "triton_experimental" else "eager"
+        ):
+            raise RuntimeError("Requested A2V VAE backend was not executed")
         if report.get("actual_gpu_batch_size") != 2 or report.get("mode") != "batch2":
             raise RuntimeError("A2V B2 cannot return sequential fallback as real GPU batch2")
         for path in (first, second):
