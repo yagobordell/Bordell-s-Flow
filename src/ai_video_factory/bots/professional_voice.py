@@ -142,6 +142,136 @@ def _fingerprint(value: Any) -> str:
                                    separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
+def _source_block_signature(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {"block_id": block["block_id"],
+         "beat_ids": [beat["beat_id"] for beat in block["beats"]]}
+        for block in blocks
+    ]
+
+
+def _progressive_voice_groups(blocks: list[dict[str, Any]]) -> list[list[int]]:
+    """Merge adjacent small B2 blocks from 1 through 4 beats, shortest neighbour first.
+
+    Recompute sizes after every merge. For equal-sized neighbours choose the
+    previous block, and process the earliest remaining candidate of each size.
+    B2 itself is never changed.
+    """
+    if not blocks or len({block["block_id"] for block in blocks}) != len(blocks):
+        raise VoicePlanError("Voice grouping requires distinct ordered B2 blocks")
+    units: list[list[dict[str, Any]]] = [[block] for block in blocks]
+
+    def count(unit: list[dict[str, Any]]) -> int:
+        return sum(len(block["beats"]) for block in unit)
+
+    for size in range(1, 5):
+        while len(units) > 1:
+            index = next((i for i, unit in enumerate(units) if count(unit) == size), None)
+            if index is None:
+                break
+            if index == 0:
+                target = 1
+            elif index == len(units) - 1:
+                target = index - 1
+            else:
+                target = index - 1 if count(units[index - 1]) <= count(units[index + 1]) else index + 1
+            left = min(index, target)
+            units[left:left + 2] = [units[left] + units[left + 1]]
+    return [[block["block_id"] for block in unit] for unit in units]
+
+
+def _assemble_voice_blocks(
+    blocks: list[dict[str, Any]], groups: list[list[int]],
+) -> list[dict[str, Any]]:
+    """Create voice-only containers, preserving every B2 beat and source boundary."""
+    cursor = 0
+    assembled: list[dict[str, Any]] = []
+    for ids in groups:
+        members = blocks[cursor:cursor + len(ids)]
+        if not ids or [block["block_id"] for block in members] != ids:
+            raise VoicePlanError("Voice groups must cover contiguous B2 blocks in order")
+        cursor += len(ids)
+        if len(members) == 1:
+            assembled.append(members[0])
+            continue
+        first, last = members[0], members[-1]
+        assembled.append({
+            "block_id": first["block_id"],
+            "type": "grouped",
+            "emotional_entry": first["emotional_entry"],
+            "emotional_exit": last["emotional_exit"],
+            "span": {
+                "first_words": first["span"]["first_words"],
+                "last_words": last["span"]["last_words"],
+            },
+            "source_block_ids": ids,
+            "source_blocks": [
+                {
+                    "block_id": block["block_id"], "type": block["type"],
+                    "emotional_entry": block["emotional_entry"],
+                    "emotional_exit": block["emotional_exit"], "span": block["span"],
+                    "beat_ids": [beat["beat_id"] for beat in block["beats"]],
+                }
+                for block in members
+            ],
+            "beats": [beat for block in members for beat in block["beats"]],
+        })
+    if cursor != len(blocks):
+        raise VoicePlanError("Voice groups omit one or more original B2 blocks")
+    return assembled
+
+
+def _voice_plan_path(output: Path) -> Path:
+    root = output / "voice_direction" if (output / "voice_direction").exists() else output
+    return root / "V1" / "voice_block_plan.json"
+
+
+def _voice_blocks_for_plan(
+    blocks: list[dict[str, Any]], output_root: Path,
+) -> list[dict[str, Any]]:
+    path = output_root / "V1" / "voice_block_plan.json"
+    if path.is_symlink() or path.parent.is_symlink():
+        raise VoicePlanError("Linked professional voice block plan")
+    signature = _source_block_signature(blocks)
+    if path.is_file():
+        saved = _read(path)
+        if saved.get("schema_version") != "professional-voice-groups-v1":
+            raise VoicePlanError("Unsupported voice grouping checkpoint")
+        if saved.get("source_block_beat_ids") == signature:
+            groups = saved.get("groups")
+            if not isinstance(groups, list):
+                raise VoicePlanError("Malformed saved voice groups")
+            return _assemble_voice_blocks(blocks, groups)
+        # Corrected B2 can change beat counts: recalculate before rerunning V.
+    elif (output_root / "V1").exists():
+        # Pre-feature V checkpoints must resume with their original one-to-one
+        # mapping; migrating them silently would repeat previously paid calls.
+        return blocks
+    groups = _progressive_voice_groups(blocks)
+    _json(path, {
+        "schema_version": "professional-voice-groups-v1",
+        "source_block_beat_ids": signature,
+        "groups": groups,
+    })
+    return _assemble_voice_blocks(blocks, groups)
+
+
+def _voice_blocks_for_audio(
+    blocks: list[dict[str, Any]], output: Path,
+) -> list[dict[str, Any]]:
+    path = _voice_plan_path(output)
+    if path.is_symlink():
+        raise VoicePlanError("Linked professional voice grouping checkpoint")
+    if not path.exists():
+        return blocks  # A pre-feature run, or a patched legacy test plan.
+    saved = _read(path)
+    if (saved.get("schema_version") != "professional-voice-groups-v1"
+        or saved.get("source_block_beat_ids") != _source_block_signature(blocks)
+        or not isinstance(saved.get("groups"), list)):
+        raise VoicePlanError("Saved professional voice grouping differs from current B2")
+    return _assemble_voice_blocks(blocks, saved["groups"])
+
+
 def _check_v1(result: V1, blocks: list[dict[str, Any]], contested: list[dict[str, Any]]) -> None:
     ids = [block["block_id"] for block in blocks]
     if [entry.block_id for entry in result.block_rhythms] != ids:
@@ -409,6 +539,7 @@ async def plan_professional_voice(
     if legacy.exists() and any((output / stage).exists() for stage in ("V1", "V2", "V3")):
         raise VoicePlanError("Ambiguous legacy and current voice checkpoints")
     root = legacy if legacy.exists() else output
+    voice_blocks = _voice_blocks_for_plan(blocks, root)
     contested: list[dict[str, Any]] = []
     v1: V1 | None = None
     v2s: list[V2] = []
@@ -417,9 +548,9 @@ async def plan_professional_voice(
     for iteration in range(9):
         v1 = await _time_stage(
             "V1",
-            _direct("V1", {"narrative_core": core, "blocks": blocks,
+            _direct("V1", {"narrative_core": core, "blocks": voice_blocks,
                            "contested_baselines": contested}, V1,
-                    lambda value: _check_v1(value, blocks, contested), provider, model,
+                    lambda value: _check_v1(value, voice_blocks, contested), provider, model,
                     root / "V1" / f"pass_{iteration + 1}", on_response, on_timing, None),
             on_stage_duration,
         )
@@ -446,7 +577,7 @@ async def plan_professional_voice(
 
         v2_outcomes = await _time_stage(
             "V2",
-            asyncio.gather(*(one(block) for block in blocks), return_exceptions=True),
+            asyncio.gather(*(one(block) for block in voice_blocks), return_exceptions=True),
             on_stage_duration,
         )
         v2_failures = [entry for entry in v2_outcomes if isinstance(entry, BaseException)]
@@ -467,7 +598,7 @@ async def plan_professional_voice(
                         "block_id": v2.block_id, "axis": mismatch.axis,
                         "contested_value": value, "reading": mismatch.reading,
                         "beat_ids": mismatch.beat_ids,
-                        "block_beat_count": len(next(block["beats"] for block in blocks
+                        "block_beat_count": len(next(block["beats"] for block in voice_blocks
                                                      if block["block_id"] == v2.block_id)),
                     })
         if not new:
@@ -501,7 +632,7 @@ async def plan_professional_voice(
     v3_outcomes = await _time_stage(
         "V3",
         asyncio.gather(
-            *(perform(block, v2) for block, v2 in zip(blocks, v2s, strict=True)),
+            *(perform(block, v2) for block, v2 in zip(voice_blocks, v2s, strict=True)),
             return_exceptions=True,
         ),
         on_stage_duration,
@@ -603,11 +734,21 @@ async def generate_professional_audio(
         on_stage_duration=on_stage_duration,
         max_parallel_calls=max_parallel_calls,
     )
+    voice_blocks = _voice_blocks_for_audio(blocks, output)
+    groups = [
+        {"block_id": block["block_id"],
+         "source_block_ids": block.get("source_block_ids", [block["block_id"]]),
+         "beat_ids": [beat["beat_id"] for beat in block["beats"]]}
+        for block in voice_blocks
+    ]
+    grouped_plan = _voice_plan_path(output).is_file()
     # Fingerprint includes effective directions; changed B2/V3 can never reuse paid audio.
     payload = {"blocks": blocks, "v1": v1.model_dump(), "v2": [x.model_dump() for x in v2s],
                "v3": [x.model_dump() for x in v3s], "voice": voice_id,
                "model": DEFAULT_GEMINI_TTS_MODEL, "generation_nonce": generation_nonce,
                "source_sha256": source_sha256}
+    if grouped_plan:
+        payload["voice_groups"] = groups
     fingerprint = _fingerprint(payload)
     run_dir = output / "audio" / "runs" / ("gemini-" + fingerprint[:24])
     manifest = run_dir / "task.json"
@@ -634,24 +775,32 @@ async def generate_professional_audio(
                          "model": DEFAULT_GEMINI_TTS_MODEL, "voice": voice_id,
                          "run_id": run_dir.name, "source_sha256": source_sha256,
                          "generation_nonce": generation_nonce,
-                         "block_ids": [b["block_id"] for b in blocks]})
+                         "block_ids": [b["block_id"] for b in voice_blocks]})
     speech = speech_provider or GeminiTtsSpeechProvider(api_key=gemini_api_key)
     stt = stt_client or OpenAISttClient(api_key=settings.openai_api_key)
     semaphore = asyncio.Semaphore(max_parallel_calls)
 
     async def one(block: dict[str, Any], direction: V3) -> dict[str, Any]:
         bid = block["block_id"]
+        source_ids = block.get("source_block_ids", [bid])
+        turns_fingerprint = _fingerprint(
+            {"turns": [
+                {"text": _tagged(segment), "style": segment.style}
+                for delivery in direction.beat_deliveries for segment in delivery.segments
+            ], "source_block_ids": source_ids}
+        ) if len(source_ids) > 1 else None
         folder = run_dir / "blocks" / f"block_{bid}"
         state_path = folder / "task.json"
         async with semaphore:
             turns = [{"text": _tagged(segment), "style": segment.style}
                      for delivery in direction.beat_deliveries for segment in delivery.segments]
+            speech_fingerprint = turns_fingerprint or _fingerprint(turns)
             if state_path.exists():
                 state = _read(state_path)
-                if state.get("fingerprint") != _fingerprint(turns):
+                if state.get("fingerprint") != speech_fingerprint:
                     raise VoicePlanError(f"Gemini block {bid} saved direction differs")
             else:
-                state = {"block_id": bid, "fingerprint": _fingerprint(turns), "status": "planned"}
+                state = {"block_id": bid, "fingerprint": speech_fingerprint, "status": "planned"}
                 _json(state_path, state)
             audio_path = folder / "audio.wav"
             # A block is either completed or retryable.  Older runs may still
@@ -669,7 +818,7 @@ async def generate_professional_audio(
                 reused_digest = (
                     _reuse_verified_block(
                         output=output, current_run=run_dir, block_id=bid,
-                        fingerprint=_fingerprint(turns), model=DEFAULT_GEMINI_TTS_MODEL,
+                        fingerprint=speech_fingerprint, model=DEFAULT_GEMINI_TTS_MODEL,
                         voice_id=voice_id, folder=folder,
                     )
                     if not generation_nonce else None
@@ -703,7 +852,7 @@ async def generate_professional_audio(
                 or hashlib.sha256(audio_path.read_bytes()).hexdigest() != state.get("sha256")):
                 raise VoicePlanError(f"Gemini block {bid}: saved WAV unavailable or changed")
             item: dict[str, Any] = {
-                "block_id": bid, "task_id": f"gemini-{fingerprint[:12]}-{bid}",
+                "block_id": bid, "source_block_ids": source_ids, "task_id": f"gemini-{fingerprint[:12]}-{bid}",
                 "file": audio_path.relative_to(output).as_posix(),
                 "sha256": state["sha256"], "format": "wav", "bytes": audio_path.stat().st_size,
                 "credit_cost": None, "director_usage": None,
@@ -714,7 +863,7 @@ async def generate_professional_audio(
             return item
 
     results = await asyncio.gather(
-        *(one(block, v3) for block, v3 in zip(blocks, v3s, strict=True)),
+        *(one(block, v3) for block, v3 in zip(voice_blocks, v3s, strict=True)),
         return_exceptions=True,
     )
     failures = [x for x in results if isinstance(x, BaseException)]
@@ -745,6 +894,7 @@ async def generate_professional_audio(
         "block_end_seconds": joined["block_end_seconds"],
         "block_durations_seconds": joined["block_durations_seconds"],
         "stt_complete": True, "stt_model": stt.model, "block_count": len(items),
+        **({"block_groups": groups} if grouped_plan else {}),
         "blocks": items, "credit_cost": None, "director_model": model,
     }
     _json(manifest, {"fingerprint": fingerprint, "status": "completed",
