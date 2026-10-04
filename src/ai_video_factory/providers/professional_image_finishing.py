@@ -167,7 +167,10 @@ def _materialize(
         if saved.get("status") == "ready_to_replace":
             # Resolve either side of an interrupted atomic replacement.
             if png.is_file() and _digest(png.read_bytes()) == saved.get("sha256"):
-                pass
+                if staged.exists():
+                    if _digest(staged.read_bytes()) != saved["sha256"]:
+                        raise ProfessionalImageFinishingError("Unreconciled staged finished PNG")
+                    staged.unlink()
             elif (
                 png.is_file() and _digest(png.read_bytes()) == item["sha256"]
                 and staged.is_file() and _digest(staged.read_bytes()) == saved.get("sha256")
@@ -321,8 +324,7 @@ def finish_professional_images(
     try:
         for item in originals:
             if item["visual_type"] in {"media_image", "avatar_media"}:
-                with Image.open(BytesIO(source)) as image:
-                    width, height = image.size
+                width, height = item["width"], item["height"]
                 result = _materialize(
                     output, item, recipe="image_x2",
                     target=(width * 2, height * 2), fingerprint="exact-image-x2",
