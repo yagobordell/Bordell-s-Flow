@@ -84,6 +84,8 @@ def patch_builder_source(source: str) -> str:
         # whole transient blocks would defeat the memory bound.
         if getattr(self.registry, "_cache_weights", None) is not False:
             raise RuntimeError("I2V progressive stage2 requires an uncached weight registry")
+        if lora_sd_and_strengths:
+            raise RuntimeError("I2V progressive stage2 permits only the approved no-LoRA FP8 recipe")
 
         for block_idx, entries in block_key_map.items():
             names = frozenset(
@@ -120,6 +122,9 @@ def patch_builder_source(source: str) -> str:
                 if original is not None:
                     fill_views[key].copy_(original)
                     block_sd.sd[key] = None
+            # Python loop variables retain their last value after iteration.
+            # Dispose the final temporary tensor explicitly as well.
+            del original
             # Releasing the per-block raw tensors here is the sole memory
             # optimization; final pinned blocks remain live for ALL forwards.
             del block_sd
