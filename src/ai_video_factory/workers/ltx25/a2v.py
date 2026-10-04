@@ -1449,6 +1449,7 @@ class DirectLTX25AudioToVideoBackend:
         parameters_a: LTXAudioToVideoParameters,
         parameters_b: LTXAudioToVideoParameters,
         vae_backend: str = "eager",
+        guidance_forward_batch_size: int = 2,
     ) -> dict[str, Any]:
         """Isolated true GPU-B2 Full HD static-reference A2V; no B1 fallback.
 
@@ -1464,6 +1465,8 @@ class DirectLTX25AudioToVideoBackend:
             raise ValueError("A2V paired backend requires distinct static 1080p/24 inputs")
         if vae_backend not in ("eager", "triton_experimental"):
             raise ValueError("Unknown A2V B2 VAE backend")
+        if guidance_forward_batch_size not in (2, 4):
+            raise ValueError("A2V B2 guidance forward batch must be 2 or 4")
         start = time.monotonic()
         plans = []
         probes = []
@@ -1589,6 +1592,7 @@ class DirectLTX25AudioToVideoBackend:
                         frames=plans[0].num_frames,
                         stage2_factory=stage2_factory,
                         phase_metrics=phase_metrics,
+                        max_transformer_forward_batch_size=guidance_forward_batch_size,
                     )
                     inference_seconds = time.monotonic() - inference_at
                     original_decoder = pipeline.video_decoder
@@ -1658,6 +1662,11 @@ class DirectLTX25AudioToVideoBackend:
             "stage2_sampler": LTX_A2V_REFERENCE_RECIPE.stage_2_sampler,
             "video_vae_backend": selected_backend,
             "vae_backend_request": vae_backend,
+            "guidance_forward_batch_size": guidance_forward_batch_size,
+            "guidance_forward_mode": (
+                "fused_effective_b4" if guidance_forward_batch_size == 4
+                else "split_effective_b4_into_b2"
+            ),
             "triton_gpu_probe_seconds": triton_probe_seconds,
             "phase_metrics": phase_metrics,
             "shared_vae_decoder_builds": 1,
