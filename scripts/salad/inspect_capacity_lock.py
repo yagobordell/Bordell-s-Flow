@@ -12,9 +12,9 @@ import sys
 from typing import Any
 
 from ai_video_factory.inference.capacity_controller import (
-    CONTROLLER_NAME,
     _ADVISORY_LOCK_KEY,
     _ADVISORY_LOCK_NAMESPACE,
+    CONTROLLER_NAME,
     resolve_capacity_controller_dsn,
 )
 
