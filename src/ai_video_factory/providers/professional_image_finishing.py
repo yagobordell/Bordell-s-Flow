@@ -191,6 +191,60 @@ def _materialize(
                 f"Unknown outcome for {beat} ({recipe}); reconcile before any resubmission"
             )
     else:
+        legacy_folder = output / "images" / "professional_finished" / f"block_{block}"
+        legacy_state = legacy_folder / f"{beat}-{recipe}.json"
+        legacy_png = legacy_state.with_suffix(".png")
+        legacy_raw = legacy_folder / f"{beat}-{recipe}.native.png"
+        if legacy_state.exists() or legacy_state.is_symlink():
+            if any(path.is_symlink() for path in (
+                legacy_folder, legacy_state, legacy_png, legacy_raw,
+            )):
+                raise ProfessionalImageFinishingError("Linked legacy professional output")
+            old = json.loads(legacy_state.read_text(encoding="utf-8"))
+            if old.get("identity") != identity_hash or old.get("status") != "completed":
+                raise ProfessionalImageFinishingError(
+                    f"Legacy paid finishing state for {beat} requires reconciliation"
+                )
+            if not legacy_png.is_file():
+                raise ProfessionalImageFinishingError("Legacy finished PNG is missing")
+            legacy_bytes = legacy_png.read_bytes()
+            if _digest(legacy_bytes) != old.get("sha256"):
+                raise ProfessionalImageFinishingError("Legacy finished PNG SHA mismatch")
+            _check_png(legacy_bytes, target)
+            _source(output, item)  # Keep the paid original identity verifiable.
+            saved = {
+                "schema_version": "professional-image-finishing-v1",
+                "identity": identity_hash, "status": "pending",
+                "source": item["file"], "source_sha256": item["sha256"],
+                "block_id": block, "beat_id": beat,
+                "model_id": model if recipe == "native_grid_video" else None,
+                "artifact": old.get("artifact", {}),
+            }
+            _save_json(state, saved)
+            staged.write_bytes(legacy_bytes)
+            saved.update({
+                "status": "ready_to_replace", "sha256": old["sha256"],
+                "output_file": item["file"],
+            })
+            _save_json(state, saved)
+            if _digest(png.read_bytes()) != item["sha256"]:
+                raise ProfessionalImageFinishingError("Legacy original changed during migration")
+            staged.replace(png)
+            saved["status"] = "completed"
+            _save_json(state, saved)
+            # Only delete the old copy once its new destination and durable
+            # recovery state are confirmed. Never retain duplicate final PNGs.
+            legacy_png.unlink()
+            legacy_state.unlink()
+            if legacy_raw.is_file():
+                legacy_raw.unlink()
+            if not any(legacy_folder.iterdir()):
+                legacy_folder.rmdir()
+            if not any(legacy_folder.parent.iterdir()):
+                legacy_folder.parent.rmdir()
+            return completed_record(saved)
+        if legacy_png.exists() or legacy_png.is_symlink():
+            raise ProfessionalImageFinishingError("Untracked legacy finished PNG")
         saved = {
             "schema_version": "professional-image-finishing-v1",
             "identity": identity_hash, "status": "pending",
