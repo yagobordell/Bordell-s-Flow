@@ -10,6 +10,7 @@ import pytest
 
 from ai_video_factory.inference.errors import NonRetryableTaskError
 from ai_video_factory.workers.ltx25.a2v import (
+    LTX_A2V_PRODUCTION_FAST_PROFILE,
     LTX_A2V_BENCH_NONE_PROFILE,
     LTX_A2V_EXPERIMENTAL_TASK,
     LTX_A2V_TASK,
@@ -110,3 +111,26 @@ def test_structural_streaming_failure_is_terminal_only_for_experiment(
     monkeypatch.setattr(experimental, "_validate_request", lambda *_args: None)
     with pytest.raises(TypeError, match="unrelated"):
         experimental.run(request, {"image": tmp_path, "audio": tmp_path}, tmp_path)
+
+
+def test_promoted_reference_profile_is_production_only() -> None:
+    from ai_video_factory.workers.ltx25.a2v import (
+        LTX_A2V_EXPERIMENTS,
+        LTX_A2V_RESIDENCY_PROFILES,
+        LTXAudioToVideoParameters,
+    )
+
+    assert LTXAudioToVideoParameters().generation_profile == LTX_A2V_PRODUCTION_FAST_PROFILE
+    assert LTX_A2V_RESIDENCY_PROFILES[LTX_A2V_PRODUCTION_FAST_PROFILE] == ("none", "eager")
+    assert LTX_A2V_PRODUCTION_FAST_PROFILE not in LTX_A2V_EXPERIMENTS
+    production = build_ltx25_runners(_local_settings("a2v"))
+    assert production.task_names == (LTX_A2V_TASK,)
+    experimental = LTXAudioToVideoTaskRunner(
+        backend=SimpleNamespace(), experimental=True
+    )
+    request = SimpleNamespace(
+        task=LTX_A2V_EXPERIMENTAL_TASK,
+        parameters={"generation_profile": LTX_A2V_PRODUCTION_FAST_PROFILE},
+    )
+    with pytest.raises(NonRetryableTaskError, match="experimental profile"):
+        experimental._validate_request(request, {})
