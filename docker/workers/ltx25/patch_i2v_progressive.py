@@ -111,14 +111,16 @@ def patch_builder_source(source: str) -> str:
                 for block_idx, entries in group
                 for _sft_key, param_name in entries
             )
+            sd_ops_suffix = (
+                f"i2v_progressive_block_{group[0][0]}" if group_size == 1
+                else f"a2v_grouped_blocks_{group[0][0]}_{group[-1][0]}"
+            )
             block_sd = load_state_dict(
                 self.model_path,
                 self.model_loader,
                 self.registry,
                 torch.device("cpu"),
-                self._filtered_sd_ops(
-                    f"progressive_blocks_{group[0][0]}_{group[-1][0]}", names,
-                ),
+                self._filtered_sd_ops(sd_ops_suffix, names),
             )
             # Never silently omit, reorder or numerically transform a weight.
             if set(block_sd.sd) != names:
