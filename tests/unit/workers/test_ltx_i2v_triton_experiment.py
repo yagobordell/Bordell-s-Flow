@@ -145,7 +145,7 @@ def test_exact_image_triton_probe_is_optional_and_fails_closed() -> None:
     ) as call:
         abi.verify(PINNED, require_triton=True)
     source = call.call_args.args[0][-1]
-    assert "triton_na3d" in source
+    assert "fallback_na.triton_na import na3d" in source
     assert "ensure_triton_gpu_probe" in source
     assert "triton_strict" in source
     assert "--gpus" not in call.call_args.args[0]
