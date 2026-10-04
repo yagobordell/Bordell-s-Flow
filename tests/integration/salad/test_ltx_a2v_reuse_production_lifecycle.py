@@ -143,8 +143,19 @@ $s | ConvertTo-Json | Set-Content $p
         run.stdout + run.stderr
     )
     assert (out / "recovery.txt").is_file()
+    assert "CAPACITY_CONTROLLER_DSN_OK" in run.stdout, run.stdout + run.stderr
     if fail_ready:
         assert run.returncode != 0
     else:
         assert run.returncode == 0, run.stdout + run.stderr
         assert len(json.loads((out / "manifest.json").read_text(encoding="utf-8-sig"))["runs"]) == 3
+
+def test_python_dsn_preflight_has_no_nested_quoted_literals() -> None:
+    """Windows PowerShell 5.1 can strip embedded quotes from native -c args."""
+    source = (
+        _ROOT / "scripts" / "smoke" / "run_ltx25_a2v_benchmark_reusing_production.ps1"
+    ).read_text(encoding="utf-8")
+    preflight = next(line for line in source.splitlines() if "& $Python -c " in line)
+    assert "resolve_capacity_controller_dsn()" in preflight
+    assert "print(" not in preflight
+    assert "CAPACITY_CONTROLLER_DSN_OK" in source
