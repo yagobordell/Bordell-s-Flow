@@ -104,10 +104,15 @@ pretending that a 720p grid panel merely resized to 1080p is natively detailed,
 and avoids giant 5760x3240 grids. The video requirement governs the final
 video-panel dimensions. Paid edit costs are included once in B2 image billing.
 
-Original GPT PNGs, original full grids and derived crops remain immutable.
-Finishing uses per-beat JSON state, SHA-256 input/output verification and
-distinct derived paths under `images/professional_finished/`; uncertain
-remote outcomes are never resubmitted blindly. LTX and the preview consume
+Original GPT per-beat PNGs and derived grid panels remain unchanged until
+their individual finishing is verified. The resulting 2x or 1920x1080 PNG
+**atomically replaces that beat's original path** (`images/block_N/BEAT.png`).
+Only original full GPT grids remain separate and immutable. Durable SHA-256
+recovery metadata lives under `images/finishing_state/`; no separate folder of
+finished images is created. For native video edits, transient paid 1920x1088
+inputs are removed from this state folder after successful replacement.
+A crash during replacement is recoverable without repeating paid calls.
+Uncertain remote outcomes still require reconciliation. LTX and the preview consume
 **only** the verified finished assets for professional runs. No video
 Real-ESRGAN/upscaler is used.
 
