@@ -12,6 +12,7 @@ param(
     [ValidateSet(720,1080)][int]$Height = 720,
     [switch]$AcceptFullHdBatch2OomRisk,
     [ValidateSet("cpu","disk")][string]$FullHdStage2Mode = "cpu",
+    [ValidateSet("eager","triton_experimental")][string]$VaeBackend = "eager",
     [string]$ReferenceA = "", [string]$ReferenceB = "",
     [string]$EnvFile = ".env",
     [switch]$CheckInputsOnly, [switch]$AllowSequentialFallback,
@@ -39,6 +40,12 @@ if ($Width -eq 1920 -and -not $AcceptFullHdBatch2OomRisk) {
 if ($Width -eq 1920 -and ($AllowSequentialFallback -or $EnableStageReuse)) {
     throw "Full HD trial must remain real B=2 with independent stage builds."
 }
+if ($VaeBackend -eq "triton_experimental" -and (
+    $Width -ne 1920 -or $Height -ne 1080 -or $FullHdStage2Mode -ne "cpu" -or
+    $AllowSequentialFallback -or $EnableStageReuse
+)) {
+    throw "Triton VAE experiment requires 1080p true B2 with CPU stage2."
+}
 if ($RunId -notmatch '^[A-Za-z0-9_-]{1,70}$') { throw "Use a new 1-70 character safe RunId." }
 if ($ExpectedPinnedImage -notmatch '^[^\s@]+@sha256:[0-9a-fA-F]{64}$') {
     throw "ExpectedPinnedImage must be your newly BUILT experimental repo@sha256 digest."
@@ -62,6 +69,7 @@ $ArgsSubmit = @(
     "--seed-a", [string]$SeedA, "--seed-b", [string]$SeedB,
     "--width", [string]$Width, "--height", [string]$Height,
     "--full-hd-stage2-mode", $FullHdStage2Mode,
+    "--vae-backend", $VaeBackend,
     "--run-id", $RunId, "--output-dir", $Folder,
     "--timeout-seconds", [string]$JobTimeoutSeconds
 )
@@ -93,7 +101,9 @@ if ($Width -eq 1920) {
     # A syntactically pinned digest does NOT prove its installed Python
     # schema contains the new hybrid field. This offline container check
     # blocks a costly Salad bootstrap with the wrong historical image.
-    & $Python (Join-Path $PSScriptRoot "verify_ltx25_i2v_hybrid_image.py") --image $ExpectedPinnedImage
+    $ImageProbeArgs = @("--image", $ExpectedPinnedImage)
+    if ($VaeBackend -eq "triton_experimental") { $ImageProbeArgs += "--require-triton" }
+    & $Python (Join-Path $PSScriptRoot "verify_ltx25_i2v_hybrid_image.py") @ImageProbeArgs
     if ($LASTEXITCODE -ne 0) {
         throw "STOP: pinned Docker lacks the hybrid I2V API; rebuild before paid Salad startup."
     }
