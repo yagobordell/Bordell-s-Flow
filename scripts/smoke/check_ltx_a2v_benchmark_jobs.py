@@ -95,7 +95,7 @@ def main() -> int:
                 if failed_job_id is not None:
                     cursor.execute(
                         """
-                        SELECT status FROM gpu.jobs
+                        SELECT status, last_error FROM gpu.jobs
                         WHERE task = %s AND job_id = %s
                         """,
                         (_A2V_TASK, failed_job_id),
@@ -115,10 +115,20 @@ def main() -> int:
             )
         return 1
     if args.terminal_failure_dir:
-        if failed_row != ("failed",):
+        if failed_row is None or failed_row[0] != "failed":
             print(
                 f"Cannot continue: job {failed_job_id!r} is not terminal failed "
                 "(possible lease, retry or media-validation mismatch)",
+                file=sys.stderr,
+            )
+            return 1
+        # A structural model failure can make the CUDA process unsafe even
+        # when the job itself is terminal. Fail closed before the next sample.
+        detail = failed_row[1] or ""
+        if not detail or "A2V_EXPERIMENTAL_STREAMING_STRUCTURE_INVALID" in detail:
+            print(
+                "A2V_UNSAFE_TERMINAL_FAILURE: missing or structural failure "
+                "detail; stop this worker before starting a different profile",
                 file=sys.stderr,
             )
             return 1
