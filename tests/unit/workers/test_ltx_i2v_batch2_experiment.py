@@ -101,6 +101,16 @@ def test_full_hd_batch2_requires_explicit_gpu_risk_without_any_hidden_fallback()
     assert accepted.a.height == 1080
     assert accepted.allow_sequential_fallback is False
     assert accepted.reuse_transformer_across_stages is False
+    assert accepted.full_hd_stage2_mode == "cpu"
+    assert Batch2Parameters.model_validate({
+        **full_hd, "accept_full_hd_batch2_oom_risk": True,
+        "full_hd_stage2_mode": "disk",
+    }).full_hd_stage2_mode == "disk"
+    with pytest.raises(ValueError, match="cpu or disk"):
+        Batch2Parameters.model_validate({
+            **full_hd, "accept_full_hd_batch2_oom_risk": True,
+            "full_hd_stage2_mode": "gpu",
+        })
     for unsafe in (
         {"allow_sequential_fallback": True},
         {"reuse_transformer_across_stages": True},
@@ -138,9 +148,11 @@ def test_full_hd_batch2_backend_only_admits_true_parallel_with_consent(tmp_path:
     assert (report["requested_width"], report["requested_height"]) == (1920, 1080)
     assert report["actual_gpu_batch_size"] == 2
     assert report["mode"] == "batch2"
+    assert report["transformer_offload_mode"] == "stage1:none,stage2:cpu"
     assert report["full_hd_gpu_validation_pending"] is True
     backend._pair_attempt.assert_called_once()
     assert backend._pair_attempt.call_args.kwargs["forward_batch_size"] == 2
+    assert backend._pair_attempt.call_args.kwargs["full_hd_stage2_mode"] == "cpu"
 
 
 def test_batch2_outputs_are_one_atomic_primary_plus_two_named_sidecars(tmp_path: Path) -> None:
