@@ -156,6 +156,7 @@ class V4Event(Strict):
     source_kind: Literal["vocal_intent", "pause"]
     source_item_index: int = Field(ge=0)
     source_at: int | None = Field(default=None, ge=0)
+    pause_direction: str | None = Field(default=None, min_length=1, max_length=160)
 
 
 class V4Speak(Strict):
@@ -503,8 +504,7 @@ def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
                 if source_index < index
             ]
             if preceding:
-                slot, _, speak = preceding[-1]
-                # The exact placement is checked against V4's source index.
+                slot = preceding[-1][0]
             else:
                 if not expected:
                     raise VoicePlanError("V3 pause without a spoken unit")
@@ -513,15 +513,13 @@ def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
         observed: set[tuple[str, int, int | None, int]] = set()
         for slot, destination in enumerate(compiled.segments):
             original = expected[slot][1]
-            positions: set[int] = set()
             for event in destination.events:
                 key = (
                     event.source_kind, event.source_item_index, event.source_at, slot
                 )
-                if key in observed or event.at in positions:
-                    raise VoicePlanError("V4 duplicated an event or overlapped tags")
+                if key in observed:
+                    raise VoicePlanError("V4 duplicated a source event")
                 observed.add(key)
-                positions.add(event.at)
                 if event.tag not in _ALLOWED_TAGS or event.at > len(destination.speak):
                     raise VoicePlanError("V4 generated an unsupported tag or position")
                 if (0 < event.at < len(destination.speak)
@@ -543,6 +541,7 @@ def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
                              if intent.at == event.source_at), None
                         )
                         or event.at != event.source_at
+                        or event.pause_direction is not None
                     ):
                         raise VoicePlanError("V4 changed or invented a human vocal behavior")
                 else:
@@ -551,6 +550,11 @@ def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
                     ) else None
                     if not isinstance(pause, Pause) or event.source_at is not None:
                         raise VoicePlanError("V4 invented a pause")
+                    if (not event.pause_direction
+                        or event.pause_direction not in destination.style):
+                        raise VoicePlanError(
+                            "V4 omitted the audible purpose of a V3 explicit pause"
+                        )
                     allowed = {
                         "breath": {"breath", "short pause"},
                         "beat": {"short pause", "long pause"},
@@ -583,7 +587,10 @@ def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
 def _tagged_v4(piece: V4Speak) -> str:
     """Insert only audited V4 tags, never model-edited source text."""
     text = piece.speak
-    for event in sorted(piece.events, key=lambda x: x.at, reverse=True):
+    # Original V3 item order is the tie-breaker for coincident events.
+    for event in sorted(
+        piece.events, key=lambda x: (x.at, x.source_item_index), reverse=True
+    ):
         text = text[:event.at] + f"<{event.tag}>" + text[event.at:]
     return text
 
@@ -870,13 +877,28 @@ async def plan_professional_voice(
     rhythms = {r.block_id: r for r in v1.block_rhythms}
     # Existing V3 outputs came from the old provider-specific contract.
     # Preserve their format and paid-audio resume semantics for the whole run.
-    legacy_v3 = any(
-        (root / "V3" / f"block_{block['block_id']}" / "output.json").is_file()
-        and "segments" in json.dumps(_read(
-            root / "V3" / f"block_{block['block_id']}" / "output.json"
-        ).get("beat_deliveries", []))
-        for block in voice_blocks
-    )
+    saved_formats: set[str] = set()
+    for block in voice_blocks:
+        saved_path = root / "V3" / f"block_{block['block_id']}" / "output.json"
+        if not saved_path.is_file():
+            continue
+        saved = _read(saved_path)
+        deliveries = saved.get("beat_deliveries")
+        if not isinstance(deliveries, list) or not deliveries:
+            raise VoicePlanError(f"Invalid existing V3 checkpoint: {saved_path}")
+        if all(isinstance(beat, dict) and "segments" in beat
+               and "delivery" not in beat for beat in deliveries):
+            saved_formats.add("legacy")
+        elif all(isinstance(beat, dict) and "delivery" in beat
+                 and "segments" not in beat for beat in deliveries):
+            saved_formats.add("current")
+        else:
+            raise VoicePlanError(f"Unrecognised saved V3 checkpoint: {saved_path}")
+    if len(saved_formats) > 1:
+        raise VoicePlanError(
+            "Mixed legacy and V4-era V3 checkpoints cannot be resumed safely"
+        )
+    legacy_v3 = "legacy" in saved_formats
     semaphore = asyncio.Semaphore(max_parallel_calls)
 
     async def perform(block: dict[str, Any], v2: V2) -> V3 | LegacyV3:
