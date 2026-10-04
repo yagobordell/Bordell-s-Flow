@@ -16,6 +16,7 @@ from pathlib import Path
 from statistics import fmean
 from typing import Any
 
+from ai_video_factory.inference.storage import sha256_file
 from submit_ltx25_a2v_smoke import _voice_rms_profile
 
 
@@ -38,7 +39,7 @@ def _metric(
     )
     if result.returncode:
         raise RuntimeError(f"{kind} comparison failed: {result.stderr[-1000:]}")
-    pattern = r"psnr_avg:([^\\s]+)" if kind == "psnr" else r"All:([^\\s]+)"
+    pattern = r"psnr_avg:([^\s]+)" if kind == "psnr" else r"All:([^\\s]+)"
     values = [
         float(match.group(1))
         for line in log.read_text().splitlines()
@@ -95,9 +96,7 @@ def compare_one(
     baseline_lag = _envelope_lag(input_envelope, baseline_envelope)
     candidate_lag = _envelope_lag(input_envelope, candidate_envelope)
     return {
-        "input_sha256": __import__(
-            "ai_video_factory.inference.storage", fromlist=["sha256_file"]
-        ).sha256_file(audio),
+        "input_sha256": sha256_file(audio),
         "baseline_video": str(baseline),
         "candidate_video": str(candidate),
         "video": {
