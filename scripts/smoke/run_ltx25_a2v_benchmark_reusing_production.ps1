@@ -41,12 +41,25 @@ $Python = Join-Path $Root '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     $Python = (Get-Command python -ErrorAction Stop).Source
 }
+# All mutating Salad operations require a session-capable Postgres advisory
+# lock. Resolve its DSN BEFORE attempting Prepare, not after allocating work.
+$RepoRoot = $Root
+. (Join-Path $Root 'scripts\salad\_env_file.ps1')
+Import-EnvFile -Path $EnvFile
+if ([string]::IsNullOrWhiteSpace($env:SALAD_CAPACITY_CONTROLLER_POSTGRES_DSN) -and
+    [string]::IsNullOrWhiteSpace($env:POSTGRES_DSN)) {
+    throw "Missing Postgres DSN for Capacity Controller lock. Set a direct or session-mode DSN in the active checkout or the selected EnvFile's companion app.env."
+}
 $Manager = Join-Path $Root 'scripts\salad\manage_salad_worker.ps1'
 $Isolation = Join-Path $PSScriptRoot 'check_ltx_a2v_benchmark_isolation.py'
 $QueueGate = Join-Path $PSScriptRoot 'check_ltx_a2v_benchmark_jobs.py'
 $Preflight = Join-Path $Root 'scripts\pipeline\check_r2_ready.py'
 $Runner = Join-Path $PSScriptRoot 'run_ltx25_a2v_benchmark_batch.ps1'
 $Restore = Join-Path $PSScriptRoot 'restore_ltx25_a2v_production.ps1'
+& $Python -c 'from ai_video_factory.inference.capacity_controller import resolve_capacity_controller_dsn; resolve_capacity_controller_dsn(); print("CAPACITY_CONTROLLER_DSN_OK")'
+if ($LASTEXITCODE -ne 0) {
+    throw "Capacity Controller DSN is invalid or transaction-pooled; use direct/session Postgres DSN."
+}
 $OutputDir = if ($OutputDir) {
     [IO.Path]::GetFullPath($OutputDir)
 } else {
