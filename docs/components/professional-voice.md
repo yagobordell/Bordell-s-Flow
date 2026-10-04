@@ -66,23 +66,33 @@ one ending behavior, exact optional stress targets and optional justified
 punctual human vocal intentions. Explicit pauses have a class
 (breath, beat, hold) and a meaningful pause function.
 
-V4 preserves every decision and compiles them into one compact
-`audio_profile`, `directors_notes` for the block arc and a precise
-`speech_metadata.style` per spoken fragment. The identity and arc are
-included only in Gemini's first part; later parts contain only local
-instructions. Exact stress targets and ending behavior remain traceable.
+V4 preserves every decision and compiles it into a single
+`audio_profile`, ordered group-wide `directors_notes`, and occurrence-addressed
+`spoken_directions`. Together these become exactly **one
+`speech_metadata.style` per complete grouped voice block**. Gemini receives
+exactly **one text part for that complete group**, not one per beat or fragment.
+Exact stress targets and ending behaviors remain traceable through addressed
+clauses inside that single style.
 
 V4 translates punctual human actions and explicit pauses into only
 `breath`, `exhales`, `sigh`, `chuckle`, `gasp`,
 `short pause`, or `long pause`. Every event records the source V3
-item and its exact original character position. Code validates a
-one-to-one decision mapping and inserts angle brackets; model output
-never rewrites narration. V4 adds no silent-time or spoken-time
-decision of its own.
+item and its exact original character position in the full original
+B2 beat. Every beat has `text: ""`; untagged beats have `inserts: []`.
+Each authorized tag insert includes ONLY one original source word before
+and one after the tag, with exact punctuation/whitespace. Multiple tags
+in one beat produce separate minimal snippets. The runtime reconstructs
+the FULL GROUP narration exclusively from original B2 beat text and
+inserts audited angle brackets at the verified original offsets:
+model-produced snippets are NEVER the Gemini transcript. V4 adds no
+silent-time or spoken-time decision of its own.
 
 A pre-feature run already checkpointed using the old V3 contract
 remains in that mode to avoid unnecessary paid regeneration, and
-its historic prompt is retained. New runs require validated V4
+its historic prompt is retained. Pre-existing V4 checkpoint inputs
+with the former compiler contract are recompiled only if the professional
+voice pipeline is rerun; distinct compiler fingerprints prevent accidental
+reuse of incompatible paid speech. New runs require validated V4
 before any paid Gemini request. V4 inputs/outputs and usage/timing
 are archived and published along with V1-V3. V4 follows the same
 two-feedback-retries policy per failed block and reuses validated
