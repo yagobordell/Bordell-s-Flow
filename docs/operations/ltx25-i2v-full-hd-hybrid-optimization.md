@@ -112,3 +112,38 @@ image. A previously published genuine hybrid Docker that passes the exact
 offline digest check can be reused. Never rebuild solely because the RAM
 manifest changed. If the installed immutable image fails the ABI probe, a
 new image from the reviewed hybrid source is necessary.
+
+
+## 2026-10-04 1080p CPU-stage2 trial: stage2 sigma name collision
+
+The next paid test got through bootstrap with I2V instance version 17 and
+reached the real B=2 GPU-resident stage1. The attached worker CSV establishes:
+
+- Both individual Gemma prompt encodings succeeded.
+- Stage1 reported `forward_batch=2`, ~31.89 s transformer build and
+  ~26.79 s diffusion. Upcaling and full-size image conditioning completed.
+- The lazy stage2 factory selected `offload=cpu cpu_slots=all`.
+- BEFORE stage2 diffusion started, `paired_i2v.py` passed a
+  `DiffusionStage` instance through its `sigmas` keyword, because the local
+  `stage2` variable had been overwritten by `stage2_factory()`. Indexing
+  `sigmas[0]` raised `TypeError: 'DiffusionStage' object is not subscriptable`.
+- This was a Python naming collision, not a stage2 OOM or a CPU-streaming
+  performance measurement. The outer script confirmed Salad I2V
+  `status=stopped pending=False` after the failure.
+
+Corrected by keeping a distinct `stage2_sigmas` tensor initialized from
+the original `STAGE_2_DISTILLED_SIGMAS` throughout the same B=2 sampler.
+No steps, diffusion equations, precision, resolution or offload policy were
+altered. A CPU-only AST regression gate plus a GPU-optional mocked stage
+check now forbid passing a stage object where the second-stage sigma tensor
+is required. The offline Docker preflight also checks an explicit patched
+stage2 ABI marker AND parses the installed source AST; an older hybrid image
+that passed the previous signature-only ABI check is no longer accepted.
+
+**New immutable Docker build is REQUIRED for this worker-source fix.**
+The formerly prepared image must not be reused for a paid run even though
+its Pydantic hybrid field and remote resource checks succeed. Start only
+after a fresh build from this reviewed commit, full I2V CI green, a clean
+offline Docker ABI verification and remote read-only image/RAM match. Use a
+new job RunId and operator approval. Stage2 CPU RAM/VRAM fit and end-to-end
+runtime remain unproven.
