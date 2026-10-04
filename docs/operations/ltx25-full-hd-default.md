@@ -1,3 +1,21 @@
+# CURRENT I2V HYBRID UPDATE (supersedes old all-DISK experiment)
+
+The measured October 4 all-DISK 1080p true-B2 run succeeded (3,407.85s)
+with ~17.0 GiB peak GPU allocated but unacceptable repeated disk reads.
+The NEXT, **unverified** I2V-only trial now uses a GPU-resident FP8 stage1
+and full-block pinned-RAM FP8 stage2, provisioned with **64 GiB RAM**
+for the I2V Salad service **only**. Existing 720p remains unchanged.
+The older all-DISK performance notes further down record historical
+experiments, not the current selected mode.
+
+See [hybrid 1080p I2V implementation](ltx25-i2v-full-hd-hybrid-optimization.md)
+for the dedicated resource prerequisite, exact stage ordering, independent
+FP8 and B2 quality contracts, safe no-cost preflight and why GPU success
+and speed improvement are NOT YET proven. A2V worker optimizations are
+out of scope; never merge this historical conflicted PR wholesale.
+
+---
+
 # New video default: 1920×1080 / 24 fps — EXPERIMENTAL, NOT MERGED
 
 New **B2 video jobs** (professional and casero), default standalone Phase 8
