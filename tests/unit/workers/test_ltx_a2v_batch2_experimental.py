@@ -44,6 +44,12 @@ def test_pair_accepts_full_hd_but_rejects_unvalidated_recipe_or_shape() -> None:
     assert A2VBatch2Parameters.model_validate(valid).a.seed == 7
     assert A2VBatch2Parameters.model_validate(valid).vae_backend == "eager"
     assert A2VBatch2Parameters.model_validate(valid).guidance_forward_batch_size == 2
+    assert A2VBatch2Parameters.model_validate(valid).max_stage1_major_page_faults == 0
+    assert A2VBatch2Parameters.model_validate({
+        **valid, "vae_backend": "triton_experimental",
+        "guidance_forward_batch_size": 4,
+        "max_stage1_major_page_faults": 20000,
+    }).max_stage1_major_page_faults == 20000
     assert A2VBatch2Parameters.model_validate({
         **valid, "guidance_forward_batch_size": 4,
     }).guidance_forward_batch_size == 4
@@ -55,6 +61,8 @@ def test_pair_accepts_full_hd_but_rejects_unvalidated_recipe_or_shape() -> None:
         {"stage2_mode": "disk"},
         {"vae_backend": "unknown"},
         {"guidance_forward_batch_size": 3},
+        {"max_stage1_major_page_faults": -1},
+        {"max_stage1_major_page_faults": 1000001},
         {"b": _params(7)},
         {"b": _params(8, width=1280, height=720)},
         {"b": {**_params(8), "generation_profile": LTX_A2V_PRODUCTION_FAST_PROFILE}},
@@ -85,6 +93,9 @@ class FakeBackend:
         return {
             "mode": "batch2", "actual_gpu_batch_size": self.batch,
             "guidance_forward_batch_size": kwargs.get("guidance_forward_batch_size", 2),
+            "max_stage1_major_page_faults": kwargs.get(
+                "max_stage1_major_page_faults", 0,
+            ),
             "video_vae_backend": (
                 "triton" if kwargs.get("vae_backend") == "triton_experimental"
                 else "eager"
@@ -137,6 +148,7 @@ def test_atomic_four_input_contract_and_independent_audio(tmp_path: Path) -> Non
     assert backend.calls[0]["audio_a"] != backend.calls[0]["audio_b"]
     assert backend.calls[0]["vae_backend"] == "eager"
     assert backend.calls[0]["guidance_forward_batch_size"] == 2
+    assert backend.calls[0]["max_stage1_major_page_faults"] == 0
     assert backend.calls[0]["parameters_a"].seed == 7
     assert backend.calls[0]["parameters_b"].seed == 8
     assert json.loads((tmp_path / "batch2-report.json").read_text())["actual_gpu_batch_size"] == 2
@@ -215,3 +227,48 @@ def test_cli_contains_lipsync_and_four_input_gates() -> None:
     wrapper = (root / "scripts/smoke/run_ltx25_a2v_batch2_trial.ps1").read_text()
     assert wrapper.index("--check-inputs-only") < wrapper.index('-Action Start')
     assert "ltx25_a2v_experimental" in wrapper
+
+
+def test_host_paging_guard_rejects_slow_instance_without_gpu_fallback() -> None:
+    from ai_video_factory.workers.ltx25.paired_a2v import _check_stage1_host_pressure
+
+    metrics: dict[str, Any] = {}
+    _check_stage1_host_pressure(
+        {"process_major_page_faults": 1000},
+        {"process_major_page_faults": 3000},
+        20000, metrics,
+    )
+    assert metrics["stage1_major_page_faults_delta"] == 2000
+    assert metrics["stage1_major_page_faults_limit"] == 20000
+    with pytest.raises(RuntimeError, match="No stage2 or VAE was started"):
+        _check_stage1_host_pressure(
+            {"process_major_page_faults": 1000},
+            {"process_major_page_faults": 171000},
+            20000, {},
+        )
+    with pytest.raises(RuntimeError, match="monotonic"):
+        _check_stage1_host_pressure({}, {}, 20000, {})
+    with pytest.raises(RuntimeError, match="monotonic"):
+        _check_stage1_host_pressure(
+            {"process_major_page_faults": 100},
+            {"process_major_page_faults": 99},
+            20000, {},
+        )
+    with pytest.raises(ValueError, match="explicitly enabled"):
+        _check_stage1_host_pressure(
+            {"process_major_page_faults": 0},
+            {"process_major_page_faults": 0},
+            0, {},
+        )
+
+
+def test_latency_trial_exposes_combined_mode_and_target_without_auto_promotion() -> None:
+    root = Path(__file__).resolve().parents[3]
+    wrapper = (root / "scripts/smoke/run_ltx25_a2v_batch2_trial.ps1").read_text()
+    smoke = (root / "scripts/smoke/submit_ltx25_a2v_batch2_smoke.py").read_text()
+    assert "--max-stage1-major-page-faults" in wrapper
+    assert "--performance-target-seconds" in wrapper
+    assert "HUMAN_COMBINED_B4_TRITON_APPROVAL_REQUIRED" in smoke
+    assert "A2V_B2_PERFORMANCE_TARGET_" in smoke
+    assert 'report["performance_target_met"]' in smoke
+    assert "a.guidance_forward_batch_size == 4" in smoke
