@@ -54,11 +54,14 @@ def _ffmpeg_scores(
 ) -> dict[str, float | int | None]:
     args = [
         ffmpeg, "-hide_banner", "-nostdin", "-v", "error",
-        "-i", str(baseline), "-i", str(candidate),
-        "-lavfi", f"{kind}=stats_file={stats.as_posix()}",
+        "-i", str(baseline.resolve()), "-i", str(candidate.resolve()),
+        "-lavfi", f"{kind}=stats_file={stats.name}",
         "-an", "-f", "null", "-",
     ]
-    subprocess.run(args, check=True, capture_output=True, text=True, timeout=600)
+    subprocess.run(
+        args, check=True, capture_output=True, text=True,
+        timeout=600, cwd=stats.parent.resolve(),
+    )
     lines = stats.read_text(encoding="utf-8").splitlines()
     pattern = r"psnr_avg:([^\s]+)" if kind == "psnr" else r"All:([^\s]+)"
     values = [
