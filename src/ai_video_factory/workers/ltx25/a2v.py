@@ -1451,6 +1451,9 @@ class DirectLTX25AudioToVideoBackend:
         vae_backend: str = "eager",
         guidance_forward_batch_size: int = 2,
         max_stage1_major_page_faults: int = 0,
+        progressive_block_group_size: int = 1,
+        min_checkpoint_direct_read_mibps: float = 0.0,
+        max_stage1_build_seconds: float = 0.0,
     ) -> dict[str, Any]:
         """Isolated true GPU-B2 Full HD static-reference A2V; no B1 fallback.
 
@@ -1470,6 +1473,12 @@ class DirectLTX25AudioToVideoBackend:
             raise ValueError("A2V B2 guidance forward batch must be 2 or 4")
         if max_stage1_major_page_faults < 0:
             raise ValueError("A2V B2 fault guard must not be negative")
+        if progressive_block_group_size not in (1, 2, 4, 8):
+            raise ValueError("A2V B2 progressive group size must be 1, 2, 4 or 8")
+        if not 0 <= min_checkpoint_direct_read_mibps <= 10000:
+            raise ValueError("Invalid A2V experimental checkpoint read minimum")
+        if not 0 <= max_stage1_build_seconds <= 3600:
+            raise ValueError("Invalid A2V experimental stage1 build cap")
         start = time.monotonic()
         plans = []
         probes = []
@@ -1532,6 +1541,15 @@ class DirectLTX25AudioToVideoBackend:
                         ),
                         audio_path=str(plan.path.resolve()),
                     ))
+                if min_checkpoint_direct_read_mibps:
+                    from .checkpoint_io import probe_checkpoint_direct_read
+
+                    io_facts = probe_checkpoint_direct_read(
+                        self._model_files.shared.transformer,
+                        minimum_mibps=min_checkpoint_direct_read_mibps,
+                    )
+                    phase_metrics["checkpoint_direct_io"] = io_facts
+                    logger.info("LTX25_A2V_CHECKPOINT_DIRECT_IO %s", json.dumps(io_facts))
                 with bindings.torch.inference_mode():
                     if vae_backend == "triton_experimental":
                         # Before the timed pair, run a fail-closed CUDA child;
@@ -1583,8 +1601,13 @@ class DirectLTX25AudioToVideoBackend:
                         if getattr(builder.registry, "_cache_weights", None) is not False:
                             raise RuntimeError("A2V progressive stage2 must disable weight caching")
                         builder._i2v_progressive_pinned_blocks = True
+                        builder._a2v_progressive_block_group_size = (
+                            progressive_block_group_size
+                        )
                         logger.info(
-                            "LTX25_A2V_B2_STAGE2_POLICY offload=cpu progressive=true"
+                            "LTX25_A2V_B2_STAGE2_POLICY offload=cpu "
+                            "progressive=true group_size=%d",
+                            progressive_block_group_size,
                         )
                         return alternate
 
@@ -1597,6 +1620,7 @@ class DirectLTX25AudioToVideoBackend:
                         phase_metrics=phase_metrics,
                         max_transformer_forward_batch_size=guidance_forward_batch_size,
                         max_stage1_major_page_faults=max_stage1_major_page_faults,
+                        max_stage1_build_seconds=max_stage1_build_seconds,
                     )
                     inference_seconds = time.monotonic() - inference_at
                     original_decoder = pipeline.video_decoder
@@ -1668,6 +1692,9 @@ class DirectLTX25AudioToVideoBackend:
             "vae_backend_request": vae_backend,
             "guidance_forward_batch_size": guidance_forward_batch_size,
             "max_stage1_major_page_faults": max_stage1_major_page_faults,
+            "progressive_block_group_size": progressive_block_group_size,
+            "min_checkpoint_direct_read_mibps": min_checkpoint_direct_read_mibps,
+            "max_stage1_build_seconds": max_stage1_build_seconds,
             "guidance_forward_mode": (
                 "fused_effective_b4" if guidance_forward_batch_size == 4
                 else "split_effective_b4_into_b2"
