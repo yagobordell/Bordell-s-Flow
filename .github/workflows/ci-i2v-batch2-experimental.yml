@@ -40,7 +40,9 @@ jobs:
             tests/unit/workers/test_ltx_i2v_batch2_optimizations.py \
             tests/unit/workers/test_ltx_i2v_batch2_experiment.py \
             tests/unit/workers/test_ltx_salad_readiness.py \
-            tests/integration/salad/test_salad_shared_helpers.py
+            tests/integration/salad/test_salad_shared_helpers.py \
+            tests/contracts/test_salad_deployment_profiles.py \
+            tests/integration/salad/test_ltx_bootstrap_start.py
       - name: I2V batch2 and Full HD regression (CPU only)
         run: |
           uv run --no-sync pytest -q \
