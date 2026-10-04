@@ -19,10 +19,15 @@ from ai_video_factory.workers.ltx25.experimental_a2v_batch2 import (
 from ai_video_factory.workers.ltx25.shared_a2v_decoder import SharedA2VDecoder
 from ai_video_factory.workers.ltx25.triton_a2v_probe import ensure_triton_gpu_probe
 from ltx_core.block_streaming.builder import StreamingModelBuilder
+from ai_video_factory.workers.ltx25.checkpoint_io import probe_checkpoint_direct_read
 assert callable(_build_state) and callable(generate_paired_static_a2v)
 assert callable(euler_ancestral_denoising_loop)
 assert "new_noise_fn" in inspect.signature(euler_ancestral_denoising_loop).parameters
 assert "_i2v_progressive_pinned_blocks_supported" in inspect.getsource(StreamingModelBuilder)
+assert "_a2v_progressive_block_group_size" in inspect.getsource(
+    StreamingModelBuilder._load_i2v_progressive_pinned_blocks
+)
+assert callable(probe_checkpoint_direct_read)
 assert "generate_pair" in dir(DirectLTX25AudioToVideoBackend)
 assert "actual_gpu_batch_size" in inspect.getsource(DirectLTX25AudioToVideoBackend.generate_pair)
 assert "stage2_factory" in inspect.signature(generate_paired_static_a2v).parameters
@@ -35,11 +40,19 @@ assert "max_stage1_major_page_faults" in inspect.signature(
 assert "max_stage1_major_page_faults" in inspect.signature(
     DirectLTX25AudioToVideoBackend.generate_pair
 ).parameters
+for key in (
+    "progressive_block_group_size", "min_checkpoint_direct_read_mibps",
+    "max_stage1_build_seconds",
+):
+    assert key in inspect.signature(DirectLTX25AudioToVideoBackend.generate_pair).parameters
 assert hasattr(SharedA2VDecoder, "close")
 assert A2VBatch2Parameters.model_fields["stage2_mode"].default == "cpu"
 assert A2VBatch2Parameters.model_fields["vae_backend"].default == "eager"
 assert A2VBatch2Parameters.model_fields["guidance_forward_batch_size"].default == 2
 assert A2VBatch2Parameters.model_fields["max_stage1_major_page_faults"].default == 0
+assert A2VBatch2Parameters.model_fields["progressive_block_group_size"].default == 1
+assert A2VBatch2Parameters.model_fields["min_checkpoint_direct_read_mibps"].default == 0.0
+assert A2VBatch2Parameters.model_fields["max_stage1_build_seconds"].default == 0.0
 assert callable(ensure_triton_gpu_probe)
 assert "requested_pair_vae_backend" in inspect.signature(
     DirectLTX25AudioToVideoBackend._get_or_build_pipeline
