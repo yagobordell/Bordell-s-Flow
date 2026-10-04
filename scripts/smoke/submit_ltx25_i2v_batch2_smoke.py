@@ -38,6 +38,7 @@ def parser() -> argparse.Namespace:
     p.add_argument("--width", type=int, default=1280)
     p.add_argument("--height", type=int, default=720)
     p.add_argument("--accept-full-hd-batch2-oom-risk", action="store_true")
+    p.add_argument("--full-hd-stage2-mode", choices=("cpu", "disk"), default="cpu")
     p.add_argument("--run-id", required=True)
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--reference-a", type=Path)
@@ -161,6 +162,7 @@ def main() -> None:
         "allow_sequential_fallback": a.allow_sequential_fallback,
         "reuse_transformer_across_stages": a.enable_stage_reuse and not a.disable_stage_reuse,
         "accept_full_hd_batch2_oom_risk": a.accept_full_hd_batch2_oom_risk,
+        "full_hd_stage2_mode": a.full_hd_stage2_mode,
         "video_width": a.width,
         "video_height": a.height,
     }
@@ -195,6 +197,7 @@ def main() -> None:
             "allow_sequential_fallback": a.allow_sequential_fallback,
             "reuse_transformer_across_stages": a.enable_stage_reuse and not a.disable_stage_reuse,
             "accept_full_hd_batch2_oom_risk": a.accept_full_hd_batch2_oom_risk,
+            "full_hd_stage2_mode": a.full_hd_stage2_mode,
         },
     )
     (a.output_dir / "job-request.json").write_text(
