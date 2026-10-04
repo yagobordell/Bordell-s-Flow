@@ -64,7 +64,11 @@ def test_remote_immutable_digest_and_memory_are_verified_read_only() -> None:
         ("current_state", {"status": "running"}, "stably STOPPED"),
         ("container.image", "docker.io/other@sha256:" + "b" * 64, "digest differs"),
         ("container.environment_variables.LTX_WORKER_TASK_MODE", "a2v", "isolated I2V"),
-        ("container.environment_variables.LTX_EXPERIMENTAL_I2V_BATCH2_ENABLED", "false", "isolated I2V"),
+        (
+            "container.environment_variables.LTX_EXPERIMENTAL_I2V_BATCH2_ENABLED",
+            "false",
+            "isolated I2V",
+        ),
         ("container.resources.memory", 40960, "below"),
         ("container.resources.memory", None, "absent"),
     ],
