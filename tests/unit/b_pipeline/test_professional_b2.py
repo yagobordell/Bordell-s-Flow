@@ -103,17 +103,23 @@ def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions()
     assert "skip discretionary steps 3-12" in prompt
     assert "Write every image prompt as an affirmative description" in prompt
     assert "omit\nnegative prompt clauses, preventive exclusions" in prompt
-    assert "Screens and documents: context belongs outside the visible scene" in prompt
-    assert "(For context: he is scrolling through Instagram.)" in prompt
-    assert "(For context: she is reviewing a financial report about declining revenue.)" in prompt
-    assert "A person handling or looking at a device/document" in prompt
-    assert "is ONE possible scene, not a requirement." in prompt
-    assert "Never add a person, require natural handling" in prompt
-    assert "A close-up of a television on a wall in an otherwise empty room." in prompt
-    assert "Do not impose human interaction or device/page orientation." in prompt
-    assert "naturally oriented phones, other screens and documents" not in prompt
-    assert "No person or extra cars." not in prompt
-    assert "It never forces avatar, media, or any opening/closing anchor" not in prompt
+    assert "Screens and documents: narrative context" in prompt
+    assert "Choose the visible scene, subjects, actions, composition" in prompt
+    assert "(For context: [relevant information].)" in prompt
+    assert "Apply the same principle to image prompts and video animation prompts" in prompt
+    assert "include useful narrative details in a brief, separate" in prompt
+    assert "screen and document beats use narrative context" in prompt
+    # Screen/document context explains the narrative but does not dictate
+    # whether a person appears, an orientation, or what content may be depicted.
+    for old_rule in (
+        "is ONE possible scene, not a requirement.",
+        "Never add a person, require natural handling",
+        "Do not impose human interaction or device/page orientation.",
+        "without requiring a person or a particular",
+        "do not turn the note into a request to render legible text",
+        "Examples (different valid compositions for the same context rule)",
+    ):
+        assert old_rule not in prompt
     # Avoid replacing one brand rule with another, including in this correction.
     for word in ("brands", "branding", "logos", "packaging"):
         assert word not in prompt.lower()
