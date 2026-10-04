@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ai_video_factory.inference.contracts import InferenceJobRequest
 from ai_video_factory.inference.gpu_failures import is_retryable_gpu_failure
@@ -31,6 +31,7 @@ class A2VBatch2Parameters(BaseModel):
     stage2_mode: Literal["cpu"] = "cpu"
     vae_backend: Literal["eager", "triton_experimental"] = "eager"
     guidance_forward_batch_size: Literal[2, 4] = 2
+    max_stage1_major_page_faults: int = Field(default=0, ge=0, le=1000000)
     accept_full_hd_oom_risk: bool = False
 
     @model_validator(mode="after")
@@ -95,6 +96,7 @@ class ExperimentalA2VBatch2TaskRunner:
                 parameters_a=params.a, parameters_b=params.b,
                 vae_backend=params.vae_backend,
                 guidance_forward_batch_size=params.guidance_forward_batch_size,
+                max_stage1_major_page_faults=params.max_stage1_major_page_faults,
             )
         except Exception as exc:
             if is_retryable_gpu_failure(exc):
@@ -106,6 +108,8 @@ class ExperimentalA2VBatch2TaskRunner:
             raise RuntimeError("Requested A2V VAE backend was not executed")
         if report.get("guidance_forward_batch_size") != params.guidance_forward_batch_size:
             raise RuntimeError("Requested A2V guidance forward batch was not executed")
+        if report.get("max_stage1_major_page_faults") != params.max_stage1_major_page_faults:
+            raise RuntimeError("Requested A2V host paging guard was not executed")
         if report.get("actual_gpu_batch_size") != 2 or report.get("mode") != "batch2":
             raise RuntimeError("A2V B2 cannot return sequential fallback as real GPU batch2")
         for path in (first, second):
