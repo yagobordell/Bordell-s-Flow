@@ -11,7 +11,6 @@ __pycache__
 !.env.example
 data
 node_modules
-remotion/node_modules
 models
 *.safetensors
 *.ckpt
