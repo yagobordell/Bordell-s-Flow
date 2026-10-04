@@ -53,6 +53,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--terminal-failure-dir", type=Path)
     parser.add_argument("--expected-segment", default="")
+    parser.add_argument(
+        "--include-production", action="store_true",
+        help="Also block on normal A2V jobs when using the shared production Salad group",
+    )
     args = parser.parse_args()
     if bool(args.terminal_failure_dir) != bool(args.expected_segment):
         parser.error("--terminal-failure-dir and --expected-segment must be supplied together")
@@ -61,6 +65,9 @@ def main() -> int:
     dsn = os.getenv("POSTGRES_DSN", "").strip()
     if not dsn:
         raise SystemExit("POSTGRES_DSN is required: refusing to allocate an experimental GPU")
+    tasks = [_A2V_TASK]
+    if args.include_production:
+        tasks.append("video.ltx25.audio_to_video")
     try:
         with psycopg.connect(dsn, connect_timeout=10) as connection:
             with connection.cursor() as cursor:
@@ -69,10 +76,10 @@ def main() -> int:
                 cursor.execute(
                     """
                     SELECT job_id, status, lease_expires_at
-                    FROM gpu.jobs WHERE task = %s
+                    FROM gpu.jobs WHERE task = ANY(%s)
                       AND status IN ('pending', 'retryable_failed', 'running')
                     """,
-                    (_A2V_TASK,),
+                    (tasks,),
                 )
                 rows = [
                     dict(zip(("job_id", "status", "lease_expires_at"), record, strict=True))
