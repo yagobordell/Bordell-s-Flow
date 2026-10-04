@@ -1,15 +1,13 @@
-# Scripts
+# Herramientas
 
-Operational executables are grouped by responsibility:
+El punto de entrada de producción es `run.ps1`, que delega en
+`scripts/pipeline/run_managed.py` y en
+`scripts/pipeline/run_b_pipeline.py`.
 
-- `pipeline/run_b_pipeline.py`: active B1.1 → B1.2 → B2 planning with
-  local script and PNG avatar selection; no Salad capacity is requested by this runner.
-- `pipeline/`: independently runnable GPU and composition stage clients,
-  cache audits/preflights and controlled wrappers; no end-to-end video runner.
-- `salad/`: SaladCloud lifecycle, Postgres-backed capacity control and deployment.
-- `smoke/`: explicit inference smoke and validation workloads.
-- `diagnostics/`: queue, cache and recovery inspectors.
+- `pipeline/`: motor de B-pipeline, lanzador administrado y comprobación de disponibilidad de R2; no hay ejecutores independientes de las fases retiradas.
+- `salad/`: ciclo de vida de los servicios, Postgres y Capacity Controller.
+- `smoke/`: pruebas controladas de inferencia, sin integrarse en otra producción.
+- `diagnostics/`: inspección de colas, manifiestos y recuperación.
+- `youtube/` y `security/`: publicación y controles de credenciales.
 
-The scene/shot planning bots and their one-command production orchestrator have
-been retired; stage clients remain for their existing explicitly supplied
-artifacts until a source-preserving downstream B2 migration is validated.
+El historial de experimentos y las versiones anteriores del flujo se consultan en Git.

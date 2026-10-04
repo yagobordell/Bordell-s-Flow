@@ -1,34 +1,26 @@
-# Documentation
+# Documentación del flujo actual
 
-Active documentation describes the current system only. Historical validation runs, migration notes,
-old image digests and retired implementation handoffs belong in Git history.
+## Producción
 
-## Architecture
+- [Arquitectura](architecture/overview.md)
+- [Flujo B1.1 → B1.2 → B2 y producción](components/b-pipeline.md)
+- [Voz profesional](components/professional-voice.md)
+- [Imágenes profesionales](components/image-upscaler.md)
+- [Casero: voz](components/casero-voice-sources.md)
+- [Casero: CTA](components/casero-ebook-cta.md)
+- [Publicación en YouTube](integrations/youtube.md)
 
-- [System overview](architecture/overview.md)
-- [Planning retirement and Salad dependency audit](architecture/planning-retirement-audit.md)
-- [Shared inference worker core](architecture/inference-worker-core.md)
+## Infraestructura y operaciones
 
-## Components
+- [Núcleo compartido de inferencia](architecture/inference-worker-core.md)
+- [Despliegue de Salad](operations/salad-stack-deployment.md)
+- [Capacity Controller](operations/salad-capacity-controller.md)
+- [Validación del despliegue](operations/deployment-validation.md)
+- [LTX 2.5](components/ltx25-worker.md)
+- [LTX A2V](components/ltx25-a2v.md)
+- [Servicio de upscale](operations/image-upscaler-salad.md)
 
-- [Active B1.1/B1.2/B2 planning pipeline](components/b-pipeline.md)
-- [Breeze TTS 2 worker](components/breeze-tts2-worker.md)
-- [Fish Speech fallback](components/fish-speech-fallback.md)
-- [Whisper worker](components/whisper-worker.md)
-- [Ideogram 4 worker](components/ideogram4-worker.md)
-- [Qwen Image 2.1 worker](components/qwen-image-21.md)
-- [LTX 2.5 worker](components/ltx25-worker.md)
-- [LTX 2.5 audio-to-video mode](components/ltx25-a2v.md)
-- [Phase 8 video generation](components/phase8-video-generation.md)
-- [Phase 9 compositor](components/phase9-compositor.md)
-
-## Operations
-
-- [End-to-end runner retirement and migration](operations/production-runner.md)
-- [Salad stack deployment](operations/salad-stack-deployment.md)
-- [Salad Capacity Controller](operations/salad-capacity-controller.md)
-- [Salad startup performance](operations/salad-startup-performance.md)
-- [Deployment validation](operations/deployment-validation.md)
-
-Mutable deployment values such as image tags, queues, GPU classes, replica ceilings and runtime
-environment belong to `deploy/salad/services.json`.
+Los valores mutables de despliegue pertenecen a
+`deploy/salad/services.json`. La documentación histórica, los informes
+de experimentos y las instrucciones de runners retirados se conservan
+en el historial de Git.

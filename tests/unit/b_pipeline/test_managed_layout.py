@@ -109,6 +109,17 @@ def test_qr_only_does_not_consume_pending_script(
     assert not (root / "Jorge" / "first").exists()
 
 
+def test_retired_legacy_layout_flag_fails_before_any_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_call(*args, **kwargs):
+        raise AssertionError("Legacy layout must not run a subprocess")
+
+    monkeypatch.setattr(run_managed.subprocess, "call", unexpected_call)
+    with pytest.raises(SystemExit, match="has been retired"):
+        run_managed.main(["--legacy-layout", "test01", "Jorge"])
+
+
 def test_existing_script_folder_requires_explicit_resume(tmp_path: Path) -> None:
     root = tmp_path / "data"
     _png(root / "Jorge" / "Jorge.png")

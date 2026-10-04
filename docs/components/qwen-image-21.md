@@ -41,7 +41,8 @@ or use the production Capacity Controller. Stop manually allocated capacity afte
 a controlled test. Refer to `docs/operations/deployment-validation.md` for the
 production acceptance criteria.
 
-Phase 8 consumes the native 1280x736 keyframe without cropping. LTX fits the
-image proportionally into 1280x720 and extends roughly 14 pixels per side using
-edge pixels. LTX's internal 1280x768 model-grid padding is separate; the final
-video remains 1280x720 for the existing upscale and compositor contracts.
+The Qwen worker retains its native image-validation and Postgres/R2
+inference contracts for direct service use. B2's managed image path
+currently uses GPT Image, so this worker is not a parallel image
+generator for the managed B2 flow. Validate its current service
+independently rather than invoking the retired phase-8 scripts.

@@ -1,16 +1,17 @@
-# B1.1 → B1.2 → B2 (replacement planning bots)
+# B1.1 → B1.2 → B2: flujo actual
 
-Professional audio is now a downstream **post-B2** path:
-V1 (whole-film rhythm) → V2 (beat-level intent per block) →
-V3 (verbatim delivery, sustained style and optional human vocal tags) →
-Gemini 3.8 TTS per block. Casero retains its independent Fish/MiniMax/
-ElevenLabs path. V1/V2/V3 do not alter B2 visual contracts or any source
-narration. The original B8 documents are archived and the adapted prompts
-are versioned in `bots/prompts/v{1,2,3}.md`.
-See [Professional voice documentation](professional-voice.md).
+El acceso de producción es `run.ps1`, que selecciona el estilo del
+avatar y ejecuta los bots B1.1 → B1.2 → B2. El estilo profesional
+continúa con V1 → V2 → V3 → V4 y Gemini TTS por bloques;
+Casero conserva su propia ruta de voz y CTA. Las etapas de voz
+preservan los textos, identificadores y decisiones visuales de B2.
+Consulta [voz profesional](professional-voice.md).
 
+Los prompts activos viven en `src/ai_video_factory/bots/prompts/`.
+Las referencias históricas B8 están disponibles en el historial Git,
+no en el árbol actual.
 
-This standalone, opt-in stage loads its instruction documents from
+El motor actual carga sus documentos de instrucciones desde
 `src/ai_video_factory/bots/prompts/` on every run. Prompt edits take effect immediately;
 the runner does not require checksum updates. A transport note for Responses API
 Structured Outputs is appended at runtime.
@@ -152,138 +153,35 @@ The code-owned high-end phone-photography style remains separate from B2:
 `effective_image_prompt()` injects it during generation, after any
 numeric continuity marker.
 
-## Script library, avatar selection and snapshot
+## Scripts, avatares y checkpoints del flujo administrado
 
-Keep any number of authoritative UTF-8 plain-text scripts directly in
-`data/input/`, for example `historia_roma.txt` and `documental_japon.txt`.
-The input files are ignored by Git. There are no committed `.gitkeep`
-placeholders: on a clean clone, the B runner creates `data/input/` when listing
-or selecting scripts. To migrate previously ignored local files, move your
-`data/input/scripts/*.txt` files into `data/input/` without overwriting
-same-named files; the runner does not delete or move source scripts. Do not rename
-or copy a script to `script.txt`.
-Place one or more real PNG avatar images directly in `data/avatar/`, for
-example `monje.png` and `maestra.png`. The folder includes a versioned
-README, but **PNG images are not committed**. A missing avatar folder is
-created by the runner. On an ordinary run, the script is selected first
-and the avatar is selected second. The avatar is mandatory even if a
-particular B2 result does not use it in every beat.
-
-From the repository root, after setting `OPENAI_API_KEY` in local `.env`:
-
-List the available scripts (no API key or inference is required for this command):
+El acceso público de producción es `run.ps1`. En la primera
+ejecución, coloca el PNG del avatar y el guion TXT en `data/`;
+el lanzador organiza automáticamente
+`data/<avatar>/<guion>/<guion>.txt` y crea los metadatos persistentes del
+avatar en `data/<avatar>/meta/`. Para los siguientes guiones de ese
+avatar, deja cada TXT pendiente dentro de `data/<avatar>/`.
+El estilo `casero` o `profesional` se fija por avatar y no cambia
+silenciosamente.
 
 ```powershell
-uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --list-scripts
-uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --list-avatars
+.\run.ps1 historia_roma monje --style profesional
+.\run.ps1 historia_roma monje --from B2
+.\run.ps1 historia_roma monje --images-only
+.\run.ps1 historia_roma monje --sync-only
 ```
 
-Start the pipeline without selection arguments to choose the script and then
-the avatar from two numbered menus:
+Los estados de trabajo y los manifiestos verificables residen en
+`.video_factory_work/<avatar>/<guion>/`. Las salidas visibles
+se publican en `data/<avatar>/<guion>/outputs/` y `media/`.
+Los bots guardan sus `input.json` y `output.json` por bloque;
+`visual_plan.json` conserva la identidad y el orden de los beats.
+Los checks SHA-256 impiden reanudar con otro guion o reutilizar
+resultados de pago de una solicitud distinta. `--rerun` archiva
+expresamente la ejecución anterior antes de empezar una nueva.
 
-```powershell
-uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py
-```
-
-For a non-interactive run, choose the file explicitly:
-
-```powershell
-uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py `
-  --script documental_japon.txt --avatar monje.png --max-parallel-calls 8
-```
-
-`--script documental_japon` and `--avatar monje` work without their suffixes.
-Use `--scripts-dir PATH` or `--avatars-dir PATH` for a different library;
-a direct positional script path is still accepted. `--list-scripts` and
-`--list-avatars` require no API key or inference. In a non-interactive
-terminal, **both** script and avatar must be specified explicitly. Unknown,
-missing, symlinked or invalid PNG avatars cannot trigger API calls or delete
-the previous run output. The selected image is checked by Pillow before the
-output folder is replaced.
-
-To rerun only a later stage, use `--from B1.2` or `--from B2`. The runner
-loads the prior output from `data/output/<script-name>/`, verifies that the
-script SHA-256 matches, validates the saved B1.1 output, and for `--from B2`
-also validates the complete B1.2 merge. It skips API calls for earlier stages
-and replaces outputs from the selected stage onward. The run report carries
-forward prior timing and API usage. A checkpoint from another script or a
-missing/incomplete upstream stage is rejected before outputs are changed.
-
-```powershell
-uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py `
-  --script documental_japon.txt --avatar monje.png --from B1.2
-
-uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py `
-  --script documental_japon.txt --avatar monje.png --from B2
-```
-
-Each script gets its own default output directory,
-`data/output/<script-name>/` (directly under the output root, without a `b_pipeline` subfolder). A repeated run of the same script removes
-**that script's previous output directory before the first planning API call**, then creates
-a fresh run. Other script folders are not touched. The source `.txt` is never
-deleted or rewritten. `--output PATH` overrides the **output root**, not the
-per-script folder: the runner still appends `<script-name>/`. The runner refuses
-to delete an unrelated directory, a symlink or a path containing the input script.
-The script is read as UTF-8 without stripping or normalizing any characters.
-B1.1 receives the selected complete text as `plain_script_for_recording`.
-The avatar is **not** added to B2's audited request or response schema:
-the application stores one run-level avatar binding that downstream stages
-will resolve for both `avatar` and `avatar_media` beats.
-
-One finished script has the following structure (B1.2 and B2 repeat one subfolder
-per frozen block):
-
-```text
-data/output/historia_roma/
-  avatar.png
-  qr.png
-  run_report.json
-  B1.1/
-    input.json
-    output.json
-  B1.2/
-    merged_output.json
-    block_1/
-      input.json
-      output.json
-    block_2/
-      input.json
-      output.json
-  B2/
-    merged_output.json
-    block_1/
-      input.json
-      output.json
-    block_2/
-      input.json
-      output.json
-  visual_plan.json
-  images/
-    manifest.json
-    block_1/
-      1B.json
-      1B.png
-      1C.json
-      1C.png
-```
-
-Each `input.json` is the exact decoded payload sent to that bot, including the
-single materialized block for B1.2 and the upstream beats for B2. Each
-`output.json` contains the corresponding validated bot response. Inputs are
-written before each request and outputs after stage validation; a failed run
-can therefore leave diagnostic inputs and successfully completed outputs.
-The application-owned `B1.2/merged_output.json` and
-`B2/merged_output.json` combine the validated blocks in ascending `block_id`
-order without making a second model call or changing the original single-block
-input/output contracts. `visual_plan.json` remains the application-owned
-visual join. It adds a top-level `avatar` object containing `filename`,
-`source`, `file: "avatar.png"`, `sha256`, `width` and `height`.
-The same immutable binding appears at `run_report.json → run.avatar`.
-`avatar.png` is a byte-for-byte snapshot of the selected source, so later
-edits to `data/avatar/` cannot change the image used for this run. Original
-`B2/block_<id>/input.json` and `output.json` are unchanged; the top-level
-avatar binding applies to beats with `visual_type` `avatar` or `avatar_media`.
-Lip-sync/video generation is not implemented by this selection feature.
+El módulo `scripts/pipeline/run_b_pipeline.py` es el motor del
+lanzador, no un segundo layout de producción.
 
 ### Persistent ebook QR per avatar (local, no GPT calls)
 
@@ -569,19 +467,13 @@ Para el uso habitual en PowerShell, desde la raíz del repositorio:
 ```powershell
 .\run.ps1 test2 Jorge --no-image
 ```
-El acceso directo establece la biblioteca `data/input/scripts/` y llama
-al runner Python con `uv run --locked --extra dev`; los nombres del guion
-y avatar admiten omitir `.txt` y `.png`. Si se omiten ambos, el runner
-muestra los menús interactivos. Esta configuración del acceso directo no
-cambia el valor por defecto de `--scripts-dir` en el runner original.
-Una ejecución completa borra y sustituye `data/output/<guion>` antes de
-generarlo de nuevo.
-
-Para iterar solo los bots sin crear imágenes, usa `--no-image`
-(alias compatible de `--skip-images`):
+El lanzador selecciona el avatar y el guion desde el layout
+administrado `data/<avatar>/`. Sin argumentos, muestra los menús
+interactivos. Para iterar únicamente los bots, sin nuevas llamadas
+de imagen, ejecuta:
 
 ```powershell
-uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script historia_roma.txt --avatar monje.png --no-image
+.\run.ps1 historia_roma monje --no-image
 ```
 
 El runner termina después de escribir B2 y `visual_plan.json`, sin llamar
@@ -694,12 +586,12 @@ No arranques ni detengas manualmente los Container Groups mientras el
 controlador sea el propietario de la capacidad. Si tu `POSTGRES_DSN` utiliza un
 pooler transaccional, configura el DSN de sesión independiente del controlador
 antes de ejecutar `--generate-video`.
-Si los guiones están en `data/input/` en vez de `data/input/scripts/`,
-usa directamente:
+Para detener la ejecución antes de vídeo y reanudarlo
+posteriormente se utiliza el mismo lanzador administrado:
 
 ```powershell
-uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script test2 --no-video --avatar Jorge
-uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py --script test2 --generate-video
+.\run.ps1 test2 Jorge --no-video
+.\run.ps1 test2 Jorge --generate-video
 ```
 
 `--images-only` y `--resume-audio` también activan LTX cuando la otra
@@ -707,7 +599,7 @@ mitad de artefactos está disponible. Las comprobaciones automáticas son
 técnicas y no acreditan visualmente la sincronización de labios o la
 inmovilidad de cámara; se requiere revisión de una generación real en Salad.
 
-## Organización automática de guiones por avatar (nuevo `run.ps1`)
+## Organización de guiones por avatar
 
 El acceso directo `run.ps1` usa ahora **data/ como punto de entrada**.
 Para estrenar un avatar, coloca únicamente su PNG y el primer guion TXT
@@ -819,11 +711,8 @@ comprueba el guion, los hashes de imágenes y audio y el MP4 antes de crear el
 elegidos por los manifiestos actuales, no generaciones descartadas. Publicar
 dos veces el mismo resultado verifica y reutiliza los archivos ya presentes;
 si un archivo publicado fue modificado o falta, falla sin regenerar ni
-sobrescribirlo. Se conserva `--legacy-layout` para ejecutar directamente
-el runner previo con `data/avatar`, `data/input/scripts`, `data/output`
-y `data/results` como antes.
-
-Los ejemplos anteriores de este documento que citan `data/input/scripts` o
-`data/output/<script>` corresponden al runner **histórico**:
-usa `uv run --locked --extra dev python scripts/pipeline/run_b_pipeline.py`
-o `.\run.ps1 --legacy-layout ...` para reproducir exactamente esos comandos.
+sobrescribirlo. El único acceso directo admitido por `run.ps1` es el directorio
+administrado `data/<avatar>/<guion>/`. Para probar el motor directamente
+sin el lanzador, `scripts/pipeline/run_b_pipeline.py` conserva su interfaz
+técnica de checkpoints y rutas explícitas; no constituye otro flujo público
+ni ofrece el antiguo modo `--legacy-layout`.

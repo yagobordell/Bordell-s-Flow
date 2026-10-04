@@ -12,12 +12,14 @@ has fewer than five beats, one voice block remains. B2 and all its original
 beat identities stay unchanged for visuals/video.
 Even B2 beats with `audio: false` receive narration (voice-over).
 
-## Four stages and archived originals
+## Four active voice stages
 
-The original B8.1/B8.2/B8.3 references and the later supplied B8.4
-are archived under `docs/reference/professional-voice-original-b8-*.md`.
-Adapted prompts live under `src/ai_video_factory/bots/prompts/v{1,2,3,4}.md`;
-`v3_legacy.md` preserves the old provider-specific prompt for old checkpoints.
+The only prompts for **new** professional voice runs are
+`src/ai_video_factory/bots/prompts/v{1,2,3,4}.md`. The original
+B8 reference documents live in Git history, not in the current tree.
+`v3_legacy.md` is not selectable for new runs: it exists solely to
+reconcile already-paid historical voice checkpoints without resubmitting
+charges.
 B3 canonical scenes and B7.2 depictions do not exist in this repository's B2
 contract; the active V2/V3 prompts instead operate on immutable B2 beat IDs.
 They never invent scenes, pictures, timing or narration.
