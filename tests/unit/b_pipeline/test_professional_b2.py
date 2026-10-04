@@ -91,26 +91,6 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     assert "When audio=true, video_prompt is instead sent to the A2V" in prompt
 
 
-def test_professional_video_uses_for_context_for_offscreen_website_content() -> None:
-    """The B2 instruction must not animate unobservable screen content."""
-    prompt = (
-        files("ai_video_factory.bots.prompts")
-        .joinpath("b2_professional.md")
-        .read_text(encoding="utf-8")
-    )
-    video_rules = prompt.split("Video animation prompt (video_prompt)", 1)[1]
-    assert "animate what is" in video_rules
-    assert "observable from the supplied starting frame" in video_rules
-    assert "a few natural" in video_rules and "keystrokes" in video_rules
-    assert "small trackpad movement" in video_rules
-    assert "(For context: he is opening the delivery company's" in video_rules
-    assert "website directly.)" in video_rules
-    # An exposed display still permits describing genuine visible interactions.
-    assert "If the chosen frame does show the content" in video_rules
-    # The rule is not a forced shot composition or actor requirement.
-    assert "does not prescribe a presenter or a front-facing" in video_rules
-
-
 def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions() -> None:
     prompt = (
         files("ai_video_factory.bots.prompts")
@@ -127,13 +107,6 @@ def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions()
     assert "Choose the visible scene, subjects, actions, composition" in prompt
     assert "(For context: [relevant information].)" in prompt
     assert "Apply the same principle to image prompts and video animation prompts" in prompt
-    assert "Evaluate visibility independently in EACH prompt" in prompt
-    assert "does not establish that the screen or document contents are visible" in prompt
-    assert "The video generator receives video_prompt separately" in prompt
-    assert "When the screen/page content is actually shown" in prompt
-    assert "animate what is" in prompt and "observable from the supplied starting frame" in prompt
-    assert "If the chosen frame does show the content" in prompt
-    assert "image prompt and video_prompt each decide independently" in prompt
     assert "include useful narrative details in a brief, separate" in prompt
     assert "screen and document beats use narrative context" in prompt
     # Screen/document context explains the narrative but does not dictate
@@ -150,6 +123,32 @@ def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions()
     # Avoid replacing one brand rule with another, including in this correction.
     for word in ("brands", "branding", "logos", "packaging"):
         assert word not in prompt.lower()
+
+
+def test_professional_video_prompt_keeps_screen_content_only_in_context() -> None:
+    """Video-only rule; the earlier image-prompt instructions remain intact."""
+    instructions = (
+        files("ai_video_factory.bots.prompts")
+        .joinpath("b2_professional.md")
+        .read_text(encoding="utf-8")
+    )
+    image_rules = instructions.split(
+        "Screens and documents: narrative context", 1
+    )[1].split("Video animation prompt (video_prompt)", 1)[0]
+    video_rules = instructions.split(
+        "Video animation prompt (video_prompt)", 1
+    )[1].split("\nreference\n", 1)[0]
+
+    assert "Apply the same principle to image prompts and video animation prompts" in (
+        image_rules
+    )
+    assert "ALWAYS belongs exclusively" in video_rules
+    assert "whether the screen/page is visible" in video_rules
+    assert "Include that note in video_prompt independently" in video_rules
+    assert "a few natural" in video_rules and "keystrokes" in video_rules
+    assert "(For context: he is opening the delivery company's" in video_rules
+    assert "website directly.)" in video_rules
+    assert "content only in its separate (For context: ...) note" in video_rules
 
 
 def _professional_anchor_output(
