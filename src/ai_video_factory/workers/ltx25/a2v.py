@@ -1527,6 +1527,16 @@ class DirectLTX25AudioToVideoBackend:
             quantization=quantization,
             offload_mode=offload_mode,
         )
+        if generation_profile in LTX_A2V_EXPERIMENTS and selected_offload == "cpu":
+            # Upstream streaming meta_model.eval() already ran. Avoid repeating
+            # the recursive traversal of live streaming hooks in benchmark only.
+            from .reference_a2v import (
+                DistilledReferenceA2VPipeline,
+                configure_experimental_a2v_streaming,
+            )
+            if isinstance(self._pipeline, DistilledReferenceA2VPipeline):
+                configure_experimental_a2v_streaming(self._pipeline)
+                logger.info("LTX25_A2V_EXPERIMENTAL_STREAMING_EVAL_GUARD enabled=true")
         self._pipeline_profile = generation_profile
         self._pipeline_effective_backend = effective_backend
         self._pipeline_params = bindings.detect_params(str(transformer))
@@ -1568,6 +1578,22 @@ class LTXAudioToVideoTaskRunner:
             # Record the OOM with its original allocator state, before cleanup
             # invalidates resident models and obscures the failing allocation.
             diagnostic_failure(exc)
+            if (
+                request.task == LTX_A2V_EXPERIMENTAL_TASK
+                and isinstance(exc, TypeError)
+                and "cannot unpack non-iterable FeedForward object" in str(exc)
+            ):
+                # A malformed live PyTorch module hierarchy is not transient.
+                # Never retry in the same CUDA process after this failure.
+                logger.error(
+                    "A2V_EXPERIMENTAL_STREAMING_STRUCTURE_INVALID job_id=%s",
+                    request.job_id,
+                )
+                raise NonRetryableTaskError(
+                    "A2V_EXPERIMENTAL_STREAMING_STRUCTURE_INVALID: "
+                    "streaming module traversal failed; keep the GPU worker stopped "
+                    "and inspect its original diagnostic traceback"
+                ) from exc
             if is_retryable_gpu_failure(exc) or classify_gpu_failure(exc) == "decoder_budget":
                 invalidator = getattr(self._backend, "invalidate_pipeline", None)
                 if callable(invalidator):
