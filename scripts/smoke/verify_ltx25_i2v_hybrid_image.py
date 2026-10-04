@@ -27,6 +27,7 @@ from ai_video_factory.workers.ltx25.model import DirectLTX25Backend
 from ai_video_factory.workers.ltx25.paired_i2v import generate_paired_fast_distilled
 from ltx_core.block_streaming.builder import StreamingModelBuilder
 from ai_video_factory.workers.ltx25.shared_i2v_decoder import SharedSequentialVideoDecoder
+from ai_video_factory.workers.ltx25.memory_trace import I2VMemoryTrace
 from ltx_core.model.video_vae.transformer.attention import natten_available
 
 assert "full_hd_stage2_mode" in Batch2Parameters.model_fields, "old batch2 request schema"
@@ -103,6 +104,15 @@ assert '_force_diffvae_eager_sdpa' in inspect.getsource(_select_diffvae_backend)
 )
 print("I2V_VAE_RUNTIME_STATUS natten_importable=" + str(natten_available()) +
       " selected_baseline=eager_sdpa (prior RTX5090 native NATTEN crash)")
+assert hasattr(I2VMemoryTrace, "sample_now")
+assert hasattr(I2VMemoryTrace, "report")
+assert 'with memory_trace:' in inspect.getsource(DirectLTX25Backend.generate_pair), (
+    "image is missing RAM timeline around B2 inference"
+)
+assert "mark_i2v_ram_phase" in inspect.getsource(DirectLTX25Backend._pair_attempt), (
+    "image lacks per-clip VAE RAM phase markers"
+)
+print("I2V_RAM_TRACE_ABI_OK")
 print("I2V_HYBRID_DOCKER_ABI_OK")
 """
 
