@@ -165,3 +165,10 @@ Unparsed responses and uncertain request outcomes are reported with unknown
 cost instead of being counted as free. OpenAI V planning uses the verified
 same Luna token price calculation as B1.1/B1.2/B2; **Gemini TTS and
 OpenAI STT remain excluded** from that OpenAI planning estimate, as before.
+
+
+## B8-to-V audit: scope and silence fidelity
+
+B8.1 originally sees the whole film; V1 still sees the whole B2 film, but assigns baselines to the resulting voice groups. B8.2 originally sees B3 canonical scene scopes and B7.2 finished depictions, neither of which exists in this B2 pipeline. V2 deliberately uses immutable B2 beats as local intent units and one overall landing per resulting voice group, preserving the B8.2 separation between cognitive and attitudinal change and relative tempo/pressure modulation. V3 receives each full voice group and treats B2's imagery strictly as planned depiction, not observed completed footage. These are transparent adaptations, not a literal scene-level port of the original B8 documents.
+
+V4 extends the provider-neutral B8.4 with precisely source-referenced Gemini events. Each compiled pause additionally carries a concise pause_direction taken from V3's pause_function and included in the adjacent Gemini per-part style; a short/long tag alone cannot preserve its function. Where separately authorized V3 vocalizations and pauses share a source character boundary, V4 preserves both tags in original V3 order. No compiler output may make a new artistic choice.
