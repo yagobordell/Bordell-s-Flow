@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
+import re
 
 import pytest
 from PIL import Image, ImageDraw
@@ -53,16 +55,18 @@ class RecordingGPT:
             raise ConnectionError("lost native grid edit outcome")
         size = tuple(map(int, kw["size"].split("x")))
         destination = kw["destination"]
-        if size == (2560, 1440) and not kw.get("reference_image_urls"):
-            # Non-uniform grid with real straight white separators.
+        grid = re.search(r"([23])x([23]) grid", kw["prompt"])
+        if grid is not None:
+            columns, rows = int(grid.group(1)), int(grid.group(2))
             image = Image.new("RGB", size, "white")
             drawing = ImageDraw.Draw(image)
-            for row in range(2):
-                for col in range(2):
+            width, height = size[0] // columns, size[1] // rows
+            for row in range(rows):
+                for col in range(columns):
                     drawing.rectangle(
-                        (col * 1280 + 10, row * 720 + 10,
-                         (col + 1) * 1280 - 10, (row + 1) * 720 - 10),
-                        fill=(50 + col * 80, 50 + row * 100, 90),
+                        (col * width + 10, row * height + 10,
+                         (col + 1) * width - 10, (row + 1) * height - 10),
+                        fill=(50 + col * 65, 50 + row * 65, 90),
                     )
             out = io.BytesIO()
             image.save(out, "PNG")
@@ -118,8 +122,8 @@ def test_professional_standalone_native_video_still_image_original_quality_uncha
     )
     by_stem = {call["destination"].stem: call for call in direct.calls}
     assert (by_stem["1B"]["size"], by_stem["1B"]["quality"]) == ("1280x720", "low")
-    assert (by_stem["1C"]["size"], by_stem["1C"]["quality"]) == ("1920x1088", "medium")
-    assert (by_stem["1D"]["size"], by_stem["1D"]["quality"]) == ("1920x1088", "medium")
+    assert (by_stem["1C"]["size"], by_stem["1C"]["quality"]) == ("1920x1088", "low")
+    assert (by_stem["1D"]["size"], by_stem["1D"]["quality"]) == ("1920x1088", "low")
     assert by_stem["1D"]["reference_image_url"].startswith("data:image/png;base64,")
     original_hashes = [item["sha256"] for item in original["items"]]
     upscaler = RecordingUpscaler()
@@ -145,86 +149,69 @@ def test_professional_standalone_native_video_still_image_original_quality_uncha
     assert len(upscaler.calls) == 1 and len(direct.calls) == 3
 
 
-def test_professional_mixed_grid_upscales_images_and_natively_regenerates_video(
-    tmp_path,
-):
+
+def test_professional_mixed_grid_upscales_only_stills_and_uses_video_crop(tmp_path):
     plan = professional(
         beat("1B", "media_image", "1. Red doorway"),
         beat("1C", "media_video", "2. Same doorway as moving shot"),
-    )
-    direct = RecordingGPT()
-    original = gpt.generate_b2_images(
-        tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
-    )
-    assert original["grid_count"] == 1
-    assert len(direct.calls) == 1
-    assert direct.calls[0]["size"] == "2560x1440"
-    assert direct.calls[0]["quality"] == "medium"
-    crop_grid_assets(tmp_path, original)
-    crop_hashes = [p["sha256"] for p in original["panel_assets"]]
-    upscaler = RecordingUpscaler()
-    finished = finish_professional_images(
-        tmp_path, plan, original, upscaler=upscaler,
-        api_key=None, direct_client=direct,
-    )
-    assert len(direct.calls) == 2
-    video_edit = direct.calls[1]
-    assert video_edit["size"] == "1920x1088"
-    assert video_edit["quality"] == "medium"
-    assert len(video_edit["reference_image_urls"]) == 1
-    assert video_edit["destination"].suffix == ".png"
-    assert {
-        p["beat_id"]: (p["width"], p["height"]) for p in finished
-    } == {"1B": (2560, 1440), "1C": (1920, 1080)}
-    assert upscaler.calls == [((1280, 720), (2560, 1440))]
-    assert original["native_grid_video_calls"] == 1
-    assert [p["sha256"] for p in original["panel_assets"]] == crop_hashes
-    assert all(
-        _verified_asset(tmp_path, p["file"], p["sha256"]).is_file() for p in finished
-    )
-    # The paid grid stays intact; panel paths now hold only finished images.
-    assert original["items"][0]["grid"]["width"] == 2560
-    assert all(p["file"] == f"images/block_1/{p['beat_id']}.png" for p in finished)
-    assert not (tmp_path / "images" / "professional_finished").exists()
-    crop_grid_assets(tmp_path, original)  # Resume must accept verified replaced panels.
-    gpt.generate_b2_images(
-        tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
-    )  # Reuse the original paid grid without any additional GPT request.
-    again = finish_professional_images(
-        tmp_path, plan, original, upscaler=upscaler,
-        api_key=None, direct_client=direct,
-    )
-    assert again == finished
-    assert len(direct.calls) == 2
-    assert len(upscaler.calls) == 1
-
-
-def test_lost_paid_native_grid_edit_is_not_resubmitted_on_resume(tmp_path):
-    plan = professional(
-        beat("1B", "media_image", "1. Forest"),
-        beat("1C", "media_video", "2. Forest action"),
     )
     direct = RecordingGPT(fail_native=True)
     original = gpt.generate_b2_images(
         tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
     )
+    assert original["grid_count"] == 1
+    assert len(direct.calls) == 1
+    assert direct.calls[0]["size"] == "3840x2160"
+    assert direct.calls[0]["quality"] == "medium"
     crop_grid_assets(tmp_path, original)
+    crop_hashes = {p["beat_id"]: p["sha256"] for p in original["panel_assets"]}
     upscaler = RecordingUpscaler()
-    with pytest.raises(ConnectionError, match="lost native"):
-        finish_professional_images(
-            tmp_path, plan, original, upscaler=upscaler,
-            api_key=None, direct_client=direct,
-        )
-    assert original["finishing_status"] == "incomplete"
-    assert len(direct.calls) == 2
-    with pytest.raises(ProfessionalImageFinishingError, match="Unknown outcome"):
-        finish_professional_images(
-            tmp_path, plan, original, upscaler=upscaler,
-            api_key=None, direct_client=direct,
-        )
-    assert len(direct.calls) == 2
+    finished = finish_professional_images(
+        tmp_path, plan, original, upscaler=upscaler,
+        api_key=None, direct_client=direct,
+    )
+    assert len(direct.calls) == 1  # Never create a second GPT image per panel.
+    assert {
+        p["beat_id"]: (p["width"], p["height"]) for p in finished
+    } == {"1B": (3840, 2160), "1C": (1920, 1080)}
+    assert finished[1]["sha256"] == crop_hashes["1C"]
+    assert finished[1]["provider"] == "grid_video_crop"
+    assert upscaler.calls == [((1920, 1080), (3840, 2160))]
+    assert original["native_grid_video_calls"] == 0
+    assert all(
+        _verified_asset(tmp_path, p["file"], p["sha256"]).is_file() for p in finished
+    )
+    crop_grid_assets(tmp_path, original)
+    gpt.generate_b2_images(
+        tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
+    )
+    again = finish_professional_images(
+        tmp_path, plan, original, upscaler=upscaler,
+        api_key=None, direct_client=direct,
+    )
+    assert again == finished
+    assert len(direct.calls) == 1
     assert len(upscaler.calls) == 1
 
+
+def test_grid_video_finishing_requires_no_second_gpt_call_or_api_key(tmp_path):
+    plan = professional(beat("1B", "media_video", "1. Forest action"),
+                        beat("1C", "media_video", "2. Forest continuation"))
+    direct = RecordingGPT(fail_native=True)
+    original = gpt.generate_b2_images(
+        tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
+    )
+    panels = crop_grid_assets(tmp_path, original)
+    finished = finish_professional_images(
+        tmp_path, plan, original, upscaler=None, api_key=None,
+    )
+    assert len(direct.calls) == 1
+    assert [p["sha256"] for p in panels] == [p["sha256"] for p in finished]
+    assert all(p["provider"] == "grid_video_crop" for p in finished)
+    assert original["native_grid_video_calls"] == 0
+    assert finish_professional_images(
+        tmp_path, plan, original, upscaler=None, api_key=None,
+    ) == finished
 
 def test_casero_image_jobs_do_not_acquire_new_resolution_or_finishing(tmp_path):
     plan = {"blocks": [{"block_id": 1, "beats": [
@@ -246,18 +233,37 @@ def test_casero_image_jobs_do_not_acquire_new_resolution_or_finishing(tmp_path):
         )
 
 
-def test_mixed_grid_video_resolution_comes_from_native_edit_not_resize():
+
+def test_professional_grid_sizes_depend_on_video_and_canvas_limit():
+    cases = [
+        (["media_image", "media_image"], "2560x1440", (1280, 720)),
+        (["media_image", "media_video"], "3840x2160", (1920, 1080)),
+        (["media_image", "media_image", "media_video"], "3840x2160", (1920, 1080)),
+        (["media_image"] * 4 + ["media_video"], "3840x1440", (1280, 720)),
+        (["media_image"] * 6 + ["media_video"], "3840x2160", (1280, 720)),
+    ]
+    for kinds, expected_size, expected_panel in cases:
+        plan = professional(*[
+            beat(f"1{chr(ord('B') + i)}", kind, f"{i+1}. Step {i+1}")
+            for i, kind in enumerate(kinds)
+        ])
+        jobs = plan_image_jobs(plan, gpt.described_beats(plan))
+        assert len(jobs) == 1
+        assert jobs[0]["size"] == expected_size
+        assert (jobs[0]["grid"]["panel_width"],
+                jobs[0]["grid"]["panel_height"]) == expected_panel
+
+
+def test_video_selected_as_grid_filler_increases_2x2_canvas():
     plan = professional(
-        beat("1B", "media_image", "1. Photo"),
-        beat("1C", "media_video", "2. Video"),
+        beat("1B", "media_image", "1. First image"),
+        beat("1C", "media_image", "2. Second image"),
+        beat("1D", "media_video", "An unnumbered video filler"),
     )
-    described = gpt.described_beats(plan)
-    jobs = plan_image_jobs(plan, described)
-    assert len(jobs) == 1
-    assert jobs[0]["size"] == "2560x1440"
-    assert jobs[0]["video_panel_ids"] == ["1C"]
-    assert jobs[0]["grid"]["panel_width"] == 1280
-    # Native per-video output is a separately paid edit after cropping.
+    jobs = plan_image_jobs(plan, gpt.described_beats(plan))
+    assert jobs[0]["size"] == "3840x2160"
+    assert (jobs[0]["grid"]["panel_width"],
+            jobs[0]["grid"]["panel_height"]) == (1920, 1080)
 
 
 def test_completed_professional_finishing_is_archived_on_b2_rerun(tmp_path):
@@ -279,11 +285,13 @@ def test_completed_professional_finishing_is_archived_on_b2_rerun(tmp_path):
     assert not gpt.has_pending_image_tasks(tmp_path)
     removed = gpt.clear_b2_images_for_rerun(tmp_path)
     assert removed >= 3
-    archived = list((tmp_path / "images_replaced_professional_finishing").glob(
-        "run-*/block_1/1C-native_grid_video.json"
-    ))
-    assert len(archived) == 1
     assert not (tmp_path / "images" / "finishing_state").exists()
+    assert list((tmp_path / "images_replaced_professional_finishing").glob(
+        "run-*/block_1/1B-image_x2.json"
+    ))
+    assert list((tmp_path / "images_replaced_b2").glob(
+        "run-*/grids/block_1_1B.json"
+    ))
     ledger = ApiCostLedger()
     ledger.sync_image_usage(tmp_path)
     report = ledger.report(
@@ -291,25 +299,29 @@ def test_completed_professional_finishing_is_archived_on_b2_rerun(tmp_path):
         expected_calls={"B1.1": 0, "B1.2": 0, "B2": 0, "Fish director": 0},
     )
     assert report["stages"]["B2 images"]["priced_calls"] == 1
-    assert "images_replaced_professional_finishing" in report["requests"][0][
-        "image_state_file"
-    ]
+    assert "images_replaced_b2" in report["requests"][0]["image_state_file"]
 
 
-def test_b2_rerun_refuses_unresolved_native_video_edit_without_deletion(tmp_path):
+def test_historical_unknown_native_edit_is_not_discarded(tmp_path):
     plan = professional(
         beat("1B", "media_image", "1. Forest"),
         beat("1C", "media_video", "2. Forest video"),
     )
-    direct = RecordingGPT(fail_native=True)
+    direct = RecordingGPT()
     original = gpt.generate_b2_images(
         tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
     )
     crop_grid_assets(tmp_path, original)
-    with pytest.raises(ConnectionError, match="lost native"):
+    state = tmp_path / "images" / "finishing_state" / "block_1" / "1C-native_grid_video.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(json.dumps({
+        "schema_version": "professional-image-finishing-v1",
+        "status": "direct_submitting_unknown",
+        "source": "images/block_1/1C.png",
+    }))
+    with pytest.raises(ProfessionalImageFinishingError, match="Historical"):
         finish_professional_images(
-            tmp_path, plan, original, upscaler=RecordingUpscaler(),
-            api_key=None, direct_client=direct,
+            tmp_path, plan, original, upscaler=RecordingUpscaler(), api_key=None,
         )
     paid_grid = tmp_path / "images" / "grids" / "block_1_1B.png"
     paid_bytes = paid_grid.read_bytes()
@@ -317,9 +329,7 @@ def test_b2_rerun_refuses_unresolved_native_video_edit_without_deletion(tmp_path
     with pytest.raises(gpt.ImageGenerationError, match="finishing is unresolved"):
         gpt.clear_b2_images_for_rerun(tmp_path)
     assert paid_grid.read_bytes() == paid_bytes
-    assert (tmp_path / "images" / "finishing_state" / "block_1"
-            / "1C-native_grid_video.json").is_file()
-
+    assert state.is_file()
 
 def test_managed_partial_publication_contains_verified_professional_finished_images(tmp_path):
     from ai_video_factory.managed_media import _image_sources
