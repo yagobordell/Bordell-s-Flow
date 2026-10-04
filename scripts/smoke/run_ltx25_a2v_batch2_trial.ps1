@@ -16,6 +16,9 @@ param(
     [ValidateSet("eager", "triton_experimental")][string]$VaeBackend = "eager",
     [ValidateSet(2, 4)][int]$GuidanceForwardBatchSize = 2,
     [ValidateRange(0, 1000000)][int]$MaxStage1MajorPageFaults = 0,
+    [ValidateSet(1, 2, 4, 8)][int]$ProgressiveBlockGroupSize = 1,
+    [ValidateRange(0, 10000)][double]$MinCheckpointDirectReadMiBps = 0,
+    [ValidateRange(0, 3600)][double]$MaxStage1BuildSeconds = 0,
     [ValidateRange(0, 10800)][double]$PerformanceTargetSeconds = 0,
     [switch]$CheckInputsOnly,
     [switch]$AllowPaidTrial,
@@ -63,6 +66,9 @@ $ArgsList = @(
     "--accept-full-hd-oom-risk", "--vae-backend", $VaeBackend,
     "--guidance-forward-batch-size", [string]$GuidanceForwardBatchSize,
     "--max-stage1-major-page-faults", [string]$MaxStage1MajorPageFaults,
+    "--progressive-block-group-size", [string]$ProgressiveBlockGroupSize,
+    "--min-checkpoint-direct-read-mibps", [string]$MinCheckpointDirectReadMiBps,
+    "--max-stage1-build-seconds", [string]$MaxStage1BuildSeconds,
     "--performance-target-seconds", [string]$PerformanceTargetSeconds
 )
 if ($ReferenceA) { $ArgsList += @("--reference-a", $ReferenceA) }
