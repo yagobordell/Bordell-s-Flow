@@ -109,7 +109,7 @@ def test_standard_requests_generate_one_image_per_job_and_cache_results(
     ("A laptop. (For context : the page contains a report.)", "medium"),
     ("A laptop. ( For context : the page contains a report.)", "medium"),
     ("A laptop. (   fOr  CoNtExT  : text", "medium"),
-    ("A laptop. (\\n For\\tcontext: message", "medium"),
+    ("A laptop. (\n For\tcontext: message", "medium"),
     ("A table discussing for context with no parenthesis", "low"),
     ("A page about the word contextualization", "low"),
     ("A file labeled (for contexts: topic)", "low"),
