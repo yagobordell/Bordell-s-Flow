@@ -309,7 +309,7 @@ def main() -> None:
     if isinstance(report.get("memory_trace"), dict):
         ram = report["memory_trace"]
         (a.output_dir / "memory-trace.json").write_text(
-            json.dumps(ram, indent=2, sort_keys=True) + "\\n", encoding="utf-8"
+            json.dumps(ram, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
         samples = ram.get("samples", [])
         if samples:
