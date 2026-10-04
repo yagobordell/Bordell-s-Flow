@@ -263,3 +263,79 @@ force the 200-second metric. As a separately priced scheduling
 alternative, concurrent independent B1 jobs on separate GPUs could
 shorten wall time, but are **not** the same one-GPU B2 benchmark and
 must include both running-GPU cost and cold-start cost.
+
+
+## Cold-checkpoint bottleneck postmortem and grouped-stage2 candidate (2026-10-05)
+
+The full Salad CSV for the 628.34-second B4+Triton run shows **two
+different worker instances**: the first failed the 100-Mbps network probe
+(61-71 Mbps) and requested replacement. The second downloaded about **71 GB**
+of A2V assets between 21:47 and 22:10 and finished bootstrap at 22:14,
+then accepted the job at 22:15. It took **56.08 s for Gemma and embeddings**,
+**188.36 s to build the GPU-resident Stage 1 transformer**, **166.14 s to
+build Stage 2**, but only **57.05 + 62.79 s to denoise** and
+**30.26 + 24.36 s to encode both clips**. Stage 1 recorded only 1292
+additional major page faults, so the previous page-fault protection
+could not catch this kind of cold/slow checkpoint access. At most
+39.83 GiB process VmHWM and 59.54 MiB process swap were reported;
+the container memory controller was unavailable. The log strongly
+implicates a recently downloaded, cold model filesystem, but existing
+data cannot separate I/O throughput from CPU conversion during model
+construction. Do not claim that the disk is the sole proven cause.
+
+This experiment adds three *opt-in and strictly isolated* changes:
+
+- `-MinCheckpointDirectReadMiBps 350`: before constructing Gemma or
+  running the Triton GPU probe, perform eight distant 16-MiB aligned
+  O_DIRECT reads on the original **42-GB transformer checkpoint**.
+  Report median/minimum throughput. Reject slow or unsupported direct
+  reads rather than mistaking cached reads for fast storage. The threshold
+  is an initial experimental admission floor, NOT a guaranteed latency
+  predictor. A failed gate still incurs any preceding Salad bootstrap.
+- `-ProgressiveBlockGroupSize 8`: Stage 2 requests the SAME FP8 CPU-pinned
+  destination buffers and SAME upstream per-key state-dict transforms,
+  but batches up to eight consecutive transformer blocks into one
+  restricted checkpoint read rather than issuing a new loader invocation
+  for every block. Validate all expected keys and copy original bytes
+  into the same final views, releasing raw tensors after every group.
+  This reduces repeated metadata/setup calls and may improve locality
+  without changing the model or forward equations. Additional transient
+  raw weights (up to eight blocks) are expected, so reject OOM and
+  monitor RAM/swap. I2V and the old A2V B2 default remain group=1.
+- `-MaxStage1BuildSeconds 70`: abort safely after Stage 1 model build
+  if the selected instance again takes an abnormal time, before running
+  any denoise/Stage 2/VAE. Model-build log now reports process CPU
+  seconds, process physical read-byte delta and major-fault delta
+  independently for **each** stage, including failed slow builds.
+
+The candidate retains fused-B4 CFG, strict Triton DiffVAE, 1080p,
+137 frames, identical original input hashes, seed pair, FP8 policy,
+sigmas, audio freeze and immutable original Eager reference comparison.
+Nothing is promoted automatically. The comparison must be checked
+visually for both facial motion and lipsync even when PSNR/SSIM and
+audio-envelope alignment look good.
+
+A new Docker digest is required. The exact-image free ABI gate rejects
+an older worker without the grouped-loader source marker, new typed
+parameters or O_DIRECT probe. After build/publish, use the existing
+experimental PowerShell trial with:
+
+```powershell
+$Trial.RunId = "a2v-b4-triton-group8-$(Get-Date -Format yyyyMMddHHmmss)"
+.\scripts\smoke\run_ltx25_a2v_batch2_trial.ps1 @Trial \
+    -GuidanceForwardBatchSize 4 -VaeBackend triton_experimental \
+    -ProgressiveBlockGroupSize 8 -MinCheckpointDirectReadMiBps 350 \
+    -MaxStage1BuildSeconds 70 -MaxStage1MajorPageFaults 20000 \
+    -PerformanceTargetSeconds 200 -CheckInputsOnly
+```
+
+Only after local preflight, immutable image ABI check, and stopped,
+operator-owned experimental Salad group + exact-image verification
+may the same command be executed with `-AllowPaidTrial -NonInteractive`.
+Never force cleanup of a foreign execution.
+
+**Important:** Even the previous fastest Eager-B4 run was 267.73 s.
+Grouped Stage 2 and host admission are potential improvements, but
+neither guarantees a sub-200-second result. Measure all phases and
+the run's end-to-end elapsed time before claiming profitability or
+merging PR #306.
