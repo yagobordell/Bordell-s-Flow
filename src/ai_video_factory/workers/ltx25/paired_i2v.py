@@ -37,9 +37,9 @@ from ltx_pipelines.utils.helpers import (
 )
 from ltx_pipelines.utils.samplers import euler_ancestral_denoising_loop, euler_denoising_loop
 
+from .memory_trace import mark_i2v_ram_phase
 from .resource_metrics import cuda_memory_snapshot as _cuda_memory_snapshot
 from .resource_metrics import memory_pressure as _memory_pressure
-from .memory_trace import mark_i2v_ram_phase
 
 logger = logging.getLogger(__name__)
 
