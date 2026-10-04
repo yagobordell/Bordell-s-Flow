@@ -70,26 +70,28 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
         .joinpath("b2_professional.md")
         .read_text(encoding="utf-8")
     )
-    # Casting preference must not become a media/presenter visual_type quota.
+    # The model chooses both the scene and cast from each beat rather than
+    # following automatic presenter, motion or human-presence preferences.
     assert "Visual format and human casting are independent decisions" in prompt
-    assert "prefer using the actual presenter" in prompt
-    assert "story characters keep their own identity" in prompt
-    # The same photo can preserve identity without freezing expression and gaze.
-    assert "Never rely on the reference photo's fixed smile" in prompt
-    assert "If the face is not visible" in prompt
-    # Voice sync is allowed for simple speaking-compatible demonstrations, not
-    # misrepresented as complex action animation from the A2V model.
-    assert "Visible-presenter speech preference" in prompt
-    assert "A2V does not guarantee detailed" in prompt
-    assert "use audio=false and observational media_video" in prompt
-    # Branding choices are deliberately outside the B2 policy.
+    assert "scene, subjects, framing and movement together as an editorial decision" in prompt
+    assert "Choose the subjects and demonstrators who best express" in prompt
+    assert "Maintain named or contextually established characters" in prompt
+    assert "Preserve the referenced identity while choosing the expression" in prompt
+    assert "Expression guidance applies to visible faces" in prompt
+    assert "choose the speaking or observational treatment" in prompt
+    assert "detailed independent hand-action animation is better expressed" in prompt
+    for old_bias in (
+        "prefer using the actual presenter",
+        "STRONG PRESENTER ACTION DEFAULT",
+        "Visible-presenter speech preference",
+        "choose media_video by default",
+    ):
+        assert old_bias not in prompt
     for token in ("branding", "brands", "logos", "packaging"):
         assert token not in prompt.lower()
-    assert "STRONG PRESENTER ACTION DEFAULT" in prompt
     assert "Video animation prompt (video_prompt)" in prompt
     assert "When audio=false, video_prompt is sent DIRECTLY to I2V" in prompt
     assert "When audio=true, video_prompt is instead sent to the A2V" in prompt
-
 
 def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions() -> None:
     prompt = (
@@ -97,27 +99,27 @@ def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions()
         .joinpath("b2_professional.md")
         .read_text(encoding="utf-8")
     )
+    # Preserve the implementation-critical anchors and affirmative scene style.
     assert "The FIRST beat of every type=intro block MUST" in prompt
     assert "The LAST beat of every type=close block MUST" in prompt
     assert "prompt=null, video_prompt=null, reference=false, audio=true" in prompt
-    assert "skip discretionary steps 3-12" in prompt
+    assert "skip discretionary steps 3–12" in prompt
     assert "Write every image prompt as an affirmative description" in prompt
-    assert "omit\nnegative prompt clauses, preventive exclusions" in prompt
-    assert "Screens and documents: context belongs outside the visible scene" in prompt
-    assert "(For context: he is scrolling through Instagram.)" in prompt
-    assert "(For context: she is reviewing a financial report about declining revenue.)" in prompt
-    assert "A person handling or looking at a device/document" in prompt
-    assert "is ONE possible scene, not a requirement." in prompt
-    assert "Never add a person, require natural handling" in prompt
-    assert "A close-up of a television on a wall in an otherwise empty room." in prompt
-    assert "Do not impose human interaction or device/page orientation." in prompt
-    assert "naturally oriented phones, other screens and documents" not in prompt
-    assert "No person or extra cars." not in prompt
-    assert "It never forces avatar, media, or any opening/closing anchor" not in prompt
-    # Avoid replacing one brand rule with another, including in this correction.
+    assert "Screens and documents: narrative context" in prompt
+    assert "Select the scene, subjects, actions, shot size and viewpoint" in prompt
+    assert "(For context: [relevant app, page, message or document information].)" in prompt
+    assert "The note conveys narrative meaning" in prompt
+    # No prompt-level casting or screen-orientation exclusions are reintroduced.
+    for old_bias in (
+        "A person handling or looking at a device/document",
+        "is ONE possible scene, not a requirement.",
+        "Never add a person, require natural handling",
+        "Do not impose human interaction or device/page orientation.",
+        "without requiring a person",
+    ):
+        assert old_bias not in prompt
     for word in ("brands", "branding", "logos", "packaging"):
         assert word not in prompt.lower()
-
 
 def _professional_anchor_output(
     kind: str, beats: list[dict],
@@ -236,15 +238,13 @@ def test_professional_b2_global_framing_sequence_progression_and_still_audio() -
         .read_text(encoding="utf-8")
     )
     assert "Global shot composition and camera-angle freedom" in instructions
-    assert "For EVERY generated beat throughout the video" in instructions
-    assert "not only in numbered" in instructions
-    assert "slightly zoomed-in COMPOSITION" in instructions
-    assert "Downstream\nKen Burns handles still-image motion" in instructions
-    assert "Shot progression is ESPECIALLY important within continuous sequences" in instructions
-    assert "near-duplicate images" in instructions
-    assert "For media_image, audio MUST always be false" in instructions
-    assert "generated synchronized speech" in instructions
-
+    assert "For EVERY generated beat, deliberately choose" in instructions
+    assert "Let the current beat and neighboring visual progression guide composition" in instructions
+    assert "downstream Ken Burns handles still-image movement" in instructions
+    assert "Design adjoining images to communicate the progression" in instructions
+    assert "media_image: audio=false" in instructions
+    assert "generated synchronized visible speech uses media_video with audio=true" in instructions
+    assert "1. \n2. " in instructions
 
 @pytest.mark.parametrize(
     ("visual_type", "audio", "accepted"),
