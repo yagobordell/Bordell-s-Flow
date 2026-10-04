@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image
+from submit_ltx25_a2v_smoke import _validate_decodable_video, _validate_reference_voice_tail
 
 from ai_video_factory.config import settings
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
@@ -24,18 +25,18 @@ from ai_video_factory.providers.inference_jobs import InferenceJobExecutor
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.r2 import create_r2_storage
 from ai_video_factory.workers.ltx25.a2v import (
-    LTX_A2V_RUN_STATIC_FAST_PROFILE, probe_audio, _validate_audio_duration,
+    LTX_A2V_RUN_STATIC_FAST_PROFILE,
+    _validate_audio_duration,
+    probe_audio,
 )
 from ai_video_factory.workers.ltx25.experimental_a2v_batch2 import (
-    A2VBatch2Parameters, LTX_A2V_BATCH2_TASK,
+    LTX_A2V_BATCH2_TASK,
+    A2VBatch2Parameters,
 )
 from ai_video_factory.workers.ltx25.reference_recipe import (
     reference_num_frames_for_samples,
 )
-from submit_ltx25_a2v_smoke import _validate_decodable_video, _validate_reference_voice_tail
-
-
-def parser() -> argparse.ArgumentParser:
+\n\ndef parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     for suffix in ("a", "b"):
         p.add_argument("--image-" + suffix, type=Path, required=True)
