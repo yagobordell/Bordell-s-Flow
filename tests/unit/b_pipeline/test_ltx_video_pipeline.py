@@ -867,3 +867,49 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     )
     assert again["sha256"] == result["sha256"]
     assert len(submitted) == 3
+
+
+def test_fast_static_run_never_inherits_old_disk_offload_clips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    timeline, jobs, _run_dir = b_video.build_b2_video_plan(
+        tmp_path, plan, audio, images
+    )
+    first = next(job for job in jobs if job.kind == "a2v")
+    image_sha = next(item.sha256 for item in first.request.inputs if item.name == "image")
+    audio_sha = next(item.sha256 for item in first.request.inputs if item.name == "audio")
+    old_job_id = b_video.ltx_a2v_application_job_id(
+        segment_id=f"b2-{first.beats[0]}-{first.beats[-1]}",
+        prompt=first.request.parameters["prompt"], image_sha256=image_sha,
+        audio_sha256=audio_sha, seed=int(first.request.parameters["seed"]),
+        width=1280, height=720, fps=b_video._FPS,
+        generation_profile=LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+    )
+    assert first.request.job_id != old_job_id
+    avatar, assets = b_video._source_assets(tmp_path, plan, images)
+    assert b_video._fingerprint(timeline, audio, assets, avatar) != b_video._fingerprint(
+        timeline, audio, assets, avatar,
+        profile=LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+    )
+
+    monkeypatch.setattr(
+        b_video, "_reconcile_prior_failed_video_runs",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        b_video, "_inherit_completed_v4_clips",
+        lambda *_args, **_kwargs: pytest.fail(
+            "Never inherit disk-streamed A2V clips into a fast static run"
+        ),
+    )
+
+    def before_paid_submission() -> None:
+        raise RuntimeError("stopped before paid inference")
+
+    with pytest.raises(RuntimeError, match="stopped before paid inference"):
+        b_video.generate_b2_ltx_video(
+            tmp_path, plan, audio, images,
+            queue=SimpleNamespace(), storage=SimpleNamespace(),
+            check_i2v_worker=before_paid_submission,
+        )
