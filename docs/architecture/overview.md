@@ -1,38 +1,37 @@
-# Architecture overview
+# Arquitectura actual
 
-The active planning pipeline is B1.1 → B1.2 → B2. It produces a source-preserving
-visual plan with string beat IDs and avatar/image/video strategies. Each run
-selects a local PNG avatar, snapshots it and records the binding in the
-application-owned visual plan without modifying B2's bot contracts. The previous
-scene/shot-based planning bots and end-to-end production runner have been retired.
-GPU stage clients remain usable independently, but there is no supported
-end-to-end B2-to-final-video path until their contracts are migrated.
+El flujo oficial es el lanzador administrado `run.ps1` →
+`scripts/pipeline/run_managed.py` →
+`scripts/pipeline/run_b_pipeline.py`. B1.1 bloquea fragmentos del guion
+sin alterar sus palabras, B1.2 los divide en beats y B2 asigna las
+estrategias visuales. Cada avatar conserva su estilo de producción.
 
-## Application control plane
+Tras B2, el modo profesional aplica V1/V2/V3/V4 y Gemini para la voz.
+Casero utiliza su propio flujo Fish y CTA. Ambos pueden producir
+imágenes, previsualización, clips de vídeo con LTX, composición final y
+publicación administrada; las solicitudes de pago cuentan con estados
+verificables para reanudación.
 
-Postgres `gpu.jobs` is the authoritative queue. Providers submit deterministic
-`InferenceJobRequest` objects; dedicated workers on Salad claim jobs with leases,
-read their inputs from R2, execute inference and publish durable outputs.
-R2 manifests and request fingerprints provide replay and recovery.
+La generación de imágenes usa GPT Image con calidad baja por defecto,
+calidad media para prompts con `(For context...)` y para todas las rejillas.
+Los paneles extraídos de una rejilla nunca se regeneran por separado
+con GPT. El acabado profesional amplía fotografías estáticas, no las
+imágenes de vídeo extraídas de rejillas.
 
-## Salad's role
+## Recursos y control
 
-Salad hosts the compute services defined in `deploy/salad/services.json`.
-Breeze TTS 2, Fish Speech, Whisper, Qwen Image 2.1, Ideogram 4 (optional),
-LTX 2.5 and Real-ESRGAN retain their worker runtimes and client integrations.
-The global Capacity Controller reconciles project capacity against Postgres
-demand. Model workers share inference contracts, health checks, Postgres
-claims/heartbeats, storage integrity and recovery. Salad is not the queue
-authority.
+Postgres `gpu.jobs` es la cola autoritativa. R2 conserva las entradas
+y salidas verificadas de inferencia. Salad alberga los servicios GPU y el
+Capacity Controller ajusta su capacidad a la demanda. Estos servicios,
+sus workers y sus pruebas de operación forman parte de la plataforma
+actual, aunque las antiguas herramientas autónomas de fases
+escenas/shots no sean un segundo orquestador de producción.
 
-Service management, controlled per-stage GPU runners and smoke tests remain
-independent of the retired planning bots. The B runner itself calls OpenAI
-and does not allocate Salad GPU capacity.
+## Comandos y documentación
 
-## Execution
-
-Use `scripts/pipeline/run_b_pipeline.py` for the active planning bots.
-Use the service-specific wrappers and smoke tests for GPU validation. There is
-no general video-production entrypoint until the downstream migration is tested.
-See [B pipeline](../components/b-pipeline.md) and
-[production-runner transition](../operations/production-runner.md).
+El único lanzador público es `run.ps1`. El motor Python acepta rutas
+explícitas para su invocación desde el lanzador administrado.
+Consulta [B-pipeline](../components/b-pipeline.md),
+[voz profesional](../components/professional-voice.md),
+[imágenes profesionales](../components/image-upscaler.md) y
+[operación de Salad](../operations/salad-stack-deployment.md).
