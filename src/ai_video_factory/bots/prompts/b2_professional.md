@@ -105,24 +105,14 @@ Use narrative_core, emotional_entry and emotional_exit as context only. The beat
 
 Neutral visual selection
 
-For every NON-ANCHOR beat, choose the visual carrier from its communicative need, not from beat_type and not from a format preference.
+For every NON-ANCHOR beat, choose the visual treatment that communicates its meaning, narrative intent and emotion most naturally, clearly and faithfully. Determine what the viewer should see and select the corresponding visual format and cast from the needs of this beat and its established context. Every available format and scene composition competes on its merits.
 
-Choose avatar when seeing the presenter deliver the beat is itself the most natural and useful visual treatment: direct explanation, reaction, personal testimony, interpersonal delivery, a presenter-owned transition, or another moment where the speaker's visible presence carries the beat better than illustrative media.
+- avatar: the presenter's visible delivery itself best carries the moment.
+- avatar_media: seeing the presenter and a supporting still together adds useful complementary information.
+- media_image: one still image best conveys the selected scene or moment, including a photographed action state, person, object, environment, relationship or result. media_image uses audio=false with narration as voice-over.
+- media_video: seeing the selected scene unfold through motion adds material value, or a full-screen generated subject needs synchronized visible speech. Generated on-screen speech uses media_video with audio=true and A2V.
 
-Choose avatar_media when the presenter should remain visibly present and one supporting still adds distinct information at the same time.
-
-Choose media_image for a genuinely still documentary visual: an object, stable result, portrait, waiting moment, relationship or meaningful frozen state. media_image is always a STILL with audio=false, even when the soundtrack contains narration as voice-over; it cannot depict synchronized speaking.
-
-Choose media_video whenever a physical action, execution, interaction, trajectory, change or temporal development is the useful visual information. STRONG PRESENTER ACTION DEFAULT: if the referenced presenter performs a visible practical step (applying, pressing, blending, massaging, cleansing, dabbing, using or demonstrating a product in motion), prefer media_video even if a single photograph could summarize the instruction. A presenter who merely holds an object in a genuinely static explanatory portrait MAY remain media_image if movement does not serve the beat. Choose media_image for a real still result, pause or portrait, not for an in-progress hand/product/skin demonstration. The static versus temporal decision is about what needs to be SEEN, not whether the beat_type happens to be 'action'.
-
-Also choose media_video whenever a generated full-screen shot must show synchronized visible speech (audio=true), even if its starting frame is photograph-like. The pipeline animates that image as an A2V video.
-
-Do not choose a format merely for variety. Do not avoid a format because nearby beats use it. Repetition is acceptable when it remains the best treatment.
-
-Visual format and human casting are independent decisions. A media_image or media_video
-may depict the presenter demonstrating a step without adding a separate talking-head
-layer. Choose the format from the beat's visual needs, then choose WHO should appear
-using the presenter-led demonstration rule below.
+Choose visual_type, scene, subjects, framing and movement together as an editorial decision. A media_image or media_video scene can feature any narratively appropriate person, including the referenced presenter, with cast determined by the story rather than visual_type. The chosen presentation can recur whenever it remains the most effective treatment.
 
 Mandatory intro/close presenter anchors
 
@@ -146,47 +136,19 @@ Block type supplies narrative context only outside these two immutable anchors.
 
 Documentary scene reasoning
 
-Generated visuals should behave like documentary coverage rather than literal illustrations of every sentence.
+Generated visuals should feel like persuasive, natural documentary coverage, guided by the narration and the established situation. For each beat, consider what a documentary camera would most effectively show while these words are heard.
 
-Ask: what would a documentary camera naturally show while this narration is heard?
+Choose the most expressive, narratively grounded people, locations, objects, environments, visual details, evidence, actions or creative composition for the beat. For emotional and reflective moments, a contextual scene or detail can convey the underlying experience naturally.
 
-Prefer observable, source-grounded moments, people, locations, objects, evidence and actions. Do not invent symbolic props, staged metaphors, fake documents, decorative story details or unrelated topical filler merely to make an abstract sentence visual.
-
-For emotional or reflective narration, it is valid to show a restrained contextual moment, environment, person or detail that belongs to the established event instead of literalizing the abstract wording.
-
-Prompts should describe the scene, subject, moment, composition and materially relevant lighting/mood. Do not add global device-specific, lens, photographic-style, cinematic, editorial or quality boilerplate. The application injects the canonical image style later in code immediately before image generation.
+Prompts describe the chosen subject, moment, composition and relevant lighting or mood. The application injects its canonical image style later, directly before generation.
 
 Global shot composition and camera-angle freedom
 
-For EVERY generated beat throughout the video, deliberately choose the shot
-size, camera viewpoint, crop and focal emphasis that best communicates the
-current beat. You have editorial freedom to use an establishing/wide view,
-medium shot, medium close-up, close-up, tight close-up, detail insert,
-hands-focused crop, three-quarter angle, profile, over-the-shoulder view,
-mirror-side view or a slightly zoomed-in COMPOSITION when genuinely helpful.
-A closer crop may reveal a meaningful product amount, fingertip motion,
-skin texture or emotional detail that a repeated medium face shot would hide.
+For EVERY generated beat, deliberately choose the shot size, viewpoint, crop, movement-compatible framing and focal emphasis that best communicate the scene. Available choices include establishing and wide shots, medium views, medium close-ups, close-ups, tight details, hands-focused compositions, three-quarter angles, profile, over-the-shoulder or mirror-side views and tighter still-image crops.
 
-Use this toolkit across ALL blocks and unrelated beats, not only in numbered
-sequences. For each new scene, ask which distance, viewpoint and subject
-detail best supports the narration. Vary recurring subjects and actions
-when a different framing reveals new information or improves pacing.
-Do not automatically inherit the avatar reference photo's head-on angle
-or crop. Reference identity is independent of camera angle, shot size,
-pose and scene-specific expression.
+Let the current beat and neighboring visual progression guide composition. Keep the same view when it best captures the event; choose a different one when it reveals valuable information, improves pacing or deepens the intended emotion. Treat the reference image as a source of visible continuity while composing each new scene for its own purpose.
 
-Framing variation is purposeful, not a prescribed wide/medium/close quota:
-do not force an angle change when the same view is necessary, sacrifice
-an important expression or action, crop away required evidence, or invent
-a physically impossible perspective. When a face must visibly speak with
-audio=true, retain sufficient clear mouth/face visibility for lip sync;
-a hands-only close-up must use audio=false.
-
-A requested "slight zoom-in" in an IMAGE prompt means a tighter still-image
-composition or crop, not an instruction to animate camera movement. Downstream
-Ken Burns handles still-image motion; the existing A2V route has fixed
-camera-stability requirements. For media_video, choose a motion-ready starting
-framing without requiring unsupported zoom/dolly camera animation.
+For generated synchronized visible speech, frame the face and mouth clearly enough for lip sync. A hands-only close-up uses audio=false. A requested slight zoom in an IMAGE prompt describes a tighter still-image crop; downstream Ken Burns handles still-image movement. Build media_video prompts around a motion-ready starting frame compatible with the existing static-camera A2V route.
 
 Field semantics
 
@@ -208,7 +170,7 @@ For avatar_media, media_image and media_video, prompt must be a non-empty Englis
 video_prompt is native JSON null for avatar, avatar_media and media_image.
 For every media_video beat, video_prompt must be a separate non-empty English string.
 
-Every non-null prompt describes only the beat-specific scene. Do not prepend a global visual-style template. Do not mention iPhone, DSLR, cinematic photography, luxury editorial, image quality or any other application-wide style boilerplate unless that wording is itself source-grounded narrative content.
+Every non-null prompt describes the beat-specific scene in its own terms; the application applies its global visual-style template separately.
 
 Write the shortest self-contained prompt that fully controls:
 
@@ -223,49 +185,16 @@ Write the shortest self-contained prompt that fully controls:
 - continuity details when required;
 - affirmative scene details that directly support the beat's visual purpose.
 
-Write every image prompt as an affirmative description of the intended scene,
-subjects, actions and composition. Describe the desired result directly; omit
-negative prompt clauses, preventive exclusions and routine disclaimers.
+Write every image prompt as an affirmative description of the desired scene,
+subjects, actions, composition and narratively grounded creative details.
 
-Do not add decorative story facts merely to make the image more vivid.
+Screens and documents: narrative context
 
-Screens and documents: context belongs outside the visible scene
+When a beat involves an app, website, message, chart, report, screen, document or other information source, understand its content as part of the narrative. Select the scene, subjects, actions, shot size and viewpoint that most effectively communicate the beat, using the same editorial judgment as for every other subject.
 
-Apply this rule consistently to phones, tablets, laptops, desktop monitors,
-televisions, other electronic screens, printed papers and documents. When the
-narration mentions an app, website, message, chart, report, document text or
-any other screen/page content, use that information to understand the scene.
-Choose the visible scene, subject, shot size and camera viewpoint from what
-best communicates the beat. A person handling or looking at a device/document
-is ONE possible scene, not a requirement. The screen, device, page or its
-surroundings may instead be the primary subject, including an object-only
-detail shot. Never add a person, require natural handling, turn the surface
-toward a user or force an observer-side camera angle merely because screen
-or document content is mentioned.
-
-Place specific content details in a short, separate parenthetical CONTEXT
-note when they matter for the narrative, rather than describing them as
-visible text, interface layouts or graphics. Preserve the same relevant
-information in that note regardless of the scene composition; do not turn
-the note into a request to render legible text or an exact interface.
-Examples (different valid compositions for the same context rule):
-- "A man relaxing on his sofa, holding his smartphone naturally in one
-  hand and looking down at it, viewed from across the room.
-  (For context: he is scrolling through Instagram.)"
-- "A woman seated at her desk, reading a printed document held naturally
-  in both hands, viewed from a three-quarter side angle.
-  (For context: she is reviewing a financial report about declining revenue.)"
-- "A laptop open on a quiet cafe table, viewed in a tight three-quarter shot.
-  (For context: the student is reading an online article about the topic.)"
-- "A close-up of a television on a wall in an otherwise empty room.
-  (For context: the television is showing a news report on the current event.)"
-
-Apply the same separation in video_prompt: describe the visible action and
-movement developing naturally from the chosen starting image, whether that
-involves a person, a device/document alone or the surrounding scene. Retain
-the specific app, page or document content only as parenthetical context
-when needed. Do not impose human interaction or device/page orientation.
-Preserve the upstream narration unchanged.
+When specific screen or document content matters to understanding the action, place it in a concise parenthetical note separate from the visible scene description:
+"(For context: [relevant app, page, message or document information].)"
+The note conveys narrative meaning; the visual description conveys the selected image and its composition. Use this distinction in both prompt and video_prompt, with the latter describing motion developing naturally from the chosen starting image. Preserve upstream narration unchanged.
 
 Video animation prompt (video_prompt)
 
@@ -336,81 +265,27 @@ reference = true does not mean the presenter must appear. If the reference is
 used only for an object or environment, describe the intended object-only
 or environment-only shot positively.
 
-Presenter-led demonstration casting
+Scene casting and reference continuity
 
-When a presenter-led script explains, recommends or illustrates a practical action
-that the presenter can naturally demonstrate, prefer using the actual presenter
-from the supplied avatar reference as the demonstrator in generated coverage.
-This includes first-person examples and suitable second-person instructions
-when no different person is established. Do not invent a generic substitute
-merely because the chosen visual_type is media_image or media_video. Attach the
-avatar reference and preserve the presenter's recognizable identity.
+Choose the subjects and demonstrators who best express each beat's narrative meaning. The reference image is available when the chosen scene depicts the established presenter or relies on another visible element from it; use reference=true and specify what should remain recognizable in the new composition.
 
-This is a contextual casting preference, never a quota or format preference.
-Do not force the presenter into established third-party stories, evidence of
-real events, another person's lived experience or scenes where their appearance
-would be staged or misleading. Product-only or hands-only details need not
-show an identifiable person when identity adds no meaningful value. Established
-story characters keep their own identity. Preserve the same correctly cast
-person across consecutive shots of a continuous demonstration.
-
-Reference identity does not mean copying irrelevant reference wardrobe, background,
-lighting, camera framing, pose or facial expression. Preserve wardrobe and setting
-only when the same depicted occasion needs visual continuity.
+When a scene continues an established event, maintain the people, wardrobe, setting and visual details relevant to that continuity. For a new occasion, compose appearance, expression, setting and camera viewpoint for the current story moment.
 
 audio
 
 audio is a JSON boolean.
 
-For avatar and avatar_media, audio is always true.
+- avatar and avatar_media: audio=true.
+- media_image: audio=false. This format is a still with any narration presented as voice-over.
+- media_video: audio=true when the visible generated subject delivers this beat's speech and the scene supports synchronized facial movement; audio=false when the selected movement plays under voice-over.
 
-For media_image, audio MUST always be false. It remains a still visual,
-whether ordinary voice-over is heard on the soundtrack or not. Never
-write a media_image prompt showing someone speaking, moving their lips
-or delivering dialogue. For a visibly speaking generated subject, use
-media_video with audio=true instead.
-
-For media_video:
-
-- audio = true when the visible person in the selected visual is the person
-  delivering/reading that beat and the composition is compatible with speaking;
-- audio = false when narration functions as voice-over, the visible person is
-  only observational documentary coverage, or no speaking face is visible.
-
-Visible-presenter speech preference: when the presenter demonstrates their own
-simple advice or action, prefer audio=true if the presenter can naturally
-speak while doing it and their face/mouth remain visibly available. Choose a
-composition, expression and gaze compatible with that intent. This
-audio=true preference applies to avatar, avatar_media or media_video,
-never media_image. Gently pressing skincare onto the cheeks with the
-mouth unobstructed may support natural speech.
-
-Technical A2V limitation: an audio=true media beat is animated through the
-pipeline's existing speaking-focused A2V prompt; A2V does not guarantee detailed,
-independent hand-action animation. Use audio=true for a demonstration only when
-visible speech is plausible as the primary motion and any hand action is simple
-and secondary. If showing the movement accurately is the primary purpose, the
-face is cropped/obscured or the action demands sustained visual attention,
-use audio=false and observational media_video with voice-over. Never put
-dialogue, speaking or lip-movement instructions into audio=false image prompts.
-
-Presenter identity, reference=true and first-person narration do not
-automatically force audio=true. Evaluate each beat rather than applying a
-blanket speaking or voice-over default.
+For media_video, choose the speaking or observational treatment that best communicates the action and speech. The existing A2V route is speaking-focused and supports natural lip/jaw movement and simple secondary gestures; detailed independent hand-action animation is better expressed through I2V with audio=false. Match framing, visible face, gestures and video_prompt to the selected audio route.
 
 Narrative identity
 
-Resolve who owns the selected action/state before choosing actors.
+Resolve who owns the depicted actions, words and experiences from the established narrative. Maintain named or contextually established characters across beats, including their pronouns and referenced experiences. Unquoted first-person narration can establish the presenter as the subject when the action or state genuinely belongs to them; attributed quotations belong to their established speaker. Interpret second- and third-person references from their actual narrative context.
 
-- preserve named or contextually established story characters through pronouns/coreference;
-- unquoted first-person presenter narration may establish the presenter as the subject when the action/state genuinely belongs to the presenter;
-- first person inside attributed dialogue/thought belongs to that established speaker;
-- second person does not imply presenter presence;
-- third-person people remain those people.
-
-A mentioned person is not automatically the presenter. Never relabel a distinct story character as the presenter merely because the host narrates their story.
-
-Use the reference image to preserve appearance, not to invent narrative identity.
+Use the reference image to maintain chosen visible identity and appearance while giving every new scene its own natural expression, action and composition.
 
 Avatar reuse/regeneration
 
@@ -420,9 +295,7 @@ When visual_type = avatar, reuse the supplied avatar image by default:
 - reference = false;
 - audio = true.
 
-Regenerate avatar only when the beat still works primarily as presenter delivery but materially requires a visible presenter state, appearance, pose, object interaction or setting that the base image cannot provide.
-
-Do not regenerate merely for variety, topical background matching or neighboring-scene continuity.
+Regenerate the avatar when a new presenter image materially improves a beat that is primarily presenter delivery, requiring a specific visible state, appearance, pose, object interaction or setting.
 
 When regenerating:
 
@@ -432,175 +305,78 @@ When regenerating:
 
 Generated-image invariants
 
-Each generated image must represent one photographable instant:
+Each generated still, including a media_video starting frame, depicts one coherent photographable instant: an action or process at a selected moment, or a stable state, subject, relationship or arrangement. Build comparisons and multiple simultaneous subjects when those are the actual communicative need of the beat.
 
-- exactly one deliberate action; or
-- one natural continuous process represented at one useful instant; or
-- one stable state, object, result, relationship or arrangement.
-
-Do not chain several deliberate actions into one image.
-
-Do not create split screens, storyboards, before/after composites or several sequential moments in one image unless the beat explicitly requires one simultaneous multi-item comparison.
-
-media_video still receives an image prompt. Describe one motion-ready start or mid-action key image for one coherent later action/process. Do not depict multiple temporal stages in the key image.
-
-Generated visuals must be physically plausible and human-observable at ordinary scale. For hidden mechanisms, prefer a visible human-scale referent, consequence or result rather than invented microscopic imagery.
+For media_video, write the source-image prompt for a clear starting or mid-action frame and its video_prompt for the subsequent coherent movement. Depict physically plausible, narratively grounded scenes with visual details suited to their documentary purpose.
 
 Reference consistency
 
-Use the supplied image when continuity materially depends on:
+Use the supplied image when the selected scene requires visual continuity of a presenter, another person, a distinctive object or vehicle, an established environment, or an appearance associated with the same event.
 
-1. presenter/person identity;
-2. a distinctive visible object or vehicle;
-3. an established environment;
-4. wardrobe/appearance within the same event.
-
-Do not preserve wardrobe automatically across unrelated times or events. Preserve
-it when the sequence is meant to be the same occasion. A consistent identity
-does not require repeating the expression, gaze or pose of the reference photo
-or the previous beat; adapt visible expressions to the current scene.
-
-Do not copy unrelated background, lighting, objects or composition merely because they appear in the reference.
+Preserve the identity and scene details that matter for the current beat. Choose the expression, gaze, pose, lighting, camera viewpoint and surroundings appropriate to the new scene and its place in the narrative.
 
 Static versus temporal choice
 
-Use media_image when one still communicates essentially all useful visual
-information and no generated on-screen person needs synchronized speech.
+Choose media_image when the strongest treatment is a still moment, including a purposeful snapshot of action or a meaningful state or detail.
 
-Use media_video when seeing how something moves, changes, unfolds or is
-performed adds material understanding, OR when the full-screen generated
-subject must speak on screen with audio=true and synchronized lips.
-
-A genuine static hold, result or portrait can remain media_image. When the referenced presenter or another visible demonstrator is actively performing a practical step, motion ordinarily adds value: choose media_video by default, with separate image-start and video-animation prompts.
-
-A failed or complex video candidate does not automatically become avatar. Reconsider whether a still, presenter view or presenter-plus-support is the most faithful alternative.
+Choose media_video when seeing movement or change unfold materially improves the beat, or when a generated full-screen subject must speak visibly with synchronized lips. For every candidate, evaluate the precise scene and intended message to determine whether the still or animated treatment communicates it better. If the preferred animated treatment cannot be delivered reliably, reconsider the most faithful available presentation.
 
 Operational presenter-run limit
 
 The application enforces a maximum of 120 narration characters across consecutive avatar/avatar_media beats in whole-video order. Interior spaces and punctuation count after trimming beat boundaries. media_image and media_video reset the run.
 
-This is a technical constraint, not a preference. Within it, do not minimize or maximize presenter use by quota.
-
-If a local choice would create an obviously overlong presenter run, choose the next-best faithful non-presenter visual for a beat that can naturally carry it. Never invent content merely to break the run.
+This is a technical constraint. When a planned sequence would exceed the limit, select the most effective faithful alternative scene or treatment for a beat that supports it.
 
 Consecutive visual continuity
 
-Use continuity numbering only when 2–9 consecutive generated assets belong to the same narratively or physically continuous event and should preserve the same identities, location, wardrobe, objects, time context or physical state.
+Use continuity numbering when 2–9 consecutive generated assets form one narratively or physically continuous event and share meaningful identity, location, wardrobe, objects, time context or physical state.
 
 Prefix each participating non-null prompt literally with:
 
-1. 
-2. 
-3. 
+1.
+2.
+3.
 ...
-9. 
+9.
 
-The sequence marker must be the first token in the B2 prompt. The application will inject the canonical image style after that numeric marker at generation time.
+The sequence marker is the first token in the B2 prompt; the application injects canonical image style after it at generation time. Each numbered prompt is self-contained and explicitly carries forward the relevant established details.
 
-Each numbered prompt must still be self-contained. Explicitly carry forward the relevant identities, environment, wardrobe, objects and physical state. Do not rely on the number alone.
-
-Shot progression is ESPECIALLY important within continuous sequences.
-Preserve the SAME person, setting, wardrobe, event and physical continuity
-while deliberately evolving shot scale, viewpoint, crop or visual focus
-across adjacent generated assets when useful. A multi-step demonstration
-might establish the presenter in a medium shot, move to a close-up of
-product meeting skin, use a tighter side/detail crop for blending, then
-show a slightly wider angle or mirror view for localized touch-up or
-the result. This is an example, not a compulsory shot-size sequence.
-
-Do not write adjacent numbered prompts whose only substantive difference
-is a slight change in the same gesture while camera distance, viewpoint
-and composition remain identical: they produce near-duplicate images,
-especially when panels share one generated grid. Make EACH step visually
-distinguishable by emphasizing different useful information while keeping
-the event continuous. If a fixed shot is genuinely necessary, describe
-the meaningful changed state or detail rather than inventing an
-irrelevant angle solely for variety.
-
-A qualifying sequence may mix avatar_media, media_image, media_video and a regenerated avatar.
-
-Do not number merely because generated beats are adjacent. Number only when visual continuity between them materially matters.
-
-An avatar beat with prompt = null ends the generated-asset sequence because no new image is generated.
-
-Numbering is local to the current block. If a qualifying run exceeds nine generated assets, start a new batch at 1 after 9.
+Design adjoining images to communicate the progression of the event. Choose the distance, angle, crop and visual focus that make each step clear; maintain a fixed composition when it serves the development. A sequence can mix avatar_media, media_image, media_video and regenerated avatar. Numbering is local to the block, and a qualifying run longer than nine generated assets begins again at 1 after 9. An avatar beat with prompt=null ends a generated-asset sequence.
 
 Decision procedure
 
 For each beat:
 
-1. freeze upstream fields;
-2. apply the immutable intro/close full-field anchor if this beat is a required
-   boundary beat; keep it unchanged and skip discretionary steps 3-12;
-3. for every other beat, identify its primary communicative function;
-4. resolve the relevant person/character/object/place and narration ownership;
-5. decide whether presenter presence, presenter plus support, a documentary still or a documentary video is the most natural carrier;
-6. choose visual_type without format quotas or tie-breaking bias;
-7. cast generated human demonstrators with the contextual presenter preference
-   while preserving distinct story-character identities;
-8. decide reference from actual visual/identity continuity dependency;
-9. for every visible face depicted from the reference, describe a scene-specific
-   facial expression, demeanor and useful gaze/attention without copying the
-   source image's expression;
-10. decide audio from the visible person's speaking role AND whether the actual
-   A2V speaking-focused route can plausibly support the shot; if visible speech
-   needs generated media, use media_video, NEVER media_image with audio=true;
-11. choose a purposeful shot scale, camera angle, crop and visual focus for
-    EVERY generated beat, considering nearby similar subjects;
-12. write concise source-grounded still-image prompts and, for media_video,
-    a distinct animation video_prompt describing action development, gestures
-    and camera behavior consistent with the selected audio route;
-13. after the block is stable, apply continuity numbering to genuine continuous
-    events and strengthen shot-to-shot progression within those sequences;
-14. validate the 120-character presenter-run constraint as far as this block can know;
-15. validate the final output contract.
+1. preserve upstream fields;
+2. apply the immutable intro/close full-field anchor when this is a required boundary beat; skip discretionary steps 3–12 for anchors;
+3. understand the beat's communicative goal, tone and relationship to neighboring beats;
+4. determine the scene, people, objects, actions and composition that best express it while preserving established narrative identity;
+5. choose the visual_type that delivers this scene most effectively;
+6. decide reference from actual visual-continuity needs;
+7. when a reference-derived face is visible, specify its natural scene-specific expression, demeanor and useful gaze;
+8. decide audio from the chosen subject's speech role and available speaking or observational motion capabilities;
+9. choose the most expressive shot size, angle, crop and focal emphasis for this generated scene;
+10. write the beat-specific affirmative still-image prompt and, for media_video, a distinct coherent animation video_prompt;
+11. apply continuity numbering when generated assets form one continuous event;
+12. check the 120-character presenter-run technical constraint as far as this block can determine;
+13. validate the output contract.
 
 Block-level review
 
 Before output, review the block for:
 
-- mandatory intro/close anchors: the first beat of intro and last beat of
-  close use the unchanged base-avatar assignment in full, including null
-  prompt/video_prompt, reference=false and audio=true;
-- format bias: no discretionary visual_type was chosen because it is generally preferred;
-- demonstrator casting: presenter-led examples use the referenced presenter when
-  naturally demonstrable, while distinct third-party subjects and identity-free
-  close-ups are not forcibly recast;
-- story-character integrity: established people remain themselves;
-- documentary usefulness: generated visuals feel like plausible coverage of the narrated event, not decorative illustration;
-- image/video fit: movement is used only when it adds material value;
-- global shot variety: each generated beat uses its most informative natural
-  shot scale, camera angle, crop and visual focus; recurring subjects are not
-  automatically shown in the reference's face-centered medium shot;
-- sequence shot progression: adjoining numbered prompts preserve continuity
-  while avoiding near-duplicate framing and emphasizing distinct steps;
-- redundancy: repeated visuals remain only when repetition is narratively useful;
-- prompt discipline: image and video prompts use affirmative, scene-specific
-  descriptions of the intended result, free of exclusion clauses and stock
-  negative-prompt lists;
-- screens/documents: choose the beat's most useful scene freely, with or
-  without a person; keep specific app/page/document content in the SAME
-  brief parenthetical context note, not in the visible-scene description;
-  apply this rule to still frames and video animation;
-- reference correctness: every dependency on the supplied image is explicit and
-  unrelated source-image style, expression, background or pose are not copied;
-- referenced visible faces: a natural beat-specific expression and relevant
-  gaze/attention are explicit rather than inherited from the input photo;
-- still/video action fit: a referenced presenter actively demonstrating
-  an ongoing practical step uses media_video rather than an inert still,
-  while real result/portrait/pause shots remain eligible for media_image;
-- animation specificity: each media_video has a nonempty video_prompt
-  describing real-time action development consistent with its first image
-  and speaking/voice-over routing;
-- audio correctness: media_image always has audio=false, without speaking
-  instructions; visible generated speech needs media_video with audio=true.
-  A clearly visible presenter performing a simple compatible action was
-  considered for audio=true; if detailed movement or face occlusion
-  makes speaking-focused A2V unsuitable, choose voice-over;
-- continuity: numbering is used for actual continuous events and omitted otherwise;
-- presenter-run limit: no avoidable >120-character avatar/avatar_media run is created.
-
-Do not optimize whole-script format percentages. Runs of any format are acceptable when justified by content and technical constraints.
+- exact mandatory intro and close anchor assignments;
+- scene and visual_type chosen from the needs of the individual beat;
+- narrative fidelity and consistent identity of established characters;
+- natural documentary usefulness and creative suitability of every scene;
+- meaningful composition, framing and progression across related beats;
+- affirmative scene descriptions that express the intended result;
+- screen/document context represented as a separate parenthetical note when relevant;
+- accurate reference dependencies and beat-specific visible facial expressions;
+- image/video fit according to the information best conveyed in a still or through motion;
+- complete, beat-specific video_prompt for every media_video and correct audio routing;
+- continuity numbering for qualifying events;
+- compliance with the 120-character presenter-run technical limit.
 
 Minimal reference example
 
@@ -617,32 +393,9 @@ and the beat needs an object-only shot:
 The application adds the global image-style prefix later. B2 must not include
 it here. This object-only scene has no facial-expression requirement.
 
-Presenter-led demonstration calibration
+Illustrative scene calibration
 
-When a presenter explains their own simple skincare demonstration, a suitable
-media_video prompt could describe the SAME presenter from the reference lightly
-pressing toner onto the cheeks with a relaxed, attentive expression, eyes
-naturally engaged with the camera and mouth unobstructed. In that specific
-speaking-compatible composition, reference=true and audio=true are appropriate.
-The video_prompt separately describes how the presenter speaks and makes
-small natural hand motions during the shot.
-
-Conversely, if the narrator explains an actual skincare application as
-voice-over, an appropriate media_video output could use:
-
-{
-  "visual_type": "media_video",
-  "prompt": "2. Use the reference to preserve the presenter's identity. At the same vanity and in the same outfit, frame a tight cheek-and-hand close-up just as her fingertip touches a thin layer of moisturizer. She looks toward the mirror with a focused, relaxed expression.",
-  "video_prompt": "From the supplied starting frame, the presenter uses two slow fingertip passes to smooth the thin moisturizer layer over the cheek, then gently lifts her hand away. Natural wrist motion and subtle blinking; eyes remain on the mirror. One steady close-up take centered on the continuous action and the mirror-facing subject.",
-  "reference": true,
-  "audio": false
-}
-
-This is an example of casting and audio intent, not a requirement to use
-media_video for tutorials or to make every presenter demonstration audio=true.
-If precise hand motion is the main point, use audio=false with voice-over instead.
-Every pictured referenced face needs its own expression appropriate to that
-beat, not a repeated stock expression.
+A practical demonstration can be framed around a face, hands, an object, a wider interaction or another scene that communicates the beat most effectively. When the selected subject visibly speaks, plan a speaking-compatible shot with audio=true and a video_prompt focused on natural speech and simple accompanying movement. When the selected scene centers on precise continuous action under voice-over, plan an observational I2V scene with audio=false and a video_prompt describing the action precisely. Choose the treatment from the beat's narrative and visual needs.
 
 Final self-check
 
@@ -650,57 +403,22 @@ Before emitting success, verify:
 
 - exactly one usable avatar reference image was supplied;
 - upstream fields and beat order are unchanged;
-- every beat has exactly one allowed visual_type, one prompt, one video_prompt,
-  one reference boolean and one audio boolean;
-- the first intro beat and the last close beat use exactly
-  visual_type="avatar", prompt=null, video_prompt=null,
-  reference=false and audio=true, without regeneration;
-- all other beats were chosen without block-type format bias;
-- prompt = null occurs only for avatar and always has reference = false;
-- avatar_media, media_image and media_video have non-empty prompts;
-- non-null prompts contain scene instructions only, without application-wide style boilerplate;
-- every generated image contains one deliberate action/process/state at one photographable instant;
-- media_video prompts describe one motion-ready key image AND their
-  separate video_prompt describes one coherent action developing from it;
-- visual_type was chosen from beat needs, not beat_type or format preference;
-- generated humans preserve narrative identity and presenter-led practical
-  examples preferentially use the actual presenter when narratively natural,
-  independent of visual_type;
-- distinct third-party subjects were not replaced just because the presenter
-  could physically perform the same action;
-- every prompt depicting the presenter uses reference = true;
-- every prompt depending on a visible reference object/environment/person uses reference = true;
-- reference = true prompts state exactly what to preserve;
-- every reference=true prompt depicting a visible referenced person's face
-  explicitly describes scene-specific expression/demeanor and useful gaze;
-  the reference photo's original facial expression is not copied by default;
-- reference=true prompts without a visible face are exempt from facial-expression
-  instructions (for example, objects or hands-only details);
-- reference-only object/environment prompts describe the intended
-  object-only or environment-only scene positively;
-- prompts involving phones, other screens or documents choose their scene
-  and viewpoint for the beat, without requiring a person or a particular
-  device/page orientation; the specific on-screen/on-page content remains
-  in parenthetical context rather than a visible-content description;
-- both image and animation prompts follow affirmative scene writing,
-  with video_prompt describing only beat-specific movement;
-- image and animation instructions are separate; media_video has a
-  self-contained video_prompt while other visual types use native null;
-- scene details are relevant to the beat; narration is unchanged;
-- avatar and avatar_media have audio = true;
-- media_image ALWAYS has audio=false and does not request visible speaking;
-  active referenced presenter demonstrations favor media_video instead;
-  generated synchronized speech requires media_video with audio=true;
-- media_video audio was decided per beat, preferring natural visible presenter
-  speech when simple action and facial visibility are compatible with A2V;
-- every generated beat uses a purposefully selected shot scale/crop/angle/focus
-  without copying the reference photo's framing or demanding animated zoom;
-- numbered sequences preserve identity and setting but also progress through
-  meaningful, visually distinct framing/emphasis where appropriate;
-- numbered continuity is current and represents one continuous event;
-- numbered prompts begin with the exact local sequence marker and contain no style prefix;
-- no avoidable consecutive avatar/avatar_media run exceeds 120 narration characters;
-- generated media is source-grounded, physically plausible and contains no unsupported narrative facts.
+- every beat has exactly one allowed visual_type, one prompt, one video_prompt, one reference boolean and one audio boolean;
+- mandatory intro and close beats use exactly visual_type="avatar", prompt=null, video_prompt=null, reference=false and audio=true;
+- each discretionary beat uses the scene, subjects and visual treatment best suited to its narrative goal;
+- prompt=null occurs only for avatar, with reference=false;
+- avatar_media, media_image and media_video each have a complete scene prompt;
+- scene prompts describe the selected moment affirmatively; application-owned style is added later;
+- generated image prompts depict a coherent photographable instant;
+- every media_video has a motion-ready starting image and an independent video_prompt for its subsequent movement;
+- the subject, cast and reference choices preserve established narrative identity and required visual continuity;
+- every reference=true prompt states the visible element being preserved, and visible reference-derived faces have scene-specific expressions and useful gaze;
+- relevant screen and document content is included in a separate parenthetical context note;
+- avatar/avatar_media use audio=true, media_image uses audio=false and generated synchronized visible speech uses media_video with audio=true;
+- each media_video audio choice is compatible with its speaking or observational animation route;
+- every generated scene has a purposeful composition and continuity numbering is used for qualifying continuous events;
+- the 120-character consecutive avatar/avatar_media technical limit is respected;
+- the result is grounded in the narration, visually coherent and technically valid.
 
 Correct any failed invariant before output.
 
