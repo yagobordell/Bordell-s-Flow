@@ -485,8 +485,8 @@ def _check_v3(result: V3, block: dict[str, Any]) -> None:
 def _minimal_tag_excerpt(text: str, at: int, tag: str) -> str:
     """Preserve one adjacent original word either side, including punctuation."""
     left, right = text[:at], text[at:]
-    before = re.search(r"\\w+[^\\w]*$", left)
-    after = re.match(r"[^\\w]*\\w+", right)
+    before = re.search(r"\w+[^\w]*$", left)
+    after = re.match(r"[^\w]*\w+", right)
     return (
         (before.group() if before else left if not left.strip() else "")
         + f"<{tag}>"
