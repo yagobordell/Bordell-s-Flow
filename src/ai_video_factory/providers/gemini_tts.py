@@ -201,7 +201,7 @@ def _build_payload(
 
 
 def _build_directed_payload(*, turns: list[dict[str, str]], voice: str) -> dict[str, Any]:
-    """One Gemini 3.8 request per B2 block, style per text part, tags only inline."""
+    """One Gemini 3.8 request per voice block, style per part, tags only inline."""
     if not turns:
         raise ValueError("Gemini directed TTS needs at least one speech turn")
     parts: list[dict[str, Any]] = []
@@ -363,7 +363,7 @@ class GeminiTtsSpeechProvider:
     async def generate_directed_speech(
         self, *, turns: list[dict[str, str]], model: str, voice: str
     ) -> GeneratedSpeech:
-        """Generate one directed professional B2 block without re-voicing the transcript."""
+        """Generate one directed professional voice block without re-voicing it."""
         if not model.strip() or not voice.strip():
             raise ValueError("Gemini directed TTS requires a model and voice")
         voice = validate_gemini_voice_name(voice)

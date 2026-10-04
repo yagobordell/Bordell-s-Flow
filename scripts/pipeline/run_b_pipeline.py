@@ -1366,6 +1366,7 @@ def _preflight_stt_alignment(
     return {
         "status": "completed",
         "block_count": len(plan.get("blocks", [])),
+        "audio_block_count": len(audio.get("blocks", [])),
         "beat_count": len(timeline["beats"]),
     }
 

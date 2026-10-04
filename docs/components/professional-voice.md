@@ -4,6 +4,12 @@ This is the **professional** audio path. Casero is unchanged and continues to of
 Fish Audio, MiniMax and ElevenLabs. Professional no longer starts Fish at B1.1:
 it waits for a **validated complete B2** output so the director can interpret
 the narration against both the source text and the planned image/motion.
+Before V1, adjacent source blocks with fewer than five beats merge
+progressively (one-beat candidates first, then two, three and four). A
+candidate joins the shorter immediate neighbour, preferring the preceding
+block on a tie. Sizes are recalculated after each merge; if the whole film
+has fewer than five beats, one voice block remains. B2 and all its original
+beat identities stay unchanged for visuals/video.
 Even B2 beats with `audio: false` receive narration (voice-over).
 
 ## Three stages and archived originals
@@ -16,13 +22,13 @@ contract; the active V2/V3 prompts instead operate on immutable B2 beat IDs.
 They never invent scenes, pictures, timing or narration.
 
 - **V1** reads the complete B2 film and assigns global curve and independent
-  tempo and pressure baselines to each existing block.
-- **V2** runs per block, distributes that block's argument and viewer
+  tempo and pressure baselines to each resulting voice block.
+- **V2** runs per grouped voice block, distributes that block's argument and viewer
   trajectory across existing beats and modulates tempo/pressure locally.
   If the baseline genuinely fails to represent the beats, V2 reports it and
   V1 re-evaluates the whole film. A repeated unchanged baseline settles the
   axis.
-- **V3** runs per block, turns those intentions into spoken fragments with
+- **V3** runs per grouped voice block, turns those intentions into spoken fragments with
   sustained `style`, exact source `speak` substrings and optional point-in-time
   **human vocal events**. It does not change a character of B2 narration.
 
@@ -33,7 +39,10 @@ stages: `V1/pass_<n>/`, `V2/pass_<n>/block_<id>/` and
 rejected attempts and immutable per-API-call token/duration records, are
 published as `<avatar>/<script>/outputs/V1`, `outputs/V2` and
 `outputs/V3`, alongside B1.1/B1.2/B2. The final delivered publication
-contains the same files. Existing unfinished runs still resume their
+contains the same files. Existing unfinished runs without a grouping checkpoint retain their
+original one-to-one B2/audio mapping for safe recovery. Group plans
+are recomputed when a corrected B2 changes source beat counts. Existing
+unfinished runs still resume their
 `voice_direction/V*` checkpoints without an extra paid call; those files
 are mapped into the same public `outputs/V*` layout. A failed local response validation receives up to two explicitly
 described correction calls through OpenAI Responses API. One block's V2/V3
@@ -62,10 +71,14 @@ return 24-kHz mono `audio/L16;rate=24000`; the adapter wraps that PCM16
 into a canonical WAV and retains its sample-rate/channel checks. Existing
 single-token voices retain their original `AUDIO_WAV` request path.
 One single-speaker GenerateContent request receives the styled parts for
-one B2 block. The resulting WAV is retained per block and Whisper-1 supplies
-word timestamps. The existing sample-accurate join and STT→B2 timeline
-are reused; real LTX audio/video sync still follows the existing alignment
-process, not guessed lengths from V3.
+one resulting voice block. The resulting WAV is retained per voice block
+and Whisper-1 supplies word timestamps. The V1/voice_block_plan.json
+checkpoint records each voice block's ordered original B2 block IDs and
+beat IDs. The audio artifact publishes the same mapping in block_groups,
+allowing the sample-accurate join and STT→B2 timeline to map each word
+back to the original visual beat. The regular 500-ms join pause applies only
+between resulting voice blocks, not inside a newly merged one. Real LTX
+audio/video sync still uses measured STT timing, not V3 guesses.
 
 ## First run: choose a voice
 
