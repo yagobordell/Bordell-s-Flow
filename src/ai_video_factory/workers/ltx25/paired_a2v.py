@@ -13,35 +13,40 @@ import logging
 import math
 import time
 from dataclasses import dataclass
-from functools import partial
 from typing import Any
 
 import torch
 from ltx_core.batch_split import BatchSplitAdapter
 from ltx_core.components.diffusion_steps import (
-    EulerAncestralDiffusionStep, EulerDiffusionStep,
+    EulerAncestralDiffusionStep,
+    EulerDiffusionStep,
 )
 from ltx_core.components.guiders import MultiModalGuider, MultiModalGuiderParams
 from ltx_core.components.patchifiers import AudioPatchifier, VideoLatentPatchifier
+from ltx_core.conditioning.types.latent_cond import VideoConditionByLatentIndex
 from ltx_core.model.audio_vae import encode_audio as vae_encode_audio
 from ltx_core.model.video_vae import AUTO_TILING
-from ltx_core.conditioning.types.latent_cond import VideoConditionByLatentIndex
 from ltx_core.tools import AudioLatentTools, VideoLatentTools
 from ltx_core.types import Audio, AudioLatentShape, VideoLatentShape, VideoPixelShape
 from ltx_pipelines.utils.blocks import _build_state
 from ltx_pipelines.utils.constants import DISTILLED_SIGMAS, STAGE_2_DISTILLED_SIGMAS
 from ltx_pipelines.utils.denoisers import GuidedDenoiser, SimpleDenoiser
 from ltx_pipelines.utils.helpers import (
-    assert_resolution, audio_duration_seconds, combined_image_conditionings,
-    ensure_tiling_config, tiling_scale_factors_for_vae,
+    assert_resolution,
+    audio_duration_seconds,
+    combined_image_conditionings,
+    ensure_tiling_config,
+    tiling_scale_factors_for_vae,
 )
 from ltx_pipelines.utils.media_io import decode_audio_from_file
 from ltx_pipelines.utils.samplers import euler_ancestral_denoising_loop, euler_denoising_loop
 from ltx_pipelines.utils.types import ModalitySpec, PipelineOutput
 
 from .reference_recipe import (
-    LTX_A2V_REFERENCE_RECIPE, LTX_A2V_STATIC_IMAGE_STRENGTH,
-    LTX_A2V_STATIC_NEGATIVE_PROMPT, LTX_A2V_STATIC_VIDEO_CFG_SCALE,
+    LTX_A2V_REFERENCE_RECIPE,
+    LTX_A2V_STATIC_IMAGE_STRENGTH,
+    LTX_A2V_STATIC_NEGATIVE_PROMPT,
+    LTX_A2V_STATIC_VIDEO_CFG_SCALE,
 )
 from .reference_a2v import _with_strength
 
@@ -169,7 +174,8 @@ def _stage(
         )
         video = _build_state(v_spec, video_tools, noiser, stage._dtype, stage._device)
         audio = _build_state(a_spec, audio_tools, noiser, stage._dtype, stage._device)
-        assert audio.frozen and not torch.any(audio.denoise_mask)
+        if not audio.frozen or torch.any(audio.denoise_mask):
+            raise RuntimeError("A2V B2 frozen audio must never be denoised")
         if negative_ctx is None:
             denoiser = SimpleDenoiser(video_ctx, audio_ctx)
             loop = euler_denoising_loop
@@ -260,7 +266,7 @@ def generate_paired_static_a2v(
         if actual + 1.0 / decoded.sampling_rate < duration:
             raise ValueError("A2V audio does not cover the snapped paired frame duration")
         latent = pipeline.audio_conditioner(
-            lambda encoder: vae_encode_audio(decoded, encoder, None)
+            lambda encoder, decoded=decoded: vae_encode_audio(decoded, encoder, None)
         )
         expected = AudioLatentShape.from_duration(
             batch=1, duration=duration, channels=8, mel_bins=16,
