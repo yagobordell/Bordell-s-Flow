@@ -351,6 +351,12 @@ def test_hybrid_full_hd_stage2_factory_runs_after_stage1_and_conditioning() -> N
     def stage(stage_arg, **kwargs):
         events.append(("stage", kwargs["stage_label"]))
         assert stage_arg is (stage1 if kwargs["stage_label"] == "stage1" else stage2)
+        if kwargs["stage_label"] == "stage2":
+            assert isinstance(kwargs["sigmas"], torch.Tensor)
+            assert torch.equal(
+                kwargs["sigmas"],
+                paired.STAGE_2_DISTILLED_SIGMAS.to(dtype=torch.float32),
+            ), "A lazy stage2 DiffusionStage must never overwrite the sigma tensor"
         return SimpleNamespace(latent=latent), SimpleNamespace(latent=latent)
 
     def factory():
