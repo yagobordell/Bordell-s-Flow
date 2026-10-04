@@ -1706,8 +1706,16 @@ class DirectLTX25AudioToVideoBackend:
     ) -> tuple[Any, bool]:
         if requested_pair_vae_backend not in ("eager", "triton_experimental"):
             raise ValueError("Unknown requested A2V pair VAE backend")
+        # Respect existing opt-in single-video Triton benchmark profiles;
+        # do not rebuild/wipe their warm pipeline on every call.
+        selected_profile_backend = LTX_A2V_RESIDENCY_PROFILES.get(
+            generation_profile, ("cpu", "eager"),
+        )[1]
         expected_effective = (
-            "triton" if requested_pair_vae_backend == "triton_experimental" else "eager"
+            "triton"
+            if requested_pair_vae_backend == "triton_experimental"
+            or selected_profile_backend == "triton"
+            else "eager"
         )
         if self._pipeline is not None:
             if (self._pipeline_profile == generation_profile
