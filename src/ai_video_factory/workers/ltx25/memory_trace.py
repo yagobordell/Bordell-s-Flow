@@ -12,9 +12,10 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from contextvars import ContextVar
-from datetime import datetime, timezone
-from typing import Any, Callable
+from datetime import UTC, datetime
+from typing import Any
 
 from .resource_metrics import memory_pressure
 
@@ -112,7 +113,7 @@ class I2VMemoryTrace:
                 phase = self._phase
             sample = {
                 "elapsed_seconds": round(now - self._start, 3),
-                "utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                "utc": datetime.now(UTC).isoformat(timespec="milliseconds"),
                 "phase": phase,
                 "process_available": bool(data.get("process_available")),
                 "cgroup_available": bool(data.get("cgroup_available")),
