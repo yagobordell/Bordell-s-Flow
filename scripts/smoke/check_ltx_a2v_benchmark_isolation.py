@@ -58,6 +58,11 @@ def _required(name: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--env-file", default=".env")
+    parser.add_argument("--reuse-production", action="store_true")
+    parser.add_argument("--expected-production-image", default="")
+    parser.add_argument(
+        "--expected-task-mode", choices=("a2v", "a2v_experimental"), default="a2v"
+    )
     args = parser.parse_args()
     env_path = Path(args.env_file)
     if not env_path.is_absolute():
@@ -86,25 +91,42 @@ def main() -> int:
         organization_name=_required("SALAD_ORGANIZATION"),
         project_name=_required("SALAD_PROJECT"),
     )
+    if args.reuse_production and not args.expected_production_image:
+        raise RuntimeError("--expected-production-image is required when reusing production")
+    selected = production if args.reuse_production else experiment
     try:
         client = SaladClient(
             SaladDispatchConfig(
-                **common, container_group_name=experiment["group_name"]
+                **common, container_group_name=selected["group_name"]
             )
         )
         group = client.describe_container_group()
         assert_quiescent_group(
-            group, expected_group_name=experiment["group_name"],
+            group, expected_group_name=selected["group_name"],
             instances=client.list_container_group_instances(),
         )
+        if args.reuse_production:
+            image = group.get("container", {}).get("image")
+            if image != args.expected_production_image:
+                raise RuntimeError(
+                    "Production group image mismatch; refusing to reuse or restore"
+                )
+            environment = group.get("container", {}).get("environment_variables", {})
+            if environment.get("LTX_WORKER_TASK_MODE") != args.expected_task_mode:
+                raise RuntimeError(
+                    "Production task mode mismatch; refusing to reuse or restore"
+                )
     except Exception as exc:
         print(
-            "A2V isolation failed. Prepare and stop the separate experimental group. "
-            f"Details: {exc}",
+            "A2V isolation failed; selected group must be stopped and match its "
+            f"expected image and task mode. Details: {exc}",
             file=sys.stderr,
         )
         return 1
-    print("A2V_ISOLATION_OK production=independent experiment=stopped")
+    if args.reuse_production:
+        print("A2V_ISOLATION_OK production=reuse-guarded stopped=true")
+    else:
+        print("A2V_ISOLATION_OK production=independent experiment=stopped")
     return 0
 
 
