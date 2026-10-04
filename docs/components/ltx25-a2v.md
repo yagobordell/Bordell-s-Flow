@@ -32,7 +32,7 @@ the shared replay/idempotency path.
 
 ## Validated fast reference production profile
 
-`LTX_A2V_PRODUCTION_FAST_PROFILE` (`ltx25-a2v-reference-fp8none-eager-a95ab-prod-v1`)
+`LTX_A2V_PRODUCTION_FAST_PROFILE` (`ltx25-a2v-reference-distilled-fp8none-eager-a95ab-prod-v1`)
 is the default for **new direct A2V requests** and the smoke CLI's `--profile fast`.
 It runs the unchanged distilled two-stage **reference** recipe using FP8 CAST,
 no CPU weight offload and Eager DiffVAE. Its immutable identity is new:
