@@ -148,3 +148,65 @@ CI unit tests and Docker ABI cannot establish real 32-GiB GPU headroom
 or lip synchronization. Do not promote to main or change production
 A2V's recipe until the operator signs off on actual output and
 the measured times/VRAM and Salad worker RAM logs.
+
+
+## Quality-preserving latency experiments
+
+The accepted Eager/split-B2 pair remains the immutable quality baseline. Three
+latency optimizations are isolated from the generation recipe:
+
+1. **Identical prompt reuse inside one pair.** If and only if both literal
+   positive prompts match, the pair runs the deterministic prompt encoder once
+   and reuses the resulting positive/negative context tensors for the second
+   slot. Seeds, images and audio remain independent. Differently worded prompts
+   still execute two complete prompt encodes.
+2. **Triton DiffVAE is opt-in only.** `VaeBackend=triton_experimental`
+   requires the exact original Eager pair as references, runs the CUDA kernel
+   probe in an isolated child process, forbids silent fallback and writes a
+   full decoded-frame comparison for human approval.
+3. **Fused guidance forward is opt-in only.** Stage 1 CFG naturally constructs
+   an effective transformer batch of four: conditioned B=2 plus unconditional
+   B=2. The accepted baseline uses `BatchSplitAdapter(max_batch_size=2)`,
+   which serializes that effective B=4 into two B=2 forwards. Setting
+   `GuidanceForwardBatchSize=4` leaves the upstream CFG tensors, ordering,
+   sigmas, samplers, image strengths, audio latents and RNG streams unchanged;
+   it only executes that already-constructed B=4 transformer input in one
+   forward. Stage 2 remains logical B=2 and therefore has no arithmetic change.
+   This may OOM on the RTX 5090 and has no sequential fallback.
+
+The pinned upstream CPU block-streaming implementation already overlaps pinned
+H2D copies with transformer compute on a dedicated CUDA stream. No additional
+custom Stage-2 prefetch layer is added: duplicating that machinery would add
+risk without a demonstrated quality-preserving benefit. Instead the worker
+reports Stage-2 wrapper-build and denoise timings plus process/cgroup memory so
+future work can target a measured bottleneck.
+
+The optimized forward or Triton paths MUST receive the exact accepted baseline
+`batch2-a.mp4` and `batch2-b.mp4` from one run, together with its original
+JSON manifests. The smoke client rejects mismatched image/audio hashes,
+prompts, seeds, geometry, frame count, profile, non-Eager decoder or a baseline
+that itself used fused B4. Successful candidates still remain
+`HUMAN_*_VISUAL_LIPSYNC_APPROVAL_REQUIRED`; PSNR/SSIM and audio-envelope
+alignment are evidence, not automatic quality approval.
+
+Example using the accepted baseline:
+
+```powershell
+$Trial.ReferenceA = "data/output/deployment-validation/ltx25-a2v-batch2/a2v-b2-20261004190627/batch2-a.mp4"
+$Trial.ReferenceB = "data/output/deployment-validation/ltx25-a2v-batch2/a2v-b2-20261004190627/batch2-b.mp4"
+$Trial.RunId = "a2v-b2-fused4-$(Get-Date -Format yyyyMMddHHmmss)"
+.\scripts\smoke\run_ltx25_a2v_batch2_trial.ps1 @Trial \
+    -GuidanceForwardBatchSize 4 -CheckInputsOnly
+```
+
+For the decoder-only comparison, retain split guidance and select Triton:
+
+```powershell
+$Trial.RunId = "a2v-b2-triton-$(Get-Date -Format yyyyMMddHHmmss)"
+.\scripts\smoke\run_ltx25_a2v_batch2_trial.ps1 @Trial \
+    -GuidanceForwardBatchSize 2 -VaeBackend triton_experimental -CheckInputsOnly
+```
+
+Do not combine fused-B4 and Triton in the first paid retest. Measure them
+independently against the same accepted Eager/split-B2 pair so any timing or
+quality difference has one cause.
