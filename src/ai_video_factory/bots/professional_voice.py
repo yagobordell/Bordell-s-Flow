@@ -402,6 +402,19 @@ def _check_v3(result: V3, block: dict[str, Any]) -> None:
         performance.register_, performance.pace_character, performance.intensity_arc,
     )):
         raise VoicePlanError("V3 block performance cannot contain empty prose")
+    # V3 is the artistic director, never a Gemini token compiler.
+    # Reject markup in ALL artistic prose; historically this was checked
+    # only in the B2 text, so tags could leak through delivery/pause notes.
+    for name, note in (
+        ("register", performance.register_),
+        ("pace_character", performance.pace_character),
+        ("intensity_arc", performance.intensity_arc),
+    ):
+        if "<" in note or ">" in note:
+            raise VoicePlanError(
+                f"V3 inline-tag leakage in block_performance.{name}: "
+                "describe the performance naturally; V4 alone emits angle-bracket tags"
+            )
     beats = block["beats"]
     if result.block_id != block["block_id"] or [
         beat.beat_id for beat in result.beat_deliveries
@@ -414,14 +427,25 @@ def _check_v3(result: V3, block: dict[str, Any]) -> None:
             raise VoicePlanError("V3 adjacent pauses across original beat boundary")
         previous_outgoing_pause = isinstance(delivery.delivery[-1], Pause)
         spoken = [item for item in delivery.delivery if isinstance(item, Speak)]
-        if not spoken or "".join(item.speak for item in spoken) != source["text"]:
-            raise VoicePlanError(f"V3 altered verbatim narration in beat {source['beat_id']}")
         if re.search(r"<[^>]+>", source["text"]):
             raise VoicePlanError("Ambiguous literal Gemini tags in source narration")
+        rebuilt = "".join(item.speak for item in spoken)
+        if not spoken or rebuilt != source["text"]:
+            if re.search(r"<[^<>]*>", rebuilt):
+                raise VoicePlanError(
+                    f"V3 inline-tag leakage in beat {source['beat_id']} narration: "
+                    "copy B2 text verbatim; only V4 may insert angle-bracket tags"
+                )
+            raise VoicePlanError(f"V3 altered verbatim narration in beat {source['beat_id']}")
         for index, item in enumerate(delivery.delivery):
             if isinstance(item, Pause):
                 if not item.pause_function.strip():
                     raise VoicePlanError("V3 explicit pause needs an audible purpose")
+                if "<" in item.pause_function or ">" in item.pause_function:
+                    raise VoicePlanError(
+                        f"V3 inline-tag leakage in beat {source['beat_id']} "
+                        "pause_function: describe silence artistically; V4 owns tags"
+                    )
                 if (index and isinstance(delivery.delivery[index - 1], Pause)
                     or index == len(delivery.delivery) - 1
                     and item.pause == "breath"):
@@ -429,6 +453,12 @@ def _check_v3(result: V3, block: dict[str, Any]) -> None:
                 continue
             if not item.delivery_quality.strip():
                 raise VoicePlanError("V3 spoken delivery needs an audible direction")
+            if "<" in item.delivery_quality or ">" in item.delivery_quality:
+                raise VoicePlanError(
+                    f"V3 inline-tag leakage in beat {source['beat_id']} "
+                    "delivery_quality: describe human behavior without technical "
+                    "tokens; V4 alone inserts tags"
+                )
             if len(item.vocal_intents) > 2:
                 raise VoicePlanError("V3 excessive vocal intents in spoken unit")
             if len(set(item.stress)) != len(item.stress) or any(
@@ -491,6 +521,8 @@ def _v4_style(direction: V4, source: V3) -> str:
 
 def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
     """Verify every V3 decision and sparse tag against immutable original B2."""
+    # A V4 compiler may not accept hidden technical markup from V3 prose.
+    _check_v3(direction, block)
     ids = [beat["beat_id"] for beat in block["beats"]]
     if (result.block_id != direction.block_id
         or [entry.beat_id for entry in result.beat_tags] != ids
@@ -592,6 +624,7 @@ def _tagged_v4(original_beat: str, sparse: V4BeatTags) -> str:
 
 def _v4_turns(direction: V4, block: dict[str, Any], source: V3) -> list[dict[str, str]]:
     """One full transcript and ONE style for the entire voice group."""
+    _check_v3(source, block)  # No bypass through saved or injected V3 results.
     text = ""
     for beat, sparse in zip(block["beats"], direction.beat_tags, strict=True):
         rendered = _tagged_v4(beat["text"], sparse)
@@ -631,10 +664,20 @@ async def _direct(
             check(prior)
             return prior
         except (ValueError, ValidationError) as exc:
-            # A corrupt saved result cannot silently be used as model authority.
-            raise VoicePlanError(
-                f"{stage} block {block_id}: saved result no longer validates"
-            ) from exc
+            # A V3 checkpoint accepted by the former validator can contain
+            # technical tags in artistic prose. Preserve it for diagnosis and
+            # re-run ONLY that V3 block, then let V4 re-check its input.
+            # Other invalid checkpoints and legacy paid V3 stay fail-closed.
+            if (stage == "V3" and output_type is V3
+                and isinstance(exc, VoicePlanError)
+                and str(exc).startswith("V3 inline-tag leakage")):
+                preserved = folder / "rejected_v3_inline_tags.json"
+                if not preserved.exists():
+                    _json(preserved, _read(cached))
+            else:
+                raise VoicePlanError(
+                    f"{stage} block {block_id}: saved result no longer validates"
+                ) from exc
     previous_id = None
     validation_feedback: dict[str, Any] | None = None
     for attempt in range(3):
@@ -683,12 +726,27 @@ async def _direct(
         try:
             check(response_obj)
         except (ValueError, TypeError) as exc:
+            v3_tag_leak = (
+                stage == "V3" and output_type is V3
+                and str(exc).startswith("V3 inline-tag leakage")
+            )
             validation_feedback = {
                 "error": str(exc),
-                "rejected_response": response_obj.model_dump(
-                    mode="json", by_alias=True,
+                # Feeding literal rejected tokens back to V3 encourages it
+                # to repeat the same markup. Keep those tokens in V4 only.
+                "rejected_response": (
+                    {"omitted": "Previous V3 output contained forbidden technical tags"}
+                    if v3_tag_leak else response_obj.model_dump(
+                        mode="json", by_alias=True,
+                    )
                 ),
                 "task": (
+                    "Recreate this V3 block using ONLY artistic performance "
+                    "instructions and verbatim B2 text. No angle-bracket "
+                    "tokens anywhere in V3; V4 is solely responsible for "
+                    "their translation and insertion. Keep semantic "
+                    "vocal_intents and functional pauses if justified."
+                    if v3_tag_leak else
                     "Correct only the stated contract violations; "
                     "all source strings and IDs are immutable."
                 ),

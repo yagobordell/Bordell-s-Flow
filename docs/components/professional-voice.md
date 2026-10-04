@@ -31,12 +31,18 @@ They never invent scenes, pictures, timing or narration.
   If the baseline genuinely fails to represent the beats, V2 reports it and
   V1 re-evaluates the whole film. A repeated unchanged baseline settles the
   axis.
-- **V3** is now the artistic director: block-wide vocal register, pace and
-  intensity movement, exact spoken substrings, endings, exact stress targets,
-  deliberate functional pauses and rare human vocal intentions. It emits
-  no Gemini bracket tags.
-- **V4** compiles those decisions into compact Gemini styles and exactly
-  sourced punctual tags. V4 cannot independently change the interpretation.
+- **V3** is solely the artistic director: block-wide vocal register, pace,
+  intensity movement, verbatim spoken substrings, endings, stress, functional
+  pauses and rare **semantic** human intentions. V3 must never emit an inline
+  tag or technical code, even in its delivery, register or pause prose.
+- **V4** is the only technical compiler and the only owner of all inline-tag
+  syntax, selection and insertion. It translates validated V3 choices into one
+  Gemini style per full group plus exactly sourced punctual tags; it must not
+  independently change the artistic interpretation. The V3 validator now
+  rejects leaked markup in every prose field, not just altered transcript.
+  A contaminated modern V3 checkpoint is preserved for diagnosis and only
+  its affected block is recompiled; all other invalid and legacy checkpoints
+  retain their conservative fail-closed behavior.
 
 New runs store the full structured requests and validated outputs beside the B
 stages: `V1/pass_<n>/`, `V2/pass_<n>/block_<id>/` and
