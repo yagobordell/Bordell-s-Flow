@@ -123,7 +123,20 @@ def _image_sources(
     else:
         final = []
     entries: dict[str, tuple[Path, str]] = {}
-    for item in [*items, *panels, *final]:
+    if selected_style == "profesional" and manifest.get("finishing_status") == "completed":
+        selected_images = [
+            *(item for item in items if item.get("grid") is not None),
+            *final,
+        ]
+    else:
+        # A partially finished run may contain a mix of source and finished
+        # beat PNGs. Prefer finished records for paths already replaced.
+        finished_paths = {item.get("file") for item in final}
+        selected_images = [
+            *(item for item in [*items, *panels] if item.get("file") not in finished_paths),
+            *final,
+        ]
+    for item in selected_images:
         if not isinstance(item, dict):
             raise PublicationError("Invalid saved image record")
         name = item.get("file")
