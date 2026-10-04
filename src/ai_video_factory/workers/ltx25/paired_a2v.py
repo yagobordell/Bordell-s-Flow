@@ -143,6 +143,7 @@ def _stage(
     negative_ctx: torch.Tensor | None = None,
     seeds: tuple[int, int],
     label: str,
+    phase_metrics: dict[str, Any] | None = None,
 ) -> Any:
     """Faithful pinned DiffusionStage._build_state + frozen modality semantics."""
     
@@ -211,6 +212,9 @@ def _stage(
             ), denoiser=denoiser, **loop_options,
         )
         seconds = time.perf_counter() - started
+        if phase_metrics is not None:
+            phase_metrics[label + "_transformer_build_seconds"] = build
+            phase_metrics[label + "_denoise_seconds"] = seconds
         video = video_tools.unpatchify(video_tools.clear_conditioning(video))
         audio = audio_tools.unpatchify(audio_tools.clear_conditioning(audio))
         logger.info("LTX25_A2V_B2_STAGE %s", json.dumps({
@@ -221,10 +225,52 @@ def _stage(
         return video, audio
 
 
+def _prepare_independent_prompt_contexts(
+    pipeline: Any, samples: tuple[A2VSample, A2VSample],
+) -> tuple[list[tuple[A2VSample, Any, Any]], dict[str, Any]]:
+    """Within this PAIR only, reuse literally identical deterministic embeddings.
+
+    The pinned reference prompt encoder has image enhancement disabled. The
+    same literal positive/negative text and identical encoder options yield
+    the same embeddings. Keep two independent batch tensor slots via cat;
+    never cache across jobs, seeds, images, or differently worded prompts.
+    """
+    prepared: list[tuple[A2VSample, Any, Any]] = []
+    first_contexts: Any = None
+    identical = samples[0].prompt == samples[1].prompt
+    started = time.perf_counter()
+    for index, sample in enumerate(samples):
+        (image,) = pipeline.image_conditioner.resolve_crf([sample.image])
+        if index == 1 and identical:
+            contexts = first_contexts
+        else:
+            contexts = pipeline.prompt_encoder(
+                [sample.prompt, LTX_A2V_STATIC_NEGATIVE_PROMPT],
+                enhance_first_prompt=False, enhance_static_cache=False,
+            )
+            if len(contexts) != 2:
+                raise RuntimeError(
+                    "A2V static reference requires positive + negative encodes"
+                )
+            if index == 0:
+                first_contexts = contexts
+        prepared.append((
+            A2VSample(sample.prompt, sample.seed, image, sample.audio_path),
+            contexts[0], contexts[1],
+        ))
+    return prepared, {
+        "identical_prompts": identical,
+        "prompt_encoder_calls": 1 if identical else 2,
+        "prompt_preparation_seconds": time.perf_counter() - started,
+        "same_pair_context_reuse": identical,
+    }
+
+
 def generate_paired_static_a2v(
     pipeline: Any, samples: tuple[A2VSample, A2VSample], *,
     width: int, height: int, fps: int, frames: int,
     stage2_factory: Any,
+    phase_metrics: dict[str, Any] | None = None,
 ) -> tuple[PipelineOutput, PipelineOutput]:
     """Generate paired A/V with independent frozen PCM and no silent B1 fallback."""
     if len(samples) != 2 or samples[0].seed == samples[1].seed:
@@ -234,19 +280,9 @@ def generate_paired_static_a2v(
     if (frames - 1) % 8 or frames < 9:
         raise ValueError("A2V pair must share the exact 8k+1 audio-driven frame count")
     assert_resolution(height=height, width=width, is_two_stage=True)
-    prepared = []
-    for sample in samples:
-        (image,) = pipeline.image_conditioner.resolve_crf([sample.image])
-        # Exactly the approved static B1 prompt path; never batch Gemma
-        # tokenization because unequal prompt lengths change conditioning.
-        contexts = pipeline.prompt_encoder(
-            [sample.prompt, LTX_A2V_STATIC_NEGATIVE_PROMPT],
-            enhance_first_prompt=False, enhance_static_cache=False,
-        )
-        if len(contexts) != 2:
-            raise RuntimeError("A2V static reference requires positive + negative encodes")
-        prepared.append((A2VSample(sample.prompt, sample.seed, image, sample.audio_path),
-                         contexts[0], contexts[1]))
+    prepared, prompt_metrics = _prepare_independent_prompt_contexts(pipeline, samples)
+    if phase_metrics is not None:
+        phase_metrics.update(prompt_metrics)
     v_context = torch.cat([x[1].video_encoding for x in prepared], dim=0)
     a_context = torch.cat([x[1].audio_encoding for x in prepared], dim=0)
     negative = torch.cat([x[2].video_encoding for x in prepared], dim=0)
@@ -297,10 +333,15 @@ def generate_paired_static_a2v(
     noiser = IndependentA2VNoiser(
         (samples[0].seed, samples[1].seed), pipeline.device,
     )
+    conditioning_start = time.perf_counter()
     stage1_images = _batch_images(
         pipeline, prepared_samples, width // 2, height // 2,
         LTX_A2V_STATIC_IMAGE_STRENGTH,
     )
+    if phase_metrics is not None:
+        phase_metrics["stage1_image_conditioning_seconds"] = (
+            time.perf_counter() - conditioning_start
+        )
     logger.info("LTX25_A2V_B2_START stage=stage1 frames=%d", frames)
     stage1_video, stage1_audio = _stage(
         pipeline.stage_1, video_ctx=v_context, audio_ctx=a_context,
@@ -309,19 +350,32 @@ def generate_paired_static_a2v(
         width=width // 2, height=height // 2, frames=frames, fps=fps,
         initial_video=None, frozen_audio=frozen,
         negative_ctx=negative, seeds=(samples[0].seed, samples[1].seed),
-        label="stage1",
+        label="stage1", phase_metrics=phase_metrics,
     )
     del stage1_images, stage1_audio
+    upsample_start = time.perf_counter()
     upscaled = torch.cat([
         pipeline.upsampler(stage1_video.latent[i:i + 1]) for i in range(2)
     ], dim=0)
     del stage1_video
+    if phase_metrics is not None:
+        phase_metrics["latent_upsampling_seconds"] = time.perf_counter() - upsample_start
+    conditioning_start = time.perf_counter()
     stage2_images = _batch_images(
         pipeline, prepared_samples, width, height,
         LTX_A2V_REFERENCE_RECIPE.stage_2_image_strength,
     )
     del prepared_samples
+    if phase_metrics is not None:
+        phase_metrics["stage2_image_conditioning_seconds"] = (
+            time.perf_counter() - conditioning_start
+        )
+    stage2_factory_start = time.perf_counter()
     stage2 = stage2_factory()
+    if phase_metrics is not None:
+        phase_metrics["stage2_wrapper_factory_seconds"] = (
+            time.perf_counter() - stage2_factory_start
+        )
     logger.info("LTX25_A2V_B2_START stage=stage2")
     final, _ = _stage(
         stage2, video_ctx=v_context, audio_ctx=a_context,
@@ -333,6 +387,7 @@ def generate_paired_static_a2v(
         initial_video=upscaled,
         frozen_audio=frozen,
         seeds=(samples[0].seed, samples[1].seed), label="stage2",
+        phase_metrics=phase_metrics,
     )
     result = []
     for i in range(2):
