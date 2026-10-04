@@ -84,30 +84,6 @@ class V2(Strict):
     baseline_misfit: list[Misfit]
 
 
-class VocalEvent(Strict):
-    """Legacy V3 provider tag, retained exclusively to resume old runs."""
-    at: int = Field(ge=0)
-    tag: Tag
-
-
-class LegacySpeak(Strict):
-    speak: str = Field(min_length=1)
-    style: str = Field(min_length=1, max_length=360)
-    ending_behavior: Ending
-    events: list[VocalEvent]
-
-
-class LegacyBeatDelivery(Strict):
-    beat_id: str
-    segments: list[LegacySpeak] = Field(min_length=1)
-
-
-class LegacyV3(Strict):
-    pipeline_stage: Literal["V3"]
-    block_id: int
-    beat_deliveries: list[LegacyBeatDelivery]
-
-
 HumanBehavior = Literal["inhale", "exhale", "sigh", "chuckle", "gasp"]
 PauseClass = Literal["breath", "beat", "hold"]
 
@@ -213,8 +189,6 @@ class VoicePlanError(ValueError):
 
 _TEMPO = ("held", "measured", "driving", "relentless")
 _PRESSURE = ("low", "moderate", "high", "extreme")
-_ALLOWED_TAGS = frozenset({"breath", "exhales", "sigh", "chuckle", "gasp",
-                           "short pause", "long pause"})
 
 
 def _json(path: Path, payload: dict[str, Any]) -> None:
@@ -380,41 +354,6 @@ def _check_v2(result: V2, block: dict[str, Any], rhythm: BlockRhythm) -> None:
             raise VoicePlanError(f"V2 baseline_misfit {item.axis} contains unknown beat_ids")
 
 
-def _check_legacy_v3(result: LegacyV3, block: dict[str, Any]) -> None:
-    beats = block["beats"]
-    if result.block_id != block["block_id"] or [b.beat_id for b in result.beat_deliveries] != [
-        b["beat_id"] for b in beats
-    ]:
-        raise VoicePlanError(f"V3 block {block['block_id']} changed beat identity or order")
-    for incoming, delivered in zip(beats, result.beat_deliveries, strict=True):
-        if "".join(piece.speak for piece in delivered.segments) != incoming["text"]:
-            raise VoicePlanError(f"V3 altered verbatim narration in beat {incoming['beat_id']}")
-        if re.search(r"<[^>]+>", incoming["text"]):
-            raise VoicePlanError(f"V3 source beat {incoming['beat_id']} has ambiguous literal tags")
-        count = 0
-        for piece in delivered.segments:
-            if len(piece.events) > 2:
-                raise VoicePlanError(f"V3 too many events in fragment of {incoming['beat_id']}")
-            for event in piece.events:
-                count += 1
-                if event.tag not in _ALLOWED_TAGS or event.at > len(piece.speak):
-                    raise VoicePlanError(f"V3 unsafe event in {incoming['beat_id']}")
-                if (0 < event.at < len(piece.speak)
-                    and piece.speak[event.at - 1].isalnum() and piece.speak[event.at].isalnum()):
-                    raise VoicePlanError(f"V3 event splits a word in {incoming['beat_id']}")
-            if len({event.at for event in piece.events}) != len(piece.events):
-                raise VoicePlanError(f"V3 coinciding events in {incoming['beat_id']}")
-        if count > 2:
-            raise VoicePlanError(f"V3 beat {incoming['beat_id']} exceeds human-event safety limit")
-
-
-def _tagged(piece: LegacySpeak) -> str:
-    text = piece.speak
-    for event in sorted(piece.events, key=lambda x: x.at, reverse=True):
-        text = text[:event.at] + f"<{event.tag}>" + text[event.at:]
-    return text
-
-
 def _check_v3(result: V3, block: dict[str, Any]) -> None:
     performance = result.block_performance
     if any(not text.strip() for text in (
@@ -525,15 +464,27 @@ def _v4_style(direction: V4, source: V3) -> str:
     for v3_beat, tagged_beat in zip(
         source.beat_deliveries, direction.beat_tags, strict=True
     ):
-        for event in tagged_beat.inserts:
-            if event.source_kind != "pause":
+        original = "".join(
+            item.speak for item in v3_beat.delivery if isinstance(item, Speak)
+        )
+        cursor = 0
+        for index, item in enumerate(v3_beat.delivery):
+            if isinstance(item, Speak):
+                cursor += len(item.speak)
                 continue
-            pause = v3_beat.delivery[event.source_item_index]
-            if not isinstance(pause, Pause):
-                raise VoicePlanError("V4 pause reference is not a V3 pause")
-            short_anchor = event.text.replace(f"<{event.tag}>", "|")
+            event = next(
+                (e for e in tagged_beat.inserts
+                 if e.source_kind == "pause" and e.source_item_index == index),
+                None,
+            )
+            # An omitted technical tag must not silently discard designed
+            # silence: default to V3's authored natural-language purpose.
+            purpose = event.pause_direction if event else item.pause_function
+            anchor = _minimal_tag_excerpt(original, cursor, "seam").replace(
+                "<seam>", "|"
+            )
             lines.append(
-                f"At '{short_anchor}', pause class: {pause.pause}; {event.pause_direction}"
+                f"At '{anchor}', pause class: {item.pause}; {purpose}"
             )
     return chr(10).join(lines)
 
@@ -624,8 +575,8 @@ def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
                     raise VoicePlanError("V4 lost V3 explicit pause function")
             elif event.pause_direction is not None:
                 raise VoicePlanError("V4 invented a pause purpose on human vocalization")
-        if observed != set(expected):
-            raise VoicePlanError("V4 lost one or more V3 human events or pauses")
+        # V4 has the final say on optional tag insertion. Every selected
+        # tag still needs valid V3 provenance and an exact B2 source offset.
     if len(_v4_style(result, direction).encode("utf-8")) > 5500:
         raise VoicePlanError("V4 group-wide style exceeds Gemini budget")
 
@@ -887,33 +838,27 @@ async def plan_professional_voice(
     if v1 is None:
         raise VoicePlanError("V1 failed to produce global rhythm")
     rhythms = {r.block_id: r for r in v1.block_rhythms}
-    # Existing V3 outputs came from the old provider-specific contract.
-    # Preserve their format and paid-audio resume semantics for the whole run.
-    saved_formats: set[str] = set()
+    # Legacy V3 had a second independent Gemini-tag compiler. Disable it;
+    # protect existing paid WAVs by failing before any new model/API call.
     for block in voice_blocks:
-        saved_path = root / "V3" / f"block_{block['block_id']}" / "output.json"
-        if not saved_path.is_file():
+        checkpoint = root / "V3" / f"block_{block['block_id']}" / "output.json"
+        if not checkpoint.is_file():
             continue
-        saved = _read(saved_path)
+        saved = _read(checkpoint)
         deliveries = saved.get("beat_deliveries")
         if not isinstance(deliveries, list) or not deliveries:
-            raise VoicePlanError(f"Invalid existing V3 checkpoint: {saved_path}")
-        if all(isinstance(beat, dict) and "segments" in beat
-               and "delivery" not in beat for beat in deliveries):
-            saved_formats.add("legacy")
-        elif all(isinstance(beat, dict) and "delivery" in beat
-                 and "segments" not in beat for beat in deliveries):
-            saved_formats.add("current")
-        else:
-            raise VoicePlanError(f"Unrecognised saved V3 checkpoint: {saved_path}")
-    if len(saved_formats) > 1:
-        raise VoicePlanError(
-            "Mixed legacy and V4-era V3 checkpoints cannot be resumed safely"
-        )
-    legacy_v3 = "legacy" in saved_formats
+            raise VoicePlanError(f"Invalid saved V3 checkpoint: {checkpoint}")
+        if any(isinstance(beat, dict) and "segments" in beat
+               for beat in deliveries):
+            raise VoicePlanError(
+                "Legacy V3 checkpoint has obsolete Gemini tag generation; "
+                f"preserved at {checkpoint}. Start a new professional voice "
+                "run with modern V3→V4. Existing paid audio is not touched "
+                "or automatically replayed."
+            )
     semaphore = asyncio.Semaphore(max_parallel_calls)
 
-    async def perform(block: dict[str, Any], v2: V2) -> V3 | LegacyV3:
+    async def perform(block: dict[str, Any], v2: V2) -> V3:
         async with semaphore:
             bid = block["block_id"]
             return await _direct(
@@ -921,12 +866,9 @@ async def plan_professional_voice(
                        "block_rhythm": rhythms[bid].model_dump(),
                        "beat_intents": [_resolved(rhythms[bid], beat) for beat in v2.beat_intents],
                        "landing_beat_id": v2.landing_beat_id},
-                LegacyV3 if legacy_v3 else V3,
-                (lambda value: _check_legacy_v3(value, block)) if legacy_v3
-                else (lambda value: _check_v3(value, block)),
-                provider, model,
-                root / "V3" / f"block_{bid}", on_response, on_timing, bid,
-                prompt_name="v3_legacy.md" if legacy_v3 else None,
+                V3, lambda value: _check_v3(value, block),
+                provider, model, root / "V3" / f"block_{bid}",
+                on_response, on_timing, bid,
             )
 
     v3_outcomes = await _time_stage(
@@ -943,52 +885,45 @@ async def plan_professional_voice(
             f"V3 has {len(v3_failures)} incomplete block(s); "
             "valid blocks were checkpointed for safe recovery"
         ) from v3_failures[0]
-    v3s = [
-        entry for entry in v3_outcomes
-        if isinstance(entry, (V3, LegacyV3))
+    v3s = [entry for entry in v3_outcomes if isinstance(entry, V3)]
+    v4_semaphore = asyncio.Semaphore(max_parallel_calls)
+
+    async def compile_one(block: dict[str, Any], direction: V3) -> V4:
+        async with v4_semaphore:
+            bid = block["block_id"]
+            return await _direct(
+                "V4",
+                {"current_block": block, "v3": direction.model_dump(
+                    mode="json", by_alias=True,
+                ),
+                 "voice_contract": "professional-v4-group-style-sparse-tags-v2"},
+                V4, lambda value: _check_v4(value, block, direction),
+                provider, model, root / "V4" / f"block_{bid}",
+                on_response, on_timing, bid,
+            )
+
+    v4_outcomes = await _time_stage(
+        "V4",
+        asyncio.gather(*(
+            compile_one(block, direction)
+            for block, direction in zip(voice_blocks, v3s, strict=True)
+            if isinstance(direction, V3)
+        ), return_exceptions=True),
+        on_stage_duration,
+    )
+    v4_failures = [
+        entry for entry in v4_outcomes if isinstance(entry, BaseException)
     ]
-    v4s: list[V4] = []
-    if not legacy_v3:
-        if not all(isinstance(item, V3) for item in v3s):
-            raise VoicePlanError("Inconsistent V3 checkpoint format")
-        v4_semaphore = asyncio.Semaphore(max_parallel_calls)
-
-        async def compile_one(block: dict[str, Any], direction: V3) -> V4:
-            async with v4_semaphore:
-                bid = block["block_id"]
-                return await _direct(
-                    "V4",
-                    {"current_block": block, "v3": direction.model_dump(
-                        mode="json", by_alias=True,
-                    ),
-                     "voice_contract": "professional-v4-group-style-sparse-tags-v2"},
-                    V4, lambda value: _check_v4(value, block, direction),
-                    provider, model, root / "V4" / f"block_{bid}",
-                    on_response, on_timing, bid,
-                )
-
-        v4_outcomes = await _time_stage(
-            "V4",
-            asyncio.gather(*(
-                compile_one(block, direction)
-                for block, direction in zip(voice_blocks, v3s, strict=True)
-                if isinstance(direction, V3)
-            ), return_exceptions=True),
-            on_stage_duration,
-        )
-        v4_failures = [
-            entry for entry in v4_outcomes if isinstance(entry, BaseException)
-        ]
-        if v4_failures:
-            raise VoicePlanError(
-                f"V4 has {len(v4_failures)} incomplete block(s); "
-                "validated blocks were checkpointed for safe recovery"
-            ) from v4_failures[0]
-        v4s = [entry for entry in v4_outcomes if isinstance(entry, V4)]
-        _json(root / "V4" / "merged_output.json", {
-            "pipeline_stage": "V4",
-            "blocks": [item.model_dump(mode="json", by_alias=True) for item in v4s],
-        })
+    if v4_failures:
+        raise VoicePlanError(
+            f"V4 has {len(v4_failures)} incomplete block(s); "
+            "validated blocks were checkpointed for safe recovery"
+        ) from v4_failures[0]
+    v4s = [entry for entry in v4_outcomes if isinstance(entry, V4)]
+    _json(root / "V4" / "merged_output.json", {
+        "pipeline_stage": "V4",
+        "blocks": [item.model_dump(mode="json", by_alias=True) for item in v4s],
+    })
     # Present the final reconciled result like B1.2/B2, without hiding
     # intermediate passes and per-block files needed for troubleshooting.
     _json(root / "V1" / "merged_output.json", v1.model_dump(mode="json", by_alias=True))
@@ -1090,8 +1025,7 @@ async def generate_professional_audio(
         block.get("source_block_ids", [block["block_id"]]) != [block["block_id"]]
         for block in voice_blocks
     )
-    legacy_audio = not v4s and all(isinstance(item, LegacyV3) for item in v3s)
-    if not legacy_audio and len(v4s) != len(voice_blocks):
+    if len(v4s) != len(voice_blocks):
         raise VoicePlanError("Every new professional voice block requires validated V4")
     # Fingerprint includes effective directions and the compiler contract.
     payload = {"blocks": blocks, "v1": v1.model_dump(by_alias=True),
@@ -1099,9 +1033,8 @@ async def generate_professional_audio(
                "v3": [x.model_dump(by_alias=True) for x in v3s], "voice": voice_id,
                "model": DEFAULT_GEMINI_TTS_MODEL, "generation_nonce": generation_nonce,
                "source_sha256": source_sha256}
-    if v4s:
-        payload["v4"] = [x.model_dump(by_alias=True) for x in v4s]
-        payload["compiler_version"] = "professional-v4-group-v2"
+    payload["v4"] = [x.model_dump(by_alias=True) for x in v4s]
+    payload["compiler_version"] = "professional-v4-exclusive-tags-v3"
     if grouped_plan:
         payload["voice_groups"] = groups
     fingerprint = _fingerprint(payload)
@@ -1136,30 +1069,18 @@ async def generate_professional_audio(
     semaphore = asyncio.Semaphore(max_parallel_calls)
 
     async def one(
-        block: dict[str, Any], direction: V3 | LegacyV3, compiler: V4 | None,
+        block: dict[str, Any], direction: V3, compiler: V4,
     ) -> dict[str, Any]:
         bid = block["block_id"]
         source_ids = block.get("source_block_ids", [bid])
         folder = run_dir / "blocks" / f"block_{bid}"
         state_path = folder / "task.json"
         async with semaphore:
-            if compiler is not None:
-                turns = _v4_turns(compiler, block, direction)
-            elif isinstance(direction, LegacyV3):
-                turns = [
-                    {"text": _tagged(segment), "style": segment.style}
-                    for delivery in direction.beat_deliveries
-                    for segment in delivery.segments
-                ]
-            else:
-                raise VoicePlanError("New V3 cannot send speech without validated V4")
-            speech_fingerprint = (
-                _fingerprint({
-                    "turns": turns, "source_block_ids": source_ids,
-                    **({"compiler_version": "professional-v4-group-v2"} if compiler else {}),
-                })
-                if len(source_ids) > 1 or compiler else _fingerprint(turns)
-            )
+            turns = _v4_turns(compiler, block, direction)
+            speech_fingerprint = _fingerprint({
+                "turns": turns, "source_block_ids": source_ids,
+                "compiler_version": "professional-v4-exclusive-tags-v3",
+            })
             if state_path.exists():
                 state = _read(state_path)
                 if state.get("fingerprint") != speech_fingerprint:

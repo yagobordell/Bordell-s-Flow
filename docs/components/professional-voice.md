@@ -17,9 +17,10 @@ Even B2 beats with `audio: false` receive narration (voice-over).
 The only prompts for **new** professional voice runs are
 `src/ai_video_factory/bots/prompts/v{1,2,3,4}.md`. The original
 B8 reference documents live in Git history, not in the current tree.
-`v3_legacy.md` is not selectable for new runs: it exists solely to
-reconcile already-paid historical voice checkpoints without resubmitting
-charges.
+The obsolete legacy V3 code and its competing tag compiler have been removed. Old
+legacy-V3 checkpoints are preserved but explicitly rejected when resuming;
+start a new modern V3→V4 voice run instead. Existing completed paid audio
+files are never automatically regenerated.
 B3 canonical scenes and B7.2 depictions do not exist in this repository's B2
 contract; the active V2/V3 prompts instead operate on immutable B2 beat IDs.
 They never invent scenes, pictures, timing or narration.
@@ -41,8 +42,8 @@ They never invent scenes, pictures, timing or narration.
   independently change the artistic interpretation. The V3 validator now
   rejects leaked markup in every prose field, not just altered transcript.
   A contaminated modern V3 checkpoint is preserved for diagnosis and only
-  its affected block is recompiled; all other invalid and legacy checkpoints
-  retain their conservative fail-closed behavior.
+  its affected block is recompiled. Legacy V3 checkpoints are no longer
+  executable and fail closed, preserving previously purchased audio files.
 
 New runs store the full structured requests and validated outputs beside the B
 stages: `V1/pass_<n>/`, `V2/pass_<n>/block_<id>/` and
@@ -195,3 +196,13 @@ V4 extends the provider-neutral B8.4 with precisely source-referenced Gemini eve
 ## V4: one Gemini style and sparse tagged beat excerpts
 
 The new V4 contract matches the original B8.4 group scope: the **entire B2 voice group** is sent as exactly **one Gemini text part** with exactly **one speech_metadata.style**, assembled from audio_profile, group-wide directors_notes and compact locator-addressed spoken_directions. A group may contain many beats or V3 fragments; none receives an independent Gemini style. For every original B2 beat, beat_tags has text="" and inserts=[] unless there are authorized V3 tags. Each insert contains only the original preceding and following source word with one tag between, plus absolute beat character offset and V3 source provenance. Multiple tags in one beat produce independent minimal excerpts. Validators ensure snippets match original B2 at their exact offsets, V3 decisions are preserved, and the final full narration is reconstructed only from original B2 text; model-produced excerpts are never sent as the transcript. <swallow> in examples is illustrative and rejected until documented support is added. Version professional-v4-group-v2 separates new audio requests from old paid audio caches.
+
+
+**Compiler ownership:** The legacy code path that could generate tags in
+V3 has been deleted. V4 decides independently whether a structured V3
+human intention or designed pause needs an actual inline Gemini tag. Source
+provenance and exact B2 offsets remain mandatory for any tag it chooses;
+there is no longer a forced one-tag-per-V3-event validation. Original
+V3 artistic pause functions still appear once in the group style, with or
+without a technical tag. Completed historical audio stays untouched,
+but obsolete legacy checkpoints cannot run through the active pipeline.
