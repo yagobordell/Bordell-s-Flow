@@ -142,8 +142,8 @@ finally {
             & $Manager -Action Stop -Service ltx25_i2v -EnvFile $EnvFile -NonInteractive
             if (-not $?) { throw "Stop returned an unsuccessful PowerShell status." }
             $StoppedStatus = (& $Manager -Action Status -Service ltx25_i2v -EnvFile $EnvFile -NonInteractive | Out-String)
-            if ($StoppedStatus -notmatch 'status=stopped(\\s|$)' -or
-                $StoppedStatus -notmatch 'pending=False(\\s|$)') {
+            if ($StoppedStatus -notmatch 'status=stopped(\s|$)' -or
+                $StoppedStatus -notmatch 'pending=False(\s|$)') {
                 throw "Stop did not prove a stably stopped remote group: $StoppedStatus"
             }
         }
