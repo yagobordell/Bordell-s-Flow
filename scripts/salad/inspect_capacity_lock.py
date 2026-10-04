@@ -7,9 +7,13 @@ owners require human coordination, not -AllowControllerOverride.
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
 
 from ai_video_factory.inference.capacity_controller import (
     _ADVISORY_LOCK_KEY,
@@ -73,6 +77,19 @@ def inspect(connection: Any) -> dict[str, Any]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--env-file", default=".env")
+    args = parser.parse_args()
+    root = Path(__file__).resolve().parents[2]
+    env_file = Path(args.env_file)
+    if not env_file.is_absolute():
+        env_file = root / env_file
+    # Standalone read-only diagnostics must work from the same .env as the
+    # PowerShell manager, even when no process variables were pre-exported.
+    load_dotenv(root / "config" / "app.env", override=False)
+    load_dotenv(root / "config" / "salad.env", override=False)
+    if env_file.is_file():
+        load_dotenv(env_file, override=False)
     try:
         import psycopg
 
