@@ -898,6 +898,22 @@ def _clear_outputs_from(output: Path, start_from: str) -> None:
         if not visual_plan.is_file():
             raise SystemExit(f"Visual plan path is not a file: {visual_plan}")
         visual_plan.unlink()
+    if start_from == "B2":
+        # B2 corrections invalidate the complete professional voice plan.
+        # V1-V4 use the same clean checkpoint layout as B: input/output only.
+        for root in (output, output / "voice_direction"):
+            if root.is_symlink() or root.is_junction():
+                raise SystemExit(f"Refusing to clear linked voice output: {root}")
+            for stage in ("V1", "V2", "V3", "V4"):
+                target = root / stage
+                if target.is_symlink() or target.is_junction():
+                    raise SystemExit(f"Refusing to clear linked voice stage: {target}")
+                if target.exists():
+                    if not target.is_dir():
+                        raise SystemExit(f"Voice stage output is not a directory: {target}")
+                    shutil.rmtree(target)
+            if root.name == "voice_direction" and root.exists():
+                root.rmdir()
 
 
 

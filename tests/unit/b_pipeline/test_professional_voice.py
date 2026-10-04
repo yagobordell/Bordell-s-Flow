@@ -219,10 +219,15 @@ def test_plan_validation_retries_only_v3_and_persists_outputs(tmp_path):
     ))
     assert [type(item).__name__ for item in result] == ["V1", "list", "list", "list"]
     assert provider.calls == ["V1", "V2", "V3", "V3", "V4"]
-    assert (tmp_path / "V3/block_1/rejected_attempt_1.json").is_file()
-    assert (tmp_path / "V1/pass_1/input.json").is_file()
-    assert (tmp_path / "V2/pass_1/block_1/output.json").is_file()
-    assert (tmp_path / "V3/block_1/input_attempt_2.json").is_file()
+    assert (tmp_path / "V1/input.json").is_file()
+    assert (tmp_path / "V1/output.json").is_file()
+    assert (tmp_path / "V2/block_1/input.json").is_file()
+    assert (tmp_path / "V2/block_1/output.json").is_file()
+    assert (tmp_path / "V3/block_1/input.json").is_file()
+    assert (tmp_path / "V3/block_1/output.json").is_file()
+    assert not list(tmp_path.rglob("api_call_*.json"))
+    assert not list(tmp_path.rglob("rejected_attempt_*.json"))
+    assert not list(tmp_path.rglob("input_attempt_*.json"))
     for stage in ("V1", "V2", "V3", "V4"):
         assert (tmp_path / stage / "merged_output.json").is_file()
     # The second invocation reuses validated V1/V2/V3 files without paid text calls.
@@ -561,10 +566,10 @@ def test_professional_voice_stage_wall_times_are_separate_from_parallel_call_tim
     assert len(provider.calls) == 4
     assert len(call_times) == 4
     assert len(stage_times) == 8
-    assert (tmp_path / "V1/pass_1/api_call_1.json").is_file()
+    assert not list(tmp_path.rglob("api_call_*.json"))
 
 
-def test_legacy_professional_voice_checkpoints_are_reused_without_paid_repost(
+def test_legacy_professional_voice_checkpoints_are_rejected(
     tmp_path,
 ) -> None:
     legacy = tmp_path / "voice_direction"
@@ -580,12 +585,11 @@ def test_legacy_professional_voice_checkpoints_are_reused_without_paid_repost(
     legacy.mkdir()
     for stage in ("V1", "V2", "V3", "V4"):
         (tmp_path / stage).rename(legacy / stage)
-    asyncio.run(pv.plan_professional_voice(**kwargs))
-    assert provider.calls == ["V1", "V2", "V3", "V4"]
-    assert not (tmp_path / "V1").exists()
+    with pytest.raises(pv.VoicePlanError, match="Legacy voice checkpoints"):
+        asyncio.run(pv.plan_professional_voice(**kwargs))
 
 
-def test_api_usage_snapshots_are_append_only_across_v_retries(tmp_path) -> None:
+def test_v_retries_keep_only_stable_input_and_output_files(tmp_path) -> None:
     class WithUsage(FakeProvider):
         async def generate_structured_with_response(self, *, output_type, **kwargs):
             result, raw = await super().generate_structured_with_response(
@@ -607,9 +611,8 @@ def test_api_usage_snapshots_are_append_only_across_v_retries(tmp_path) -> None:
         core={"central_question": "Why?", "final_answer": "Because."},
         blocks=[_block()], output=tmp_path, provider=provider, model="gpt-6-luna",
     ))
-    first = json.loads((tmp_path / "V3/block_1/api_call_1.json").read_text())
-    second = json.loads((tmp_path / "V3/block_1/api_call_2.json").read_text())
-    assert first["outcome"] == second["outcome"] == "received"
-    assert first["response"]["usage"]["input_tokens"] == 100
-    assert first["response"]["id"] != second["response"]["id"]
-    assert first["request_sha256"] != second["request_sha256"]
+    assert (tmp_path / "V3/block_1/input.json").is_file()
+    assert (tmp_path / "V3/block_1/output.json").is_file()
+    assert not list(tmp_path.rglob("api_call_*.json"))
+    assert not list(tmp_path.rglob("rejected_attempt_*.json"))
+    assert not list(tmp_path.rglob("input_attempt_*.json"))

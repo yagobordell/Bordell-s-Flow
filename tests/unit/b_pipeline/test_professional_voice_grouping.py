@@ -69,10 +69,13 @@ def test_group_preserves_original_narrative_boundaries():
     assert voice[1] is source[3]
 
 
-def test_pre_feature_checkpoints_keep_original_mapping(tmp_path):
+def test_grouping_is_recomputed_without_a_grouping_checkpoint(tmp_path):
     (tmp_path / "V1").mkdir()
     source = _blocks([6, 1, 3, 8])
-    assert pv._voice_blocks_for_plan(source, tmp_path) == source
+    grouped = pv._voice_blocks_for_plan(source, tmp_path)
+    assert [block.get("source_block_ids", [block["block_id"]]) for block in grouped] == [
+        [1, 2, 3], [4],
+    ]
     assert not (tmp_path / "V1" / "voice_block_plan.json").exists()
 
 
@@ -185,7 +188,7 @@ def test_full_v1_v2_v3_receive_same_premerged_units_and_resume(tmp_path):
     assert len(v3[0].beat_deliveries) == 10
     assert provider.inputs[0]["blocks"][0]["source_block_ids"] == [1, 2, 3]
     assert sorted(provider.calls) == ["V1", "V2", "V2", "V3", "V3", "V4", "V4"]
-    assert (tmp_path / "V1" / "voice_block_plan.json").is_file()
+    assert not (tmp_path / "V1" / "voice_block_plan.json").exists()
     asyncio.run(pv.plan_professional_voice(**kwargs))
     assert len(provider.calls) == 7  # all cached; no repeat paid V calls
 

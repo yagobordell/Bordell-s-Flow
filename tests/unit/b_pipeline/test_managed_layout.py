@@ -856,18 +856,17 @@ def test_professional_v_stages_are_visible_next_to_b_bots_and_in_final_publicati
     managed_complete: tuple[Path, Path, Path],
 ) -> None:
     work, script, target = managed_complete
-    _json(work, "V1/pass_1/input.json", {"payload": "direction"})
-    _json(work, "V1/pass_1/output.json", {"pipeline_stage": "V1"})
-    _json(work, "V2/pass_1/block_1/input.json", {"payload": "rhythm"})
-    _json(work, "V2/pass_1/block_1/output.json", {"pipeline_stage": "V2"})
+    _json(work, "V1/input.json", {"payload": "direction"})
+    _json(work, "V1/output.json", {"pipeline_stage": "V1"})
+    _json(work, "V2/block_1/input.json", {"payload": "rhythm"})
+    _json(work, "V2/block_1/output.json", {"pipeline_stage": "V2"})
     _json(work, "V3/block_1/input.json", {"payload": "delivery"})
-    _json(work, "V3/block_1/rejected_attempt_1.json", {"error": "bad beat"})
     _json(work, "V3/block_1/output.json", {"pipeline_stage": "V3"})
     sync_managed_outputs(work, target)
     for stage, rel in (
-        ("V1", "pass_1/input.json"), ("V1", "pass_1/output.json"),
-        ("V2", "pass_1/block_1/output.json"),
-        ("V3", "block_1/input.json"), ("V3", "block_1/rejected_attempt_1.json"),
+        ("V1", "input.json"), ("V1", "output.json"),
+        ("V2", "block_1/output.json"),
+        ("V3", "block_1/input.json"),
         ("V3", "block_1/output.json"),
     ):
         assert (target / "outputs" / stage / rel).is_file()

@@ -244,7 +244,7 @@ def test_silent_breath_class_never_creates_unrequested_audible_inhale():
 
 def test_empty_whitespace_prose_cannot_bypass_v3_v4_validations():
     direction = _artistic()
-    direction.block_performance.register = "   "
+    direction.block_performance.register_ = "   "
     with pytest.raises(pv.VoicePlanError, match="empty prose"):
         pv._check_v3(direction, _block())
     direction = _artistic()

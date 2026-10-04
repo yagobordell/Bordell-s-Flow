@@ -137,7 +137,9 @@ class BeatDelivery(Strict):
 
 
 class BlockPerformance(Strict):
-    register: str = Field(min_length=1)
+    register_: str = Field(
+        alias="register", serialization_alias="register", min_length=1,
+    )
     pace_character: str = Field(min_length=1)
     intensity_arc: str = Field(min_length=1)
 
@@ -303,55 +305,18 @@ def _assemble_voice_blocks(
     return assembled
 
 
-def _voice_plan_path(output: Path) -> Path:
-    root = output / "voice_direction" if (output / "voice_direction").exists() else output
-    return root / "V1" / "voice_block_plan.json"
-
-
 def _voice_blocks_for_plan(
-    blocks: list[dict[str, Any]], output_root: Path,
+    blocks: list[dict[str, Any]], _output_root: Path | None = None,
 ) -> list[dict[str, Any]]:
-    path = output_root / "V1" / "voice_block_plan.json"
-    if path.is_symlink() or path.parent.is_symlink():
-        raise VoicePlanError("Linked professional voice block plan")
-    signature = _source_block_signature(blocks)
-    if path.is_file():
-        saved = _read(path)
-        if saved.get("schema_version") != "professional-voice-groups-v1":
-            raise VoicePlanError("Unsupported voice grouping checkpoint")
-        if saved.get("source_block_beat_ids") == signature:
-            groups = saved.get("groups")
-            if not isinstance(groups, list):
-                raise VoicePlanError("Malformed saved voice groups")
-            return _assemble_voice_blocks(blocks, groups)
-        # Corrected B2 can change beat counts: recalculate before rerunning V.
-    elif (output_root / "V1").exists():
-        # Pre-feature V checkpoints must resume with their original one-to-one
-        # mapping; migrating them silently would repeat previously paid calls.
-        return blocks
-    groups = _progressive_voice_groups(blocks)
-    _json(path, {
-        "schema_version": "professional-voice-groups-v1",
-        "source_block_beat_ids": signature,
-        "groups": groups,
-    })
-    return _assemble_voice_blocks(blocks, groups)
+    """Build deterministic groups without a separate grouping checkpoint."""
+    return _assemble_voice_blocks(blocks, _progressive_voice_groups(blocks))
 
 
 def _voice_blocks_for_audio(
     blocks: list[dict[str, Any]], output: Path,
 ) -> list[dict[str, Any]]:
-    path = _voice_plan_path(output)
-    if path.is_symlink():
-        raise VoicePlanError("Linked professional voice grouping checkpoint")
-    if not path.exists():
-        return blocks  # A pre-feature run, or a patched legacy test plan.
-    saved = _read(path)
-    if (saved.get("schema_version") != "professional-voice-groups-v1"
-        or saved.get("source_block_beat_ids") != _source_block_signature(blocks)
-        or not isinstance(saved.get("groups"), list)):
-        raise VoicePlanError("Saved professional voice grouping differs from current B2")
-    return _assemble_voice_blocks(blocks, saved["groups"])
+    del output
+    return _voice_blocks_for_plan(blocks)
 
 
 def _check_v1(result: V1, blocks: list[dict[str, Any]], contested: list[dict[str, Any]]) -> None:
@@ -434,7 +399,7 @@ def _tagged(piece: LegacySpeak) -> str:
 def _check_v3(result: V3, block: dict[str, Any]) -> None:
     performance = result.block_performance
     if any(not text.strip() for text in (
-        performance.register, performance.pace_character, performance.intensity_arc,
+        performance.register_, performance.pace_character, performance.intensity_arc,
     )):
         raise VoicePlanError("V3 block performance cannot contain empty prose")
     beats = block["beats"]
@@ -636,48 +601,6 @@ def _v4_turns(direction: V4, block: dict[str, Any], source: V3) -> list[dict[str
     return [{"text": text, "style": _v4_style(direction, source)}]
 
 
-def _response_snapshot(response: Any, model: str) -> dict[str, Any]:
-    """Persist only the API fields required for auditable per-call pricing."""
-    def field(value: Any, name: str) -> Any:
-        return value.get(name) if isinstance(value, dict) else getattr(value, name, None)
-
-    usage = field(response, "usage")
-    details = field(usage, "input_tokens_details")
-    output_details = field(usage, "output_tokens_details")
-    return {
-        "id": field(response, "id"),
-        "model": field(response, "model") or model,
-        "service_tier": field(response, "service_tier"),
-        "usage": {
-            "input_tokens": field(usage, "input_tokens"),
-            "output_tokens": field(usage, "output_tokens"),
-            "input_tokens_details": {
-                "cached_tokens": field(details, "cached_tokens"),
-                "cache_write_tokens": field(details, "cache_write_tokens"),
-            },
-            "output_tokens_details": {
-                "reasoning_tokens": field(output_details, "reasoning_tokens"),
-            },
-        } if usage is not None else None,
-    }
-
-
-def _save_api_call(
-    folder: Path, *, stage: str, block_id: int | None,
-    response: dict[str, Any], request: dict[str, Any],
-    elapsed_seconds: float, outcome: str,
-) -> None:
-    """Append rather than overwrite charges when B2 corrections rerun V planning."""
-    index = 1
-    while (folder / f"api_call_{index}.json").exists():
-        index += 1
-    _json(folder / f"api_call_{index}.json", {
-        "stage": stage, "block_id": block_id, "request_sha256": _fingerprint(request),
-        "response": response, "elapsed_seconds": round(elapsed_seconds, 3),
-        "outcome": outcome,
-    })
-
-
 async def _time_stage(
     stage: str, operation: Any, on_stage_duration: Callable[..., None] | None,
 ) -> Any:
@@ -713,20 +636,15 @@ async def _direct(
                 f"{stage} block {block_id}: saved result no longer validates"
             ) from exc
     previous_id = None
+    validation_feedback: dict[str, Any] | None = None
     for attempt in range(3):
         instructions = prompt
         data: dict[str, Any] = {"payload": payload}
-        if attempt:
-            rejected = _read(folder / f"rejected_attempt_{attempt}.json")
-            data["validation_feedback"] = {
-                "error": rejected["error"], "rejected_response": rejected["response"],
-                "task": (
-                    "Correct only the stated contract violations; "
-                    "all source strings and IDs are immutable."
-                ),
-            }
-        input_name = "input.json" if attempt == 0 else f"input_attempt_{attempt + 1}.json"
-        _json(folder / input_name, data)
+        if validation_feedback is not None:
+            data["validation_feedback"] = validation_feedback
+        # One stable input checkpoint per V unit. A local validation retry
+        # overwrites this file instead of creating attempt/rejection files.
+        _json(folder / "input.json", data)
         start = perf_counter()
         try:
             response_obj, raw = await provider.generate_structured_with_response(
@@ -735,23 +653,17 @@ async def _direct(
                 output_type=output_type, previous_response_id=previous_id,
             )
         except ValidationError as exc:
-            # The API could have charged for a response the SDK could not parse.
-            # Preserve a conservative unknown-cost call, not a fictitious $0.
             elapsed = perf_counter() - start
-            _save_api_call(
-                folder, stage=stage, block_id=block_id,
-                response={"id": None, "model": model, "service_tier": None,
-                          "usage": None},
-                request=data, elapsed_seconds=elapsed, outcome="schema_invalid",
-            )
             if on_timing is not None:
                 on_timing(stage, block_id, elapsed)
-            # A provider response reached schema validation but could not be parsed.
-            # Give the text bot a clear correction message; no paid speech is involved.
-            _json(folder / f"rejected_attempt_{attempt + 1}.json", {
-                "attempt": attempt + 1, "error": f"JSON schema validation: {exc}",
+            validation_feedback = {
+                "error": f"JSON schema validation: {exc}",
                 "response": {"unparsed": "Provider parsed no valid output"},
-            })
+                "task": (
+                    "Correct only the stated contract violations; "
+                    "all source strings and IDs are immutable."
+                ),
+            }
             if attempt == 2:
                 raise VoicePlanError(
                     f"{stage} block {block_id}: provider schema validation exhausted"
@@ -759,22 +671,10 @@ async def _direct(
             continue
         except Exception as exc:
             elapsed = perf_counter() - start
-            _save_api_call(
-                folder, stage=stage, block_id=block_id,
-                response={"id": None, "model": model, "service_tier": None,
-                          "usage": None},
-                request=data, elapsed_seconds=elapsed, outcome="transport_unknown",
-            )
             if on_timing is not None:
                 on_timing(stage, block_id, elapsed)
-            # Transport or unknown POST outcomes must not silently be replayed.
             raise VoicePlanError(f"{stage} block {block_id}: provider failed: {exc}") from exc
         elapsed = perf_counter() - start
-        _save_api_call(
-            folder, stage=stage, block_id=block_id,
-            response=_response_snapshot(raw, model),
-            request=data, elapsed_seconds=elapsed, outcome="received",
-        )
         if on_response:
             on_response(stage, block_id, raw)
         if on_timing:
@@ -783,16 +683,22 @@ async def _direct(
         try:
             check(response_obj)
         except (ValueError, TypeError) as exc:
-            _json(folder / f"rejected_attempt_{attempt + 1}.json", {
-                "attempt": attempt + 1, "error": str(exc),
-                "response": response_obj.model_dump(mode="json"),
-            })
+            validation_feedback = {
+                "error": str(exc),
+                "rejected_response": response_obj.model_dump(
+                    mode="json", by_alias=True,
+                ),
+                "task": (
+                    "Correct only the stated contract violations; "
+                    "all source strings and IDs are immutable."
+                ),
+            }
             if attempt == 2:
                 raise VoicePlanError(
                     f"{stage} block {block_id}: validation failed after 2 retries: {exc}"
                 ) from exc
             continue
-        _json(folder / "output.json", response_obj.model_dump(mode="json"))
+        _json(folder / "output.json", response_obj.model_dump(mode="json", by_alias=True))
         return response_obj
     raise AssertionError("Unreachable V retry state")
 
@@ -818,30 +724,29 @@ async def plan_professional_voice(
     max_parallel_calls: int = 8,
 ) -> tuple[V1, list[V2], list[V3 | LegacyV3], list[V4]]:
     """No paid speech request starts before all V contracts validate."""
-    # New runs use exactly the B-stage sibling layout (output/V1,V2,V3).
-    # Historical in-progress runs continue using their legacy checkpoints,
-    # avoiding an accidental second paid V call after a software update.
     legacy = output / "voice_direction"
     if legacy.is_symlink() or any((output / stage).is_symlink()
                                  for stage in ("V1", "V2", "V3", "V4")):
         raise VoicePlanError("Linked voice checkpoint root")
-    if legacy.exists() and any((output / stage).exists()
-                               for stage in ("V1", "V2", "V3", "V4")):
-        raise VoicePlanError("Ambiguous legacy and current voice checkpoints")
-    root = legacy if legacy.exists() else output
+    if legacy.exists():
+        raise VoicePlanError(
+            "Legacy voice checkpoints found; rerun from B2 to recreate V1-V4 "
+            "with only input.json and output.json."
+        )
+    root = output
     voice_blocks = _voice_blocks_for_plan(blocks, root)
     contested: list[dict[str, Any]] = []
     v1: V1 | None = None
     v2s: list[V2] = []
     # V2 misfit re-enters the film-level V1; settled baselines stop re-entry.
     settled: set[tuple[int, str, str]] = set()
-    for iteration in range(9):
+    for _iteration in range(9):
         v1 = await _time_stage(
             "V1",
             _direct("V1", {"narrative_core": core, "blocks": voice_blocks,
                            "contested_baselines": contested}, V1,
                     lambda value: _check_v1(value, voice_blocks, contested), provider, model,
-                    root / "V1" / f"pass_{iteration + 1}", on_response, on_timing, None),
+                    root / "V1", on_response, on_timing, None),
             on_stage_duration,
         )
         rhythm_by_id = {r.block_id: r for r in v1.block_rhythms}
@@ -851,7 +756,7 @@ async def plan_professional_voice(
             block: dict[str, Any],
             *, _semaphore: asyncio.Semaphore = semaphore,
             _rhythms: dict[int, BlockRhythm] = rhythm_by_id,
-            _global: V1 = v1, _iteration: int = iteration,
+            _global: V1 = v1,
         ) -> V2:
             async with _semaphore:
                 bid = block["block_id"]
@@ -861,7 +766,7 @@ async def plan_professional_voice(
                            "block_rhythms": [x.model_dump() for x in _global.block_rhythms],
                            "current_block": block},
                     V2, lambda candidate: _check_v2(candidate, block, rhythm), provider, model,
-                    root / "V2" / f"pass_{_iteration + 1}" / f"block_{bid}",
+                    root / "V2" / f"block_{bid}",
                     on_response, on_timing, bid,
                 )
 
@@ -976,7 +881,9 @@ async def plan_professional_voice(
                 bid = block["block_id"]
                 return await _direct(
                     "V4",
-                    {"current_block": block, "v3": direction.model_dump(mode="json"),
+                    {"current_block": block, "v3": direction.model_dump(
+                        mode="json", by_alias=True,
+                    ),
                      "voice_contract": "professional-v4-group-style-sparse-tags-v2"},
                     V4, lambda value: _check_v4(value, block, direction),
                     provider, model, root / "V4" / f"block_{bid}",
@@ -1003,18 +910,18 @@ async def plan_professional_voice(
         v4s = [entry for entry in v4_outcomes if isinstance(entry, V4)]
         _json(root / "V4" / "merged_output.json", {
             "pipeline_stage": "V4",
-            "blocks": [item.model_dump(mode="json") for item in v4s],
+            "blocks": [item.model_dump(mode="json", by_alias=True) for item in v4s],
         })
     # Present the final reconciled result like B1.2/B2, without hiding
     # intermediate passes and per-block files needed for troubleshooting.
-    _json(root / "V1" / "merged_output.json", v1.model_dump(mode="json"))
+    _json(root / "V1" / "merged_output.json", v1.model_dump(mode="json", by_alias=True))
     _json(root / "V2" / "merged_output.json", {
         "pipeline_stage": "V2",
         "blocks": [item.model_dump(mode="json") for item in v2s],
     })
     _json(root / "V3" / "merged_output.json", {
         "pipeline_stage": "V3",
-        "blocks": [item.model_dump(mode="json") for item in v3s],
+        "blocks": [item.model_dump(mode="json", by_alias=True) for item in v3s],
     })
     return v1, v2s, v3s, v4s
 
@@ -1102,17 +1009,21 @@ async def generate_professional_audio(
          "beat_ids": [beat["beat_id"] for beat in block["beats"]]}
         for block in voice_blocks
     ]
-    grouped_plan = _voice_plan_path(output).is_file()
+    grouped_plan = any(
+        block.get("source_block_ids", [block["block_id"]]) != [block["block_id"]]
+        for block in voice_blocks
+    )
     legacy_audio = not v4s and all(isinstance(item, LegacyV3) for item in v3s)
     if not legacy_audio and len(v4s) != len(voice_blocks):
         raise VoicePlanError("Every new professional voice block requires validated V4")
     # Fingerprint includes effective directions and the compiler contract.
-    payload = {"blocks": blocks, "v1": v1.model_dump(), "v2": [x.model_dump() for x in v2s],
-               "v3": [x.model_dump() for x in v3s], "voice": voice_id,
+    payload = {"blocks": blocks, "v1": v1.model_dump(by_alias=True),
+               "v2": [x.model_dump(by_alias=True) for x in v2s],
+               "v3": [x.model_dump(by_alias=True) for x in v3s], "voice": voice_id,
                "model": DEFAULT_GEMINI_TTS_MODEL, "generation_nonce": generation_nonce,
                "source_sha256": source_sha256}
     if v4s:
-        payload["v4"] = [x.model_dump() for x in v4s]
+        payload["v4"] = [x.model_dump(by_alias=True) for x in v4s]
         payload["compiler_version"] = "professional-v4-group-v2"
     if grouped_plan:
         payload["voice_groups"] = groups
