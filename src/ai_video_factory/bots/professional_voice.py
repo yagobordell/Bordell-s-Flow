@@ -113,14 +113,19 @@ PauseClass = Literal["breath", "beat", "hold"]
 
 
 class VocalIntent(Strict):
-    """Artistic humanization, not a Gemini tag."""
-    at: int = Field(ge=0)
+    """Artistic humanization intent; the V4 compiler alone selects inline tags."""
+    at: int = Field(
+        ge=0, description="Semantic location within the verbatim spoken fragment; no inline tag.",
+    )
     behavior: HumanBehavior
 
 
 class Speak(Strict):
     speak: str = Field(min_length=1)
-    delivery_quality: str = Field(min_length=1)
+    delivery_quality: str = Field(
+        min_length=1,
+        description="Natural-language artistic delivery only. No technical tags, markup or Gemini commands.",
+    )
     ending_behavior: Ending
     stress: list[str]
     vocal_intents: list[VocalIntent]
@@ -128,7 +133,10 @@ class Speak(Strict):
 
 class Pause(Strict):
     pause: PauseClass
-    pause_function: str = Field(min_length=1)
+    pause_function: str = Field(
+        min_length=1,
+        description="Artistic purpose of deliberate silence, in prose only. No tags or technical syntax.",
+    )
 
 
 class BeatDelivery(Strict):
@@ -139,9 +147,14 @@ class BeatDelivery(Strict):
 class BlockPerformance(Strict):
     register_: str = Field(
         alias="register", serialization_alias="register", min_length=1,
+        description="Stable artistic vocal register; no technical inline codes or tags.",
     )
-    pace_character: str = Field(min_length=1)
-    intensity_arc: str = Field(min_length=1)
+    pace_character: str = Field(
+        min_length=1, description="Qualitative artistic pace, natural prose without inline tags.",
+    )
+    intensity_arc: str = Field(
+        min_length=1, description="Artistic intensity movement, no technical markup.",
+    )
 
 
 class V3(Strict):

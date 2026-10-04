@@ -362,3 +362,21 @@ def test_identical_tag_excerpts_use_distinct_source_offsets():
     compiler.beat_tags[0].inserts[1].at = 5
     with pytest.raises(pv.VoicePlanError, match="duplicated or moved"):
         pv._check_v4(compiler, block, direction)
+
+
+def test_v3_pause_function_rejects_inline_gemini_token():
+    direction = _artistic()
+    direction.beat_deliveries[0].delivery[1].pause_function = (
+        "Let greeting register <short pause>"
+    )
+    with pytest.raises(pv.VoicePlanError, match="V3 inline-tag leakage"):
+        pv._check_v3(direction, _block())
+
+
+def test_v4_refuses_to_compile_or_render_contaminated_v3_prose():
+    direction = _artistic()
+    direction.block_performance.register_ = "Grounded <sigh> storyteller"
+    with pytest.raises(pv.VoicePlanError, match="V3 inline-tag leakage"):
+        pv._check_v4(_compiled(), _block(), direction)
+    with pytest.raises(pv.VoicePlanError, match="V3 inline-tag leakage"):
+        pv._v4_turns(_compiled(), _block(), direction)
