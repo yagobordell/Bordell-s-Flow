@@ -32,6 +32,9 @@ class A2VBatch2Parameters(BaseModel):
     vae_backend: Literal["eager", "triton_experimental"] = "eager"
     guidance_forward_batch_size: Literal[2, 4] = 2
     max_stage1_major_page_faults: int = Field(default=0, ge=0, le=1000000)
+    progressive_block_group_size: Literal[1, 2, 4, 8] = 1
+    min_checkpoint_direct_read_mibps: float = Field(default=0.0, ge=0, le=10000)
+    max_stage1_build_seconds: float = Field(default=0.0, ge=0, le=3600)
     accept_full_hd_oom_risk: bool = False
 
     @model_validator(mode="after")
@@ -97,6 +100,9 @@ class ExperimentalA2VBatch2TaskRunner:
                 vae_backend=params.vae_backend,
                 guidance_forward_batch_size=params.guidance_forward_batch_size,
                 max_stage1_major_page_faults=params.max_stage1_major_page_faults,
+                progressive_block_group_size=params.progressive_block_group_size,
+                min_checkpoint_direct_read_mibps=params.min_checkpoint_direct_read_mibps,
+                max_stage1_build_seconds=params.max_stage1_build_seconds,
             )
         except Exception as exc:
             if is_retryable_gpu_failure(exc):
@@ -110,6 +116,13 @@ class ExperimentalA2VBatch2TaskRunner:
             raise RuntimeError("Requested A2V guidance forward batch was not executed")
         if report.get("max_stage1_major_page_faults") != params.max_stage1_major_page_faults:
             raise RuntimeError("Requested A2V host paging guard was not executed")
+        for key in (
+            "progressive_block_group_size",
+            "min_checkpoint_direct_read_mibps",
+            "max_stage1_build_seconds",
+        ):
+            if report.get(key) != getattr(params, key):
+                raise RuntimeError(f"Requested A2V latency optimization not executed: {key}")
         if report.get("actual_gpu_batch_size") != 2 or report.get("mode") != "batch2":
             raise RuntimeError("A2V B2 cannot return sequential fallback as real GPU batch2")
         for path in (first, second):
