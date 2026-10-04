@@ -1,16 +1,17 @@
-# B1.1 → B1.2 → B2 (replacement planning bots)
+# B1.1 → B1.2 → B2: flujo actual
 
-Professional audio is now a downstream **post-B2** path:
-V1 (whole-film rhythm) → V2 (beat-level intent per block) →
-V3 (verbatim delivery, sustained style and optional human vocal tags) →
-Gemini 3.8 TTS per block. Casero retains its independent Fish/MiniMax/
-ElevenLabs path. V1/V2/V3 do not alter B2 visual contracts or any source
-narration. The original B8 documents are archived and the adapted prompts
-are versioned in `bots/prompts/v{1,2,3}.md`.
-See [Professional voice documentation](professional-voice.md).
+El acceso de producción es `run.ps1`, que selecciona el estilo del
+avatar y ejecuta los bots B1.1 → B1.2 → B2. El estilo profesional
+continúa con V1 → V2 → V3 → V4 y Gemini TTS por bloques;
+Casero conserva su propia ruta de voz y CTA. Las etapas de voz
+preservan los textos, identificadores y decisiones visuales de B2.
+Consulta [voz profesional](professional-voice.md).
 
+Los prompts activos viven en `src/ai_video_factory/bots/prompts/`.
+Las referencias históricas B8 están disponibles en el historial Git,
+no en el árbol actual.
 
-This standalone, opt-in stage loads its instruction documents from
+El motor actual carga sus documentos de instrucciones desde
 `src/ai_video_factory/bots/prompts/` on every run. Prompt edits take effect immediately;
 the runner does not require checksum updates. A transport note for Responses API
 Structured Outputs is appended at runtime.
