@@ -927,9 +927,22 @@ class DirectLTX25Backend:
         slots = stage._transformer_builder.cpu_slots_count
         if (mode == "cpu" and slots is not None) or (mode == "disk" and slots != 2):
             raise RuntimeError("Hybrid I2V stage2 buffer policy is not as requested")
+        if mode == "cpu":
+            builder = stage._transformer_builder
+            # The Docker-patched upstream builder keeps its normal CPU path
+            # unchanged by default. Explicitly opt in ONLY for the lazy Full
+            # HD I2V stage2. Its prepared FP8 copies retain this instance flag.
+            if not getattr(builder, "_i2v_progressive_pinned_blocks_supported", False):
+                raise RuntimeError(
+                    "I2V progressive CPU stage2 requires the newly patched Docker image"
+                )
+            if getattr(builder.registry, "_cache_weights", None) is not False:
+                raise RuntimeError("I2V progressive stage2 requires an uncached registry")
+            builder._i2v_progressive_pinned_blocks = True
         logger.info(
-            "LTX25_I2V_PAIR_STAGE2_POLICY offload=%s cpu_slots=%s",
-            mode, "all" if slots is None else slots,
+            "LTX25_I2V_PAIR_STAGE2_POLICY offload=%s cpu_slots=%s "
+            "progressive_pinned_load=%s",
+            mode, "all" if slots is None else slots, mode == "cpu",
         )
         return stage
 
