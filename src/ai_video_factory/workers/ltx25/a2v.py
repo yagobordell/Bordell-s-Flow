@@ -1273,7 +1273,9 @@ class DirectLTX25AudioToVideoBackend:
                 json.dumps(
                     {
                         "generation_profile": parameters.generation_profile,
-                        "offload_mode": LTX_A2V_RESIDENCY_PROFILES[parameters.generation_profile][0],
+                        "offload_mode": LTX_A2V_RESIDENCY_PROFILES[
+                            parameters.generation_profile
+                        ][0],
                         "diffvae_backend_effective": self._pipeline_effective_backend,
                         "pipeline_reused": not built_now,
                         "cuda_peak_reset": metrics.cuda_peak_reset,
