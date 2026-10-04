@@ -336,3 +336,56 @@ locking and automatic owner-checked cleanup requirements.
 If the Triton results fail stability, exceed eager runtime, or display
 any quality regression, leave the approved eager configuration unchanged.
 Do not promote this branch to main on an unverified video comparison.
+
+
+## I2V B2 continuous RAM telemetry (2026-10-04)
+
+Every isolated B2 **inference attempt** now starts an independent, read-only
+`I2VMemoryTrace` background sampler at **2-second intervals**. It records
+wall-clock UTC and monotonic elapsed time, active generation phase, process
+RSS/HWM, swap, major page faults and process disk reads; it also samples
+container cgroup memory usage/limit/peak, cgroup swap, anon/file cache
+and OOM events **only when the OS exposes the corresponding files**.
+It never synchronizes the GPU, runs CUDA operations, adds model allocations,
+or modifies weights, timing policies, seeds, latents or sampler arithmetic.
+Phase markers trigger one extra CPU /proc snapshot so very short phases
+are not missed. Phases distinguish setup, prompt/conditioning, stage1
+transformer build/denoise/forwards, upsampling, stage2 build/denoise/
+forwards, separate A/B VAE+MP4 processing and output completion.
+
+The cgroup discovery now also maps `/proc/self/cgroup` through
+`/proc/self/mountinfo`, accounting for cgroup namespace / bind-mount
+subtree roots before attempting conventional fallback paths. When none of
+the memory controller paths is exposed, `cgroup_available` stays **false**
+and `cgroup_unavailable_reason` is recorded; **process VmHWM must not be
+misrepresented as container memory usage**. If readable, sampled container
+headroom is `memory.max - memory.current`, and kernel-reported
+`memory.peak` is separately labelled: that kernel peak may include
+activity before this attempt and is not identical to sampled per-job peak.
+The v1 `memsw` field is memory+swap, not pure swap; interpret accordingly.
+
+Live progress and crash survivability: every sample is logged as a
+structured `LTX25_I2V_RAM_SAMPLE` record (and a summary is logged at
+`LTX25_I2V_RAM_TRACE_FINISH`). Thus an OOM or other failed attempt still
+leaves a partial trace in Salad logs; `failed_attempts` stores the
+summary when it returns a report. No batch failure is caused merely
+by absent or unreadable RAM telemetry.
+
+Successful attempts include a complete `memory_trace` object (samples
+plus summary and phase markers) inside the EXISTING atomically published
+`batch2-report.json` sidecar. The client additionally exports
+`memory-trace.json` and `memory-trace.csv` next to the usual
+`experiment-summary.json` for plotting; these are local derivatives
+of the durable report and do not introduce extra R2 / queue sidecars.
+The read-only collector's 2-second CPU sampling overhead is deliberately
+small but **must still be measured** against existing 190.52-second Triton
+results before claiming truly zero runtime impact. Native CPU process
+metrics cannot expose GPU VRAM; existing CUDA stage checkpoints still
+record VRAM and peak allocator stats separately.
+
+The Triton CUDA compatibility probe executes in an **independent child
+process BEFORE the timed B2 inference attempt** and is represented by its
+separate `triton_gpu_probe_seconds` field rather than folded into
+`memory_trace`. Salad worker bootstrap is likewise outside the trace.
+This separation makes comparisons with the previous reference
+unambiguous.
