@@ -107,12 +107,28 @@ print("I2V_HYBRID_DOCKER_ABI_OK")
 """
 
 
-def verify(image: str) -> None:
+_TRITON_IMAGE_PROBE = """
+import triton
+from ltx_core.model.video_vae.transformer.fallback_na.triton_na import na3d
+from ai_video_factory.workers.ltx25.triton_na_probe import ensure_triton_gpu_probe
+from ai_video_factory.workers.ltx25.model import _select_diffvae_backend, DirectLTX25Backend
+from ai_video_factory.workers.ltx25.experimental_batch2 import Batch2Parameters
+assert callable(na3d) and callable(ensure_triton_gpu_probe)
+assert "vae_backend" in Batch2Parameters.model_fields
+assert "triton_strict" in inspect.getsource(_select_diffvae_backend)
+assert "ensure_triton_gpu_probe()" in inspect.getsource(DirectLTX25Backend.generate_pair)
+assert "vae_backend" in inspect.signature(DirectLTX25Backend.generate_pair).parameters
+print("I2V_TRITON_DOCKER_ABI_OK version=" + triton.__version__)
+"""
+
+
+def verify(image: str, *, require_triton: bool = False) -> None:
     if _PINNED.fullmatch(image) is None:
         raise ValueError("Expected immutable Docker repository@sha256 digest")
     argv = [
         "docker", "run", "--rm", "--network", "none",
-        "--entrypoint", "python", image, "-c", _IMAGE_PROBE,
+        "--entrypoint", "python", image, "-c",
+        _IMAGE_PROBE + (_TRITON_IMAGE_PROBE if require_triton else ""),
     ]
     try:
         result = subprocess.run(
@@ -123,7 +139,11 @@ def verify(image: str) -> None:
             "Could not inspect the exact pinned Docker image locally; "
             "NO Salad GPU must be started"
         ) from exc
-    if result.returncode != 0 or "I2V_HYBRID_DOCKER_ABI_OK" not in result.stdout:
+    if (
+        result.returncode != 0
+        or "I2V_HYBRID_DOCKER_ABI_OK" not in result.stdout
+        or (require_triton and "I2V_TRITON_DOCKER_ABI_OK" not in result.stdout)
+    ):
         details = (result.stderr or result.stdout).strip()[-1800:]
         raise RuntimeError(
             "Pinned Docker does NOT prove hybrid I2V compatibility. "
@@ -131,13 +151,16 @@ def verify(image: str) -> None:
             f"then Prepare the STOPPED I2V group with its NEW digest. Details: {details}"
         )
     print(f"I2V_HYBRID_DOCKER_ABI_OK pinned_image={image}")
+    if require_triton:
+        print(f"I2V_TRITON_DOCKER_ABI_OK pinned_image={image}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", required=True)
+    parser.add_argument("--require-triton", action="store_true")
     args = parser.parse_args()
-    verify(args.image)
+    verify(args.image, require_triton=args.require_triton)
 
 
 if __name__ == "__main__":
