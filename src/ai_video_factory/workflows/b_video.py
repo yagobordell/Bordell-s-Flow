@@ -120,7 +120,7 @@ def _source_assets(
         images.get("finishing_status") != "completed"
     ):
         raise B2VideoError(
-            "Professional LTX requires completed still-image finishing "
+            "Professional LTX requires finished still images "
             "and verified video sources"
         )
     for item in (
