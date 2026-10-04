@@ -149,36 +149,41 @@ class V3(Strict):
     beat_deliveries: list[BeatDelivery]
 
 
-class V4Event(Strict):
-    """A Gemini tag with a provable V3 source; no artistic decisions live here."""
+class V4SpokenDirection(Strict):
+    """A locatable clause in ONE group-wide style, not a Gemini turn."""
+    beat_id: str
+    source_item_index: int = Field(ge=0)
+    locator: str = Field(min_length=1)
+    occurrence: int = Field(default=1, ge=1)
+    instruction: str = Field(min_length=1, max_length=260)
+    ending_behavior: Ending
+    stress: list[str]
+
+
+class V4TagSnippet(Strict):
+    """Only adjacent words and one tag, anchored to canonical B2 by offset."""
     at: int = Field(ge=0)
     tag: Tag
+    text: str = Field(min_length=1)
     source_kind: Literal["vocal_intent", "pause"]
     source_item_index: int = Field(ge=0)
     source_at: int | None = Field(default=None, ge=0)
     pause_direction: str | None = Field(default=None, min_length=1, max_length=160)
 
 
-class V4Speak(Strict):
-    source_item_index: int = Field(ge=0)
-    speak: str = Field(min_length=1)
-    style: str = Field(min_length=1, max_length=360)
-    ending_behavior: Ending
-    stress: list[str]
-    events: list[V4Event]
-
-
-class V4BeatDelivery(Strict):
+class V4BeatTags(Strict):
     beat_id: str
-    segments: list[V4Speak] = Field(min_length=1)
+    text: Literal[""] = ""
+    inserts: list[V4TagSnippet]
 
 
 class V4(Strict):
     pipeline_stage: Literal["V4"]
     block_id: int
     audio_profile: str = Field(min_length=1, max_length=200)
-    directors_notes: list[str] = Field(min_length=1, max_length=2)
-    beat_deliveries: list[V4BeatDelivery]
+    directors_notes: list[str] = Field(min_length=1)
+    spoken_directions: list[V4SpokenDirection]
+    beat_tags: list[V4BeatTags]
 
 
 class VoicePlanError(ValueError):
@@ -477,150 +482,158 @@ def _check_v3(result: V3, block: dict[str, Any]) -> None:
                     raise VoicePlanError("V3 vocal intent splits a word or exceeds text")
 
 
-def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
-    """Require a bijection from every V3 decision to V4 Gemini directions."""
-    if result.block_id != direction.block_id or [
-        item.beat_id for item in result.beat_deliveries
-    ] != [item.beat_id for item in direction.beat_deliveries]:
-        raise VoicePlanError("V4 changed V3 beat identity or order")
-    if not result.audio_profile.strip():
-        raise VoicePlanError("V4 must compile a nonempty stable speaker identity")
-    if any(not note.strip() or len(note) > 350 for note in result.directors_notes):
-        raise VoicePlanError("V4 directors_notes must be compact and nonempty")
-    for source, compiled in zip(
-        direction.beat_deliveries, result.beat_deliveries, strict=True
-    ):
-        expected = [
-            (index, item) for index, item in enumerate(source.delivery)
-            if isinstance(item, Speak)
-        ]
-        if [item.source_item_index for item in compiled.segments] != [
-            index for index, _ in expected
-        ]:
-            raise VoicePlanError("V4 omitted, duplicated or reordered V3 spoken units")
-        expected_events: set[tuple[str, int, int | None, int]] = set()
-        for segment_index, (source_index, original) in enumerate(expected):
-            destination = compiled.segments[segment_index]
-            if not destination.style.strip():
-                raise VoicePlanError("V4 spoken fragment needs an audible style")
-            if (destination.speak != original.speak
-                or destination.ending_behavior != original.ending_behavior
-                or destination.stress != original.stress):
-                raise VoicePlanError("V4 changed source words, stress or ending behavior")
-            if any(target not in destination.style for target in original.stress):
-                raise VoicePlanError("V4 dropped an exact vocal stress target")
-            for intent in original.vocal_intents:
-                expected_events.add(("vocal_intent", source_index, intent.at, segment_index))
-        for index, item in enumerate(source.delivery):
-            if not isinstance(item, Pause):
-                continue
-            # A pause following a spoken unit belongs to that unit's end.
-            # A leading pause belongs to the next unit's beginning.
-            preceding = [
-                (slot, source_index, speak)
-                for slot, (source_index, speak) in enumerate(expected)
-                if source_index < index
-            ]
-            if preceding:
-                slot = preceding[-1][0]
-            else:
-                if not expected:
-                    raise VoicePlanError("V3 pause without a spoken unit")
-                slot = 0
-            expected_events.add(("pause", index, None, slot))
-        observed: set[tuple[str, int, int | None, int]] = set()
-        for slot, destination in enumerate(compiled.segments):
-            for event in destination.events:
-                key = (
-                    event.source_kind, event.source_item_index, event.source_at, slot
-                )
-                if key in observed:
-                    raise VoicePlanError("V4 duplicated a source event")
-                observed.add(key)
-                if event.tag not in _ALLOWED_TAGS or event.at > len(destination.speak):
-                    raise VoicePlanError("V4 generated an unsupported tag or position")
-                if (0 < event.at < len(destination.speak)
-                    and destination.speak[event.at - 1].isalnum()
-                    and destination.speak[event.at].isalnum()):
-                    raise VoicePlanError("V4 inserted a tag inside a word")
-                if event.source_kind == "vocal_intent":
-                    source_item = source.delivery[event.source_item_index] if (
-                        event.source_item_index < len(source.delivery)
-                    ) else None
-                    behavior = {
-                        "inhale": "breath", "exhale": "exhales", "sigh": "sigh",
-                        "chuckle": "chuckle", "gasp": "gasp",
-                    }
-                    if (
-                        not isinstance(source_item, Speak)
-                        or event.tag != next(
-                            (behavior[intent.behavior] for intent in source_item.vocal_intents
-                             if intent.at == event.source_at), None
-                        )
-                        or event.at != event.source_at
-                        or event.pause_direction is not None
-                    ):
-                        raise VoicePlanError("V4 changed or invented a human vocal behavior")
-                else:
-                    pause = source.delivery[event.source_item_index] if (
-                        event.source_item_index < len(source.delivery)
-                    ) else None
-                    if not isinstance(pause, Pause) or event.source_at is not None:
-                        raise VoicePlanError("V4 invented a pause")
-                    if (not event.pause_direction or not event.pause_direction.strip()
-                        or event.pause_direction not in destination.style):
-                        raise VoicePlanError(
-                            "V4 omitted the audible purpose of a V3 explicit pause"
-                        )
-                    allowed = {
-                        "breath": {"short pause"},
-                        "beat": {"short pause", "long pause"},
-                        "hold": {"short pause", "long pause"},
-                    }
-                    if event.tag not in allowed[pause.pause]:
-                        raise VoicePlanError("V4 changed an explicit pause class")
-                    previous = [
-                        (i, orig) for i, (source_i, orig) in enumerate(expected)
-                        if source_i < event.source_item_index
-                    ]
-                    expected_slot = previous[-1][0] if previous else 0
-                    expected_at = (
-                        len(expected[expected_slot][1].speak) if previous else 0
-                    )
-                    if slot != expected_slot or event.at != expected_at:
-                        raise VoicePlanError("V4 moved an explicit V3 pause")
-            if len(destination.style.encode("utf-8")) > 950:
-                raise VoicePlanError("V4 style exceeds concise Gemini turn budget")
-        if observed != expected_events:
-            raise VoicePlanError("V4 did not preserve every V3 vocal intent and pause")
-    if not result.beat_deliveries:
-        raise VoicePlanError("V4 missing compiled speech")
-    first = result.beat_deliveries[0].segments[0].style
-    full_first = "\n".join([result.audio_profile, *result.directors_notes, first])
-    if len(full_first.encode("utf-8")) > 1300:
-        raise VoicePlanError("V4 profile and notes exceed Gemini first-turn budget")
+def _minimal_tag_excerpt(text: str, at: int, tag: str) -> str:
+    """Preserve one adjacent original word either side, including punctuation."""
+    left, right = text[:at], text[at:]
+    before = re.search(r"\w+[^\w]*$", left)
+    after = re.match(r"[^\w]*\w+", right)
+    return (
+        (before.group() if before else left if not left.strip() else "")
+        + f"<{tag}>"
+        + (after.group() if after else right if not right.strip() else "")
+    )
 
 
-def _tagged_v4(piece: V4Speak) -> str:
-    """Insert only audited V4 tags, never model-edited source text."""
-    text = piece.speak
-    # Original V3 item order is the tie-breaker for coincident events.
-    for event in sorted(
-        piece.events, key=lambda x: (x.at, x.source_item_index), reverse=True
-    ):
-        text = text[:event.at] + f"<{event.tag}>" + text[event.at:]
-    return text
-
-
-def _v4_turns(direction: V4) -> list[dict[str, str]]:
-    turns = [
-        {"text": _tagged_v4(segment), "style": segment.style}
-        for beat in direction.beat_deliveries for segment in beat.segments
+def _v4_style(direction: V4, source: V3) -> str:
+    """Compile ALL directions for a group into exactly one Gemini style."""
+    lines = [direction.audio_profile, *direction.directors_notes]
+    all_speaks = [
+        item.speak for beat in source.beat_deliveries
+        for item in beat.delivery if isinstance(item, Speak)
     ]
-    turns[0]["style"] = "\n".join([
-        direction.audio_profile, *direction.directors_notes, turns[0]["style"],
-    ])
-    return turns
+    for item in direction.spoken_directions:
+        matches = sum(speak.count(item.locator) for speak in all_speaks)
+        label = (
+            f"occurrence {item.occurrence} of '{item.locator}'"
+            if matches > 1 else f"'{item.locator}'"
+        )
+        lines.append(f"On {label}: {item.instruction}")
+    for v3_beat, tagged_beat in zip(
+        source.beat_deliveries, direction.beat_tags, strict=True
+    ):
+        for event in tagged_beat.inserts:
+            if event.source_kind != "pause":
+                continue
+            pause = v3_beat.delivery[event.source_item_index]
+            if not isinstance(pause, Pause):
+                raise VoicePlanError("V4 pause reference is not a V3 pause")
+            short_anchor = event.text.replace(f"<{event.tag}>", "|")
+            lines.append(
+                f"At '{short_anchor}', pause class: {pause.pause}; {event.pause_direction}"
+            )
+    return chr(10).join(lines)
+
+
+def _check_v4(result: V4, block: dict[str, Any], direction: V3) -> None:
+    """Verify every V3 decision and sparse tag against immutable original B2."""
+    ids = [beat["beat_id"] for beat in block["beats"]]
+    if (result.block_id != direction.block_id
+        or [entry.beat_id for entry in result.beat_tags] != ids
+        or [entry.beat_id for entry in direction.beat_deliveries] != ids):
+        raise VoicePlanError("V4 changed original beat identity or order")
+    prose = [result.audio_profile, *result.directors_notes]
+    if any(not note.strip() or re.search(r"<[^>]+>", note) for note in prose):
+        raise VoicePlanError("V4 requires substantive tag-free group directions")
+    if any(len(note) > 350 for note in result.directors_notes):
+        raise VoicePlanError("V4 directors_notes must be concise")
+    expected_spoken = [
+        (beat.beat_id, index, item)
+        for beat in direction.beat_deliveries
+        for index, item in enumerate(beat.delivery)
+        if isinstance(item, Speak)
+    ]
+    if [(entry.beat_id, entry.source_item_index) for entry in result.spoken_directions] != [
+        (bid, index) for bid, index, _ in expected_spoken
+    ]:
+        raise VoicePlanError("V4 omitted, duplicated or reordered V3 spoken occurrences")
+    for position, (entry, (_, _, original)) in enumerate(zip(
+        result.spoken_directions, expected_spoken, strict=True
+    )):
+        if (not entry.instruction.strip() or entry.locator not in original.speak
+            or original.speak.count(entry.locator) != 1
+            or entry.ending_behavior != original.ending_behavior
+            or entry.stress != original.stress
+            or any(word not in entry.instruction for word in original.stress)
+            or re.search(r"<[^>]+>", entry.instruction)):
+            raise VoicePlanError("V4 lost exact spoken locator, stress or ending")
+        occurrence = 1 + sum(
+            earlier.speak.count(entry.locator)
+            for _, _, earlier in expected_spoken[:position]
+        )
+        if entry.occurrence != occurrence:
+            raise VoicePlanError("V4 locator lacks exact group-wide occurrence ordinal")
+    voice_tags = {
+        "inhale": "breath", "exhale": "exhales", "sigh": "sigh",
+        "chuckle": "chuckle", "gasp": "gasp",
+    }
+    pause_tags = {
+        "breath": {"short pause"}, "beat": {"short pause", "long pause"},
+        "hold": {"short pause", "long pause"},
+    }
+    for beat, v3, sparse in zip(
+        block["beats"], direction.beat_deliveries, result.beat_tags, strict=True
+    ):
+        text = beat["text"]
+        if sparse.text != "":
+            raise VoicePlanError("V4 must leave original beat text empty")
+        expected: dict[tuple[str, int, int | None, int], set[str]] = {}
+        cursor = 0
+        for index, item in enumerate(v3.delivery):
+            if isinstance(item, Speak):
+                for intent in item.vocal_intents:
+                    expected[("vocal_intent", index, intent.at, cursor + intent.at)] = {
+                        voice_tags[intent.behavior]
+                    }
+                cursor += len(item.speak)
+            else:
+                expected[("pause", index, None, cursor)] = pause_tags[item.pause]
+        if cursor != len(text):
+            raise VoicePlanError("V4 original B2 and V3 beat text differ")
+        observed: set[tuple[str, int, int | None, int]] = set()
+        for event in sparse.inserts:
+            key = (event.source_kind, event.source_item_index, event.source_at, event.at)
+            if key not in expected or key in observed or event.tag not in expected[key]:
+                raise VoicePlanError("V4 invented, duplicated or moved a V3 event")
+            observed.add(key)
+            if event.at > len(text) or (
+                0 < event.at < len(text)
+                and text[event.at - 1].isalnum()
+                and text[event.at].isalnum()
+            ):
+                raise VoicePlanError("V4 event exceeds beat or splits word")
+            if event.text != _minimal_tag_excerpt(text, event.at, event.tag):
+                raise VoicePlanError("V4 excerpt must use only exact adjacent words")
+            if event.source_kind == "pause":
+                if not event.pause_direction or not event.pause_direction.strip():
+                    raise VoicePlanError("V4 lost V3 explicit pause function")
+            elif event.pause_direction is not None:
+                raise VoicePlanError("V4 invented a pause purpose on human vocalization")
+        if observed != set(expected):
+            raise VoicePlanError("V4 lost one or more V3 human events or pauses")
+    if len(_v4_style(result, direction).encode("utf-8")) > 5500:
+        raise VoicePlanError("V4 group-wide style exceeds Gemini budget")
+
+
+def _tagged_v4(original_beat: str, sparse: V4BeatTags) -> str:
+    """Insert ONLY validated tags into the canonical source beat."""
+    rendered = original_beat
+    for event in sorted(
+        sparse.inserts, key=lambda item: (item.at, item.source_item_index),
+        reverse=True,
+    ):
+        rendered = rendered[:event.at] + f"<{event.tag}>" + rendered[event.at:]
+    return rendered
+
+
+def _v4_turns(direction: V4, block: dict[str, Any], source: V3) -> list[dict[str, str]]:
+    """One full transcript and ONE style for the entire voice group."""
+    text = ""
+    for beat, sparse in zip(block["beats"], direction.beat_tags, strict=True):
+        rendered = _tagged_v4(beat["text"], sparse)
+        if text and not text[-1].isspace() and rendered and not rendered[0].isspace():
+            text += " "
+        text += rendered
+    return [{"text": text, "style": _v4_style(direction, source)}]
 
 
 def _response_snapshot(response: Any, model: str) -> dict[str, Any]:
@@ -964,7 +977,7 @@ async def plan_professional_voice(
                 return await _direct(
                     "V4",
                     {"current_block": block, "v3": direction.model_dump(mode="json"),
-                     "voice_contract": "Gemini 3.8 per-part style + inline human tags"},
+                     "voice_contract": "professional-v4-group-style-sparse-tags-v2"},
                     V4, lambda value: _check_v4(value, block, direction),
                     provider, model, root / "V4" / f"block_{bid}",
                     on_response, on_timing, bid,
@@ -1100,7 +1113,7 @@ async def generate_professional_audio(
                "source_sha256": source_sha256}
     if v4s:
         payload["v4"] = [x.model_dump() for x in v4s]
-        payload["compiler_version"] = "professional-v4-v1"
+        payload["compiler_version"] = "professional-v4-group-v2"
     if grouped_plan:
         payload["voice_groups"] = groups
     fingerprint = _fingerprint(payload)
@@ -1143,7 +1156,7 @@ async def generate_professional_audio(
         state_path = folder / "task.json"
         async with semaphore:
             if compiler is not None:
-                turns = _v4_turns(compiler)
+                turns = _v4_turns(compiler, block, direction)
             elif isinstance(direction, LegacyV3):
                 turns = [
                     {"text": _tagged(segment), "style": segment.style}
@@ -1155,7 +1168,7 @@ async def generate_professional_audio(
             speech_fingerprint = (
                 _fingerprint({
                     "turns": turns, "source_block_ids": source_ids,
-                    **({"compiler_version": "professional-v4-v1"} if compiler else {}),
+                    **({"compiler_version": "professional-v4-group-v2"} if compiler else {}),
                 })
                 if len(source_ids) > 1 or compiler else _fingerprint(turns)
             )

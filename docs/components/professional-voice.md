@@ -66,23 +66,33 @@ one ending behavior, exact optional stress targets and optional justified
 punctual human vocal intentions. Explicit pauses have a class
 (breath, beat, hold) and a meaningful pause function.
 
-V4 preserves every decision and compiles them into one compact
-`audio_profile`, `directors_notes` for the block arc and a precise
-`speech_metadata.style` per spoken fragment. The identity and arc are
-included only in Gemini's first part; later parts contain only local
-instructions. Exact stress targets and ending behavior remain traceable.
+V4 preserves every decision and compiles it into a single
+`audio_profile`, ordered group-wide `directors_notes`, and occurrence-addressed
+`spoken_directions`. Together these become exactly **one
+`speech_metadata.style` per complete grouped voice block**. Gemini receives
+exactly **one text part for that complete group**, not one per beat or fragment.
+Exact stress targets and ending behaviors remain traceable through addressed
+clauses inside that single style.
 
 V4 translates punctual human actions and explicit pauses into only
 `breath`, `exhales`, `sigh`, `chuckle`, `gasp`,
 `short pause`, or `long pause`. Every event records the source V3
-item and its exact original character position. Code validates a
-one-to-one decision mapping and inserts angle brackets; model output
-never rewrites narration. V4 adds no silent-time or spoken-time
-decision of its own.
+item and its exact original character position in the full original
+B2 beat. Every beat has `text: ""`; untagged beats have `inserts: []`.
+Each authorized tag insert includes ONLY one original source word before
+and one after the tag, with exact punctuation/whitespace. Multiple tags
+in one beat produce separate minimal snippets. The runtime reconstructs
+the FULL GROUP narration exclusively from original B2 beat text and
+inserts audited angle brackets at the verified original offsets:
+model-produced snippets are NEVER the Gemini transcript. V4 adds no
+silent-time or spoken-time decision of its own.
 
 A pre-feature run already checkpointed using the old V3 contract
 remains in that mode to avoid unnecessary paid regeneration, and
-its historic prompt is retained. New runs require validated V4
+its historic prompt is retained. Pre-existing V4 checkpoint inputs
+with the former compiler contract are recompiled only if the professional
+voice pipeline is rerun; distinct compiler fingerprints prevent accidental
+reuse of incompatible paid speech. New runs require validated V4
 before any paid Gemini request. V4 inputs/outputs and usage/timing
 are archived and published along with V1-V3. V4 follows the same
 two-feedback-retries policy per failed block and reuses validated
@@ -174,3 +184,8 @@ OpenAI STT remain excluded** from that OpenAI planning estimate, as before.
 B8.1 originally sees the whole film; V1 still sees the whole B2 film, but assigns baselines to the resulting voice groups. B8.2 originally sees B3 canonical scene scopes and B7.2 finished depictions, neither of which exists in this B2 pipeline. V2 deliberately uses immutable B2 beats as local intent units and one overall landing per resulting voice group, preserving the B8.2 separation between cognitive and attitudinal change and relative tempo/pressure modulation. V3 receives each full voice group and treats B2's imagery strictly as planned depiction, not observed completed footage. These are transparent adaptations, not a literal scene-level port of the original B8 documents.
 
 V4 extends the provider-neutral B8.4 with precisely source-referenced Gemini events. Each compiled pause additionally carries a concise pause_direction taken from V3's pause_function and included in the adjacent Gemini per-part style; a short/long tag alone cannot preserve its function. Where separately authorized V3 vocalizations and pauses share a source character boundary, V4 preserves both tags in original V3 order. No compiler output may make a new artistic choice.
+
+
+## V4: one Gemini style and sparse tagged beat excerpts
+
+The new V4 contract matches the original B8.4 group scope: the **entire B2 voice group** is sent as exactly **one Gemini text part** with exactly **one speech_metadata.style**, assembled from audio_profile, group-wide directors_notes and compact locator-addressed spoken_directions. A group may contain many beats or V3 fragments; none receives an independent Gemini style. For every original B2 beat, beat_tags has text="" and inserts=[] unless there are authorized V3 tags. Each insert contains only the original preceding and following source word with one tag between, plus absolute beat character offset and V3 source provenance. Multiple tags in one beat produce independent minimal excerpts. Validators ensure snippets match original B2 at their exact offsets, V3 decisions are preserved, and the final full narration is reconstructed only from original B2 text; model-produced excerpts are never sent as the transcript. <swallow> in examples is illustrative and rejected until documented support is added. Version professional-v4-group-v2 separates new audio requests from old paid audio caches.

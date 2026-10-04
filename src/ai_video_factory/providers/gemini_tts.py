@@ -201,7 +201,7 @@ def _build_payload(
 
 
 def _build_directed_payload(*, turns: list[dict[str, str]], voice: str) -> dict[str, Any]:
-    """One Gemini 3.8 request per voice block, style per part, tags only inline."""
+    """One Gemini request per voice group; V4 sends one part and one style."""
     if not turns:
         raise ValueError("Gemini directed TTS needs at least one speech turn")
     parts: list[dict[str, Any]] = []
@@ -210,7 +210,8 @@ def _build_directed_payload(*, turns: list[dict[str, str]], voice: str) -> dict[
         if not isinstance(spoken, str) or not spoken.strip():
             raise ValueError("Gemini directed TTS requires non-empty transcript turns")
         if (not isinstance(style, str) or not style.strip()
-            or len((style.strip() + "\n" + _VERBATIM).encode("utf-8")) > 1500):
+            or len((style.strip() + "\n" + _VERBATIM).encode("utf-8"))
+            > (6000 if len(turns) == 1 else 1500)):
             raise ValueError("Gemini directed TTS requires a concise style on each turn")
         parts.append({
             "text": spoken,
