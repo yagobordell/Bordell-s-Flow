@@ -330,6 +330,74 @@ def test_full_hd_releases_stage1_image_conditioning_before_second_stage() -> Non
     ]
 
 
+def test_hybrid_full_hd_stage2_factory_runs_after_stage1_and_conditioning() -> None:
+    torch = pytest.importorskip("torch")
+    import ai_video_factory.workers.ltx25.paired_i2v as paired
+
+    events = []
+    latent = torch.ones((2, 1, 1, 2, 2), dtype=torch.bfloat16)
+    context = SimpleNamespace(
+        video_encoding=torch.zeros((1, 4, 2)),
+        audio_encoding=torch.zeros((1, 4, 2)),
+    )
+    pair = (paired.PairInput("A", 5243, "a.png"), paired.PairInput("B", 5244, "b.png"))
+    stage1 = object()
+    stage2 = object()
+
+    def encode(_pipeline, _pair, width, _height):
+        events.append(("conditioning", width))
+        return [width]
+
+    def stage(stage_arg, **kwargs):
+        events.append(("stage", kwargs["stage_label"]))
+        assert stage_arg is (stage1 if kwargs["stage_label"] == "stage1" else stage2)
+        return SimpleNamespace(latent=latent), SimpleNamespace(latent=latent)
+
+    def factory():
+        # The GPU-resident transformer and image encoder must have finished
+        # before loading the pinned-CPU transformer block weights.
+        assert events == [
+            ("conditioning", 960), ("stage", "stage1"),
+            ("upsample", None), ("upsample", None),
+            ("conditioning", 1920),
+        ]
+        events.append(("construct_stage2", None))
+        return stage2
+
+    def upsample(video):
+        events.append(("upsample", None))
+        return video
+
+    pipeline = SimpleNamespace(
+        stage=stage1, device=torch.device("cpu"), duration_predictor=None,
+        video_decoder=SimpleNamespace(checkpoint_path="fake", diffvae_optimization=None),
+        upsampler=upsample, use_ancestral_sampler=True,
+    )
+    with (
+        patch.object(paired, "_encode_pair_prompts", return_value=(
+            (pair[0], context), (pair[1], context),
+        )),
+        patch.object(paired, "_batch_conditionings", side_effect=encode),
+        patch.object(paired, "_paired_stage", side_effect=stage),
+        patch.object(paired, "assert_resolution"),
+        patch.object(paired, "require_num_frames_source"),
+        patch.object(paired, "resolve_num_frames", return_value=121),
+        patch.object(paired, "tiling_scale_factors_for_vae"),
+        patch.object(paired, "ensure_tiling_config", return_value=None),
+        patch.object(paired, "_log_gpu_checkpoint"),
+    ):
+        result = paired.generate_paired_fast_distilled(
+            pipeline, pair=pair, width=1920, height=1088,
+            frame_rate=24, num_frames=121,
+            full_hd_memory_cleanup=True,
+            stage2_factory=factory,
+        )
+    assert len(result) == 2
+    assert events[-2:] == [
+        ("construct_stage2", None), ("stage", "stage2"),
+    ]
+
+
 def test_full_hd_boundary_trim_only_evicts_unreachable_cuda_cache() -> None:
     torch = pytest.importorskip("torch")
     import ai_video_factory.workers.ltx25.paired_i2v as paired
