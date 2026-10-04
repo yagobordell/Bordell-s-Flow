@@ -449,8 +449,19 @@ def _force_diffvae_eager_sdpa(diffvae_apply: Any) -> None:
 
 
 def _select_diffvae_backend(bindings: _LTXBindings, requested: str) -> str:
-    """Never enable crash-prone NATTEN on the RTX 5090 pinned runtime."""
+    """Eager is the safe baseline; strict Triton is explicit I2V B2 only.
+
+    The opt-in caller executes the isolated numerical CUDA probe FIRST.
+    Never enable the native-crashing NATTEN implementation on RTX 5090.
+    """
+    if requested not in ("eager", "triton", "triton_strict"):
+        raise ValueError("Unsupported I2V DiffVAE backend")
     _force_diffvae_eager_sdpa(bindings.diffvae_apply)
+    if requested == "triton_strict":
+        if not callable(bindings.triton_probe) or not bindings.triton_probe():
+            raise RuntimeError("Experimental I2V Triton is unavailable; refusing eager fallback")
+        bindings.diffvae_apply.triton_na_available = bindings.triton_probe
+        return "triton"
     if requested == "triton":
         if callable(bindings.triton_probe) and bindings.triton_probe():
             bindings.diffvae_apply.triton_na_available = bindings.triton_probe
@@ -958,6 +969,7 @@ class DirectLTX25Backend:
         forward_batch_size: int,
         reuse_transformer_across_stages: bool = False,
         full_hd_stage2_mode: str = "cpu",
+        vae_backend: str = "eager",
     ) -> int | None:
         """Run one experimental attempt. Scoped so failed CUDA tensors can be released."""
         from .paired_i2v import PairInput, generate_paired_fast_distilled
@@ -986,9 +998,14 @@ class DirectLTX25Backend:
                     full_hd_stage2_mode if is_full_hd else "none",
                     forward_batch_size,
                 )
-                pipeline = self._get_or_build_pipeline(
-                    bindings, requested_offload_mode="none",
-                )
+                pipeline_kwargs = {"requested_offload_mode": "none"}
+                if vae_backend == "triton_experimental":
+                    pipeline_kwargs["requested_diffvae_backend"] = "triton_strict"
+                pipeline = self._get_or_build_pipeline(bindings, **pipeline_kwargs)
+                if vae_backend == "triton_experimental":
+                    if self._pipeline_effective_diffvae_backend != "triton":
+                        raise RuntimeError("I2V Triton request did not select Triton DiffVAE")
+                    logger.info("LTX25_I2V_TRITON_BACKEND_SELECTED confirmed=triton")
                 stage2_factory = (
                     (lambda: self._full_hd_streaming_stage2(
                         pipeline, bindings, mode=full_hd_stage2_mode,
@@ -1090,6 +1107,7 @@ class DirectLTX25Backend:
         reuse_transformer_across_stages: bool = False,
         accept_full_hd_batch2_oom_risk: bool = False,
         full_hd_stage2_mode: str = "cpu",
+        vae_backend: str = "eager",
     ) -> dict[str, Any]:
         """EXPERIMENT: B=2, then shared-weight B=1, then EXACT existing B=1.
 
@@ -1114,6 +1132,15 @@ class DirectLTX25Backend:
             return p.width, p.height, p.fps, p.num_frames
 
         dimensions = geometry(parameters_a)
+        if vae_backend not in ("eager", "triton_experimental"):
+            raise ValueError("I2V VAE backend must be eager or triton_experimental")
+        if vae_backend == "triton_experimental" and (
+            dimensions != (1920, 1080, 24, 121) or full_hd_stage2_mode != "cpu"
+            or allow_sequential_fallback or reuse_transformer_across_stages
+        ):
+            raise ValueError(
+                "Triton VAE experiment requires 1080p CPU-stage2 true B2, no fallback"
+            )
         if full_hd_stage2_mode not in ("cpu", "disk"):
             raise ValueError("Full HD stage2 mode must be cpu or disk")
         if dimensions != geometry(parameters_b):
@@ -1137,6 +1164,14 @@ class DirectLTX25Backend:
         if parameters_a.seed == parameters_b.seed:
             raise ValueError("Separate videos must have separate RNG seeds")
 
+        triton_probe_seconds = None
+        if vae_backend == "triton_experimental":
+            # Child process may crash with native CUDA error without killing
+            # the worker. Run BEFORE the timed B2 attempt; never silently
+            # fall back to eager after explicitly requesting Triton.
+            from .triton_na_probe import ensure_triton_gpu_probe
+
+            triton_probe_seconds = ensure_triton_gpu_probe()
         started = time.monotonic()
         failed_attempts: list[dict[str, Any]] = []
         outputs = (output_a, output_b)
@@ -1164,6 +1199,8 @@ class DirectLTX25Backend:
                     reuse_transformer_across_stages=shared_stages,
                     **({"full_hd_stage2_mode": full_hd_stage2_mode}
                        if dimensions[1] == 1080 else {}),
+                    **({"vae_backend": vae_backend}
+                       if vae_backend != "eager" else {}),
                 )
             except Exception as exc:
                 failure = classify_gpu_failure(exc)
@@ -1220,6 +1257,8 @@ class DirectLTX25Backend:
                         if dimensions[1] == 1080 else "none"
                     ),
                     "recipe": LTX_PRODUCTION_I2V_PROFILE,
+                    "vae_backend": vae_backend,
+                    "triton_gpu_probe_seconds": triton_probe_seconds,
                     "individual_seeds": [parameters_a.seed, parameters_b.seed],
                     "elapsed_seconds": time.monotonic() - started,
                     "peak_vram_bytes": peak,
