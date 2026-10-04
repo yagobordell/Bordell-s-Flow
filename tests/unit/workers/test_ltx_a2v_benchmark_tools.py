@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from scripts.smoke.check_ltx_a2v_benchmark_isolation import assert_quiescent_group
+from scripts.smoke.check_ltx_a2v_benchmark_jobs import safe_terminal_failure_detail
 from scripts.smoke.compare_ltx_a2v_benchmarks import analyze_manifest
 
 _PROFILES = {
@@ -210,3 +211,18 @@ def test_hashes_compare_to_correct_control_regardless_of_execution_order(
     assert row["comparison_control"] == "reference-bench-cpu"
     assert row["matches_cpu_decoded_video"] is False
     assert row["matches_cpu_decoded_audio"] is True
+
+
+@pytest.mark.parametrize(
+    ("detail", "allowed"),
+    [
+        ("RuntimeError: decoder budget exceeded", True),
+        (None, False),
+        ("", False),
+        ("NonRetryableTaskError: A2V_EXPERIMENTAL_STREAMING_STRUCTURE_INVALID", False),
+    ],
+)
+def test_only_known_nonstructural_terminal_failure_may_be_skipped(
+    detail: str | None, allowed: bool
+) -> None:
+    assert safe_terminal_failure_detail(detail) is allowed
