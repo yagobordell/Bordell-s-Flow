@@ -30,10 +30,9 @@ aligned with the 16:9 LTX pipeline and downstream composition.
 Request identity includes the inputs and generation-defining parameters so a repeated segment can use
 the shared replay/idempotency path.
 
-## Feature branch: optimized professional `run` A2V
+## Optimized professional `run` A2V
 
-On `feature/b2-run-a2v-static-fp8-no-offload-20261004`, new professional
-`run` generations use the immutable
+New professional `run` generations use the immutable
 `LTX_A2V_RUN_STATIC_FAST_PROFILE`
 (`ltx25-a2v-static-reference-distilled-fp8none-eager-a95ab-run-v1`).
 Unlike direct A2V's approved reference profile, this selection retains
@@ -56,12 +55,34 @@ Salad LTX A2V group actually uses that digest before any paid B2 A2V
 submission. The old `SALAD_LTX25_PAGEABLE_A2V_IMAGE` cannot be reused.
 A source-branch change alone does not deploy a Docker image.
 
-**Not yet established:** The previously approved ~101.55 s warm
-measurement and human lip-sync review belong to the **non-static**
-reference recipe, not this static B2 variant. GPU comparison of this
-specific variant against current B2 disk streaming, decoded A/V
-comparison, camera stability and lipsync approval remain mandatory
-before merging/deploying this feature.
+**RTX 5090 static-profile acceptance (2026-10-04):** A separate real
+5-second mono 24-kHz WAV and avatar image were submitted to the normal
+`video.ltx25.audio_to_video` task using the immutable static-fast
+profile with `A Person speaking to the camera.` as the prompt and seed
+4242. Job `ltx-a2v-b2-static-test-20261004173620-be37868638f8` completed
+without replay: 121 H.264 video frames at 1280x720 and 24 fps, matching
+5.041667-second AAC output with 0.041667 s temporal-grid padding.
+Reported FP8 CAST / offload `none` / Eager decoder, immutable
+`distilled_static_reference` recipe, negative static-camera guidance,
+stage-1 image strength 0.8, video CFG 1.25, 8+3 diffusion steps and
+frozen speech conditioning. MP4 SHA-256:
+`dba7beae84dfd39354c9bed6682414e9896485ee888297db17e3ed8e56f62a3f`.
+Measured 130.84 s inference and 151.59 s total for this initial sample;
+peak allocated VRAM ~24.43 GiB. The operator accepted the generated
+lip-sync, and the reference WAV and generated MP4 were independently
+inspected for stream validity and speech continuity. The guarded
+production-group experiment finished with `RESTORE_OK` and the old
+production image and `a2v` task mode restored; it did **not** deploy
+the experimental image permanently.
+
+This is a real acceptance of the **static** recipe's functionality and
+lip-sync, not a warm-throughput or extended-stability comparison against
+the previous disk-streamed static B2 recipe. The ~101.55 s warm figure
+belongs to the separate non-static reference recipe; do not apply it
+to the static profile. Source-code merge alone does not update Salad:
+a separately controlled production image rollout must pin the tested
+digest and set `SALAD_LTX25_RUN_STATIC_FP8_IMAGE` before a normal paid
+professional `run` can use this profile.
 
 ## Validated fast reference production profile
 
