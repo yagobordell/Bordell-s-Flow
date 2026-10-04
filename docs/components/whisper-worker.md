@@ -1,40 +1,17 @@
 # Whisper worker
 
-Whisper Large V3 Turbo provides word-level alignment for the canonical narration asset.
+Whisper Large V3 Turbo is a separately deployed speech-to-text worker.
+It receives a verified audio input through R2, executes a Postgres-backed
+inference job, and returns timing/text evidence. Worker configuration,
+health checks, model bootstrap and safe replay follow the shared
+inference contracts.
 
-## Boundary
+The managed B-pipeline orchestrates the transcription steps it needs.
+There is no supported `run_phase5_alignment.py` command: that standalone
+scene/shot-era runner has been removed.
 
-```text
-narration.wav
-   -> R2 input
-   -> Salad Whisper worker
-   -> words.json
-   -> NarrationWord[]
-```
-
-The worker uses the shared inference core for R2, Postgres leases, replay and request validation. Its
-model package owns only Whisper settings, runtime preparation and transcription task handling.
-
-The source script is not injected as decoder prompt context. The audio plus explicit language hint
-drive transcription; downstream validation compares timing/text evidence against the production
-contract.
-
-## Deployment
-
-The service definition is `whisper` in `deploy/salad/services.json`. GPU class, image, replica capacity and model environment are manifest-owned.
-
-Model bootstrap uses the shared download watchdog and validates the local snapshot before the worker
-becomes ready.
-
-Run alignment directly for debugging with:
-
-```powershell
-python scripts/pipeline/run_phase5_alignment.py
-```
-
-The controlled Whisper wrapper remains available for explicit alignment inputs.
-There is no current end-to-end B2 video runner. Service lifecycle operations use
-`scripts/salad/manage_salad_worker.ps1`.
-
-OpenAI transcription remains an optional compatibility provider in code; it is not the normal Phase 5
-alignment path.
+Use `scripts/salad/manage_salad_worker.ps1` for worker deployment,
+status and isolated manual service operations. Capacity for production
+jobs belongs to the global controller, so avoid manually starting the
+same service while it owns the pool. See
+[Salad deployment](../operations/salad-stack-deployment.md).
