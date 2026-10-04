@@ -19,7 +19,7 @@ class Latent:
         self.value = value
         self.casts: list[str] = []
 
-    def to(self, *, dtype: str) -> "Latent":
+    def to(self, *, dtype: str) -> Latent:
         self.casts.append(dtype)
         return self
 
@@ -31,7 +31,7 @@ def make_decoder(events: list, *, fail_on_clip: int | None = None) -> SimpleName
         def __init__(self) -> None:
             self.decode_count = 0
 
-        def eval(self) -> "Model":
+        def eval(self) -> Model:
             return self
 
         def decode_video(self, latent, tiling, generator):
