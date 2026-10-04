@@ -210,3 +210,56 @@ $Trial.RunId = "a2v-b2-triton-$(Get-Date -Format yyyyMMddHHmmss)"
 Do not combine fused-B4 and Triton in the first paid retest. Measure them
 independently against the same accepted Eager/split-B2 pair so any timing or
 quality difference has one cause.
+
+
+## Experimental sub-200-second research gate (not yet hardware validated)
+
+The accepted original Eager/split-B2 Full HD reference took 298.14 seconds;
+fused B4 with Eager took 267.73 seconds. Strict Triton with split B2 took
+299.17 seconds on a markedly paging-constrained host, despite reducing the
+combined two-clip VAE+MP4 phase from 89.73 to 52.05 seconds. Do not add
+these savings arithmetically or claim that combining both reaches 200 seconds.
+
+The next **isolated** experiment combines the already-tested B4 forward and
+strict Triton decoder. It changes no A2V model weights, prompts, audio freeze,
+CFG equation, sampling sigmas, seed order, frame count or tiling policy. The
+new `-MaxStage1MajorPageFaults 20000` test-only placement guard measures
+*incremental process-level* major page faults from pipeline acquisition
+through Stage 1. If that increment exceeds 20,000 (original B4's cumulative
+count was about 1,600; the unusually slow split-B2 Triton run exceeded
+170,000 by Stage 1), abort **before** expensive Stage 2 and VAE. Missing
+or non-monotonic proc counters also fail closed. This is not proof that a
+remaining host is swap-free: cgroup memory can be hidden by Salad.
+
+A2V now forces cyclic garbage collection at two natural lifetime
+boundaries: after upsampling and dropping stage1 tensors before loading
+the pinned Stage 2, and after Stage 2 has fully exited its streaming
+context and before lazily building the shared VAE. Those changes touch
+only already-dead Python allocations. Reports include both GC costs and
+memory snapshots so we can reject them if collection is slower than any
+memory benefit. Do not introduce extra CUDA synchronization.
+
+The optional `-PerformanceTargetSeconds 200` records an explicit
+`MET`/`MISSED` comparison using **total pair elapsed seconds**. A miss
+does not discard paid videos or invent a speedup; all 137-frame PSNR/SSIM
+and independent audio-envelope comparisons still run against the original
+immutable Eager/split-B2 pair. A successful target result is not quality
+approval: operator still verifies both lipsync and facial motion.
+
+The experiment MUST run on a freshly built immutable Docker digest
+including the new host-guard ABI. It must run the `-CheckInputsOnly`
+free preflight (including strict Triton ABI) and only prepare the
+**stopped, operator-owned experimental** A2V group. Do not reuse the older
+`efb47d0...` image; it cannot honor the new guard. The paid wrapper
+refuses a nonmatching remote digest, active instance, or pending change
+and stops only the capacity it started.
+
+Next phase *if the measured combined run remains >=200 seconds*: inspect
+`stage1_denoise_seconds`, `stage2_denoise_seconds`,
+`stage1_release_gc_seconds`, `stage2_release_gc_seconds`,
+`memory_before_vae`, and decoder/MP4 times. Do not change sampling
+steps/CFG/audio or introduce approximate sparse attention solely to
+force the 200-second metric. As a separately priced scheduling
+alternative, concurrent independent B1 jobs on separate GPUs could
+shorten wall time, but are **not** the same one-GPU B2 benchmark and
+must include both running-GPU cost and cold-start cost.
