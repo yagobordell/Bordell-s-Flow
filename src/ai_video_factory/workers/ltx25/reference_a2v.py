@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from contextlib import contextmanager, nullcontext
-from types import MethodType
+from contextlib import nullcontext
 from functools import partial
 
 import torch
@@ -37,56 +36,6 @@ from .reference_recipe import LTX_A2V_REFERENCE_RECIPE
 
 
 
-@contextmanager
-def _experimental_streaming_transformer_context(stage):
-    """Avoid a second recursive eval() after upstream built an eval-mode meta model.
-
-    The pinned upstream StreamingModelBuilder.build() already calls
-    meta_model.eval() BEFORE wiring the block-streaming provider and hooks.
-    A subsequent X0Model(streaming_wrapper).eval() recursively walks those
-    live hooks' modules again. The third warm A2V sample failed in precisely
-    that redundant walk. Preserve upstream streaming build/teardown; only
-    replace the extra traversal for opt-in CPU-streamed A2V benchmarks.
-    """
-    from ltx_core.model.transformer import X0Model
-    from ltx_pipelines.utils.blocks import _streaming_model
-
-    builder = stage._prepared_builder()
-    if not stage._is_streaming:
-        raise RuntimeError("experimental streaming guard requires a streaming stage")
-    with _streaming_model(
-        builder, stage._device, stage._dtype, stage._alloc_trim_strategy
-    ) as streaming_wrapper:
-        raw_model = streaming_wrapper._model
-        if raw_model.training:
-            raise RuntimeError(
-                "A2V streaming meta model must already be in eval mode"
-            )
-        # Set only the two outer containers' training flags. Do not traverse
-        # children again: the underlying meta model was already recursively
-        # evaluated inside StreamingModelBuilder.build().
-        streaming_wrapper.training = False
-        model = X0Model(streaming_wrapper)
-        model.training = False
-        yield model
-
-
-def configure_experimental_a2v_streaming(pipeline: DistilledReferenceA2VPipeline) -> None:
-    """Patch only an opt-in benchmark instance, never production or I2V."""
-    for name in ("stage_1", "stage_2"):
-        stage = getattr(pipeline, name)
-        if not getattr(stage, "_is_streaming", False):
-            raise RuntimeError(
-                f"Experimental CPU A2V expected streaming {name}; refusing partial patch"
-            )
-    for name in ("stage_1", "stage_2"):
-        stage = getattr(pipeline, name)
-        stage._streaming_transformer_ctx = MethodType(
-            _experimental_streaming_transformer_context, stage
-        )
-
-
-
 def _with_strength(
     images: Sequence[ImageConditioningInput],
     strength: float,
@@ -110,6 +59,11 @@ class DistilledReferenceA2VPipeline(A2VidPipelineTwoStage):
     specialized so Stage 1 uses the LTX-2.5 ancestral sampler, image strengths
     differ by stage, and padded audio is checked before frozen conditioning.
     """
+
+    def configure_experimental_streaming_guard(self) -> None:
+        from .a2v_streaming_guard import configure_experimental_a2v_streaming
+
+        configure_experimental_a2v_streaming(self)
 
     def __call__(  # noqa: PLR0913
         self,
