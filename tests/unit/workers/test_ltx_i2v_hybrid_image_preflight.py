@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,6 +37,8 @@ def test_image_probe_reads_installed_code_inside_exact_immutable_image() -> None
     assert 'full_hd_stage2_mode' in code
     assert "_full_hd_streaming_stage2" in code
     assert "stage2_factory" in code
+    assert "STAGE2_SIGMAS_SAFE_ABI" in code
+    assert "stage2_sigmas" in code
     assert "I2V_HYBRID_DOCKER_ABI_OK" in code
     assert run.call_args.kwargs["timeout"] >= 300
     assert "gpus" not in argv
@@ -85,3 +88,53 @@ def test_powershell_checks_docker_abi_before_it_starts_salad() -> None:
     assert "STOP: pinned Docker lacks the hybrid I2V API" in source
     # Local --CheckInputsOnly must still remain free and require no Docker pull.
     assert source.index("if ($CheckInputsOnly)") < source.index(guard)
+
+
+def test_stage2_sigma_tensor_is_never_shadowed_by_lazy_stage_object() -> None:
+    """CPU-only AST gate: even CI without torch must catch the paid-trial bug."""
+    path = ROOT / "src/ai_video_factory/workers/ltx25/paired_i2v.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    functions = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "generate_paired_fast_distilled"
+    ]
+    assert len(functions) == 1
+    calls = [
+        node for node in ast.walk(functions[0])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_paired_stage"
+    ]
+    second = [
+        call for call in calls
+        if any(
+            key.arg == "stage_label"
+            and isinstance(key.value, ast.Constant)
+            and key.value.value == "stage2"
+            for key in call.keywords
+        )
+    ]
+    assert len(second) == 1
+    sigma_args = [key.value for key in second[0].keywords if key.arg == "sigmas"]
+    assert len(sigma_args) == 1
+    assert isinstance(sigma_args[0], ast.Name)
+    assert sigma_args[0].id == "stage2_sigmas"
+    # A stage wrapper may be assigned to `stage2`; sigma must be a distinct
+    # variable assigned from the exact upstream second-stage tensor.
+    assignments = [
+        node for node in ast.walk(functions[0])
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "stage2_sigmas"
+            for target in node.targets
+        )
+    ]
+    assert len(assignments) == 1
+    assigned = assignments[0].value
+    assert isinstance(assigned, ast.Call)
+    assert isinstance(assigned.func, ast.Attribute)
+    assert isinstance(assigned.func.value, ast.Name)
+    assert assigned.func.value.id == "STAGE_2_DISTILLED_SIGMAS"
+    assert assigned.func.attr == "to"
