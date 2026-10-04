@@ -55,7 +55,8 @@ def test_mountinfo_resolves_v1_bind_root_and_collects_swap(
     assert result["cgroup_version"] == "v1"
     assert result["cgroup_resolution"] == "mountinfo"
     assert result["cgroup_memory_current_bytes"] == 1000000
-    assert result["cgroup_swap_counter_bytes"] == 1500000
+    assert result["cgroup_memsw_current_bytes"] == 1500000
+    assert result["cgroup_swap_counter_bytes"] == 500000
 
 
 def test_missing_cgroup_never_fakes_container_ram(
