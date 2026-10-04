@@ -57,6 +57,10 @@ def parser() -> argparse.ArgumentParser:
         "--guidance-forward-batch-size", type=int, choices=(2, 4), default=2,
     )
     p.add_argument("--max-stage1-major-page-faults", type=int, default=0)
+    p.add_argument("--progressive-block-group-size", type=int,
+                   choices=(1, 2, 4, 8), default=1)
+    p.add_argument("--min-checkpoint-direct-read-mibps", type=float, default=0.0)
+    p.add_argument("--max-stage1-build-seconds", type=float, default=0.0)
     p.add_argument("--performance-target-seconds", type=float, default=0.0)
     p.add_argument("--check-inputs-only", action="store_true")
     p.add_argument("--timeout-seconds", type=float, default=10800)
@@ -80,6 +84,10 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("Invalid experimental major-page-fault limit")
     if not 0 <= a.performance_target_seconds <= 10800:
         raise ValueError("Invalid experimental wall-time target")
+    if not 0 <= a.min_checkpoint_direct_read_mibps <= 10000:
+        raise ValueError("Invalid experimental direct checkpoint I/O minimum")
+    if not 0 <= a.max_stage1_build_seconds <= 3600:
+        raise ValueError("Invalid experimental stage1 model build cap")
     if a.seed_a == a.seed_b:
         raise ValueError("Separate A2V B2 seeds are mandatory")
     if bool(a.reference_a) != bool(a.reference_b):
@@ -126,6 +134,9 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
         "vae_backend": a.vae_backend,
         "guidance_forward_batch_size": a.guidance_forward_batch_size,
         "max_stage1_major_page_faults": a.max_stage1_major_page_faults,
+        "progressive_block_group_size": a.progressive_block_group_size,
+        "min_checkpoint_direct_read_mibps": a.min_checkpoint_direct_read_mibps,
+        "max_stage1_build_seconds": a.max_stage1_build_seconds,
         "accept_full_hd_oom_risk": a.accept_full_hd_oom_risk,
     })
     provenance = {
@@ -139,6 +150,9 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
         "vae_backend": a.vae_backend,
         "guidance_forward_batch_size": a.guidance_forward_batch_size,
         "max_stage1_major_page_faults": a.max_stage1_major_page_faults,
+        "progressive_block_group_size": a.progressive_block_group_size,
+        "min_checkpoint_direct_read_mibps": a.min_checkpoint_direct_read_mibps,
+        "max_stage1_build_seconds": a.max_stage1_build_seconds,
         "performance_target_seconds": a.performance_target_seconds,
     }
     for path in (a.reference_a, a.reference_b):
@@ -347,6 +361,13 @@ def main() -> None:
         raise RuntimeError("A2V reported a different guidance forward batch")
     if report.get("max_stage1_major_page_faults") != a.max_stage1_major_page_faults:
         raise RuntimeError("A2V reported a different host paging guard")
+    for key in (
+        "progressive_block_group_size",
+        "min_checkpoint_direct_read_mibps",
+        "max_stage1_build_seconds",
+    ):
+        if report.get(key) != getattr(a, key):
+            raise RuntimeError(f"A2V did not execute the requested optimization: {key}")
     if report.get("video_vae_backend") != expected_backend:
         raise RuntimeError("A2V reported a different decoder backend: silent fallback")
     report["technical_validation"] = {}
