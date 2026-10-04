@@ -43,13 +43,13 @@ from ltx_pipelines.utils.samplers import euler_ancestral_denoising_loop, euler_d
 from ltx_pipelines.utils.types import ModalitySpec, PipelineOutput
 
 from .reference_a2v import _with_strength
-from .resource_metrics import memory_pressure
 from .reference_recipe import (
     LTX_A2V_REFERENCE_RECIPE,
     LTX_A2V_STATIC_IMAGE_STRENGTH,
     LTX_A2V_STATIC_NEGATIVE_PROMPT,
     LTX_A2V_STATIC_VIDEO_CFG_SCALE,
 )
+from .resource_metrics import memory_pressure
 
 logger = logging.getLogger(__name__)
 
