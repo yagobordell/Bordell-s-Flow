@@ -13,13 +13,15 @@ from pydantic import ValidationError
 
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
 from ai_video_factory.workers.ltx25.a2v import (
-    DirectLTX25AudioToVideoBackend,
     LTX_A2V_PRODUCTION_FAST_PROFILE,
     LTX_A2V_RUN_STATIC_FAST_PROFILE,
+    DirectLTX25AudioToVideoBackend,
     LTXAudioToVideoParameters,
 )
 from ai_video_factory.workers.ltx25.experimental_a2v_batch2 import (
-    A2VBatch2Parameters, ExperimentalA2VBatch2TaskRunner, LTX_A2V_BATCH2_TASK,
+    LTX_A2V_BATCH2_TASK,
+    A2VBatch2Parameters,
+    ExperimentalA2VBatch2TaskRunner,
 )
 from scripts.smoke import verify_ltx25_a2v_batch2_image as probe
 
