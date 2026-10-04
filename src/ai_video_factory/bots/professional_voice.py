@@ -174,7 +174,10 @@ def _progressive_voice_groups(blocks: list[dict[str, Any]]) -> list[list[int]]:
             elif index == len(units) - 1:
                 target = index - 1
             else:
-                target = index - 1 if count(units[index - 1]) <= count(units[index + 1]) else index + 1
+                target = (
+                    index - 1 if count(units[index - 1]) <= count(units[index + 1])
+                    else index + 1
+                )
             left = min(index, target)
             units[left:left + 2] = [units[left] + units[left + 1]]
     return [[block["block_id"] for block in unit] for unit in units]
@@ -783,18 +786,15 @@ async def generate_professional_audio(
     async def one(block: dict[str, Any], direction: V3) -> dict[str, Any]:
         bid = block["block_id"]
         source_ids = block.get("source_block_ids", [bid])
-        turns_fingerprint = _fingerprint(
-            {"turns": [
-                {"text": _tagged(segment), "style": segment.style}
-                for delivery in direction.beat_deliveries for segment in delivery.segments
-            ], "source_block_ids": source_ids}
-        ) if len(source_ids) > 1 else None
         folder = run_dir / "blocks" / f"block_{bid}"
         state_path = folder / "task.json"
         async with semaphore:
             turns = [{"text": _tagged(segment), "style": segment.style}
                      for delivery in direction.beat_deliveries for segment in delivery.segments]
-            speech_fingerprint = turns_fingerprint or _fingerprint(turns)
+            speech_fingerprint = (
+                _fingerprint({"turns": turns, "source_block_ids": source_ids})
+                if len(source_ids) > 1 else _fingerprint(turns)
+            )
             if state_path.exists():
                 state = _read(state_path)
                 if state.get("fingerprint") != speech_fingerprint:
@@ -852,7 +852,8 @@ async def generate_professional_audio(
                 or hashlib.sha256(audio_path.read_bytes()).hexdigest() != state.get("sha256")):
                 raise VoicePlanError(f"Gemini block {bid}: saved WAV unavailable or changed")
             item: dict[str, Any] = {
-                "block_id": bid, "source_block_ids": source_ids, "task_id": f"gemini-{fingerprint[:12]}-{bid}",
+                "block_id": bid, "source_block_ids": source_ids,
+                "task_id": f"gemini-{fingerprint[:12]}-{bid}",
                 "file": audio_path.relative_to(output).as_posix(),
                 "sha256": state["sha256"], "format": "wav", "bytes": audio_path.stat().st_size,
                 "credit_cost": None, "director_usage": None,
