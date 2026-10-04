@@ -358,7 +358,9 @@ def generate_paired_fast_distilled(
         raise ValueError("Experimental transformer forward batch size must be 1 or 2")
     if full_hd_memory_cleanup and (width, height) != (1920, 1088):
         raise ValueError("Full HD memory profile requires internal 1920x1088 model grid")
-    if stage2_factory is not None and (not full_hd_memory_cleanup or reuse_transformer_across_stages):
+    if stage2_factory is not None and (
+        not full_hd_memory_cleanup or reuse_transformer_across_stages
+    ):
         raise ValueError("Alternate stage2 requires separate Full HD stage residency")
     if len(pair) != 2 or pair[0].seed == pair[1].seed:
         raise ValueError("Batch2 needs two independent seeds")
