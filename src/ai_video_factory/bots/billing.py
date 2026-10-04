@@ -286,6 +286,8 @@ class ApiCostLedger:
         active = sorted(root.glob("block_*/*.json")) + sorted(
             (root / "grids").glob("*.json")
         ) + sorted(
+            (root / "finishing_state").glob("block_*/*-native_grid_video.json")
+        ) + sorted(
             (root / "professional_finished").glob("block_*/*-native_grid_video.json")
         )
         replaced = sorted(archive.glob("block_*/*.json")) + sorted(
