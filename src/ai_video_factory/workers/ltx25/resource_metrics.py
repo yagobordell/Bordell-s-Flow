@@ -185,16 +185,23 @@ def memory_pressure(
             for event in ("oom", "oom_kill", "high", "max"):
                 if event in events:
                     result[f"cgroup_memory_events_{event}"] = events[event]
-        swap_peak = _integer(
-            base / ("memory.swap.peak" if version == "v2" else "memory.memsw.max_usage_in_bytes")
-        )
-        if swap_peak is not None:
-            result["cgroup_swap_peak_bytes"] = swap_peak
-        swap = _integer(
-            base / ("memory.swap.current" if version == "v2" else "memory.memsw.usage_in_bytes")
-        )
-        if swap is not None:
-            result["cgroup_swap_counter_bytes"] = swap
+        if version == "v2":
+            swap_peak = _integer(base / "memory.swap.peak")
+            swap = _integer(base / "memory.swap.current")
+            if swap_peak is not None:
+                result["cgroup_swap_peak_bytes"] = swap_peak
+            if swap is not None:
+                result["cgroup_swap_counter_bytes"] = swap
+        else:
+            # v1 memsw is memory PLUS swap: not the same as v2
+            # memory.swap.current. Subtract contemporaneous memory usage.
+            memsw_peak = _integer(base / "memory.memsw.max_usage_in_bytes")
+            if memsw_peak is not None:
+                result["cgroup_memsw_reported_peak_bytes"] = memsw_peak
+            memsw = _integer(base / "memory.memsw.usage_in_bytes")
+            if memsw is not None:
+                result["cgroup_memsw_current_bytes"] = memsw
+                result["cgroup_swap_counter_bytes"] = max(0, memsw - usage)
         info = _stats(base / "memory.stat")
         mapping = {
             "file": "file" if version == "v2" else "total_cache",
