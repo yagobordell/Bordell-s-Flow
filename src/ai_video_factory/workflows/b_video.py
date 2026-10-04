@@ -901,6 +901,11 @@ def generate_b2_ltx_video(
                     LTX_A2V_RUN_STATIC_FAST_PROFILE
                     or values.get("negative_prompt_applied") is not True
                     or values.get("positive_prompt_enhanced") is not False
+                    or values.get("quantization") != "fp8_cast"
+                    or values.get("offload_mode") != "none"
+                    or values.get("diffvae_backend_effective") != "eager"
+                    or values.get("stage_1_image_strength") != 0.8
+                    or values.get("video_cfg_scale") != 1.25
                 ):
                     raise B2VideoError("A2V did not apply the pinned static camera guidance")
             part.replace(clip)
