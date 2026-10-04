@@ -26,6 +26,8 @@ from ai_video_factory.workers.ltx25.paired_i2v import STAGE2_SIGMAS_SAFE_ABI
 from ai_video_factory.workers.ltx25.model import DirectLTX25Backend
 from ai_video_factory.workers.ltx25.paired_i2v import generate_paired_fast_distilled
 from ltx_core.block_streaming.builder import StreamingModelBuilder
+from ai_video_factory.workers.ltx25.shared_i2v_decoder import SharedSequentialVideoDecoder
+from ltx_core.model.video_vae.transformer.attention import natten_available
 
 assert "full_hd_stage2_mode" in Batch2Parameters.model_fields, "old batch2 request schema"
 assert "full_hd_stage2_mode" in inspect.signature(
@@ -81,6 +83,26 @@ stage2_source = inspect.getsource(DirectLTX25Backend._full_hd_streaming_stage2)
 assert 'builder._i2v_progressive_pinned_blocks = True' in stage2_source, (
     "I2V hybrid factory does not enable progressive stage2"
 )
+# Verify the installed exact image contains the shared VAE implementation
+# and that only Full HD opts into it. The pinned runtime intentionally forces
+# eager SDPA after an RTX 5090 NATTEN native segfault; do not silently change
+# that attention algorithm to claim a speedup.
+source = inspect.getsource(DirectLTX25Backend._pair_attempt)
+assert 'SharedSequentialVideoDecoder(original_decoder)' in source, (
+    "image lacks the isolated Full HD shared VAE encoder"
+)
+assert 'if is_full_hd else nullcontext()' in source, (
+    "image must retain the unchanged 720p decode path"
+)
+assert hasattr(SharedSequentialVideoDecoder, "close"), (
+    "image lacks shared VAE exception cleanup"
+)
+from ai_video_factory.workers.ltx25.model import _select_diffvae_backend
+assert '_force_diffvae_eager_sdpa' in inspect.getsource(_select_diffvae_backend), (
+    "image changed the safety-pinned eager decode backend"
+)
+print("I2V_VAE_RUNTIME_STATUS natten_importable=" + str(natten_available()) +
+      " selected_baseline=eager_sdpa (prior RTX5090 native NATTEN crash)")
 print("I2V_HYBRID_DOCKER_ABI_OK")
 """
 
