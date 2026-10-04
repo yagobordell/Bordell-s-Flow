@@ -42,9 +42,14 @@ def test_pair_accepts_full_hd_but_rejects_unvalidated_recipe_or_shape() -> None:
         "stage2_mode": "cpu", "accept_full_hd_oom_risk": True,
     }
     assert A2VBatch2Parameters.model_validate(valid).a.seed == 7
+    assert A2VBatch2Parameters.model_validate(valid).vae_backend == "eager"
+    assert A2VBatch2Parameters.model_validate({
+        **valid, "vae_backend": "triton_experimental",
+    }).vae_backend == "triton_experimental"
     for mutation in (
         {"accept_full_hd_oom_risk": False},
         {"stage2_mode": "disk"},
+        {"vae_backend": "unknown"},
         {"b": _params(7)},
         {"b": _params(8, width=1280, height=720)},
         {"b": {**_params(8), "generation_profile": LTX_A2V_PRODUCTION_FAST_PROFILE}},
@@ -72,7 +77,13 @@ class FakeBackend:
         self.calls.append(kwargs)
         for name in ("output_a", "output_b"):
             kwargs[name].write_bytes(b"valid-test-mp4")
-        return {"mode": "batch2", "actual_gpu_batch_size": self.batch}
+        return {
+            "mode": "batch2", "actual_gpu_batch_size": self.batch,
+            "video_vae_backend": (
+                "triton" if kwargs.get("vae_backend") == "triton_experimental"
+                else "eager"
+            ),
+        }
 
 
 def _job() -> InferenceJobRequest:
@@ -118,6 +129,7 @@ def test_atomic_four_input_contract_and_independent_audio(tmp_path: Path) -> Non
     assert artifact.path.read_bytes() == b"valid-test-mp4"
     assert {s.name for s in artifact.sidecars} == {"video_b", "report"}
     assert backend.calls[0]["audio_a"] != backend.calls[0]["audio_b"]
+    assert backend.calls[0]["vae_backend"] == "eager"
     assert backend.calls[0]["parameters_a"].seed == 7
     assert backend.calls[0]["parameters_b"].seed == 8
     assert json.loads((tmp_path / "batch2-report.json").read_text())["actual_gpu_batch_size"] == 2
