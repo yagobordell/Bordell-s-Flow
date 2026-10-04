@@ -36,6 +36,7 @@ jobs:
           uv run --no-sync ruff check \
             src/ai_video_factory/workers/ltx25/paired_i2v.py \
             docker/workers/ltx25/patch_i2v_progressive.py \
+            src/ai_video_factory/workers/ltx25/resource_metrics.py \
             tests/unit/workers/test_ltx_i2v_progressive_loader.py \
             src/ai_video_factory/workers/ltx25/model.py \
             scripts/smoke/submit_ltx25_i2v_batch2_smoke.py \
