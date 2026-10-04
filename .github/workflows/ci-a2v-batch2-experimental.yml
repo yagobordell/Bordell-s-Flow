@@ -38,6 +38,8 @@ jobs:
           uv run --no-sync ruff check \
             src/ai_video_factory/workers/ltx25/a2v.py \
             src/ai_video_factory/workers/ltx25/paired_a2v.py \
+            src/ai_video_factory/workers/ltx25/resource_metrics.py \
+            src/ai_video_factory/workers/ltx25/triton_a2v_probe.py \
             src/ai_video_factory/workers/ltx25/experimental_a2v_batch2.py \
             src/ai_video_factory/workers/ltx25/shared_a2v_decoder.py \
             src/ai_video_factory/workers/ltx25/settings.py \
@@ -46,12 +48,14 @@ jobs:
             scripts/smoke/compare_ltx25_a2v_b2_vs_b1.py \
             scripts/smoke/verify_ltx25_a2v_batch2_image.py \
             tests/unit/workers/test_ltx_a2v_batch2_experimental.py \
+            tests/unit/workers/test_ltx_a2v_b2_quality_preserving_optimizations.py \
             tests/unit/workers/test_ltx_a2v_b2_b1_comparison.py \
             tests/unit/workers/test_ltx_a2v_shared_decoder.py
       - name: CPU-only A2V and existing audio regressions
         run: |
           uv run --no-sync python -m pytest -q \
             tests/unit/workers/test_ltx_a2v_batch2_experimental.py \
+            tests/unit/workers/test_ltx_a2v_b2_quality_preserving_optimizations.py \
             tests/unit/workers/test_ltx_a2v_b2_b1_comparison.py \
             tests/unit/workers/test_ltx_a2v_shared_decoder.py \
             tests/unit/workers/test_ltx_a2v_task.py
@@ -70,6 +74,8 @@ jobs:
           uv run --no-sync python -m compileall -q \
             src/ai_video_factory/workers/ltx25/a2v.py \
             src/ai_video_factory/workers/ltx25/paired_a2v.py \
+            src/ai_video_factory/workers/ltx25/resource_metrics.py \
+            src/ai_video_factory/workers/ltx25/triton_a2v_probe.py \
             src/ai_video_factory/workers/ltx25/experimental_a2v_batch2.py \
             scripts/smoke/submit_ltx25_a2v_batch2_smoke.py \
             scripts/smoke/compare_ltx25_a2v_b2_vs_b1.py \
