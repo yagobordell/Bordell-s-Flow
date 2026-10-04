@@ -316,3 +316,49 @@ def test_repeated_words_are_placed_by_original_offset_not_snippet_search():
     assert pv._v4_turns(compiler, block, direction)[0]["text"] == (
         "Hola,<breath> como fue todo"
     )
+
+
+def test_identical_tag_excerpts_use_distinct_source_offsets():
+    """Repeated words can produce identical excerpts: never search by text."""
+    text = "como como como"
+    block = {"block_id": 9, "beats": [{"beat_id": "R", "text": text}]}
+    direction = pv.V3(
+        pipeline_stage="V3", block_id=9,
+        block_performance={"register": "Same narrator", "pace_character": "Natural",
+                           "intensity_arc": "Unchanged"},
+        beat_deliveries=[{"beat_id": "R", "delivery": [
+            {"speak": text, "delivery_quality": "Conversational",
+             "ending_behavior": "resolve", "stress": [],
+             "vocal_intents": [
+                 {"at": 5, "behavior": "inhale"},
+                 {"at": 10, "behavior": "inhale"},
+             ]}
+        ]}],
+    )
+    compiler = pv.V4(
+        pipeline_stage="V4", block_id=9, audio_profile="Same narrator",
+        directors_notes=["Natural delivery"],
+        spoken_directions=[
+            {"beat_id": "R", "source_item_index": 0, "locator": text,
+             "instruction": "Conversational; resolve naturally",
+             "ending_behavior": "resolve", "stress": []},
+        ],
+        beat_tags=[{"beat_id": "R", "text": "", "inserts": [
+            {"at": at, "tag": "breath", "text": "como <breath>como",
+             "source_kind": "vocal_intent", "source_item_index": 0,
+             "source_at": at}
+            for at in (5, 10)
+        ]}],
+    )
+    pv._check_v3(direction, block)
+    pv._check_v4(compiler, block, direction)
+    assert compiler.beat_tags[0].inserts[0].text == (
+        compiler.beat_tags[0].inserts[1].text
+    )
+    assert pv._v4_turns(compiler, block, direction) == [{
+        "text": "como <breath>como <breath>como",
+        "style": pv._v4_style(compiler, direction),
+    }]
+    compiler.beat_tags[0].inserts[1].at = 5
+    with pytest.raises(pv.VoicePlanError, match="duplicated or moved"):
+        pv._check_v4(compiler, block, direction)
