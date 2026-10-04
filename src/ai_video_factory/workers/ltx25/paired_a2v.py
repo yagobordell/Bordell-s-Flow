@@ -43,6 +43,7 @@ from ltx_pipelines.utils.samplers import euler_ancestral_denoising_loop, euler_d
 from ltx_pipelines.utils.types import ModalitySpec, PipelineOutput
 
 from .reference_a2v import _with_strength
+from .resource_metrics import memory_pressure
 from .reference_recipe import (
     LTX_A2V_REFERENCE_RECIPE,
     LTX_A2V_STATIC_IMAGE_STRENGTH,
@@ -280,6 +281,8 @@ def generate_paired_static_a2v(
     if (frames - 1) % 8 or frames < 9:
         raise ValueError("A2V pair must share the exact 8k+1 audio-driven frame count")
     assert_resolution(height=height, width=width, is_two_stage=True)
+    if phase_metrics is not None:
+        phase_metrics["memory_after_pipeline_acquire"] = memory_pressure()
     prepared, prompt_metrics = _prepare_independent_prompt_contexts(pipeline, samples)
     if phase_metrics is not None:
         phase_metrics.update(prompt_metrics)
@@ -352,6 +355,8 @@ def generate_paired_static_a2v(
         negative_ctx=negative, seeds=(samples[0].seed, samples[1].seed),
         label="stage1", phase_metrics=phase_metrics,
     )
+    if phase_metrics is not None:
+        phase_metrics["memory_after_stage1"] = memory_pressure()
     del stage1_images, stage1_audio
     upsample_start = time.perf_counter()
     upscaled = torch.cat([
@@ -389,6 +394,8 @@ def generate_paired_static_a2v(
         seeds=(samples[0].seed, samples[1].seed), label="stage2",
         phase_metrics=phase_metrics,
     )
+    if phase_metrics is not None:
+        phase_metrics["memory_after_stage2"] = memory_pressure()
     result = []
     for i in range(2):
         latent = final.latent[i:i + 1]
