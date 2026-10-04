@@ -16,6 +16,7 @@ import pytest
 from PIL import Image
 
 from ai_video_factory.workers.ltx25.a2v import (
+    LTX_A2V_RUN_STATIC_FAST_PROFILE,
     LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
     LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
 )
@@ -134,7 +135,7 @@ def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     assert first.request.parameters["prompt"] == "A Person speaking to the camera."
     assert last.request.parameters["prompt"] == first.request.parameters["prompt"]
     assert first.request.parameters["generation_profile"] == (
-        LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
+        LTX_A2V_RUN_STATIC_FAST_PROFILE
     )
     assert b_video.AVATAR_NEGATIVE_PROMPT == (
         "camera zoom, zoom in, push in, dolly in, camera drift, camera shake, "
@@ -436,7 +437,7 @@ def test_all_ltx_jobs_are_published_before_first_wait(
     events: list[tuple[str, str]] = []
     metadata_file = tmp_path / "worker-metadata.json"
     metadata_file.write_text(json.dumps({
-        "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+        "generation_profile": LTX_A2V_RUN_STATIC_FAST_PROFILE,
         "negative_prompt_applied": True,
         "positive_prompt_enhanced": False,
     }), encoding="utf-8")
@@ -603,7 +604,7 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
         return new_fingerprint(*args, **kwargs)
 
     monkeypatch.setattr(
-        b_video, "LTX_A2V_STATIC_SAFE_GENERATION_PROFILE",
+        b_video, "LTX_A2V_RUN_STATIC_FAST_PROFILE",
         LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
     )
     monkeypatch.setattr(
@@ -640,7 +641,7 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
                 "positive_prompt_enhanced": False,
             }), encoding="utf-8")
     b_video._save_json(old_run / "manifest.json", previous)
-    monkeypatch.setattr(b_video, "LTX_A2V_STATIC_SAFE_GENERATION_PROFILE", v5)
+    monkeypatch.setattr(b_video, "LTX_A2V_RUN_STATIC_FAST_PROFILE", v5)
     monkeypatch.setattr(b_video, "LTX_PRODUCTION_I2V_PROFILE", selected_i2v)
     monkeypatch.setattr(b_video, "_fingerprint", new_fingerprint)
     monkeypatch.setattr(
@@ -762,7 +763,7 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     ], check=True, capture_output=True)
     metadata = tmp_path / "worker-metadata.json"
     metadata.write_text(json.dumps({
-        "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+        "generation_profile": LTX_A2V_RUN_STATIC_FAST_PROFILE,
         "negative_prompt_applied": True,
         "positive_prompt_enhanced": False,
     }), encoding="utf-8")
