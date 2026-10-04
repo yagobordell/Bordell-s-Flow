@@ -43,6 +43,7 @@ jobs:
             src/ai_video_factory/workers/ltx25/settings.py \
             src/ai_video_factory/workers/ltx25/worker_factory.py \
             scripts/smoke/submit_ltx25_a2v_batch2_smoke.py \
+            scripts/smoke/compare_ltx25_a2v_b2_vs_b1.py \
             scripts/smoke/verify_ltx25_a2v_batch2_image.py \
             tests/unit/workers/test_ltx_a2v_batch2_experimental.py \
             tests/unit/workers/test_ltx_a2v_shared_decoder.py
@@ -69,5 +70,6 @@ jobs:
             src/ai_video_factory/workers/ltx25/paired_a2v.py \
             src/ai_video_factory/workers/ltx25/experimental_a2v_batch2.py \
             scripts/smoke/submit_ltx25_a2v_batch2_smoke.py \
+            scripts/smoke/compare_ltx25_a2v_b2_vs_b1.py \
             scripts/smoke/verify_ltx25_a2v_batch2_image.py \
             docker/workers/ltx25/patch_i2v_progressive.py
