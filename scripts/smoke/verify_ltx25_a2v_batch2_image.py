@@ -17,6 +17,7 @@ from ai_video_factory.workers.ltx25.experimental_a2v_batch2 import (
     A2VBatch2Parameters, ExperimentalA2VBatch2TaskRunner,
 )
 from ai_video_factory.workers.ltx25.shared_a2v_decoder import SharedA2VDecoder
+from ai_video_factory.workers.ltx25.triton_a2v_probe import ensure_triton_gpu_probe
 from ltx_core.block_streaming.builder import StreamingModelBuilder
 assert callable(_build_state) and callable(generate_paired_static_a2v)
 assert callable(euler_ancestral_denoising_loop)
@@ -27,12 +28,29 @@ assert "actual_gpu_batch_size" in inspect.getsource(DirectLTX25AudioToVideoBacke
 assert "stage2_factory" in inspect.signature(generate_paired_static_a2v).parameters
 assert hasattr(SharedA2VDecoder, "close")
 assert A2VBatch2Parameters.model_fields["stage2_mode"].default == "cpu"
+assert A2VBatch2Parameters.model_fields["vae_backend"].default == "eager"
+assert callable(ensure_triton_gpu_probe)
+assert "requested_pair_vae_backend" in inspect.signature(
+    DirectLTX25AudioToVideoBackend._get_or_build_pipeline
+).parameters
+assert "_prepare_independent_prompt_contexts" in inspect.getsource(
+    generate_paired_static_a2v
+)
 assert ExperimentalA2VBatch2TaskRunner.task_name.endswith("batch2_experimental")
 print("LTX25_A2V_B2_DOCKER_ABI_OK torch=" + torch.__version__, flush=True)
 """
 
 
-def verify(image: str) -> None:
+_TRITON_IMAGE_PROBE = """
+import triton
+from ltx_core.model.video_vae.transformer.fallback_na.triton_na import na3d
+from ai_video_factory.workers.ltx25.triton_a2v_probe import ensure_triton_gpu_probe
+assert callable(na3d) and callable(ensure_triton_gpu_probe)
+print("LTX25_A2V_B2_TRITON_IMAGE_OK", flush=True)
+"""
+
+
+def verify(image: str, *, require_triton: bool = False) -> None:
     repo, separator, digest = image.partition("@sha256:")
     if (
         not separator or not repo or any(char.isspace() for char in repo)
@@ -49,13 +67,26 @@ def verify(image: str) -> None:
             + (result.stderr or result.stdout)[-1800:]
         )
     print(result.stdout.strip())
+    if require_triton:
+        strict = subprocess.run(
+            ["docker", "run", "--rm", "--entrypoint", "python",
+             image, "-c", _TRITON_IMAGE_PROBE],
+            check=False, text=True, capture_output=True, timeout=180,
+        )
+        if strict.returncode != 0 or "LTX25_A2V_B2_TRITON_IMAGE_OK" not in strict.stdout:
+            raise RuntimeError(
+                "A2V strict Triton Docker ABI failed; no billed GPU starts: "
+                + (strict.stderr or strict.stdout)[-1800:]
+            )
+        print(strict.stdout.strip())
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--image", required=True)
+    p.add_argument("--require-triton", action="store_true")
     a = p.parse_args()
-    verify(a.image)
+    verify(a.image, require_triton=a.require_triton)
 
 
 if __name__ == "__main__":
