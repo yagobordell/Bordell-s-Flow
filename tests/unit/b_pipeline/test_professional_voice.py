@@ -78,22 +78,16 @@ def _v4():
         audio_profile="Consistent intimate documentary narrator",
         directors_notes=["Measured beginning, then deliberate recognition."],
         spoken_directions=[
-            {"beat_id": "1A", "source_item_index": 0, "locator": "mundo",
-             "instruction": "Measured conversational delivery; emphasize mundo; keep open",
-             "ending_behavior": "carry", "stress": ["mundo"]},
-            {"beat_id": "1B", "source_item_index": 0, "locator": "realidad",
-             "instruction": "Warm deliberate delivery; land decisively",
-             "ending_behavior": "land", "stress": []},
+            {"locator": "mundo", "instruction": "Measured conversational emphasis"},
+            {"locator": "realidad", "instruction": "Warm deliberate finish"},
         ],
         beat_tags=[
             {"beat_id": "1A", "text": "", "inserts": [
-                {"at": 6, "tag": "breath", "text": "Hola, <breath>mundo",
-                 "source_kind": "vocal_intent", "source_item_index": 0, "source_at": 6},
+                {"at": 6, "tag": "breath", "text": "Hola, <breath>mundo"},
             ]},
             {"beat_id": "1B", "text": "", "inserts": []},
         ],
     )
-
 
 def _wav(rate=24000):
     stream = io.BytesIO()
@@ -110,7 +104,7 @@ def test_v3_artistic_contract_and_v4_source_bound_tags():
     result = _v3()
     pv._check_v3(result, block)
     compiler = _v4()
-    pv._check_v4(compiler, block, result)
+    pv._check_v4(compiler, block)
     assert pv._tagged_v4(block["beats"][0]["text"], compiler.beat_tags[0]) == (
         "Hola, <breath>mundo. "
     )
@@ -161,7 +155,7 @@ def test_v1_reconsideration_contract():
 
 def test_gemini_one_style_and_one_transcript_per_complete_group():
     direction = _v4()
-    turns = pv._v4_turns(direction, _block(), _v3())
+    turns = pv._v4_turns(direction, _block())
     assert len(turns) == 1
     payload = gemini_tts._build_directed_payload(turns=turns, voice="Algenib")
     parts = payload["contents"][0]["parts"]
@@ -616,3 +610,83 @@ def test_v_retries_keep_only_stable_input_and_output_files(tmp_path) -> None:
     assert not list(tmp_path.rglob("api_call_*.json"))
     assert not list(tmp_path.rglob("rejected_attempt_*.json"))
     assert not list(tmp_path.rglob("input_attempt_*.json"))
+
+
+@pytest.mark.parametrize(("field", "token"), [
+    ("register", "<breath>"),
+    ("pace_character", "<short pause>"),
+    ("intensity_arc", "<sigh>"),
+    ("delivery_quality", "<chuckle>"),
+])
+def test_v3_refuses_inline_compiler_tokens_in_every_artistic_field(field, token):
+    source, direction = _block(), _v3()
+    if field == "delivery_quality":
+        direction.beat_deliveries[0].delivery[0].delivery_quality += " " + token
+    elif field == "register":
+        direction.block_performance.register_ += " " + token
+    else:
+        setattr(direction.block_performance, field,
+                getattr(direction.block_performance, field) + " " + token)
+    with pytest.raises(pv.VoicePlanError, match="V3 inline-tag leakage"):
+        pv._check_v3(direction, source)
+
+
+def test_v3_inline_code_in_copied_narration_gets_specific_validation_error():
+    direction = _v3()
+    direction.beat_deliveries[0].delivery[0].speak = "Hola, <breath>mundo. "
+    with pytest.raises(pv.VoicePlanError, match="V3 inline-tag leakage"):
+        pv._check_v3(direction, _block())
+
+
+def test_v3_inline_markup_receives_clear_local_retry_without_echoing_tokens(tmp_path):
+    class Contaminated(FakeProvider):
+        def __init__(self):
+            super().__init__()
+            self.feedback = []
+
+        async def generate_structured_with_response(self, *, output_type, **kwargs):
+            if output_type is pv.V3 and self.calls.count("V3"):
+                self.feedback.append(json.loads(kwargs["input_text"])["validation_feedback"])
+            result, raw = await super().generate_structured_with_response(
+                output_type=output_type, **kwargs,
+            )
+            if output_type is pv.V3 and self.calls.count("V3") == 1:
+                result.beat_deliveries[0].delivery[0].delivery_quality += " <breath>"
+            return result, raw
+
+    provider = Contaminated()
+    v1, v2, v3, v4 = asyncio.run(pv.plan_professional_voice(
+        core={"central_question": "Why?", "final_answer": "Because."},
+        blocks=[_block()], output=tmp_path, provider=provider, model="test",
+    ))
+    assert provider.calls == ["V1", "V2", "V3", "V3", "V4"]
+    assert len(provider.feedback) == 1
+    assert "V3 inline-tag leakage" in provider.feedback[0]["error"]
+    assert "<breath>" not in json.dumps(provider.feedback[0])
+    assert "V4" in provider.feedback[0]["task"]
+    assert "<" not in v3[0].beat_deliveries[0].delivery[0].delivery_quality
+    assert pv._v4_turns(v4[0], _block())[0]["text"] == (
+        "Hola, <breath>mundo. Esa es la realidad."
+    )
+
+
+def test_tagged_modern_v3_checkpoint_is_repaired_only_for_its_block(tmp_path):
+    kwargs = {
+        "core": {"central_question": "Why?", "final_answer": "Because."},
+        "blocks": [_block()], "output": tmp_path, "model": "test",
+    }
+    provider = FakeProvider()
+    asyncio.run(pv.plan_professional_voice(**kwargs, provider=provider))
+    assert provider.calls == ["V1", "V2", "V3", "V4"]
+    checkpoint = tmp_path / "V3" / "block_1" / "output.json"
+    data = json.loads(checkpoint.read_text(encoding="utf-8"))
+    data["beat_deliveries"][0]["delivery"][0]["delivery_quality"] += " <sigh>"
+    checkpoint.write_text(json.dumps(data), encoding="utf-8")
+    repair = FakeProvider()
+    asyncio.run(pv.plan_professional_voice(**kwargs, provider=repair))
+    assert repair.calls == ["V3"]
+    assert json.loads(checkpoint.read_text())["beat_deliveries"][0]["delivery"][0][
+        "delivery_quality"
+    ] == "Measured, conversational"
+    rejected = tmp_path / "V3" / "block_1" / "rejected_v3_inline_tags.json"
+    assert "<sigh>" in rejected.read_text(encoding="utf-8")

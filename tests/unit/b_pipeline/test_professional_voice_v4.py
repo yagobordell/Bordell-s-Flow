@@ -1,4 +1,4 @@
-"""V4's compiler may translate V3 decisions, never direct new ones."""
+"""V4 has final authority; only technical B2/Gemini safety is validated."""
 import asyncio
 import copy
 import json
@@ -52,70 +52,127 @@ def _artistic():
 def _compiled():
     return pv.V4(
         pipeline_stage="V4", block_id=1,
-        audio_profile="Grounded conversational storyteller",
-        directors_notes=["Begin broadly, narrow toward precise recognition."],
-        spoken_directions=[
-            {"beat_id": "1A", "source_item_index": 0, "locator": "Hola",
-             "instruction": "Warm opening; keep the thought open",
-             "ending_behavior": "carry", "stress": []},
-            {"beat_id": "1A", "source_item_index": 2, "locator": "mundo",
-             "instruction": "Emphasize mundo; resolve naturally",
-             "ending_behavior": "resolve", "stress": ["mundo"]},
-            {"beat_id": "1B", "source_item_index": 0, "locator": "realidad",
-             "instruction": "Measured recognition; land decisively",
-             "ending_behavior": "land", "stress": []},
-        ],
+        audio_profile="Independent documentary voice",
+        directors_notes=["Natural direct narration, no designed pauses."],
+        spoken_directions=[{"locator": "mundo", "instruction": "Light emphasis"}],
         beat_tags=[
             {"beat_id": "1A", "text": "", "inserts": [
-                {"at": 0, "tag": "breath", "text": "<breath>Hola",
-                 "source_kind": "vocal_intent",
-                 "source_item_index": 0, "source_at": 0},
-                {"at": 6, "tag": "short pause", "text": "Hola, <short pause>mundo",
-                 "source_kind": "pause", "source_item_index": 1,
-                 "source_at": None, "pause_direction": "Let the greeting register"},
+                {"at": 0, "tag": "breath", "text": "<breath>Hola"},
+                {"at": 6, "tag": "short pause", "text": "Hola, <short pause>mundo"},
             ]},
             {"beat_id": "1B", "text": "", "inserts": []},
         ],
     )
 
 
-def test_compiler_preserves_distinct_pause_spoken_time_and_exact_stress():
-    source, direction, compiler = _block(), _artistic(), _compiled()
-    pv._check_v3(direction, source)
-    pv._check_v4(compiler, source, direction)
-    turns = pv._v4_turns(compiler, source, direction)
+def test_v4_full_group_one_style_and_only_its_own_instructions():
+    source, compiled = _block(), _compiled()
+    pv._check_v4(compiled, source)
+    turns = pv._v4_turns(compiled, source)
     assert len(turns) == 1
     assert turns[0]["text"] == (
         "<breath>Hola, <short pause>mundo. Esa es la realidad."
     )
-    assert "mundo" in turns[0]["style"]
-    assert "broadly" in turns[0]["style"]
-    assert "Let the greeting register" in turns[0]["style"]
-    assert "Grounded conversational" in turns[0]["style"]
-    assert compiler.beat_tags[1].text == ""
-    assert compiler.beat_tags[1].inserts == []
+    assert "Natural direct narration" in turns[0]["style"]
+    assert "Light emphasis" in turns[0]["style"]
+    assert "Grounded conversational" not in turns[0]["style"]
+    assert "Let the greeting register" not in turns[0]["style"]
 
 
-@pytest.mark.parametrize(("change", "error"), [
-    (lambda value: value.beat_tags[0].inserts.pop(),
-     "lost one or more"),
-    (lambda value: value.spoken_directions[1].stress.clear(),
-     "exact spoken locator, stress"),
-    (lambda value: setattr(value.beat_tags[0].inserts[1], "tag", "gasp"),
-     "invented, duplicated or moved"),
-    (lambda value: setattr(value.beat_tags[0].inserts[1], "at", 2),
-     "invented, duplicated or moved"),
-    (lambda value: value.beat_tags[1].inserts.append(
-        pv.V4TagSnippet(at=0, tag="gasp", text="<gasp>Esa",
-                        source_kind="vocal_intent",
-                        source_item_index=0, source_at=0)
-    ), "invented, duplicated or moved"),
+def test_v4_can_ignore_every_v3_decision_including_stress_and_pause():
+    source, compiled = _block(), _compiled()
+    v3 = _artistic()
+    v3.block_performance.register_ = "V3 different narrator description"
+    v3.beat_deliveries[0].delivery[0].delivery_quality = "V3 must whisper"
+    v3.beat_deliveries[0].delivery[2].stress = ["mundo"]
+    pv._check_v3(v3, source)
+    compiled.beat_tags[0].inserts = []
+    compiled.spoken_directions = []
+    compiled.directors_notes = ["Speak forward with NO designed silence."]
+    pv._check_v4(compiled, source)
+    turns = pv._v4_turns(compiled, source)
+    assert turns == [{
+        "text": "Hola, mundo. Esa es la realidad.",
+        "style": "Independent documentary voice\nSpeak forward with NO designed silence.",
+    }]
+    assert "register" not in turns[0]["style"].lower()
+
+
+def test_v4_can_introduce_supported_tag_not_proposed_by_v3():
+    direction, block = _compiled(), _block()
+    direction.beat_tags[0].inserts = [
+        {"at": 6, "tag": "gasp", "text": "Hola, <gasp>mundo"},
+    ]
+    direction = pv.V4.model_validate(direction.model_dump())
+    pv._check_v4(direction, block)
+    assert pv._v4_turns(direction, block)[0]["text"].startswith("Hola, <gasp>mundo")
+
+
+def test_v4_different_punctual_choice_at_original_v3_pause_seam_is_allowed():
+    source, compiled = _block(), _compiled()
+    compiled.beat_tags[0].inserts[1].tag = "chuckle"
+    compiled.beat_tags[0].inserts[1].text = "Hola, <chuckle>mundo"
+    pv._check_v4(compiled, source)
+    assert "<chuckle>" in pv._v4_turns(compiled, source)[0]["text"]
+
+
+@pytest.mark.parametrize(("mutate", "error"), [
+    (lambda x: setattr(x.beat_tags[0].inserts[1], "text", "Hola, <short pause>mundo. Esa"),
+     "adjacent"),
+    (lambda x: setattr(x.beat_tags[0].inserts[1], "at", 2), "splits a word"),
+    (lambda x: x.beat_tags[0].inserts.append(
+        pv.V4TagSnippet(at=0, tag="breath", text="<breath>Hola")), "duplicated"),
+    (lambda x: setattr(x.beat_tags[0], "beat_id", "WRONG"), "B2 order"),
+    (lambda x: setattr(x, "audio_profile", "   "), "substantive"),
 ])
-def test_compiler_rejects_lost_or_invented_decisions(change, error):
-    result = copy.deepcopy(_compiled())
-    change(result)
+def test_v4_rejects_only_invalid_technical_output(mutate, error):
+    compiled = copy.deepcopy(_compiled())
+    mutate(compiled)
     with pytest.raises(pv.VoicePlanError, match=error):
-        pv._check_v4(result, _block(), _artistic())
+        pv._check_v4(compiled, _block())
+
+
+def test_repeated_identical_excerpts_use_their_own_absolute_b2_offsets():
+    text = "como como como"
+    block = {"block_id": 9, "beats": [{"beat_id": "R", "text": text}]}
+    compiled = pv.V4(
+        pipeline_stage="V4", block_id=9, audio_profile="Independent actor",
+        directors_notes=["Full independence"],
+        spoken_directions=[{"locator": "como", "occurrence": 2,
+                            "instruction": "Make the second 'como' curious"}],
+        beat_tags=[{"beat_id": "R", "text": "", "inserts": [
+            {"at": at, "tag": "breath", "text": "como <breath>como"}
+            for at in (5, 10)
+        ]}],
+    )
+    pv._check_v4(compiled, block)
+    assert pv._v4_turns(compiled, block)[0]["text"] == (
+        "como <breath>como <breath>como"
+    )
+    compiled.beat_tags[0].inserts[1].at = 5
+    with pytest.raises(pv.VoicePlanError, match="duplicated"):
+        pv._check_v4(compiled, block)
+
+
+def test_same_offset_different_tags_preserve_v4_authored_order():
+    compiler = _compiled()
+    compiler.beat_tags[0].inserts = [
+        pv.V4TagSnippet(at=6, tag="exhales", text="Hola, <exhales>mundo"),
+        pv.V4TagSnippet(at=6, tag="short pause", text="Hola, <short pause>mundo"),
+    ]
+    pv._check_v4(compiler, _block())
+    assert pv._v4_turns(compiler, _block())[0]["text"].startswith(
+        "Hola, <exhales><short pause>mundo"
+    )
+
+
+def test_v4_invalid_local_locator_is_only_an_invalid_b2_reference():
+    compiler = _compiled()
+    compiler.spoken_directions = [
+        pv.V4SpokenDirection(locator="not B2", instruction="Anything"),
+    ]
+    with pytest.raises(pv.VoicePlanError, match="invalid B2 locator"):
+        pv._check_v4(compiler, _block())
 
 
 def test_v3_rejects_unjustified_stress_or_invented_words():
@@ -129,7 +186,7 @@ def test_v3_rejects_unjustified_stress_or_invented_words():
         pv._check_v3(result, _block())
 
 
-def test_existing_legacy_v3_checkpoint_skips_new_v4_without_new_paid_calls(tmp_path):
+def test_legacy_v3_checkpoint_is_rejected_without_new_paid_calls(tmp_path):
     core, block = {"central_question": "Why?", "final_answer": "Because."}, _block()
     rhythm = pv.V1(
         pipeline_stage="V1", curve="A recognition follows the greeting",
@@ -149,15 +206,17 @@ def test_existing_legacy_v3_checkpoint_skips_new_v4_without_new_paid_calls(tmp_p
             for beat in block["beats"]
         ], landing_beat_id="1B", baseline_misfit=[],
     )
-    old_direction = pv.LegacyV3(
-        pipeline_stage="V3", block_id=1, beat_deliveries=[
-            {"beat_id": beat["beat_id"], "segments": [
-                {"speak": beat["text"], "style": "Original professional style",
-                 "ending_behavior": "carry", "events": []},
-            ]}
+    old_direction = {
+        "pipeline_stage": "V3", "block_id": 1, "beat_deliveries": [
+            {"beat_id": beat["beat_id"], "segments": [{
+                "speak": beat["text"], "style": "Obsolete Gemini style",
+                "ending_behavior": "carry", "events": [{
+                    "at": 0, "tag": "breath",
+                }],
+            }]}
             for beat in block["beats"]
         ],
-    )
+    }
     inputs = {
         "narrative_core": core, "curve": rhythm.curve,
         "current_block": block,
@@ -170,7 +229,7 @@ def test_existing_legacy_v3_checkpoint_skips_new_v4_without_new_paid_calls(tmp_p
     checkpoint = tmp_path / "V3" / "block_1"
     checkpoint.mkdir(parents=True)
     (checkpoint / "input.json").write_text(json.dumps({"payload": inputs}))
-    (checkpoint / "output.json").write_text(old_direction.model_dump_json())
+    (checkpoint / "output.json").write_text(json.dumps(old_direction))
     class Provider:
         calls = []
         async def generate_structured_with_response(self, *, output_type, **_):
@@ -178,40 +237,16 @@ def test_existing_legacy_v3_checkpoint_skips_new_v4_without_new_paid_calls(tmp_p
             value = rhythm if output_type is pv.V1 else intent
             return value, SimpleNamespace(id=str(len(self.calls)), model="test", usage=None)
     provider = Provider()
-    v1, v2, v3, v4 = asyncio.run(pv.plan_professional_voice(
-        core=core, blocks=[block], output=tmp_path, provider=provider, model="test",
-    ))
-    assert (v1, v2, v3, v4) == (rhythm, [intent], [old_direction], [])
-    assert provider.calls == ["V1", "V2"]
+    with pytest.raises(pv.VoicePlanError, match="Legacy V3 checkpoint"):
+        asyncio.run(pv.plan_professional_voice(
+            core=core, blocks=[block], output=tmp_path, provider=provider, model="test",
+        ))
+    assert provider.calls == []  # Reject before any text or paid audio API call.
+    assert json.loads((checkpoint / "output.json").read_text()) == old_direction
     assert not (tmp_path / "V4").exists()
 
 
-def test_v4_rejects_missing_pause_direction():
-    compiler = _compiled()
-    compiler.beat_tags[0].inserts[1].pause_direction = None
-    with pytest.raises(pv.VoicePlanError, match="explicit pause function"):
-        pv._check_v4(compiler, _block(), _artistic())
-
-
-def test_v3_coincident_human_behavior_and_explicit_pause_preserve_source_order():
-    direction = _artistic()
-    direction.beat_deliveries[0].delivery[0].vocal_intents = [
-        pv.VocalIntent(at=0, behavior="inhale"),
-        pv.VocalIntent(at=6, behavior="exhale"),
-    ]
-    compiler = _compiled()
-    compiler.beat_tags[0].inserts.insert(1, pv.V4TagSnippet(
-        at=6, tag="exhales", text="Hola, <exhales>mundo",
-        source_kind="vocal_intent", source_item_index=0, source_at=6,
-    ))
-    pv._check_v3(direction, _block())
-    pv._check_v4(compiler, _block(), direction)
-    assert pv._v4_turns(compiler, _block(), direction)[0]["text"] == (
-        "<breath>Hola, <exhales><short pause>mundo. Esa es la realidad."
-    )
-
-
-def test_legacy_checkpoint_detection_is_structural_not_prose_substring(tmp_path):
+def test_modern_checkpoint_detection_is_structural_not_prose_substring(tmp_path):
     # A new-format delivery quality mentioning 'segments' is NOT old V3.
     direction = _artistic()
     direction.beat_deliveries[0].delivery[0].delivery_quality = (
@@ -220,45 +255,11 @@ def test_legacy_checkpoint_detection_is_structural_not_prose_substring(tmp_path)
     saved = tmp_path / "V3" / "block_1"
     saved.mkdir(parents=True)
     (saved / "output.json").write_text(direction.model_dump_json())
-    # A saved new V3 result must not force the whole run onto LegacyV3.
+    # Modern V3 stays on the modern V3/V4 contract regardless of its prose.
     snapshot = json.loads((saved / "output.json").read_text())
     assert "segments" in (saved / "output.json").read_text()
     assert "delivery" in snapshot["beat_deliveries"][0]
     assert "segments" not in snapshot["beat_deliveries"][0]
-
-
-def test_silent_breath_class_never_creates_unrequested_audible_inhale():
-    direction = _artistic()
-    direction.beat_deliveries[0].delivery[1] = pv.Pause(
-        pause="breath", pause_function="Silently re-gather before resuming"
-    )
-    compiler = _compiled()
-    compiler.beat_tags[0].inserts[1].pause_direction = (
-        "Silently re-gather before resuming"
-    )
-    pv._check_v4(compiler, _block(), direction)
-    compiler.beat_tags[0].inserts[1].tag = "breath"
-    with pytest.raises(pv.VoicePlanError, match="invented, duplicated or moved"):
-        pv._check_v4(compiler, _block(), direction)
-
-
-def test_empty_whitespace_prose_cannot_bypass_v3_v4_validations():
-    direction = _artistic()
-    direction.block_performance.register_ = "   "
-    with pytest.raises(pv.VoicePlanError, match="empty prose"):
-        pv._check_v3(direction, _block())
-    direction = _artistic()
-    direction.beat_deliveries[0].delivery[1].pause_function = " "
-    with pytest.raises(pv.VoicePlanError, match="audible purpose"):
-        pv._check_v3(direction, _block())
-    compiler = _compiled()
-    compiler.audio_profile = "   "
-    with pytest.raises(pv.VoicePlanError, match="substantive"):
-        pv._check_v4(compiler, _block(), _artistic())
-    compiler = _compiled()
-    compiler.beat_tags[0].inserts[1].pause_direction = " "
-    with pytest.raises(pv.VoicePlanError, match="explicit pause function"):
-        pv._check_v4(compiler, _block(), _artistic())
 
 
 def test_v3_collapses_duplicate_explicit_silence_across_beat_boundary():
@@ -273,92 +274,12 @@ def test_v3_collapses_duplicate_explicit_silence_across_beat_boundary():
         pv._check_v3(direction, _block())
 
 
-def test_sparse_tag_excerpt_rejects_extra_words_or_wrong_position():
-    compiler = _compiled()
-    compiler.beat_tags[0].inserts[1].text = "Hola, <short pause>mundo. Esa"
-    with pytest.raises(pv.VoicePlanError, match="exact adjacent words"):
-        pv._check_v4(compiler, _block(), _artistic())
-    compiler = _compiled()
-    compiler.beat_tags[0].inserts[1].at = 5
-    with pytest.raises(pv.VoicePlanError, match="invented, duplicated or moved"):
-        pv._check_v4(compiler, _block(), _artistic())
+def test_v3_pause_function_rejects_inline_gemini_token():
+    direction = _artistic()
+    direction.beat_deliveries[0].delivery[1].pause_function = (
+        "Let greeting register <short pause>"
+    )
+    with pytest.raises(pv.VoicePlanError, match="V3 inline-tag leakage"):
+        pv._check_v3(direction, _block())
 
 
-def test_repeated_words_are_placed_by_original_offset_not_snippet_search():
-    beat = {"beat_id": "R", "text": "Hola, como fue todo"}
-    block = {"block_id": 12, "beats": [beat]}
-    direction = pv.V3(
-        pipeline_stage="V3", block_id=12,
-        block_performance={"register": "Same narrator", "pace_character": "Even",
-                           "intensity_arc": "Gentle rise"},
-        beat_deliveries=[{"beat_id": "R", "delivery": [
-            {"speak": beat["text"], "delivery_quality": "Natural",
-             "ending_behavior": "resolve", "stress": [],
-             "vocal_intents": [{"at": 5, "behavior": "inhale"}]}
-        ]}],
-    )
-    compiler = pv.V4(
-        pipeline_stage="V4", block_id=12, audio_profile="Same narrator",
-        directors_notes=["Even delivery, gentle rise"],
-        spoken_directions=[
-            {"beat_id": "R", "source_item_index": 0, "locator": "todo",
-             "instruction": "Natural, resolve naturally",
-             "ending_behavior": "resolve", "stress": []},
-        ],
-        beat_tags=[{"beat_id": "R", "text": "", "inserts": [
-            {"at": 5, "tag": "breath", "text": "Hola,<breath> como",
-             "source_kind": "vocal_intent", "source_item_index": 0,
-             "source_at": 5}
-        ]}],
-    )
-    pv._check_v3(direction, block)
-    pv._check_v4(compiler, block, direction)
-    assert pv._v4_turns(compiler, block, direction)[0]["text"] == (
-        "Hola,<breath> como fue todo"
-    )
-
-
-def test_identical_tag_excerpts_use_distinct_source_offsets():
-    """Repeated words can produce identical excerpts: never search by text."""
-    text = "como como como"
-    block = {"block_id": 9, "beats": [{"beat_id": "R", "text": text}]}
-    direction = pv.V3(
-        pipeline_stage="V3", block_id=9,
-        block_performance={"register": "Same narrator", "pace_character": "Natural",
-                           "intensity_arc": "Unchanged"},
-        beat_deliveries=[{"beat_id": "R", "delivery": [
-            {"speak": text, "delivery_quality": "Conversational",
-             "ending_behavior": "resolve", "stress": [],
-             "vocal_intents": [
-                 {"at": 5, "behavior": "inhale"},
-                 {"at": 10, "behavior": "inhale"},
-             ]}
-        ]}],
-    )
-    compiler = pv.V4(
-        pipeline_stage="V4", block_id=9, audio_profile="Same narrator",
-        directors_notes=["Natural delivery"],
-        spoken_directions=[
-            {"beat_id": "R", "source_item_index": 0, "locator": text,
-             "instruction": "Conversational; resolve naturally",
-             "ending_behavior": "resolve", "stress": []},
-        ],
-        beat_tags=[{"beat_id": "R", "text": "", "inserts": [
-            {"at": at, "tag": "breath", "text": "como <breath>como",
-             "source_kind": "vocal_intent", "source_item_index": 0,
-             "source_at": at}
-            for at in (5, 10)
-        ]}],
-    )
-    pv._check_v3(direction, block)
-    pv._check_v4(compiler, block, direction)
-    assert compiler.beat_tags[0].inserts[0].text == (
-        compiler.beat_tags[0].inserts[1].text
-    )
-    assert pv._v4_turns(compiler, block, direction) == [{
-        "text": "como <breath>como <breath>como",
-        "style": pv._v4_style(compiler, direction),
-    }]
-    compiler.beat_tags[0].inserts[1].at = 5
-    with pytest.raises(pv.VoicePlanError, match="duplicated or moved"):
-        pv._check_v4(compiler, block, direction)

@@ -153,14 +153,10 @@ class GroupAwareProvider:
                 audio_profile="Clear documentary narrator",
                 directors_notes=["Measured, subtly increasing focus."],
                 spoken_directions=[
-                    {"beat_id": beat.beat_id, "source_item_index": i,
-                     "locator": item.speak.strip(),
-                     "instruction": "Natural delivery; keep cadence open",
-                     "ending_behavior": item.ending_behavior,
-                     "stress": item.stress}
+                    {"locator": item.speak.strip(),
+                     "instruction": "Natural delivery; confident cadence"}
                     for beat in direction.beat_deliveries
-                    for i, item in enumerate(beat.delivery)
-                    if isinstance(item, pv.Speak)
+                    for item in beat.delivery if isinstance(item, pv.Speak)
                 ],
                 beat_tags=[
                     {"beat_id": beat.beat_id, "text": "", "inserts": []}
