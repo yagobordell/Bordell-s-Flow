@@ -36,6 +36,9 @@ jobs:
           uv run --no-sync ruff check \
             src/ai_video_factory/workers/ltx25/paired_i2v.py \
             src/ai_video_factory/workers/ltx25/shared_i2v_decoder.py \
+            src/ai_video_factory/workers/ltx25/triton_na_probe.py \
+            scripts/smoke/compare_ltx25_i2v_backend_trial.py \
+            tests/unit/workers/test_ltx_i2v_triton_experiment.py \
             tests/unit/workers/test_ltx_i2v_shared_decoder.py \
             docker/workers/ltx25/patch_i2v_progressive.py \
             src/ai_video_factory/workers/ltx25/resource_metrics.py \
@@ -71,6 +74,7 @@ jobs:
           uv run --no-sync pytest -q \
             tests/unit/workers/test_ltx_i2v_batch2_optimizations.py \
             tests/unit/workers/test_ltx_i2v_shared_decoder.py \
+            tests/unit/workers/test_ltx_i2v_triton_experiment.py \
             tests/unit/workers/test_ltx_i2v_progressive_loader.py \
             tests/unit/workers/test_ltx_i2v_batch2_experiment.py \
             tests/unit/workflows/test_video_full_hd_defaults.py \
