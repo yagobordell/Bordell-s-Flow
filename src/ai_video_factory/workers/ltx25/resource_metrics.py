@@ -114,6 +114,27 @@ def memory_pressure(
         result["cgroup_available"] = True
         result["cgroup_version"] = version
         result["cgroup_memory_current_bytes"] = usage
+        # Current RSS alone is not enough to evaluate Salad placement.
+        # Read the container's own cgroup limits/peaks when exposed;
+        # v2 uses 'max' for unlimited and v1 uses an enormous sentinel.
+        limit = _integer(base / ("memory.max" if version == "v2" else "memory.limit_in_bytes"))
+        if limit is not None and 0 < limit < (1 << 60):
+            result["cgroup_memory_limit_bytes"] = limit
+        peak = _integer(
+            base / ("memory.peak" if version == "v2" else "memory.max_usage_in_bytes")
+        )
+        if peak is not None:
+            result["cgroup_memory_peak_bytes"] = peak
+        if version == "v2":
+            events = _stats(base / "memory.events")
+            for event in ("oom", "oom_kill", "high", "max"):
+                if event in events:
+                    result[f"cgroup_memory_events_{event}"] = events[event]
+        swap_peak = _integer(
+            base / ("memory.swap.peak" if version == "v2" else "memory.memsw.max_usage_in_bytes")
+        )
+        if swap_peak is not None:
+            result["cgroup_swap_peak_bytes"] = swap_peak
         swap = _integer(
             base / ("memory.swap.current" if version == "v2" else "memory.memsw.usage_in_bytes")
         )
