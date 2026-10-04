@@ -89,6 +89,7 @@ LTX_SUPPORTED_I2V_PROFILES = (
     *LTX_FAST_PROFILES,
 )
 _CANONICAL_LANDSCAPE_SIZE = (1280, 720)
+_FULL_HD_LANDSCAPE_SIZE = (1920, 1080)
 _LTX_TWO_STAGE_SPATIAL_GRID = 64
 
 _TRANSFORMER = "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors"
@@ -136,10 +137,13 @@ class LTXVideoParameters(BaseModel):
             self.width % _LTX_TWO_STAGE_SPATIAL_GRID == 0
             and self.height % _LTX_TWO_STAGE_SPATIAL_GRID == 0
         )
-        if not on_native_grid and (self.width, self.height) != _CANONICAL_LANDSCAPE_SIZE:
+        if not on_native_grid and (self.width, self.height) not in (
+            _CANONICAL_LANDSCAPE_SIZE, _FULL_HD_LANDSCAPE_SIZE,
+        ):
             raise ValueError(
                 "LTX-2.5 two-stage dimensions must be divisible by 64, except the "
-                "canonical 1280x720 profile which uses deterministic internal grid padding"
+                "approved 1280x720 and 1920x1080 delivery, which use deterministic "
+                "internal grid padding"
             )
         if (self.num_frames - 1) % 8 != 0:
             raise ValueError("LTX-2.5 num_frames must satisfy 8k + 1")
@@ -445,8 +449,19 @@ def _force_diffvae_eager_sdpa(diffvae_apply: Any) -> None:
 
 
 def _select_diffvae_backend(bindings: _LTXBindings, requested: str) -> str:
-    """Never enable crash-prone NATTEN on the RTX 5090 pinned runtime."""
+    """Eager is the safe baseline; strict Triton is explicit I2V B2 only.
+
+    The opt-in caller executes the isolated numerical CUDA probe FIRST.
+    Never enable the native-crashing NATTEN implementation on RTX 5090.
+    """
+    if requested not in ("eager", "triton", "triton_strict"):
+        raise ValueError("Unsupported I2V DiffVAE backend")
     _force_diffvae_eager_sdpa(bindings.diffvae_apply)
+    if requested == "triton_strict":
+        if not callable(bindings.triton_probe) or not bindings.triton_probe():
+            raise RuntimeError("Experimental I2V Triton is unavailable; refusing eager fallback")
+        bindings.diffvae_apply.triton_na_available = bindings.triton_probe
+        return "triton"
     if requested == "triton":
         if callable(bindings.triton_probe) and bindings.triton_probe():
             bindings.diffvae_apply.triton_na_available = bindings.triton_probe
@@ -817,7 +832,7 @@ class DirectLTX25Backend:
         requested_offload_mode: str = "cpu",
         requested_quantization: str = "fp8_cast",
     ) -> Any:
-        if requested_offload_mode not in ("cpu", "none"):
+        if requested_offload_mode not in ("cpu", "disk", "none"):
             raise ValueError("Unsupported LTX I2V offload mode")
         if requested_quantization not in ("fp8_cast", "nvfp4_prequant"):
             raise ValueError("Unsupported LTX I2V quantization")
@@ -871,6 +886,7 @@ class DirectLTX25Backend:
             quantization=quantization,
             offload_mode=(
                 bindings.offload_mode.NONE if requested_offload_mode == "none"
+                else bindings.offload_mode.DISK if requested_offload_mode == "disk"
                 else bindings.offload_mode.CPU
             ),
         )
@@ -884,6 +900,422 @@ class DirectLTX25Backend:
             effective_backend,
         )
         return self._pipeline
+
+
+
+    def _full_hd_streaming_stage2(
+        self, pipeline: Any, bindings: _LTXBindings, *, mode: str,
+    ) -> Any:
+        """Build only the alternate FP8 stage wrapper, never a second live pipeline.
+
+        Upstream DistilledPipeline uses DiffusionStage.from_checkpoint with
+        these exact fields. Invoked AFTER GPU stage1 exits and its weights
+        have been disposed; CPU mode pins blocks once for all three 1080p
+        denoising forwards instead of re-reading them every step.
+        """
+        if mode not in ("cpu", "disk"):
+            raise ValueError("Full HD stage2 must use CPU or explicit disk streaming")
+        first = pipeline.stage
+        if first._is_streaming:
+            raise RuntimeError("Hybrid I2V requires GPU-resident stage1")
+        policy = getattr(first, "_quantization", None)
+        if policy is None or policy.fuse_rule is None:
+            raise RuntimeError("Hybrid I2V must retain the pinned FP8 cast policy")
+        offload = bindings.offload_mode.CPU if mode == "cpu" else bindings.offload_mode.DISK
+        stage = type(first).from_checkpoint(
+            checkpoint_path=str(self._model_files.transformer),
+            dtype=first._dtype,
+            device=first._device,
+            loras=(),
+            quantization=policy,
+            offload_mode=offload,
+            alloc_trim_strategy=first._alloc_trim_strategy,
+            scale_factors=first.video_scale_factors,
+        )
+        if not stage._is_streaming:
+            raise RuntimeError("Hybrid I2V stage2 did not create block streaming")
+        slots = stage._transformer_builder.cpu_slots_count
+        if (mode == "cpu" and slots is not None) or (mode == "disk" and slots != 2):
+            raise RuntimeError("Hybrid I2V stage2 buffer policy is not as requested")
+        if mode == "cpu":
+            builder = stage._transformer_builder
+            # The Docker-patched upstream builder keeps its normal CPU path
+            # unchanged by default. Explicitly opt in ONLY for the lazy Full
+            # HD I2V stage2. Its prepared FP8 copies retain this instance flag.
+            if not getattr(builder, "_i2v_progressive_pinned_blocks_supported", False):
+                raise RuntimeError(
+                    "I2V progressive CPU stage2 requires the newly patched Docker image"
+                )
+            if getattr(builder.registry, "_cache_weights", None) is not False:
+                raise RuntimeError("I2V progressive stage2 requires an uncached registry")
+            builder._i2v_progressive_pinned_blocks = True
+        logger.info(
+            "LTX25_I2V_PAIR_STAGE2_POLICY offload=%s cpu_slots=%s "
+            "progressive_pinned_load=%s",
+            mode, "all" if slots is None else slots, mode == "cpu",
+        )
+        return stage
+
+    def _pair_attempt(
+        self,
+        *,
+        keyframe_a: Path,
+        keyframe_b: Path,
+        output_a: Path,
+        output_b: Path,
+        parameters_a: LTXVideoParameters,
+        parameters_b: LTXVideoParameters,
+        forward_batch_size: int,
+        reuse_transformer_across_stages: bool = False,
+        full_hd_stage2_mode: str = "cpu",
+        vae_backend: str = "eager",
+    ) -> int | None:
+        """Run one experimental attempt. Scoped so failed CUDA tensors can be released."""
+        from .memory_trace import mark_i2v_ram_phase
+        from .paired_i2v import PairInput, generate_paired_fast_distilled
+
+        with self._lock:
+            self.ready()
+            bindings = self._get_bindings()
+            self._validate_runtime(bindings)
+            with _torch_inference_context(bindings.torch):
+                cuda = bindings.torch.cuda
+                if self._device.startswith("cuda"):
+                    cuda.reset_peak_memory_stats()
+                is_full_hd = (parameters_a.width, parameters_a.height) == (1920, 1080)
+                if full_hd_stage2_mode not in ("cpu", "disk"):
+                    raise ValueError("Unknown Full HD stage2 streaming mode")
+                # Full-HD stage1 was demonstrated to fit as true GPU-resident
+                # B=2 in ~30s, whereas streaming it from disk took 27min.
+                # Stage2 needs the activation headroom of a streamed FP8
+                # transformer: CPU mode retains its block weights in RAM
+                # for all 3 forwards. Its host memory must be provisioned
+                # deliberately; explicit disk mode preserves the old fallback.
+                logger.info(
+                    "LTX25_I2V_PAIR_MEMORY_POLICY resolution=%dx%d "
+                    "stage1_offload=none stage2_offload=%s true_gpu_batch=%d",
+                    parameters_a.width, parameters_a.height,
+                    full_hd_stage2_mode if is_full_hd else "none",
+                    forward_batch_size,
+                )
+                mark_i2v_ram_phase("pipeline_acquire")
+                pipeline_kwargs = {"requested_offload_mode": "none"}
+                if vae_backend == "triton_experimental":
+                    pipeline_kwargs["requested_diffvae_backend"] = "triton_strict"
+                pipeline = self._get_or_build_pipeline(bindings, **pipeline_kwargs)
+                if vae_backend == "triton_experimental":
+                    if self._pipeline_effective_diffvae_backend != "triton":
+                        raise RuntimeError("I2V Triton request did not select Triton DiffVAE")
+                    logger.info("LTX25_I2V_TRITON_BACKEND_SELECTED confirmed=triton")
+                stage2_factory = (
+                    (lambda: self._full_hd_streaming_stage2(
+                        pipeline, bindings, mode=full_hd_stage2_mode,
+                    ))
+                    if is_full_hd else None
+                )
+                pipeline_width, pipeline_height = _pipeline_dimensions(parameters_a)
+                mark_i2v_ram_phase("prepare_conditioning")
+                pair = []
+                for keyframe, output, params in (
+                    (keyframe_a, output_a, parameters_a),
+                    (keyframe_b, output_b, parameters_b),
+                ):
+                    destination = output.parent / (output.stem + ".batch-grid.png")
+                    image_path = _prepare_grid_keyframe(
+                        keyframe, destination,
+                        requested_width=params.width,
+                        requested_height=params.height,
+                        pipeline_width=pipeline_width, pipeline_height=pipeline_height,
+                    )
+                    pair.append(PairInput(
+                        params.prompt, params.seed,
+                        bindings.image_conditioning_input(
+                            path=str(image_path.resolve()), frame_idx=0,
+                            strength=1.0, crf=None,
+                        ),
+                    ))
+                mark_i2v_ram_phase("prompt_and_diffusion")
+                results = generate_paired_fast_distilled(
+                    pipeline, pair=(pair[0], pair[1]),
+                    width=pipeline_width, height=pipeline_height,
+                    frame_rate=float(parameters_a.fps),
+                    num_frames=parameters_a.num_frames,
+                    max_forward_batch_size=forward_batch_size,
+                    reuse_transformer_across_stages=reuse_transformer_across_stages,
+                    full_hd_memory_cleanup=is_full_hd,
+                    stage2_factory=stage2_factory,
+                )
+                # Keep B=1 VAE arithmetic and independent ADVANCED generators:
+                # the lazy result.video iterators resolve pipeline.video_decoder
+                # only as each MP4 encoder actually consumes them. For Full HD
+                # exclusively, share its upstream model/context, but NOT decoder
+                # outputs, tiling, or RNG state between the two videos.
+                from contextlib import nullcontext
+
+                from .shared_i2v_decoder import SharedSequentialVideoDecoder
+
+                original_decoder = pipeline.video_decoder
+                session = (
+                    SharedSequentialVideoDecoder(original_decoder)
+                    if is_full_hd else nullcontext()
+                )
+                with session as shared:
+                    if is_full_hd:
+                        pipeline.video_decoder = shared
+                    try:
+                        for result, output, params in zip(
+                            results, (output_a, output_b),
+                            (parameters_a, parameters_b), strict=True,
+                        ):
+                            video = (
+                                _crop_video_to_requested(
+                                    result.video,
+                                    requested_width=params.width,
+                                    requested_height=params.height,
+                                )
+                                if (pipeline_width, pipeline_height)
+                                != (params.width, params.height)
+                                else result.video
+                            )
+                            output.parent.mkdir(parents=True, exist_ok=True)
+                            mark_i2v_ram_phase(
+                                "vae_decode_video_a" if output == output_a
+                                else "vae_decode_video_b"
+                            )
+                            bindings.encode_video(
+                                video=video, fps=params.fps, audio=None,
+                                output_path=str(output),
+                                video_chunks_number=bindings.get_video_chunks_number(
+                                    result.num_frames, result.tiling_config,
+                                ),
+                            )
+                        if is_full_hd and shared.completed != 2:
+                            raise RuntimeError(
+                                "I2V shared VAE output iterators must be fully consumed"
+                            )
+                    finally:
+                        pipeline.video_decoder = original_decoder
+                mark_i2v_ram_phase("output_complete")
+                peak = (
+                    cuda.max_memory_allocated() if self._device.startswith("cuda") else None
+                )
+                self._pipeline_successful_generations += 2
+                return peak
+
+    def generate_pair(
+        self,
+        *,
+        keyframe_a: Path,
+        keyframe_b: Path,
+        output_a: Path,
+        output_b: Path,
+        parameters_a: LTXVideoParameters,
+        parameters_b: LTXVideoParameters,
+        allow_sequential_fallback: bool = False,
+        reuse_transformer_across_stages: bool = False,
+        accept_full_hd_batch2_oom_risk: bool = False,
+        full_hd_stage2_mode: str = "cpu",
+        vae_backend: str = "eager",
+    ) -> dict[str, Any]:
+        """EXPERIMENT: B=2, then shared-weight B=1, then EXACT existing B=1.
+
+        All recovery modes are explicit in the report, so a fallback can
+        NEVER be mistaken for validated parallel GPU generation.
+        """
+        from ai_video_factory.inference.gpu_failures import (
+            classify_gpu_failure,
+            cleanup_cuda_memory,
+        )
+
+        from .memory_trace import I2VMemoryTrace
+        from .resource_metrics import cuda_memory_snapshot, memory_pressure
+
+        for path in (keyframe_a, keyframe_b):
+            if not path.is_file():
+                raise FileNotFoundError(f"Batch2 input not found: {path}")
+        if (parameters_a.generation_profile, parameters_b.generation_profile) != (
+            LTX_PRODUCTION_I2V_PROFILE, LTX_PRODUCTION_I2V_PROFILE,
+        ):
+            raise ValueError("Pairing uses only the validated FP8 no-offload profile")
+        def geometry(p: LTXVideoParameters) -> tuple[int, int, int, int]:
+            return p.width, p.height, p.fps, p.num_frames
+
+        dimensions = geometry(parameters_a)
+        if vae_backend not in ("eager", "triton_experimental"):
+            raise ValueError("I2V VAE backend must be eager or triton_experimental")
+        if vae_backend == "triton_experimental" and (
+            dimensions != (1920, 1080, 24, 121) or full_hd_stage2_mode != "cpu"
+            or allow_sequential_fallback or reuse_transformer_across_stages
+        ):
+            raise ValueError(
+                "Triton VAE experiment requires 1080p CPU-stage2 true B2, no fallback"
+            )
+        if full_hd_stage2_mode not in ("cpu", "disk"):
+            raise ValueError("Full HD stage2 mode must be cpu or disk")
+        if dimensions != geometry(parameters_b):
+            raise ValueError("Batch2 experiment requires matching per-video dimensions")
+        if dimensions == (1920, 1080, 24, 121):
+            if not accept_full_hd_batch2_oom_risk:
+                raise ValueError(
+                    "1080p batch2 has not been GPU-validated: "
+                    "explicitly accept the OOM risk"
+                )
+            if allow_sequential_fallback or reuse_transformer_across_stages:
+                raise ValueError(
+                    "Full HD trial must be real B2 with separate transformer "
+                    "builds and no silent sequential fallback"
+                )
+        elif dimensions != (1280, 720, 24, 121):
+            raise ValueError(
+                "Batch2 experiment supports two matching 5s 720p/24fps videos, "
+                "or an explicit-risk trial with two 5s 1080p/24fps videos"
+            )
+        if parameters_a.seed == parameters_b.seed:
+            raise ValueError("Separate videos must have separate RNG seeds")
+
+        triton_probe_seconds = None
+        if vae_backend == "triton_experimental":
+            # Child process may crash with native CUDA error without killing
+            # the worker. Run BEFORE the timed B2 attempt; never silently
+            # fall back to eager after explicitly requesting Triton.
+            from .triton_na_probe import ensure_triton_gpu_probe
+
+            triton_probe_seconds = ensure_triton_gpu_probe()
+        started = time.monotonic()
+        failed_attempts: list[dict[str, Any]] = []
+        outputs = (output_a, output_b)
+
+        # A one-build B=2 attempt holds the same GPU transformer across
+        # stage1, upsample and stage2. If upsample/conditioning cannot fit
+        # alongside it, retry the previously VISUALLY APPROVED two-build B=2
+        # kernel automatically before trying any B=1 fallback.
+        candidates = (
+            [(2, True), (2, False)] if reuse_transformer_across_stages
+            else [(2, False)]
+        )
+        if allow_sequential_fallback:
+            candidates.append((1, False))
+        for index, (forward_batch, shared_stages) in enumerate(candidates):
+            label = "batch2" if forward_batch == 2 else "stage_shared_sequential_forward"
+            attempt_started = time.monotonic()
+            retry_after_oom = False
+            memory_trace = I2VMemoryTrace()
+            try:
+                with memory_trace:
+                    memory_trace.mark("pair_attempt")
+                    peak = self._pair_attempt(
+                        keyframe_a=keyframe_a, keyframe_b=keyframe_b,
+                        output_a=output_a, output_b=output_b,
+                        parameters_a=parameters_a, parameters_b=parameters_b,
+                        forward_batch_size=forward_batch,
+                        reuse_transformer_across_stages=shared_stages,
+                        **({"full_hd_stage2_mode": full_hd_stage2_mode}
+                           if dimensions[1] == 1080 else {}),
+                        **({"vae_backend": vae_backend}
+                           if vae_backend != "eager" else {}),
+                    )
+            except Exception as exc:
+                failure = classify_gpu_failure(exc)
+                logger.warning(
+                    "LTX25_I2V_PAIR_ATTEMPT_FAILED %s",
+                    json.dumps({
+                        "mode": label,
+                        "shared_between_stages": shared_stages,
+                        "failure": failure,
+                        "exception_type": type(exc).__name__,
+                        "elapsed_seconds": time.monotonic() - attempt_started,
+                        "cuda": cuda_memory_snapshot(),
+                        "system": memory_pressure(),
+                        "memory_trace_summary": memory_trace.summary(),
+                    }, sort_keys=True),
+                )
+                failed_attempts.append({
+                    "mode": label,
+                    "shared_between_stages": shared_stages,
+                    "gpu_failure": failure,
+                    "error_type": type(exc).__name__,
+                    "elapsed_seconds": time.monotonic() - attempt_started,
+                    "memory_trace_summary": memory_trace.summary(),
+                })
+                for output in outputs:
+                    output.unlink(missing_ok=True)
+                # Do not run gc.collect()/empty_cache while the live
+                # exception traceback still owns stage locals and potentially
+                # the previous GPU transformer. Cleanup after the except
+                # scope ends, before starting any smaller-memory retry.
+                if failure != "oom":
+                    raise
+                logger.warning(
+                    "LTX25_I2V_PAIR_OOM mode=%s shared_between_stages=%s next_attempt=%s",
+                    label, shared_stages,
+                    candidates[index + 1] if index + 1 < len(candidates) else None,
+                )
+                # No fallback means no silent downgrade to sequential video
+                # generation, but retrying B=2 WITHOUT shared model residency
+                # preserves the previously validated GPU-parallel algorithm.
+                if index + 1 == len(candidates) and not allow_sequential_fallback:
+                    raise
+                retry_after_oom = True
+            else:
+                report = {
+                    "mode": label,
+                    "actual_gpu_batch_size": forward_batch,
+                    "shared_transformer_stage_builds": 1 if shared_stages else 2,
+                    "transformer_reused_between_stages": shared_stages,
+                    "quality": "visual_review_pending",
+                    "requested_width": dimensions[0],
+                    "requested_height": dimensions[1],
+                    "full_hd_gpu_validation_pending": dimensions[1] == 1080,
+                    "transformer_offload_mode": (
+                        f"stage1:none,stage2:{full_hd_stage2_mode}"
+                        if dimensions[1] == 1080 else "none"
+                    ),
+                    "recipe": LTX_PRODUCTION_I2V_PROFILE,
+                    "vae_backend": vae_backend,
+                    "triton_gpu_probe_seconds": triton_probe_seconds,
+                    "individual_seeds": [parameters_a.seed, parameters_b.seed],
+                    "elapsed_seconds": time.monotonic() - started,
+                    "peak_vram_bytes": peak,
+                    "memory_trace": memory_trace.report(),
+                    "failed_attempts": failed_attempts,
+                }
+                # Full sampled timeline belongs in the durable JSON report,
+                # not the one-line metrics log (which would duplicate hundreds
+                # of samples and may be truncated by Salad).
+                summary_log = {**report, "memory_trace": memory_trace.summary()}
+                logger.info(
+                    "LTX25_I2V_PAIR_METRICS %s", json.dumps(summary_log, sort_keys=True),
+                )
+                return report
+            if retry_after_oom:
+                self.invalidate_pipeline()
+                cleanup_cuda_memory()
+
+        # Last-resort fallback: EXACTLY the previously visually approved B=1
+        # generator. At no point does one batch clip mix with one reference clip.
+        for output in outputs:
+            output.unlink(missing_ok=True)
+        self.generate(
+            keyframe_path=keyframe_a, output_path=output_a,
+            parameters=parameters_a,
+        )
+        self.generate(
+            keyframe_path=keyframe_b, output_path=output_b,
+            parameters=parameters_b,
+        )
+        report = {
+            "mode": "reference_sequential_oom_fallback",
+            "actual_gpu_batch_size": 1,
+            "shared_transformer_stage_builds": None,
+            "quality": "existing_B1_recipe_visual_review_pending",
+            "recipe": LTX_PRODUCTION_I2V_PROFILE,
+            "individual_seeds": [parameters_a.seed, parameters_b.seed],
+            "elapsed_seconds": time.monotonic() - started,
+            "peak_vram_bytes": None,
+            "failed_attempts": failed_attempts,
+        }
+        logger.info("LTX25_I2V_PAIR_METRICS %s", json.dumps(report, sort_keys=True))
+        return report
 
 
 class LTXVideoTaskRunner:

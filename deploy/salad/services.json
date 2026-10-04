@@ -44,7 +44,7 @@
       "priority": "high",
       "resources": {
         "cpu": 8,
-        "memory": 40960,
+        "memory": 61440,
         "shm_size": 8192,
         "storage_amount": 171798691840,
         "gpu_class_names": [
@@ -71,7 +71,8 @@
         "HF_XET_CLIENT_ENABLE_ADAPTIVE_CONCURRENCY": "true",
         "HF_HUB_DOWNLOAD_TIMEOUT": "60",
         "HF_HUB_ETAG_TIMEOUT": "15",
-        "LTX_WORKER_TASK_MODE": "i2v"
+        "LTX_WORKER_TASK_MODE": "i2v",
+        "LTX_EXPERIMENTAL_I2V_BATCH2_ENABLED": "true"
       },
       "required_environment": [
         "HF_TOKEN"

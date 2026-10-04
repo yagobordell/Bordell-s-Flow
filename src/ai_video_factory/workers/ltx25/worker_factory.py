@@ -15,15 +15,18 @@ def build_ltx25_runners(settings: LTX25WorkerSettings) -> TaskRunnerRegistry:
     mode_controller = LTXPipelineModeController()
     runners = []
     if settings.task_mode in ("i2v", "both"):
-        runners.append(
-            LTXVideoTaskRunner(
-                backend=DirectLTX25Backend(
-                    model_root=settings.model_root,
-                    device=settings.device,
-                    mode_controller=mode_controller,
-                )
-            )
+        # A single backend shares the same model controller; normal single
+        # requests retain their original path. Pairing is an explicit NEW task.
+        backend = DirectLTX25Backend(
+            model_root=settings.model_root,
+            device=settings.device,
+            mode_controller=mode_controller,
         )
+        runners.append(LTXVideoTaskRunner(backend=backend))
+        if settings.experimental_batch2_enabled:
+            from .experimental_batch2 import ExperimentalBatch2TaskRunner
+
+            runners.append(ExperimentalBatch2TaskRunner(backend=backend))
     if settings.task_mode in ("a2v", "a2v_experimental", "both"):
         runners.append(
             LTXAudioToVideoTaskRunner(

@@ -1,0 +1,90 @@
+name: Experimental I2V B2 isolated CI
+
+# Temporary, branch-scoped checks because the historical mixed A2V/I2V
+# experimental PR conflicts with main while A2V is being optimized elsewhere.
+# This workflow performs no Docker build or paid GPU operation.
+on:
+  push:
+    branches:
+      - experiment/salad-ltx-a2v-resolutions-i2v-contention
+  workflow_dispatch:
+
+concurrency:
+  group: experimental-i2v-b2-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  i2v-batch2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - name: Install project and test dependencies
+        run: uv sync --locked --extra dev --python 3.12
+      - name: Lint only scoped I2V worker and tests
+        run: |
+          uv run --no-sync ruff check \
+            src/ai_video_factory/workers/ltx25/paired_i2v.py \
+            src/ai_video_factory/workers/ltx25/shared_i2v_decoder.py \
+            src/ai_video_factory/workers/ltx25/triton_na_probe.py \
+            scripts/smoke/compare_ltx25_i2v_backend_trial.py \
+            tests/unit/workers/test_ltx_i2v_triton_experiment.py \
+            tests/unit/workers/test_ltx_i2v_shared_decoder.py \
+            docker/workers/ltx25/patch_i2v_progressive.py \
+            src/ai_video_factory/workers/ltx25/resource_metrics.py \
+            src/ai_video_factory/workers/ltx25/memory_trace.py \
+            tests/unit/workers/test_ltx_i2v_memory_trace.py \
+            tests/unit/workers/test_ltx_i2v_progressive_loader.py \
+            src/ai_video_factory/workers/ltx25/model.py \
+            scripts/smoke/submit_ltx25_i2v_batch2_smoke.py \
+            tests/unit/workers/test_ltx_i2v_batch2_optimizations.py \
+            tests/unit/workers/test_ltx_i2v_batch2_experiment.py \
+            tests/unit/workers/test_ltx_salad_readiness.py \
+            scripts/smoke/verify_ltx25_i2v_hybrid_image.py \
+            tests/unit/workers/test_ltx_i2v_hybrid_image_preflight.py \
+            scripts/smoke/verify_ltx25_i2v_remote_config.py \
+            scripts/salad/inspect_capacity_lock.py \
+            tests/unit/workers/test_ltx_i2v_remote_config.py \
+            tests/unit/workers/test_ltx_i2v_safe_cleanup.py \
+            tests/integration/salad/test_salad_shared_helpers.py \
+            tests/contracts/test_salad_deployment_profiles.py \
+            tests/integration/salad/test_ltx_bootstrap_start.py
+      - name: Verify patch applies to exact pinned upstream LTX builder (offline, no GPU)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pinned-ltx/packages/ltx-core/src/ltx_core/block_streaming"
+          curl --fail --location --retry 3 --retry-all-errors \
+            https://raw.githubusercontent.com/Lightricks/LTX-2/a95ab856bf29407b6b066ede0abe1846050db56c/packages/ltx-core/src/ltx_core/block_streaming/builder.py \
+            -o "$RUNNER_TEMP/pinned-ltx/packages/ltx-core/src/ltx_core/block_streaming/builder.py"
+          uv run --no-sync python docker/workers/ltx25/patch_i2v_progressive.py \
+            --ltx-root "$RUNNER_TEMP/pinned-ltx"
+          uv run --no-sync python -m py_compile \
+            "$RUNNER_TEMP/pinned-ltx/packages/ltx-core/src/ltx_core/block_streaming/builder.py"
+      - name: I2V batch2 and Full HD regression (CPU only)
+        run: |
+          uv run --no-sync pytest -q \
+            tests/unit/workers/test_ltx_i2v_batch2_optimizations.py \
+            tests/unit/workers/test_ltx_i2v_memory_trace.py \
+            tests/unit/workers/test_ltx_i2v_shared_decoder.py \
+            tests/unit/workers/test_ltx_i2v_triton_experiment.py \
+            tests/unit/workers/test_ltx_i2v_progressive_loader.py \
+            tests/unit/workers/test_ltx_i2v_batch2_experiment.py \
+            tests/unit/workflows/test_video_full_hd_defaults.py \
+            tests/unit/workers/test_ltx_salad_readiness.py \
+            tests/unit/workers/test_ltx_i2v_hybrid_image_preflight.py \
+            tests/unit/workers/test_ltx_i2v_remote_config.py \
+            tests/unit/workers/test_ltx_i2v_safe_cleanup.py \
+            tests/integration/salad/test_salad_shared_helpers.py \
+            tests/contracts/test_salad_deployment_profiles.py \
+            tests/integration/salad/test_ltx_bootstrap_start.py
