@@ -25,23 +25,18 @@ def build_ltx25_runners(settings: LTX25WorkerSettings) -> TaskRunnerRegistry:
             )
         )
     if settings.task_mode in ("a2v", "a2v_experimental", "both"):
-        runners.append(
-            LTXAudioToVideoTaskRunner(
-                backend=DirectLTX25AudioToVideoBackend(
-                    model_root=settings.model_root,
-                    device=settings.device,
-                    mode_controller=mode_controller,
-                ),
-                experimental=settings.task_mode == "a2v_experimental",
-            )
+        a2v_backend = DirectLTX25AudioToVideoBackend(
+            model_root=settings.model_root,
+            device=settings.device,
+            mode_controller=mode_controller,
         )
-    if settings.experimental_a2v_batch2_enabled:
-        from .experimental_a2v_batch2 import ExperimentalA2VBatch2TaskRunner
+        runners.append(LTXAudioToVideoTaskRunner(
+            backend=a2v_backend,
+            experimental=settings.task_mode == "a2v_experimental",
+        ))
+        if settings.experimental_a2v_batch2_enabled:
+            from .experimental_a2v_batch2 import ExperimentalA2VBatch2TaskRunner
 
-        # Register on the SAME isolated backend/lock used by this A2V worker.
-        # Never co-serve B2 in the production a2v or I2V service.
-        if settings.task_mode != "a2v_experimental":
-            raise ValueError("A2V GPU B2 requires its dedicated experimental service")
-        backend = runners[-1]._backend
-        runners.append(ExperimentalA2VBatch2TaskRunner(backend=backend))
+            # Both experimental A2V tasks share the SAME backend and GPU lock.
+            runners.append(ExperimentalA2VBatch2TaskRunner(backend=a2v_backend))
     return TaskRunnerRegistry(runners)
