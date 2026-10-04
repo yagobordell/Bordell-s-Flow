@@ -102,13 +102,22 @@ def test_ram_timeline_samples_phases_headroom_and_kernel_peaks(
             "cgroup_memory_events_oom": 1,
         },
     ))
+    # The collector deliberately takes one final snapshot when exiting.
+    # Reuse the latest reading after the three synthetic phase transitions.
+    latest: dict = {}
+
+    def reader() -> dict:
+        nonlocal latest
+        latest = next(readings, latest)
+        return latest
+
     with caplog.at_level(logging.INFO), I2VMemoryTrace(
-        interval_seconds=120, reader=lambda: next(readings),
+        interval_seconds=120, reader=reader,
     ) as monitor:
         mark_i2v_ram_phase("stage1_denoise")
         mark_i2v_ram_phase("stage2_transformer_build")
     report = monitor.report()
-    assert report["sample_count"] == 3
+    assert report["sample_count"] == 4
     assert len([r for r in caplog.records if "LTX25_I2V_RAM_SAMPLE {" in r.message]) == 3
     assert report["process_sampled_peak_rss_bytes"] == 300
     assert report["process_reported_peak_hwm_bytes"] == 330
@@ -124,6 +133,7 @@ def test_ram_timeline_samples_phases_headroom_and_kernel_peaks(
     )
     assert [s["phase"] for s in report["samples"]] == [
         "start", "stage1_denoise", "stage2_transformer_build",
+        "stage2_transformer_build",
     ]
     json.dumps(report)
     assert report["cgroup_available_during_run"]
