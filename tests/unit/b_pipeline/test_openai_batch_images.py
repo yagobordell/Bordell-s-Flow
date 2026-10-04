@@ -441,4 +441,4 @@ def test_explicit_b2_rerun_preserves_paid_current_and_replaced_request_states(
     assert len(list(archive.glob(
         "run-*/replaced_states/block_1/1C.previous.json"
     ))) == 1
-    assert not (tmp_path / "images").exists()
+    assert not list((tmp_path / "images").iterdir())
