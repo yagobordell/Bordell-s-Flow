@@ -71,13 +71,17 @@ description is driven by the beat, not by brand-specific positive or negative
 instructions. The professional grid adds no such rules. The professional bot's
 general scene-prompt instructions require affirmative scene descriptions
 instead of generated negative clauses, exclusions or stock disclaimers.
-When a scene includes a phone, screen or document, B2 describes natural
-handling and orientation; app/page/document content is kept in a separate
-brief context note rather than making the screen/page face the camera.
+When a scene includes a phone, screen or document, B2 freely chooses
+the scene and camera viewpoint that best communicates the beat. A person
+using the device or document is optional: object-only close-ups and other
+source-grounded compositions are equally valid. The specific
+app/page/document content stays in the same brief `(For context: ...)`
+note, not in instructions to render visible text or exact interfaces.
 This applies to still-image and video-animation prompts. Professional
-grid requests preserve the existing Voice over context unchanged, but
-panel descriptions determine the visible scenes and screen orientation.
-The legacy `casero` prompt and grid are unchanged.
+grid requests preserve the existing Voice over context unchanged and
+honor each panel's chosen composition without adding a person or forcing
+a device/document orientation. The legacy `casero` prompt and grid
+are unchanged.
 
 A clearly visible presenter making a simple, speaking-compatible
 demonstration can use `audio: true`, including on a `media_video` beat;
