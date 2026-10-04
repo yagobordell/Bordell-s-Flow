@@ -972,6 +972,7 @@ class DirectLTX25Backend:
         vae_backend: str = "eager",
     ) -> int | None:
         """Run one experimental attempt. Scoped so failed CUDA tensors can be released."""
+        from .memory_trace import mark_i2v_ram_phase
         from .paired_i2v import PairInput, generate_paired_fast_distilled
 
         with self._lock:
@@ -998,6 +999,7 @@ class DirectLTX25Backend:
                     full_hd_stage2_mode if is_full_hd else "none",
                     forward_batch_size,
                 )
+                mark_i2v_ram_phase("pipeline_acquire")
                 pipeline_kwargs = {"requested_offload_mode": "none"}
                 if vae_backend == "triton_experimental":
                     pipeline_kwargs["requested_diffvae_backend"] = "triton_strict"
@@ -1013,6 +1015,7 @@ class DirectLTX25Backend:
                     if is_full_hd else None
                 )
                 pipeline_width, pipeline_height = _pipeline_dimensions(parameters_a)
+                mark_i2v_ram_phase("prepare_conditioning")
                 pair = []
                 for keyframe, output, params in (
                     (keyframe_a, output_a, parameters_a),
@@ -1032,6 +1035,7 @@ class DirectLTX25Backend:
                             strength=1.0, crf=None,
                         ),
                     ))
+                mark_i2v_ram_phase("prompt_and_diffusion")
                 results = generate_paired_fast_distilled(
                     pipeline, pair=(pair[0], pair[1]),
                     width=pipeline_width, height=pipeline_height,
@@ -1075,6 +1079,10 @@ class DirectLTX25Backend:
                                 else result.video
                             )
                             output.parent.mkdir(parents=True, exist_ok=True)
+                            mark_i2v_ram_phase(
+                                "vae_decode_video_a" if output == output_a
+                                else "vae_decode_video_b"
+                            )
                             bindings.encode_video(
                                 video=video, fps=params.fps, audio=None,
                                 output_path=str(output),
@@ -1088,6 +1096,7 @@ class DirectLTX25Backend:
                             )
                     finally:
                         pipeline.video_decoder = original_decoder
+                mark_i2v_ram_phase("output_complete")
                 peak = (
                     cuda.max_memory_allocated() if self._device.startswith("cuda") else None
                 )
@@ -1196,13 +1205,13 @@ class DirectLTX25Backend:
                 with memory_trace:
                     memory_trace.mark("pair_attempt")
                     peak = self._pair_attempt(
-                    keyframe_a=keyframe_a, keyframe_b=keyframe_b,
-                    output_a=output_a, output_b=output_b,
-                    parameters_a=parameters_a, parameters_b=parameters_b,
-                    forward_batch_size=forward_batch,
-                    reuse_transformer_across_stages=shared_stages,
-                    **({"full_hd_stage2_mode": full_hd_stage2_mode}
-                       if dimensions[1] == 1080 else {}),
+                        keyframe_a=keyframe_a, keyframe_b=keyframe_b,
+                        output_a=output_a, output_b=output_b,
+                        parameters_a=parameters_a, parameters_b=parameters_b,
+                        forward_batch_size=forward_batch,
+                        reuse_transformer_across_stages=shared_stages,
+                        **({"full_hd_stage2_mode": full_hd_stage2_mode}
+                           if dimensions[1] == 1080 else {}),
                         **({"vae_backend": vae_backend}
                            if vae_backend != "eager" else {}),
                     )
