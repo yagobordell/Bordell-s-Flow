@@ -46,11 +46,13 @@ jobs:
             scripts/smoke/compare_ltx25_a2v_b2_vs_b1.py \
             scripts/smoke/verify_ltx25_a2v_batch2_image.py \
             tests/unit/workers/test_ltx_a2v_batch2_experimental.py \
+            tests/unit/workers/test_ltx_a2v_b2_b1_comparison.py \
             tests/unit/workers/test_ltx_a2v_shared_decoder.py
       - name: CPU-only A2V and existing audio regressions
         run: |
           uv run --no-sync python -m pytest -q \
             tests/unit/workers/test_ltx_a2v_batch2_experimental.py \
+            tests/unit/workers/test_ltx_a2v_b2_b1_comparison.py \
             tests/unit/workers/test_ltx_a2v_shared_decoder.py \
             tests/unit/workers/test_ltx_a2v_task.py
       - name: PowerShell syntax
