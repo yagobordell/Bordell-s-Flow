@@ -1448,6 +1448,7 @@ class DirectLTX25AudioToVideoBackend:
         output_a: Path, output_b: Path,
         parameters_a: LTXAudioToVideoParameters,
         parameters_b: LTXAudioToVideoParameters,
+        vae_backend: str = "eager",
     ) -> dict[str, Any]:
         """Isolated true GPU-B2 Full HD static-reference A2V; no B1 fallback.
 
@@ -1461,6 +1462,8 @@ class DirectLTX25AudioToVideoBackend:
             for p in (parameters_a, parameters_b)
         ) or parameters_a.seed == parameters_b.seed:
             raise ValueError("A2V paired backend requires distinct static 1080p/24 inputs")
+        if vae_backend not in ("eager", "triton_experimental"):
+            raise ValueError("Unknown A2V B2 VAE backend")
         start = time.monotonic()
         plans = []
         probes = []
@@ -1492,6 +1495,8 @@ class DirectLTX25AudioToVideoBackend:
         results = ()
         build_seconds = 0.0
         inference_seconds = 0.0
+        phase_metrics: dict[str, Any] = {}
+        triton_probe_seconds = 0.0
         per_clip_encode: list[float] = []
         peak: int | None = None
         try:
@@ -1522,18 +1527,30 @@ class DirectLTX25AudioToVideoBackend:
                         audio_path=str(plan.path.resolve()),
                     ))
                 with bindings.torch.inference_mode():
+                    if vae_backend == "triton_experimental":
+                        # Before the timed pair, run a fail-closed CUDA child;
+                        # a native kernel crash must not kill this worker.
+                        from .triton_a2v_probe import ensure_triton_gpu_probe
+
+                        triton_probe_seconds = ensure_triton_gpu_probe()
                     cuda = bindings.torch.cuda
                     if self._device.startswith("cuda"):
                         cuda.reset_peak_memory_stats()
                     built_at = time.monotonic()
                     pipeline, built = self._get_or_build_pipeline(
                         bindings, generation_profile=LTX_A2V_RUN_STATIC_FAST_PROFILE,
+                        requested_pair_vae_backend=vae_backend,
                     )
                     build_seconds = time.monotonic() - built_at if built else 0.0
                     if pipeline.stage_1._is_streaming:
                         raise RuntimeError("A2V B2 stage1 must remain fully GPU resident")
-                    if self._pipeline_effective_backend != "eager":
-                        raise RuntimeError("A2V B2 preserves the approved eager VAE backend")
+                    selected_backend = (
+                        "triton" if vae_backend == "triton_experimental" else "eager"
+                    )
+                    if self._pipeline_effective_backend != selected_backend:
+                        raise RuntimeError(
+                            "A2V B2 VAE backend mismatch: refusing silent fallback"
+                        )
 
                     def stage2_factory() -> Any:
                         original = pipeline.stage_2
@@ -1571,6 +1588,7 @@ class DirectLTX25AudioToVideoBackend:
                         width=width, height=height, fps=24,
                         frames=plans[0].num_frames,
                         stage2_factory=stage2_factory,
+                        phase_metrics=phase_metrics,
                     )
                     inference_seconds = time.monotonic() - inference_at
                     original_decoder = pipeline.video_decoder
@@ -1638,7 +1656,10 @@ class DirectLTX25AudioToVideoBackend:
             "stage2_residency": "progressive_cpu",
             "stage1_sampler": LTX_A2V_REFERENCE_RECIPE.stage_1_sampler,
             "stage2_sampler": LTX_A2V_REFERENCE_RECIPE.stage_2_sampler,
-            "video_vae_backend": "eager",
+            "video_vae_backend": selected_backend,
+            "vae_backend_request": vae_backend,
+            "triton_gpu_probe_seconds": triton_probe_seconds,
+            "phase_metrics": phase_metrics,
             "shared_vae_decoder_builds": 1,
             "pipeline_build_seconds": build_seconds,
             "audio_preparation_seconds": audio_prepared_seconds,
@@ -1680,10 +1701,17 @@ class DirectLTX25AudioToVideoBackend:
                 empty_cache()
 
     def _get_or_build_pipeline(
-        self, bindings: _A2VBindings, *, generation_profile: str
+        self, bindings: _A2VBindings, *, generation_profile: str,
+        requested_pair_vae_backend: str = "eager",
     ) -> tuple[Any, bool]:
+        if requested_pair_vae_backend not in ("eager", "triton_experimental"):
+            raise ValueError("Unknown requested A2V pair VAE backend")
+        expected_effective = (
+            "triton" if requested_pair_vae_backend == "triton_experimental" else "eager"
+        )
         if self._pipeline is not None:
-            if self._pipeline_profile == generation_profile:
+            if (self._pipeline_profile == generation_profile
+                    and self._pipeline_effective_backend == expected_effective):
                 return self._pipeline, False
             self._release_pipeline_locked()
 
@@ -1729,13 +1757,20 @@ class DirectLTX25AudioToVideoBackend:
             ]
         )
         _force_diffvae_eager_sdpa(bindings.diffvae_apply)
-        requested_backend = LTX_A2V_RESIDENCY_PROFILES.get(generation_profile, ("cpu", "eager"))[1]
+        requested_backend = (
+            "triton" if requested_pair_vae_backend == "triton_experimental"
+            else LTX_A2V_RESIDENCY_PROFILES.get(
+                generation_profile, ("cpu", "eager"),
+            )[1]
+        )
         effective_backend = "eager"
         if requested_backend == "triton":
             if callable(bindings.triton_probe) and bindings.triton_probe():
                 bindings.diffvae_apply.triton_na_available = bindings.triton_probe
                 effective_backend = "triton"
             else:
+                if requested_pair_vae_backend == "triton_experimental":
+                    raise RuntimeError("A2V B2 strict Triton backend unavailable")
                 logger.warning("LTX25_A2V_TRITON_UNAVAILABLE fallback=eager")
         pipeline_cls = (
             bindings.reference_a2v_pipeline if reference else bindings.a2v_pipeline
