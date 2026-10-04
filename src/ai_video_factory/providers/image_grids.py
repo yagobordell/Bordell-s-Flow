@@ -63,8 +63,11 @@ def _grid_prompt(
                 "\n\nKeep each panel faithful to its own scene description, "
                 "including naturally occurring scene details and the specified "
                 "camera viewpoint. Treat Voice over context as narrative context "
-                "while the panel descriptions determine the visible scenes, "
-                "including natural device and document orientation."
+                "while the panel descriptions determine the visible scenes. "
+                "For screens or documents, preserve each panel's chosen composition "
+                "without adding a person or imposing a screen/page orientation. "
+                "Specific app/page/document content in a panel's (For context: ...) "
+                "note remains narrative context, not a visible text or layout request."
             )
         )
     )
