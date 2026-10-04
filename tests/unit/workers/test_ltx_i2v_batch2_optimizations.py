@@ -536,9 +536,14 @@ def test_hybrid_stage2_build_reuses_identical_fp8_policy_and_cpu_slots() -> None
             seen.append(kwargs)
             mode = kwargs["offload_mode"]
             slots = None if mode == "cpu_enum" else 2
+            builder = SimpleNamespace(
+                cpu_slots_count=slots,
+                registry=SimpleNamespace(_cache_weights=False),
+                _i2v_progressive_pinned_blocks_supported=True,
+            )
             return SimpleNamespace(
                 _is_streaming=True,
-                _transformer_builder=SimpleNamespace(cpu_slots_count=slots),
+                _transformer_builder=builder,
             )
 
     bindings = SimpleNamespace(
@@ -555,6 +560,9 @@ def test_hybrid_stage2_build_reuses_identical_fp8_policy_and_cpu_slots() -> None
         assert seen[-1]["scale_factors"] == "unchanged"
         assert result._transformer_builder.cpu_slots_count == (
             None if mode == "cpu" else 2
+        )
+        assert getattr(result._transformer_builder, "_i2v_progressive_pinned_blocks", False) is (
+            mode == "cpu"
         )
 
 
