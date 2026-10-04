@@ -53,6 +53,9 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--vae-backend", choices=("eager", "triton_experimental"), default="eager",
     )
+    p.add_argument(
+        "--guidance-forward-batch-size", type=int, choices=(2, 4), default=2,
+    )
     p.add_argument("--check-inputs-only", action="store_true")
     p.add_argument("--timeout-seconds", type=float, default=10800)
     return p
@@ -77,6 +80,10 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("Supply both reference videos or neither")
     if a.vae_backend == "triton_experimental" and a.reference_a is None:
         raise ValueError("Triton requires both matching approved Eager B2 reference MP4s")
+    if a.guidance_forward_batch_size == 4 and a.reference_a is None:
+        raise ValueError(
+            "Fused B4 guidance requires both matching approved Eager/split-B2 reference MP4s"
+        )
     pictures = (a.image_a, a.image_b)
     audios = (a.audio_a, a.audio_b)
     for image in pictures:
@@ -111,6 +118,7 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
         "b": {**plan, "prompt": a.prompt_b, "seed": a.seed_b},
         "stage2_mode": "cpu",
         "vae_backend": a.vae_backend,
+        "guidance_forward_batch_size": a.guidance_forward_batch_size,
         "accept_full_hd_oom_risk": a.accept_full_hd_oom_risk,
     })
     provenance = {
@@ -122,11 +130,12 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
         "profile": LTX_A2V_RUN_STATIC_FAST_PROFILE,
         "geometry": [1920, 1080, 24],
         "vae_backend": a.vae_backend,
+        "guidance_forward_batch_size": a.guidance_forward_batch_size,
     }
     for path in (a.reference_a, a.reference_b):
         if path is not None and (not path.is_file() or path.stat().st_size == 0):
             raise ValueError(f"Missing B1 reference video: {path}")
-    if a.vae_backend == "triton_experimental":
+    if a.vae_backend == "triton_experimental" or a.guidance_forward_batch_size == 4:
         provenance["eager_baseline"] = _require_matching_eager_baseline(
             a.reference_a, a.reference_b, provenance,
         )
@@ -158,8 +167,8 @@ def _require_matching_eager_baseline(
     )
     original_params = request["parameters"]
     required = A2VBatch2Parameters.model_validate(original_params)
-    if required.vae_backend != "eager":
-        raise ValueError("Triton reference must be original Eager batch2")
+    if required.vae_backend != "eager" or required.guidance_forward_batch_size != 2:
+        raise ValueError("Optimization reference must be original Eager/split-B2 pair")
     if (
         request.get("task") != LTX_A2V_BATCH2_TASK
         or report.get("mode") != "batch2"
@@ -325,6 +334,8 @@ def main() -> None:
     expected_backend = (
         "triton" if a.vae_backend == "triton_experimental" else "eager"
     )
+    if report.get("guidance_forward_batch_size") != a.guidance_forward_batch_size:
+        raise RuntimeError("A2V reported a different guidance forward batch")
     if report.get("video_vae_backend") != expected_backend:
         raise RuntimeError("A2V reported a different decoder backend: silent fallback")
     report["technical_validation"] = {}
@@ -349,6 +360,9 @@ def main() -> None:
         if a.vae_backend == "triton_experimental":
             report["eager_backend_comparison"] = comparison
             report["promotion_status"] = "HUMAN_EAGER_TRITON_VISUAL_LIPSYNC_APPROVAL_REQUIRED"
+        elif a.guidance_forward_batch_size == 4:
+            report["split_b2_guidance_comparison"] = comparison
+            report["promotion_status"] = "HUMAN_SPLIT2_FUSED4_VISUAL_LIPSYNC_APPROVAL_REQUIRED"
         else:
             report["b1_comparison"] = comparison
     (a.output_dir / "experiment-summary.json").write_text(
