@@ -39,6 +39,7 @@ from ltx_pipelines.utils.samplers import euler_ancestral_denoising_loop, euler_d
 
 from .resource_metrics import cuda_memory_snapshot as _cuda_memory_snapshot
 from .resource_metrics import memory_pressure as _memory_pressure
+from .memory_trace import mark_i2v_ram_phase
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ def _log_gpu_checkpoint(phase: str, *, trim: bool = False) -> None:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+    mark_i2v_ram_phase(phase)
     logger.info(
         "LTX25_I2V_PAIR_GPU_CHECKPOINT %s",
         json.dumps({
@@ -251,6 +253,7 @@ def _paired_stage(
             model_dtype=stage._dtype,
         )
     memory_before = _memory_pressure()
+    mark_i2v_ram_phase(stage_label + "_transformer_build")
     build_started = time.perf_counter()
     stage_ctx = (
         nullcontext(shared_transformer)
@@ -262,6 +265,7 @@ def _paired_stage(
             0.0 if shared_transformer is not None
             else time.perf_counter() - build_started
         )
+        mark_i2v_ram_phase(stage_label + "_denoise")
         denoise_started = time.perf_counter()
         transformer = (
             built if stage._model_wrapper is None
@@ -449,6 +453,7 @@ def generate_paired_fast_distilled(
         stage1_images = None
         _log_gpu_checkpoint("stage1_conditioning_released")
         # Upscale individually, preserving baseline's B=1 arithmetic and peak VRAM.
+        mark_i2v_ram_phase("latent_upsample")
         logger.info(
             "LTX25_I2V_PAIR_UPSAMPLE_START shared_transformer=%s memory=%s",
             shared_transformer is not None,
@@ -481,6 +486,7 @@ def generate_paired_fast_distilled(
         # Build the streaming stage2 wrapper only AFTER stage1 latents and the
         # image encoder have been released. Never instantiate a second live
         # transformer or reload Gemma / VAE for this mode.
+        mark_i2v_ram_phase("stage2_wrapper_prepare")
         stage2 = stage2_factory() if stage2_factory is not None else pipeline.stage
         if full_hd_memory_cleanup:
             _log_gpu_checkpoint("stage2_transformer_factory_ready")
