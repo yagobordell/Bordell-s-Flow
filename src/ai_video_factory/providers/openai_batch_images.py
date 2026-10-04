@@ -603,10 +603,27 @@ def clear_previous_b2_images(output: Path, plan: dict[str, Any]) -> int:
             )
         crop_sha = crop_records.get(image_path.relative_to(output).as_posix())
         if crop_sha is not None and image_path.is_file():
-            if hashlib.sha256(image_path.read_bytes()).hexdigest() != crop_sha:
-                raise ImageGenerationError(
-                    f"Saved grid crop changed at {image_path}; reconcile manually"
-                )
+            actual = hashlib.sha256(image_path.read_bytes()).hexdigest()
+            if actual != crop_sha:
+                finishing = None
+                for beat in described:
+                    if (beat["block_id"] == job["block_id"]
+                        and beat["beat_id"] == job["beat_id"]):
+                        recipe = (
+                            "image_x2"
+                            if beat["visual_type"] in {"media_image", "avatar_media"}
+                            else "native_grid_video"
+                        )
+                        finishing = finished_in_place_sha(
+                            output, file=image_path.relative_to(output).as_posix(),
+                            source_sha256=crop_sha, block=beat["block_id"],
+                            beat=beat["beat_id"], recipes=(recipe,),
+                        )
+                        break
+                if finishing != actual:
+                    raise ImageGenerationError(
+                        f"Saved grid crop changed at {image_path}; reconcile manually"
+                    )
             continue
         if state_path.is_file() or image_path.is_file() or legacy_batch_path.is_file():
             assets.append((state_path, image_path, legacy_batch_path, folder))
@@ -660,9 +677,16 @@ def clear_b2_images_for_rerun(output: Path) -> int:
             if finished_state.is_symlink() or finished_state.parent.is_symlink():
                 raise ImageGenerationError("Linked professional finishing state")
             saved = json.loads(finished_state.read_text(encoding="utf-8"))
+            if (saved.get("schema_version") != "professional-image-finishing-v1"
+                or saved.get("status") != "completed"):
+                raise ImageGenerationError(
+                    f"Professional image finishing is unresolved at {finished_state}; "
+                    "reconcile it before rerunning B2"
+                )
             if finished_root.name == "finishing_state":
                 relative = saved.get("output_file")
-                if not isinstance(relative, str) or not relative.startswith("images/"):
+                if (not isinstance(relative, str) or not relative.startswith("images/")
+                    or ".." in Path(relative).parts):
                     raise ImageGenerationError("Invalid in-place finished image destination")
                 image_path = output / relative
                 if not image_path.is_relative_to(image_root):
@@ -670,9 +694,7 @@ def clear_b2_images_for_rerun(output: Path) -> int:
             else:
                 image_path = finished_state.with_suffix(".png")
             if (
-                saved.get("schema_version") != "professional-image-finishing-v1"
-                or saved.get("status") != "completed"
-                or not image_path.is_file() or image_path.is_symlink()
+                not image_path.is_file() or image_path.is_symlink()
                 or hashlib.sha256(image_path.read_bytes()).hexdigest() != saved.get("sha256")
             ):
                 raise ImageGenerationError(
@@ -736,7 +758,8 @@ def has_pending_image_tasks(output: Path) -> bool:
                 state = json.loads(path.read_text(encoding="utf-8"))
                 if root.name == "finishing_state":
                     relative = state.get("output_file")
-                    if not isinstance(relative, str) or not relative.startswith("images/"):
+                    if (not isinstance(relative, str) or not relative.startswith("images/")
+                        or ".." in Path(relative).parts):
                         return True
                     image = output / relative
                     if not image.is_relative_to(output / "images"):
