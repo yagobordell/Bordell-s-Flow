@@ -80,7 +80,7 @@ def test_powershell_checks_docker_abi_before_it_starts_salad() -> None:
         ROOT / "scripts/smoke/run_ltx25_i2v_batch2_trial.ps1"
     ).read_text(encoding="utf-8")
     guard = "verify_ltx25_i2v_hybrid_image.py"
-    start = "$Started = $false"
+    start = "$StartRequested = $false"
     assert source.index(guard) < source.index(start)
     assert "STOP: pinned Docker lacks the hybrid I2V API" in source
     # Local --CheckInputsOnly must still remain free and require no Docker pull.
