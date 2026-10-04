@@ -119,7 +119,7 @@ def _source_assets(
     if plan.get("visual_style") == "profesional" and (
         images.get("finishing_status") != "completed"
     ):
-        raise B2VideoError("Professional LTX requires finished image x2 and native video keys")
+        raise B2VideoError("Professional LTX requires completed still-image finishing and verified video sources")
     for item in (
         images["final_assets"] if plan.get("visual_style") == "profesional"
         else [
