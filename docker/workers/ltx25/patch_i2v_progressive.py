@@ -51,7 +51,10 @@ def patch_builder_source(source: str) -> str:
             self._load_i2v_progressive_pinned_blocks(
                 block_key_map, fill_views, lora_sd_and_strengths,
             )
-            pinned = {\n                idx: PinnedBlock(pinned_buffers[idx], block_layouts[idx])\n                for idx in pinned_buffers\n            }
+            pinned = {
+                idx: PinnedBlock(pinned_buffers[idx], block_layouts[idx])
+                for idx in pinned_buffers
+            }
             return PinnedWeightSource(pinned), []
 
         block_sd = load_state_dict(
@@ -85,7 +88,9 @@ def patch_builder_source(source: str) -> str:
         if getattr(self.registry, "_cache_weights", None) is not False:
             raise RuntimeError("I2V progressive stage2 requires an uncached weight registry")
         if lora_sd_and_strengths:
-            raise RuntimeError(\n                "I2V progressive stage2 permits only the approved no-LoRA FP8 recipe"\n            )
+            raise RuntimeError(
+                "I2V progressive stage2 permits only the approved no-LoRA FP8 recipe"
+            )
 
         for block_idx, entries in block_key_map.items():
             names = frozenset(
@@ -112,7 +117,9 @@ def patch_builder_source(source: str) -> str:
                 fuse_rule=self.fuse_rule, preserve_input_device=False,
             ):
                 if key not in names:
-                    raise RuntimeError(\n                        f"I2V progressive block {block_idx}: unexpected fused key {key}"\n                    )
+                    raise RuntimeError(
+                        f"I2V progressive block {block_idx}: unexpected fused key {key}"
+                    )
                 fill_views[key].copy_(fused, non_blocking=True)
                 block_sd.sd[key] = None
             # Preserve original per-block tensor/view iteration order.
