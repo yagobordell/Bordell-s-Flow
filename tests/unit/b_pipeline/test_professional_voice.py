@@ -78,22 +78,16 @@ def _v4():
         audio_profile="Consistent intimate documentary narrator",
         directors_notes=["Measured beginning, then deliberate recognition."],
         spoken_directions=[
-            {"beat_id": "1A", "source_item_index": 0, "locator": "mundo",
-             "instruction": "Measured conversational delivery; emphasize mundo; keep open",
-             "ending_behavior": "carry", "stress": ["mundo"]},
-            {"beat_id": "1B", "source_item_index": 0, "locator": "realidad",
-             "instruction": "Warm deliberate delivery; land decisively",
-             "ending_behavior": "land", "stress": []},
+            {"locator": "mundo", "instruction": "Measured conversational emphasis"},
+            {"locator": "realidad", "instruction": "Warm deliberate finish"},
         ],
         beat_tags=[
             {"beat_id": "1A", "text": "", "inserts": [
-                {"at": 6, "tag": "breath", "text": "Hola, <breath>mundo",
-                 "source_kind": "vocal_intent", "source_item_index": 0, "source_at": 6},
+                {"at": 6, "tag": "breath", "text": "Hola, <breath>mundo"},
             ]},
             {"beat_id": "1B", "text": "", "inserts": []},
         ],
     )
-
 
 def _wav(rate=24000):
     stream = io.BytesIO()
@@ -110,7 +104,7 @@ def test_v3_artistic_contract_and_v4_source_bound_tags():
     result = _v3()
     pv._check_v3(result, block)
     compiler = _v4()
-    pv._check_v4(compiler, block, result)
+    pv._check_v4(compiler, block)
     assert pv._tagged_v4(block["beats"][0]["text"], compiler.beat_tags[0]) == (
         "Hola, <breath>mundo. "
     )
@@ -161,7 +155,7 @@ def test_v1_reconsideration_contract():
 
 def test_gemini_one_style_and_one_transcript_per_complete_group():
     direction = _v4()
-    turns = pv._v4_turns(direction, _block(), _v3())
+    turns = pv._v4_turns(direction, _block())
     assert len(turns) == 1
     payload = gemini_tts._build_directed_payload(turns=turns, voice="Algenib")
     parts = payload["contents"][0]["parts"]
@@ -671,7 +665,7 @@ def test_v3_inline_markup_receives_clear_local_retry_without_echoing_tokens(tmp_
     assert "<breath>" not in json.dumps(provider.feedback[0])
     assert "V4" in provider.feedback[0]["task"]
     assert "<" not in v3[0].beat_deliveries[0].delivery[0].delivery_quality
-    assert pv._v4_turns(v4[0], _block(), v3[0])[0]["text"] == (
+    assert pv._v4_turns(v4[0], _block())[0]["text"] == (
         "Hola, <breath>mundo. Esa es la realidad."
     )
 
