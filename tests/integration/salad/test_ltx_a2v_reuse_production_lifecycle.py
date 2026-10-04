@@ -25,8 +25,16 @@ def test_reuse_restores_production_even_when_bootstrap_fails(
     salad = checkout / "scripts" / "salad"
     pipeline = checkout / "scripts" / "pipeline"
     source = checkout / "src" / "ai_video_factory" / "workers" / "ltx25"
-    for folder in (smoke, salad, pipeline, source):
+    for folder in (smoke, salad, pipeline, source, checkout / "config"):
         folder.mkdir(parents=True)
+    (checkout / "config" / "app.env").write_text(
+        "POSTGRES_DSN=postgresql://fixture.example.invalid/test\\n",
+        encoding="utf-8",
+    )
+    (salad / "_env_file.ps1").write_text(
+        (_ROOT / "scripts" / "salad" / "_env_file.ps1").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
     for name in (
         "run_ltx25_a2v_benchmark_batch.ps1",
         "run_ltx25_a2v_benchmark_reusing_production.ps1",
