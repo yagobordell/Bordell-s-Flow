@@ -101,6 +101,61 @@ def test_standard_requests_generate_one_image_per_job_and_cache_results(
     assert len(direct.calls) == 3
 
 
+
+@pytest.mark.parametrize(("scene", "expected"), [
+    ("A table with a glass of water", "low"),
+    ("A laptop. (For context: the page contains a report.)", "medium"),
+    ("A laptop. ( For context: the page contains a report.)", "medium"),
+    ("A laptop. (For context : the page contains a report.)", "medium"),
+    ("A laptop. ( For context : the page contains a report.)", "medium"),
+    ("A laptop. (   fOr  CoNtExT  : text", "medium"),
+    ("A laptop. (\\n For\\tcontext: message", "medium"),
+    ("A table discussing for context with no parenthesis", "low"),
+    ("A page about the word contextualization", "low"),
+    ("A file labeled (for contexts: topic)", "low"),
+])
+@pytest.mark.parametrize("visual_style", ["casero", "profesional"])
+def test_for_context_alone_promotes_individual_image_quality(
+    tmp_path: Path, scene: str, expected: str, visual_style: str,
+) -> None:
+    plan = _plan(scene)
+    if visual_style == "profesional":
+        plan["visual_style"] = "profesional"
+        for beat in plan["blocks"][0]["beats"]:
+            beat["reference"] = False
+            beat["audio"] = beat["visual_type"] == "avatar"
+            beat["prompt"] = beat.pop("description")
+    direct = FakeDirect()
+    result = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), direct_client=direct,
+    )
+    assert direct.calls[0]["quality"] == expected
+    assert result["items"][0]["quality"] == expected
+    state = json.loads((tmp_path / "images/block_1/1B.json").read_text())
+    assert state["quality"] == expected
+    assert state["artifact"]["quality"] == expected
+    images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), direct_client=direct,
+    )
+    assert len(direct.calls) == 1
+
+
+def test_context_quality_change_refuses_unpaid_silent_regeneration(
+    tmp_path: Path,
+) -> None:
+    direct = FakeDirect()
+    first = _plan("A screen. (For context: quarterly results.)")
+    images.generate_b2_images(
+        tmp_path, first, api_key=None, options=_opts(), direct_client=direct,
+    )
+    with pytest.raises(images.ImageGenerationError, match="request differs"):
+        images.generate_b2_images(
+            tmp_path, _plan("A screen."), api_key=None,
+            options=_opts(), direct_client=direct,
+        )
+    assert len(direct.calls) == 1
+
+
 def test_avatar_media_uses_exact_split_aspect_without_crop(tmp_path: Path) -> None:
     plan = {"blocks": [{"block_id": 1, "beats": [
         {"beat_id": "1A", "visual_type": "avatar", "description": None},
