@@ -505,7 +505,7 @@ def _v4_style(direction: V4, source: V3) -> str:
         matches = sum(speak.count(item.locator) for speak in all_speaks)
         label = (
             f"occurrence {item.occurrence} of '{item.locator}'"
-            if totals[item.locator] > 1 else f"'{item.locator}'"
+            if matches > 1 else f"'{item.locator}'"
         )
         lines.append(f"On {label}: {item.instruction}")
     for v3_beat, tagged_beat in zip(
