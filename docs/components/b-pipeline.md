@@ -71,13 +71,17 @@ description is driven by the beat, not by brand-specific positive or negative
 instructions. The professional grid adds no such rules. The professional bot's
 general scene-prompt instructions require affirmative scene descriptions
 instead of generated negative clauses, exclusions or stock disclaimers.
-When a scene includes a phone, screen or document, B2 describes natural
-handling and orientation; app/page/document content is kept in a separate
-brief context note rather than making the screen/page face the camera.
+When a scene includes a phone, screen or document, B2 freely chooses
+the scene and camera viewpoint that best communicates the beat. A person
+using the device or document is optional: object-only close-ups and other
+source-grounded compositions are equally valid. The specific
+app/page/document content stays in the same brief `(For context: ...)`
+note, not in instructions to render visible text or exact interfaces.
 This applies to still-image and video-animation prompts. Professional
-grid requests preserve the existing Voice over context unchanged, but
-panel descriptions determine the visible scenes and screen orientation.
-The legacy `casero` prompt and grid are unchanged.
+grid requests preserve the existing Voice over context unchanged and
+honor each panel's chosen composition without adding a person or forcing
+a device/document orientation. The legacy `casero` prompt and grid
+are unchanged.
 
 A clearly visible presenter making a simple, speaking-compatible
 demonstration can use `audio: true`, including on a `media_video` beat;
@@ -514,10 +518,27 @@ OPENAI_IMAGE_QUALITY=low
 El pipeline utiliza **GPT Image 2.5**, con el ID `gpt-image-2.5-flare`
 por defecto o `gpt-image-2.5-sunburst` si se selecciona explícitamente.
 `gpt-image-2.5` sin variante no es un identificador válido para la API.
-La generación estándar usa el modelo, PNG, 16:9,
-calidad low y 1280×720. Actualiza también `config/app.env` si todavía
-contiene `OPENAI_IMAGE_MODEL=gpt-image-2`; un `git pull` no edita ese
-archivo privado. Las generaciones independientes se ejecutan en paralelo según la
+La generación individual usa calidad `low` por defecto, incluida la
+imagen inicial destinada a vídeo (1920×1088 en Profesional). Solo pasa a
+`medium` cuando su prompt contiene una variante de `(For context`
+(independientemente de mayúsculas, espacios, dos puntos o cierre de
+paréntesis). **Todas las rejillas usan `medium`.** El campo global
+`quality=low` del manifiesto indica el valor por defecto; la calidad
+real se registra por solicitud y forma parte del fingerprint que impide
+repetir inadvertidamente generaciones de pago. Actualiza también
+`config/app.env` si todavía contiene `OPENAI_IMAGE_MODEL=gpt-image-2`;
+un `git pull` no edita ese archivo privado.
+
+Las rejillas 16:9 solo de imágenes estáticas generan paneles nominales
+de 1280×720: 2×2 (2560×1440), 3×2 (3840×1440) y 3×3
+(3840×2160). Si incluyen al menos un panel para vídeo, las 2×2 pasan
+a 3840×2160 para paneles nominales de 1920×1080. Las 3×2 y 3×3
+ya están en el tamaño máximo admitido y conservan paneles de 1280×720.
+Los grids exclusivos `avatar_media` mantienen su geometría 8:9.
+**Nunca se regenera un panel de rejilla con GPT**: los paneles de vídeo
+se usan directamente a la resolución obtenida del recorte, sin
+reescalado posterior. Solo los paneles estáticos profesionales reciben
+el upscaler 2× previsto. Las generaciones independientes se ejecutan en paralelo según la
 cantidad de jobs; `ImageOptions.max_parallel_images` permite
 establecer un límite explícito cuando se invoca el proveedor.
 Cada solicitud contiene exactamente una imagen. El manifiesto

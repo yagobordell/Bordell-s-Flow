@@ -17,6 +17,7 @@ from typing import Any
 from PIL import Image
 
 from .image_grids import BLACK_PANEL_SOURCE
+from .professional_image_state import finished_in_place_sha
 
 _SHA256 = re.compile(r"[0-9a-f]{64}", flags=re.ASCII)
 _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", flags=re.ASCII)
@@ -207,8 +208,19 @@ def _write_panel(output: Path, metadata: dict[str, Any], data: bytes) -> None:
     if target.exists():
         if not target.is_file():
             raise GridCropError(f"Panel output path is not a file: {target}")
-        if hashlib.sha256(target.read_bytes()).hexdigest() == metadata["sha256"]:
+        actual = hashlib.sha256(target.read_bytes()).hexdigest()
+        if actual == metadata["sha256"]:
             return
+        recipe = (
+            "image_x2" if metadata["visual_type"] in {"media_image", "avatar_media"}
+            else "native_grid_video"
+        )
+        finished = finished_in_place_sha(
+            output, file=metadata["file"], source_sha256=metadata["sha256"],
+            block=metadata["block_id"], beat=metadata["beat_id"], recipes=(recipe,),
+        )
+        if actual == finished:
+            return  # The derived panel has already been replaced and verified.
         raise GridCropError(
             f"Existing panel differs from the derived grid crop: {target}; "
             "manual reconciliation is required"

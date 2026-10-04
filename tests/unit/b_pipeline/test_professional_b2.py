@@ -106,7 +106,12 @@ def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions()
     assert "Screens and documents: context belongs outside the visible scene" in prompt
     assert "(For context: he is scrolling through Instagram.)" in prompt
     assert "(For context: she is reviewing a financial report about declining revenue.)" in prompt
-    assert "A screen or document remains oriented naturally toward its user" in prompt
+    assert "A person handling or looking at a device/document" in prompt
+    assert "is ONE possible scene, not a requirement." in prompt
+    assert "Never add a person, require natural handling" in prompt
+    assert "A close-up of a television on a wall in an otherwise empty room." in prompt
+    assert "Do not impose human interaction or device/page orientation." in prompt
+    assert "naturally oriented phones, other screens and documents" not in prompt
     assert "No person or extra cars." not in prompt
     assert "It never forces avatar, media, or any opening/closing anchor" not in prompt
     # Avoid replacing one brand rule with another, including in this correction.
@@ -442,7 +447,11 @@ def test_professional_grid_never_adds_amateur_header_and_scopes_reference() -> N
         assert token not in grid["description"].lower()
     assert "Do not add visible text unless" not in grid["description"]
     assert "Treat Voice over context as narrative context" in grid["description"]
-    assert "natural device and document orientation" in grid["description"]
+    assert "without adding a person or imposing a screen/page orientation" in grid[
+        "description"
+    ]
+    assert "Specific app/page/document content" in grid["description"]
+    assert "natural device and document orientation" not in grid["description"]
     assert "Do not add artificial captions" not in grid["description"]
     assert "Respect EACH panel's own requested shot scale" in grid["description"]
     assert "Keep the resulting panels visually distinct" in grid["description"]
@@ -470,7 +479,8 @@ def test_professional_grid_keeps_original_voice_over_as_context() -> None:
         {
             "beat_id": "1C",
             "description": (
-                "2. A woman reading a printed sheet held in her own hands. "
+                "2. A close-up of a printed sheet resting on a desk, "
+                "viewed directly from above. "
                 "(For context: the page contains a quarterly financial report.)"
             ),
             "text": "She reads a quarterly financial report.",
@@ -483,7 +493,10 @@ def test_professional_grid_keeps_original_voice_over_as_context() -> None:
         "\n1C: She reads a quarterly financial report."
     ) in grid_prompt
     assert "panel descriptions determine the visible scenes" in grid_prompt
-    assert "natural device and document orientation" in grid_prompt
+    assert "2. A close-up of a printed sheet resting on a desk" in grid_prompt
+    assert "(For context: the page contains a quarterly financial report.)" in grid_prompt
+    assert "without adding a person or imposing a screen/page orientation" in grid_prompt
+    assert "natural device and document orientation" not in grid_prompt
     assert "Do not add artificial captions" not in grid_prompt
     assert (
         "photography, not DSLR or cinematic photography.  instagram rhode style."

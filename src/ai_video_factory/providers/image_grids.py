@@ -63,8 +63,11 @@ def _grid_prompt(
                 "\n\nKeep each panel faithful to its own scene description, "
                 "including naturally occurring scene details and the specified "
                 "camera viewpoint. Treat Voice over context as narrative context "
-                "while the panel descriptions determine the visible scenes, "
-                "including natural device and document orientation."
+                "while the panel descriptions determine the visible scenes. "
+                "For screens or documents, preserve each panel's chosen composition "
+                "without adding a person or imposing a screen/page orientation. "
+                "Specific app/page/document content in a panel's (For context: ...) "
+                "note remains narrative context, not a visible text or layout request."
             )
         )
     )
@@ -180,10 +183,6 @@ def plan_image_jobs(
         avatar_media_grid = all(
             beat["visual_type"] == "avatar_media" for beat in run
         )
-        panel_width, panel_height = (
-            (_AVATAR_MEDIA_PANEL_WIDTH, _AVATAR_MEDIA_PANEL_HEIGHT)
-            if avatar_media_grid else (_PANEL_WIDTH, _PANEL_HEIGHT)
-        )
 
         first = positions[run[0]["block_id"], run[0]["beat_id"]]
         last = positions[run[-1]["block_id"], run[-1]["beat_id"]]
@@ -217,6 +216,17 @@ def plan_image_jobs(
         for key in forward + backward:
             del available[key]
         selected.sort(key=lambda b: positions[b["block_id"], b["beat_id"]])
+        # Size the canvas from the ACTUAL selected panels, including fillers.
+        # Only 2x2 landscape grids can reach native 1920x1080 per video panel.
+        has_video = any(
+            beat["visual_type"] in {"media_video", "avatar"} for beat in selected
+        )
+        panel_width, panel_height = (
+            (_AVATAR_MEDIA_PANEL_WIDTH, _AVATAR_MEDIA_PANEL_HEIGHT)
+            if avatar_media_grid else (1920, 1080)
+            if visual_style == "profesional" and has_video and (columns, rows) == (2, 2)
+            else (_PANEL_WIDTH, _PANEL_HEIGHT)
+        )
         black_panel_count = count - len(selected)
         selected.extend(
             {

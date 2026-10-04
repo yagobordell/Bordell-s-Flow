@@ -286,9 +286,20 @@ class ApiCostLedger:
         active = sorted(root.glob("block_*/*.json")) + sorted(
             (root / "grids").glob("*.json")
         ) + sorted(
+            (root / "finishing_state").glob("block_*/*-native_grid_video.json")
+        ) + sorted(
             (root / "professional_finished").glob("block_*/*-native_grid_video.json")
         )
+        historical_b2 = output / "images_replaced_b2"
+        if historical_b2.is_symlink():
+            raise ValueError("Refusing linked B2 billing archive")
         replaced = sorted(archive.glob("block_*/*.json")) + sorted(
+            historical_b2.glob("run-*/block_*/*.json")
+        ) + sorted(
+            historical_b2.glob("run-*/grids/*.json")
+        ) + sorted(
+            historical_b2.glob("run-*/replaced_states/block_*/*.json")
+        ) + sorted(
             finished_archive.glob("run-*/block_*/*-native_grid_video.json")
         )
         active_count = 0
@@ -304,7 +315,8 @@ class ApiCostLedger:
             status = state.get("status")
             if status not in ("completed", "direct_submitting_unknown"):
                 continue  # direct_pending has not been submitted to the paid API.
-            if path.is_relative_to(archive) or path.is_relative_to(finished_archive):
+            if (path.is_relative_to(archive) or path.is_relative_to(finished_archive)
+                or path.is_relative_to(historical_b2)):
                 replaced_count += 1
             else:
                 active_count += 1
