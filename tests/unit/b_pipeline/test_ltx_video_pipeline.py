@@ -447,6 +447,11 @@ def test_all_ltx_jobs_are_published_before_first_wait(
         "generation_profile": LTX_A2V_RUN_STATIC_FAST_PROFILE,
         "negative_prompt_applied": True,
         "positive_prompt_enhanced": False,
+        "quantization": "fp8_cast",
+        "offload_mode": "none",
+        "diffvae_backend_effective": "eager",
+        "stage_1_image_strength": 0.8,
+        "video_cfg_scale": 1.25,
     }), encoding="utf-8")
 
     class FakeQueue:
@@ -679,6 +684,11 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
         "generation_profile": v5,
         "negative_prompt_applied": True,
         "positive_prompt_enhanced": False,
+        "quantization": "fp8_cast",
+        "offload_mode": "none",
+        "diffvae_backend_effective": "eager",
+        "stage_1_image_strength": 0.8,
+        "video_cfg_scale": 1.25,
     }), encoding="utf-8")
 
     class FakeStorage:
@@ -773,6 +783,11 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
         "generation_profile": LTX_A2V_RUN_STATIC_FAST_PROFILE,
         "negative_prompt_applied": True,
         "positive_prompt_enhanced": False,
+        "quantization": "fp8_cast",
+        "offload_mode": "none",
+        "diffvae_backend_effective": "eager",
+        "stage_1_image_strength": 0.8,
+        "video_cfg_scale": 1.25,
     }), encoding="utf-8")
     submitted: list[str] = []
     input_names: list[str] = []
