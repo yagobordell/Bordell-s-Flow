@@ -53,7 +53,10 @@ def test_reuse_restores_production_even_when_bootstrap_fails(
         (smoke / name).write_text("print('OK')\n", encoding="utf-8")
     (pipeline / "check_r2_ready.py").write_text("print('OK')\n", encoding="utf-8")
     (smoke / "wait_salad_ltx25_ready.py").write_text(
-        f"import sys\nsys.exit({1 if fail_ready else 0})\n", encoding="utf-8"
+        "import sys\n"
+        "assert '--reuse-production' in sys.argv, 'shared readiness flag missing'\n"
+        "assert sys.argv[sys.argv.index('--service') + 1] == 'ltx25'\n"
+        f"sys.exit({1 if fail_ready else 0})\n", encoding="utf-8"
     )
     (smoke / "submit_ltx25_a2v_smoke.py").write_text(
         "import json, pathlib, sys\n"
