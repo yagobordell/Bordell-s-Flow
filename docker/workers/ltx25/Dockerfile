@@ -48,10 +48,13 @@ RUN git clone --filter=blob:none https://github.com/Lightricks/LTX-2.git /opt/lt
 # Patch only the pinned upstream revision: fall back to pageable host buffers
 # on pinned-allocation CUDA OOM and force blocking H2D for pageable buffers.
 COPY docker/workers/ltx25/patch_host_memory.py /usr/local/bin/patch-ltx-host-memory
+COPY docker/workers/ltx25/patch_i2v_progressive.py /usr/local/bin/patch-ltx-progressive-a2v
 RUN python3 /usr/local/bin/patch-ltx-host-memory --ltx-root /opt/ltx \
+    && python3 /usr/local/bin/patch-ltx-progressive-a2v --ltx-root /opt/ltx \
     && python3 -m compileall -q \
         /opt/ltx/packages/ltx-core/src/ltx_core/block_streaming/utils.py \
-        /opt/ltx/packages/ltx-core/src/ltx_core/block_streaming/provider.py
+        /opt/ltx/packages/ltx-core/src/ltx_core/block_streaming/provider.py \
+        /opt/ltx/packages/ltx-core/src/ltx_core/block_streaming/builder.py
 
 RUN printf '%s\n' \
         'torch==2.11.0' \
