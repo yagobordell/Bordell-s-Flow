@@ -893,6 +893,46 @@ class DirectLTX25Backend:
 
 
 
+    def _full_hd_streaming_stage2(
+        self, pipeline: Any, bindings: _LTXBindings, *, mode: str,
+    ) -> Any:
+        """Build only the alternate FP8 stage wrapper, never a second live pipeline.
+
+        Upstream DistilledPipeline uses DiffusionStage.from_checkpoint with
+        these exact fields. Invoked AFTER GPU stage1 exits and its weights
+        have been disposed; CPU mode pins blocks once for all three 1080p
+        denoising forwards instead of re-reading them every step.
+        """
+        if mode not in ("cpu", "disk"):
+            raise ValueError("Full HD stage2 must use CPU or explicit disk streaming")
+        first = pipeline.stage
+        if first._is_streaming:
+            raise RuntimeError("Hybrid I2V requires GPU-resident stage1")
+        policy = getattr(first, "_quantization", None)
+        if policy is None or policy.fuse_rule is None:
+            raise RuntimeError("Hybrid I2V must retain the pinned FP8 cast policy")
+        offload = bindings.offload_mode.CPU if mode == "cpu" else bindings.offload_mode.DISK
+        stage = type(first).from_checkpoint(
+            checkpoint_path=str(self._model_files.transformer),
+            dtype=first._dtype,
+            device=first._device,
+            loras=(),
+            quantization=policy,
+            offload_mode=offload,
+            alloc_trim_strategy=first._alloc_trim_strategy,
+            scale_factors=first.video_scale_factors,
+        )
+        if not stage._is_streaming:
+            raise RuntimeError("Hybrid I2V stage2 did not create block streaming")
+        slots = stage._transformer_builder.cpu_slots_count
+        if (mode == "cpu" and slots is not None) or (mode == "disk" and slots != 2):
+            raise RuntimeError("Hybrid I2V stage2 buffer policy is not as requested")
+        logger.info(
+            "LTX25_I2V_PAIR_STAGE2_POLICY offload=%s cpu_slots=%s",
+            mode, "all" if slots is None else slots,
+        )
+        return stage
+
     def _pair_attempt(
         self,
         *,
@@ -904,6 +944,7 @@ class DirectLTX25Backend:
         parameters_b: LTXVideoParameters,
         forward_batch_size: int,
         reuse_transformer_across_stages: bool = False,
+        full_hd_stage2_mode: str = "cpu",
     ) -> int | None:
         """Run one experimental attempt. Scoped so failed CUDA tensors can be released."""
         from .paired_i2v import PairInput, generate_paired_fast_distilled
@@ -916,31 +957,31 @@ class DirectLTX25Backend:
                 cuda = bindings.torch.cuda
                 if self._device.startswith("cuda"):
                     cuda.reset_peak_memory_stats()
-                # Native 1080p B=2 exhausted RTX 5090 VRAM inside the stage2
-                # transformer. Block-streaming FP8 uses the exact same weights,
-                # forward batch size, sigmas and independent random generators.
-                # DISK keeps only two pinned CPU block slots, unlike RAM
-                # streaming, so the 40-GiB Salad container is protected too.
-                # The proven 720p B=2 path remains GPU-resident and unchanged.
-                pair_offload_mode = (
-                    "disk" if (parameters_a.width, parameters_a.height) == (1920, 1080)
-                    else "none"
-                )
+                is_full_hd = (parameters_a.width, parameters_a.height) == (1920, 1080)
+                if full_hd_stage2_mode not in ("cpu", "disk"):
+                    raise ValueError("Unknown Full HD stage2 streaming mode")
+                # Full-HD stage1 was demonstrated to fit as true GPU-resident
+                # B=2 in ~30s, whereas streaming it from disk took 27min.
+                # Stage2 needs the activation headroom of a streamed FP8
+                # transformer: CPU mode retains its block weights in RAM
+                # for all 3 forwards. Its host memory must be provisioned
+                # deliberately; explicit disk mode preserves the old fallback.
                 logger.info(
-                    "LTX25_I2V_PAIR_MEMORY_POLICY resolution=%dx%d offload=%s "
-                    "true_gpu_batch=%d",
-                    parameters_a.width, parameters_a.height, pair_offload_mode,
+                    "LTX25_I2V_PAIR_MEMORY_POLICY resolution=%dx%d "
+                    "stage1_offload=none stage2_offload=%s true_gpu_batch=%d",
+                    parameters_a.width, parameters_a.height,
+                    full_hd_stage2_mode if is_full_hd else "none",
                     forward_batch_size,
                 )
                 pipeline = self._get_or_build_pipeline(
-                    bindings, requested_offload_mode=pair_offload_mode,
+                    bindings, requested_offload_mode="none",
                 )
-                if pair_offload_mode == "disk" and not pipeline.stage._is_streaming:
-                    raise RuntimeError("Full HD B=2 requires block-streamed FP8 transformer")
-                if pair_offload_mode == "disk":
-                    policy = getattr(pipeline.stage, "_quantization", None)
-                    if policy is None or policy.fuse_rule is None:
-                        raise RuntimeError("Full HD block streaming requires FP8 cast policy")
+                stage2_factory = (
+                    (lambda: self._full_hd_streaming_stage2(
+                        pipeline, bindings, mode=full_hd_stage2_mode,
+                    ))
+                    if is_full_hd else None
+                )
                 pipeline_width, pipeline_height = _pipeline_dimensions(parameters_a)
                 pair = []
                 for keyframe, output, params in (
@@ -968,7 +1009,8 @@ class DirectLTX25Backend:
                     num_frames=parameters_a.num_frames,
                     max_forward_batch_size=forward_batch_size,
                     reuse_transformer_across_stages=reuse_transformer_across_stages,
-                    full_hd_memory_cleanup=pair_offload_mode == "disk",
+                    full_hd_memory_cleanup=is_full_hd,
+                    stage2_factory=stage2_factory,
                 )
                 for result, output, params in zip(
                     results, (output_a, output_b),
@@ -1010,6 +1052,7 @@ class DirectLTX25Backend:
         allow_sequential_fallback: bool = False,
         reuse_transformer_across_stages: bool = False,
         accept_full_hd_batch2_oom_risk: bool = False,
+        full_hd_stage2_mode: str = "cpu",
     ) -> dict[str, Any]:
         """EXPERIMENT: B=2, then shared-weight B=1, then EXACT existing B=1.
 
@@ -1034,6 +1077,8 @@ class DirectLTX25Backend:
             return p.width, p.height, p.fps, p.num_frames
 
         dimensions = geometry(parameters_a)
+        if full_hd_stage2_mode not in ("cpu", "disk"):
+            raise ValueError("Full HD stage2 mode must be cpu or disk")
         if dimensions != geometry(parameters_b):
             raise ValueError("Batch2 experiment requires matching per-video dimensions")
         if dimensions == (1920, 1080, 24, 121):
@@ -1080,6 +1125,8 @@ class DirectLTX25Backend:
                     parameters_a=parameters_a, parameters_b=parameters_b,
                     forward_batch_size=forward_batch,
                     reuse_transformer_across_stages=shared_stages,
+                    **({"full_hd_stage2_mode": full_hd_stage2_mode}
+                       if dimensions[1] == 1080 else {}),
                 )
             except Exception as exc:
                 failure = classify_gpu_failure(exc)
@@ -1131,7 +1178,10 @@ class DirectLTX25Backend:
                     "requested_width": dimensions[0],
                     "requested_height": dimensions[1],
                     "full_hd_gpu_validation_pending": dimensions[1] == 1080,
-                    "transformer_offload_mode": "disk" if dimensions[1] == 1080 else "none",
+                    "transformer_offload_mode": (
+                        f"stage1:none,stage2:{full_hd_stage2_mode}"
+                        if dimensions[1] == 1080 else "none"
+                    ),
                     "recipe": LTX_PRODUCTION_I2V_PROFILE,
                     "individual_seeds": [parameters_a.seed, parameters_b.seed],
                     "elapsed_seconds": time.monotonic() - started,
