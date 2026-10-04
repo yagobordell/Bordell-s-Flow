@@ -30,6 +30,39 @@ aligned with the 16:9 LTX pipeline and downstream composition.
 Request identity includes the inputs and generation-defining parameters so a repeated segment can use
 the shared replay/idempotency path.
 
+## Feature branch: optimized professional `run` A2V
+
+On `feature/b2-run-a2v-static-fp8-no-offload-20261004`, new professional
+`run` generations use the immutable
+`LTX_A2V_RUN_STATIC_FAST_PROFILE`
+(`ltx25-a2v-static-reference-distilled-fp8none-eager-a95ab-run-v1`).
+Unlike direct A2V's approved reference profile, this selection retains
+B2's existing static-camera negative prompt, stage-1 image strength 0.8,
+video CFG 1.25, 8+3 steps, upward audio padding, frozen conditioning,
+seed/prompt/geometry/fps and decoder Eager. Only FP8 CAST model residency
+changes from disk streaming to no CPU offload.
+
+All new B2 A2V jobs use a new stable request identity and the new B2 run
+fingerprint. Completed v4 disk-streamed clips are **not** inherited as if
+they were generated using no-offload. Finished older run directories and
+job identities remain untouched. Generated metadata must verify the
+requested immutable profile, FP8 CAST, no offload, Eager, unchanged
+static-camera guidance and parameters before accepting an MP4.
+
+**Rollout gate:** `scripts/pipeline/run_b_pipeline.py` requires
+`SALAD_LTX25_RUN_STATIC_FP8_IMAGE=<repository>@sha256:<digest>` in the
+operator's `config/salad.env` and verifies that the current production
+Salad LTX A2V group actually uses that digest before any paid B2 A2V
+submission. The old `SALAD_LTX25_PAGEABLE_A2V_IMAGE` cannot be reused.
+A source-branch change alone does not deploy a Docker image.
+
+**Not yet established:** The previously approved ~101.55 s warm
+measurement and human lip-sync review belong to the **non-static**
+reference recipe, not this static B2 variant. GPU comparison of this
+specific variant against current B2 disk streaming, decoded A/V
+comparison, camera stability and lipsync approval remain mandatory
+before merging/deploying this feature.
+
 ## Validated fast reference production profile
 
 `LTX_A2V_PRODUCTION_FAST_PROFILE` (`ltx25-a2v-reference-distilled-fp8none-eager-a95ab-prod-v1`)
