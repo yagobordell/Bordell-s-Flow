@@ -28,7 +28,7 @@ _IMAGE_PRICING = {
 }
 _STAGES = (
     "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2",
-    "V1", "V2", "V3", "Fish director", _IMAGE_STAGE, "CTA image",
+    "V1", "V2", "V3", "V4", "Fish director", _IMAGE_STAGE, "CTA image",
 )
 
 
@@ -131,19 +131,19 @@ class ApiCostLedger:
         """
         states: list[Path] = []
         for root in (output / "voice_direction", output):
-            for stage in ("V1", "V2", "V3"):
+            for stage in ("V1", "V2", "V3", "V4"):
                 stage_root = root / stage
                 if stage_root.is_symlink():
                     raise ValueError("Linked professional voice billing directory")
                 states.extend(sorted(stage_root.rglob("api_call_*.json")))
         seen = {
             (item["stage"], item.get("response_id"), item.get("source_state_file"))
-            for item in self._records if item["stage"] in {"V1", "V2", "V3"}
+            for item in self._records if item["stage"] in {"V1", "V2", "V3", "V4"}
         }
         response_ids = {
             (item["stage"], item.get("response_id"))
             for item in self._records
-            if item["stage"] in {"V1", "V2", "V3"} and item.get("response_id") is not None
+            if item["stage"] in {"V1", "V2", "V3", "V4"} and item.get("response_id") is not None
         }
         for path in states:
             if path.is_symlink() or path.parent.is_symlink():
@@ -152,7 +152,7 @@ class ApiCostLedger:
             stage, block_id, response = (
                 item.get("stage"), item.get("block_id"), item.get("response"),
             )
-            if (stage not in {"V1", "V2", "V3"} or not isinstance(response, dict)
+            if (stage not in {"V1", "V2", "V3", "V4"} or not isinstance(response, dict)
                 or (block_id is not None and (type(block_id) is not int or block_id < 1))):
                 raise ValueError(f"Malformed professional voice API call: {path}")
             relative = path.relative_to(output).as_posix()
@@ -175,7 +175,7 @@ class ApiCostLedger:
             raise ValueError("Fish audio runs directory is invalid or linked")
         for path in sorted(runs.glob("*/blocks/block_*/task.json")):
             # Professional Gemini blocks are not Fish directors; their V-stage
-            # Responses usage is recorded separately as V1/V2/V3.
+            # Responses usage is recorded separately as V1/V2/V3/V4.
             if path.parent.parent.parent.name.startswith("gemini-"):
                 continue
             parents = (path, path.parent, path.parent.parent, path.parent.parent.parent)
@@ -420,7 +420,7 @@ class ApiCostLedger:
         )
         expected["CTA image"] = sum(item["stage"] == "CTA image" for item in ordered)
         fish_count = sum(item["stage"] == "Fish director" for item in ordered)
-        for v_stage in ("V1", "V2", "V3"):
+        for v_stage in ("V1", "V2", "V3", "V4"):
             actual = sum(item["stage"] == v_stage for item in ordered)
             reported = expected_calls.get(v_stage) if expected_calls is not None else None
             expected[v_stage] = max(

@@ -88,7 +88,7 @@ def sync_managed_outputs(work: Path, target: Path) -> None:
                 _copy_tree(folder, staging / stage)
         # V bots retain the old private checkpoint layout for safe recovery.
         # Publish the same user-facing stage layout as B1.1/B1.2/B2.
-        for stage in ("V1", "V2", "V3"):
+        for stage in ("V1", "V2", "V3", "V4"):
             canonical = work / stage
             legacy = work / "voice_direction" / stage
             if canonical.exists() and legacy.exists():
