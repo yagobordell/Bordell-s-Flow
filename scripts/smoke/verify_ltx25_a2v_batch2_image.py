@@ -26,9 +26,11 @@ assert "_i2v_progressive_pinned_blocks_supported" in inspect.getsource(Streaming
 assert "generate_pair" in dir(DirectLTX25AudioToVideoBackend)
 assert "actual_gpu_batch_size" in inspect.getsource(DirectLTX25AudioToVideoBackend.generate_pair)
 assert "stage2_factory" in inspect.signature(generate_paired_static_a2v).parameters
+assert "max_transformer_forward_batch_size" in inspect.signature(generate_paired_static_a2v).parameters
 assert hasattr(SharedA2VDecoder, "close")
 assert A2VBatch2Parameters.model_fields["stage2_mode"].default == "cpu"
 assert A2VBatch2Parameters.model_fields["vae_backend"].default == "eager"
+assert A2VBatch2Parameters.model_fields["guidance_forward_batch_size"].default == 2
 assert callable(ensure_triton_gpu_probe)
 assert "requested_pair_vae_backend" in inspect.signature(
     DirectLTX25AudioToVideoBackend._get_or_build_pipeline
