@@ -7,6 +7,7 @@ be committed and SHA-verified before this client claims success.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import mimetypes
@@ -302,6 +303,23 @@ def main() -> None:
     }
     report["replayed"] = response.replayed
     report["quality_status"] = "REFERENCE_VIDEO_SIDE_BY_SIDE_REVIEW_REQUIRED"
+    # The durable report sidecar already contains the complete worker RAM
+    # history. Export standalone JSON/CSV locally for plotting and sharing
+    # without changing the atomic Postgres/R2 sidecar contract.
+    if isinstance(report.get("memory_trace"), dict):
+        ram = report["memory_trace"]
+        (a.output_dir / "memory-trace.json").write_text(
+            json.dumps(ram, indent=2, sort_keys=True) + "\\n", encoding="utf-8"
+        )
+        samples = ram.get("samples", [])
+        if samples:
+            columns = list(dict.fromkeys(key for point in samples for key in point))
+            with (a.output_dir / "memory-trace.csv").open(
+                "w", newline="", encoding="utf-8",
+            ) as stream:
+                writer = csv.DictWriter(stream, fieldnames=columns)
+                writer.writeheader()
+                writer.writerows(samples)
     if a.vae_backend == "triton_experimental":
         from compare_ltx25_i2v_backend_trial import compare
 
