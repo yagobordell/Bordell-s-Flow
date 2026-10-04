@@ -16,6 +16,7 @@ from ai_video_factory.inference.gpu_failures import DEFAULT_GPU_MAX_ATTEMPTS
 from ai_video_factory.workers.ltx25 import (
     LTX_A2V_DEV_GENERATION_PROFILE,
     LTX_A2V_GENERATION_PROFILE,
+    LTX_A2V_PRODUCTION_FAST_PROFILE,
     LTX_A2V_GUIDED_GENERATION_PROFILE,
     LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
     LTX_A2V_TASK,
@@ -121,7 +122,10 @@ def _request(
 def test_a2v_parameters_are_audio_driven_and_keep_720p24_defaults() -> None:
     parameters = LTXAudioToVideoParameters()
 
-    assert parameters.generation_profile == LTX_A2V_GENERATION_PROFILE
+    assert parameters.generation_profile == LTX_A2V_PRODUCTION_FAST_PROFILE
+    assert LTXAudioToVideoParameters(
+        generation_profile=LTX_A2V_GENERATION_PROFILE
+    ).generation_profile == LTX_A2V_GENERATION_PROFILE
     assert "distilled" in parameters.generation_profile
     assert LTXAudioToVideoParameters(
         generation_profile=LTX_A2V_DEV_GENERATION_PROFILE
