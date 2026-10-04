@@ -65,6 +65,10 @@ LTX_A2V_BENCH_CPU_TRITON_PROFILE = "ltx25-a2v-reference-bench-fp8cpu-triton-a95a
 LTX_A2V_BENCH_NONE_TRITON_PROFILE = "ltx25-a2v-reference-bench-fp8none-triton-a95ab-v1"
 LTX_A2V_BENCH_STATIC_CPU_PROFILE = "ltx25-a2v-static-bench-fp8cpu-eager-a95ab-v1"
 LTX_A2V_BENCH_STATIC_NONE_PROFILE = "ltx25-a2v-static-bench-fp8none-eager-a95ab-v1"
+# New immutable production identity for the exact reference recipe validated on
+# RTX 5090 (three CPU + three FP8/no-offload videos; decoded A/V identical).
+# Preserve all historical profile strings for already-submitted jobs.
+LTX_A2V_PRODUCTION_FAST_PROFILE = "ltx25-a2v-reference-fp8none-eager-a95ab-prod-v1"
 LTX_A2V_EXPERIMENTS = {
     LTX_A2V_BENCH_CPU_PROFILE: ("cpu", "eager"),
     LTX_A2V_BENCH_NONE_PROFILE: ("none", "eager"),
@@ -72,6 +76,12 @@ LTX_A2V_EXPERIMENTS = {
     LTX_A2V_BENCH_NONE_TRITON_PROFILE: ("none", "triton"),
     LTX_A2V_BENCH_STATIC_CPU_PROFILE: ("cpu", "eager"),
     LTX_A2V_BENCH_STATIC_NONE_PROFILE: ("none", "eager"),
+}
+# This map is for pipeline residency/decoder choice; only EXPERIMENTS may be
+# submitted to the separate experimental task queue.
+LTX_A2V_RESIDENCY_PROFILES = {
+    **LTX_A2V_EXPERIMENTS,
+    LTX_A2V_PRODUCTION_FAST_PROFILE: ("none", "eager"),
 }
 LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v5"
 LTX_A2V_REFERENCE_GENERATION_PROFILE = (
@@ -128,7 +138,7 @@ class LTXAudioToVideoParameters(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    generation_profile: str = LTX_A2V_GENERATION_PROFILE
+    generation_profile: str = LTX_A2V_PRODUCTION_FAST_PROFILE
     prompt: str = Field(default=LTX_A2V_DEFAULT_PROMPT, min_length=1, max_length=8000)
     seed: int = Field(default=42, ge=0, le=2**63 - 1)
     width: int = Field(default=1280, gt=0, le=8192)
@@ -140,7 +150,9 @@ class LTXAudioToVideoParameters(BaseModel):
     def validate_generation_profile(cls, value: str) -> str:
         if value not in (
             LTX_A2V_GENERATION_PROFILE,
+            LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
@@ -962,6 +974,9 @@ class DirectLTX25AudioToVideoBackend:
     ) -> dict[str, Any]:
         generation_started = time.monotonic()
         experimental = parameters.generation_profile in LTX_A2V_EXPERIMENTS
+        # The validated production path retains benchmark phase diagnostics,
+        # allowing comparable operational timings and VRAM telemetry.
+        profiled = experimental or parameters.generation_profile == LTX_A2V_PRODUCTION_FAST_PROFILE
         # CUDA synchronization is deliberately opt-in: it changes benchmark
         # overhead but neither tensors nor the original production execution.
         metrics: I2VPhaseMetrics | None = None
@@ -986,6 +1001,7 @@ class DirectLTX25AudioToVideoBackend:
         )
         reference = parameters.generation_profile in (
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
@@ -1052,7 +1068,7 @@ class DirectLTX25AudioToVideoBackend:
             )
 
             cuda = getattr(bindings.torch, "cuda", None)
-            if experimental:
+            if profiled:
                 metrics = I2VPhaseMetrics(bindings.torch, self._device)
                 metrics.begin_generation()
             else:
@@ -1258,7 +1274,7 @@ class DirectLTX25AudioToVideoBackend:
                 json.dumps(
                     {
                         "generation_profile": parameters.generation_profile,
-                        "offload_mode": LTX_A2V_EXPERIMENTS[parameters.generation_profile][0],
+                        "offload_mode": LTX_A2V_RESIDENCY_PROFILES[parameters.generation_profile][0],
                         "diffvae_backend_effective": self._pipeline_effective_backend,
                         "pipeline_reused": not built_now,
                         "cuda_peak_reset": metrics.cuda_peak_reset,
@@ -1336,12 +1352,14 @@ class DirectLTX25AudioToVideoBackend:
             "audio_frozen_stage_2": True,
             "quantization": "fp8_cast",
             "offload_mode": (
-                LTX_A2V_EXPERIMENTS[parameters.generation_profile][0]
-                if experimental else "disk" if guided or memory_safe else "cpu"
+                LTX_A2V_RESIDENCY_PROFILES[parameters.generation_profile][0]
+                if parameters.generation_profile in LTX_A2V_RESIDENCY_PROFILES
+                else "disk" if guided or memory_safe else "cpu"
             ),
             "diffvae_backend_requested": (
-                LTX_A2V_EXPERIMENTS[parameters.generation_profile][1]
-                if experimental else "eager"
+                LTX_A2V_RESIDENCY_PROFILES[parameters.generation_profile][1]
+                if parameters.generation_profile in LTX_A2V_RESIDENCY_PROFILES
+                else "eager"
             ),
             "diffvae_backend_effective": self._pipeline_effective_backend,
             "activation_budget_cap_bytes": (
@@ -1450,6 +1468,7 @@ class DirectLTX25AudioToVideoBackend:
         fast = generation_profile == LTX_A2V_GENERATION_PROFILE
         reference = generation_profile in (
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
+            LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
@@ -1486,7 +1505,7 @@ class DirectLTX25AudioToVideoBackend:
             ]
         )
         _force_diffvae_eager_sdpa(bindings.diffvae_apply)
-        requested_backend = LTX_A2V_EXPERIMENTS.get(generation_profile, ("cpu", "eager"))[1]
+        requested_backend = LTX_A2V_RESIDENCY_PROFILES.get(generation_profile, ("cpu", "eager"))[1]
         effective_backend = "eager"
         if requested_backend == "triton":
             if callable(bindings.triton_probe) and bindings.triton_probe():
@@ -1507,7 +1526,7 @@ class DirectLTX25AudioToVideoBackend:
             LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
         )
-        selected_offload = LTX_A2V_EXPERIMENTS.get(generation_profile, ("cpu", "eager"))[0]
+        selected_offload = LTX_A2V_RESIDENCY_PROFILES.get(generation_profile, ("cpu", "eager"))[0]
         offload_mode = (
             bindings.offload_mode.DISK if guided or memory_safe
             else bindings.offload_mode.NONE if selected_offload == "none"
