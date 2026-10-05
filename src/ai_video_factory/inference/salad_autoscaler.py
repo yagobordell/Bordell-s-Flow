@@ -193,7 +193,11 @@ class PostgresAutoscalerStore:
                     ) AS run_id,
                     status,
                     lease_owner AS worker_id,
-                    started_at
+                    started_at,
+                    NULLIF(
+                        request #>> '{parameters,run_job_count}',
+                        ''
+                    )::integer AS run_job_count
                 FROM gpu.jobs
                 WHERE task = ANY(%s)
                   AND status = ANY(%s)
@@ -1073,11 +1077,20 @@ def build_global_demands(
         jobs_per_replica = jobs_per_replica_by_stage.get(stage)
         job_count_target: int | None = None
         if jobs_per_replica is not None:
+            large_run_active = any(
+                (_optional_int(row.get("run_job_count")) or 0) > jobs_per_replica
+                for row in rows
+            )
             job_count_target = (
                 math.ceil(active_job_count / jobs_per_replica)
                 if active_job_count > 0
                 else 0
             )
+            if large_run_active and active_job_count > 1:
+                # Current run jobs persist their original per-type batch size.
+                # Keep the burst replica for the life of a large run instead of
+                # paying its cold start and immediately removing it at 30 left.
+                job_count_target = max(job_count_target, 2)
             # Clip-count targets may intentionally fall below the number of
             # currently running workers. Safe active draining prevents those
             # workers from claiming another clip and waits for them to finish
