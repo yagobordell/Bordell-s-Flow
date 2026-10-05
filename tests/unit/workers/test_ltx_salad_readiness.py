@@ -80,6 +80,7 @@ def _wait(
     timeout: float = 10,
     clock: _Clock | None = None,
     report: Callable[[str], None] | None = None,
+    max_unique_instances: int = 0,
 ) -> str:
     timer = clock or _Clock()
     return wait_for_ready(
@@ -92,6 +93,7 @@ def _wait(
         clock=timer.now,
         sleep=timer.sleep,
         report=report or (lambda _: None),
+        max_unique_instances=max_unique_instances,
     )
 
 
@@ -208,6 +210,32 @@ def test_fail_closed_after_bounded_transient_salad_errors() -> None:
         _wait(_Salad([], error=error), clock=timer)
     assert timer.elapsed == 4
 
+
+
+def test_transport_timeout_without_http_status_is_retried_then_fails_bounded() -> None:
+    error = SaladRequestError(
+        message="Salad request failed error=<urlopen error timed out>",
+        status_code=None,
+        url="https://api.salad.com",
+        detail="",
+    )
+    timer = _Clock()
+    with pytest.raises(RuntimeError, match="five consecutive polls"):
+        _wait(_Salad([], error=error), clock=timer)
+    assert timer.elapsed == 4
+
+
+def test_experimental_readiness_bounds_reallocated_instance_churn() -> None:
+    observations = [
+        (_group(), [_instance(instance_id=f"gpu-{index}", ready=False)])
+        for index in range(1, 5)
+    ]
+    timer = _Clock()
+    with pytest.raises(RuntimeError, match="instance churn budget"):
+        _wait(
+            _Salad(observations), clock=timer, timeout=10, max_unique_instances=3,
+        )
+    assert timer.elapsed == 3
 
 def test_nontransient_salad_error_is_not_masked() -> None:
     error = SaladRequestError(

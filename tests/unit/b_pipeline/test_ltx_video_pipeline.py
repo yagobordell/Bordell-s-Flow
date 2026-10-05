@@ -16,7 +16,10 @@ import pytest
 from PIL import Image
 
 from ai_video_factory.workers.ltx25.a2v import (
-    LTX_A2V_RUN_STATIC_FAST_PROFILE,
+    LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE,
+    LTX_A2V_RUN_OPTIMIZED_PROFILE,
+    LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
+    LTX_A2V_RUN_VAE_BACKEND,
     LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
     LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
 )
@@ -135,7 +138,14 @@ def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     assert first.request.parameters["prompt"] == "A Person speaking to the camera."
     assert last.request.parameters["prompt"] == first.request.parameters["prompt"]
     assert first.request.parameters["generation_profile"] == (
-        LTX_A2V_RUN_STATIC_FAST_PROFILE
+        LTX_A2V_RUN_OPTIMIZED_PROFILE
+    )
+    assert first.request.parameters["vae_backend"] == LTX_A2V_RUN_VAE_BACKEND
+    assert first.request.parameters["guidance_forward_batch_size"] == (
+        LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE
+    )
+    assert first.request.parameters["progressive_block_group_size"] == (
+        LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE
     )
     assert b_video.AVATAR_NEGATIVE_PROMPT == (
         "camera zoom, zoom in, push in, dolly in, camera drift, camera shake, "
@@ -264,26 +274,28 @@ def test_automatic_ltx_activation_requires_complete_audio_and_transport(
 
 
 
-def test_new_memory_safe_a2v_requires_exact_deployed_image_digest(
+def test_promoted_a2v_run_v2_requires_exact_new_deployed_image_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(runner, "load_dotenv", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(runner.settings, "salad_api_key", "test-key")
     monkeypatch.setenv("SALAD_ORGANIZATION", "org")
     monkeypatch.setenv("SALAD_PROJECT", "project")
+    monkeypatch.delenv("SALAD_LTX25_RUN_V2_IMAGE", raising=False)
     monkeypatch.delenv("SALAD_LTX25_RUN_STATIC_FP8_IMAGE", raising=False)
     monkeypatch.delenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", raising=False)
 
-    with pytest.raises(RuntimeError, match="SALAD_LTX25_RUN_STATIC_FP8_IMAGE"):
+    with pytest.raises(RuntimeError, match="SALAD_LTX25_RUN_V2_IMAGE"):
         runner._require_ltx_safe_a2v_worker()
 
     pinned = "docker.io/yagobordell/ai-video-factory@sha256:" + "a" * 64
     old_image = "docker.io/yagobordell/ai-video-factory@sha256:" + "b" * 64
+    monkeypatch.setenv("SALAD_LTX25_RUN_V2_IMAGE", pinned)
     monkeypatch.setenv("SALAD_LTX25_RUN_STATIC_FP8_IMAGE", pinned)
-    monkeypatch.setenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", pinned)
     with pytest.raises(RuntimeError, match="cannot reuse"):
         runner._require_ltx_safe_a2v_worker()
 
+    monkeypatch.setenv("SALAD_LTX25_RUN_STATIC_FP8_IMAGE", old_image)
     monkeypatch.setenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", old_image)
     deployed = {"image": old_image}
 
@@ -444,12 +456,17 @@ def test_all_ltx_jobs_are_published_before_first_wait(
     events: list[tuple[str, str]] = []
     metadata_file = tmp_path / "worker-metadata.json"
     metadata_file.write_text(json.dumps({
-        "generation_profile": LTX_A2V_RUN_STATIC_FAST_PROFILE,
+        "generation_profile": LTX_A2V_RUN_OPTIMIZED_PROFILE,
         "negative_prompt_applied": True,
         "positive_prompt_enhanced": False,
         "quantization": "fp8_cast",
         "offload_mode": "none",
-        "diffvae_backend_effective": "eager",
+        "diffvae_backend_effective": "triton",
+        "vae_backend_request": LTX_A2V_RUN_VAE_BACKEND,
+        "guidance_forward_batch_size": LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE,
+        "progressive_block_group_size": LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
+        "stage1_residency": "gpu",
+        "stage2_residency": "progressive_cpu",
         "stage_1_image_strength": 0.8,
         "video_cfg_scale": 1.25,
     }), encoding="utf-8")
@@ -616,7 +633,7 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
         return new_fingerprint(*args, **kwargs)
 
     monkeypatch.setattr(
-        b_video, "LTX_A2V_RUN_STATIC_FAST_PROFILE",
+        b_video, "LTX_A2V_RUN_OPTIMIZED_PROFILE",
         LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
     )
     monkeypatch.setattr(
@@ -653,7 +670,7 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
                 "positive_prompt_enhanced": False,
             }), encoding="utf-8")
     b_video._save_json(old_run / "manifest.json", previous)
-    monkeypatch.setattr(b_video, "LTX_A2V_RUN_STATIC_FAST_PROFILE", v5)
+    monkeypatch.setattr(b_video, "LTX_A2V_RUN_OPTIMIZED_PROFILE", v5)
     monkeypatch.setattr(b_video, "LTX_PRODUCTION_I2V_PROFILE", selected_i2v)
     monkeypatch.setattr(b_video, "_fingerprint", new_fingerprint)
     monkeypatch.setattr(
@@ -686,7 +703,12 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
         "positive_prompt_enhanced": False,
         "quantization": "fp8_cast",
         "offload_mode": "none",
-        "diffvae_backend_effective": "eager",
+        "diffvae_backend_effective": "triton",
+        "vae_backend_request": LTX_A2V_RUN_VAE_BACKEND,
+        "guidance_forward_batch_size": LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE,
+        "progressive_block_group_size": LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
+        "stage1_residency": "gpu",
+        "stage2_residency": "progressive_cpu",
         "stage_1_image_strength": 0.8,
         "video_cfg_scale": 1.25,
     }), encoding="utf-8")
@@ -780,12 +802,17 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     ], check=True, capture_output=True)
     metadata = tmp_path / "worker-metadata.json"
     metadata.write_text(json.dumps({
-        "generation_profile": LTX_A2V_RUN_STATIC_FAST_PROFILE,
+        "generation_profile": LTX_A2V_RUN_OPTIMIZED_PROFILE,
         "negative_prompt_applied": True,
         "positive_prompt_enhanced": False,
         "quantization": "fp8_cast",
         "offload_mode": "none",
-        "diffvae_backend_effective": "eager",
+        "diffvae_backend_effective": "triton",
+        "vae_backend_request": LTX_A2V_RUN_VAE_BACKEND,
+        "guidance_forward_batch_size": LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE,
+        "progressive_block_group_size": LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
+        "stage1_residency": "gpu",
+        "stage2_residency": "progressive_cpu",
         "stage_1_image_strength": 0.8,
         "video_cfg_scale": 1.25,
     }), encoding="utf-8")

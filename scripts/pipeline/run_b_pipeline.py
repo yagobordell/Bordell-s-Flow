@@ -1179,19 +1179,21 @@ def _require_ltx_safe_a2v_worker() -> None:
     load_dotenv(repo_root / "config" / "app.env", override=False)
     load_dotenv(repo_root / "config" / "salad.env", override=False)
     load_dotenv(repo_root / ".env", override=False)
-    expected = os.getenv("SALAD_LTX25_RUN_STATIC_FP8_IMAGE", "").strip()
+    expected = os.getenv("SALAD_LTX25_RUN_V2_IMAGE", "").strip()
     if not re.fullmatch(r"[^ ]+@sha256:[0-9a-fA-F]{64}", expected):
         raise RuntimeError(
-            "Fast static A2V run requires SALAD_LTX25_RUN_STATIC_FP8_IMAGE="
+            "Promoted A2V run-v2 requires SALAD_LTX25_RUN_V2_IMAGE="
             "<repository>@sha256:<64-hex-digest> in config/salad.env. "
-            "Build and publish this feature branch as a NEW worker image, "
-            "then Prepare the stopped ltx25 group with that exact digest."
+            "Build and publish a worker image containing the promoted "
+            "Triton + progressive-group8 runtime, then Prepare the stopped "
+            "ltx25 group with that exact digest."
         )
+    previous_run = os.getenv("SALAD_LTX25_RUN_STATIC_FP8_IMAGE", "").strip()
     legacy = os.getenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", "").strip()
-    if legacy and legacy == expected:
+    if expected and expected in {previous_run, legacy}:
         raise RuntimeError(
-            "Fast static A2V cannot reuse the older disk-streamed worker digest. "
-            "Publish a new image containing LTX_A2V_RUN_STATIC_FAST_PROFILE."
+            "Promoted A2V run-v2 cannot reuse an older run-v1/pageable worker digest. "
+            "Publish a new image containing LTX_A2V_RUN_OPTIMIZED_PROFILE."
         )
     document = json.loads(
         (Path(__file__).resolve().parents[2] / "deploy" / "salad" / "services.json")

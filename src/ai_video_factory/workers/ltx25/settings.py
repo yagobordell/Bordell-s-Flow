@@ -24,8 +24,16 @@ class LTX25WorkerSettings(InferenceWorkerSettings):
         default="both", validation_alias="LTX_WORKER_TASK_MODE"
     )
 
+    experimental_a2v_batch2_enabled: bool = Field(
+        default=False, validation_alias="LTX_EXPERIMENTAL_A2V_BATCH2_ENABLED",
+    )
+
     @model_validator(mode="after")
     def validate_ltx25(self) -> Self:
+        if self.experimental_a2v_batch2_enabled and self.task_mode != "a2v_experimental":
+            raise ValueError(
+                "A2V batch2 may only register in the isolated a2v_experimental group"
+            )
         if not self.model_repository.strip():
             raise ValueError("LTX_MODEL_REPOSITORY must be non-empty")
         if not self.device.strip():

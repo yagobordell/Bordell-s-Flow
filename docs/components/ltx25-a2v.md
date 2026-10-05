@@ -33,56 +33,52 @@ the shared replay/idempotency path.
 ## Optimized professional `run` A2V
 
 New professional `run` generations use the immutable
-`LTX_A2V_RUN_STATIC_FAST_PROFILE`
-(`ltx25-a2v-static-reference-distilled-fp8none-eager-a95ab-run-v1`).
-Unlike direct A2V's approved reference profile, this selection retains
-B2's existing static-camera negative prompt, stage-1 image strength 0.8,
-video CFG 1.25, 8+3 steps, upward audio padding, frozen conditioning,
-seed/prompt/geometry/fps and decoder Eager. Only FP8 CAST model residency
-changes from disk streaming to no CPU offload.
+`LTX_A2V_RUN_OPTIMIZED_PROFILE`
+(`ltx25-a2v-static-reference-distilled-fp8none-triton-progressive8-a95ab-run-v2`).
+The generation recipe remains the accepted static-camera reference recipe:
+the same negative prompt, stage-1 image strength 0.8, video CFG 1.25,
+8+3 diffusion schedule, frozen audio conditioning, seed, prompt and fps.
+The promoted execution path uses FP8 CAST, GPU-resident Stage 1, strict
+Triton DiffVAE and CPU-progressive Stage 2 with block group size 8.
 
-All new B2 A2V jobs use a new stable request identity and the new B2 run
-fingerprint. Completed v4 disk-streamed clips are **not** inherited as if
-they were generated using no-offload. Finished older run directories and
-job identities remain untouched. Generated metadata must verify the
-requested immutable profile, FP8 CAST, no offload, Eager, unchanged
-static-camera guidance and parameters before accepting an MP4.
+Normal `run` continues to request 1280x720/24 output so A2V and I2V clips
+share the same downstream composition geometry. The validated batch2 test
+used a real GPU batch of two and therefore fused a true effective B4
+conditional/unconditional transformer forward. A normal single A2V request
+has an effective CFG batch of two; its configured forward cap remains 4 so
+the worker does not introduce an artificial split, but it does not fabricate
+a second video merely to claim B4.
+
+All new B2 A2V jobs use the run-v2 profile in their request identity and run
+fingerprint. Historical run-v1 jobs remain immutable/replayable. Before an
+MP4 is accepted, the sidecar must prove the run-v2 profile, FP8 CAST,
+no-offload Stage 1, strict Triton, guidance cap 4, progressive group 8,
+GPU Stage 1, progressive-CPU Stage 2 and the unchanged static-camera
+generation parameters.
 
 **Rollout gate:** `scripts/pipeline/run_b_pipeline.py` requires
-`SALAD_LTX25_RUN_STATIC_FP8_IMAGE=<repository>@sha256:<digest>` in the
-operator's `config/salad.env` and verifies that the current production
-Salad LTX A2V group actually uses that digest before any paid B2 A2V
-submission. The old `SALAD_LTX25_PAGEABLE_A2V_IMAGE` cannot be reused.
-A source-branch change alone does not deploy a Docker image.
+`SALAD_LTX25_RUN_V2_IMAGE=<repository>@sha256:<digest>` and verifies that
+the normal Salad A2V group is serving exactly that immutable image before a
+new paid A2V submission. The digest cannot equal the historical
+`SALAD_LTX25_RUN_STATIC_FP8_IMAGE` or
+`SALAD_LTX25_PAGEABLE_A2V_IMAGE`. Source-code merge alone does not deploy
+the worker; a new Docker image must be built, pinned and prepared separately.
 
-**RTX 5090 static-profile acceptance (2026-10-04):** A separate real
-5-second mono 24-kHz WAV and avatar image were submitted to the normal
-`video.ltx25.audio_to_video` task using the immutable static-fast
-profile with `A Person speaking to the camera.` as the prompt and seed
-4242. Job `ltx-a2v-b2-static-test-20261004173620-be37868638f8` completed
-without replay: 121 H.264 video frames at 1280x720 and 24 fps, matching
-5.041667-second AAC output with 0.041667 s temporal-grid padding.
-Reported FP8 CAST / offload `none` / Eager decoder, immutable
-`distilled_static_reference` recipe, negative static-camera guidance,
-stage-1 image strength 0.8, video CFG 1.25, 8+3 diffusion steps and
-frozen speech conditioning. MP4 SHA-256:
-`dba7beae84dfd39354c9bed6682414e9896485ee888297db17e3ed8e56f62a3f`.
-Measured 130.84 s inference and 151.59 s total for this initial sample;
-peak allocated VRAM ~24.43 GiB. The operator accepted the generated
-lip-sync, and the reference WAV and generated MP4 were independently
-inspected for stream validity and speech continuity. The guarded
-production-group experiment finished with `RESTORE_OK` and the old
-production image and `a2v` task mode restored; it did **not** deploy
-the experimental image permanently.
+**RTX 5090 run-v2 acceptance (2026-10-05):** the controlled Full-HD paired
+trial used the exact Eager baseline inputs, independent seeds 5243/5244,
+true GPU batch2, guidance forward batch 4, strict Triton and progressive
+Stage2 group8. It completed both 1920x1080/24 outputs with 137 frames and
+audio. Transformer inference was 192.54 s for the pair. Stage1 showed zero
+process swap growth and no detected host pressure; the observed process
+VmHWM was about 35.8 GB and peak allocated VRAM about 28.8 GB. Cgroup memory
+counters were not exposed, so this does not prove the exact container-wide
+peak; production therefore retains the validated 60-GiB host-memory class.
 
-This is a real acceptance of the **static** recipe's functionality and
-lip-sync, not a warm-throughput or extended-stability comparison against
-the previous disk-streamed static B2 recipe. The ~101.55 s warm figure
-belongs to the separate non-static reference recipe; do not apply it
-to the static profile. Source-code merge alone does not update Salad:
-a separately controlled production image rollout must pin the tested
-digest and set `SALAD_LTX25_RUN_STATIC_FP8_IMAGE` before a normal paid
-professional `run` can use this profile.
+Against the approved Eager pair, sample A measured mean PSNR 40.05 dB /
+SSIM 0.98415 and sample B 40.61 dB / 0.98446. Both audio-envelope lag
+comparisons reported a 0.0-s delta. The operator accepted this performance
+for promotion. The run-v2 implementation keeps the generation recipe fixed
+and promotes only the validated execution backend choices.
 
 ## Validated fast reference production profile
 

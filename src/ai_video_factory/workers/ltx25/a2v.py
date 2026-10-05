@@ -74,6 +74,16 @@ LTX_A2V_PRODUCTION_FAST_PROFILE = "ltx25-a2v-reference-distilled-fp8none-eager-a
 LTX_A2V_RUN_STATIC_FAST_PROFILE = (
     "ltx25-a2v-static-reference-distilled-fp8none-eager-a95ab-run-v1"
 )
+# Promoted run identity after the validated B4 + Triton + progressive-group8
+# 1080p batch2 trial. Historical run-v1 requests remain immutable/replayable.
+# A production single-video request cannot have a real B4 tensor because its
+# CFG batch is only two; the cap remains four so no artificial split is added.
+LTX_A2V_RUN_OPTIMIZED_PROFILE = (
+    "ltx25-a2v-static-reference-distilled-fp8none-triton-progressive8-a95ab-run-v2"
+)
+LTX_A2V_RUN_VAE_BACKEND = "triton_experimental"
+LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE = 4
+LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE = 8
 LTX_A2V_EXPERIMENTS = {
     LTX_A2V_BENCH_CPU_PROFILE: ("cpu", "eager"),
     LTX_A2V_BENCH_NONE_PROFILE: ("none", "eager"),
@@ -88,6 +98,7 @@ LTX_A2V_RESIDENCY_PROFILES = {
     **LTX_A2V_EXPERIMENTS,
     LTX_A2V_PRODUCTION_FAST_PROFILE: ("none", "eager"),
     LTX_A2V_RUN_STATIC_FAST_PROFILE: ("none", "eager"),
+    LTX_A2V_RUN_OPTIMIZED_PROFILE: ("none", "triton"),
 }
 LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v5"
 LTX_A2V_REFERENCE_GENERATION_PROFILE = (
@@ -150,6 +161,9 @@ class LTXAudioToVideoParameters(BaseModel):
     width: int = Field(default=1280, gt=0, le=8192)
     height: int = Field(default=720, gt=0, le=8192)
     fps: int = Field(default=24, gt=0, le=120)
+    vae_backend: str = "eager"
+    guidance_forward_batch_size: int = 2
+    progressive_block_group_size: int = 1
 
     @field_validator("generation_profile")
     @classmethod
@@ -158,6 +172,7 @@ class LTXAudioToVideoParameters(BaseModel):
             LTX_A2V_GENERATION_PROFILE,
             LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_RUN_STATIC_FAST_PROFILE,
+            LTX_A2V_RUN_OPTIMIZED_PROFILE,
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
@@ -184,12 +199,40 @@ class LTXAudioToVideoParameters(BaseModel):
 
     @model_validator(mode="after")
     def validate_shape(self) -> LTXAudioToVideoParameters:
-        if (self.width, self.height) != (1280, 720):
+        if (self.width, self.height) not in ((1280, 720), (1920, 1080)):
             if self.width % 64 != 0 or self.height % 64 != 0:
                 raise ValueError(
                     "LTX-2.5 two-stage dimensions must be divisible by 64, except the "
                     "canonical 1280x720 profile which uses deterministic internal grid padding"
                 )
+        if self.vae_backend not in ("eager", "triton_experimental"):
+            raise ValueError("vae_backend must be eager or triton_experimental")
+        if self.guidance_forward_batch_size not in (2, 4):
+            raise ValueError("guidance_forward_batch_size must be 2 or 4")
+        if self.progressive_block_group_size not in (1, 2, 4, 8):
+            raise ValueError("progressive_block_group_size must be 1, 2, 4 or 8")
+        optimized = self.generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE
+        requested_optimization = (
+            self.vae_backend != "eager"
+            or self.guidance_forward_batch_size != 2
+            or self.progressive_block_group_size != 1
+        )
+        if optimized:
+            if (
+                self.vae_backend != LTX_A2V_RUN_VAE_BACKEND
+                or self.guidance_forward_batch_size
+                != LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE
+                or self.progressive_block_group_size
+                != LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE
+            ):
+                raise ValueError(
+                    "run-v2 requires the approved Triton + guidance-cap4 + "
+                    "progressive-group8 configuration"
+                )
+        elif requested_optimization:
+            raise ValueError(
+                "A2V optimization knobs require the immutable run-v2 profile"
+            )
         return self
 
 
@@ -934,6 +977,7 @@ class DirectLTX25AudioToVideoBackend:
         self._pipeline_profile: str | None = None
         self._pipeline_effective_backend: str | None = None
         self._pipeline_params: Any | None = None
+        self._triton_gpu_probe_validated = False
         self._mode_controller.register("audio_to_video", self._release_pipeline_locked)
 
     @property
@@ -985,6 +1029,7 @@ class DirectLTX25AudioToVideoBackend:
         profiled = experimental or parameters.generation_profile in (
             LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_RUN_STATIC_FAST_PROFILE,
+            LTX_A2V_RUN_OPTIMIZED_PROFILE,
         )
         # CUDA synchronization is deliberately opt-in: it changes benchmark
         # overhead but neither tensors nor the original production execution.
@@ -1001,6 +1046,7 @@ class DirectLTX25AudioToVideoBackend:
         )
         static_reference = parameters.generation_profile in (
             LTX_A2V_RUN_STATIC_FAST_PROFILE,
+            LTX_A2V_RUN_OPTIMIZED_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
@@ -1013,6 +1059,7 @@ class DirectLTX25AudioToVideoBackend:
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_RUN_STATIC_FAST_PROFILE,
+            LTX_A2V_RUN_OPTIMIZED_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
@@ -1090,8 +1137,13 @@ class DirectLTX25AudioToVideoBackend:
             diagnostic_checkpoint("a2v.pipeline.build.start")
             with bindings.torch.inference_mode():
                 build_started = time.monotonic()
+                triton_probe_seconds = 0.0
+                if parameters.generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE:
+                    triton_probe_seconds = self._ensure_triton_gpu_probe()
                 pipeline, built_now = self._get_or_build_pipeline(
-                    bindings, generation_profile=parameters.generation_profile
+                    bindings,
+                    generation_profile=parameters.generation_profile,
+                    requested_pair_vae_backend=parameters.vae_backend,
                 )
                 model_load_seconds = time.monotonic() - build_started if built_now else 0.0
                 diagnostic_checkpoint("a2v.pipeline.build.done", sync_cuda=True)
@@ -1289,6 +1341,31 @@ class DirectLTX25AudioToVideoBackend:
                             parameters.generation_profile
                         ][0],
                         "diffvae_backend_effective": self._pipeline_effective_backend,
+                        "vae_backend_request": parameters.vae_backend,
+                        "guidance_forward_batch_size": (
+                            parameters.guidance_forward_batch_size
+                        ),
+                        "guidance_forward_mode": (
+                            "single_effective_b2_with_b4_cap"
+                            if parameters.guidance_forward_batch_size == 4
+                            else "single_effective_b2"
+                        ),
+                        "progressive_block_group_size": (
+                            parameters.progressive_block_group_size
+                        ),
+                        "stage1_residency": (
+                            "gpu"
+                            if parameters.generation_profile
+                            == LTX_A2V_RUN_OPTIMIZED_PROFILE
+                            else None
+                        ),
+                        "stage2_residency": (
+                            "progressive_cpu"
+                            if parameters.generation_profile
+                            == LTX_A2V_RUN_OPTIMIZED_PROFILE
+                            else None
+                        ),
+                        "triton_gpu_probe_seconds": triton_probe_seconds,
                         "pipeline_reused": not built_now,
                         "cuda_peak_reset": metrics.cuda_peak_reset,
                         **experimental_timings,
@@ -1375,6 +1452,25 @@ class DirectLTX25AudioToVideoBackend:
                 else "eager"
             ),
             "diffvae_backend_effective": self._pipeline_effective_backend,
+            "vae_backend_request": parameters.vae_backend,
+            "guidance_forward_batch_size": parameters.guidance_forward_batch_size,
+            "guidance_forward_mode": (
+                "single_effective_b2_with_b4_cap"
+                if parameters.guidance_forward_batch_size == 4
+                else "single_effective_b2"
+            ),
+            "progressive_block_group_size": parameters.progressive_block_group_size,
+            "stage1_residency": (
+                "gpu"
+                if parameters.generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE
+                else None
+            ),
+            "stage2_residency": (
+                "progressive_cpu"
+                if parameters.generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE
+                else None
+            ),
+            "triton_gpu_probe_seconds": triton_probe_seconds,
             "activation_budget_cap_bytes": (
                 LTX_A2V_SAFE_TILING_BUDGET_BYTES
                 if parameters.generation_profile
@@ -1440,6 +1536,299 @@ class DirectLTX25AudioToVideoBackend:
             **(metrics.cuda_peak() if metrics is not None else {}),
         }
 
+
+    def generate_pair(
+        self, *,
+        image_a: Path, audio_a: Path,
+        image_b: Path, audio_b: Path,
+        output_a: Path, output_b: Path,
+        parameters_a: LTXAudioToVideoParameters,
+        parameters_b: LTXAudioToVideoParameters,
+        vae_backend: str = "eager",
+        guidance_forward_batch_size: int = 2,
+        max_stage1_major_page_faults: int = 0,
+        max_stage1_swap_growth_bytes: int = 0,
+        progressive_block_group_size: int = 1,
+        min_checkpoint_direct_read_mibps: float = 0.0,
+        max_stage1_build_seconds: float = 0.0,
+    ) -> dict[str, Any]:
+        """Isolated true GPU-B2 Full HD static-reference A2V; no B1 fallback.
+
+        Audio is decoded, padded and individually Audio-VAE encoded exactly
+        as B1. The two frozen audio latents are aligned on the SAME 8k+1
+        frame grid before any transformer weights enter the GPU.
+        """
+        if any(
+            p.generation_profile != LTX_A2V_RUN_STATIC_FAST_PROFILE
+            or (p.width, p.height, p.fps) != (1920, 1080, 24)
+            for p in (parameters_a, parameters_b)
+        ) or parameters_a.seed == parameters_b.seed:
+            raise ValueError("A2V paired backend requires distinct static 1080p/24 inputs")
+        if vae_backend not in ("eager", "triton_experimental"):
+            raise ValueError("Unknown A2V B2 VAE backend")
+        if guidance_forward_batch_size not in (2, 4):
+            raise ValueError("A2V B2 guidance forward batch must be 2 or 4")
+        if max_stage1_major_page_faults < 0:
+            raise ValueError("A2V B2 fault diagnostic must not be negative")
+        if max_stage1_swap_growth_bytes < 0:
+            raise ValueError("A2V B2 swap-growth guard must not be negative")
+        if progressive_block_group_size not in (1, 2, 4, 8):
+            raise ValueError("A2V B2 progressive group size must be 1, 2, 4 or 8")
+        if not 0 <= min_checkpoint_direct_read_mibps <= 10000:
+            raise ValueError("Invalid A2V experimental checkpoint read minimum")
+        if not 0 <= max_stage1_build_seconds <= 3600:
+            raise ValueError("Invalid A2V experimental stage1 build cap")
+        start = time.monotonic()
+        plans = []
+        probes = []
+        # Complete BOTH audio preflights before invoking any GPU pipeline.
+        for label, path, output in (
+            ("a", audio_a, output_a), ("b", audio_b, output_b),
+        ):
+            probe = probe_audio(path)
+            _validate_audio_duration(probe, fps=24)
+            directory = output.parent / ("a2v_pair_" + label)
+            directory.mkdir(parents=True, exist_ok=True)
+            plan = _prepare_reference_pipeline_audio(
+                path, directory / "decoded.wav", directory / "conditioning.wav",
+                probe=probe, fps=24,
+            )
+            probes.append(probe)
+            plans.append(plan)
+        if plans[0].num_frames != plans[1].num_frames:
+            raise ValueError(
+                "A2V true B2 requires matching audio-driven 8k+1 frame counts; "
+                f"received {plans[0].num_frames} and {plans[1].num_frames}"
+            )
+        # Load the GPU-only paired module only after BOTH CPU audio grids
+        # match; malformed inputs must not even require CUDA dependencies.
+        from .paired_a2v import A2VSample, generate_paired_static_a2v
+        from .shared_a2v_decoder import SharedA2VDecoder
+
+        audio_prepared_seconds = time.monotonic() - start
+        results = ()
+        build_seconds = 0.0
+        inference_seconds = 0.0
+        phase_metrics: dict[str, Any] = {}
+        triton_probe_seconds = 0.0
+        per_clip_encode: list[float] = []
+        peak: int | None = None
+        try:
+            with self._lock:
+                self.ready()
+                bindings = self._get_bindings()
+                self._validate_runtime(bindings)
+                width, height = _pipeline_dimensions(parameters_a)
+                if (width, height) != (1920, 1088):
+                    raise RuntimeError("A2V padded Full HD grid unexpectedly changed")
+                samples = []
+                for label, image, params, plan, output in (
+                    ("a", image_a, parameters_a, plans[0], output_a),
+                    ("b", image_b, parameters_b, plans[1], output_b),
+                ):
+                    destination = output.parent / ("a2v_pair_" + label) / "avatar_grid.png"
+                    keyframe = _prepare_avatar_image(
+                        image, destination,
+                        requested_width=params.width, requested_height=params.height,
+                        pipeline_width=width, pipeline_height=height,
+                    )
+                    samples.append(A2VSample(
+                        prompt=params.prompt, seed=params.seed,
+                        image=bindings.image_conditioning_input(
+                            path=str(keyframe.resolve()), frame_idx=0,
+                            strength=1.0, crf=None,
+                        ),
+                        audio_path=str(plan.path.resolve()),
+                    ))
+                if min_checkpoint_direct_read_mibps:
+                    from .checkpoint_io import probe_checkpoint_direct_read
+
+                    io_facts = probe_checkpoint_direct_read(
+                        self._model_files.shared.transformer,
+                        minimum_mibps=min_checkpoint_direct_read_mibps,
+                    )
+                    phase_metrics["checkpoint_direct_io"] = io_facts
+                    logger.info("LTX25_A2V_CHECKPOINT_DIRECT_IO %s", json.dumps(io_facts))
+                with bindings.torch.inference_mode():
+                    if vae_backend == "triton_experimental":
+                        # Before the timed pair, run a fail-closed CUDA child;
+                        # a native kernel crash must not kill this worker.
+                        triton_probe_seconds = self._ensure_triton_gpu_probe()
+                    cuda = bindings.torch.cuda
+                    if self._device.startswith("cuda"):
+                        cuda.reset_peak_memory_stats()
+                    built_at = time.monotonic()
+                    pipeline, built = self._get_or_build_pipeline(
+                        bindings, generation_profile=LTX_A2V_RUN_STATIC_FAST_PROFILE,
+                        requested_pair_vae_backend=vae_backend,
+                    )
+                    build_seconds = time.monotonic() - built_at if built else 0.0
+                    if pipeline.stage_1._is_streaming:
+                        raise RuntimeError("A2V B2 stage1 must remain fully GPU resident")
+                    selected_backend = (
+                        "triton" if vae_backend == "triton_experimental" else "eager"
+                    )
+                    if self._pipeline_effective_backend != selected_backend:
+                        raise RuntimeError(
+                            "A2V B2 VAE backend mismatch: refusing silent fallback"
+                        )
+
+                    def stage2_factory() -> Any:
+                        return self._build_progressive_stage2(
+                            pipeline,
+                            bindings,
+                            progressive_block_group_size,
+                        )
+
+                    inference_at = time.monotonic()
+                    results = generate_paired_static_a2v(
+                        pipeline, (samples[0], samples[1]),
+                        width=width, height=height, fps=24,
+                        frames=plans[0].num_frames,
+                        stage2_factory=stage2_factory,
+                        phase_metrics=phase_metrics,
+                        max_transformer_forward_batch_size=guidance_forward_batch_size,
+                        max_stage1_major_page_faults=max_stage1_major_page_faults,
+                        max_stage1_swap_growth_bytes=max_stage1_swap_growth_bytes,
+                        max_stage1_build_seconds=max_stage1_build_seconds,
+                    )
+                    inference_seconds = time.monotonic() - inference_at
+                    original_decoder = pipeline.video_decoder
+                    with SharedA2VDecoder(original_decoder) as decoder:
+                        pipeline.video_decoder = decoder
+                        try:
+                            for result, output in zip(
+                                results, (output_a, output_b), strict=True,
+                            ):
+                                clip = _crop_video_to_requested(
+                                    result.video,
+                                    requested_width=1920, requested_height=1080,
+                                )
+                                output.parent.mkdir(parents=True, exist_ok=True)
+                                encode_at = time.monotonic()
+                                bindings.encode_video(
+                                    video=clip, fps=24, audio=result.audio,
+                                    output_path=str(output),
+                                    video_chunks_number=bindings.get_video_chunks_number(
+                                        result.num_frames, result.tiling_config,
+                                    ),
+                                )
+                                per_clip_encode.append(time.monotonic() - encode_at)
+                            if decoder.completed != 2:
+                                raise RuntimeError("A2V paired decoder did not finish both clips")
+                        finally:
+                            pipeline.video_decoder = original_decoder
+                    if self._device.startswith("cuda"):
+                        peak = int(cuda.max_memory_allocated())
+        except BaseException:
+            # Do not publish a partial atomic pair if either decode/mux failed.
+            output_a.unlink(missing_ok=True)
+            output_b.unlink(missing_ok=True)
+            raise
+
+        outputs = []
+        for i, (probe, plan, result, path) in enumerate(zip(
+            probes, plans, results, (output_a, output_b), strict=True,
+        )):
+            outputs.append({
+                "sample": "a" if i == 0 else "b",
+                "seed": (parameters_a.seed, parameters_b.seed)[i],
+                "input_audio_duration_seconds": probe.duration_seconds,
+                "conditioning_audio_samples": plan.conditioning_probe.sample_count,
+                "decoded_speech_samples": plan.decoded_probe.sample_count,
+                "audio_padding_samples": plan.padding_samples,
+                "effective_audio_duration_seconds": _result_audio_duration(result.audio),
+                "output_video_duration_seconds": _output_duration(path),
+                "num_frames": result.num_frames,
+                "fps": 24,
+                "width": 1920,
+                "height": 1080,
+                "encode_decode_mux_seconds": per_clip_encode[i],
+            })
+        report = {
+            "mode": "batch2",
+            "actual_gpu_batch_size": 2,
+            "generation_profile": LTX_A2V_RUN_STATIC_FAST_PROFILE,
+            "full_hd_gpu_validation_pending": True,
+            "quality_status": "B1_VIDEO_AND_LIPSYNC_SIDE_BY_SIDE_REVIEW_REQUIRED",
+            "input_audio_grid_frames_equal": True,
+            "audio_frozen_stage1": True,
+            "audio_frozen_stage2": True,
+            "stage1_residency": "gpu",
+            "stage2_residency": "progressive_cpu",
+            "stage1_sampler": LTX_A2V_REFERENCE_RECIPE.stage_1_sampler,
+            "stage2_sampler": LTX_A2V_REFERENCE_RECIPE.stage_2_sampler,
+            "video_vae_backend": selected_backend,
+            "vae_backend_request": vae_backend,
+            "guidance_forward_batch_size": guidance_forward_batch_size,
+            "max_stage1_major_page_faults": max_stage1_major_page_faults,
+            "max_stage1_swap_growth_bytes": max_stage1_swap_growth_bytes,
+            "progressive_block_group_size": progressive_block_group_size,
+            "min_checkpoint_direct_read_mibps": min_checkpoint_direct_read_mibps,
+            "max_stage1_build_seconds": max_stage1_build_seconds,
+            "guidance_forward_mode": (
+                "fused_effective_b4" if guidance_forward_batch_size == 4
+                else "split_effective_b4_into_b2"
+            ),
+            "triton_gpu_probe_seconds": triton_probe_seconds,
+            "phase_metrics": phase_metrics,
+            "shared_vae_decoder_builds": 1,
+            "pipeline_build_seconds": build_seconds,
+            "audio_preparation_seconds": audio_prepared_seconds,
+            "transformer_inference_seconds": inference_seconds,
+            "peak_vram_bytes": peak,
+            "elapsed_seconds": time.monotonic() - start,
+            "outputs": outputs,
+        }
+        logger.info("LTX25_A2V_B2_METRICS %s", json.dumps(report, sort_keys=True))
+        return report
+
+    def _ensure_triton_gpu_probe(self) -> float:
+        if self._triton_gpu_probe_validated:
+            return 0.0
+        from .triton_a2v_probe import ensure_triton_gpu_probe
+
+        seconds = ensure_triton_gpu_probe()
+        self._triton_gpu_probe_validated = True
+        return seconds
+
+    def _build_progressive_stage2(
+        self,
+        pipeline: Any,
+        bindings: _A2VBindings,
+        group_size: int,
+    ) -> Any:
+        if group_size not in (1, 2, 4, 8):
+            raise ValueError("A2V progressive group size must be 1, 2, 4 or 8")
+        original = pipeline.stage_2
+        quantization = original._quantization
+        if quantization is None or quantization.fuse_rule is None:
+            raise RuntimeError("A2V requires identical FP8-cast stage2 policy")
+        alternate = type(original).from_checkpoint(
+            checkpoint_path=str(self._model_files.shared.transformer),
+            dtype=original._dtype,
+            device=original._device,
+            loras=(),
+            quantization=quantization,
+            offload_mode=bindings.offload_mode.CPU,
+            alloc_trim_strategy=original._alloc_trim_strategy,
+            scale_factors=original.video_scale_factors,
+        )
+        builder = alternate._transformer_builder
+        if not getattr(builder, "_i2v_progressive_pinned_blocks_supported", False):
+            raise RuntimeError(
+                "A2V requires the pinned progressive-loader Docker patch"
+            )
+        if getattr(builder.registry, "_cache_weights", None) is not False:
+            raise RuntimeError("A2V progressive stage2 must disable weight caching")
+        builder._i2v_progressive_pinned_blocks = True
+        builder._a2v_progressive_block_group_size = group_size
+        logger.info(
+            "LTX25_A2V_STAGE2_POLICY offload=cpu progressive=true group_size=%d",
+            group_size,
+        )
+        return alternate
+
     def _get_bindings(self) -> _A2VBindings:
         if self._bindings is None:
             self._bindings = _load_a2v_bindings()
@@ -1470,10 +1859,25 @@ class DirectLTX25AudioToVideoBackend:
                 empty_cache()
 
     def _get_or_build_pipeline(
-        self, bindings: _A2VBindings, *, generation_profile: str
+        self, bindings: _A2VBindings, *, generation_profile: str,
+        requested_pair_vae_backend: str = "eager",
     ) -> tuple[Any, bool]:
+        if requested_pair_vae_backend not in ("eager", "triton_experimental"):
+            raise ValueError("Unknown requested A2V pair VAE backend")
+        # Respect existing opt-in single-video Triton benchmark profiles;
+        # do not rebuild/wipe their warm pipeline on every call.
+        selected_profile_backend = LTX_A2V_RESIDENCY_PROFILES.get(
+            generation_profile, ("cpu", "eager"),
+        )[1]
+        expected_effective = (
+            "triton"
+            if requested_pair_vae_backend == "triton_experimental"
+            or selected_profile_backend == "triton"
+            else "eager"
+        )
         if self._pipeline is not None:
-            if self._pipeline_profile == generation_profile:
+            if (self._pipeline_profile == generation_profile
+                    and self._pipeline_effective_backend == expected_effective):
                 return self._pipeline, False
             self._release_pipeline_locked()
 
@@ -1483,6 +1887,7 @@ class DirectLTX25AudioToVideoBackend:
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_RUN_STATIC_FAST_PROFILE,
+            LTX_A2V_RUN_OPTIMIZED_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
@@ -1519,13 +1924,23 @@ class DirectLTX25AudioToVideoBackend:
             ]
         )
         _force_diffvae_eager_sdpa(bindings.diffvae_apply)
-        requested_backend = LTX_A2V_RESIDENCY_PROFILES.get(generation_profile, ("cpu", "eager"))[1]
+        requested_backend = (
+            "triton" if requested_pair_vae_backend == "triton_experimental"
+            else LTX_A2V_RESIDENCY_PROFILES.get(
+                generation_profile, ("cpu", "eager"),
+            )[1]
+        )
         effective_backend = "eager"
         if requested_backend == "triton":
             if callable(bindings.triton_probe) and bindings.triton_probe():
                 bindings.diffvae_apply.triton_na_available = bindings.triton_probe
                 effective_backend = "triton"
             else:
+                if (
+                    requested_pair_vae_backend == "triton_experimental"
+                    or generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE
+                ):
+                    raise RuntimeError("A2V strict Triton backend unavailable")
                 logger.warning("LTX25_A2V_TRITON_UNAVAILABLE fallback=eager")
         pipeline_cls = (
             bindings.reference_a2v_pipeline if reference else bindings.a2v_pipeline
@@ -1560,6 +1975,12 @@ class DirectLTX25AudioToVideoBackend:
             quantization=quantization,
             offload_mode=offload_mode,
         )
+        if generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE:
+            self._pipeline.stage_2 = self._build_progressive_stage2(
+                self._pipeline,
+                bindings,
+                LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
+            )
         if generation_profile in LTX_A2V_EXPERIMENTS and selected_offload == "cpu":
             # An explicit hook exists only on our reference pipeline; fake
             # CPU-only test pipelines deliberately do not import LTX or torch.

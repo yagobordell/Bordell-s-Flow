@@ -1,0 +1,205 @@
+name: Experimental A2V 1080p B2 isolated CI
+
+on:
+  push:
+    branches:
+      - feature/ltx25-a2v-b2-1080-lipsync
+    paths:
+      - "src/ai_video_factory/workers/ltx25/**"
+      - "docker/workers/ltx25/**"
+      - "scripts/smoke/*a2v_batch2*"
+      - "tests/unit/workers/test_ltx_a2v*"
+      - "tests/unit/workers/test_ltx_resource_metrics.py"
+      - "tests/unit/workers/test_ltx25_worker.py"
+      - "deploy/salad/services.json"
+      - ".github/workflows/ci-a2v-batch2-experimental.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: a2v-b2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  a2v-b2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.18"
+      - run: uv sync --locked --extra dev
+      - name: Scoped Ruff
+        run: |
+          uv run --no-sync ruff check \
+            src/ai_video_factory/workers/ltx25/a2v.py \
+            src/ai_video_factory/workers/ltx25/paired_a2v.py \
+            src/ai_video_factory/workers/ltx25/resource_metrics.py \
+            src/ai_video_factory/workers/ltx25/checkpoint_io.py \
+            src/ai_video_factory/workers/ltx25/triton_a2v_probe.py \
+            src/ai_video_factory/workers/ltx25/experimental_a2v_batch2.py \
+            src/ai_video_factory/workers/ltx25/shared_a2v_decoder.py \
+            src/ai_video_factory/workers/ltx25/settings.py \
+            src/ai_video_factory/workers/ltx25/worker_factory.py \
+            scripts/smoke/submit_ltx25_a2v_batch2_smoke.py \
+            scripts/smoke/compare_ltx25_a2v_b2_vs_b1.py \
+            scripts/smoke/verify_ltx25_a2v_batch2_image.py \
+            tests/unit/workers/test_ltx_a2v_batch2_experimental.py \
+            tests/unit/workers/test_ltx_a2v_checkpoint_io_and_grouped_stage2.py \
+            tests/unit/workers/test_ltx_a2v_b2_quality_preserving_optimizations.py \
+            tests/unit/workers/test_ltx_a2v_b2_b1_comparison.py \
+            tests/unit/workers/test_ltx_a2v_shared_decoder.py \
+            tests/unit/workers/test_ltx_resource_metrics.py \
+            tests/unit/workers/test_ltx_model_download_watchdog.py \
+            tests/unit/workers/test_ltx_salad_readiness.py
+      - name: CPU-only A2V and existing audio regressions
+        run: |
+          uv run --no-sync python -m pytest -q \
+            tests/unit/workers/test_ltx_a2v_batch2_experimental.py \
+            tests/unit/workers/test_ltx_a2v_checkpoint_io_and_grouped_stage2.py \
+            tests/unit/workers/test_ltx_a2v_b2_quality_preserving_optimizations.py \
+            tests/unit/workers/test_ltx_a2v_b2_b1_comparison.py \
+            tests/unit/workers/test_ltx_a2v_shared_decoder.py \
+            tests/unit/workers/test_ltx_resource_metrics.py \
+            tests/unit/workers/test_ltx_model_download_watchdog.py \
+            tests/unit/workers/test_ltx_salad_readiness.py \
+            tests/unit/workers/test_ltx_a2v_task.py
+      - name: PowerShell syntax
+        shell: pwsh
+        run: |
+          foreach ($Path in @(
+              "scripts/smoke/run_ltx25_a2v_batch2_trial.ps1",
+              "scripts/salad/manage_salad_worker.ps1"
+          )) {
+              $tokens = $null
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                  (Resolve-Path $Path),
+                  [ref]$tokens, [ref]$errors
+              ) | Out-Null
+              if ($errors) { throw ("${Path}: " + ($errors -join '; ')) }
+          }
+      - name: Strict source and pinned patch compile
+        run: |
+          uv run --no-sync python -m compileall -q \
+            src/ai_video_factory/workers/ltx25/a2v.py \
+            src/ai_video_factory/workers/ltx25/paired_a2v.py \
+            src/ai_video_factory/workers/ltx25/resource_metrics.py \
+            src/ai_video_factory/workers/ltx25/checkpoint_io.py \
+            src/ai_video_factory/workers/ltx25/triton_a2v_probe.py \
+            src/ai_video_factory/workers/ltx25/experimental_a2v_batch2.py \
+            scripts/smoke/submit_ltx25_a2v_batch2_smoke.py \
+            scripts/smoke/compare_ltx25_a2v_b2_vs_b1.py \
+            scripts/smoke/verify_ltx25_a2v_batch2_image.py \
+            docker/workers/ltx25/patch_i2v_progressive.py \
+            tests/unit/workers/test_ltx_a2v_checkpoint_io_and_grouped_stage2.py \
+            tests/unit/workers/test_ltx_resource_metrics.py
+
+
+  general-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bordell_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d bordell_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/bordell_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - name: Sync project
+        run: uv sync --locked --extra dev
+      - name: Dependency consistency
+        run: uv pip check
+      - name: Ruff
+        run: uv run --no-sync ruff check .
+      - name: Initialize test Postgres
+        shell: bash
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y postgresql-client
+          fi
+          psql "$TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 \
+            -c 'CREATE ROLE anon; CREATE ROLE authenticated;'
+          for migration in infra/sql/*.sql; do
+            psql "$TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f "$migration"
+          done
+      - name: Install required FFmpeg and QR test tools
+        run: |
+          packages=()
+          if ! command -v ffmpeg >/dev/null 2>&1; then packages+=(ffmpeg); fi
+          if ! command -v zbarimg >/dev/null 2>&1; then packages+=(zbar-tools); fi
+          if (("${#packages[@]}" > 0)); then
+            sudo apt-get update -qq
+            sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+              --no-install-recommends "${packages[@]}"
+          fi
+          command -v ffmpeg
+          command -v zbarimg
+      - name: Scan tracked files for OAuth secrets
+        run: uv run --no-sync python scripts/security/check_youtube_secrets.py
+      - name: Pytest
+        run: uv run --no-sync python -m pytest
+      - name: PowerShell syntax
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          @(Get-Item run.ps1) + @(Get-ChildItem scripts -Recurse -Filter *.ps1) |
+              ForEach-Object {
+              $Tokens = $null
+              $Errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                  $_.FullName,
+                  [ref]$Tokens,
+                  [ref]$Errors
+              ) | Out-Null
+              if ($Errors) {
+                  throw "PowerShell parse errors in $($_.FullName): $($Errors -join '; ')"
+              }
+          }
+      - name: Short PowerShell runner smoke (no API calls)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $PSNativeCommandUseErrorActionPreference = $false
+          $HelpText = (& pwsh -NoProfile -File ./run.ps1 --help 2>&1) -join "`n"
+          $HelpExit = $LASTEXITCODE
+          $NoScript = (& pwsh -NoProfile -File ./run.ps1 test2 Jorge --no-image 2>&1) -join "`n"
+          $NoScriptExit = $LASTEXITCODE
+          $ErrorActionPreference = "Stop"
+          if ($HelpExit -ne 0 -or $HelpText -notmatch '--no-image') {
+              throw "run.ps1 did not forward --help to the B pipeline"
+          }
+          if ($NoScriptExit -eq 0 -or $NoScript -notmatch 'Jorge') {
+              throw "run.ps1 did not reach managed avatar/script discovery"
+          }
+          if ($NoScript -notmatch 'No PNG avatar found') {
+              throw "run.ps1 did not reach script selection without paid API calls"
+          }
+          exit 0
+      - name: Bash syntax
+        shell: bash
+        run: find docker -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n

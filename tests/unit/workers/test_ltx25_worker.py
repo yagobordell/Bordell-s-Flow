@@ -23,6 +23,7 @@ def test_ltx25_prepare_treats_missing_model_files_as_bootstrap_pending(
     with pytest.raises(ModelBootstrapPendingError, match="Missing LTX-2.5 model files"):
         backend.prepare()
 
+
 def test_ltx25_worker_settings_use_shared_inference_core() -> None:
     settings = LTX25WorkerSettings(
         _env_file=None,
@@ -36,6 +37,7 @@ def test_ltx25_worker_settings_use_shared_inference_core() -> None:
     assert settings.model_repository == "Lightricks/LTX-2.5"
     assert settings.device == "cuda"
 
+
 def test_ltx25_salad_manifest_has_dedicated_group_and_capacity() -> None:
     manifest_path = Path("deploy/salad/services.json")
     document = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -46,12 +48,13 @@ def test_ltx25_salad_manifest_has_dedicated_group_and_capacity() -> None:
     assert service["dockerfile"] == "docker/workers/ltx25/Dockerfile"
     assert "ltx25" in service["image"]
     assert service["resources"]["gpu_class_names"] == ["RTX 5090 (32 GB)"]
-    assert service["resources"]["memory"] == 40960
+    assert service["resources"]["memory"] == 61440
     assert service["resources"]["storage_amount"] == 171798691840
     assert "gpu_classes" not in service["resources"]
     assert service["capacity"] == {"start_replicas": 1, "max_replicas": 4}
     assert document["stack"]["shared_environment"]["INFERENCE_WORKER_MODE"] == "production"
     assert "GPU_WORKER_RUNTIME" not in service["environment"]
+
 
 def test_ltx25_container_is_model_specific() -> None:
     dockerfile = Path("docker/workers/ltx25/Dockerfile")
@@ -64,6 +67,7 @@ def test_ltx25_container_is_model_specific() -> None:
     ).read_text(encoding="utf-8")
     assert "COPY src /opt/factory/src" in text
     assert "COPY . /opt/factory" not in text
+
 
 def test_ltx25_model_download_uses_xet_with_resilient_timeouts() -> None:
     dockerfile = Path("docker/workers/ltx25/Dockerfile").read_text(encoding="utf-8")
