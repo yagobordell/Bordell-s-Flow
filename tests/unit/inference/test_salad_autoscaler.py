@@ -1251,6 +1251,35 @@ def test_run_ltx_defaults_scale_second_gpu_only_above_thirty_jobs(
         assert demands["ltx25"].ideal_replicas == expected
 
 
+def test_large_run_keeps_second_ltx_gpu_after_backlog_drops_below_thirty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "SALAD_AUTOSCALER_LTX25_I2V_JOBS_PER_REPLICA",
+        "SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    config = load_predictive_autoscaler_config(
+        stage_bindings=(_binding("ltx25", max_replicas=2),)
+    )
+    rows = _pending_rows(8)
+    for row in rows:
+        row["run_id"] = "run-large"
+        row["run_job_count"] = 40
+
+    demand = build_global_demands(
+        rows_by_stage={"ltx25": rows},
+        runtime_by_stage={"ltx25": 200.0},
+        config=config,
+        now=datetime(2026, 10, 5, tzinfo=UTC),
+    )["ltx25"]
+
+    assert demand.ideal_replicas == 2
+    assert demand.jobs_per_replica == 30
+    assert demand.job_count_target == 2
+
+
 def test_cold_start_longer_than_drain_window_never_exceeds_active_jobs() -> None:
     stage = "ltx25"
     config = _config(
