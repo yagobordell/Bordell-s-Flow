@@ -323,6 +323,8 @@ def _mark_complete(
     state["artifact"] = artifact
     state["sha256"] = generated["sha256"]
     state["status"] = "completed"
+    state.pop("http_status", None)
+    state.pop("error", None)
     _atomic_json(state_path, state)
     return artifact
 
@@ -396,6 +398,8 @@ def _one_image(
         # A prior 4xx is a definite failed request. A later explicit run may
         # retry it while all completed paid images remain cached.
         state["status"] = "direct_pending"
+        state.pop("http_status", None)
+        state.pop("error", None)
         _atomic_json(state_path, state)
     if state["status"] != "direct_pending":
         raise ImageGenerationError(f"Unrecognized image state for {job['beat_id']}")
