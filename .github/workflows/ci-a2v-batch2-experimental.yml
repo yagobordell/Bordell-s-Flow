@@ -9,6 +9,7 @@ on:
       - "docker/workers/ltx25/**"
       - "scripts/smoke/*a2v_batch2*"
       - "tests/unit/workers/test_ltx_a2v*"
+      - "tests/unit/workers/test_ltx_resource_metrics.py"
       - "deploy/salad/services.json"
       - ".github/workflows/ci-a2v-batch2-experimental.yml"
   workflow_dispatch:
