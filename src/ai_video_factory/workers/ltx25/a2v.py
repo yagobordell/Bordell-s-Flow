@@ -1341,25 +1341,31 @@ class DirectLTX25AudioToVideoBackend:
                             parameters.generation_profile
                         ][0],
                         "diffvae_backend_effective": self._pipeline_effective_backend,
-            "vae_backend_request": parameters.vae_backend,
-            "guidance_forward_batch_size": parameters.guidance_forward_batch_size,
-            "guidance_forward_mode": (
-                "single_effective_b2_with_b4_cap"
-                if parameters.guidance_forward_batch_size == 4
-                else "single_effective_b2"
-            ),
-            "progressive_block_group_size": parameters.progressive_block_group_size,
-            "stage1_residency": (
-                "gpu"
-                if parameters.generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE
-                else None
-            ),
-            "stage2_residency": (
-                "progressive_cpu"
-                if parameters.generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE
-                else None
-            ),
-            "triton_gpu_probe_seconds": triton_probe_seconds,
+                        "vae_backend_request": parameters.vae_backend,
+                        "guidance_forward_batch_size": (
+                            parameters.guidance_forward_batch_size
+                        ),
+                        "guidance_forward_mode": (
+                            "single_effective_b2_with_b4_cap"
+                            if parameters.guidance_forward_batch_size == 4
+                            else "single_effective_b2"
+                        ),
+                        "progressive_block_group_size": (
+                            parameters.progressive_block_group_size
+                        ),
+                        "stage1_residency": (
+                            "gpu"
+                            if parameters.generation_profile
+                            == LTX_A2V_RUN_OPTIMIZED_PROFILE
+                            else None
+                        ),
+                        "stage2_residency": (
+                            "progressive_cpu"
+                            if parameters.generation_profile
+                            == LTX_A2V_RUN_OPTIMIZED_PROFILE
+                            else None
+                        ),
+                        "triton_gpu_probe_seconds": triton_probe_seconds,
                         "pipeline_reused": not built_now,
                         "cuda_peak_reset": metrics.cuda_peak_reset,
                         **experimental_timings,
@@ -1446,6 +1452,25 @@ class DirectLTX25AudioToVideoBackend:
                 else "eager"
             ),
             "diffvae_backend_effective": self._pipeline_effective_backend,
+            "vae_backend_request": parameters.vae_backend,
+            "guidance_forward_batch_size": parameters.guidance_forward_batch_size,
+            "guidance_forward_mode": (
+                "single_effective_b2_with_b4_cap"
+                if parameters.guidance_forward_batch_size == 4
+                else "single_effective_b2"
+            ),
+            "progressive_block_group_size": parameters.progressive_block_group_size,
+            "stage1_residency": (
+                "gpu"
+                if parameters.generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE
+                else None
+            ),
+            "stage2_residency": (
+                "progressive_cpu"
+                if parameters.generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE
+                else None
+            ),
+            "triton_gpu_probe_seconds": triton_probe_seconds,
             "activation_budget_cap_bytes": (
                 LTX_A2V_SAFE_TILING_BUDGET_BYTES
                 if parameters.generation_profile
