@@ -628,7 +628,7 @@ def test_1080p_run_never_reuses_legacy_720p_ltx_clips(
     from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
 
     plan, audio, images = _case(tmp_path, monkeypatch)
-    v5 = b_video.LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
+    current_a2v_profile = b_video.LTX_A2V_RUN_OPTIMIZED_PROFILE
     selected_i2v = b_video.LTX_PRODUCTION_I2V_PROFILE
     new_fingerprint = b_video._fingerprint
 
@@ -674,7 +674,7 @@ def test_1080p_run_never_reuses_legacy_720p_ltx_clips(
                 "positive_prompt_enhanced": False,
             }), encoding="utf-8")
     b_video._save_json(old_run / "manifest.json", previous)
-    monkeypatch.setattr(b_video, "LTX_A2V_RUN_OPTIMIZED_PROFILE", v5)
+    monkeypatch.setattr(b_video, "LTX_A2V_RUN_OPTIMIZED_PROFILE", current_a2v_profile)
     monkeypatch.setattr(b_video, "LTX_PRODUCTION_I2V_PROFILE", selected_i2v)
     monkeypatch.setattr(b_video, "_fingerprint", new_fingerprint)
     monkeypatch.setattr(
