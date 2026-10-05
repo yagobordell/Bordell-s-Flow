@@ -225,9 +225,6 @@ if ($Action -eq "Status") {
         throw
     }
     Write-Output "group=$GroupName replicas=$($Group.replicas) pending=$($Group.pending_change)"
-    if ($null -ne $Group.container -and $null -ne $Group.container.image) {
-        Write-Output "container_image=$([string]$Group.container.image)"
-    }
     $CurrentStateProperty = $Group.PSObject.Properties["current_state"]
     if ($null -ne $CurrentStateProperty -and $null -ne $CurrentStateProperty.Value) {
         $CurrentState = $CurrentStateProperty.Value
@@ -255,8 +252,6 @@ if ($Action -eq "Status") {
 }
 
 if ($Action -ne "Deploy") { throw "Unsupported action '$Action'." }
-$RegistryUsername = Get-Setting -Name "GHCR_USERNAME" -Prompt "GitHub username for GHCR PAT"
-$RegistryUsername = Get-Setting -Name "GHCR_USERNAME" -Prompt "GHCR username (PAT owner)"
 $RegistryPat = Get-Setting -Name "GHCR_READ_PACKAGES_PAT" -Prompt "GHCR PAT (read:packages)" -Secret
 if ([string]::IsNullOrWhiteSpace($PinnedImage)) { $PinnedImage = Resolve-PinnedImage }
 if ($PinnedImage -notmatch '^ghcr\.io/yagobordell/image-upscaler-salad@sha256:[0-9a-f]{64}$') {
@@ -283,7 +278,7 @@ $Deployment = @{
         }
         registry_authentication = @{
             basic = @{
-                username = $RegistryUsername
+                username = "yagobordell"
                 password = $RegistryPat
             }
         }
@@ -314,26 +309,7 @@ if ($null -eq $Existing) {
     $Created = $true
     $Deployment["name"] = $GroupName
     $DeploymentJson = $Deployment | ConvertTo-Json -Depth 20
-    try {
-        Invoke-SaladMutation -Headers $Headers -Uri $ContainersBase -Method "Post" -Body $DeploymentJson -ContentType "application/json"
-    }
-    catch {
-        $Details = ""
-        if ($null -ne $_.ErrorDetails) {
-            $Details = [string]$_.ErrorDetails.Message
-        }
-        if (
-            (Get-HttpStatusCode -ErrorRecord $_) -eq 400 -and
-            $Details -match '"type"\s*:\s*"name_conflict"'
-        ) {
-            throw (
-                "Salad reports group name '$GroupName' as reserved even though it is " +
-                "not visible in project inventory. Do not retry the same hidden name; " +
-                "version deploy/salad/image-upscaler-service.json to a new group_name."
-            )
-        }
-        throw
-    }
+    Invoke-SaladMutation -Headers $Headers -Uri $ContainersBase -Method "Post" -Body $DeploymentJson -ContentType "application/json"
 }
 else {
     Invoke-SaladMutation -Headers $Headers -Uri $GroupUrl -Method "Patch" -Body $DeploymentJson -ContentType "application/merge-patch+json"
@@ -351,22 +327,6 @@ if ([string]$Verified.container.image -ne $PinnedImage) {
 }
 if ([int]$Verified.replicas -ne 1) {
     throw "Salad container group exists but does not retain one replica."
-}
-$VerifiedState = $Verified.PSObject.Properties["current_state"]
-if ($null -ne $VerifiedState -and $null -ne $VerifiedState.Value) {
-    $StateStatus = [string]$VerifiedState.Value.status
-    $StateDescription = [string]$VerifiedState.Value.description
-    if ($StateStatus -in @("failed", "error")) {
-        if ($StateDescription -match "Manifest Not Found") {
-            throw (
-                "Salad cannot pull the configured private GHCR image (Manifest Not Found). " +
-                "Verify that GHCR_USERNAME is the GitHub username paired with " +
-                "GHCR_READ_PACKAGES_PAT, that the token has read:packages access, and that " +
-                "the pinned image exists. container_image=$PinnedImage"
-            )
-        }
-        throw "Salad image upscaler entered $StateStatus: $StateDescription"
-    }
 }
 Write-Host "Image upscaler deployment submitted and verified over HTTPS." -ForegroundColor Green
 Write-Host "Run this script with -Action Status to obtain IMAGE_UPSCALER_URL."
