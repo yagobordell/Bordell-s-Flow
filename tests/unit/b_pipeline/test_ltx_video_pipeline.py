@@ -21,8 +21,8 @@ from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
     LTX_A2V_RUN_VAE_BACKEND,
     LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
-    LTXAudioToVideoParameters,
     LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
+    LTXAudioToVideoParameters,
 )
 from ai_video_factory.workers.ltx25.model import (
     LTX_GENERATION_PROFILE,
