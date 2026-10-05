@@ -346,7 +346,11 @@ def public_report(
         else "partial"
     )
     run["asset_path_base"] = "script_folder"
-    run["published_media"] = dict(stages)
+    run["published_media"] = {
+        stage: stages[stage]
+        for stage in ("audio", "images", "preview", "video")
+        if stage in stages
+    }
     audio = run.get("audio_generation")
     if isinstance(audio, dict) and stages.get("audio") == "completed":
         audio["file"] = "media/audio/narracion.wav"
