@@ -23,12 +23,21 @@ from ai_video_factory.providers.inference_jobs import (
 )
 from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_RECOMMENDED_MAX_SECONDS,
-    LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+    LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE,
+    LTX_A2V_RUN_OPTIMIZED_PROFILE,
+    LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
+    LTX_A2V_RUN_VAE_BACKEND,
     LTX_A2V_TASK,
 )
 from ai_video_factory.workers.ltx25.jobs import ltx_a2v_application_job_id
 
 _FPS = 24
+_WIDTH = 1920
+_HEIGHT = 1080
+_RUN_SCHEMA = "casero-cta-final-v3"
+_RUN_A2V_STATE = "a2v_run_v3_state.json"
+_RUN_A2V_VIDEO = "avatar_a2v_run_v3.mp4"
+_RUN_FINAL_VIDEO = "final_cta_run_v3.mp4"
 _PROMPT = "A Person speaking to the camera."
 
 
@@ -99,8 +108,8 @@ def _cta_request(directory: Path, assets: dict[str, Any]) -> InferenceJobRequest
     job_id = ltx_a2v_application_job_id(
         segment_id="casero-ebook-cta", prompt=_PROMPT,
         image_sha256=image_sha, audio_sha256=audio_sha, seed=4242,
-        width=1280, height=720, fps=_FPS,
-        generation_profile=LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
+        width=_WIDTH, height=_HEIGHT, fps=_FPS,
+        generation_profile=LTX_A2V_RUN_OPTIMIZED_PROFILE,
     )
     return InferenceJobRequest(
         job_id=job_id, task=LTX_A2V_TASK, max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
@@ -114,10 +123,36 @@ def _cta_request(directory: Path, assets: dict[str, Any]) -> InferenceJobRequest
         sidecar_outputs={"metadata": ObjectOutput(
             key=f"jobs/{job_id}/metadata.json",content_type="application/json")},
         parameters={
-            "generation_profile": LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
-            "prompt": _PROMPT, "seed": 4242, "width": 1280, "height": 720,
+            "generation_profile": LTX_A2V_RUN_OPTIMIZED_PROFILE,
+            "prompt": _PROMPT, "seed": 4242, "width": _WIDTH, "height": _HEIGHT,
             "fps": _FPS,
+            "vae_backend": LTX_A2V_RUN_VAE_BACKEND,
+            "guidance_forward_batch_size": LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE,
+            "progressive_block_group_size": LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
         },
+    )
+
+
+def current_cta_ready(directory: Path) -> bool:
+    """Return true only for the current verified Full-HD/run-v2 CTA artifact."""
+    completed = directory/"completed.json"
+    if not completed.is_file():
+        return False
+    ready = _read(completed)
+    final_meta = ready.get("final")
+    if not isinstance(final_meta, dict):
+        raise CTACompositionError("Stored CTA completion has no final artifact")
+    file_name = final_meta.get("file")
+    digest = final_meta.get("sha256")
+    if not isinstance(file_name, str) or not isinstance(digest, str):
+        raise CTACompositionError("Stored CTA completion has invalid final metadata")
+    file = directory/file_name
+    if file.is_symlink() or not file.is_file() or sha256_file(file) != digest:
+        raise CTACompositionError("Stored reusable CTA is missing or modified")
+    return (
+        ready.get("schema_version") == _RUN_SCHEMA
+        and ready.get("width") == _WIDTH
+        and ready.get("height") == _HEIGHT
     )
 
 
@@ -125,15 +160,11 @@ def submit_cta_first(
     directory: Path, executor: InferenceJobExecutor, queue: Any,
 ) -> tuple[Any, Any] | None:
     """Submit before ALL normal B2 queue.submit calls, not merely wait first."""
-    if (directory/"completed.json").is_file():
-        ready = _read(directory/"completed.json")
-        file = directory/ready.get("final", {}).get("file", "")
-        if not file.is_file() or sha256_file(file) != ready["final"]["sha256"]:
-            raise CTACompositionError("Stored reusable CTA is missing or modified")
+    if current_cta_ready(directory):
         return None
     assets = cta_assets(directory)
     request = _cta_request(directory, assets)
-    state_file = directory/"a2v_state.json"
+    state_file = directory/_RUN_A2V_STATE
     if state_file.is_file():
         state = _read(state_file)
         if state.get("request_sha256") != request.fingerprint():
@@ -161,13 +192,24 @@ def finish_cta(directory: Path, submitted: tuple[Any, Any] | None,
                executor: InferenceJobExecutor) -> Path:
     if submitted is None:
         record = _read(directory/"completed.json")
-        return directory/record["final"]["file"]
+        if (
+            record.get("schema_version") != _RUN_SCHEMA
+            or record.get("width") != _WIDTH
+            or record.get("height") != _HEIGHT
+        ):
+            raise CTACompositionError("Reusable CTA does not match the Full-HD run contract")
+        final = directory/record["final"]["file"]
+        if final.is_symlink() or not final.is_file() or (
+            sha256_file(final) != record["final"]["sha256"]
+        ):
+            raise CTACompositionError("Stored Full-HD reusable CTA is missing or modified")
+        return final
     request, assets = submitted
-    video = directory/"avatar_a2v.mp4"
-    a2v_state = directory/"a2v_state.json"
+    video = directory/_RUN_A2V_VIDEO
+    a2v_state = directory/_RUN_A2V_STATE
     if not video.is_file():
         response = executor.execute(request, metadata={"capability":"casero-cta-a2v"})
-        temporary = directory/"avatar_a2v.part.mp4"
+        temporary = directory/"avatar_a2v_run_v3.part.mp4"
         if temporary.is_symlink():
             raise CTACompositionError("Unsafe CTA A2V temporary path")
         executor.download_output(response, temporary)
@@ -184,15 +226,29 @@ def finish_cta(directory: Path, submitted: tuple[Any, Any] | None,
         stat = executor.storage.stat(metadata.key)
         if stat is None:
             raise CTACompositionError("CTA A2V metadata sidecar is missing")
-        sidecar = directory/"avatar_a2v.metadata.json"
+        sidecar = directory/"avatar_a2v_run_v3.metadata.json"
         executor.storage.download(metadata.key, sidecar)
         if sha256_file(sidecar) != stat.metadata.get("artifact-sha256"):
             raise CTACompositionError("CTA A2V metadata sidecar differs")
         data = _read(sidecar)
-        if (data.get("generation_profile") != LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
+        if (
+            data.get("generation_profile") != LTX_A2V_RUN_OPTIMIZED_PROFILE
             or data.get("negative_prompt_applied") is not True
-            or data.get("positive_prompt_enhanced") is not False):
-            raise CTACompositionError("CTA A2V did not use pinned static profile")
+            or data.get("positive_prompt_enhanced") is not False
+            or data.get("quantization") != "fp8_cast"
+            or data.get("offload_mode") != "none"
+            or data.get("diffvae_backend_effective") != "triton"
+            or data.get("vae_backend_request") != LTX_A2V_RUN_VAE_BACKEND
+            or data.get("guidance_forward_batch_size")
+            != LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE
+            or data.get("progressive_block_group_size")
+            != LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE
+            or data.get("stage1_residency") != "gpu"
+            or data.get("stage2_residency") != "progressive_cpu"
+            or data.get("stage_1_image_strength") != 0.8
+            or data.get("video_cfg_scale") != 1.25
+        ):
+            raise CTACompositionError("CTA A2V did not use the promoted run-v2 profile")
         temporary.replace(video)
         _atomic(a2v_state, {
             "status": "completed", "job_id": request.job_id,
@@ -216,10 +272,17 @@ def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None, 
             sha256_file(path) != previous["final"]["sha256"]
         ):
             raise CTACompositionError("Reusable CTA digest changed")
-        if not upgrade_legacy:
+        if upgrade_legacy:
+            if previous.get("schema_version") != "casero-cta-final-v1":
+                raise CTACompositionError("Only a legacy CTA can be locally upgraded")
+        elif (
+            previous.get("schema_version") == _RUN_SCHEMA
+            and previous.get("width") == _WIDTH
+            and previous.get("height") == _HEIGHT
+        ):
             return path
-        if previous.get("schema_version") != "casero-cta-final-v1":
-            raise CTACompositionError("Only a legacy CTA can be locally upgraded")
+        # A verified v1/v2 completion is intentionally retained on disk but is
+        # not reused by a current run: new production video is Full HD/run-v2.
     if assets is None:
         assets = cta_assets(directory)
     half = assets["half_seconds"]
@@ -229,19 +292,34 @@ def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None, 
     tail_frames = total_frames-first_frames
     if first_frames < 1 or tail_frames < 1:
         raise CTACompositionError("CTA media frame count invalid")
-    destination = directory/("final_cta_v2.mp4" if upgrade_legacy else "final_cta.mp4")
-    temp = directory/("final_cta_v2.part.mp4" if upgrade_legacy else "final_cta.part.mp4")
-    if temp.exists() or temp.is_symlink() or destination.is_symlink():
-        raise CTACompositionError("Unreconciled CTA final composition")
+
+    if upgrade_legacy:
+        a2v_video = directory/"avatar_a2v.mp4"
+        destination = directory/"final_cta_v2.mp4"
+        temp = directory/"final_cta_v2.part.mp4"
+        render_width, render_height = 1280, 720
+    else:
+        a2v_video = directory/_RUN_A2V_VIDEO
+        destination = directory/_RUN_FINAL_VIDEO
+        temp = directory/"final_cta_run_v3.part.mp4"
+        render_width, render_height = _WIDTH, _HEIGHT
+    if (
+        a2v_video.is_symlink() or not a2v_video.is_file()
+        or temp.exists() or temp.is_symlink() or destination.is_symlink()
+    ):
+        raise CTACompositionError("Unreconciled or missing CTA composition input/output")
+
     # First 50% of speech uses A2V. The other 50% plus 1500ms uses QR motion.
     _ffmpeg([
-        "-i", str(directory/"avatar_a2v.mp4"),
+        "-i", str(a2v_video),
         "-i", str(assets["files"]["motion"]),
         "-i", str(assets["files"]["master"]),
         "-filter_complex",
-        f"[0:v]fps={_FPS},scale=1280:720,tpad=stop_mode=clone:stop_duration=0.3,"
+        f"[0:v]fps={_FPS},scale={render_width}:{render_height},"
+        "tpad=stop_mode=clone:stop_duration=0.3,"
         f"trim=end_frame={first_frames},setpts=N/({_FPS}*TB)[a];"
-        f"[1:v]fps={_FPS},scale=1280:720,tpad=stop_mode=clone:stop_duration=0.3,"
+        f"[1:v]fps={_FPS},scale={render_width}:{render_height},"
+        "tpad=stop_mode=clone:stop_duration=0.3,"
         f"trim=end_frame={tail_frames},setpts=N/({_FPS}*TB)[m];"
         "[a][m]concat=n=2:v=1:a=0,format=yuv420p[v];"
         "[2:a]apad=pad_dur=1.5[audio]",
@@ -253,12 +331,19 @@ def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None, 
     temp.replace(destination)
     v2_motion = (directory / "motion_v2_state.json").is_file()
     completion = {
-        "schema_version": "casero-cta-final-v2" if v2_motion else "casero-cta-final-v1",
+        "schema_version": (
+            "casero-cta-final-v2" if upgrade_legacy and v2_motion
+            else "casero-cta-final-v1" if upgrade_legacy
+            else _RUN_SCHEMA
+        ),
         "status": "completed",
         "duration_seconds": duration, "speech_seconds": assets["duration_seconds"],
         "first_half_seconds": half, "trailing_silence_seconds": 1.5,
         "final": {"file": destination.name, "sha256": sha256_file(destination)},
     }
+    if not upgrade_legacy:
+        completion["width"] = _WIDTH
+        completion["height"] = _HEIGHT
     if v2_motion:
         completion["motion_copy_sha256"] = sha256_file(directory / "motion_copy.json")
     if upgrade_legacy:
@@ -281,7 +366,6 @@ def compose_reusable_cta(directory: Path, assets: dict[str, Any] | None = None, 
     else:
         _atomic(directory/"completed.json", completion)
     return destination
-
 
 def upgrade_cached_cta(directory: Path) -> Path:
     """Upgrade a v1 CTA with local A2V+speech only, preserving paid artifacts."""
