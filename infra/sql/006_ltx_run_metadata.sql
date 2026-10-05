@@ -14,7 +14,7 @@ CREATE INDEX IF NOT EXISTS gpu_jobs_task_status_run_idx
     ON gpu.jobs (task, status, run_id, created_at);
 
 COMMENT ON COLUMN gpu.jobs.run_id IS
-    'Application run identity used only by capacity orchestration; never passed to model parameters.';
+    'Application run identity used only by capacity orchestration and never passed to model parameters.';
 COMMENT ON COLUMN gpu.jobs.run_job_count IS
     'Original per-task run batch size used by cost-aware LTX burst scaling.';
 
