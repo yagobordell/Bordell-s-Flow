@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "src/ai_video_factory/workflows/b_video.py"
+      - "src/ai_video_factory/workflows/casero_cta.py"
       - "src/ai_video_factory/workflows/casero_cta_video.py"
       - "src/ai_video_factory/compositor/b_video.py"
       - "src/ai_video_factory/workers/ltx25/**"
