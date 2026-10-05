@@ -56,15 +56,6 @@ def test_direct_client_uses_the_same_model_prompt_size_quality_and_single_image(
     assert destination.read_bytes() == _png()
 
 
-@pytest.mark.parametrize(
-    ("content", "message"),
-    [
-        (_png(1024, 1024), "dimensions"),
-        (_png(fmt="JPEG"), "not a PNG"),
-        (b"not a PNG", "invalid PNG"),
-    ],
-    ids=["wrong_dimensions", "jpeg", "garbage"],
-)
 def test_direct_client_surfaces_definite_http_400_rejection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -98,6 +89,15 @@ def test_direct_client_surfaces_definite_http_400_rejection(
     assert not (tmp_path / "bad.png").exists()
 
 
+@pytest.mark.parametrize(
+    ("content", "message"),
+    [
+        (_png(1024, 1024), "dimensions"),
+        (_png(fmt="JPEG"), "not a PNG"),
+        (b"not a PNG", "invalid PNG"),
+    ],
+    ids=["wrong_dimensions", "jpeg", "garbage"],
+)
 def test_direct_client_refuses_invalid_artifacts_without_writing(
     content: bytes, message: str, tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
