@@ -228,5 +228,7 @@ def test_only_experimental_a2v_uses_early_direct_storage_gate() -> None:
     gemma = "text_encoders/gemma4"
     assert scratch < network < first_download < checkpoint
     assert gemma not in script or checkpoint < script.index(gemma)
-    assert a2v["SALAD_NETWORK_MIN_DOWNLOAD_MBPS"] == "450"
+    assert a2v["SALAD_NETWORK_MIN_DOWNLOAD_MBPS"] == "40"
     assert a2v["LTX_MODEL_DOWNLOAD_MIN_THROUGHPUT_MIBPS"] == "35"
+    assert a2v["LTX_MODEL_DOWNLOAD_THROUGHPUT_GRACE_SECONDS"] == "120"
+    assert a2v["LTX_MODEL_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS"] == "120"
