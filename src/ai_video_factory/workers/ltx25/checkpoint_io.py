@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import mmap
 import os
-import uuid
 import statistics
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
