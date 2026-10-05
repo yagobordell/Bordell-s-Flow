@@ -1164,7 +1164,7 @@ def test_ltx_groups_have_independent_runtime_and_cold_start_calibration(
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_COLD_START_SECONDS", "1200")
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_I2V_RUNTIME_SECONDS", "240")
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_RUNTIME_SECONDS", "320")
-    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_I2V_JOBS_PER_REPLICA", "25")
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_I2V_JOBS_PER_REPLICA", "1")
     monkeypatch.setenv("SALAD_AUTOSCALER_ZERO_DEMAND_STABLE_POLLS", "1")
 
     config = load_predictive_autoscaler_config(
@@ -1183,10 +1183,27 @@ def test_ltx_groups_have_independent_runtime_and_cold_start_calibration(
         "ltx25": 320.0,
     }
     assert config.stage_jobs_per_replica == {
-        "ltx25_i2v": 25,
+        "ltx25_i2v": 1,
         "ltx25": 1,
     }
     assert config.zero_demand_stable_polls == 1
+
+
+def test_run_ltx_parallel_contract_rejects_sequential_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA", "2")
+    with pytest.raises(RuntimeError, match="jobs_per_replica=1"):
+        load_predictive_autoscaler_config(
+            stage_bindings=(_binding("ltx25", max_replicas=2),)
+        )
+
+    monkeypatch.delenv("SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA", raising=False)
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_MAX_REPLICAS", "1")
+    with pytest.raises(RuntimeError, match="at least 2 configured replicas"):
+        load_predictive_autoscaler_config(
+            stage_bindings=(_binding("ltx25", max_replicas=2),)
+        )
 
 
 def test_run_ltx_defaults_scale_two_pending_jobs_to_two_replicas(
