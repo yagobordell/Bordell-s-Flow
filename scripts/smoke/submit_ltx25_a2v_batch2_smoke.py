@@ -57,6 +57,7 @@ def parser() -> argparse.ArgumentParser:
         "--guidance-forward-batch-size", type=int, choices=(2, 4), default=2,
     )
     p.add_argument("--max-stage1-major-page-faults", type=int, default=0)
+    p.add_argument("--max-stage1-swap-growth-bytes", type=int, default=0)
     p.add_argument("--progressive-block-group-size", type=int,
                    choices=(1, 2, 4, 8), default=1)
     p.add_argument("--min-checkpoint-direct-read-mibps", type=float, default=0.0)
@@ -81,7 +82,9 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
     ):
         raise ValueError("Run ID must contain 1-65 ASCII letters, digits, - or _")
     if not 0 <= a.max_stage1_major_page_faults <= 1000000:
-        raise ValueError("Invalid experimental major-page-fault limit")
+        raise ValueError("Invalid experimental major-page-fault diagnostic")
+    if not 0 <= a.max_stage1_swap_growth_bytes <= 1 << 40:
+        raise ValueError("Invalid experimental stage1 swap-growth limit")
     if not 0 <= a.performance_target_seconds <= 10800:
         raise ValueError("Invalid experimental wall-time target")
     if not 0 <= a.min_checkpoint_direct_read_mibps <= 10000:
@@ -134,6 +137,7 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
         "vae_backend": a.vae_backend,
         "guidance_forward_batch_size": a.guidance_forward_batch_size,
         "max_stage1_major_page_faults": a.max_stage1_major_page_faults,
+        "max_stage1_swap_growth_bytes": a.max_stage1_swap_growth_bytes,
         "progressive_block_group_size": a.progressive_block_group_size,
         "min_checkpoint_direct_read_mibps": a.min_checkpoint_direct_read_mibps,
         "max_stage1_build_seconds": a.max_stage1_build_seconds,
@@ -150,6 +154,7 @@ def validate_inputs(a: argparse.Namespace) -> dict[str, Any]:
         "vae_backend": a.vae_backend,
         "guidance_forward_batch_size": a.guidance_forward_batch_size,
         "max_stage1_major_page_faults": a.max_stage1_major_page_faults,
+        "max_stage1_swap_growth_bytes": a.max_stage1_swap_growth_bytes,
         "progressive_block_group_size": a.progressive_block_group_size,
         "min_checkpoint_direct_read_mibps": a.min_checkpoint_direct_read_mibps,
         "max_stage1_build_seconds": a.max_stage1_build_seconds,
@@ -360,7 +365,9 @@ def main() -> None:
     if report.get("guidance_forward_batch_size") != a.guidance_forward_batch_size:
         raise RuntimeError("A2V reported a different guidance forward batch")
     if report.get("max_stage1_major_page_faults") != a.max_stage1_major_page_faults:
-        raise RuntimeError("A2V reported a different host paging guard")
+        raise RuntimeError("A2V reported a different major-fault diagnostic")
+    if report.get("max_stage1_swap_growth_bytes") != a.max_stage1_swap_growth_bytes:
+        raise RuntimeError("A2V reported a different swap-growth guard")
     for key in (
         "progressive_block_group_size",
         "min_checkpoint_direct_read_mibps",
