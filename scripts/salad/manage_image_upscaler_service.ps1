@@ -290,7 +290,26 @@ if ($null -eq $Existing) {
     $Created = $true
     $Deployment["name"] = $GroupName
     $DeploymentJson = $Deployment | ConvertTo-Json -Depth 20
-    Invoke-SaladMutation -Headers $Headers -Uri $ContainersBase -Method "Post" -Body $DeploymentJson -ContentType "application/json"
+    try {
+        Invoke-SaladMutation -Headers $Headers -Uri $ContainersBase -Method "Post" -Body $DeploymentJson -ContentType "application/json"
+    }
+    catch {
+        $Details = ""
+        if ($null -ne $_.ErrorDetails) {
+            $Details = [string]$_.ErrorDetails.Message
+        }
+        if (
+            (Get-HttpStatusCode -ErrorRecord $_) -eq 400 -and
+            $Details -match '"type"\s*:\s*"name_conflict"'
+        ) {
+            throw (
+                "Salad reports group name '$GroupName' as reserved even though it is " +
+                "not visible in project inventory. Do not retry the same hidden name; " +
+                "version deploy/salad/image-upscaler-service.json to a new group_name."
+            )
+        }
+        throw
+    }
 }
 else {
     Invoke-SaladMutation -Headers $Headers -Uri $GroupUrl -Method "Patch" -Body $DeploymentJson -ContentType "application/merge-patch+json"
