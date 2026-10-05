@@ -1184,9 +1184,42 @@ def test_ltx_groups_have_independent_runtime_and_cold_start_calibration(
     }
     assert config.stage_jobs_per_replica == {
         "ltx25_i2v": 25,
-        "ltx25": 30,
+        "ltx25": 1,
     }
     assert config.zero_demand_stable_polls == 1
+
+
+def test_run_ltx_defaults_scale_two_pending_jobs_to_two_replicas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "SALAD_AUTOSCALER_LTX25_I2V_JOBS_PER_REPLICA",
+        "SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    config = load_predictive_autoscaler_config(
+        stage_bindings=(
+            _binding("ltx25_i2v", max_replicas=2),
+            _binding("ltx25", max_replicas=2),
+        )
+    )
+
+    assert config.stage_jobs_per_replica == {
+        "ltx25_i2v": 1,
+        "ltx25": 1,
+    }
+    demands = build_global_demands(
+        rows_by_stage={
+            "ltx25_i2v": _pending_rows(2),
+            "ltx25": _pending_rows(2),
+        },
+        runtime_by_stage={"ltx25_i2v": 200.0, "ltx25": 200.0},
+        config=config,
+        now=datetime(2026, 10, 5, tzinfo=UTC),
+    )
+    assert demands["ltx25_i2v"].ideal_replicas == 2
+    assert demands["ltx25"].ideal_replicas == 2
 
 
 def test_cold_start_longer_than_drain_window_never_exceeds_active_jobs() -> None:
