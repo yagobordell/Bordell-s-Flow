@@ -13,7 +13,7 @@ from ai_video_factory.inference import salad_image_upscaler_start as startup
 def manifest(tmp_path):
     path = tmp_path / "upscaler.json"
     path.write_text(
-        json.dumps({"schema_version": 1, "service": {"group_name": "bordell-image-upscaler"}}),
+        json.dumps({"schema_version": 1, "service": {"group_name": "bordell-image-upscaler-v2"}}),
         encoding="utf-8",
     )
     return path
