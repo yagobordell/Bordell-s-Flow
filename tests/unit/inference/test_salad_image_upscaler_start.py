@@ -234,6 +234,28 @@ def test_usage_session_last_user_requests_stop(manifest):
     assert any("pg_advisory_unlock(" in query for query in queries)
 
 
+def test_usage_session_does_not_stop_after_finishing_exception(manifest):
+    salad = FakeSalad(
+        states=[("running", False)],
+        instances=[READY],
+    )
+    connection = FakeConnection(exclusive_available=True)
+
+    with pytest.raises(RuntimeError, match="ambiguous finishing"):
+        with startup.image_upscaler_usage(
+            api_key="fake-secret",
+            gateway_url="https://gateway.salad.cloud",
+            postgres_dsn="postgresql://fake",
+            manifest_path=manifest,
+            client=salad,
+            connection_factory=lambda _dsn: connection,
+        ):
+            raise RuntimeError("ambiguous finishing")
+
+    assert salad.stop_calls == 0
+    assert connection.closed is True
+
+
 def test_usage_session_does_not_stop_while_another_user_holds_shared_lock(manifest):
     salad = FakeSalad(states=[("running", False)], instances=[READY])
     connection = FakeConnection(exclusive_available=False)
