@@ -323,6 +323,8 @@ def build_b2_video_plan(
                     "no paid jobs were submitted"
                 ) from exc
 
+    group_counts = Counter(kind for kind, _first, _last in groups)
+    run_id = digest[:20]
     jobs: list[B2VideoJob] = []
     for ordinal, (kind, first, last) in enumerate(groups, start=1):
         selection = beats[first:last + 1]
@@ -366,6 +368,8 @@ def build_b2_video_plan(
                 ),
                 parameters={
                     "generation_profile": LTX_PRODUCTION_I2V_PROFILE,
+                    "run_id": run_id,
+                    "run_job_count": group_counts["i2v"],
                     "prompt": prompt, "seed": seed,
                     "width": _WIDTH, "height": _HEIGHT, "fps": _FPS,
                     "num_frames": num_frames,
@@ -420,6 +424,8 @@ def build_b2_video_plan(
                 )},
                 parameters={
                     "generation_profile": LTX_A2V_RUN_OPTIMIZED_PROFILE,
+                    "run_id": run_id,
+                    "run_job_count": group_counts["a2v"],
                     "prompt": a2v_prompt, "seed": seed,
                     "width": _WIDTH, "height": _HEIGHT, "fps": _FPS,
                     "vae_backend": LTX_A2V_RUN_VAE_BACKEND,
