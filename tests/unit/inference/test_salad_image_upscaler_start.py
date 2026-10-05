@@ -302,9 +302,9 @@ def test_pipeline_generates_paid_originals_before_waiting_for_salad():
     assert "if needs_x2:" in function
     assert function.index("generate_b2_images,") < function.index(
         "crop_grid_assets,"
-    ) < function.index("ensure_image_upscaler_ready,")
+    ) < function.index('manifest["finishing_status"] = "pending_upscaler"')
     assert function.index('manifest["finishing_status"] = "pending_upscaler"') < (
-        function.index("ensure_image_upscaler_ready,")
+        function.index("image_upscaler_usage(")
     )
     assert "image_upscaler_usage(" in function
     assert function.index("image_upscaler_usage(") < function.index(
