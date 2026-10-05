@@ -26,6 +26,7 @@ from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE
 
 _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", re.ASCII)
 _WORDS = re.compile(r"[^\W_]+", re.UNICODE)
+_STAGE_DIRECTION = re.compile(r"\[[^\[\]\r\n]+\]")
 _FPS = 30
 _WIDTH = 1280
 _HEIGHT = 720
@@ -95,6 +96,11 @@ def _tokens(text: str) -> list[str]:
         )
         for word in words
     ]
+
+
+def _spoken_tokens(text: str) -> list[str]:
+    """Tokenize only narration that the TTS is expected to speak aloud."""
+    return _tokens(_STAGE_DIRECTION.sub(" ", text))
 
 
 def _is_number_token(token: str) -> bool:
@@ -365,7 +371,7 @@ def build_stt_beat_timeline(
         ]
         if not beats:
             raise StaticPreviewError("B2 voice group has no beats")
-        expected_tokens = [_tokens(beat.get("text", "")) for _, beat in beats]
+        expected_tokens = [_spoken_tokens(beat.get("text", "")) for _, beat in beats]
         flat_expected = [token for words in expected_tokens for token in words]
         if not all(expected_tokens):
             raise StaticPreviewError(
