@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import json
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -17,7 +19,7 @@ from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
     LTX_A2V_RUN_VAE_BACKEND,
 )
-from ai_video_factory.workflows.casero_cta import split_cta_audio
+from ai_video_factory.workflows.casero_cta import prepare_casero_cta, split_cta_audio
 from ai_video_factory.workflows.casero_cta_video import _cta_request
 
 
@@ -47,6 +49,52 @@ def test_current_casero_cta_uses_full_hd_promoted_a2v_run_v2(tmp_path: Path) -> 
     assert request.parameters["progressive_block_group_size"] == (
         LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE
     )
+
+
+def test_prepare_casero_cta_reuses_current_full_hd_v3_without_paid_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    avatar = tmp_path / "Eva" / "Eva.png"
+    avatar.parent.mkdir(parents=True)
+    avatar.write_bytes(b"avatar")
+    cover = tmp_path / "cover.png"
+    cover.write_bytes(b"cover")
+    qr = tmp_path / "qr.png"
+    qr.write_bytes(b"qr")
+    directory = avatar.parent / "meta" / "cta"
+    directory.mkdir(parents=True)
+    final = directory / "final_cta_run_v3.mp4"
+    final.write_bytes(b"full-hd-cta")
+    digest = hashlib.sha256(final.read_bytes()).hexdigest()
+    (directory / "completed.json").write_text(
+        json.dumps({
+            "schema_version": "casero-cta-final-v3",
+            "status": "completed",
+            "width": 1920,
+            "height": 1080,
+            "final": {"file": final.name, "sha256": digest},
+        }),
+        encoding="utf-8",
+    )
+
+    import ai_video_factory.workflows.casero_cta_video as cta_video
+    monkeypatch.setattr(cta_video, "cta_assets", lambda _directory: {"ok": True})
+
+    result = asyncio.run(prepare_casero_cta(
+        avatar=avatar,
+        covers=SimpleNamespace(files=(cover,), sha256=("cover-sha",)),
+        qr_path=qr,
+        qr_url="https://example.test/qr",
+        script="CTA source script.",
+        voice_id="voice-1",
+        provider=SimpleNamespace(),
+        model="test-model",
+    ))
+
+    assert result["schema_version"] == "casero-cta-final-v3"
+    assert result["width"] == 1920
+    assert result["height"] == 1080
+    assert result["directory"] == str(directory)
 
 
 def test_covers_preserve_primary_order_and_survive_removed_originals(tmp_path: Path) -> None:
