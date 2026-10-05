@@ -57,11 +57,13 @@ shown; the fixed English QR instructions and the custom title still render.
 
 The CTA's first-half PCM audio (exactly half the sample count, using one
 silence sample to make odd-length recordings even) conditions a dedicated
-LTX A2V generation. On the shared Postgres queue, this request is published
-**before all uncached normal B2 requests**. A2V frames occupy the first half
-of CTA speech. The motion graphic occupies the second half plus exactly
-**1500 ms** at the end. The resulting full CTA (speech plus 1.5s silence)
-is retained under `data/<avatar>/meta/cta/final_cta.mp4` and reused.
+LTX A2V `run-v2` generation at 1920x1080/24fps. On the shared Postgres
+queue, this request is published **before all uncached normal B2 requests**.
+A2V frames occupy the first half of CTA speech. The motion graphic occupies
+the second half plus exactly **1500 ms** at the end. The current completion
+schema is `casero-cta-final-v3`; its verified Full-HD artifact is retained
+as `data/<avatar>/meta/cta/final_cta_run_v3.mp4` and reused without a new
+paid A2V request.
 
 For each casero video, the independently detected text boundary maps to the
 saved narration's real word-level STT. A frame-aligned cut inserts the cached
@@ -91,14 +93,15 @@ or paid GPU timing.
 
 ## Existing avatar CTA migration
 
-The next full casero generation automatically detects a completed v1 CTA and
-prepares only the new motion bot and local motion render. It verifies the
-original saved CTA/A2V and uses the saved speech, image and A2V files: it does
-**not** resubmit paid TTS, image, STT or GPU jobs. After a successful local
-composition it atomically switches the completion record to `v2` and keeps
-`final_cta.mp4` untouched beside `final_cta_v2.mp4`. If the local original A2V
-cannot be verified, the original CTA and its completion remain untouched; the
-operator must reconcile missing local media before migration.
+The asset-preparation migration still detects a completed v1 CTA and can
+upgrade its motion copy locally to v2 without repeating TTS, image, STT or the
+historical A2V job. The original `final_cta.mp4` is preserved beside
+`final_cta_v2.mp4`. However, v1/v2 video is legacy 1280x720 and is never
+inserted into a current Full-HD run. During B2 video generation, a verified
+v1/v2 cache supplies the already-paid speech/image/motion inputs while a new
+1920x1080 `run-v2` A2V request is created once and the final v3 CTA is written
+atomically. Subsequent runs accept only a verified v3 completion as current
+and make no new paid CTA request.
 
 The current avatar onboarding still pins one ebook-cover set and one QR URL
 per avatar; this change personalizes the graphics for that configured ebook.
