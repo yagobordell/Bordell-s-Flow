@@ -77,8 +77,6 @@ def test_run_builds_a2v_request_with_promoted_run_v2_profile(
         == LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE
         == 8
     )
-    # Production composition geometry remains unchanged; only the validated
-    # execution backend/profile is promoted here.
-    assert request.parameters["width"] == 1280
-    assert request.parameters["height"] == 720
+    assert request.parameters["width"] == 1920
+    assert request.parameters["height"] == 1080
     assert request.parameters["fps"] == 24
