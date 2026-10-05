@@ -232,3 +232,13 @@ def test_only_experimental_a2v_uses_early_direct_storage_gate() -> None:
     assert a2v["LTX_MODEL_DOWNLOAD_MIN_THROUGHPUT_MIBPS"] == "35"
     assert a2v["LTX_MODEL_DOWNLOAD_THROUGHPUT_GRACE_SECONDS"] == "120"
     assert a2v["LTX_MODEL_DOWNLOAD_THROUGHPUT_WINDOW_SECONDS"] == "120"
+
+
+def test_experimental_start_rolls_back_only_its_owned_failed_start() -> None:
+    root = Path(__file__).resolve().parents[3]
+    manager = (root / "scripts/salad/manage_salad_worker.ps1").read_text()
+    assert '$Service -eq "ltx25_a2v_experimental"' in manager
+    assert '$InitialStatus -eq "stopped"' in manager
+    assert "A2V_START_ROLLBACK controlled experimental Start failed" in manager
+    assert "rollback failed experimental start" in manager
+    assert "A2V_START_ROLLBACK_FAILED" in manager
