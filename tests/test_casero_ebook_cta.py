@@ -1,8 +1,8 @@
 """Contract tests for casero-only reusable CTA asset selection and placement."""
 from __future__ import annotations
 
-import hashlib
 import asyncio
+import hashlib
 import json
 import wave
 from pathlib import Path
