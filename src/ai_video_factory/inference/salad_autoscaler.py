@@ -19,8 +19,8 @@ ACTIVE_STATUSES = (
 # LTX scales by backlog count rather than the generic drain-time forecast.
 # Each replica still consumes the shared Postgres queue dynamically.
 _DEFAULT_JOBS_PER_REPLICA = {
-    "ltx25_i2v": 30,
-    "ltx25": 30,
+    "ltx25_i2v": 1,
+    "ltx25": 1,
 }
 
 _PROVIDER_STABLE_STATUSES = {"running", "stopped"}
