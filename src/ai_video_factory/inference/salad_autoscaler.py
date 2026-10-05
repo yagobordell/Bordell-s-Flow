@@ -336,6 +336,11 @@ def load_predictive_autoscaler_config(
             binding.max_replicas,
             minimum=0,
         )
+        if binding.workload in _DEFAULT_JOBS_PER_REPLICA and configured_max < 2:
+            raise RuntimeError(
+                f"{binding.workload} requires at least 2 configured replicas "
+                "to preserve two-way run generation"
+            )
         stage_max[binding.workload] = min(configured_max, binding.max_replicas)
         fallback_runtime[binding.workload] = _float_env(
             f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_RUNTIME_SECONDS",
@@ -349,11 +354,17 @@ def load_predictive_autoscaler_config(
         )
         default_jobs_per_replica = _DEFAULT_JOBS_PER_REPLICA.get(binding.workload)
         if default_jobs_per_replica is not None:
-            stage_jobs_per_replica[binding.workload] = _int_env(
+            configured_jobs_per_replica = _int_env(
                 f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_JOBS_PER_REPLICA",
                 default_jobs_per_replica,
                 minimum=1,
             )
+            if configured_jobs_per_replica != 1:
+                raise RuntimeError(
+                    f"{binding.workload} requires jobs_per_replica=1 "
+                    "to preserve two-way run generation"
+                )
+            stage_jobs_per_replica[binding.workload] = 1
     return PredictiveAutoscalerConfig(
         enabled=_bool_env("SALAD_AUTOSCALER_ENABLED", default=False),
         project_max_replicas=project_max,
