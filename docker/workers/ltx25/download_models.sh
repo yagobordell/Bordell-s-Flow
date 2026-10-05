@@ -10,6 +10,10 @@ MODEL_REVISION="${LTX_MODEL_REVISION:-6c7e5e573ac1667efc83407806fe9b0b93730e60}"
 INCLUDE_DEV_ASSETS="${LTX_INCLUDE_A2V_DEV_ASSETS:-false}"
 INCLUDE_I2V_NVFP4_ASSETS="${LTX_INCLUDE_I2V_NVFP4_ASSETS:-false}"
 INSTALLED_MANIFEST="${MODEL_ROOT}/.bordell-installed-model-manifest.json"
+# Only the isolated A2V experimental Salad service sets this. Zero preserves
+# production LTX startup and all other worker modes unchanged.
+A2V_STORAGE_MIN_MIBPS="${LTX_A2V_EXPERIMENTAL_BOOTSTRAP_MIN_STORAGE_MIBPS:-0}"
+A2V_TRANSFORMER_FILE="diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors"
 
 POLL_SECONDS="${LTX_MODEL_DOWNLOAD_PROGRESS_INTERVAL_SECONDS:-30}"
 STALL_TIMEOUT_SECONDS="${LTX_MODEL_DOWNLOAD_STALL_TIMEOUT_SECONDS:-600}"
@@ -79,6 +83,14 @@ fi
 if [[ "${manifest_is_valid}" == "false" ]]; then
   # An outdated manifest must not make the HTTP worker ready while assets download.
   rm -f "${INSTALLED_MANIFEST}"
+  # Screen the ACTUAL model filesystem before downloading 71 GB. The scratch
+  # sample is an admission hint, not a replacement for the real checkpoint
+  # test below. Reject/reallocate before model downloads if clearly too slow.
+  if [[ "${A2V_STORAGE_MIN_MIBPS}" != "0" ]]; then
+    python -m ai_video_factory.workers.ltx25.checkpoint_io \
+      --bootstrap-root "${MODEL_ROOT}" \
+      --minimum-mibps "${A2V_STORAGE_MIN_MIBPS}" --reallocate-on-slow
+  fi
   /usr/local/bin/network-preflight
 fi
 
@@ -124,6 +136,13 @@ else
       exit 1
     }
     echo "MODEL_VERIFY_DONE ${model_file} bytes=$(stat -c %s "${destination}")"
+    # The downloaded transformer is authoritative for actual inference I/O.
+    # Reject a marginal host BEFORE downloading Gemma and the other files.
+    if [[ "${A2V_STORAGE_MIN_MIBPS}" != "0" && "${model_file}" == "${A2V_TRANSFORMER_FILE}" ]]; then
+      python -m ai_video_factory.workers.ltx25.checkpoint_io \
+        --checkpoint "${destination}" \
+        --minimum-mibps "${A2V_STORAGE_MIN_MIBPS}" --reallocate-on-slow
+    fi
   done
 
   python -m ai_video_factory.workers.ltx25.model_manifest write \
@@ -145,6 +164,13 @@ done
 
 BOOTSTRAP_FINISHED_EPOCH="$(date +%s)"
 echo "LTX25_MODEL_BOOTSTRAP_METRIC cache_hit=${manifest_is_valid} files=${#MODEL_FILES[@]} elapsed_seconds=$((BOOTSTRAP_FINISHED_EPOCH - BOOTSTRAP_STARTED_EPOCH))"
+
+if [[ "${manifest_is_valid}" == "true" && "${A2V_STORAGE_MIN_MIBPS}" != "0" ]]; then
+  # Existing cache has not necessarily been proven fast in this container.
+  python -m ai_video_factory.workers.ltx25.checkpoint_io \
+    --checkpoint "${MODEL_ROOT}/${A2V_TRANSFORMER_FILE}" \
+    --minimum-mibps "${A2V_STORAGE_MIN_MIBPS}" --reallocate-on-slow
+fi
 
 if [[ -n "${LTX_RUNTIME_BOOTSTRAP_MARKER:-}" ]]; then
   marker_dir="$(dirname "${LTX_RUNTIME_BOOTSTRAP_MARKER}")"
