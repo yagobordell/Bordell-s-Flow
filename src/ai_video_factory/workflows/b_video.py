@@ -754,6 +754,7 @@ def generate_b2_ltx_video(
     from ai_video_factory.compositor.b_video import render_b2_ltx_video
     from ai_video_factory.workflows.casero_cta_video import (
         cta_assets,
+        current_cta_ready,
         finish_cta,
         insert_cta,
         submit_cta_first,
@@ -837,9 +838,11 @@ def generate_b2_ltx_video(
         cta_assets(casero_cta_dir)
     if (pending_jobs or casero_cta_dir is not None) and check_capacity is not None:
         check_capacity()
-    if casero_cta_dir is not None and check_a2v_worker is not None and not (
-        casero_cta_dir / "completed.json"
-    ).is_file():
+    if (
+        casero_cta_dir is not None
+        and check_a2v_worker is not None
+        and not current_cta_ready(casero_cta_dir)
+    ):
         check_a2v_worker()
     # Submit CTA first on the shared Postgres A2V queue, BEFORE normal B2 jobs.
     cta_submitted = (
