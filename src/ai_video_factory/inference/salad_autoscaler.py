@@ -188,6 +188,7 @@ class PostgresAutoscalerStore:
                 SELECT
                     job_id,
                     COALESCE(
+                        run_id,
                         request ->> 'run_id',
                         request #>> '{parameters,run_id}',
                         '<unknown>'
@@ -195,10 +196,13 @@ class PostgresAutoscalerStore:
                     status,
                     lease_owner AS worker_id,
                     started_at,
-                    NULLIF(
-                        request #>> '{parameters,run_job_count}',
-                        ''
-                    )::integer AS run_job_count
+                    COALESCE(
+                        run_job_count,
+                        NULLIF(
+                            request #>> '{parameters,run_job_count}',
+                            ''
+                        )::integer
+                    ) AS run_job_count
                 FROM gpu.jobs
                 WHERE task = ANY(%s)
                   AND status = ANY(%s)
