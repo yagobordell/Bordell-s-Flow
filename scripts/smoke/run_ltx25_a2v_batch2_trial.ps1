@@ -123,7 +123,8 @@ try {
         "--service", $Service, "--env-file", $EnvFile,
         "--expected-image", $ExpectedPinnedImage,
         "--timeout-seconds", [string]$BootstrapTimeoutSeconds,
-        "--poll-seconds", "15"
+        "--poll-seconds", "15",
+        "--max-unique-instances", "6"
     )
     & $Python $Readiness @WaitArgs
     if ($LASTEXITCODE -ne 0) {
