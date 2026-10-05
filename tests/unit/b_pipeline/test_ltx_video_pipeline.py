@@ -157,6 +157,10 @@ def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     assert video.request.job_id.startswith("b2-1D-")
     assert video.request.parameters["prompt"] == "A bird takes off."
     assert video.request.parameters["num_frames"] == 17
+    for job in jobs:
+        assert job.request.parameters["width"] == 1920
+        assert job.request.parameters["height"] == 1080
+        assert job.request.parameters["fps"] == 24
     assert video.request.inputs[0].sha256 == images["items"][1]["sha256"]
     assert first.duration_seconds == pytest.approx(1.4)
     assert last.duration_seconds == pytest.approx(0.4)
@@ -795,7 +799,7 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     source = tmp_path / "worker-with-embedded-audio.mp4"
     subprocess.run([
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-        "-f", "lavfi", "-i", "color=c=red:s=1280x720:r=24:d=3.2",
+        "-f", "lavfi", "-i", "color=c=red:s=1920x1080:r=24:d=3.2",
         "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
         "-t", "3.2", "-c:v", "libx264", "-preset", "ultrafast",
         "-pix_fmt", "yuv420p", "-c:a", "aac", str(source),
