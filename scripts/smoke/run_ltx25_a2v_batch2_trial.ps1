@@ -38,6 +38,13 @@ $Manager = Join-Path $Root "scripts\salad\manage_salad_worker.ps1"
 $Readiness = Join-Path $PSScriptRoot "wait_salad_ltx25_ready.py"
 $SourceCheck = Join-Path $PSScriptRoot "check_ltx25_python_source.py"
 $Service = "ltx25_a2v_experimental"
+# Fail locally rather than spending a Salad bootstrap on inconsistent storage gates.
+$Services = Get-Content (Join-Path $Root "deploy\salad\services.json") -Raw | ConvertFrom-Json
+$BootstrapStorageMin = [double]$Services.services.ltx25_a2v_experimental.environment.LTX_A2V_EXPERIMENTAL_BOOTSTRAP_MIN_STORAGE_MIBPS
+if ($ProgressiveBlockGroupSize -gt 1 -and $MinCheckpointDirectReadMiBps -lt $BootstrapStorageMin) {
+    throw ("Grouped A2V requires a real-checkpoint read floor >= {0} MiB/s " +
+        "to match the early experimental Salad storage gate.") -f $BootstrapStorageMin
+}
 $Destination = Join-Path $Root ("data\output\deployment-validation\ltx25-a2v-batch2\" + $RunId)
 if ($ExpectedPinnedImage -notmatch '^[^\s@]+@sha256:[0-9a-fA-F]{64}$') {
     throw "Only immutable digest-pinned Docker images are permitted."
