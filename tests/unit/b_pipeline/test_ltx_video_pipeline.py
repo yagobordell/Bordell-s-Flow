@@ -157,6 +157,11 @@ def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     assert video.request.job_id.startswith("b2-1D-")
     assert video.request.parameters["prompt"] == "A bird takes off."
     assert video.request.parameters["num_frames"] == 17
+    run_ids = {job.request.parameters["run_id"] for job in jobs}
+    assert run_ids == {_run_dir.name}
+    assert first.request.parameters["run_job_count"] == 2
+    assert last.request.parameters["run_job_count"] == 2
+    assert video.request.parameters["run_job_count"] == 1
     for job in jobs:
         assert job.request.parameters["width"] == 1920
         assert job.request.parameters["height"] == 1080
