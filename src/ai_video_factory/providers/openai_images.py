@@ -13,6 +13,7 @@ import json
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from PIL import Image
@@ -40,6 +41,15 @@ class OpenAIImageError(RuntimeError):
     """The official image API returned unusable data or an invalid image."""
 
 
+class OpenAIImageRequestRejected(OpenAIImageError):
+    """The API returned a definite HTTP rejection before any image artifact."""
+
+    def __init__(self, status_code: int, message: str) -> None:
+        self.status_code = status_code
+        self.api_message = message
+        super().__init__(f"OpenAI image API HTTP {status_code}: {message}")
+
+
 class OpenAIImageClient:
     """Generate one PNG through the standard official OpenAI image API."""
 
@@ -61,8 +71,25 @@ class OpenAIImageClient:
             },
             method="POST",
         )
-        with urlopen(request, timeout=180) as response:
-            result = json.load(response)
+        try:
+            with urlopen(request, timeout=180) as response:
+                result = json.load(response)
+        except HTTPError as exc:
+            # A 4xx response is a definite server rejection, not an ambiguous
+            # transport outcome. Preserve the API message so callers can safely
+            # mark the request retryable only on a later explicit run.
+            if 400 <= exc.code < 500:
+                try:
+                    raw = exc.read().decode("utf-8", errors="replace")
+                    payload_error = json.loads(raw)
+                    detail = payload_error.get("error") if isinstance(payload_error, dict) else None
+                    message = detail.get("message") if isinstance(detail, dict) else None
+                    if not isinstance(message, str) or not message.strip():
+                        message = raw.strip() or exc.reason or "request rejected"
+                except (OSError, ValueError, TypeError):
+                    message = str(exc.reason or "request rejected")
+                raise OpenAIImageRequestRejected(exc.code, message) from exc
+            raise
         if not isinstance(result, dict):
             raise OpenAIImageError("Official OpenAI image API returned non-object JSON")
         return result
