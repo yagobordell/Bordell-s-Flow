@@ -138,3 +138,7 @@ jobs:
           if ($NoScript -notmatch 'No PNG avatar found') {
               throw "run.ps1 did not reach script selection without paid API calls"
           }
+          exit 0
+      - name: Bash syntax
+        shell: bash
+        run: find docker -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
