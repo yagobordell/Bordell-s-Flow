@@ -327,6 +327,7 @@ def generate_paired_static_a2v(
     phase_metrics: dict[str, Any] | None = None,
     max_transformer_forward_batch_size: int = 2,
     max_stage1_major_page_faults: int = 0,
+    max_stage1_swap_growth_bytes: int = 0,
     max_stage1_build_seconds: float = 0.0,
 ) -> tuple[PipelineOutput, PipelineOutput]:
     """Generate paired A/V with independent frozen PCM and no silent B1 fallback."""
@@ -335,15 +336,15 @@ def generate_paired_static_a2v(
     if (width, height, fps) != (1920, 1088, 24):
         raise ValueError("A2V B2 only supports internal 1920x1088 at 24fps")
     if max_stage1_major_page_faults < 0:
-        raise ValueError("A2V stage1 major-page-fault limit cannot be negative")
+        raise ValueError("A2V stage1 major-page-fault diagnostic cannot be negative")
+    if max_stage1_swap_growth_bytes < 0:
+        raise ValueError("A2V stage1 swap-growth limit cannot be negative")
     if (frames - 1) % 8 or frames < 9:
         raise ValueError("A2V pair must share the exact 8k+1 audio-driven frame count")
     assert_resolution(height=height, width=width, is_two_stage=True)
-    initial_memory = memory_pressure() if max_stage1_major_page_faults else None
+    initial_memory = memory_pressure()
     if phase_metrics is not None:
-        phase_metrics["memory_after_pipeline_acquire"] = (
-            initial_memory if initial_memory is not None else memory_pressure()
-        )
+        phase_metrics["memory_after_pipeline_acquire"] = initial_memory
     prepared, prompt_metrics = _prepare_independent_prompt_contexts(pipeline, samples)
     if phase_metrics is not None:
         phase_metrics.update(prompt_metrics)
@@ -421,11 +422,13 @@ def generate_paired_static_a2v(
     stage1_memory = memory_pressure()
     if phase_metrics is not None:
         phase_metrics["memory_after_stage1"] = stage1_memory
-    if initial_memory is not None:
-        check_stage1_host_pressure(
-            initial_memory, stage1_memory, max_stage1_major_page_faults,
-            phase_metrics,
-        )
+    check_stage1_host_pressure(
+        initial_memory,
+        stage1_memory,
+        max_stage1_swap_growth_bytes,
+        phase_metrics,
+        major_page_faults_diagnostic_limit=max_stage1_major_page_faults,
+    )
     del stage1_images, stage1_audio
     upsample_start = time.perf_counter()
     upscaled = torch.cat([
