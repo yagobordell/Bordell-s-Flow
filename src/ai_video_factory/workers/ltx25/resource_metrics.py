@@ -250,33 +250,113 @@ def cuda_memory_snapshot() -> dict[str, Any]:
         }
 
 
-def check_stage1_host_pressure(
-    initial: dict[str, Any], after: dict[str, Any], limit: int,
-    metrics: dict[str, Any] | None = None,
-) -> None:
-    """Fail fast on extreme process paging before Stage 2 or VAE.
-
-    Compare per-process cumulative counters at two monotonic checkpoints.
-    This opt-in placement guard is intentionally independent of torch,
-    actual GPU kernels, unavailable cgroup data and the A2V recipe.
-    """
-    if limit <= 0:
-        raise ValueError("A2V stage1 page-fault gate must be explicitly enabled")
-    before_faults = initial.get("process_major_page_faults")
-    after_faults = after.get("process_major_page_faults")
+def _monotonic_counter_delta(
+    initial: dict[str, Any],
+    after: dict[str, Any],
+    key: str,
+) -> int | None:
+    before = initial.get(key)
+    current = after.get(key)
     if (
-        not isinstance(before_faults, int)
-        or not isinstance(after_faults, int)
-        or after_faults < before_faults
+        not isinstance(before, int)
+        or not isinstance(current, int)
+        or current < before
     ):
-        raise RuntimeError("A2V latency guard cannot read monotonic major-page faults")
-    fault_delta = after_faults - before_faults
+        return None
+    return current - before
+
+
+def check_stage1_host_pressure(
+    initial: dict[str, Any],
+    after: dict[str, Any],
+    max_swap_growth_bytes: int,
+    metrics: dict[str, Any] | None = None,
+    *,
+    major_page_faults_diagnostic_limit: int = 0,
+) -> None:
+    """Fail before Stage 2 only on evidence of real host-memory pressure.
+
+    Major faults are diagnostic: cold file-backed mmap/safetensors reads can
+    legitimately generate many major faults without swap or memory pressure.
+    The hard guard instead uses process/cgroup swap growth and cgroup memory
+    events. Reclaim counters remain diagnostic because file-cache reclaim can
+    also accompany healthy checkpoint streaming.
+    """
+    if max_swap_growth_bytes < 0:
+        raise ValueError("A2V stage1 swap-growth limit cannot be negative")
+    if major_page_faults_diagnostic_limit < 0:
+        raise ValueError("A2V stage1 major-page-fault diagnostic cannot be negative")
+
+    fault_delta = _monotonic_counter_delta(
+        initial, after, "process_major_page_faults"
+    )
+    process_swap_delta = _monotonic_counter_delta(
+        initial, after, "process_vmswap_bytes"
+    )
+
+    same_cgroup = (
+        initial.get("cgroup_available") is True
+        and after.get("cgroup_available") is True
+        and initial.get("cgroup_version") == after.get("cgroup_version")
+    )
+    cgroup_swap_delta = None
+    cgroup_swap_peak_delta = None
+    event_deltas: dict[str, int | None] = {}
+    reclaim_deltas: dict[str, int | None] = {}
+    if same_cgroup:
+        cgroup_swap_delta = _monotonic_counter_delta(
+            initial, after, "cgroup_swap_counter_bytes"
+        )
+        cgroup_swap_peak_delta = _monotonic_counter_delta(
+            initial, after, "cgroup_swap_peak_bytes"
+        )
+        for event in ("high", "max", "oom", "oom_kill"):
+            event_deltas[event] = _monotonic_counter_delta(
+                initial, after, f"cgroup_memory_events_{event}"
+            )
+        for counter in ("pgscan", "pgsteal"):
+            reclaim_deltas[counter] = _monotonic_counter_delta(
+                initial, after, f"cgroup_{counter}"
+            )
+
+    fault_limit_exceeded = (
+        fault_delta is not None
+        and major_page_faults_diagnostic_limit > 0
+        and fault_delta > major_page_faults_diagnostic_limit
+    )
+    reasons: list[str] = []
+    for label, delta in (
+        ("process_swap_growth_bytes", process_swap_delta),
+        ("cgroup_swap_growth_bytes", cgroup_swap_delta),
+        ("cgroup_swap_peak_growth_bytes", cgroup_swap_peak_delta),
+    ):
+        if delta is not None and delta > max_swap_growth_bytes:
+            reasons.append(f"{label}={delta}>{max_swap_growth_bytes}")
+    for event, delta in event_deltas.items():
+        if delta is not None and delta > 0:
+            reasons.append(f"cgroup_memory_events_{event}_delta={delta}")
+
     if metrics is not None:
         metrics["stage1_major_page_faults_delta"] = fault_delta
-        metrics["stage1_major_page_faults_limit"] = limit
-    if fault_delta > limit:
+        # Keep the old key for report compatibility, but it is diagnostic only.
+        metrics["stage1_major_page_faults_limit"] = (
+            major_page_faults_diagnostic_limit
+        )
+        metrics["stage1_major_page_faults_exceeded_diagnostic"] = (
+            fault_limit_exceeded
+        )
+        metrics["stage1_process_swap_growth_bytes"] = process_swap_delta
+        metrics["stage1_cgroup_swap_growth_bytes"] = cgroup_swap_delta
+        metrics["stage1_cgroup_swap_peak_growth_bytes"] = cgroup_swap_peak_delta
+        metrics["stage1_max_swap_growth_bytes"] = max_swap_growth_bytes
+        metrics["stage1_cgroup_memory_event_deltas"] = event_deltas
+        metrics["stage1_cgroup_reclaim_deltas"] = reclaim_deltas
+        metrics["stage1_host_pressure_detected"] = bool(reasons)
+        metrics["stage1_host_pressure_reasons"] = reasons
+
+    if reasons:
         raise RuntimeError(
-            "A2V latency guard: host paging exceeded limit after stage1 "
-            f"({fault_delta}>{limit}). "
-            "No stage2 or VAE was started; inspect Salad host memory."
+            "A2V latency guard: real host memory pressure after stage1 ("
+            + ", ".join(reasons)
+            + "). No stage2 or VAE was started; inspect Salad host memory."
         )
