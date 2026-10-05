@@ -74,6 +74,16 @@ LTX_A2V_PRODUCTION_FAST_PROFILE = "ltx25-a2v-reference-distilled-fp8none-eager-a
 LTX_A2V_RUN_STATIC_FAST_PROFILE = (
     "ltx25-a2v-static-reference-distilled-fp8none-eager-a95ab-run-v1"
 )
+# Promoted run identity after the validated B4 + Triton + progressive-group8
+# 1080p batch2 trial. Historical run-v1 requests remain immutable/replayable.
+# A production single-video request cannot have a real B4 tensor because its
+# CFG batch is only two; the cap remains four so no artificial split is added.
+LTX_A2V_RUN_OPTIMIZED_PROFILE = (
+    "ltx25-a2v-static-reference-distilled-fp8none-triton-progressive8-a95ab-run-v2"
+)
+LTX_A2V_RUN_VAE_BACKEND = "triton_experimental"
+LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE = 4
+LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE = 8
 LTX_A2V_EXPERIMENTS = {
     LTX_A2V_BENCH_CPU_PROFILE: ("cpu", "eager"),
     LTX_A2V_BENCH_NONE_PROFILE: ("none", "eager"),
@@ -88,6 +98,7 @@ LTX_A2V_RESIDENCY_PROFILES = {
     **LTX_A2V_EXPERIMENTS,
     LTX_A2V_PRODUCTION_FAST_PROFILE: ("none", "eager"),
     LTX_A2V_RUN_STATIC_FAST_PROFILE: ("none", "eager"),
+    LTX_A2V_RUN_OPTIMIZED_PROFILE: ("none", "triton"),
 }
 LTX_A2V_GENERATION_PROFILE = "ltx25-a2v-distilled-a95ab856-fp8cpu-gridpad-eagersdpa-v5"
 LTX_A2V_REFERENCE_GENERATION_PROFILE = (
@@ -150,6 +161,9 @@ class LTXAudioToVideoParameters(BaseModel):
     width: int = Field(default=1280, gt=0, le=8192)
     height: int = Field(default=720, gt=0, le=8192)
     fps: int = Field(default=24, gt=0, le=120)
+    vae_backend: str = "eager"
+    guidance_forward_batch_size: int = 2
+    progressive_block_group_size: int = 1
 
     @field_validator("generation_profile")
     @classmethod
@@ -158,6 +172,7 @@ class LTXAudioToVideoParameters(BaseModel):
             LTX_A2V_GENERATION_PROFILE,
             LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_RUN_STATIC_FAST_PROFILE,
+            LTX_A2V_RUN_OPTIMIZED_PROFILE,
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
@@ -190,6 +205,34 @@ class LTXAudioToVideoParameters(BaseModel):
                     "LTX-2.5 two-stage dimensions must be divisible by 64, except the "
                     "canonical 1280x720 profile which uses deterministic internal grid padding"
                 )
+        if self.vae_backend not in ("eager", "triton_experimental"):
+            raise ValueError("vae_backend must be eager or triton_experimental")
+        if self.guidance_forward_batch_size not in (2, 4):
+            raise ValueError("guidance_forward_batch_size must be 2 or 4")
+        if self.progressive_block_group_size not in (1, 2, 4, 8):
+            raise ValueError("progressive_block_group_size must be 1, 2, 4 or 8")
+        optimized = self.generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE
+        requested_optimization = (
+            self.vae_backend != "eager"
+            or self.guidance_forward_batch_size != 2
+            or self.progressive_block_group_size != 1
+        )
+        if optimized:
+            if (
+                self.vae_backend != LTX_A2V_RUN_VAE_BACKEND
+                or self.guidance_forward_batch_size
+                != LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE
+                or self.progressive_block_group_size
+                != LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE
+            ):
+                raise ValueError(
+                    "run-v2 requires the approved Triton + guidance-cap4 + "
+                    "progressive-group8 configuration"
+                )
+        elif requested_optimization:
+            raise ValueError(
+                "A2V optimization knobs require the immutable run-v2 profile"
+            )
         return self
 
 
@@ -934,6 +977,7 @@ class DirectLTX25AudioToVideoBackend:
         self._pipeline_profile: str | None = None
         self._pipeline_effective_backend: str | None = None
         self._pipeline_params: Any | None = None
+        self._triton_gpu_probe_validated = False
         self._mode_controller.register("audio_to_video", self._release_pipeline_locked)
 
     @property
@@ -985,6 +1029,7 @@ class DirectLTX25AudioToVideoBackend:
         profiled = experimental or parameters.generation_profile in (
             LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_RUN_STATIC_FAST_PROFILE,
+            LTX_A2V_RUN_OPTIMIZED_PROFILE,
         )
         # CUDA synchronization is deliberately opt-in: it changes benchmark
         # overhead but neither tensors nor the original production execution.
@@ -1001,6 +1046,7 @@ class DirectLTX25AudioToVideoBackend:
         )
         static_reference = parameters.generation_profile in (
             LTX_A2V_RUN_STATIC_FAST_PROFILE,
+            LTX_A2V_RUN_OPTIMIZED_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
@@ -1013,6 +1059,7 @@ class DirectLTX25AudioToVideoBackend:
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_RUN_STATIC_FAST_PROFILE,
+            LTX_A2V_RUN_OPTIMIZED_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
@@ -1090,8 +1137,13 @@ class DirectLTX25AudioToVideoBackend:
             diagnostic_checkpoint("a2v.pipeline.build.start")
             with bindings.torch.inference_mode():
                 build_started = time.monotonic()
+                triton_probe_seconds = 0.0
+                if parameters.generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE:
+                    triton_probe_seconds = self._ensure_triton_gpu_probe()
                 pipeline, built_now = self._get_or_build_pipeline(
-                    bindings, generation_profile=parameters.generation_profile
+                    bindings,
+                    generation_profile=parameters.generation_profile,
+                    requested_pair_vae_backend=parameters.vae_backend,
                 )
                 model_load_seconds = time.monotonic() - build_started if built_now else 0.0
                 diagnostic_checkpoint("a2v.pipeline.build.done", sync_cuda=True)
@@ -1289,6 +1341,25 @@ class DirectLTX25AudioToVideoBackend:
                             parameters.generation_profile
                         ][0],
                         "diffvae_backend_effective": self._pipeline_effective_backend,
+            "vae_backend_request": parameters.vae_backend,
+            "guidance_forward_batch_size": parameters.guidance_forward_batch_size,
+            "guidance_forward_mode": (
+                "single_effective_b2_with_b4_cap"
+                if parameters.guidance_forward_batch_size == 4
+                else "single_effective_b2"
+            ),
+            "progressive_block_group_size": parameters.progressive_block_group_size,
+            "stage1_residency": (
+                "gpu"
+                if parameters.generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE
+                else None
+            ),
+            "stage2_residency": (
+                "progressive_cpu"
+                if parameters.generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE
+                else None
+            ),
+            "triton_gpu_probe_seconds": triton_probe_seconds,
                         "pipeline_reused": not built_now,
                         "cuda_peak_reset": metrics.cuda_peak_reset,
                         **experimental_timings,
@@ -1557,9 +1628,7 @@ class DirectLTX25AudioToVideoBackend:
                     if vae_backend == "triton_experimental":
                         # Before the timed pair, run a fail-closed CUDA child;
                         # a native kernel crash must not kill this worker.
-                        from .triton_a2v_probe import ensure_triton_gpu_probe
-
-                        triton_probe_seconds = ensure_triton_gpu_probe()
+                        triton_probe_seconds = self._ensure_triton_gpu_probe()
                     cuda = bindings.torch.cuda
                     if self._device.startswith("cuda"):
                         cuda.reset_peak_memory_stats()
@@ -1580,39 +1649,11 @@ class DirectLTX25AudioToVideoBackend:
                         )
 
                     def stage2_factory() -> Any:
-                        original = pipeline.stage_2
-                        quantization = original._quantization
-                        if quantization is None or quantization.fuse_rule is None:
-                            raise RuntimeError("A2V B2 requires identical FP8-cast stage2 policy")
-                        alternate = type(original).from_checkpoint(
-                            checkpoint_path=str(self._model_files.shared.transformer),
-                            dtype=original._dtype,
-                            device=original._device,
-                            loras=(),
-                            quantization=quantization,
-                            offload_mode=bindings.offload_mode.CPU,
-                            alloc_trim_strategy=original._alloc_trim_strategy,
-                            scale_factors=original.video_scale_factors,
-                        )
-                        builder = alternate._transformer_builder
-                        if not getattr(
-                            builder, "_i2v_progressive_pinned_blocks_supported", False
-                        ):
-                            raise RuntimeError(
-                                "A2V B2 requires the pinned progressive-loader Docker patch"
-                            )
-                        if getattr(builder.registry, "_cache_weights", None) is not False:
-                            raise RuntimeError("A2V progressive stage2 must disable weight caching")
-                        builder._i2v_progressive_pinned_blocks = True
-                        builder._a2v_progressive_block_group_size = (
-                            progressive_block_group_size
-                        )
-                        logger.info(
-                            "LTX25_A2V_B2_STAGE2_POLICY offload=cpu "
-                            "progressive=true group_size=%d",
+                        return self._build_progressive_stage2(
+                            pipeline,
+                            bindings,
                             progressive_block_group_size,
                         )
-                        return alternate
 
                     inference_at = time.monotonic()
                     results = generate_paired_static_a2v(
@@ -1717,6 +1758,52 @@ class DirectLTX25AudioToVideoBackend:
         logger.info("LTX25_A2V_B2_METRICS %s", json.dumps(report, sort_keys=True))
         return report
 
+    def _ensure_triton_gpu_probe(self) -> float:
+        if self._triton_gpu_probe_validated:
+            return 0.0
+        from .triton_a2v_probe import ensure_triton_gpu_probe
+
+        seconds = ensure_triton_gpu_probe()
+        self._triton_gpu_probe_validated = True
+        return seconds
+
+    def _build_progressive_stage2(
+        self,
+        pipeline: Any,
+        bindings: _A2VBindings,
+        group_size: int,
+    ) -> Any:
+        if group_size not in (1, 2, 4, 8):
+            raise ValueError("A2V progressive group size must be 1, 2, 4 or 8")
+        original = pipeline.stage_2
+        quantization = original._quantization
+        if quantization is None or quantization.fuse_rule is None:
+            raise RuntimeError("A2V requires identical FP8-cast stage2 policy")
+        alternate = type(original).from_checkpoint(
+            checkpoint_path=str(self._model_files.shared.transformer),
+            dtype=original._dtype,
+            device=original._device,
+            loras=(),
+            quantization=quantization,
+            offload_mode=bindings.offload_mode.CPU,
+            alloc_trim_strategy=original._alloc_trim_strategy,
+            scale_factors=original.video_scale_factors,
+        )
+        builder = alternate._transformer_builder
+        if not getattr(builder, "_i2v_progressive_pinned_blocks_supported", False):
+            raise RuntimeError(
+                "A2V requires the pinned progressive-loader Docker patch"
+            )
+        if getattr(builder.registry, "_cache_weights", None) is not False:
+            raise RuntimeError("A2V progressive stage2 must disable weight caching")
+        builder._i2v_progressive_pinned_blocks = True
+        builder._a2v_progressive_block_group_size = group_size
+        logger.info(
+            "LTX25_A2V_STAGE2_POLICY offload=cpu progressive=true group_size=%d",
+            group_size,
+        )
+        return alternate
+
     def _get_bindings(self) -> _A2VBindings:
         if self._bindings is None:
             self._bindings = _load_a2v_bindings()
@@ -1775,6 +1862,7 @@ class DirectLTX25AudioToVideoBackend:
             LTX_A2V_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_PRODUCTION_FAST_PROFILE,
             LTX_A2V_RUN_STATIC_FAST_PROFILE,
+            LTX_A2V_RUN_OPTIMIZED_PROFILE,
             LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V2_GENERATION_PROFILE,
             LTX_A2V_STATIC_SAFE_V3_GENERATION_PROFILE,
@@ -1823,8 +1911,11 @@ class DirectLTX25AudioToVideoBackend:
                 bindings.diffvae_apply.triton_na_available = bindings.triton_probe
                 effective_backend = "triton"
             else:
-                if requested_pair_vae_backend == "triton_experimental":
-                    raise RuntimeError("A2V B2 strict Triton backend unavailable")
+                if (
+                    requested_pair_vae_backend == "triton_experimental"
+                    or generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE
+                ):
+                    raise RuntimeError("A2V strict Triton backend unavailable")
                 logger.warning("LTX25_A2V_TRITON_UNAVAILABLE fallback=eager")
         pipeline_cls = (
             bindings.reference_a2v_pipeline if reference else bindings.a2v_pipeline
@@ -1859,6 +1950,12 @@ class DirectLTX25AudioToVideoBackend:
             quantization=quantization,
             offload_mode=offload_mode,
         )
+        if generation_profile == LTX_A2V_RUN_OPTIMIZED_PROFILE:
+            self._pipeline.stage_2 = self._build_progressive_stage2(
+                self._pipeline,
+                bindings,
+                LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
+            )
         if generation_profile in LTX_A2V_EXPERIMENTS and selected_offload == "cpu":
             # An explicit hook exists only on our reference pipeline; fake
             # CPU-only test pipelines deliberately do not import LTX or torch.
