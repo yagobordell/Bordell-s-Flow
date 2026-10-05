@@ -15,12 +15,12 @@ The orchestration layer is responsible for deciding which narration intervals co
 cutting the canonical audio with STT-derived timings and supplying the reference image for those
 segments.
 
-The worker does not infer timeline ownership itself. An avatar image supplied at the Qwen
-1280x736 size is proportionally fitted to the existing 1280x720 A2V output with edge-extended
-side margins, rather than cropping its top and bottom. Other source aspect ratios retain
-the previous centered crop, avoiding large repeated margins for portrait or wide references.
-Internal padding to the 1280x768 model grid is removed after decoding. A2V is still a
-standalone worker capability, not a production stage.
+The worker does not infer timeline ownership itself. For professional `run`, an avatar image
+supplied at the Qwen 1280x736 size is proportionally fitted to the 1920x1080 A2V output with
+edge-extended side margins, rather than cropping its top and bottom. Other source aspect ratios
+retain the previous centered crop, avoiding large repeated margins for portrait or wide
+references. Internal padding to the 1920x1088 model grid is removed after decoding. A2V remains
+a standalone worker capability selected by the B2 orchestration layer.
 
 ## Output
 
@@ -41,13 +41,19 @@ the same negative prompt, stage-1 image strength 0.8, video CFG 1.25,
 The promoted execution path uses FP8 CAST, GPU-resident Stage 1, strict
 Triton DiffVAE and CPU-progressive Stage 2 with block group size 8.
 
-Normal `run` continues to request 1280x720/24 output so A2V and I2V clips
-share the same downstream composition geometry. The validated batch2 test
+Normal `run` requests 1920x1080/24 output for both A2V and I2V so every generated
+clip and the final compositor share one Full-HD geometry. The validated batch2 test
 used a real GPU batch of two and therefore fused a true effective B4
 conditional/unconditional transformer forward. A normal single A2V request
 has an effective CFG batch of two; its configured forward cap remains 4 so
 the worker does not introduce an artificial split, but it does not fabricate
 a second video merely to claim B4.
+
+Production parallelism is horizontal rather than forcing unrelated speech segments into one
+GPU batch: the A2V group is capped at two RTX 5090 replicas and the autoscaler assigns one
+active A2V job per replica. Two pending A2V clips therefore execute concurrently even when
+their audio-driven frame counts differ. I2V follows the same two-replica/one-job policy in its
+separate Salad group.
 
 All new B2 A2V jobs use the run-v2 profile in their request identity and run
 fingerprint. Historical run-v1 jobs remain immutable/replayable. Before an
@@ -98,11 +104,10 @@ lip-sync. For a ~5.71 s clip, observed no-offload warm inference averaged
 ~73.73 s and total generation ~101.55 s (two warm samples). GPU stability
 beyond this six-generation run and startup improvements are not established.
 
-**Professional B2 uses its separately pinned static-camera
-`LTX_A2V_STATIC_SAFE_GENERATION_PROFILE` (disk streaming with negative
-camera guidance).** That different recipe has NOT had equivalent no-offload
-lip-sync approval; it remains unchanged. Do not claim the new timing for B2
-until its own profile is benchmarked and approved. No Triton promotion.
+Professional B2 `run` uses the promoted `LTX_A2V_RUN_OPTIMIZED_PROFILE`
+with strict Triton and progressive Stage 2 group8. Historical static-safe profiles remain
+available only for immutable recovery of previously submitted jobs; they are not selected for
+new `run` requests.
 
 To deploy new code to Salad, publish a new Docker digest from `main`, then
 follow the stopped-group/lock checks before changing the production group
