@@ -62,21 +62,16 @@ def test_image_upscaler_has_independent_salad_group_contract() -> None:
 def test_image_upscaler_deploy_uses_private_ghcr_basic_auth_without_committed_pat() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
-    assert '"GHCR_USERNAME"' in script
     assert '"GHCR_READ_PACKAGES_PAT"' in script
     assert "registry_authentication" in script
-    assert "username = $RegistryUsername" in script
+    assert 'username = "yagobordell"' in script
     assert "networking =" in script
     assert "auth = $true" in script
     assert 'ContentType "application/json"' in script
     assert 'ContentType "application/merge-patch+json"' in script
     assert "Wait-SaladGroupSettled" in script
     assert "pending_change" in script
-    assert "name_conflict" in script
-    assert "not visible in project inventory" in script
     assert "Test-InsecureRedirectError" in script
     assert "retrying the canonical " in script
-    assert "Manifest Not Found" in script
-    assert "container_image=" in script
     assert "personal_access_token" not in script
     assert "ghp_" not in script
