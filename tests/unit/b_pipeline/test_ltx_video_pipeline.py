@@ -274,26 +274,28 @@ def test_automatic_ltx_activation_requires_complete_audio_and_transport(
 
 
 
-def test_new_memory_safe_a2v_requires_exact_deployed_image_digest(
+def test_promoted_a2v_run_v2_requires_exact_new_deployed_image_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(runner, "load_dotenv", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(runner.settings, "salad_api_key", "test-key")
     monkeypatch.setenv("SALAD_ORGANIZATION", "org")
     monkeypatch.setenv("SALAD_PROJECT", "project")
+    monkeypatch.delenv("SALAD_LTX25_RUN_V2_IMAGE", raising=False)
     monkeypatch.delenv("SALAD_LTX25_RUN_STATIC_FP8_IMAGE", raising=False)
     monkeypatch.delenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", raising=False)
 
-    with pytest.raises(RuntimeError, match="SALAD_LTX25_RUN_STATIC_FP8_IMAGE"):
+    with pytest.raises(RuntimeError, match="SALAD_LTX25_RUN_V2_IMAGE"):
         runner._require_ltx_safe_a2v_worker()
 
     pinned = "docker.io/yagobordell/ai-video-factory@sha256:" + "a" * 64
     old_image = "docker.io/yagobordell/ai-video-factory@sha256:" + "b" * 64
+    monkeypatch.setenv("SALAD_LTX25_RUN_V2_IMAGE", pinned)
     monkeypatch.setenv("SALAD_LTX25_RUN_STATIC_FP8_IMAGE", pinned)
-    monkeypatch.setenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", pinned)
     with pytest.raises(RuntimeError, match="cannot reuse"):
         runner._require_ltx_safe_a2v_worker()
 
+    monkeypatch.setenv("SALAD_LTX25_RUN_STATIC_FP8_IMAGE", old_image)
     monkeypatch.setenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", old_image)
     deployed = {"image": old_image}
 
