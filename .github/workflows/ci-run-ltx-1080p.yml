@@ -1,0 +1,140 @@
+name: Run LTX 1080p parallel CI
+
+on:
+  pull_request:
+    paths:
+      - "src/ai_video_factory/workflows/b_video.py"
+      - "src/ai_video_factory/compositor/b_video.py"
+      - "src/ai_video_factory/workers/ltx25/**"
+      - "src/ai_video_factory/inference/salad_autoscaler.py"
+      - "deploy/salad/services.json"
+      - "config/salad.env.example"
+      - "tests/unit/b_pipeline/test_ltx_video_pipeline.py"
+      - "tests/unit/inference/test_salad_autoscaler.py"
+      - "tests/unit/workers/test_ltx25_worker.py"
+      - "tests/unit/workers/test_ltx_a2v_run_promotion.py"
+      - "tests/unit/workers/test_ltx_i2v_optimization.py"
+      - ".github/workflows/ci-run-ltx-1080p.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: run-ltx-1080p-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  run-ltx-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.18"
+      - run: uv sync --locked --extra dev
+      - name: Ruff
+        run: uv run --no-sync ruff check .
+      - name: Full HD run and autoscaler regressions
+        run: |
+          uv run --no-sync python -m pytest -q \
+            tests/unit/b_pipeline/test_ltx_video_pipeline.py \
+            tests/unit/inference/test_salad_autoscaler.py \
+            tests/unit/workers/test_ltx25_worker.py \
+            tests/unit/workers/test_ltx_a2v_run_promotion.py \
+            tests/unit/workers/test_ltx_i2v_optimization.py
+
+  general-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: bordell_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d bordell_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/bordell_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - run: uv sync --locked --extra dev
+      - run: uv pip check
+      - run: uv run --no-sync ruff check .
+      - name: Initialize test Postgres
+        shell: bash
+        run: |
+          if ! command -v psql >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y postgresql-client
+          fi
+          psql "$TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 \
+            -c 'CREATE ROLE anon; CREATE ROLE authenticated;'
+          for migration in infra/sql/*.sql; do
+            psql "$TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f "$migration"
+          done
+      - name: Install FFmpeg and QR test tools
+        run: |
+          packages=()
+          if ! command -v ffmpeg >/dev/null 2>&1; then packages+=(ffmpeg); fi
+          if ! command -v zbarimg >/dev/null 2>&1; then packages+=(zbar-tools); fi
+          if (("${#packages[@]}" > 0)); then
+            sudo apt-get update -qq
+            sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+              --no-install-recommends "${packages[@]}"
+          fi
+      - run: uv run --no-sync python scripts/security/check_youtube_secrets.py
+      - name: Pytest
+        run: uv run --no-sync python -m pytest
+      - name: PowerShell syntax
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          @(Get-Item run.ps1) + @(Get-ChildItem scripts -Recurse -Filter *.ps1) |
+              ForEach-Object {
+              $Tokens = $null
+              $Errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                  $_.FullName,
+                  [ref]$Tokens,
+                  [ref]$Errors
+              ) | Out-Null
+              if ($Errors) {
+                  throw "PowerShell parse errors in $($_.FullName): $($Errors -join '; ')"
+              }
+          }
+      - name: Short run.ps1 smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $PSNativeCommandUseErrorActionPreference = $false
+          $HelpText = (& pwsh -NoProfile -File ./run.ps1 --help 2>&1) -join "`n"
+          $HelpExit = $LASTEXITCODE
+          $NoScript = (& pwsh -NoProfile -File ./run.ps1 test2 Jorge --no-image 2>&1) -join "`n"
+          $NoScriptExit = $LASTEXITCODE
+          $ErrorActionPreference = "Stop"
+          if ($HelpExit -ne 0 -or $HelpText -notmatch '--no-image') {
+              throw "run.ps1 did not forward --help to the B pipeline"
+          }
+          if ($NoScriptExit -eq 0 -or $NoScript -notmatch 'Jorge') {
+              throw "run.ps1 did not reach managed avatar/script discovery"
+          }
+          if ($NoScript -notmatch 'No PNG avatar found') {
+              throw "run.ps1 did not reach script selection without paid API calls"
+          }
