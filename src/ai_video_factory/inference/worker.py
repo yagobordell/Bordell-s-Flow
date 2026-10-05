@@ -6,6 +6,8 @@ import threading
 import time
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from .bundle_publication import (
     load_committed_bundle,
     publish_committed_bundle,
@@ -196,6 +198,7 @@ class InferenceWorker:
             InputIntegrityError,
             NonRetryableTaskError,
             OutputConflictError,
+            ValidationError,
             UnsupportedTaskError,
         ) as exc:
             self._mark_failed(
