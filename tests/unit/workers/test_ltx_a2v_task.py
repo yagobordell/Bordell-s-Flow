@@ -18,6 +18,10 @@ from ai_video_factory.workers.ltx25 import (
     LTX_A2V_GENERATION_PROFILE,
     LTX_A2V_GUIDED_GENERATION_PROFILE,
     LTX_A2V_PRODUCTION_FAST_PROFILE,
+    LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE,
+    LTX_A2V_RUN_OPTIMIZED_PROFILE,
+    LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
+    LTX_A2V_RUN_VAE_BACKEND,
     LTX_A2V_STATIC_REFERENCE_GENERATION_PROFILE,
     LTX_A2V_TASK,
     LTXA2VModelFiles,
@@ -147,6 +151,32 @@ def test_a2v_parameters_are_audio_driven_and_keep_720p24_defaults() -> None:
     with pytest.raises(ValidationError, match="extra_forbidden"):
         LTXAudioToVideoParameters.model_validate(
             {"num_frames": 121}
+        )
+
+
+def test_a2v_run_v2_requires_exact_promoted_execution_configuration() -> None:
+    parameters = LTXAudioToVideoParameters(
+        generation_profile=LTX_A2V_RUN_OPTIMIZED_PROFILE,
+        vae_backend=LTX_A2V_RUN_VAE_BACKEND,
+        guidance_forward_batch_size=LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE,
+        progressive_block_group_size=LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
+    )
+
+    assert parameters.vae_backend == "triton_experimental"
+    assert parameters.guidance_forward_batch_size == 4
+    assert parameters.progressive_block_group_size == 8
+
+    with pytest.raises(ValidationError, match="run-v2 requires"):
+        LTXAudioToVideoParameters(
+            generation_profile=LTX_A2V_RUN_OPTIMIZED_PROFILE,
+            vae_backend="eager",
+            guidance_forward_batch_size=4,
+            progressive_block_group_size=8,
+        )
+    with pytest.raises(ValidationError, match="immutable run-v2"):
+        LTXAudioToVideoParameters(
+            generation_profile=LTX_A2V_PRODUCTION_FAST_PROFILE,
+            vae_backend="triton_experimental",
         )
 
 
