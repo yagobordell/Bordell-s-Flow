@@ -6,7 +6,10 @@ from typing import Any
 
 import pytest
 
-from ai_video_factory.workers.ltx25.resource_metrics import check_stage1_host_pressure
+from ai_video_factory.workers.ltx25.resource_metrics import (
+    check_stage1_host_pressure,
+    memory_pressure,
+)
 
 
 def _snapshot(**overrides: Any) -> dict[str, Any]:
@@ -124,6 +127,43 @@ def test_major_fault_counter_is_never_required_for_pressure_decision() -> None:
     )
     assert metrics["stage1_major_page_faults_delta"] is None
     assert metrics["stage1_host_pressure_detected"] is False
+
+
+def test_memory_pressure_reads_cgroup_v1_pressure_counters(tmp_path) -> None:
+    proc_root = tmp_path / "proc"
+    cgroup_root = tmp_path / "cgroup"
+    base = cgroup_root / "memory" / "sample"
+    proc_root.mkdir()
+    base.mkdir(parents=True)
+    (proc_root / "cgroup").write_text("5:memory:/sample\n", encoding="utf-8")
+    (proc_root / "mountinfo").write_text("", encoding="utf-8")
+    (proc_root / "status").write_text(
+        "VmRSS:\t1024 kB\nVmHWM:\t2048 kB\nVmSwap:\t0 kB\n",
+        encoding="utf-8",
+    )
+    (base / "memory.usage_in_bytes").write_text("1048576\n", encoding="utf-8")
+    (base / "memory.limit_in_bytes").write_text("67108864\n", encoding="utf-8")
+    (base / "memory.failcnt").write_text("3\n", encoding="utf-8")
+    (base / "memory.oom_control").write_text(
+        "oom_kill_disable 0\nunder_oom 0\noom_kill 2\n",
+        encoding="utf-8",
+    )
+    (base / "memory.memsw.usage_in_bytes").write_text(
+        "1048576\n", encoding="utf-8"
+    )
+    (base / "memory.stat").write_text(
+        "total_cache 0\ntotal_rss 1048576\ntotal_pgmajfault 0\n"
+        "total_pgscan 0\ntotal_pgsteal 0\n",
+        encoding="utf-8",
+    )
+
+    snapshot = memory_pressure(proc_root=proc_root, cgroup_root=cgroup_root)
+
+    assert snapshot["cgroup_available"] is True
+    assert snapshot["cgroup_version"] == "v1"
+    assert snapshot["cgroup_memory_events_max"] == 3
+    assert snapshot["cgroup_memory_events_oom_kill"] == 2
+    assert snapshot["cgroup_swap_counter_bytes"] == 0
 
 
 def test_negative_pressure_limits_are_rejected() -> None:
