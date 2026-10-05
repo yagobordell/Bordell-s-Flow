@@ -42,6 +42,9 @@ immutable `repo@sha256:...` reference. Keep the GHCR package private.
 
 ## Deploy the independent Container Group
 
+The active production Container Group name is `bordell-image-upscaler-v2`. The unversioned `bordell-image-upscaler` name is retired because Salad retained that identifier after the previous group disappeared from project inventory; do not recreate or target the retired name.
+
+
 The deployment manifest fixes the requested production shape:
 
 - one replica
