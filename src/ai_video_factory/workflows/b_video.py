@@ -324,8 +324,6 @@ def build_b2_video_plan(
                     "no paid jobs were submitted"
                 ) from exc
 
-    group_counts = Counter(kind for kind, _first, _last in groups)
-    run_id = digest[:20]
     jobs: list[B2VideoJob] = []
     for ordinal, (kind, first, last) in enumerate(groups, start=1):
         selection = beats[first:last + 1]
@@ -369,8 +367,6 @@ def build_b2_video_plan(
                 ),
                 parameters={
                     "generation_profile": LTX_PRODUCTION_I2V_PROFILE,
-                    "run_id": run_id,
-                    "run_job_count": group_counts["i2v"],
                     "prompt": prompt, "seed": seed,
                     "width": _WIDTH, "height": _HEIGHT, "fps": _FPS,
                     "num_frames": num_frames,
@@ -425,8 +421,6 @@ def build_b2_video_plan(
                 )},
                 parameters={
                     "generation_profile": LTX_A2V_RUN_OPTIMIZED_PROFILE,
-                    "run_id": run_id,
-                    "run_job_count": group_counts["a2v"],
                     "prompt": a2v_prompt, "seed": seed,
                     "width": _WIDTH, "height": _HEIGHT, "fps": _FPS,
                     "vae_backend": LTX_A2V_RUN_VAE_BACKEND,
@@ -490,6 +484,50 @@ def _new_manifest(jobs: list[B2VideoJob], audio: dict[str, Any], digest: str) ->
             for job in jobs
         ],
     }
+
+
+def _legacy_run_metadata_fingerprint(
+    request: InferenceJobRequest, *, run_id: str, run_job_count: int,
+) -> str:
+    """Fingerprint the broken contract that put scaling data in model parameters."""
+    parameters = dict(request.parameters)
+    parameters.update(run_id=run_id, run_job_count=run_job_count)
+    return request.model_copy(update={"parameters": parameters}).fingerprint()
+
+
+def _migrate_legacy_run_metadata_manifest(
+    manifest: dict[str, Any], jobs: list[B2VideoJob], *, run_id: str,
+) -> tuple[bool, bool]:
+    """Rewrite only manifests proven to differ by misplaced orchestration metadata."""
+    records = manifest.get("jobs")
+    if not isinstance(records, list) or len(records) != len(jobs):
+        return False, False
+    counts = Counter(job.kind for job in jobs)
+    migrated = False
+    for job, record in zip(jobs, records, strict=True):
+        if not isinstance(record, dict) or (
+            record.get("kind") != job.kind
+            or record.get("beat_ids") != list(job.beats)
+            or record.get("job_id") != job.request.job_id
+        ):
+            return False, False
+        current_sha = job.request.fingerprint()
+        saved_sha = record.get("request_sha256")
+        if saved_sha == current_sha:
+            continue
+        if record.get("status") == "completed" or saved_sha != (
+            _legacy_run_metadata_fingerprint(
+                job.request,
+                run_id=run_id,
+                run_job_count=counts[job.kind],
+            )
+        ):
+            return False, False
+        record["request_sha256"] = current_sha
+        migrated = True
+    if migrated:
+        manifest["request_contract_migration"] = "ltx-run-metadata-postgres-v1"
+    return True, migrated
 
 
 def has_pending_b2_video(output: Path) -> bool:
@@ -611,25 +649,24 @@ def generate_b2_ltx_video(
 
     timeline, jobs, run_dir = build_b2_video_plan(output, plan, audio, images)
     digest = run_dir.name
+    run_job_counts = Counter(job.kind for job in jobs)
     manifest_path = run_dir / "manifest.json"
     expected = _new_manifest(jobs, audio, digest)
     if manifest_path.is_symlink():
         raise B2VideoError("Refusing linked LTX job manifest")
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if (
-            manifest.get("fingerprint") != digest
-            or [
-                (entry.get("kind"), entry.get("beat_ids"), entry.get("job_id"),
-                 entry.get("request_sha256"))
-                for entry in manifest.get("jobs", [])
-            ] != [
-                (entry["kind"], entry["beat_ids"], entry["job_id"],
-                 entry["request_sha256"])
-                for entry in expected["jobs"]
-            ]
-        ):
+        matches, migrated = _migrate_legacy_run_metadata_manifest(
+            manifest, jobs, run_id=digest
+        )
+        if manifest.get("fingerprint") != digest or not matches:
             raise B2VideoError("Saved LTX manifest differs; reconcile paid jobs first")
+        if migrated:
+            _save_json(manifest_path, manifest)
+            print(
+                "  Reconciled legacy LTX run metadata contract; preserving job identity.",
+                flush=True,
+            )
     else:
         manifest = expected
         _save_json(manifest_path, manifest)
@@ -713,7 +750,12 @@ def generate_b2_ltx_video(
     # re-queued here, so resume/recovery cannot create duplicate paid inference.
     for job in uncached_jobs:
         snapshot = queue.submit(
-            job.request, metadata={"capability": f"b2-ltx-{job.kind}"},
+            job.request,
+            metadata={
+                "capability": f"b2-ltx-{job.kind}",
+                "run_id": digest,
+                "run_job_count": str(run_job_counts[job.kind]),
+            },
         )
         print(
             f"  LTX {job.kind.upper()} job={job.request.job_id}: "
@@ -731,7 +773,12 @@ def generate_b2_ltx_video(
             flush=True,
         )
         response = executor.execute(
-            job.request, metadata={"capability": f"b2-ltx-{job.kind}"},
+            job.request,
+            metadata={
+                "capability": f"b2-ltx-{job.kind}",
+                "run_id": digest,
+                "run_job_count": str(run_job_counts[job.kind]),
+            },
         )
         print(
             f"  LTX {job.kind.upper()} job={job.request.job_id}: "
