@@ -390,8 +390,19 @@ async def prepare_casero_cta(
     if cached_final:
         ready = _read(directory / "completed.json")
         _require(directory, ready, "final")
+        if ready.get("schema_version") == "casero-cta-final-v3":
+            # Current Full-HD/run-v2 CTA: no paid text, speech, image or GPU calls.
+            from ai_video_factory.workflows.casero_cta_video import (
+                cta_assets,
+                current_cta_ready,
+            )
+            if not current_cta_ready(directory):
+                raise CaseroCTAError("Stored Full-HD CTA failed current run validation")
+            cta_assets(directory)
+            return {**ready, "directory": str(directory)}
         if ready.get("schema_version") == "casero-cta-final-v2":
-            # Completed new-format CTA: no paid text, speech, image or GPU calls.
+            # Legacy motion-copy CTA remains a valid source cache. B2 video
+            # orchestration will replace its 720p A2V/final clip with run-v2.
             from ai_video_factory.workflows.casero_cta_video import cta_assets
             cta_assets(directory)
             return {**ready, "directory": str(directory)}
