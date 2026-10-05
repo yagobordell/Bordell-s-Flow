@@ -193,6 +193,12 @@ def memory_pressure(
             if swap is not None:
                 result["cgroup_swap_counter_bytes"] = swap
         else:
+            failcnt = _integer(base / "memory.failcnt")
+            if failcnt is not None:
+                result["cgroup_memory_events_max"] = failcnt
+            oom_control = _stats(base / "memory.oom_control")
+            if "oom_kill" in oom_control:
+                result["cgroup_memory_events_oom_kill"] = oom_control["oom_kill"]
             # v1 memsw is memory PLUS swap: not the same as v2
             # memory.swap.current. Subtract contemporaneous memory usage.
             memsw_peak = _integer(base / "memory.memsw.max_usage_in_bytes")
