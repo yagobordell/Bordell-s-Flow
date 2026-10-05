@@ -119,11 +119,18 @@ To opt out, put `IMAGE_UPSCALER_AUTO_START=false` in `config/salad.env` and
 start the group yourself. Casero, professional jobs without x2 photo beats,
 planning-only, audio-only and video-only runs do not start the image upscaler.
 
-**Startup does not imply automatic shutdown.** Other concurrent runs may share
-this independent single-replica service, so stopping it at the end of one run
-could interrupt another. Stop the group from Salad after all image workloads
-have completed to avoid unnecessary GPU charges. Automated safe idle shutdown
-would require shared cross-run lease/idle coordination.
+By default, `IMAGE_UPSCALER_AUTO_STOP=true`. Every professional run that needs
+x2 holds a shared PostgreSQL session advisory lock while it uses the upscaler.
+When a run finishes (successfully or with a finishing error), it releases its
+shared lock and tries the exclusive form. Only the last active run can obtain
+that exclusive lock, and it requests Salad Stop while new users are temporarily
+blocked from entering. PostgreSQL releases the shared lock automatically if a
+runner process dies, so no durable lease row is left behind.
+
+This means the shared single-replica upscaler shuts down after the last
+cooperating image workload finishes without interrupting another active run.
+Set `IMAGE_UPSCALER_AUTO_STOP=false` only when an operator intentionally wants
+to keep the group warm; safe auto-stop requires `POSTGRES_DSN`.
 
 
 ## Bordell runtime configuration
@@ -133,6 +140,8 @@ Bordell keeps credentials and account selectors in `.env`. Put the upscaler URL 
 
 ```text
 IMAGE_UPSCALER_URL=https://<salad-container-gateway-host>
+IMAGE_UPSCALER_AUTO_START=true
+IMAGE_UPSCALER_AUTO_STOP=true
 R2_ENDPOINT_URL=<existing-r2-endpoint>
 R2_BUCKET=<existing-r2-bucket>
 ```
