@@ -42,9 +42,9 @@ immutable `repo@sha256:...` reference. Keep the GHCR package private.
 
 ## Deploy the independent Container Group
 
-The active production Container Group name is `bordell-image-upscaler-v2`. The unversioned `bordell-image-upscaler` name is retired because Salad retained that identifier after the previous group disappeared from project inventory; do not recreate or target the retired name.
+The active production Container Group name is `bordell-image-upscaler-v2`. The retired unversioned name is not reused because Salad still reserves it even though it is absent from project inventory.
 
-The main Postgres Capacity Controller treats this manifest as an explicit external-service allowlist entry: it may coexist in the same Salad project, but it is not added to `deploy/salad/services.json`, does not consume Postgres GPU jobs, and the controller must never resize or stop it.
+The Postgres Capacity Controller explicitly allowlists this independent group. It may coexist in the same Salad project, but it is not part of `deploy/salad/services.json` and the controller must never resize or stop it.
 
 
 The deployment manifest fixes the requested production shape:
@@ -69,16 +69,12 @@ Set or provide these operator settings:
 SALAD_API_KEY
 SALAD_ORGANIZATION
 SALAD_PROJECT
-GHCR_USERNAME
 GHCR_READ_PACKAGES_PAT
 ```
 
-`GHCR_USERNAME` must be the GitHub username used with the PAT when authenticating to
-`ghcr.io`. `GHCR_READ_PACKAGES_PAT` must be a classic GitHub PAT with `read:packages`
-access to the private adapter image. GitHub's GHCR authentication pairs a username with the
-token, so the deploy script must not hardcode the package-owner username. The deployment
-script passes these values only to Salad's private-registry authentication payload and does
-not commit the credential values to the repository.
+`GHCR_READ_PACKAGES_PAT` must be a classic GitHub PAT restricted to `read:packages` for the
+private image pull. The deployment script passes it only to Salad's private-registry
+authentication payload and does not commit it to the repository.
 
 Deploy by immutable digest:
 
@@ -145,8 +141,6 @@ Keep the access credentials in `.env`:
 
 ```text
 SALAD_API_KEY=<salad-api-key>
-GHCR_USERNAME=<github-username-for-the-pat>
-GHCR_READ_PACKAGES_PAT=<classic-pat-with-read-packages>
 R2_ACCESS_KEY_ID=<existing-r2-key>
 R2_SECRET_ACCESS_KEY=<existing-r2-secret>
 ```
