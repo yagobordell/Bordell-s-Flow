@@ -10,6 +10,7 @@ import pytest
 from PIL import Image
 
 from ai_video_factory.managed_layout import publish_managed_run, sync_managed_outputs
+from ai_video_factory.managed_media import public_report
 from ai_video_factory.publishing import PublicationError
 from scripts.pipeline import run_managed
 
@@ -391,6 +392,42 @@ def managed_complete(tmp_path: Path) -> tuple[Path, Path, Path]:
         },
     })
     return work, script, target
+
+
+def test_public_report_stage_order_is_canonical() -> None:
+    report = {
+        "run": {
+            "status": "completed",
+            "audio_generation": {"status": "completed"},
+            "image_generation": {"status": "completed"},
+            "video_preview": {"status": "completed"},
+            "video_generation": {"status": "completed"},
+        }
+    }
+    first = public_report(
+        report,
+        {
+            "audio": "completed",
+            "images": "completed",
+            "preview": "completed",
+            "video": "completed",
+        },
+        "test01",
+    )
+    second = public_report(
+        report,
+        {
+            "audio": "completed",
+            "images": "completed",
+            "video": "completed",
+            "preview": "completed",
+        },
+        "test01",
+    )
+
+    assert first == second
+    published = json.loads(first)["run"]["published_media"]
+    assert list(published) == ["audio", "images", "preview", "video"]
 
 
 def test_partial_run_exposes_bot_outputs_before_final_video(
