@@ -84,6 +84,7 @@ def test_ltx_salad_manifest_prefers_fast_high_priority_5090_nodes() -> None:
 
     assert service["priority"] == "high"
     assert service["resources"]["gpu_class_names"] == ["RTX 5090 (32 GB)"]
+    assert manifest["services"]["ltx25_a2v_experimental"]["resources"]["memory"] == 61440
     assert service["environment"]["SALAD_NETWORK_MIN_DOWNLOAD_MBPS"] == "100"
     assert service["environment"]["SALAD_NETWORK_TEST_ATTEMPTS"] == "3"
     assert service["environment"]["LTX_MODEL_DOWNLOAD_MIN_THROUGHPUT_MIBPS"] == "8"
