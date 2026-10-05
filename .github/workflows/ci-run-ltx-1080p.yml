@@ -4,12 +4,15 @@ on:
   pull_request:
     paths:
       - "src/ai_video_factory/workflows/b_video.py"
+      - "src/ai_video_factory/workflows/casero_cta_video.py"
       - "src/ai_video_factory/compositor/b_video.py"
       - "src/ai_video_factory/workers/ltx25/**"
       - "src/ai_video_factory/inference/salad_autoscaler.py"
       - "deploy/salad/services.json"
       - "config/salad.env.example"
       - "tests/unit/b_pipeline/test_ltx_video_pipeline.py"
+      - "tests/test_casero_cta_motion_copy.py"
+      - "tests/test_casero_ebook_cta.py"
       - "tests/unit/inference/test_salad_autoscaler.py"
       - "tests/unit/workers/test_ltx25_worker.py"
       - "tests/unit/workers/test_ltx_a2v_run_promotion.py"
@@ -42,6 +45,8 @@ jobs:
         run: |
           uv run --no-sync python -m pytest -q \
             tests/unit/b_pipeline/test_ltx_video_pipeline.py \
+            tests/test_casero_cta_motion_copy.py \
+            tests/test_casero_ebook_cta.py \
             tests/unit/inference/test_salad_autoscaler.py \
             tests/unit/workers/test_ltx25_worker.py \
             tests/unit/workers/test_ltx_a2v_run_promotion.py \
