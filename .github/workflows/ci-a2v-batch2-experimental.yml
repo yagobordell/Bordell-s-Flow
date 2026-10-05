@@ -52,7 +52,8 @@ jobs:
             tests/unit/workers/test_ltx_a2v_checkpoint_io_and_grouped_stage2.py \
             tests/unit/workers/test_ltx_a2v_b2_quality_preserving_optimizations.py \
             tests/unit/workers/test_ltx_a2v_b2_b1_comparison.py \
-            tests/unit/workers/test_ltx_a2v_shared_decoder.py
+            tests/unit/workers/test_ltx_a2v_shared_decoder.py \
+            tests/unit/workers/test_ltx_resource_metrics.py
       - name: CPU-only A2V and existing audio regressions
         run: |
           uv run --no-sync python -m pytest -q \
@@ -61,6 +62,7 @@ jobs:
             tests/unit/workers/test_ltx_a2v_b2_quality_preserving_optimizations.py \
             tests/unit/workers/test_ltx_a2v_b2_b1_comparison.py \
             tests/unit/workers/test_ltx_a2v_shared_decoder.py \
+            tests/unit/workers/test_ltx_resource_metrics.py \
             tests/unit/workers/test_ltx_a2v_task.py
       - name: PowerShell syntax
         shell: pwsh
@@ -90,4 +92,5 @@ jobs:
             scripts/smoke/compare_ltx25_a2v_b2_vs_b1.py \
             scripts/smoke/verify_ltx25_a2v_batch2_image.py \
             docker/workers/ltx25/patch_i2v_progressive.py \
-            tests/unit/workers/test_ltx_a2v_checkpoint_io_and_grouped_stage2.py
+            tests/unit/workers/test_ltx_a2v_checkpoint_io_and_grouped_stage2.py \
+            tests/unit/workers/test_ltx_resource_metrics.py
