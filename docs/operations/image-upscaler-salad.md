@@ -121,11 +121,13 @@ planning-only, audio-only and video-only runs do not start the image upscaler.
 
 By default, `IMAGE_UPSCALER_AUTO_STOP=true`. Every professional run that needs
 x2 holds a shared PostgreSQL session advisory lock while it uses the upscaler.
-When a run finishes (successfully or with a finishing error), it releases its
+After a run finishes its professional x2 work successfully, it releases its
 shared lock and tries the exclusive form. Only the last active run can obtain
 that exclusive lock, and it requests Salad Stop while new users are temporarily
-blocked from entering. PostgreSQL releases the shared lock automatically if a
-runner process dies, so no durable lease row is left behind.
+blocked from entering. A finishing exception deliberately skips Stop because a
+gateway timeout may still represent an in-flight inference that must remain
+recoverable. PostgreSQL releases the shared lock automatically if a runner
+process dies, so no durable lease row is left behind.
 
 This means the shared single-replica upscaler shuts down after the last
 cooperating image workload finishes without interrupting another active run.
