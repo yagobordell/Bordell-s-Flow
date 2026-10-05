@@ -817,15 +817,45 @@ try {
         if (Test-LegacyQueueAttachment -Group $Group) {
             throw "'$Service' still has Salad Job Queue config. Run Prepare once to migrate it."
         }
-        if ([int]$Group.replicas -ne $DesiredReplicas) {
-            $Body = @{ replicas = $DesiredReplicas } | ConvertTo-Json
-            Invoke-SaladRequest -Headers $Headers -Method "Patch" -Uri "$ContainersBase/$GroupName" -Operation "set explicit replica capacity" -ContentType "application/merge-patch+json" -Body $Body -TimeoutSec 60 | Out-Null
-            $Group = Wait-ForGroupSettled -Headers $Headers -TimeoutMinutes 30
+        $InitialStatus = Get-GroupStatus -Group $Group
+        $OwnsExperimentalStart = (
+            $Service -eq "ltx25_a2v_experimental" -and
+            $AllowBootstrappingInstance -and
+            $InitialStatus -eq "stopped"
+        )
+        try {
+            if ([int]$Group.replicas -ne $DesiredReplicas) {
+                $Body = @{ replicas = $DesiredReplicas } | ConvertTo-Json
+                Invoke-SaladRequest -Headers $Headers -Method "Patch" -Uri "$ContainersBase/$GroupName" -Operation "set explicit replica capacity" -ContentType "application/merge-patch+json" -Body $Body -TimeoutSec 60 | Out-Null
+                $Group = Wait-ForGroupSettled -Headers $Headers -TimeoutMinutes 30
+            }
+            if ((Get-GroupStatus -Group $Group) -ne "running") {
+                Invoke-SaladRequest -Headers $Headers -Method "Post" -Uri "$ContainersBase/$GroupName/start" -Operation "start container group" -TimeoutSec 60 | Out-Null
+            }
+            Wait-ForRunningCapacity -Headers $Headers -ExpectedReplicas $DesiredReplicas -AllowBootstrappingInstance:$AllowBootstrappingInstance | Out-Null
+        } catch {
+            $StartFailure = $_
+            if ($OwnsExperimentalStart) {
+                try {
+                    $Current = Try-Get-Group -Headers $Headers
+                    if ($null -ne $Current -and
+                        (Get-GroupStatus -Group $Current) -ne "stopped") {
+                        Write-Warning (
+                            "A2V_START_ROLLBACK controlled experimental Start failed; " +
+                            "returning the group to stopped before surfacing the error."
+                        )
+                        Invoke-SaladRequest -Headers $Headers -Method "Post" -Uri "$ContainersBase/$GroupName/stop" -Operation "rollback failed experimental start" -TimeoutSec 60 | Out-Null
+                        Wait-ForStoppedGroup -Headers $Headers | Out-Null
+                    }
+                } catch {
+                    Write-Warning (
+                        "A2V_START_ROLLBACK_FAILED original_error=$($StartFailure.Exception.Message) " +
+                        "rollback_error=$($_.Exception.Message)"
+                    )
+                }
+            }
+            throw $StartFailure
         }
-        if ((Get-GroupStatus -Group $Group) -ne "running") {
-            Invoke-SaladRequest -Headers $Headers -Method "Post" -Uri "$ContainersBase/$GroupName/start" -Operation "start container group" -TimeoutSec 60 | Out-Null
-        }
-        Wait-ForRunningCapacity -Headers $Headers -ExpectedReplicas $DesiredReplicas -AllowBootstrappingInstance:$AllowBootstrappingInstance | Out-Null
         if ($AllowBootstrappingInstance) {
             Write-Host "$Service LTX bootstrap instance started; awaiting /ready before submitting Postgres demand." -ForegroundColor Green
         } else {
