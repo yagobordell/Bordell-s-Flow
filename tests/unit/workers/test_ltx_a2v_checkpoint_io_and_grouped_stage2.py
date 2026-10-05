@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +10,10 @@ from unittest.mock import patch
 
 import pytest
 
-from ai_video_factory.workers.ltx25.checkpoint_io import probe_checkpoint_direct_read
+from ai_video_factory.workers.ltx25.checkpoint_io import (
+    probe_bootstrap_storage,
+    probe_checkpoint_direct_read,
+)
 
 
 def _patched_helper():
@@ -157,3 +161,72 @@ def test_direct_io_probe_rejects_unsupported_direct_reads(
     ):
         with pytest.raises(RuntimeError, match="refusing to rely on cached"):
             probe_checkpoint_direct_read(model, minimum_mibps=500)
+
+
+def test_bootstrap_direct_probe_creates_bounded_file_and_always_cleans(
+    tmp_path: Path,
+) -> None:
+    real_open = os.open
+    seen: list[tuple[int, int, float]] = []
+
+    def fake_open(path: Path, flags: int, mode: int = 0o777) -> int:
+        assert flags & os.O_DIRECT
+        return real_open(path, flags & ~os.O_DIRECT, mode)
+
+    def fake_probe(
+        path: Path, *, minimum_mibps: float, sample_bytes: int, samples: int,
+    ) -> dict[str, object]:
+        assert path.parent == tmp_path
+        assert path.stat().st_size == 10 * 4096
+        seen.append((sample_bytes, samples, minimum_mibps))
+        return {"direct_io": True, "speed_mibps_median": 1000.0}
+
+    with (
+        patch("os.open", side_effect=fake_open),
+        patch(
+            "ai_video_factory.workers.ltx25.checkpoint_io.probe_checkpoint_direct_read",
+            side_effect=fake_probe,
+        ),
+    ):
+        result = probe_bootstrap_storage(
+            tmp_path, minimum_mibps=850, sample_bytes=4096, write_blocks=10,
+        )
+    assert result["scratch_bytes"] == 40960
+    assert result["probe_kind"] == "bootstrap_scratch_screen"
+    assert seen == [(4096, 9, 850)]
+    assert list(tmp_path.iterdir()) == []
+
+    with (
+        patch("os.open", side_effect=fake_open),
+        patch(
+            "ai_video_factory.workers.ltx25.checkpoint_io.probe_checkpoint_direct_read",
+            side_effect=RuntimeError("storage too slow"),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="storage too slow"):
+            probe_bootstrap_storage(
+                tmp_path, minimum_mibps=850, sample_bytes=4096, write_blocks=10,
+            )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_only_experimental_a2v_uses_early_direct_storage_gate() -> None:
+    root = Path(__file__).resolve().parents[3]
+    script = (root / "docker/workers/ltx25/download_models.sh").read_text()
+    manifest = json.loads((root / "deploy/salad/services.json").read_text())
+    services = manifest["services"]
+    a2v = services["ltx25_a2v_experimental"]["environment"]
+    flag = "LTX_A2V_EXPERIMENTAL_BOOTSTRAP_MIN_STORAGE_MIBPS"
+    assert flag in script and a2v[flag] == "850"
+    assert all(flag not in service.get("environment", {})
+               for name, service in services.items()
+               if name != "ltx25_a2v_experimental")
+    scratch = script.index("--bootstrap-root")
+    network = script.index('/usr/local/bin/network-preflight')
+    first_download = script.index('hf download')
+    checkpoint = script.index('--checkpoint "${destination}"')
+    gemma = "text_encoders/gemma4"
+    assert scratch < network < first_download < checkpoint
+    assert gemma not in script or checkpoint < script.index(gemma)
+    assert a2v["SALAD_NETWORK_MIN_DOWNLOAD_MBPS"] == "450"
+    assert a2v["LTX_MODEL_DOWNLOAD_MIN_THROUGHPUT_MIBPS"] == "35"
