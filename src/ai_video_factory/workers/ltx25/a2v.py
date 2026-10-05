@@ -1451,6 +1451,7 @@ class DirectLTX25AudioToVideoBackend:
         vae_backend: str = "eager",
         guidance_forward_batch_size: int = 2,
         max_stage1_major_page_faults: int = 0,
+        max_stage1_swap_growth_bytes: int = 0,
         progressive_block_group_size: int = 1,
         min_checkpoint_direct_read_mibps: float = 0.0,
         max_stage1_build_seconds: float = 0.0,
@@ -1472,7 +1473,9 @@ class DirectLTX25AudioToVideoBackend:
         if guidance_forward_batch_size not in (2, 4):
             raise ValueError("A2V B2 guidance forward batch must be 2 or 4")
         if max_stage1_major_page_faults < 0:
-            raise ValueError("A2V B2 fault guard must not be negative")
+            raise ValueError("A2V B2 fault diagnostic must not be negative")
+        if max_stage1_swap_growth_bytes < 0:
+            raise ValueError("A2V B2 swap-growth guard must not be negative")
         if progressive_block_group_size not in (1, 2, 4, 8):
             raise ValueError("A2V B2 progressive group size must be 1, 2, 4 or 8")
         if not 0 <= min_checkpoint_direct_read_mibps <= 10000:
@@ -1620,6 +1623,7 @@ class DirectLTX25AudioToVideoBackend:
                         phase_metrics=phase_metrics,
                         max_transformer_forward_batch_size=guidance_forward_batch_size,
                         max_stage1_major_page_faults=max_stage1_major_page_faults,
+                        max_stage1_swap_growth_bytes=max_stage1_swap_growth_bytes,
                         max_stage1_build_seconds=max_stage1_build_seconds,
                     )
                     inference_seconds = time.monotonic() - inference_at
@@ -1692,6 +1696,7 @@ class DirectLTX25AudioToVideoBackend:
             "vae_backend_request": vae_backend,
             "guidance_forward_batch_size": guidance_forward_batch_size,
             "max_stage1_major_page_faults": max_stage1_major_page_faults,
+            "max_stage1_swap_growth_bytes": max_stage1_swap_growth_bytes,
             "progressive_block_group_size": progressive_block_group_size,
             "min_checkpoint_direct_read_mibps": min_checkpoint_direct_read_mibps,
             "max_stage1_build_seconds": max_stage1_build_seconds,
