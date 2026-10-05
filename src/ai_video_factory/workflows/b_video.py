@@ -43,8 +43,6 @@ from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_RUN_OPTIMIZED_PROFILE,
     LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
     LTX_A2V_RUN_VAE_BACKEND,
-    LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
-    LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
     LTX_A2V_TASK,
 )
 from ai_video_factory.workers.ltx25.jobs import (
@@ -581,162 +579,6 @@ def _reconcile_prior_failed_video_runs(
         )
 
 
-def _inherit_completed_v4_clips(
-    output: Path,
-    *,
-    timeline: dict[str, Any],
-    audio: dict[str, Any],
-    images: dict[str, Any],
-    plan: dict[str, Any],
-    jobs: list[B2VideoJob],
-    run_dir: Path,
-    digest: str,
-    manifest: dict[str, Any],
-    manifest_path: Path,
-) -> None:
-    """Copy only validated v4 successes into v5; never resubmit paid completed clips.
-
-    The exact old fingerprint proves the complete timeline, narration, avatar,
-    images and prompts have not changed. Every copied clip also needs a matching
-    old immutable request fingerprint, local digest and media validation.
-    This is an exact v4 -> v5 observability/runtime-only recovery, not a generic
-    way of reusing outputs after editing the script or changing video settings.
-    """
-    avatar, assets = _source_assets(output, plan, images)
-    # The run directory and manifest store the first 20 hex characters,
-    # not the full 64-character content hash returned by _fingerprint.
-    old_digest = _fingerprint(
-        timeline, audio, assets, avatar,
-        profile=LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
-        i2v_profile=None,  # Exact historical v4 directory/fingerprint.
-    )[:20]
-    if old_digest == digest:
-        return
-    old_run = output / "video" / "runs" / old_digest[:20]
-    previous_path = old_run / "manifest.json"
-    if old_run.is_symlink() or previous_path.is_symlink() or not previous_path.is_file():
-        return
-    old = json.loads(previous_path.read_text(encoding="utf-8"))
-    if (
-        old.get("fingerprint") != old_digest
-        or old.get("master_audio_sha256") != audio["sha256"]
-        or old.get("avatar_prompt") != AVATAR_PROMPT
-        or old.get("avatar_negative_prompt") != AVATAR_NEGATIVE_PROMPT
-    ):
-        raise B2VideoError("Saved v4 manifest does not match the immutable source plan")
-    if old.get("status") == "superseded" and old.get("superseded_by") != digest:
-        raise B2VideoError("Saved v4 run was superseded by a different video plan")
-    if old.get("status") not in {"superseded", "completed"}:
-        raise B2VideoError("Prior v4 run must be reconciled before clip reuse")
-    previous_jobs = old.get("jobs")
-    if not isinstance(previous_jobs, list) or len(previous_jobs) != len(jobs):
-        raise B2VideoError("Saved v4 job grouping differs from the current video plan")
-
-    for job, record, old_record in zip(jobs, manifest["jobs"], previous_jobs, strict=True):
-        legacy_geometry = (
-            job.request.parameters.get("width"),
-            job.request.parameters.get("height"),
-        )
-        if legacy_geometry != (1280, 720):
-            continue
-        if record["status"] == "completed" or old_record.get("status") != "completed":
-            continue
-        if job.kind == "i2v":
-            # Its promoted recipe changes output pixels and paid request identity;
-            # never masquerade an old guided I2V clip as new FP8 resident output.
-            continue
-        if (
-            old_record.get("kind") != job.kind
-            or old_record.get("beat_ids") != list(job.beats)
-        ):
-            raise B2VideoError("Saved v4 completed job has incompatible beat grouping")
-        if job.kind == "a2v":
-            params = dict(job.request.parameters)
-            params["generation_profile"] = LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE
-            image_sha = next(i.sha256 for i in job.request.inputs if i.name == "image")
-            audio_sha = next(i.sha256 for i in job.request.inputs if i.name == "audio")
-            old_id = ltx_a2v_application_job_id(
-                segment_id=f"b2-{job.beats[0]}-{job.beats[-1]}",
-                prompt=AVATAR_PROMPT,
-                image_sha256=image_sha,
-                audio_sha256=audio_sha,
-                seed=int(params["seed"]),
-                width=1280,
-                height=720,
-                fps=_FPS,
-                generation_profile=LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
-            )
-            old_request = job.request.model_copy(update={
-                "job_id": old_id,
-                "parameters": params,
-                "output": ObjectOutput(
-                    key=f"jobs/{old_id}/b2_avatar.mp4", content_type="video/mp4",
-                ),
-                "sidecar_outputs": {
-                    "metadata": ObjectOutput(
-                        key=f"jobs/{old_id}/metadata.json",
-                        content_type="application/json",
-                    ),
-                },
-            })
-        if (
-            old_record.get("job_id") != old_id
-            or old_record.get("request_sha256") != old_request.fingerprint()
-        ):
-            raise B2VideoError(
-                f"Saved v4 request for {job.beats} differs; refusing to reuse the clip"
-            )
-        old_clip = old_run / "clips" / f"{old_id}.mp4"
-        if old_record.get("file") != old_clip.relative_to(output).as_posix():
-            raise B2VideoError("Saved v4 completed clip has an unexpected source path")
-        source = _verified_asset(
-            output, old_record.get("file"), old_record.get("sha256"),
-        )
-        _probe_video(source, job)
-        if job.kind == "a2v":
-            old_metadata = old_run / "clips" / f"{old_id}.metadata.json"
-            if old_metadata.is_symlink() or not old_metadata.is_file():
-                raise B2VideoError("Saved v4 A2V metadata is missing")
-            values = json.loads(old_metadata.read_text(encoding="utf-8"))
-            if (
-                values.get("generation_profile") != LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE
-                or values.get("negative_prompt_applied") is not True
-                or values.get("positive_prompt_enhanced") is not False
-            ):
-                raise B2VideoError("Saved v4 A2V metadata does not match pinned guidance")
-
-        destination = run_dir / "clips" / f"{job.request.job_id}.mp4"
-        if destination.is_symlink() or destination.parent.is_symlink():
-            raise B2VideoError("Refusing linked inherited LTX clip")
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        part = destination.with_suffix(".part.mp4")
-        if part.is_symlink():
-            raise B2VideoError("Refusing linked inherited temporary LTX clip")
-        part.unlink(missing_ok=True)
-        try:
-            shutil.copyfile(source, part)
-            if sha256_file(part) != old_record["sha256"]:
-                raise B2VideoError("Inherited v4 LTX clip changed during copy")
-            part.replace(destination)
-        finally:
-            part.unlink(missing_ok=True)
-        record.update(
-            status="completed",
-            file=destination.relative_to(output).as_posix(),
-            sha256=old_record["sha256"],
-            duration_seconds=job.duration_seconds,
-            replayed=True,
-            reused_from_job_id=old_id,
-            reused_generation_profile=LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
-        )
-        _save_json(manifest_path, manifest)
-        print(
-            f"  LTX {job.kind.upper()} beats={','.join(job.beats)}: "
-            f"reusing verified v4 clip {old_id}; no GPU job submitted",
-            flush=True,
-        )
-
-
 def generate_b2_ltx_video(
     output: Path, plan: dict[str, Any], audio: dict[str, Any],
     images: dict[str, Any], *, queue: JobQueueClient, storage: ObjectStorage,
@@ -794,19 +636,6 @@ def generate_b2_ltx_video(
     _reconcile_prior_failed_video_runs(
         output, new_digest=digest, audio_sha256=audio["sha256"], queue=queue
     )
-    # Legacy v4->v5 clip inheritance is only valid for its original
-    # disk-streamed recipe. FP8 no-offload has a different immutable recipe,
-    # so never relabel old v4 pixels as a freshly validated fast A2V result.
-    if all(
-        job.kind != "a2v" or job.request.parameters["generation_profile"]
-        == LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
-        for job in jobs
-    ):
-        _inherit_completed_v4_clips(
-            output, timeline=timeline, audio=audio, images=images, plan=plan,
-            jobs=jobs, run_dir=run_dir, digest=digest,
-            manifest=manifest, manifest_path=manifest_path,
-        )
     executor = InferenceJobExecutor(
         queue=queue, storage=storage,
         poll_seconds=poll_seconds, timeout_seconds=timeout_seconds,
