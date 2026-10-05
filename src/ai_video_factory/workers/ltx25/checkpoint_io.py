@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import mmap
 import os
+import uuid
 import statistics
 import time
 from pathlib import Path
@@ -85,3 +86,111 @@ def probe_checkpoint_direct_read(
             "do not pay for inference on this instance"
         )
     return result
+
+
+def probe_bootstrap_storage(
+    root: Path, *, minimum_mibps: float,
+    sample_bytes: int = _DIRECT_BLOCK_SIZE,
+    write_blocks: int = 32,
+) -> dict[str, Any]:
+    """Early opt-in screening on the actual model filesystem, before downloads.
+
+    A bounded scratch file is written with O_DIRECT, fsynced, sampled by the
+    checkpoint's existing O_DIRECT reader, and removed in all cases. Sampling
+    fresh scratch storage cannot prove that a downloaded checkpoint will load
+    quickly; the *second*, real-checkpoint probe is therefore mandatory.
+    """
+    if not 0 < minimum_mibps <= 10000:
+        raise ValueError("Invalid experimental bootstrap storage minimum")
+    if sample_bytes < 4096 or sample_bytes % 4096 or not 10 <= write_blocks <= 128:
+        raise ValueError("Invalid bootstrap storage geometry")
+    if not all(hasattr(os, flag) for flag in ("O_DIRECT", "pwritev", "preadv")):
+        raise RuntimeError("A2V bootstrap storage requires Linux direct I/O")
+    root.mkdir(parents=True, exist_ok=True)
+    scratch = root / f".a2v-direct-probe-{os.getpid()}-{uuid.uuid4().hex}.tmp"
+    fd: int | None = None
+    try:
+        fd = os.open(
+            scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_DIRECT, 0o600,
+        )
+        try:
+            with mmap.mmap(-1, sample_bytes) as buffer:
+                aligned = memoryview(buffer)
+                try:
+                    for index in range(write_blocks):
+                        aligned[:] = os.urandom(sample_bytes)
+                        written = os.pwritev(fd, [aligned], index * sample_bytes)
+                        if written != sample_bytes:
+                            raise RuntimeError(
+                                f"A2V short scratch write: {written}/{sample_bytes}"
+                            )
+                finally:
+                    aligned.release()
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+            fd = None
+        result = probe_checkpoint_direct_read(
+            scratch, minimum_mibps=minimum_mibps, sample_bytes=sample_bytes,
+            samples=min(16, write_blocks - 1),
+        )
+        result["probe_kind"] = "bootstrap_scratch_screen"
+        result["scratch_bytes"] = sample_bytes * write_blocks
+        return result
+    finally:
+        if fd is not None:
+            os.close(fd)
+        scratch.unlink(missing_ok=True)
+
+
+def main() -> None:
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description="Strict experimental LTX A2V storage gate")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--bootstrap-root", type=Path)
+    mode.add_argument("--checkpoint", type=Path)
+    parser.add_argument("--minimum-mibps", type=float, required=True)
+    parser.add_argument("--reallocate-on-slow", action="store_true")
+    args = parser.parse_args()
+    try:
+        result = (
+            probe_bootstrap_storage(
+                args.bootstrap_root, minimum_mibps=args.minimum_mibps,
+            )
+            if args.bootstrap_root is not None else
+            probe_checkpoint_direct_read(
+                args.checkpoint, minimum_mibps=args.minimum_mibps,
+            )
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        print(
+            "LTX25_EXPERIMENTAL_STORAGE_PREFLIGHT_FAILED "
+            f"phase={'bootstrap' if args.bootstrap_root is not None else 'checkpoint'} "
+            f"reason={exc}",
+            flush=True,
+        )
+        if args.reallocate_on_slow:
+            from ai_video_factory.workers.download_watchdog import (
+                request_salad_reallocation,
+            )
+
+            reason = (
+                "A2V experimental storage too slow/unsupported for sub-200s trials: "
+                + str(exc)[:180]
+            )
+            print(f"SALAD_REALLOCATION_REQUEST reason={reason}", flush=True)
+            if request_salad_reallocation(reason):
+                print("SALAD_REALLOCATION_REQUESTED", flush=True)
+            else:
+                print("SALAD_REALLOCATION_REQUEST_FAILED", flush=True)
+        raise SystemExit(1) from exc
+    print(
+        "LTX25_EXPERIMENTAL_STORAGE_PREFLIGHT_OK " + json.dumps(result, sort_keys=True),
+        flush=True,
+    )
+
+
+if __name__ == "__main__":
+    main()
