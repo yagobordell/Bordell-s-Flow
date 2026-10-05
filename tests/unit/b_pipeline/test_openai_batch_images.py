@@ -226,6 +226,64 @@ def test_unknown_standard_post_is_not_repeated(tmp_path: Path) -> None:
     assert len(direct.calls) == 1
 
 
+def test_definite_400_rejection_is_retryable_only_on_later_explicit_run(
+    tmp_path: Path,
+) -> None:
+    class RejectOnceDirect(FakeDirect):
+        def __init__(self) -> None:
+            super().__init__()
+            self.rejected = False
+
+        def generate_png(self, **kwargs):
+            self.calls.append(kwargs)
+            if "Reject me" in kwargs["prompt"] and not self.rejected:
+                self.rejected = True
+                raise images.OpenAIImageRequestRejected(400, "Unsupported image size")
+            size = tuple(map(int, kwargs["size"].split("x")))
+            content = _png(size=size)
+            destination = kwargs["destination"]
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(content)
+            return {
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "width": size[0],
+                "height": size[1],
+                "size": kwargs["size"],
+                "output_format": "png",
+                "usage": {"input_tokens": 4},
+                "created": 8,
+            }
+
+    direct = RejectOnceDirect()
+    plan = _plan("Keep me", "Reject me")
+
+    with pytest.raises(images.ImageGenerationError, match="HTTP 400"):
+        images.generate_b2_images(
+            tmp_path, plan, api_key=None, options=_opts(), direct_client=direct,
+        )
+
+    kept_state = json.loads((tmp_path / "images/block_1/1B.json").read_text())
+    rejected_path = tmp_path / "images/block_1/1C.json"
+    rejected_state = json.loads(rejected_path.read_text())
+    assert kept_state["status"] == "completed"
+    assert rejected_state["status"] == "direct_rejected"
+    assert rejected_state["http_status"] == 400
+    assert rejected_state["error"] == "Unsupported image size"
+
+    result = images.generate_b2_images(
+        tmp_path, plan, api_key=None, options=_opts(), direct_client=direct,
+    )
+
+    assert result["status"] == "completed"
+    assert len(direct.calls) == 3
+    assert sum("Keep me" in call["prompt"] for call in direct.calls) == 1
+    assert sum("Reject me" in call["prompt"] for call in direct.calls) == 2
+    recovered = json.loads(rejected_path.read_text())
+    assert recovered["status"] == "completed"
+    assert "http_status" not in recovered
+    assert "error" not in recovered
+
+
 def test_nonstandard_legacy_state_is_rejected_before_standard_post(tmp_path: Path) -> None:
     state_path = tmp_path / "images/block_1/1B.json"
     images._atomic_json(state_path, {
