@@ -6,6 +6,7 @@ worker_name="${2:?worker name is required}"
 ready_timeout_seconds="${3:?ready timeout is required}"
 ready_poll_seconds="${4:-5}"
 bootstrap_command="${5:-}"
+admission_command="${6:-}"
 
 app_pid=""
 
@@ -29,6 +30,12 @@ wait_for_endpoint() {
   done
   return 1
 }
+
+if [[ -n "${admission_command}" ]]; then
+  echo "${worker_name} worker admission preflight starting"
+  "${admission_command}"
+  echo "${worker_name} worker admission preflight passed"
+fi
 
 uvicorn "${app}" --host 0.0.0.0 --port 8080 --no-access-log &
 app_pid=$!
