@@ -29,7 +29,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PINNED_IMAGE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 _TRANSIENT_API_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 _TRANSIENT_TRANSPORT_TEXT = re.compile(
-    r"(?i)timed out|timeout|disconnect|connection reset|temporarily unavailable|server unavailable|gateway timeout"
+    r"(?i)timed out|timeout|disconnect|connection reset|"
+    r"temporarily unavailable|server unavailable|gateway timeout"
 )
 
 
@@ -193,7 +194,8 @@ def wait_for_ready(
                     instance_id = instance.get("id")
                     if (
                         instance.get("version") == version
-                        and instance.get("state") in {"allocating", "downloading", "creating", "running"}
+                        and instance.get("state")
+                        in {"allocating", "downloading", "creating", "running"}
                         and isinstance(instance_id, str)
                         and instance_id
                     ):
