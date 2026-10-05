@@ -39,7 +39,11 @@ from ai_video_factory.providers.job_queue import (
 )
 from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_RECOMMENDED_MAX_SECONDS,
+    LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE,
+    LTX_A2V_RUN_OPTIMIZED_PROFILE,
+    LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
     LTX_A2V_RUN_STATIC_FAST_PROFILE,
+    LTX_A2V_RUN_VAE_BACKEND,
     LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
     LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
     LTX_A2V_TASK,
@@ -232,7 +236,7 @@ def _fingerprint(
             [block_id, beat_id, sha256_file(path)]
             for (block_id, beat_id), path in sorted(assets.items())
         ],
-        "profile": profile or LTX_A2V_RUN_STATIC_FAST_PROFILE,
+        "profile": profile or LTX_A2V_RUN_OPTIMIZED_PROFILE,
         "positive_prompt": AVATAR_PROMPT,
         "negative_prompt": AVATAR_NEGATIVE_PROMPT,
         "fps": _FPS,
@@ -391,7 +395,7 @@ def build_b2_video_plan(
                 segment_id=f"b2-{beat_ids[0]}-{beat_ids[-1]}",
                 prompt=a2v_prompt, image_sha256=image_sha,
                 audio_sha256=audio_sha, seed=seed, width=1280, height=720,
-                fps=_FPS, generation_profile=LTX_A2V_RUN_STATIC_FAST_PROFILE,
+                fps=_FPS, generation_profile=LTX_A2V_RUN_OPTIMIZED_PROFILE,
             )
             request = InferenceJobRequest(
                 job_id=job_id, task=LTX_A2V_TASK, max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
@@ -414,9 +418,16 @@ def build_b2_video_plan(
                     content_type="application/json",
                 )},
                 parameters={
-                    "generation_profile": LTX_A2V_RUN_STATIC_FAST_PROFILE,
+                    "generation_profile": LTX_A2V_RUN_OPTIMIZED_PROFILE,
                     "prompt": a2v_prompt, "seed": seed,
                     "width": 1280, "height": 720, "fps": _FPS,
+                    "vae_backend": LTX_A2V_RUN_VAE_BACKEND,
+                    "guidance_forward_batch_size": (
+                        LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE
+                    ),
+                    "progressive_block_group_size": (
+                        LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE
+                    ),
                 },
             )
         jobs.append(B2VideoJob(
@@ -898,12 +909,19 @@ def generate_b2_ltx_video(
                 values = json.loads(meta.read_text(encoding="utf-8"))
                 if (
                     values.get("generation_profile") !=
-                    LTX_A2V_RUN_STATIC_FAST_PROFILE
+                    LTX_A2V_RUN_OPTIMIZED_PROFILE
                     or values.get("negative_prompt_applied") is not True
                     or values.get("positive_prompt_enhanced") is not False
                     or values.get("quantization") != "fp8_cast"
                     or values.get("offload_mode") != "none"
-                    or values.get("diffvae_backend_effective") != "eager"
+                    or values.get("diffvae_backend_effective") != "triton"
+                    or values.get("vae_backend_request") != LTX_A2V_RUN_VAE_BACKEND
+                    or values.get("guidance_forward_batch_size")
+                    != LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE
+                    or values.get("progressive_block_group_size")
+                    != LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE
+                    or values.get("stage1_residency") != "gpu"
+                    or values.get("stage2_residency") != "progressive_cpu"
                     or values.get("stage_1_image_strength") != 0.8
                     or values.get("video_cfg_scale") != 1.25
                 ):
