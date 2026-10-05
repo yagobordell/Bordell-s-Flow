@@ -339,3 +339,60 @@ Grouped Stage 2 and host admission are potential improvements, but
 neither guarantees a sub-200-second result. Measure all phases and
 the run's end-to-end elapsed time before claiming profitability or
 merging PR #306.
+
+
+## 2026-10-05: storage root cause and pre-download experimental admission
+
+The next grouped-B4+Triton trial was safely aborted after its 70-second
+Stage 1 build gate (94.682 seconds measured). Its exported Salad logs show
+a **381.22 MiB/s median O_DIRECT read speed** on eight distant 16-MiB
+transformer-checkpoint samples (minimum 352.30 MiB/s). Stage 1 consumed
+**94.682 wall seconds but only 14.197 process CPU seconds**, and incurred
+only **31 new major page faults** during the build. It had to bootstrap
+all five model files on the node in **2869 seconds**. That combination
+is direct evidence of an I/O-bound model load on *that specific node*,
+not of slow Stage 1 denoising. It does not establish whether every Salad
+RTX 5090 node has the same physical I/O bottleneck.
+
+A 42,018,190,584-byte checkpoint contains about 40,071 MiB. At
+381 MiB/s one complete cold read alone would take about 105 seconds.
+The previous 350 MiB/s admission threshold could not possibly coexist
+with the intended 70-second Stage 1 build cap. The new opt-in
+experimental floor is **850 MiB/s** (40,071/850 = about 47 seconds,
+leaving roughly 23 seconds for conversion/setup). It is an initial
+engineering screen, not proof that the overall pair will reach 200 s.
+
+The experimental Salad service alone now sets
+`LTX_A2V_EXPERIMENTAL_BOOTSTRAP_MIN_STORAGE_MIBPS=850`. On cache miss,
+`download_models.sh` creates a *bounded 512-MiB temporary file on the
+actual model volume*, measures it with aligned **O_DIRECT writes
+and reads**, and removes it in success and failure. Failures request
+Salad reallocation and prevent the 71-GB model download. A newly
+downloaded original 42-GB transformer is then sampled with the
+existing **real-checkpoint O_DIRECT** probe before Gemma downloads.
+On preexisting verified caches, the real-checkpoint check still runs
+before readiness. Unsupported direct I/O is a hard failure, not a
+cached-read fallback. The scratch test only screens obvious slow
+storage: the real checkpoint is authoritative and can still reject
+a falsely fast scratch device.
+
+This is *not a production-wide change*: other I2V/A2V services do
+not set this variable, and the script defaults to its original behavior.
+The experimental service also raises its network speed gate from
+100 to 450 Mb/s and its sustained model-download minimum from 8 to
+35 MiB/s (180-second grace); these remain adjustable host-admission
+heuristics and do not guarantee download or end-to-end latency.
+The PowerShell paid-trial wrapper rejects a grouped Stage 2 trial
+whose requested real-checkpoint floor is below the experimental
+boot floor, **before starting any paid instance**.
+
+After building and publishing a new immutable Docker image, the
+previous grouped trial must update:
+`-MinCheckpointDirectReadMiBps 850`; keep
+`-ProgressiveBlockGroupSize 8`, `-MaxStage1BuildSeconds 70`,
+`-MaxStage1MajorPageFaults 20000`,
+`-GuidanceForwardBatchSize 4`, strict Triton and the original Eager
+reference paths. Run `-CheckInputsOnly` first and verify the stopped,
+operator-owned Salad group image digest prior to any paid execution.
+Do not merge or promote until a successful full-GPU run also passes
+frame-by-frame quality review and human lip-sync approval.
