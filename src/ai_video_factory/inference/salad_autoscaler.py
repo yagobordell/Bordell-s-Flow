@@ -321,6 +321,16 @@ def load_predictive_autoscaler_config(
     stage_bindings: tuple[AutoscalerServiceBinding, ...],
 ) -> PredictiveAutoscalerConfig:
     project_max = _int_env("SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS", 30, minimum=1)
+    ltx_stage_count = sum(
+        binding.workload in _DEFAULT_JOBS_PER_REPLICA for binding in stage_bindings
+    )
+    required_ltx_project_capacity = 2 * ltx_stage_count
+    if required_ltx_project_capacity and project_max < required_ltx_project_capacity:
+        raise RuntimeError(
+            "SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS must be >= "
+            f"{required_ltx_project_capacity} to preserve two-way capacity for "
+            f"{ltx_stage_count} production LTX service(s)"
+        )
     cold_start_seconds = _float_env(
         "SALAD_AUTOSCALER_COLD_START_SECONDS",
         180.0,
