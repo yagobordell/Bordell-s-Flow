@@ -633,7 +633,11 @@ def _inherit_completed_v4_clips(
         raise B2VideoError("Saved v4 job grouping differs from the current video plan")
 
     for job, record, old_record in zip(jobs, manifest["jobs"], previous_jobs, strict=True):
-        if (job.request.parameters.get("width"), job.request.parameters.get("height")) != (1280, 720):
+        legacy_geometry = (
+            job.request.parameters.get("width"),
+            job.request.parameters.get("height"),
+        )
+        if legacy_geometry != (1280, 720):
             continue
         if record["status"] == "completed" or old_record.get("status") != "completed":
             continue
