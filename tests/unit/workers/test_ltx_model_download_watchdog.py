@@ -6,6 +6,8 @@ from ai_video_factory.workers.ltx25.model_manifest import (
 )
 
 BOOTSTRAP = Path("docker/workers/ltx25/download_models.sh")
+LTX_ENTRYPOINT = Path("docker/workers/ltx25/entrypoint.sh")
+COMMON_ENTRYPOINT = Path("docker/workers/common/entrypoint.sh")
 
 
 def test_ltx_model_download_reuses_shared_watchdog() -> None:
@@ -24,8 +26,19 @@ def test_ltx_model_download_reuses_shared_watchdog() -> None:
     assert "--throughput-grace-seconds" in script
     assert "--throughput-window-seconds" in script
     assert "--reallocate-on-slow" in script
-    assert "/usr/local/bin/network-preflight" in script
+    assert "/usr/local/bin/network-preflight" not in script
 
+
+def test_ltx_network_admission_runs_before_health_endpoint() -> None:
+    ltx_entrypoint = LTX_ENTRYPOINT.read_text(encoding="utf-8")
+    common_entrypoint = COMMON_ENTRYPOINT.read_text(encoding="utf-8")
+
+    assert "network-preflight" in ltx_entrypoint
+    assert "admission_command" in common_entrypoint
+    admission = common_entrypoint.index('"${admission_command}"')
+    uvicorn = common_entrypoint.index('uvicorn "${app}"')
+    health_wait = common_entrypoint.index("wait_for_endpoint /health")
+    assert admission < uvicorn < health_wait
 
 def test_ltx_model_download_fast_path_requires_pinned_provenance() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
