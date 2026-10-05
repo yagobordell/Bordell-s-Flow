@@ -44,6 +44,8 @@ immutable `repo@sha256:...` reference. Keep the GHCR package private.
 
 The active production Container Group name is `bordell-image-upscaler-v2`. The unversioned `bordell-image-upscaler` name is retired because Salad retained that identifier after the previous group disappeared from project inventory; do not recreate or target the retired name.
 
+The main Postgres Capacity Controller treats this manifest as an explicit external-service allowlist entry: it may coexist in the same Salad project, but it is not added to `deploy/salad/services.json`, does not consume Postgres GPU jobs, and the controller must never resize or stop it.
+
 
 The deployment manifest fixes the requested production shape:
 
