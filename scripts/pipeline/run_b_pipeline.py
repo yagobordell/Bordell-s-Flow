@@ -999,7 +999,10 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
             ) from exc
 
     if needs_x2:
-        assert upscaler is not None
+        if upscaler is None:
+            raise ImageGenerationError(
+                "Professional x2 requires a configured image upscaler"
+            )
 
         def finish_with_upscaler_session() -> list[dict[str, object]]:
             with image_upscaler_usage(
