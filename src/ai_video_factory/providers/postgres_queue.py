@@ -15,6 +15,49 @@ from .job_queue import (
 )
 
 
+def _run_metadata(metadata: Mapping[str, str]) -> tuple[str | None, int | None]:
+    run_id = str(metadata.get("run_id") or "").strip() or None
+    raw_count = str(metadata.get("run_job_count") or "").strip()
+    run_job_count = int(raw_count) if raw_count else None
+    if run_job_count is not None and run_job_count < 1:
+        raise ValueError("run_job_count must be >= 1")
+    if (run_id is None) != (run_job_count is None):
+        raise ValueError("run_id and run_job_count must be supplied together")
+    return run_id, run_job_count
+
+
+def _legacy_run_metadata_fingerprint(
+    request: InferenceJobRequest, *, run_id: str, run_job_count: int,
+) -> str:
+    parameters = dict(request.parameters)
+    parameters.update(run_id=run_id, run_job_count=run_job_count)
+    return request.model_copy(update={"parameters": parameters}).fingerprint()
+
+
+def _can_rebind_legacy_run_metadata_failure(
+    row: Mapping[str, Any],
+    request: InferenceJobRequest,
+    *,
+    run_id: str | None,
+    run_job_count: int | None,
+) -> bool:
+    if run_id is None or run_job_count is None or str(row.get("status")) != "failed":
+        return False
+    error = str(row.get("last_error") or "")
+    if not (
+        "ValidationError:" in error
+        and "run_id" in error
+        and "run_job_count" in error
+        and ("extra_forbidden" in error or "Extra inputs are not permitted" in error)
+    ):
+        return False
+    return str(row.get("request_sha256") or "") == _legacy_run_metadata_fingerprint(
+        request,
+        run_id=run_id,
+        run_job_count=run_job_count,
+    )
+
+
 class PostgresJobQueueClient(JobQueueClient):
     """Application queue backed by gpu.jobs, the canonical inference job state."""
 
@@ -38,9 +81,9 @@ class PostgresJobQueueClient(JobQueueClient):
         *,
         metadata: Mapping[str, str],
     ) -> QueueJobSnapshot:
-        del metadata
         from psycopg.types.json import Jsonb
 
+        run_id, run_job_count = _run_metadata(metadata)
         request_sha256 = request.fingerprint()
         manifest = request.model_dump(mode="json", exclude_none=True)
         with self._pool.connection() as connection, connection.transaction():
@@ -52,8 +95,10 @@ class PostgresJobQueueClient(JobQueueClient):
                     task,
                     request,
                     output_key,
-                    transport_job_id
-                ) VALUES (%s, %s, %s, %s, %s, %s)
+                    transport_job_id,
+                    run_id,
+                    run_job_count
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (job_id) DO NOTHING
                 """,
                 (
@@ -63,12 +108,14 @@ class PostgresJobQueueClient(JobQueueClient):
                     Jsonb(manifest),
                     request.output.key,
                     request.job_id,
+                    run_id,
+                    run_job_count,
                 ),
             )
             row = connection.execute(
                 """
                 SELECT job_id, request_sha256, status, attempt_count, lease_expires_at,
-                       result, last_error
+                       result, last_error, run_id, run_job_count
                 FROM gpu.jobs
                 WHERE job_id = %s
                 FOR UPDATE
@@ -78,9 +125,91 @@ class PostgresJobQueueClient(JobQueueClient):
             if row is None:  # pragma: no cover - defensive database invariant
                 raise RuntimeError(f"job row was not created: {request.job_id}")
             if row["request_sha256"] != request_sha256:
-                raise RuntimeError(
-                    f"job_id {request.job_id!r} is already bound to a different request"
+                if not _can_rebind_legacy_run_metadata_failure(
+                    row,
+                    request,
+                    run_id=run_id,
+                    run_job_count=run_job_count,
+                ):
+                    raise RuntimeError(
+                        f"job_id {request.job_id!r} is already bound to a different request"
+                    )
+                connection.execute(
+                    """
+                    UPDATE gpu.jobs
+                    SET request_sha256 = %s,
+                        request = %s,
+                        output_key = %s,
+                        transport_job_id = %s,
+                        run_id = %s,
+                        run_job_count = %s,
+                        status = 'pending',
+                        attempt_count = 0,
+                        lease_owner = NULL,
+                        lease_expires_at = NULL,
+                        result = NULL,
+                        last_error = NULL,
+                        started_at = NULL,
+                        finished_at = NULL,
+                        updated_at = now()
+                    WHERE job_id = %s
+                      AND request_sha256 = %s
+                      AND status = 'failed'
+                    """,
+                    (
+                        request_sha256,
+                        Jsonb(manifest),
+                        request.output.key,
+                        request.job_id,
+                        run_id,
+                        run_job_count,
+                        request.job_id,
+                        row["request_sha256"],
+                    ),
                 )
+                row = {
+                    **row,
+                    "request_sha256": request_sha256,
+                    "status": "pending",
+                    "attempt_count": 0,
+                    "lease_expires_at": None,
+                    "result": None,
+                    "last_error": None,
+                    "run_id": run_id,
+                    "run_job_count": run_job_count,
+                }
+            else:
+                existing_run_id = row.get("run_id")
+                existing_run_job_count = row.get("run_job_count")
+                if (
+                    run_id is not None
+                    and existing_run_id not in (None, run_id)
+                ) or (
+                    run_job_count is not None
+                    and existing_run_job_count not in (None, run_job_count)
+                ):
+                    raise RuntimeError(
+                        f"job_id {request.job_id!r} is already bound to different run metadata"
+                    )
+                if (
+                    run_id is not None
+                    and (existing_run_id is None or existing_run_job_count is None)
+                ):
+                    connection.execute(
+                        """
+                        UPDATE gpu.jobs
+                        SET run_id = %s,
+                            run_job_count = %s,
+                            updated_at = now()
+                        WHERE job_id = %s
+                        """,
+                        (run_id, run_job_count, request.job_id),
+                    )
+                    row = {
+                        **row,
+                        "run_id": run_id,
+                        "run_job_count": run_job_count,
+                    }
 
             status = str(row["status"])
             lease_expires_at = row["lease_expires_at"]
