@@ -28,6 +28,15 @@ from ai_video_factory.inference.salad import (
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PINNED_IMAGE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 _TRANSIENT_API_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+_TRANSIENT_TRANSPORT_TEXT = re.compile(
+    r"(?i)timed out|timeout|disconnect|connection reset|temporarily unavailable|server unavailable|gateway timeout"
+)
+
+
+def _is_transient_salad_error(error: SaladRequestError) -> bool:
+    if error.status_code in _TRANSIENT_API_STATUSES:
+        return True
+    return error.status_code is None and _TRANSIENT_TRANSPORT_TEXT.search(str(error)) is not None
 
 
 def _required_salad_account_env(name: str) -> str:
@@ -147,6 +156,7 @@ def wait_for_ready(
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     report: Callable[[str], None] = print,
+    max_unique_instances: int = 0,
 ) -> str:
     """Require two consecutive ready observations of the same current instance."""
     if not 0 < timeout_seconds <= 21600:
@@ -155,6 +165,8 @@ def wait_for_ready(
         raise ValueError("readiness poll interval must be between 0 and 60 seconds")
     if expected_image and _PINNED_IMAGE.fullmatch(expected_image) is None:
         raise ValueError("expected image must use the immutable repo@sha256:digest form")
+    if max_unique_instances < 0 or max_unique_instances > 32:
+        raise ValueError("max_unique_instances must be between 0 and 32")
 
     started_at = clock()
     deadline = started_at + timeout_seconds
@@ -163,6 +175,7 @@ def wait_for_ready(
     previous_ready_id: str | None = None
     consecutive_ready = 0
     transient_failures = 0
+    seen_instance_ids: set[str] = set()
 
     while True:
         now = clock()
@@ -174,6 +187,23 @@ def wait_for_ready(
         try:
             group = client.describe_container_group()
             instances = client.list_container_group_instances()
+            if max_unique_instances:
+                version = group.get("version")
+                for instance in instances:
+                    instance_id = instance.get("id")
+                    if (
+                        instance.get("version") == version
+                        and instance.get("state") in {"allocating", "downloading", "creating", "running"}
+                        and isinstance(instance_id, str)
+                        and instance_id
+                    ):
+                        seen_instance_ids.add(instance_id)
+                if len(seen_instance_ids) > max_unique_instances:
+                    raise RuntimeError(
+                        "LTX bootstrap exceeded the bounded instance churn budget "
+                        f"({len(seen_instance_ids)}>{max_unique_instances}); "
+                        "no inference job was submitted"
+                    )
             ready_id, observation = _readiness_observation(
                 group,
                 instances,
@@ -184,7 +214,7 @@ def wait_for_ready(
             )
             transient_failures = 0
         except SaladRequestError as error:
-            if error.status_code not in _TRANSIENT_API_STATUSES:
+            if not _is_transient_salad_error(error):
                 raise
             transient_failures += 1
             if transient_failures >= 5:
@@ -235,6 +265,7 @@ def main() -> int:
     parser.add_argument("--env-file", default=".env")
     parser.add_argument("--timeout-seconds", type=float, default=7200.0)
     parser.add_argument("--poll-seconds", type=float, default=15.0)
+    parser.add_argument("--max-unique-instances", type=int, default=0)
     parser.add_argument("--expected-image", default="")
     parser.add_argument(
         "--reuse-production",
@@ -326,6 +357,7 @@ def main() -> int:
             expected_task_mode=expected_task_mode,
             timeout_seconds=args.timeout_seconds,
             poll_seconds=args.poll_seconds,
+            max_unique_instances=args.max_unique_instances,
         )
     except (RuntimeError, TimeoutError, ValueError) as error:
         print(f"LTX readiness failed: {error}", file=sys.stderr)
