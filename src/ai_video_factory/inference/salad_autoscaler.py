@@ -18,7 +18,8 @@ ACTIVE_STATUSES = (
 
 # LTX scales by backlog count rather than the generic drain-time forecast.
 # Keep small/normal runs on one RTX 5090 and add the second replica only when
-# more than thirty active clips of the same type remain.
+# the original per-type run batch exceeds thirty clips. Current run jobs carry
+# that durable batch size so the burst replica is not discarded mid-run.
 _DEFAULT_JOBS_PER_REPLICA = {
     "ltx25_i2v": 30,
     "ltx25": 30,
