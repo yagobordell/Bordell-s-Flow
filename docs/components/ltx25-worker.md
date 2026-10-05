@@ -78,10 +78,11 @@ Operate it with:
 
 Production capacity is governed by the Postgres-backed predictive controller.
 I2V and A2V must use independent cold-start/runtime calibration because they are separate
-container groups even though they currently share the same worker image. Both production LTX
-groups are capped at two RTX 5090 replicas and default to one queued inference job per replica,
-so two pending I2V clips or two pending A2V clips request two independent GPUs and execute
-concurrently even when their durations differ. The controller is the only production authority
+container groups even though they currently share the same worker image. Both production LTX groups are capped at two RTX 5090 replicas, but scale out conservatively
+for cost control: one replica handles up to 30 active clips of its own type. A second replica is
+requested only when that I2V or A2V backlog exceeds 30 clips. The second worker then consumes the
+same Postgres queue independently, so large runs can process two clips concurrently while small
+runs keep a single paid GPU. The controller is the only production authority
 allowed to resize or stop those groups; workers never stop Salad directly.
 Controlled paid smokes allocate one replica explicitly and stop it in `finally`.
 See [isolated I2V validation](../operations/ltx25-i2v-isolated-smoke.md).
