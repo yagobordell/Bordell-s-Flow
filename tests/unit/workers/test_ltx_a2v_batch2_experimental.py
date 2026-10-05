@@ -45,6 +45,7 @@ def test_pair_accepts_full_hd_but_rejects_unvalidated_recipe_or_shape() -> None:
     assert A2VBatch2Parameters.model_validate(valid).vae_backend == "eager"
     assert A2VBatch2Parameters.model_validate(valid).guidance_forward_batch_size == 2
     assert A2VBatch2Parameters.model_validate(valid).max_stage1_major_page_faults == 0
+    assert A2VBatch2Parameters.model_validate(valid).max_stage1_swap_growth_bytes == 0
     assert A2VBatch2Parameters.model_validate({
         **valid, "vae_backend": "triton_experimental",
         "guidance_forward_batch_size": 4,
@@ -63,6 +64,8 @@ def test_pair_accepts_full_hd_but_rejects_unvalidated_recipe_or_shape() -> None:
         {"guidance_forward_batch_size": 3},
         {"max_stage1_major_page_faults": -1},
         {"max_stage1_major_page_faults": 1000001},
+        {"max_stage1_swap_growth_bytes": -1},
+        {"max_stage1_swap_growth_bytes": (1 << 40) + 1},
         {"progressive_block_group_size": 3},
         {"min_checkpoint_direct_read_mibps": -1},
         {"max_stage1_build_seconds": 3601},
@@ -98,6 +101,9 @@ class FakeBackend:
             "guidance_forward_batch_size": kwargs.get("guidance_forward_batch_size", 2),
             "max_stage1_major_page_faults": kwargs.get(
                 "max_stage1_major_page_faults", 0,
+            ),
+            "max_stage1_swap_growth_bytes": kwargs.get(
+                "max_stage1_swap_growth_bytes", 0,
             ),
             "progressive_block_group_size": kwargs.get("progressive_block_group_size", 1),
             "min_checkpoint_direct_read_mibps": kwargs.get(
@@ -157,6 +163,7 @@ def test_atomic_four_input_contract_and_independent_audio(tmp_path: Path) -> Non
     assert backend.calls[0]["vae_backend"] == "eager"
     assert backend.calls[0]["guidance_forward_batch_size"] == 2
     assert backend.calls[0]["max_stage1_major_page_faults"] == 0
+    assert backend.calls[0]["max_stage1_swap_growth_bytes"] == 0
     assert backend.calls[0]["progressive_block_group_size"] == 1
     assert backend.calls[0]["min_checkpoint_direct_read_mibps"] == 0.0
     assert backend.calls[0]["max_stage1_build_seconds"] == 0.0
@@ -240,37 +247,30 @@ def test_cli_contains_lipsync_and_four_input_gates() -> None:
     assert "ltx25_a2v_experimental" in wrapper
 
 
-def test_host_paging_guard_rejects_slow_instance_without_gpu_fallback() -> None:
+def test_host_pressure_guard_allows_cold_checkpoint_faults_without_swap() -> None:
     from ai_video_factory.workers.ltx25.resource_metrics import check_stage1_host_pressure
 
     metrics: dict[str, Any] = {}
     check_stage1_host_pressure(
-        {"process_major_page_faults": 1000},
-        {"process_major_page_faults": 3000},
-        20000, metrics,
+        {
+            "process_major_page_faults": 11050,
+            "process_vmswap_bytes": 0,
+            "cgroup_available": False,
+        },
+        {
+            "process_major_page_faults": 163104,
+            "process_vmswap_bytes": 0,
+            "cgroup_available": False,
+        },
+        0,
+        metrics,
+        major_page_faults_diagnostic_limit=20000,
     )
-    assert metrics["stage1_major_page_faults_delta"] == 2000
+    assert metrics["stage1_major_page_faults_delta"] == 152054
     assert metrics["stage1_major_page_faults_limit"] == 20000
-    with pytest.raises(RuntimeError, match="No stage2 or VAE was started"):
-        check_stage1_host_pressure(
-            {"process_major_page_faults": 1000},
-            {"process_major_page_faults": 171000},
-            20000, {},
-        )
-    with pytest.raises(RuntimeError, match="monotonic"):
-        check_stage1_host_pressure({}, {}, 20000, {})
-    with pytest.raises(RuntimeError, match="monotonic"):
-        check_stage1_host_pressure(
-            {"process_major_page_faults": 100},
-            {"process_major_page_faults": 99},
-            20000, {},
-        )
-    with pytest.raises(ValueError, match="explicitly enabled"):
-        check_stage1_host_pressure(
-            {"process_major_page_faults": 0},
-            {"process_major_page_faults": 0},
-            0, {},
-        )
+    assert metrics["stage1_major_page_faults_exceeded_diagnostic"] is True
+    assert metrics["stage1_process_swap_growth_bytes"] == 0
+    assert metrics["stage1_host_pressure_detected"] is False
 
 
 def test_latency_trial_exposes_combined_mode_and_target_without_auto_promotion() -> None:
@@ -278,6 +278,7 @@ def test_latency_trial_exposes_combined_mode_and_target_without_auto_promotion()
     wrapper = (root / "scripts/smoke/run_ltx25_a2v_batch2_trial.ps1").read_text()
     smoke = (root / "scripts/smoke/submit_ltx25_a2v_batch2_smoke.py").read_text()
     assert "--max-stage1-major-page-faults" in wrapper
+    assert "--max-stage1-swap-growth-bytes" in wrapper
     assert "--performance-target-seconds" in wrapper
     assert "HUMAN_COMBINED_B4_TRITON_APPROVAL_REQUIRED" in smoke
     assert "A2V_B2_PERFORMANCE_TARGET_" in smoke
