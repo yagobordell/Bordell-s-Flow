@@ -222,6 +222,8 @@ def test_offline_docker_probe_requires_exact_digest_and_aborts_on_bad_image() ->
     assert "--gpus" not in args
     assert "--rm" in args
     assert "A2VBatch2Parameters" in args[-1]
+    assert "max_stage1_swap_growth_bytes" in args[-1]
+    assert "major_page_faults_diagnostic_limit" in args[-1]
     for bad in ("docker.io/x:latest", "docker.io/x@sha256:zz"):
         with pytest.raises(ValueError):
             probe.verify(bad)
