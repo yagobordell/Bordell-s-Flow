@@ -32,6 +32,7 @@ class A2VBatch2Parameters(BaseModel):
     vae_backend: Literal["eager", "triton_experimental"] = "eager"
     guidance_forward_batch_size: Literal[2, 4] = 2
     max_stage1_major_page_faults: int = Field(default=0, ge=0, le=1000000)
+    max_stage1_swap_growth_bytes: int = Field(default=0, ge=0, le=1 << 40)
     progressive_block_group_size: Literal[1, 2, 4, 8] = 1
     min_checkpoint_direct_read_mibps: float = Field(default=0.0, ge=0, le=10000)
     max_stage1_build_seconds: float = Field(default=0.0, ge=0, le=3600)
@@ -100,6 +101,7 @@ class ExperimentalA2VBatch2TaskRunner:
                 vae_backend=params.vae_backend,
                 guidance_forward_batch_size=params.guidance_forward_batch_size,
                 max_stage1_major_page_faults=params.max_stage1_major_page_faults,
+                max_stage1_swap_growth_bytes=params.max_stage1_swap_growth_bytes,
                 progressive_block_group_size=params.progressive_block_group_size,
                 min_checkpoint_direct_read_mibps=params.min_checkpoint_direct_read_mibps,
                 max_stage1_build_seconds=params.max_stage1_build_seconds,
@@ -115,7 +117,9 @@ class ExperimentalA2VBatch2TaskRunner:
         if report.get("guidance_forward_batch_size") != params.guidance_forward_batch_size:
             raise RuntimeError("Requested A2V guidance forward batch was not executed")
         if report.get("max_stage1_major_page_faults") != params.max_stage1_major_page_faults:
-            raise RuntimeError("Requested A2V host paging guard was not executed")
+            raise RuntimeError("Requested A2V major-fault diagnostic was not executed")
+        if report.get("max_stage1_swap_growth_bytes") != params.max_stage1_swap_growth_bytes:
+            raise RuntimeError("Requested A2V swap-growth guard was not executed")
         for key in (
             "progressive_block_group_size",
             "min_checkpoint_direct_read_mibps",
