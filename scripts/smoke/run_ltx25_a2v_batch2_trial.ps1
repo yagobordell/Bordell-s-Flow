@@ -42,8 +42,8 @@ $Service = "ltx25_a2v_experimental"
 $Services = Get-Content (Join-Path $Root "deploy\salad\services.json") -Raw | ConvertFrom-Json
 $BootstrapStorageMin = [double]$Services.services.ltx25_a2v_experimental.environment.LTX_A2V_EXPERIMENTAL_BOOTSTRAP_MIN_STORAGE_MIBPS
 if ($ProgressiveBlockGroupSize -gt 1 -and $MinCheckpointDirectReadMiBps -lt $BootstrapStorageMin) {
-    throw ("Grouped A2V requires a real-checkpoint read floor >= {0} MiB/s " +
-        "to match the early experimental Salad storage gate.") -f $BootstrapStorageMin
+    throw (("Grouped A2V requires a real-checkpoint read floor >= {0} MiB/s " +
+        "to match the early experimental Salad storage gate.") -f $BootstrapStorageMin)
 }
 $Destination = Join-Path $Root ("data\output\deployment-validation\ltx25-a2v-batch2\" + $RunId)
 if ($ExpectedPinnedImage -notmatch '^[^\s@]+@sha256:[0-9a-fA-F]{64}$') {
