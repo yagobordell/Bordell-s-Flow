@@ -33,6 +33,7 @@ def test_image_upscaler_has_independent_salad_group_contract() -> None:
     service = manifest["service"]
 
     assert manifest["schema_version"] == 1
+    assert service["group_name"] == "bordell-image-upscaler-v2"
     assert service["image"].startswith("ghcr.io/yagobordell/image-upscaler-salad:")
     assert service["capacity"]["replicas"] == 1
     assert service["resources"] == {
