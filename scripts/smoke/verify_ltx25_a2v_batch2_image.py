@@ -19,7 +19,9 @@ from ai_video_factory.workers.ltx25.experimental_a2v_batch2 import (
 from ai_video_factory.workers.ltx25.shared_a2v_decoder import SharedA2VDecoder
 from ai_video_factory.workers.ltx25.triton_a2v_probe import ensure_triton_gpu_probe
 from ltx_core.block_streaming.builder import StreamingModelBuilder
-from ai_video_factory.workers.ltx25.checkpoint_io import probe_checkpoint_direct_read
+from ai_video_factory.workers.ltx25.checkpoint_io import (
+    probe_bootstrap_storage, probe_checkpoint_direct_read,
+)
 assert callable(_build_state) and callable(generate_paired_static_a2v)
 assert callable(euler_ancestral_denoising_loop)
 assert "new_noise_fn" in inspect.signature(euler_ancestral_denoising_loop).parameters
@@ -28,6 +30,12 @@ assert "_a2v_progressive_block_group_size" in inspect.getsource(
     StreamingModelBuilder._load_i2v_progressive_pinned_blocks
 )
 assert callable(probe_checkpoint_direct_read)
+assert callable(probe_bootstrap_storage)
+from pathlib import Path
+bootstrap_script = Path("/usr/local/bin/download-models").read_text(encoding="utf-8")
+assert "--bootstrap-root" in bootstrap_script
+assert "--checkpoint" in bootstrap_script
+assert "LTX_A2V_EXPERIMENTAL_BOOTSTRAP_MIN_STORAGE_MIBPS" in bootstrap_script
 assert "generate_pair" in dir(DirectLTX25AudioToVideoBackend)
 assert "actual_gpu_batch_size" in inspect.getsource(DirectLTX25AudioToVideoBackend.generate_pair)
 assert "stage2_factory" in inspect.signature(generate_paired_static_a2v).parameters
