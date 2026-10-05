@@ -107,11 +107,13 @@ def image_upscaler_usage(
 ) -> Iterator[SaladClient]:
     """Coordinate one professional image-finishing user across machines.
 
-    Every active run holds a shared Postgres advisory lock. On exit, the run
-    releases its shared lock and tries the exclusive form. Exclusive success
-    proves that no other cooperating run is using the service; while that lock
-    is held, new users cannot enter, so Stop cannot race an active inference.
-    PostgreSQL releases session advisory locks automatically if a process dies.
+    Every active run holds a shared Postgres advisory lock. After successful
+    finishing, the run releases its shared lock and tries the exclusive form.
+    Exclusive success proves that no other cooperating run is using the service;
+    while that lock is held, new users cannot enter, so Stop cannot race an
+    active inference. A finishing exception deliberately skips Stop because a
+    transport error may represent an ambiguous in-flight inference. PostgreSQL
+    releases session advisory locks automatically if a process dies.
     """
     say = notify or (lambda message: print(message, flush=True))
     group_name = _manifest_group_name(manifest_path)
@@ -122,6 +124,7 @@ def image_upscaler_usage(
     shared_locked = False
     exclusive_locked = False
     ready = False
+    completed = False
     try:
         if auto_stop:
             if not postgres_dsn or not postgres_dsn.strip():
@@ -152,6 +155,7 @@ def image_upscaler_usage(
         )
         ready = True
         yield resolved_client
+        completed = True
     finally:
         if connection is not None:
             try:
@@ -166,7 +170,7 @@ def image_upscaler_usage(
                     (_UPSCALER_USAGE_LOCK_KEY,),
                 ).fetchone()
                 exclusive_locked = bool(row and row[0])
-                if exclusive_locked and ready:
+                if exclusive_locked and ready and completed:
                     try:
                         group = resolved_client.describe_container_group()
                         state = group.get("current_state")
