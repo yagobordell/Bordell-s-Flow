@@ -16,6 +16,7 @@ on:
       - "tests/unit/inference/test_salad_autoscaler.py"
       - "tests/unit/workers/test_ltx25_worker.py"
       - "tests/unit/workers/test_ltx_a2v_run_promotion.py"
+      - "tests/unit/workers/test_ltx_a2v_task.py"
       - "tests/unit/workers/test_ltx_i2v_optimization.py"
       - ".github/workflows/ci-run-ltx-1080p.yml"
 
@@ -50,6 +51,7 @@ jobs:
             tests/unit/inference/test_salad_autoscaler.py \
             tests/unit/workers/test_ltx25_worker.py \
             tests/unit/workers/test_ltx_a2v_run_promotion.py \
+            tests/unit/workers/test_ltx_a2v_task.py \
             tests/unit/workers/test_ltx_i2v_optimization.py
 
   general-parity:
