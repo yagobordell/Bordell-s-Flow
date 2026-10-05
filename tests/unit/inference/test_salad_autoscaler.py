@@ -1205,6 +1205,16 @@ def test_run_ltx_parallel_contract_rejects_sequential_overrides(
             stage_bindings=(_binding("ltx25", max_replicas=2),)
         )
 
+    monkeypatch.delenv("SALAD_AUTOSCALER_LTX25_MAX_REPLICAS", raising=False)
+    monkeypatch.setenv("SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS", "3")
+    with pytest.raises(RuntimeError, match="must be >= 4"):
+        load_predictive_autoscaler_config(
+            stage_bindings=(
+                _binding("ltx25_i2v", max_replicas=2),
+                _binding("ltx25", max_replicas=2),
+            )
+        )
+
 
 def test_run_ltx_defaults_scale_two_pending_jobs_to_two_replicas(
     monkeypatch: pytest.MonkeyPatch,
