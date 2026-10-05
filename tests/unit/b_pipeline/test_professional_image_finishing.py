@@ -667,6 +667,11 @@ def test_professional_paid_originals_survive_transient_salad_start_error(
     ):
         monkeypatch.setattr(runner.settings, setting, "test-value")
     monkeypatch.setattr(runner.settings, "image_upscaler_url", "https://gateway.salad.cloud")
+    monkeypatch.setattr(
+        runner,
+        "create_optium_image_upscaler",
+        lambda **kwargs: RecordingUpscaler(),
+    )
 
     @contextmanager
     def reject_salad(**kwargs):
