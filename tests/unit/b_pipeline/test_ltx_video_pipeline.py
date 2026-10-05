@@ -99,6 +99,31 @@ def _case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict, dict, 
     return plan, audio, images
 
 
+def test_final_compositor_uses_professional_finished_asset_identity() -> None:
+    from ai_video_factory.compositor import b_video as compositor
+
+    original = {
+        "block_id": 2,
+        "beat_id": "2A",
+        "file": "images/block_2/2A.png",
+        "sha256": "a" * 64,
+    }
+    finished = {
+        **original,
+        "sha256": "b" * 64,
+        "provider": "image_x2",
+        "source_sha256": original["sha256"],
+    }
+    images = {
+        "items": [original],
+        "panel_assets": [],
+        "finishing_status": "completed",
+        "final_assets": [finished],
+    }
+
+    assert compositor._image_records(images) == [finished]
+
+
 def test_final_compositor_alternates_media_image_zoom_direction() -> None:
     from ai_video_factory.compositor import b_video as compositor
 
