@@ -22,6 +22,7 @@ from ltx_core.block_streaming.builder import StreamingModelBuilder
 from ai_video_factory.workers.ltx25.checkpoint_io import (
     probe_bootstrap_storage, probe_checkpoint_direct_read,
 )
+from ai_video_factory.workers.ltx25.resource_metrics import check_stage1_host_pressure
 assert callable(_build_state) and callable(generate_paired_static_a2v)
 assert callable(euler_ancestral_denoising_loop)
 assert "new_noise_fn" in inspect.signature(euler_ancestral_denoising_loop).parameters
@@ -45,9 +46,24 @@ assert "max_transformer_forward_batch_size" in inspect.signature(
 assert "max_stage1_major_page_faults" in inspect.signature(
     generate_paired_static_a2v
 ).parameters
+assert "max_stage1_swap_growth_bytes" in inspect.signature(
+    generate_paired_static_a2v
+).parameters
 assert "max_stage1_major_page_faults" in inspect.signature(
     DirectLTX25AudioToVideoBackend.generate_pair
 ).parameters
+assert "max_stage1_swap_growth_bytes" in inspect.signature(
+    DirectLTX25AudioToVideoBackend.generate_pair
+).parameters
+assert "max_swap_growth_bytes" in inspect.signature(
+    check_stage1_host_pressure
+).parameters
+assert "major_page_faults_diagnostic_limit" in inspect.signature(
+    check_stage1_host_pressure
+).parameters
+assert "stage1_host_pressure_detected" in inspect.getsource(
+    check_stage1_host_pressure
+)
 for key in (
     "progressive_block_group_size", "min_checkpoint_direct_read_mibps",
     "max_stage1_build_seconds",
@@ -58,6 +74,7 @@ assert A2VBatch2Parameters.model_fields["stage2_mode"].default == "cpu"
 assert A2VBatch2Parameters.model_fields["vae_backend"].default == "eager"
 assert A2VBatch2Parameters.model_fields["guidance_forward_batch_size"].default == 2
 assert A2VBatch2Parameters.model_fields["max_stage1_major_page_faults"].default == 0
+assert A2VBatch2Parameters.model_fields["max_stage1_swap_growth_bytes"].default == 0
 assert A2VBatch2Parameters.model_fields["progressive_block_group_size"].default == 1
 assert A2VBatch2Parameters.model_fields["min_checkpoint_direct_read_mibps"].default == 0.0
 assert A2VBatch2Parameters.model_fields["max_stage1_build_seconds"].default == 0.0
