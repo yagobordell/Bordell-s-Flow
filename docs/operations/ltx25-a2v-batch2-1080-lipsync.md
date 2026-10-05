@@ -223,13 +223,16 @@ these savings arithmetically or claim that combining both reaches 200 seconds.
 The next **isolated** experiment combines the already-tested B4 forward and
 strict Triton decoder. It changes no A2V model weights, prompts, audio freeze,
 CFG equation, sampling sigmas, seed order, frame count or tiling policy. The
-new `-MaxStage1MajorPageFaults 20000` test-only placement guard measures
-*incremental process-level* major page faults from pipeline acquisition
-through Stage 1. If that increment exceeds 20,000 (original B4's cumulative
-count was about 1,600; the unusually slow split-B2 Triton run exceeded
-170,000 by Stage 1), abort **before** expensive Stage 2 and VAE. Missing
-or non-monotonic proc counters also fail closed. This is not proof that a
-remaining host is swap-free: cgroup memory can be hidden by Salad.
+`-MaxStage1MajorPageFaults 20000` is now a diagnostic threshold only.
+A later fast host proved that cold mmap/safetensors checkpoint reads can
+produce about 152,000 incremental major faults while process swap stays at
+zero and Stage 1 build remains fast. Major faults therefore never abort by
+themselves. The hard placement guard is `-MaxStage1SwapGrowthBytes 0`:
+any Stage 1 growth in process/cgroup swap, or an increase in cgroup
+`memory.events` `high`, `max`, `oom` or `oom_kill`, aborts before
+Stage 2/VAE. `pgscan`/`pgsteal` remain diagnostic because file-cache
+reclaim can accompany healthy checkpoint streaming. If the cgroup is hidden
+and process VmSwap does not grow, a high major-fault count alone is accepted.
 
 A2V now forces cyclic garbage collection at two natural lifetime
 boundaries: after upsampling and dropping stage1 tensors before loading
@@ -324,9 +327,9 @@ experimental PowerShell trial with:
 $Trial.RunId = "a2v-b4-triton-group8-$(Get-Date -Format yyyyMMddHHmmss)"
 .\scripts\smoke\run_ltx25_a2v_batch2_trial.ps1 @Trial \
     -GuidanceForwardBatchSize 4 -VaeBackend triton_experimental \
-    -ProgressiveBlockGroupSize 8 -MinCheckpointDirectReadMiBps 350 \
+    -ProgressiveBlockGroupSize 8 -MinCheckpointDirectReadMiBps 850 \
     -MaxStage1BuildSeconds 70 -MaxStage1MajorPageFaults 20000 \
-    -PerformanceTargetSeconds 200 -CheckInputsOnly
+    -MaxStage1SwapGrowthBytes 0 -PerformanceTargetSeconds 200 -CheckInputsOnly
 ```
 
 Only after local preflight, immutable image ABI check, and stopped,
@@ -390,7 +393,7 @@ After building and publishing a new immutable Docker image, the
 previous grouped trial must update:
 `-MinCheckpointDirectReadMiBps 850`; keep
 `-ProgressiveBlockGroupSize 8`, `-MaxStage1BuildSeconds 70`,
-`-MaxStage1MajorPageFaults 20000`,
+`-MaxStage1MajorPageFaults 20000`, `-MaxStage1SwapGrowthBytes 0`,
 `-GuidanceForwardBatchSize 4`, strict Triton and the original Eager
 reference paths. Run `-CheckInputsOnly` first and verify the stopped,
 operator-owned Salad group image digest prior to any paid execution.
