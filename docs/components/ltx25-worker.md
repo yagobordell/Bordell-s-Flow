@@ -8,20 +8,22 @@ the audio-to-video capability used by avatar-oriented flows.
 Normal Phase 8 generation receives a storyboard keyframe, motion prompt and timing-derived generation
 parameters, then writes one silent MP4 artifact per shot.
 
-Production video geometry is:
+Production `run` video geometry is:
 
 ```text
-1280x720
+1920x1080
 24 fps
-silent H.264 MP4
+H.264 MP4
 ```
 
 Qwen text-to-image keyframes are 1280x736 rather than exact 16:9. For I2V, the worker
-preserves the entire source frame using proportional fit and narrow edge-extended side margins
-before padding the internal model grid to 1280x768. Only that internal grid padding is removed
-from the decoded output. The public MP4 remains 1280x720; no Qwen content is center-cropped.
+preserves the entire source frame using proportional fit and narrow edge-extended side margins,
+scales it to the 1920x1080 delivery frame, then pads only the model grid to 1920x1088.
+That eight-pixel internal height margin is removed after decoding. The public I2V MP4 is
+1920x1080 and remains silent; A2V carries its generated speech stream until final composition.
 
-Accepted clips are subsequently upscaled by Real-ESRGAN to 2560x1440.
+The current `run` path does not use a video upscaler after LTX; LTX delivers the final
+1920x1080 clip geometry directly.
 
 ## Container and bootstrap
 
@@ -76,8 +78,13 @@ Operate it with:
 
 Production capacity is governed by the Postgres-backed predictive controller.
 I2V and A2V must use independent cold-start/runtime calibration because they are separate
-container groups even though they currently share the same worker image. The controller is the
-only production authority allowed to resize or stop those groups; workers never stop Salad directly.
+container groups even though they currently share the same worker image. Both production LTX groups are capped at two RTX 5090 replicas, but scale out conservatively
+for cost control: one replica handles runs containing up to 30 clips of its own type. A run whose original I2V or
+A2V batch exceeds 30 clips requests the second replica and carries that batch size in every job,
+so the second GPU remains useful through the tail of the large run instead of being removed as
+soon as the live backlog falls back to 30. The two workers consume the same Postgres queue
+independently, while small runs keep a single paid GPU. The controller is the only production authority
+allowed to resize or stop those groups; workers never stop Salad directly.
 Controlled paid smokes allocate one replica explicitly and stop it in `finally`.
 See [isolated I2V validation](../operations/ltx25-i2v-isolated-smoke.md).
 

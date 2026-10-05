@@ -157,6 +157,15 @@ def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     assert video.request.job_id.startswith("b2-1D-")
     assert video.request.parameters["prompt"] == "A bird takes off."
     assert video.request.parameters["num_frames"] == 17
+    run_ids = {job.request.parameters["run_id"] for job in jobs}
+    assert run_ids == {_run_dir.name}
+    assert first.request.parameters["run_job_count"] == 2
+    assert last.request.parameters["run_job_count"] == 2
+    assert video.request.parameters["run_job_count"] == 1
+    for job in jobs:
+        assert job.request.parameters["width"] == 1920
+        assert job.request.parameters["height"] == 1080
+        assert job.request.parameters["fps"] == 24
     assert video.request.inputs[0].sha256 == images["items"][1]["sha256"]
     assert first.duration_seconds == pytest.approx(1.4)
     assert last.duration_seconds == pytest.approx(0.4)
@@ -617,14 +626,14 @@ def test_non_oom_terminal_failure_requires_manual_reconciliation(tmp_path: Path)
     assert json.loads(previous.read_text(encoding="utf-8"))["status"] == "running"
 
 
-def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
+def test_1080p_run_never_reuses_legacy_720p_ltx_clips(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from ai_video_factory.compositor import b_video as compositor
     from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
 
     plan, audio, images = _case(tmp_path, monkeypatch)
-    v5 = b_video.LTX_A2V_STATIC_SAFE_GENERATION_PROFILE
+    current_a2v_profile = b_video.LTX_A2V_RUN_OPTIMIZED_PROFILE
     selected_i2v = b_video.LTX_PRODUCTION_I2V_PROFILE
     new_fingerprint = b_video._fingerprint
 
@@ -670,7 +679,7 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
                 "positive_prompt_enhanced": False,
             }), encoding="utf-8")
     b_video._save_json(old_run / "manifest.json", previous)
-    monkeypatch.setattr(b_video, "LTX_A2V_RUN_OPTIMIZED_PROFILE", v5)
+    monkeypatch.setattr(b_video, "LTX_A2V_RUN_OPTIMIZED_PROFILE", current_a2v_profile)
     monkeypatch.setattr(b_video, "LTX_PRODUCTION_I2V_PROFILE", selected_i2v)
     monkeypatch.setattr(b_video, "_fingerprint", new_fingerprint)
     monkeypatch.setattr(
@@ -698,7 +707,7 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
 
     new_metadata = tmp_path / "new-metadata.json"
     new_metadata.write_text(json.dumps({
-        "generation_profile": v5,
+        "generation_profile": current_a2v_profile,
         "negative_prompt_applied": True,
         "positive_prompt_enhanced": False,
         "quantization": "fp8_cast",
@@ -752,14 +761,15 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
         tmp_path, plan, audio, images, queue=FakeQueue(), storage=FakeStorage(),
     )
     assert result["status"] == "completed"
-    assert len(submitted) == 2
-    assert old_jobs[1].request.job_id not in submitted
-    assert old_jobs[2].request.job_id not in submitted
+    assert len(submitted) == 3
+    assert all(job.request.job_id in submitted for job in b_video.build_b2_video_plan(
+        tmp_path, plan, audio, images
+    )[1])
     manifest_file = tmp_path / "video" / "runs" / result["fingerprint"][:20] / "manifest.json"
     saved = json.loads(manifest_file.read_text(encoding="utf-8"))
-    assert saved["jobs"][0]["reused_from_job_id"] == old_jobs[0].request.job_id
     assert saved["jobs"][0]["status"] == "completed"
-    assert _sha(tmp_path / saved["jobs"][0]["file"]) == previous["jobs"][0]["sha256"]
+    assert "reused_from_job_id" not in saved["jobs"][0]
+    assert saved["jobs"][0]["job_id"] != old_jobs[0].request.job_id
     assert saved["jobs"][1]["job_id"] in submitted
     assert saved["jobs"][1]["job_id"] != old_jobs[1].request.job_id
     assert "reused_from_job_id" not in saved["jobs"][1]
@@ -795,7 +805,7 @@ def test_offline_ltx_dispatch_renders_one_master_audio_and_replays(
     source = tmp_path / "worker-with-embedded-audio.mp4"
     subprocess.run([
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-        "-f", "lavfi", "-i", "color=c=red:s=1280x720:r=24:d=3.2",
+        "-f", "lavfi", "-i", "color=c=red:s=1920x1080:r=24:d=3.2",
         "-f", "lavfi", "-i", "anullsrc=r=48000:cl=mono",
         "-t", "3.2", "-c:v", "libx264", "-preset", "ultrafast",
         "-pix_fmt", "yuv420p", "-c:a", "aac", str(source),
@@ -924,12 +934,7 @@ def test_fast_static_run_never_inherits_old_disk_offload_clips(
         b_video, "_reconcile_prior_failed_video_runs",
         lambda *_args, **_kwargs: None,
     )
-    monkeypatch.setattr(
-        b_video, "_inherit_completed_v4_clips",
-        lambda *_args, **_kwargs: pytest.fail(
-            "Never inherit disk-streamed A2V clips into a fast static run"
-        ),
-    )
+    assert not hasattr(b_video, "_inherit_completed_v4_clips")
 
     def before_paid_submission() -> None:
         raise RuntimeError("stopped before paid inference")

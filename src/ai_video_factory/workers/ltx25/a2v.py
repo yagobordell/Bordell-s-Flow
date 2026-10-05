@@ -36,7 +36,7 @@ from ai_video_factory.inference.ports import LocalArtifact, LocalSidecarArtifact
 from .bootstrap import require_runtime_bootstrap_complete
 from .i2v_metrics import I2VPhaseMetrics
 from .model import (
-    _CANONICAL_LANDSCAPE_SIZE,
+    _CANONICAL_LANDSCAPE_SIZES,
     LTXModelFiles,
     LTXPipelineModeController,
     _crop_video_to_requested,
@@ -203,7 +203,7 @@ class LTXAudioToVideoParameters(BaseModel):
             if self.width % 64 != 0 or self.height % 64 != 0:
                 raise ValueError(
                     "LTX-2.5 two-stage dimensions must be divisible by 64, except the "
-                    "canonical 1280x720 profile which uses deterministic internal grid padding"
+                    "canonical 16:9 run profiles which use deterministic internal grid padding"
                 )
         if self.vae_backend not in ("eager", "triton_experimental"):
             raise ValueError("vae_backend must be eager or triton_experimental")
@@ -886,7 +886,7 @@ def _prepare_avatar_image(
     if image.size == (
         QWEN_IMAGE_21_PRODUCTION_WIDTH,
         QWEN_IMAGE_21_PRODUCTION_HEIGHT,
-    ) and (requested_width, requested_height) == _CANONICAL_LANDSCAPE_SIZE:
+    ) and (requested_width, requested_height) in _CANONICAL_LANDSCAPE_SIZES:
         fitted = _fit_image_with_edge_padding(
             image, width=requested_width, height=requested_height
         )

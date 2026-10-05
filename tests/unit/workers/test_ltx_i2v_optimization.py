@@ -69,6 +69,20 @@ def test_experimental_profiles_are_distinct_and_keep_default_fingerprint() -> No
         ).generation_profile == profile
 
 
+def test_production_i2v_accepts_public_1080p_on_padded_model_grid() -> None:
+    parameters = LTXVideoParameters(
+        generation_profile=LTX_PRODUCTION_I2V_PROFILE,
+        prompt="Animate this frame naturally.",
+        seed=4242,
+        width=1920,
+        height=1080,
+        fps=24,
+        num_frames=121,
+    )
+
+    assert ltx_model._pipeline_dimensions(parameters) == (1920, 1088)
+
+
 def test_diffvae_uses_triton_only_with_probe_and_never_enables_natten() -> None:
     apply = SimpleNamespace(
         natten_available=lambda: True,

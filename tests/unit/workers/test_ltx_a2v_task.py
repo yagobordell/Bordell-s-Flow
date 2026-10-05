@@ -180,6 +180,22 @@ def test_a2v_run_v2_requires_exact_promoted_execution_configuration() -> None:
         )
 
 
+def test_run_v2_accepts_full_hd_delivery_geometry() -> None:
+    parameters = LTXAudioToVideoParameters(
+        generation_profile=LTX_A2V_RUN_OPTIMIZED_PROFILE,
+        width=1920,
+        height=1080,
+        fps=24,
+        vae_backend=LTX_A2V_RUN_VAE_BACKEND,
+        guidance_forward_batch_size=LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE,
+        progressive_block_group_size=LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
+    )
+
+    assert parameters.width == 1920
+    assert parameters.height == 1080
+    assert a2v._pipeline_dimensions(parameters) == (1920, 1088)
+
+
 def test_a2v_runner_requires_image_audio_and_metadata_sidecar(tmp_path: Path) -> None:
     backend = FakeBackend()
     runner = LTXAudioToVideoTaskRunner(backend=backend)

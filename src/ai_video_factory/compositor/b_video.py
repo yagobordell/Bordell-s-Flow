@@ -29,8 +29,8 @@ if TYPE_CHECKING:
     from ai_video_factory.workflows.b_video import B2VideoJob
 
 _FPS = 24
-_WIDTH = 1280
-_HEIGHT = 720
+_WIDTH = 1920
+_HEIGHT = 1080
 
 
 class B2VideoCompositionError(RuntimeError):
@@ -69,7 +69,7 @@ def _probe_final(path: Path, duration: float, frames: int) -> float:
         raise B2VideoCompositionError("Final LTX video must have one video and one audio")
     video = videos[0]
     if (video["width"], video["height"]) != (_WIDTH, _HEIGHT):
-        raise B2VideoCompositionError("Final LTX output is not 1280x720")
+        raise B2VideoCompositionError("Final LTX output is not 1920x1080")
     numerator, denominator = map(int, video.get("avg_frame_rate", "0/1").split("/"))
     if not denominator or abs(numerator / denominator - _FPS) > 0.01:
         raise B2VideoCompositionError("Final LTX video is not 24 fps")

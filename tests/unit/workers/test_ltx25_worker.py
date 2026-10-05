@@ -51,7 +51,7 @@ def test_ltx25_salad_manifest_has_dedicated_group_and_capacity() -> None:
     assert service["resources"]["memory"] == 61440
     assert service["resources"]["storage_amount"] == 171798691840
     assert "gpu_classes" not in service["resources"]
-    assert service["capacity"] == {"start_replicas": 1, "max_replicas": 4}
+    assert service["capacity"] == {"start_replicas": 1, "max_replicas": 2}
     assert document["stack"]["shared_environment"]["INFERENCE_WORKER_MODE"] == "production"
     assert "GPU_WORKER_RUNTIME" not in service["environment"]
 

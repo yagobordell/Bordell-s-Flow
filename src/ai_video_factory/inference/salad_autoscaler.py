@@ -17,7 +17,9 @@ ACTIVE_STATUSES = (
 )
 
 # LTX scales by backlog count rather than the generic drain-time forecast.
-# Each replica still consumes the shared Postgres queue dynamically.
+# Keep small/normal runs on one RTX 5090 and add the second replica only when
+# the original per-type run batch exceeds thirty clips. Current run jobs carry
+# that durable batch size so the burst replica is not discarded mid-run.
 _DEFAULT_JOBS_PER_REPLICA = {
     "ltx25_i2v": 30,
     "ltx25": 30,
@@ -192,7 +194,11 @@ class PostgresAutoscalerStore:
                     ) AS run_id,
                     status,
                     lease_owner AS worker_id,
-                    started_at
+                    started_at,
+                    NULLIF(
+                        request #>> '{parameters,run_job_count}',
+                        ''
+                    )::integer AS run_job_count
                 FROM gpu.jobs
                 WHERE task = ANY(%s)
                   AND status = ANY(%s)
@@ -321,6 +327,16 @@ def load_predictive_autoscaler_config(
     stage_bindings: tuple[AutoscalerServiceBinding, ...],
 ) -> PredictiveAutoscalerConfig:
     project_max = _int_env("SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS", 30, minimum=1)
+    ltx_stage_count = sum(
+        binding.workload in _DEFAULT_JOBS_PER_REPLICA for binding in stage_bindings
+    )
+    required_ltx_project_capacity = 2 * ltx_stage_count
+    if required_ltx_project_capacity and project_max < required_ltx_project_capacity:
+        raise RuntimeError(
+            "SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS must be >= "
+            f"{required_ltx_project_capacity} to preserve two-way capacity for "
+            f"{ltx_stage_count} production LTX service(s)"
+        )
     cold_start_seconds = _float_env(
         "SALAD_AUTOSCALER_COLD_START_SECONDS",
         180.0,
@@ -336,6 +352,11 @@ def load_predictive_autoscaler_config(
             binding.max_replicas,
             minimum=0,
         )
+        if binding.workload in _DEFAULT_JOBS_PER_REPLICA and configured_max < 2:
+            raise RuntimeError(
+                f"{binding.workload} requires at least 2 configured replicas "
+                "to preserve two-way run generation"
+            )
         stage_max[binding.workload] = min(configured_max, binding.max_replicas)
         fallback_runtime[binding.workload] = _float_env(
             f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_RUNTIME_SECONDS",
@@ -349,11 +370,17 @@ def load_predictive_autoscaler_config(
         )
         default_jobs_per_replica = _DEFAULT_JOBS_PER_REPLICA.get(binding.workload)
         if default_jobs_per_replica is not None:
-            stage_jobs_per_replica[binding.workload] = _int_env(
+            configured_jobs_per_replica = _int_env(
                 f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_JOBS_PER_REPLICA",
                 default_jobs_per_replica,
                 minimum=1,
             )
+            if configured_jobs_per_replica != default_jobs_per_replica:
+                raise RuntimeError(
+                    f"{binding.workload} requires jobs_per_replica="
+                    f"{default_jobs_per_replica} for cost-aware LTX scaling"
+                )
+            stage_jobs_per_replica[binding.workload] = default_jobs_per_replica
     return PredictiveAutoscalerConfig(
         enabled=_bool_env("SALAD_AUTOSCALER_ENABLED", default=False),
         project_max_replicas=project_max,
@@ -1051,11 +1078,20 @@ def build_global_demands(
         jobs_per_replica = jobs_per_replica_by_stage.get(stage)
         job_count_target: int | None = None
         if jobs_per_replica is not None:
+            large_run_active = any(
+                (_optional_int(row.get("run_job_count")) or 0) > jobs_per_replica
+                for row in rows
+            )
             job_count_target = (
                 math.ceil(active_job_count / jobs_per_replica)
                 if active_job_count > 0
                 else 0
             )
+            if large_run_active and active_job_count > 1:
+                # Current run jobs persist their original per-type batch size.
+                # Keep the burst replica for the life of a large run instead of
+                # paying its cold start and immediately removing it at 30 left.
+                job_count_target = max(job_count_target, 2)
             # Clip-count targets may intentionally fall below the number of
             # currently running workers. Safe active draining prevents those
             # workers from claiming another clip and waits for them to finish

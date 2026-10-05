@@ -1164,7 +1164,7 @@ def test_ltx_groups_have_independent_runtime_and_cold_start_calibration(
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_COLD_START_SECONDS", "1200")
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_I2V_RUNTIME_SECONDS", "240")
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_RUNTIME_SECONDS", "320")
-    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_I2V_JOBS_PER_REPLICA", "25")
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_I2V_JOBS_PER_REPLICA", "30")
     monkeypatch.setenv("SALAD_AUTOSCALER_ZERO_DEMAND_STABLE_POLLS", "1")
 
     config = load_predictive_autoscaler_config(
@@ -1183,10 +1183,101 @@ def test_ltx_groups_have_independent_runtime_and_cold_start_calibration(
         "ltx25": 320.0,
     }
     assert config.stage_jobs_per_replica == {
-        "ltx25_i2v": 25,
+        "ltx25_i2v": 30,
         "ltx25": 30,
     }
     assert config.zero_demand_stable_polls == 1
+
+
+def test_run_ltx_cost_contract_rejects_early_scale_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA", "29")
+    with pytest.raises(RuntimeError, match="jobs_per_replica=30"):
+        load_predictive_autoscaler_config(
+            stage_bindings=(_binding("ltx25", max_replicas=2),)
+        )
+
+    monkeypatch.delenv("SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA", raising=False)
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_MAX_REPLICAS", "1")
+    with pytest.raises(RuntimeError, match="at least 2 configured replicas"):
+        load_predictive_autoscaler_config(
+            stage_bindings=(_binding("ltx25", max_replicas=2),)
+        )
+
+    monkeypatch.delenv("SALAD_AUTOSCALER_LTX25_MAX_REPLICAS", raising=False)
+    monkeypatch.setenv("SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS", "3")
+    with pytest.raises(RuntimeError, match="must be >= 4"):
+        load_predictive_autoscaler_config(
+            stage_bindings=(
+                _binding("ltx25_i2v", max_replicas=2),
+                _binding("ltx25", max_replicas=2),
+            )
+        )
+
+
+def test_run_ltx_defaults_scale_second_gpu_only_above_thirty_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "SALAD_AUTOSCALER_LTX25_I2V_JOBS_PER_REPLICA",
+        "SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    config = load_predictive_autoscaler_config(
+        stage_bindings=(
+            _binding("ltx25_i2v", max_replicas=2),
+            _binding("ltx25", max_replicas=2),
+        )
+    )
+
+    assert config.stage_jobs_per_replica == {
+        "ltx25_i2v": 30,
+        "ltx25": 30,
+    }
+
+    for count, expected in ((2, 1), (30, 1), (31, 2), (60, 2), (100, 2)):
+        demands = build_global_demands(
+            rows_by_stage={
+                "ltx25_i2v": _pending_rows(count),
+                "ltx25": _pending_rows(count),
+            },
+            runtime_by_stage={"ltx25_i2v": 200.0, "ltx25": 200.0},
+            config=config,
+            now=datetime(2026, 10, 5, tzinfo=UTC),
+        )
+        assert demands["ltx25_i2v"].ideal_replicas == expected
+        assert demands["ltx25"].ideal_replicas == expected
+
+
+def test_large_run_keeps_second_ltx_gpu_after_backlog_drops_below_thirty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "SALAD_AUTOSCALER_LTX25_I2V_JOBS_PER_REPLICA",
+        "SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    config = load_predictive_autoscaler_config(
+        stage_bindings=(_binding("ltx25", max_replicas=2),)
+    )
+    rows = _pending_rows(8)
+    for row in rows:
+        row["run_id"] = "run-large"
+        row["run_job_count"] = 40
+
+    demand = build_global_demands(
+        rows_by_stage={"ltx25": rows},
+        runtime_by_stage={"ltx25": 200.0},
+        config=config,
+        now=datetime(2026, 10, 5, tzinfo=UTC),
+    )["ltx25"]
+
+    assert demand.ideal_replicas == 2
+    assert demand.jobs_per_replica == 30
+    assert demand.job_count_target == 2
 
 
 def test_cold_start_longer_than_drain_window_never_exceeds_active_jobs() -> None:
