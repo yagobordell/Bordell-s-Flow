@@ -65,13 +65,18 @@ jobs:
       - name: PowerShell syntax
         shell: pwsh
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-              (Resolve-Path scripts/smoke/run_ltx25_a2v_batch2_trial.ps1),
-              [ref]$tokens, [ref]$errors
-          ) | Out-Null
-          if ($errors) { throw ($errors -join '; ') }
+          foreach ($Path in @(
+              "scripts/smoke/run_ltx25_a2v_batch2_trial.ps1",
+              "scripts/salad/manage_salad_worker.ps1"
+          )) {
+              $tokens = $null
+              $errors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                  (Resolve-Path $Path),
+                  [ref]$tokens, [ref]$errors
+              ) | Out-Null
+              if ($errors) { throw ("$Path: " + ($errors -join '; ')) }
+          }
       - name: Strict source and pinned patch compile
         run: |
           uv run --no-sync python -m compileall -q \
