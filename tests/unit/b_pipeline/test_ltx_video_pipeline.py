@@ -621,7 +621,7 @@ def test_non_oom_terminal_failure_requires_manual_reconciliation(tmp_path: Path)
     assert json.loads(previous.read_text(encoding="utf-8"))["status"] == "running"
 
 
-def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
+def test_1080p_run_never_reuses_legacy_720p_ltx_clips(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from ai_video_factory.compositor import b_video as compositor
@@ -756,14 +756,15 @@ def test_v5_recovery_reuses_legacy_a2v_but_regenerates_promoted_i2v(
         tmp_path, plan, audio, images, queue=FakeQueue(), storage=FakeStorage(),
     )
     assert result["status"] == "completed"
-    assert len(submitted) == 2
-    assert old_jobs[1].request.job_id not in submitted
-    assert old_jobs[2].request.job_id not in submitted
+    assert len(submitted) == 3
+    assert all(job.request.job_id in submitted for job in b_video.build_b2_video_plan(
+        tmp_path, plan, audio, images
+    )[1])
     manifest_file = tmp_path / "video" / "runs" / result["fingerprint"][:20] / "manifest.json"
     saved = json.loads(manifest_file.read_text(encoding="utf-8"))
-    assert saved["jobs"][0]["reused_from_job_id"] == old_jobs[0].request.job_id
     assert saved["jobs"][0]["status"] == "completed"
-    assert _sha(tmp_path / saved["jobs"][0]["file"]) == previous["jobs"][0]["sha256"]
+    assert "reused_from_job_id" not in saved["jobs"][0]
+    assert saved["jobs"][0]["job_id"] != old_jobs[0].request.job_id
     assert saved["jobs"][1]["job_id"] in submitted
     assert saved["jobs"][1]["job_id"] != old_jobs[1].request.job_id
     assert "reused_from_job_id" not in saved["jobs"][1]
