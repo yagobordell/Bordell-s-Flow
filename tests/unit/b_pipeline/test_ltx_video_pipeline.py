@@ -702,7 +702,7 @@ def test_1080p_run_never_reuses_legacy_720p_ltx_clips(
 
     new_metadata = tmp_path / "new-metadata.json"
     new_metadata.write_text(json.dumps({
-        "generation_profile": v5,
+        "generation_profile": current_a2v_profile,
         "negative_prompt_applied": True,
         "positive_prompt_enhanced": False,
         "quantization": "fp8_cast",
