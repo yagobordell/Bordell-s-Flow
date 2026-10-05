@@ -256,7 +256,7 @@ if ($Action -eq "Status") {
 
 if ($Action -ne "Deploy") { throw "Unsupported action '$Action'." }
 $RegistryUsername = Get-Setting -Name "GHCR_USERNAME" -Prompt "GitHub username for GHCR PAT"
-$RegistryUsername = Get-Setting -Name "GHCR_READ_PACKAGES_USERNAME" -Prompt "GHCR username (PAT owner)"
+$RegistryUsername = Get-Setting -Name "GHCR_USERNAME" -Prompt "GHCR username (PAT owner)"
 $RegistryPat = Get-Setting -Name "GHCR_READ_PACKAGES_PAT" -Prompt "GHCR PAT (read:packages)" -Secret
 if ([string]::IsNullOrWhiteSpace($PinnedImage)) { $PinnedImage = Resolve-PinnedImage }
 if ($PinnedImage -notmatch '^ghcr\.io/yagobordell/image-upscaler-salad@sha256:[0-9a-f]{64}$') {
