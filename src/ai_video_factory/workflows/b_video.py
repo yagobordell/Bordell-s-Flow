@@ -70,9 +70,11 @@ if AVATAR_NEGATIVE_PROMPT != LTX_A2V_STATIC_NEGATIVE_PROMPT:
     raise RuntimeError("Pinned LTX static-reference negative prompt changed")
 
 _FPS = 24
+_WIDTH = 1920
+_HEIGHT = 1080
 _RATE = 48000
 _A2V_MAX_RAW_FRAMES = 1024
-_SCHEMA = "b2-ltx-video-v1"
+_SCHEMA = "b2-ltx-video-v2-1080p"
 
 
 class B2VideoError(RuntimeError):
@@ -239,6 +241,8 @@ def _fingerprint(
         "positive_prompt": AVATAR_PROMPT,
         "negative_prompt": AVATAR_NEGATIVE_PROMPT,
         "fps": _FPS,
+        "width": _WIDTH,
+        "height": _HEIGHT,
     }
     # Only I2V-containing B2 runs need a new directory when its recipe changes;
     # historical v4 fingerprints omitted this key entirely.
@@ -348,7 +352,7 @@ def build_b2_video_plan(
                 )
             job_id = f"b2-{beat_ids[0]}-" + ltx_video_application_job_id(
                 shot_id=ordinal, prompt=prompt, keyframe_sha256=image_sha,
-                seed=seed, width=1280, height=720, fps=_FPS,
+                seed=seed, width=_WIDTH, height=_HEIGHT, fps=_FPS,
                 num_frames=num_frames, generation_profile=LTX_PRODUCTION_I2V_PROFILE,
             )
             key = f"b2-ltx/inputs/images/{image_sha}.png"
@@ -365,7 +369,7 @@ def build_b2_video_plan(
                 parameters={
                     "generation_profile": LTX_PRODUCTION_I2V_PROFILE,
                     "prompt": prompt, "seed": seed,
-                    "width": 1280, "height": 720, "fps": _FPS,
+                    "width": _WIDTH, "height": _HEIGHT, "fps": _FPS,
                     "num_frames": num_frames,
                 },
             )
@@ -393,7 +397,7 @@ def build_b2_video_plan(
             job_id = ltx_a2v_application_job_id(
                 segment_id=f"b2-{beat_ids[0]}-{beat_ids[-1]}",
                 prompt=a2v_prompt, image_sha256=image_sha,
-                audio_sha256=audio_sha, seed=seed, width=1280, height=720,
+                audio_sha256=audio_sha, seed=seed, width=_WIDTH, height=_HEIGHT,
                 fps=_FPS, generation_profile=LTX_A2V_RUN_OPTIMIZED_PROFILE,
             )
             request = InferenceJobRequest(
@@ -419,7 +423,7 @@ def build_b2_video_plan(
                 parameters={
                     "generation_profile": LTX_A2V_RUN_OPTIMIZED_PROFILE,
                     "prompt": a2v_prompt, "seed": seed,
-                    "width": 1280, "height": 720, "fps": _FPS,
+                    "width": _WIDTH, "height": _HEIGHT, "fps": _FPS,
                     "vae_backend": LTX_A2V_RUN_VAE_BACKEND,
                     "guidance_forward_batch_size": (
                         LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE
@@ -451,7 +455,7 @@ def _probe_video(path: Path, job: B2VideoJob) -> None:
     data = json.loads(probe.stdout)
     video = [entry for entry in data["streams"] if entry["codec_type"] == "video"]
     audio = [entry for entry in data["streams"] if entry["codec_type"] == "audio"]
-    if len(video) != 1 or (video[0]["width"], video[0]["height"]) != (1280, 720):
+    if len(video) != 1 or (video[0]["width"], video[0]["height"]) != (_WIDTH, _HEIGHT):
         raise B2VideoError("LTX output video geometry/streams differ from contract")
     if job.kind == "a2v" and len(audio) != 1:
         raise B2VideoError("A2V worker must return its own speech audio stream")
@@ -629,6 +633,8 @@ def _inherit_completed_v4_clips(
         raise B2VideoError("Saved v4 job grouping differs from the current video plan")
 
     for job, record, old_record in zip(jobs, manifest["jobs"], previous_jobs, strict=True):
+        if (job.request.parameters.get("width"), job.request.parameters.get("height")) != (1280, 720):
+            continue
         if record["status"] == "completed" or old_record.get("status") != "completed":
             continue
         if job.kind == "i2v":
