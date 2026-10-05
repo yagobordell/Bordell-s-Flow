@@ -51,10 +51,12 @@ a second video merely to claim B4.
 
 Production parallelism is horizontal rather than forcing unrelated speech segments into one
 GPU batch: the A2V group is capped at two RTX 5090 replicas, but cost-aware autoscaling keeps
-one GPU for up to 30 active A2V clips and requests the second only when the backlog exceeds 30.
-I2V follows the same threshold. Once scaled out, the two independent replicas can process two
-clips concurrently even when their durations or audio-driven frame counts differ. This avoids
-paying a second cold-start/GPU for small runs while preserving burst throughput for large runs.
+one GPU when a run contains up to 30 A2V clips and requests the second only when that run's
+original A2V batch exceeds 30. I2V follows the same threshold. The original batch size is persisted
+with each run job, so a large run keeps its burst capacity while it drains. Once scaled out, the two
+independent replicas can process two clips concurrently even when their durations or audio-driven
+frame counts differ. This avoids paying a second cold-start/GPU for small runs while preserving
+burst throughput for large runs.
 separate Salad group.
 
 All new B2 A2V jobs use the run-v2 profile in their request identity and run
