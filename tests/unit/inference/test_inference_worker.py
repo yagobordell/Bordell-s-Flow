@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ai_video_factory.inference.bundle_publication import bundle_manifest_key
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
@@ -215,7 +215,7 @@ def test_worker_validation_error_is_terminal_on_first_attempt(tmp_path: Path) ->
     digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
     request = build_request("job-invalid-contract", digest)
 
-    with pytest.raises(Exception, match="extra_forbidden"):
+    with pytest.raises(ValidationError, match="extra_forbidden"):
         worker.process(request)
     with pytest.raises(NonRetryableTaskError, match="extra_forbidden"):
         worker.process(request)
