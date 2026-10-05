@@ -75,7 +75,7 @@ jobs:
                   (Resolve-Path $Path),
                   [ref]$tokens, [ref]$errors
               ) | Out-Null
-              if ($errors) { throw ("$Path: " + ($errors -join '; ')) }
+              if ($errors) { throw ("${Path}: " + ($errors -join '; ')) }
           }
       - name: Strict source and pinned patch compile
         run: |
