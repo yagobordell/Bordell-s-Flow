@@ -62,6 +62,19 @@ function Invoke-Salad {
     return Invoke-RestMethod @Request
 }
 
+function Test-InsecureRedirectError {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+    $Message = [string]$ErrorRecord.Exception.Message
+    $Details = ""
+    if ($null -ne $ErrorRecord.ErrorDetails) {
+        $Details = [string]$ErrorRecord.ErrorDetails.Message
+    }
+    return (
+        $Message -match "Cannot follow an insecure redirection" -or
+        $Details -match "Cannot follow an insecure redirection"
+    )
+}
+
 function Invoke-SaladMutation {
     param(
         [hashtable]$Headers,
@@ -74,8 +87,7 @@ function Invoke-SaladMutation {
         Invoke-Salad -Headers $Headers -Uri $Uri -Method $Method -Body $Body -ContentType $ContentType | Out-Null
     }
     catch {
-        $Message = [string]$_.Exception.Message
-        if ($Message -notmatch "Cannot follow an insecure redirection") {
+        if (-not (Test-InsecureRedirectError -ErrorRecord $_)) {
             throw
         }
         Write-Warning (
@@ -104,7 +116,14 @@ function Wait-SaladGroupSettled {
             Write-Host "Waiting for Salad pending_change=false..."
         }
         catch {
-            if (
+            if (Test-InsecureRedirectError -ErrorRecord $_) {
+                Write-Warning (
+                    "Salad returned a transient insecure redirect while the container group " +
+                    "was settling. The redirect was NOT followed; retrying the canonical " +
+                    "HTTPS API endpoint."
+                )
+            }
+            elseif (
                 $AllowInitialNotFound -and
                 -not $Seen -and
                 (Get-HttpStatusCode -ErrorRecord $_) -eq 404
