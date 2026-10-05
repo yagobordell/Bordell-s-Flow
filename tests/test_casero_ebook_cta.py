@@ -11,11 +11,42 @@ from PIL import Image
 
 from ai_video_factory.bots.cta import CTAPlacement, validate_placement
 from ai_video_factory.providers.ebook_covers import ensure_ebook_covers
+from ai_video_factory.workers.ltx25.a2v import (
+    LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE,
+    LTX_A2V_RUN_OPTIMIZED_PROFILE,
+    LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
+    LTX_A2V_RUN_VAE_BACKEND,
+)
 from ai_video_factory.workflows.casero_cta import split_cta_audio
+from ai_video_factory.workflows.casero_cta_video import _cta_request
 
 
 def _png(path: Path, color: str) -> None:
     Image.new("RGB", (64, 96), color).save(path, format="PNG")
+
+
+def test_current_casero_cta_uses_full_hd_promoted_a2v_run_v2(tmp_path: Path) -> None:
+    image = tmp_path / "promotion.png"
+    audio = tmp_path / "first_half.wav"
+    image.write_bytes(b"image")
+    audio.write_bytes(b"audio")
+
+    request = _cta_request(
+        tmp_path,
+        {"files": {"image": image, "first_half": audio}},
+    )
+
+    assert request.parameters["generation_profile"] == LTX_A2V_RUN_OPTIMIZED_PROFILE
+    assert request.parameters["width"] == 1920
+    assert request.parameters["height"] == 1080
+    assert request.parameters["fps"] == 24
+    assert request.parameters["vae_backend"] == LTX_A2V_RUN_VAE_BACKEND
+    assert request.parameters["guidance_forward_batch_size"] == (
+        LTX_A2V_RUN_GUIDANCE_FORWARD_BATCH_SIZE
+    )
+    assert request.parameters["progressive_block_group_size"] == (
+        LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE
+    )
 
 
 def test_covers_preserve_primary_order_and_survive_removed_originals(tmp_path: Path) -> None:
