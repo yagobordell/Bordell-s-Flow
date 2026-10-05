@@ -121,6 +121,7 @@ def image_upscaler_usage(
     connection = None
     shared_locked = False
     exclusive_locked = False
+    ready = False
     try:
         if auto_stop:
             if not postgres_dsn or not postgres_dsn.strip():
@@ -149,6 +150,7 @@ def image_upscaler_usage(
             client=resolved_client,
             notify=say,
         )
+        ready = True
         yield resolved_client
     finally:
         if connection is not None:
@@ -164,7 +166,7 @@ def image_upscaler_usage(
                     (_UPSCALER_USAGE_LOCK_KEY,),
                 ).fetchone()
                 exclusive_locked = bool(row and row[0])
-                if exclusive_locked:
+                if exclusive_locked and ready:
                     try:
                         group = resolved_client.describe_container_group()
                         state = group.get("current_state")
