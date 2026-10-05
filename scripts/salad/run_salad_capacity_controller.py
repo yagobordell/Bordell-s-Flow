@@ -51,7 +51,9 @@ def _validate_autoscaling_schema(postgres_dsn: str) -> None:
     try:
         with psycopg.connect(postgres_dsn) as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT started_at, finished_at FROM gpu.jobs LIMIT 0")
+                cursor.execute(
+                    "SELECT started_at, finished_at, run_id, run_job_count FROM gpu.jobs LIMIT 0"
+                )
                 cursor.execute(
                     """
                     SELECT controller_name, controller_id, last_heartbeat_at
@@ -74,8 +76,9 @@ def _validate_autoscaling_schema(postgres_dsn: str) -> None:
     except psycopg.Error as error:
         raise SystemExit(
             "Predictive Salad autoscaling requires infra/sql/003_gpu_job_runtime_autoscaling.sql, "
-            "infra/sql/004_salad_capacity_controller_coordination.sql and "
-            "infra/sql/005_capacity_drain_provider_hold.sql before production."
+            "infra/sql/004_salad_capacity_controller_coordination.sql, "
+            "infra/sql/005_capacity_drain_provider_hold.sql and "
+            "infra/sql/006_ltx_run_metadata.sql before production."
         ) from error
 
 
