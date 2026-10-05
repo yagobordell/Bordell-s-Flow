@@ -73,5 +73,7 @@ def test_image_upscaler_deploy_uses_private_ghcr_basic_auth_without_committed_pa
     assert "pending_change" in script
     assert "name_conflict" in script
     assert "not visible in project inventory" in script
+    assert "Test-InsecureRedirectError" in script
+    assert "retrying the canonical " in script
     assert "personal_access_token" not in script
     assert "ghp_" not in script
