@@ -2,7 +2,7 @@
   "schema_version": 1,
   "service": {
     "display_name": "Bordell OptiumLabs Image Upscaler",
-    "group_name": "bordell-image-upscaler",
+    "group_name": "bordell-image-upscaler-v2",
     "dockerfile": "docker/services/image-upscaler-salad/Dockerfile",
     "image": "ghcr.io/yagobordell/image-upscaler-salad:salad-v1",
     "source_image": "ghcr.io/yagobordell/image-upscaler@sha256:00e046a7ba6dd00d406609f2f5c007b176b96578b1baac612ea8e97940c35aba",

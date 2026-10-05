@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -21,6 +22,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _MANIFEST_PATH = _REPO_ROOT / "deploy" / "salad" / "image-upscaler-service.json"
 _DEFAULT_TIMEOUT_SECONDS = 1800.0
 _DEFAULT_POLL_SECONDS = 15.0
+# Cross-machine session advisory lock used only to coordinate safe auto-stop.
+# Active professional runs hold the shared variant; the last finisher briefly
+# upgrades to an exclusive lock before issuing Salad Stop.
+_UPSCALER_USAGE_LOCK_KEY = 0x4252444C55505343
 
 
 class ImageUpscalerStartupError(RuntimeError):
@@ -54,6 +59,161 @@ def _manifest_group_name(path: Path) -> str:
         ) from exc
 
 
+def _build_image_upscaler_client(*, api_key: str, group_name: str) -> SaladClient:
+    organization, project = _account_settings()
+    missing = [
+        name for name, value in (
+            ("SALAD_ORGANIZATION", organization),
+            ("SALAD_PROJECT", project),
+        ) if not value or not value.strip()
+    ]
+    if missing:
+        raise ImageUpscalerStartupError(
+            "Cannot automatically manage the Salad image upscaler: "
+            + ", ".join(missing)
+            + " are missing from the local environment"
+        )
+    return SaladClient(SaladDispatchConfig(
+        api_key=api_key,
+        api_base_url=os.getenv("SALAD_API_BASE_URL", DEFAULT_SALAD_API_BASE_URL),
+        organization_name=organization,
+        project_name=project,
+        container_group_name=group_name,
+    ))
+
+
+def _connect_postgres(dsn: str):
+    try:
+        import psycopg
+        return psycopg.connect(dsn, autocommit=True)
+    except Exception as exc:
+        raise ImageUpscalerStartupError(
+            "Could not open Postgres coordination connection for image-upscaler auto-stop"
+        ) from exc
+
+
+@contextmanager
+def image_upscaler_usage(
+    *,
+    api_key: str,
+    gateway_url: str,
+    postgres_dsn: str | None,
+    auto_start: bool = True,
+    auto_stop: bool = True,
+    manifest_path: Path = _MANIFEST_PATH,
+    client: SaladClient | None = None,
+    notify: Callable[[str], None] | None = None,
+    connection_factory: Callable[[str], object] = _connect_postgres,
+) -> Iterator[SaladClient]:
+    """Coordinate one professional image-finishing user across machines.
+
+    Every active run holds a shared Postgres advisory lock. After successful
+    finishing, the run releases its shared lock and tries the exclusive form.
+    Exclusive success proves that no other cooperating run is using the service;
+    while that lock is held, new users cannot enter, so Stop cannot race an
+    active inference. A finishing exception deliberately skips Stop because a
+    transport error may represent an ambiguous in-flight inference. PostgreSQL
+    releases session advisory locks automatically if a process dies.
+    """
+    say = notify or (lambda message: print(message, flush=True))
+    group_name = _manifest_group_name(manifest_path)
+    resolved_client = client or _build_image_upscaler_client(
+        api_key=api_key, group_name=group_name,
+    )
+    connection = None
+    shared_locked = False
+    exclusive_locked = False
+    ready = False
+    completed = False
+    try:
+        if auto_stop:
+            if not postgres_dsn or not postgres_dsn.strip():
+                raise ImageUpscalerStartupError(
+                    "POSTGRES_DSN is required for safe image-upscaler auto-stop"
+                )
+            try:
+                connection = connection_factory(postgres_dsn)
+                connection.execute(
+                    "SELECT pg_advisory_lock_shared(%s)",
+                    (_UPSCALER_USAGE_LOCK_KEY,),
+                )
+                shared_locked = True
+            except ImageUpscalerStartupError:
+                raise
+            except Exception as exc:
+                raise ImageUpscalerStartupError(
+                    "Could not acquire Postgres image-upscaler usage lock"
+                ) from exc
+
+        ensure_image_upscaler_ready(
+            api_key=api_key,
+            gateway_url=gateway_url,
+            auto_start=auto_start,
+            manifest_path=manifest_path,
+            client=resolved_client,
+            notify=say,
+        )
+        ready = True
+        yield resolved_client
+        completed = True
+    finally:
+        if connection is not None:
+            try:
+                if shared_locked:
+                    connection.execute(
+                        "SELECT pg_advisory_unlock_shared(%s)",
+                        (_UPSCALER_USAGE_LOCK_KEY,),
+                    )
+                    shared_locked = False
+                row = connection.execute(
+                    "SELECT pg_try_advisory_lock(%s)",
+                    (_UPSCALER_USAGE_LOCK_KEY,),
+                ).fetchone()
+                exclusive_locked = bool(row and row[0])
+                if exclusive_locked and ready and completed:
+                    try:
+                        group = resolved_client.describe_container_group()
+                        state = group.get("current_state")
+                        status = (
+                            str(state.get("status") or "unknown")
+                            if isinstance(state, dict) else "unknown"
+                        )
+                        pending = group.get("pending_change") is True
+                        if status not in {"stopped", "stopping", "failed", "error"}:
+                            resolved_client.stop_container_group()
+                            say(
+                                "  Salad image upscaler: no other active users; "
+                                "stop requested."
+                            )
+                        elif status == "stopped" and not pending:
+                            say("  Salad image upscaler: already stopped.")
+                    except Exception as exc:
+                        # Finishing output is already durable at this point. A failed
+                        # cost-control cleanup must not invalidate paid image work.
+                        say(
+                            "  Warning: could not auto-stop Salad image upscaler: "
+                            f"{exc}"
+                        )
+            except Exception as exc:
+                say(
+                    "  Warning: could not reconcile image-upscaler auto-stop lock: "
+                    f"{exc}"
+                )
+            finally:
+                if exclusive_locked:
+                    try:
+                        connection.execute(
+                            "SELECT pg_advisory_unlock(%s)",
+                            (_UPSCALER_USAGE_LOCK_KEY,),
+                        )
+                    except Exception:
+                        pass
+                try:
+                    connection.close()
+                except Exception:
+                    pass
+
+
 def ensure_image_upscaler_ready(
     *,
     api_key: str,
@@ -70,7 +230,8 @@ def ensure_image_upscaler_ready(
     """Ensure the single independent upscaler is ready, starting it if stopped.
 
     Return True only when this invocation actually submitted a start request.
-    Never stop the group: another machine or professional run may share it.
+    This readiness helper never stops the group itself; callers that want safe
+    lifecycle cleanup should use image_upscaler_usage().
     No GPT Image request may be submitted until this function succeeds.
     """
     if timeout_seconds <= 0 or poll_seconds <= 0:
@@ -83,26 +244,7 @@ def ensure_image_upscaler_ready(
 
     group_name = _manifest_group_name(manifest_path)
     if client is None:
-        organization, project = _account_settings()
-        missing = [
-            name for name, value in (
-                ("SALAD_ORGANIZATION", organization),
-                ("SALAD_PROJECT", project),
-            ) if not value or not value.strip()
-        ]
-        if missing:
-            raise ImageUpscalerStartupError(
-                "Cannot automatically manage the Salad image upscaler: "
-                + ", ".join(missing)
-                + " are missing from the local environment"
-            )
-        client = SaladClient(SaladDispatchConfig(
-            api_key=api_key,
-            api_base_url=os.getenv("SALAD_API_BASE_URL", DEFAULT_SALAD_API_BASE_URL),
-            organization_name=organization,
-            project_name=project,
-            container_group_name=group_name,
-        ))
+        client = _build_image_upscaler_client(api_key=api_key, group_name=group_name)
 
     say = notify or (lambda message: print(message, flush=True))
     deadline = clock() + timeout_seconds

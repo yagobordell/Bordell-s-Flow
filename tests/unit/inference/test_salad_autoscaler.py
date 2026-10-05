@@ -260,6 +260,32 @@ def test_unmanaged_project_group_fails_reconciliation_before_capacity_writes() -
     assert client.stop_calls == 0
 
 
+def test_explicit_external_project_group_is_allowed_but_not_managed() -> None:
+    stage = "ltx25"
+    client = FakeSaladClient(
+        replicas=1,
+        project_groups=[
+            {"name": "ai-video-factory-ltx25-worker-v2"},
+            {"name": "bordell-image-upscaler-v2"},
+        ],
+    )
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config((stage,), project_max_replicas=1),
+        store=FakeStore(rows={stage: []}, runtimes={stage: [60.0]}),
+        clients={stage: client},
+        bindings={stage: _binding(stage, max_replicas=1)},
+        managed_group_names={"ai-video-factory-ltx25-worker-v2"},
+        allowed_external_group_names={"bordell-image-upscaler-v2"},
+        logger=lambda _message: None,
+    )
+
+    result = autoscaler.reconcile()[stage]
+
+    assert result.stage == stage
+    assert client.replica_updates == []
+    assert client.start_calls == 0
+
+
 def test_project_quota_is_shared_across_global_stage_demands() -> None:
     stages = ("ltx25", "realesrgan")
     config = _config(stages, project_max_replicas=3, stage_max_replicas=4)

@@ -213,6 +213,8 @@ def test_bootstrap_direct_probe_creates_bounded_file_and_always_cleans(
 def test_only_experimental_a2v_uses_early_direct_storage_gate() -> None:
     root = Path(__file__).resolve().parents[3]
     script = (root / "docker/workers/ltx25/download_models.sh").read_text()
+    ltx_entrypoint = (root / "docker/workers/ltx25/entrypoint.sh").read_text()
+    common_entrypoint = (root / "docker/workers/common/entrypoint.sh").read_text()
     manifest = json.loads((root / "deploy/salad/services.json").read_text())
     services = manifest["services"]
     a2v = services["ltx25_a2v_experimental"]["environment"]
@@ -221,12 +223,21 @@ def test_only_experimental_a2v_uses_early_direct_storage_gate() -> None:
     assert all(flag not in service.get("environment", {})
                for name, service in services.items()
                if name != "ltx25_a2v_experimental")
+
+    # Network admission now happens before the worker exposes /health, not
+    # inside model bootstrap. The experimental direct-storage screen remains
+    # the first storage check before any paid/large model download.
+    assert "/usr/local/bin/network-preflight" not in script
+    assert "network-preflight" in ltx_entrypoint
+    admission = common_entrypoint.index('"${admission_command}"')
+    uvicorn = common_entrypoint.index('uvicorn "${app}"')
+    assert admission < uvicorn
+
     scratch = script.index("--bootstrap-root")
-    network = script.index('/usr/local/bin/network-preflight')
-    first_download = script.index('hf download')
+    first_download = script.index("hf download")
     checkpoint = script.index('--checkpoint "${destination}"')
     gemma = "text_encoders/gemma4"
-    assert scratch < network < first_download < checkpoint
+    assert scratch < first_download < checkpoint
     assert gemma not in script or checkpoint < script.index(gemma)
     assert a2v["SALAD_NETWORK_MIN_DOWNLOAD_MBPS"] == "40"
     assert a2v["LTX_MODEL_DOWNLOAD_MIN_THROUGHPUT_MIBPS"] == "35"

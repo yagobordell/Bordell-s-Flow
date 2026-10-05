@@ -11,4 +11,5 @@ exec /usr/local/bin/common-worker-entrypoint \
   "LTX-2.5" \
   3600 \
   5 \
-  download-models
+  download-models \
+  network-preflight

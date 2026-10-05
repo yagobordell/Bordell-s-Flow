@@ -22,8 +22,13 @@ from ai_video_factory.workers.ltx25.a2v import (
     LTX_A2V_RUN_VAE_BACKEND,
     LTX_A2V_STATIC_SAFE_GENERATION_PROFILE,
     LTX_A2V_STATIC_SAFE_V4_GENERATION_PROFILE,
+    LTXAudioToVideoParameters,
 )
-from ai_video_factory.workers.ltx25.model import LTX_GENERATION_PROFILE, LTX_VIDEO_TASK
+from ai_video_factory.workers.ltx25.model import (
+    LTX_GENERATION_PROFILE,
+    LTX_VIDEO_TASK,
+    LTXVideoParameters,
+)
 from ai_video_factory.workflows import b_video
 from scripts.pipeline import run_b_pipeline as runner
 
@@ -94,6 +99,31 @@ def _case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict, dict, 
     return plan, audio, images
 
 
+def test_final_compositor_uses_professional_finished_asset_identity() -> None:
+    from ai_video_factory.compositor import b_video as compositor
+
+    original = {
+        "block_id": 2,
+        "beat_id": "2A",
+        "file": "images/block_2/2A.png",
+        "sha256": "a" * 64,
+    }
+    finished = {
+        **original,
+        "sha256": "b" * 64,
+        "provider": "image_x2",
+        "source_sha256": original["sha256"],
+    }
+    images = {
+        "items": [original],
+        "panel_assets": [],
+        "finishing_status": "completed",
+        "final_assets": [finished],
+    }
+
+    assert compositor._image_records(images) == [finished]
+
+
 def test_final_compositor_alternates_media_image_zoom_direction() -> None:
     from ai_video_factory.compositor import b_video as compositor
 
@@ -157,12 +187,14 @@ def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     assert video.request.job_id.startswith("b2-1D-")
     assert video.request.parameters["prompt"] == "A bird takes off."
     assert video.request.parameters["num_frames"] == 17
-    run_ids = {job.request.parameters["run_id"] for job in jobs}
-    assert run_ids == {_run_dir.name}
-    assert first.request.parameters["run_job_count"] == 2
-    assert last.request.parameters["run_job_count"] == 2
-    assert video.request.parameters["run_job_count"] == 1
+    assert _run_dir.name
     for job in jobs:
+        assert "run_id" not in job.request.parameters
+        assert "run_job_count" not in job.request.parameters
+        if job.kind == "a2v":
+            LTXAudioToVideoParameters.model_validate(job.request.parameters)
+        else:
+            LTXVideoParameters.model_validate(job.request.parameters)
         assert job.request.parameters["width"] == 1920
         assert job.request.parameters["height"] == 1080
         assert job.request.parameters["fps"] == 24
@@ -463,6 +495,7 @@ def test_all_ltx_jobs_are_published_before_first_wait(
 
     plan, audio, images = _case(tmp_path, monkeypatch)
     events: list[tuple[str, str]] = []
+    submitted_metadata: dict[str, dict[str, str]] = {}
     metadata_file = tmp_path / "worker-metadata.json"
     metadata_file.write_text(json.dumps({
         "generation_profile": LTX_A2V_RUN_OPTIMIZED_PROFILE,
@@ -482,7 +515,7 @@ def test_all_ltx_jobs_are_published_before_first_wait(
 
     class FakeQueue:
         def submit(self, request: object, *, metadata: object) -> QueueJobSnapshot:
-            del metadata
+            submitted_metadata[request.job_id] = dict(metadata)
             events.append(("submit", request.job_id))
             return QueueJobSnapshot(
                 id=request.job_id,
@@ -539,6 +572,40 @@ def test_all_ltx_jobs_are_published_before_first_wait(
     assert {job_id for kind, job_id in events if kind == "submit"} == {
         job_id for kind, job_id in events if kind == "execute"
     }
+    assert {value["run_id"] for value in submitted_metadata.values()} == {
+        result["fingerprint"]
+    }
+    assert sorted(
+        value["run_job_count"] for value in submitted_metadata.values()
+    ) == ["1", "2", "2"]
+
+
+def test_legacy_run_metadata_manifest_is_migrated_in_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    _timeline, jobs, run_dir = b_video.build_b2_video_plan(
+        tmp_path, plan, audio, images
+    )
+    manifest = b_video._new_manifest(jobs, audio, run_dir.name)
+    counts = {"a2v": 2, "i2v": 1}
+    for job, record in zip(jobs, manifest["jobs"], strict=True):
+        record["request_sha256"] = b_video._legacy_run_metadata_fingerprint(
+            job.request,
+            run_id=run_dir.name,
+            run_job_count=counts[job.kind],
+        )
+
+    matches, migrated = b_video._migrate_legacy_run_metadata_manifest(
+        manifest, jobs, run_id=run_dir.name
+    )
+
+    assert matches is True
+    assert migrated is True
+    assert manifest["request_contract_migration"] == "ltx-run-metadata-postgres-v1"
+    assert [record["request_sha256"] for record in manifest["jobs"]] == [
+        job.request.fingerprint() for job in jobs
+    ]
 
 
 def test_terminal_a2v_diffvae_budget_old_run_can_be_superseded(tmp_path: Path) -> None:

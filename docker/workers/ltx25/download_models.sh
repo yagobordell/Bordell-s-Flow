@@ -91,7 +91,6 @@ if [[ "${manifest_is_valid}" == "false" ]]; then
       --bootstrap-root "${MODEL_ROOT}" \
       --minimum-mibps "${A2V_STORAGE_MIN_MIBPS}" --reallocate-on-slow
   fi
-  /usr/local/bin/network-preflight
 fi
 
 python3 - <<'PY'

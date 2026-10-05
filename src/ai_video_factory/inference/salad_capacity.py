@@ -146,9 +146,30 @@ def build_salad_capacity_runtime(
         clients=clients,
         bindings=bindings,
         managed_group_names=set(group_owners),
+        allowed_external_group_names=_load_allowed_external_group_names(services_path),
         logger=logger,
     )
     return SaladCapacityRuntime(autoscaler=autoscaler, store=store)
+
+
+
+def _load_allowed_external_group_names(services_path: Path) -> set[str]:
+    """Load explicitly independent Salad groups that the capacity controller must ignore."""
+    external_path = services_path.parent / "image-upscaler-service.json"
+    if not external_path.is_file():
+        return set()
+    payload = json.loads(external_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise RuntimeError(
+            "deploy/salad/image-upscaler-service.json must use schema_version=1"
+        )
+    service = payload.get("service")
+    if not isinstance(service, dict):
+        raise RuntimeError(
+            "deploy/salad/image-upscaler-service.json requires object 'service'"
+        )
+    group_name = _required_text(service, "group_name")
+    return {group_name}
 
 
 def _required_salad_account_env(name: str) -> str:

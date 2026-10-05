@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ai_video_factory.inference.bundle_publication import bundle_manifest_key
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
@@ -57,6 +58,29 @@ class FailingRunner:
         del request, inputs, work_dir
         self.calls += 1
         raise RuntimeError("single-shot failure")
+
+
+class _StrictParameters(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    prompt: str
+
+
+class ValidationFailingRunner:
+    task_name = "infrastructure.copy"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def run(
+        self,
+        request: InferenceJobRequest,
+        inputs: Mapping[str, Path],
+        work_dir: Path,
+    ) -> LocalArtifact:
+        del request, inputs, work_dir
+        self.calls += 1
+        _StrictParameters.model_validate({"prompt": "ok", "run_id": "invalid-extra"})
+        raise AssertionError("validation must fail")
 
 
 class DrainingRepository(InMemoryJobRepository):
@@ -171,6 +195,30 @@ def test_worker_max_attempts_prevents_second_inference_execution(tmp_path: Path)
         match="RuntimeError: single-shot failure",
     ):
         worker.process(request, transport_job_id="salad-2")
+
+    assert runner.calls == 1
+
+
+def test_worker_validation_error_is_terminal_on_first_attempt(tmp_path: Path) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    repository = InMemoryJobRepository()
+    runner = ValidationFailingRunner()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-1",
+        temp_dir=tmp_path / "temp",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
+    request = build_request("job-invalid-contract", digest)
+
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        worker.process(request)
+    with pytest.raises(NonRetryableTaskError, match="extra_forbidden"):
+        worker.process(request)
 
     assert runner.calls == 1
 

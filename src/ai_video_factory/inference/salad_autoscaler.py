@@ -188,6 +188,7 @@ class PostgresAutoscalerStore:
                 SELECT
                     job_id,
                     COALESCE(
+                        run_id,
                         request ->> 'run_id',
                         request #>> '{parameters,run_id}',
                         '<unknown>'
@@ -195,10 +196,13 @@ class PostgresAutoscalerStore:
                     status,
                     lease_owner AS worker_id,
                     started_at,
-                    NULLIF(
-                        request #>> '{parameters,run_job_count}',
-                        ''
-                    )::integer AS run_job_count
+                    COALESCE(
+                        run_job_count,
+                        NULLIF(
+                            request #>> '{parameters,run_job_count}',
+                            ''
+                        )::integer
+                    ) AS run_job_count
                 FROM gpu.jobs
                 WHERE task = ANY(%s)
                   AND status = ANY(%s)
@@ -476,6 +480,7 @@ class PredictiveSaladAutoscaler:
         clients: dict[str, SaladClient],
         bindings: dict[str, AutoscalerServiceBinding],
         managed_group_names: set[str] | None = None,
+        allowed_external_group_names: set[str] | None = None,
         logger: Callable[[str], None] = print,
     ) -> None:
         self.config = config
@@ -484,6 +489,9 @@ class PredictiveSaladAutoscaler:
         self.bindings = dict(bindings)
         self.managed_group_names = (
             frozenset(managed_group_names) if managed_group_names is not None else None
+        )
+        self.allowed_external_group_names = frozenset(
+            allowed_external_group_names or ()
         )
         self.logger = logger
         self._downscale_candidates: dict[str, tuple[int, int]] = {}
@@ -791,11 +799,16 @@ class PredictiveSaladAutoscaler:
             for group in groups
             if str(group.get("name") or "").strip()
         }
-        unmanaged = sorted(remote_names - self.managed_group_names)
+        unmanaged = sorted(
+            remote_names
+            - self.managed_group_names
+            - self.allowed_external_group_names
+        )
         if unmanaged:
             raise AutoscalerReconciliationError(
                 "Salad project contains unmanaged container groups outside "
-                f"deploy/salad/services.json: {', '.join(unmanaged)}"
+                "the managed services and explicit external-service allowlist: "
+                f"{', '.join(unmanaged)}"
             )
 
     def _record_provider_bootstrap_progress(

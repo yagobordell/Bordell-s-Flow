@@ -60,7 +60,10 @@ from ai_video_factory.inference.salad import (
     SaladDispatchConfig,
 )
 from ai_video_factory.inference.salad_billing import SaladCostMeter, read_salad_costs
-from ai_video_factory.inference.salad_image_upscaler_start import ensure_image_upscaler_ready
+from ai_video_factory.inference.salad_image_upscaler_start import (
+    ImageUpscalerStartupError,
+    image_upscaler_usage,
+)
 from ai_video_factory.managed_layout import publish_managed_run, sync_managed_outputs
 from ai_video_factory.providers import OpenAIProvider
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
@@ -968,6 +971,8 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
             "R2_ACCESS_KEY_ID": settings.r2_access_key_id,
             "R2_SECRET_ACCESS_KEY": settings.r2_secret_access_key,
         }
+        if settings.image_upscaler_auto_stop:
+            required["POSTGRES_DSN"] = settings.postgres_dsn
         missing = [name for name, value in required.items() if not value]
         if missing:
             raise ImageGenerationError(
@@ -975,14 +980,7 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
                 "OptiumLabs Salad/R2 configuration: " + ", ".join(missing)
                 + ". Re-run --images-only to finish without paying for the originals again."
             )
-        # Start or reuse Salad only AFTER original GPT images are safely saved.
         try:
-            await asyncio.to_thread(
-                ensure_image_upscaler_ready,
-                api_key=settings.salad_api_key,
-                gateway_url=settings.image_upscaler_url,
-                auto_start=settings.image_upscaler_auto_start,
-            )
             upscaler = await asyncio.to_thread(
                 create_optium_image_upscaler,
                 base_url=settings.image_upscaler_url,
@@ -995,16 +993,53 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
             )
         except Exception as exc:
             raise ImageGenerationError(
+                "GPT originals are saved; professional x2 is pending upscaler setup. "
+                "Re-run --images-only to finish without regenerating paid originals. "
+                f"Setup error: {exc}"
+            ) from exc
+
+    if needs_x2:
+        if upscaler is None:
+            raise ImageGenerationError(
+                "Professional x2 requires a configured image upscaler"
+            )
+
+        def finish_with_upscaler_session() -> list[dict[str, object]]:
+            with image_upscaler_usage(
+                api_key=settings.salad_api_key,
+                gateway_url=settings.image_upscaler_url,
+                postgres_dsn=settings.postgres_dsn,
+                auto_start=settings.image_upscaler_auto_start,
+                auto_stop=settings.image_upscaler_auto_stop,
+            ):
+                return finish_professional_images(
+                    output,
+                    plan,
+                    manifest,
+                    upscaler=upscaler,
+                    api_key=settings.openai_api_key,
+                )
+
+        try:
+            final_assets = await asyncio.to_thread(finish_with_upscaler_session)
+        except ImageUpscalerStartupError as exc:
+            raise ImageGenerationError(
                 "GPT originals are saved; professional x2 is pending Salad readiness. "
                 "Re-run --images-only to finish without regenerating paid originals. "
                 f"Startup error: {exc}"
             ) from exc
-    final_assets = (
-        await asyncio.to_thread(
-            finish_professional_images, output, plan, manifest,
-            upscaler=upscaler, api_key=settings.openai_api_key,
-        ) if professional else None
-    )
+    elif professional:
+        final_assets = await asyncio.to_thread(
+            finish_professional_images,
+            output,
+            plan,
+            manifest,
+            upscaler=None,
+            api_key=settings.openai_api_key,
+        )
+    else:
+        final_assets = None
+
     plan["image_assets"] = [
         {
             "block_id": item["block_id"],
@@ -1032,7 +1067,6 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
     ]
     _write(output / "visual_plan.json", plan)
     return manifest
-
 
 def _continuity_retry_block_id(error: ImageGenerationError) -> int | None:
     """Return the B2 block implicated by a preflight continuity error."""

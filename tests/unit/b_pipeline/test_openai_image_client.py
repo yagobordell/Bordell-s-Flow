@@ -3,7 +3,9 @@
 import base64
 import hashlib
 import io
+import json
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 from PIL import Image
@@ -52,6 +54,39 @@ def test_direct_client_uses_the_same_model_prompt_size_quality_and_single_image(
     assert result["sha256"] == hashlib.sha256(destination.read_bytes()).hexdigest()
     assert result["usage"] == {"input_tokens": 11}
     assert destination.read_bytes() == _png()
+
+
+def test_direct_client_surfaces_definite_http_400_rejection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = official.OpenAIImageClient("fake-key")
+    body = io.BytesIO(json.dumps({
+        "error": {"message": "Unsupported image size"}
+    }).encode("utf-8"))
+
+    def reject(*_args, **_kwargs):
+        raise HTTPError(
+            "https://api.openai.com/v1/images/generations",
+            400,
+            "Bad Request",
+            hdrs=None,
+            fp=body,
+        )
+
+    monkeypatch.setattr(official, "urlopen", reject)
+    with pytest.raises(
+        official.OpenAIImageRequestRejected,
+        match="HTTP 400: Unsupported image size",
+    ) as exc:
+        client.generate_png(
+            prompt="Image",
+            model="gpt-image-2.5-sunburst",
+            destination=tmp_path / "bad.png",
+        )
+
+    assert exc.value.status_code == 400
+    assert exc.value.api_message == "Unsupported image size"
+    assert not (tmp_path / "bad.png").exists()
 
 
 @pytest.mark.parametrize(

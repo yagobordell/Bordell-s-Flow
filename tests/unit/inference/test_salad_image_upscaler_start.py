@@ -13,7 +13,7 @@ from ai_video_factory.inference import salad_image_upscaler_start as startup
 def manifest(tmp_path):
     path = tmp_path / "upscaler.json"
     path.write_text(
-        json.dumps({"schema_version": 1, "service": {"group_name": "bordell-image-upscaler"}}),
+        json.dumps({"schema_version": 1, "service": {"group_name": "bordell-image-upscaler-v2"}}),
         encoding="utf-8",
     )
     return path
@@ -37,6 +37,7 @@ class FakeSalad:
         self.start_result = start_result
         self.dns = dns
         self.start_calls = 0
+        self.stop_calls = 0
         self.describe_calls = 0
         self.instance_calls = 0
 
@@ -59,9 +60,36 @@ class FakeSalad:
         self.start_calls += 1
         return self.start_result
 
+    def stop_container_group(self):
+        self.stop_calls += 1
+
 
 READY = [{"ready": True, "state": "running"}]
 NOT_READY = [{"ready": False, "state": "running"}]
+
+
+class FakeCursor:
+    def __init__(self, row=None):
+        self.row = row
+
+    def fetchone(self):
+        return self.row
+
+
+class FakeConnection:
+    def __init__(self, *, exclusive_available=True):
+        self.exclusive_available = exclusive_available
+        self.commands = []
+        self.closed = False
+
+    def execute(self, query, params):
+        self.commands.append((query, params))
+        if "pg_try_advisory_lock(" in query:
+            return FakeCursor((self.exclusive_available,))
+        return FakeCursor((True,))
+
+    def close(self):
+        self.closed = True
 
 
 def check(client, manifest, *, auto_start=True, clock=None, timeout=120):
@@ -177,6 +205,104 @@ def test_racing_start_does_not_repeat_post_if_get_is_eventually_consistent(manif
     assert salad.start_calls == 1
 
 
+def test_usage_session_last_user_requests_stop(manifest):
+    salad = FakeSalad(
+        states=[("running", False), ("running", False)],
+        instances=[READY],
+    )
+    connection = FakeConnection(exclusive_available=True)
+    messages = []
+
+    with startup.image_upscaler_usage(
+        api_key="fake-secret",
+        gateway_url="https://gateway.salad.cloud",
+        postgres_dsn="postgresql://fake",
+        manifest_path=manifest,
+        client=salad,
+        connection_factory=lambda _dsn: connection,
+        notify=messages.append,
+    ):
+        pass
+
+    assert salad.stop_calls == 1
+    assert connection.closed is True
+    assert any("stop requested" in message for message in messages)
+    queries = [query for query, _params in connection.commands]
+    assert any("pg_advisory_lock_shared" in query for query in queries)
+    assert any("pg_advisory_unlock_shared" in query for query in queries)
+    assert any("pg_try_advisory_lock(" in query for query in queries)
+    assert any("pg_advisory_unlock(" in query for query in queries)
+
+
+def test_usage_session_does_not_stop_after_finishing_exception(manifest):
+    salad = FakeSalad(
+        states=[("running", False)],
+        instances=[READY],
+    )
+    connection = FakeConnection(exclusive_available=True)
+
+    with pytest.raises(RuntimeError, match="ambiguous finishing"):
+        with startup.image_upscaler_usage(
+            api_key="fake-secret",
+            gateway_url="https://gateway.salad.cloud",
+            postgres_dsn="postgresql://fake",
+            manifest_path=manifest,
+            client=salad,
+            connection_factory=lambda _dsn: connection,
+        ):
+            raise RuntimeError("ambiguous finishing")
+
+    assert salad.stop_calls == 0
+    assert connection.closed is True
+
+
+def test_usage_session_does_not_stop_while_another_user_holds_shared_lock(manifest):
+    salad = FakeSalad(states=[("running", False)], instances=[READY])
+    connection = FakeConnection(exclusive_available=False)
+
+    with startup.image_upscaler_usage(
+        api_key="fake-secret",
+        gateway_url="https://gateway.salad.cloud",
+        postgres_dsn="postgresql://fake",
+        manifest_path=manifest,
+        client=salad,
+        connection_factory=lambda _dsn: connection,
+    ):
+        pass
+
+    assert salad.stop_calls == 0
+    assert connection.closed is True
+
+
+def test_usage_session_requires_postgres_for_safe_auto_stop(manifest):
+    salad = FakeSalad(states=[("running", False)], instances=[READY])
+    with pytest.raises(startup.ImageUpscalerStartupError, match="POSTGRES_DSN"):
+        with startup.image_upscaler_usage(
+            api_key="fake-secret",
+            gateway_url="https://gateway.salad.cloud",
+            postgres_dsn=None,
+            manifest_path=manifest,
+            client=salad,
+        ):
+            pass
+    assert salad.start_calls == 0
+    assert salad.stop_calls == 0
+
+
+def test_usage_session_can_disable_auto_stop_without_postgres(manifest):
+    salad = FakeSalad(states=[("running", False)], instances=[READY])
+    with startup.image_upscaler_usage(
+        api_key="fake-secret",
+        gateway_url="https://gateway.salad.cloud",
+        postgres_dsn=None,
+        auto_stop=False,
+        manifest_path=manifest,
+        client=salad,
+    ):
+        pass
+    assert salad.stop_calls == 0
+
+
 def test_missing_salad_account_fails_before_network(monkeypatch, manifest):
     monkeypatch.setattr(startup, "_account_settings", lambda: (None, "project"))
     with pytest.raises(startup.ImageUpscalerStartupError, match="SALAD_ORGANIZATION"):
@@ -198,10 +324,12 @@ def test_pipeline_generates_paid_originals_before_waiting_for_salad():
     assert "if needs_x2:" in function
     assert function.index("generate_b2_images,") < function.index(
         "crop_grid_assets,"
-    ) < function.index("ensure_image_upscaler_ready,")
+    ) < function.index('manifest["finishing_status"] = "pending_upscaler"')
     assert function.index('manifest["finishing_status"] = "pending_upscaler"') < (
-        function.index("ensure_image_upscaler_ready,")
+        function.index("image_upscaler_usage(")
     )
-    assert function.index("ensure_image_upscaler_ready,") < function.index(
-        "finish_professional_images,"
+    assert "image_upscaler_usage(" in function
+    assert function.index("image_upscaler_usage(") < function.index(
+        "finish_professional_images("
     )
+    assert "auto_stop=settings.image_upscaler_auto_stop" in function

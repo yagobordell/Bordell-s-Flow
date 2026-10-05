@@ -3,7 +3,10 @@ from pathlib import Path
 
 import pytest
 
-from ai_video_factory.inference.salad_capacity import build_salad_capacity_runtime
+from ai_video_factory.inference.salad_capacity import (
+    _load_allowed_external_group_names,
+    build_salad_capacity_runtime,
+)
 
 
 def _write_manifest(
@@ -69,3 +72,22 @@ def test_capacity_runtime_rejects_duplicate_remote_group_identity_before_postgre
             postgres_dsn="postgresql://invalid/not-used",
             salad_api_key="test-key",
         )
+
+
+
+def test_capacity_runtime_loads_explicit_independent_image_upscaler_group(
+    tmp_path: Path,
+) -> None:
+    services = tmp_path / "services.json"
+    services.write_text('{"stack": {}, "services": {}}', encoding="utf-8")
+    (tmp_path / "image-upscaler-service.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "service": {"group_name": "bordell-image-upscaler-v2"},
+        }),
+        encoding="utf-8",
+    )
+
+    assert _load_allowed_external_group_names(services) == {
+        "bordell-image-upscaler-v2"
+    }

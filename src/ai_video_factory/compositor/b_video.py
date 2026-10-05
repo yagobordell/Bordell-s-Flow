@@ -88,6 +88,21 @@ def _fit(width: int) -> str:
     )
 
 
+def _image_records(images: dict[str, Any]) -> list[dict[str, Any]]:
+    """Resolve the immutable manifest records to the bytes used for composition."""
+    if images.get("finishing_status") == "completed":
+        final_assets = images.get("final_assets")
+        if not isinstance(final_assets, list):
+            raise B2VideoCompositionError(
+                "Completed professional image finishing has no final_assets"
+            )
+        return final_assets
+    return [
+        *(entry for entry in images.get("items", []) if entry.get("grid") is None),
+        *images.get("panel_assets", []),
+    ]
+
+
 def _motion_filter(beat: dict[str, Any], frames: int, image_index: int) -> str:
     duration_seconds = frames / _FPS
     direction = motion_direction_for_index(image_index)
@@ -124,10 +139,7 @@ def render_b2_ltx_video(
         manifest.get("avatar_sha256", sha256_file(output / "avatar.png")),
     )
     assets: dict[tuple[int, str], Path] = {}
-    for item in [
-        *(entry for entry in images["items"] if entry.get("grid") is None),
-        *images.get("panel_assets", []),
-    ]:
+    for item in _image_records(images):
         key = item["block_id"], item["beat_id"]
         if key in assets:
             raise B2VideoCompositionError(f"Duplicate PNG for {key}")

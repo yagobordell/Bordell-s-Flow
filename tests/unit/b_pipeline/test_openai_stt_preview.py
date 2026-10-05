@@ -220,6 +220,20 @@ def test_timeline_fails_closed_when_stt_changes_a_word(tmp_path: Path) -> None:
     assert not (tmp_path / "preview" / "static_preview.mp4").exists()
 
 
+def test_timeline_ignores_bracketed_stage_direction_but_not_plain_words(
+    tmp_path: Path,
+) -> None:
+    plan, audio, _images = _fixture_assets(tmp_path)
+    plan["blocks"][0]["beats"][0]["text"] = "[brief pause]\nHola"
+
+    timeline = build_stt_beat_timeline(tmp_path, plan, audio)
+    assert timeline["beats"][0]["word_count"] == 1
+
+    plan["blocks"][0]["beats"][0]["text"] = "brief pause Hola"
+    with pytest.raises(StaticPreviewError, match="do not match"):
+        build_stt_beat_timeline(tmp_path, plan, audio)
+
+
 def test_stt_accepts_spoken_currency_as_collapsed_numeric_token() -> None:
     mapping = _align_stt_tokens(
         ["forty", "seven", "dollars"], ["47"], block_id=3,

@@ -24,7 +24,7 @@ from typing import Any
 from PIL import Image
 
 from .image_grids import GridPlanError, plan_image_jobs
-from .openai_images import OpenAIImageClient
+from .openai_images import OpenAIImageClient, OpenAIImageRequestRejected
 from .professional_image_state import finished_in_place_sha
 
 _AVATAR_WORD = re.compile(r"\bavatar\b", flags=re.IGNORECASE)
@@ -323,6 +323,8 @@ def _mark_complete(
     state["artifact"] = artifact
     state["sha256"] = generated["sha256"]
     state["status"] = "completed"
+    state.pop("http_status", None)
+    state.pop("error", None)
     _atomic_json(state_path, state)
     return artifact
 
@@ -392,6 +394,13 @@ def _one_image(
             f"Standard image POST for {job['beat_id']} has an unknown outcome. "
             f"Inspect {state_path}; never resubmit automatically."
         )
+    if state["status"] == "direct_rejected":
+        # A prior 4xx is a definite failed request. A later explicit run may
+        # retry it while all completed paid images remain cached.
+        state["status"] = "direct_pending"
+        state.pop("http_status", None)
+        state.pop("error", None)
+        _atomic_json(state_path, state)
     if state["status"] != "direct_pending":
         raise ImageGenerationError(f"Unrecognized image state for {job['beat_id']}")
     if direct_client is None:
@@ -419,6 +428,17 @@ def _one_image(
         if reference_url is not None:
             kwargs["reference_image_url"] = reference_url
         generated = direct_client.generate_png(**kwargs)
+    except OpenAIImageRequestRejected as exc:
+        state["status"] = "direct_rejected"
+        state["http_status"] = exc.status_code
+        state["error"] = exc.api_message
+        _atomic_json(state_path, state)
+        raise ImageGenerationError(
+            f"Standard image POST for {job['beat_id']} was rejected by OpenAI "
+            f"with HTTP {exc.status_code}: {exc.api_message}. "
+            "Completed image beats remain cached; rerun images-only after correcting "
+            "the rejection cause."
+        ) from exc
     except Exception as exc:
         raise ImageGenerationError(
             f"Standard image POST outcome for {job['beat_id']} is unknown. "

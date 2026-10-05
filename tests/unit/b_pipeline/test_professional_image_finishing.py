@@ -462,6 +462,7 @@ def test_professional_generates_paid_originals_before_salad_then_recovers(
 ):
     import asyncio
     import json
+    from contextlib import contextmanager
 
     from scripts.pipeline import run_b_pipeline as runner
 
@@ -493,13 +494,17 @@ def test_professional_generates_paid_originals_before_salad_then_recovers(
     monkeypatch.setattr(runner.settings, "image_upscaler_url", "https://gateway.salad.cloud")
     for setting in (
         "salad_api_key", "r2_endpoint_url", "r2_bucket",
-        "r2_access_key_id", "r2_secret_access_key",
+        "r2_access_key_id", "r2_secret_access_key", "postgres_dsn",
     ):
         monkeypatch.setattr(runner.settings, setting, "test-value")
-    monkeypatch.setattr(
-        runner, "ensure_image_upscaler_ready",
-        lambda **kwargs: calls.append("salad_ready"),
-    )
+
+    @contextmanager
+    def ready_upscaler_usage(**kwargs):
+        del kwargs
+        calls.append("salad_ready")
+        yield
+
+    monkeypatch.setattr(runner, "image_upscaler_usage", ready_upscaler_usage)
     monkeypatch.setattr(
         runner, "create_optium_image_upscaler",
         lambda **kwargs: upscaler,
@@ -643,6 +648,7 @@ def test_professional_paid_originals_survive_transient_salad_start_error(
 ):
     import asyncio
     import json
+    from contextlib import contextmanager
 
     from scripts.pipeline import run_b_pipeline as runner
 
@@ -657,16 +663,24 @@ def test_professional_paid_originals_survive_transient_salad_start_error(
     )
     for setting in (
         "salad_api_key", "r2_endpoint_url", "r2_bucket",
-        "r2_access_key_id", "r2_secret_access_key",
+        "r2_access_key_id", "r2_secret_access_key", "postgres_dsn",
     ):
         monkeypatch.setattr(runner.settings, setting, "test-value")
     monkeypatch.setattr(runner.settings, "image_upscaler_url", "https://gateway.salad.cloud")
+    monkeypatch.setattr(
+        runner,
+        "create_optium_image_upscaler",
+        lambda **kwargs: RecordingUpscaler(),
+    )
 
+    @contextmanager
     def reject_salad(**kwargs):
+        del kwargs
         assert (tmp_path / "images" / "block_1" / "1B.png").is_file()
-        raise RuntimeError("Salad not ready")
+        raise runner.ImageUpscalerStartupError("Salad not ready")
+        yield  # pragma: no cover
 
-    monkeypatch.setattr(runner, "ensure_image_upscaler_ready", reject_salad)
+    monkeypatch.setattr(runner, "image_upscaler_usage", reject_salad)
     with pytest.raises(gpt.ImageGenerationError, match="Salad not ready"):
         asyncio.run(runner._generate_images(tmp_path, plan))
     saved = json.loads((tmp_path / "images" / "manifest.json").read_text())

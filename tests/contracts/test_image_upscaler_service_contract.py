@@ -33,6 +33,7 @@ def test_image_upscaler_has_independent_salad_group_contract() -> None:
     service = manifest["service"]
 
     assert manifest["schema_version"] == 1
+    assert service["group_name"] == "bordell-image-upscaler-v2"
     assert service["image"].startswith("ghcr.io/yagobordell/image-upscaler-salad:")
     assert service["capacity"]["replicas"] == 1
     assert service["resources"] == {
@@ -70,5 +71,7 @@ def test_image_upscaler_deploy_uses_private_ghcr_basic_auth_without_committed_pa
     assert 'ContentType "application/merge-patch+json"' in script
     assert "Wait-SaladGroupSettled" in script
     assert "pending_change" in script
+    assert "Test-InsecureRedirectError" in script
+    assert "retrying the canonical " in script
     assert "personal_access_token" not in script
     assert "ghp_" not in script
