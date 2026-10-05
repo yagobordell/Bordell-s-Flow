@@ -17,10 +17,11 @@ ACTIVE_STATUSES = (
 )
 
 # LTX scales by backlog count rather than the generic drain-time forecast.
-# Each replica still consumes the shared Postgres queue dynamically.
+# Keep small/normal runs on one RTX 5090 and add the second replica only when
+# more than thirty active clips of the same type remain.
 _DEFAULT_JOBS_PER_REPLICA = {
-    "ltx25_i2v": 1,
-    "ltx25": 1,
+    "ltx25_i2v": 30,
+    "ltx25": 30,
 }
 
 _PROVIDER_STABLE_STATUSES = {"running", "stopped"}
@@ -369,12 +370,12 @@ def load_predictive_autoscaler_config(
                 default_jobs_per_replica,
                 minimum=1,
             )
-            if configured_jobs_per_replica != 1:
+            if configured_jobs_per_replica != default_jobs_per_replica:
                 raise RuntimeError(
-                    f"{binding.workload} requires jobs_per_replica=1 "
-                    "to preserve two-way run generation"
+                    f"{binding.workload} requires jobs_per_replica="
+                    f"{default_jobs_per_replica} for cost-aware LTX scaling"
                 )
-            stage_jobs_per_replica[binding.workload] = 1
+            stage_jobs_per_replica[binding.workload] = default_jobs_per_replica
     return PredictiveAutoscalerConfig(
         enabled=_bool_env("SALAD_AUTOSCALER_ENABLED", default=False),
         project_max_replicas=project_max,
