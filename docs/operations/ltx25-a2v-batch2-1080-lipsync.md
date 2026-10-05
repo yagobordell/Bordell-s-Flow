@@ -396,3 +396,46 @@ reference paths. Run `-CheckInputsOnly` first and verify the stopped,
 operator-owned Salad group image digest prior to any paid execution.
 Do not merge or promote until a successful full-GPU run also passes
 frame-by-frame quality review and human lip-sync approval.
+
+
+## 2026-10-05: network gate correction after bootstrap churn
+
+A later grouped-trial attempt did not reach model download or inference.
+Two observed A2V experimental replicas passed the new model-volume
+O_DIRECT scratch screen comfortably (median about **3682 MiB/s** and
+**4945 MiB/s**) but were reallocated only because the 25-MB single-stream
+curl probe to Hugging Face measured about **50-69 Mb/s** versus the
+experimental 450-Mb/s synthetic threshold. This curl probe does **not**
+match the real bootstrap transport: the downloader is `hf download`
+with hf-xet adaptive concurrency, and the existing byte-progress watchdog
+already measures the actual aggregate model download. Therefore treating
+the short curl as the strict bandwidth authority caused unnecessary
+instance churn.
+
+For `ltx25_a2v_experimental` only:
+
+- `SALAD_NETWORK_MIN_DOWNLOAD_MBPS` is reduced from 450 to **40 Mb/s**.
+  It remains a quick connectivity/sanity filter and can still reject an
+  obviously unusable link.
+- The real downloader remains the authority at
+  `LTX_MODEL_DOWNLOAD_MIN_THROUGHPUT_MIBPS=35`, while its grace and
+  rolling window are reduced from 180 to **120 seconds**. A node whose
+  real concurrent hf-xet download cannot sustain that rate will request
+  reallocation after roughly two minutes instead of downloading tens of
+  gigabytes for a slow 45-60 minute bootstrap.
+- The 850-MiB/s model-volume storage gate is unchanged.
+
+The same failed attempt also exposed a control-plane robustness bug:
+`wait_salad_ltx25_ready.py` retried HTTP 408/429/5xx statuses but did
+not classify a Salad client transport timeout with no HTTP status as
+transient. Such timeouts are now retried under the same five-consecutive-
+failure bound. The controlled A2V wrapper also supplies
+`--max-unique-instances 6`; if repeated host/watchdog reallocations
+exceed that unique-instance budget, readiness fails closed without ever
+submitting the Postgres inference job. This is independent of the global
+bootstrap timeout and prevents an effectively endless paid reallocation
+loop.
+
+These changes only affect experimental admission and readiness behavior.
+They do not change model weights, A2V sampling, B4 guidance, Triton VAE,
+audio conditioning, seeds, resolution or the Stage2 grouped-loader math.
