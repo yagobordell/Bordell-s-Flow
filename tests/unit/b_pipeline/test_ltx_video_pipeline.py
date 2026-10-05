@@ -929,12 +929,7 @@ def test_fast_static_run_never_inherits_old_disk_offload_clips(
         b_video, "_reconcile_prior_failed_video_runs",
         lambda *_args, **_kwargs: None,
     )
-    monkeypatch.setattr(
-        b_video, "_inherit_completed_v4_clips",
-        lambda *_args, **_kwargs: pytest.fail(
-            "Never inherit disk-streamed A2V clips into a fast static run"
-        ),
-    )
+    assert not hasattr(b_video, "_inherit_completed_v4_clips")
 
     def before_paid_submission() -> None:
         raise RuntimeError("stopped before paid inference")
