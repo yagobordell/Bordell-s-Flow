@@ -144,6 +144,54 @@ def test_motion_copy_unknown_paid_request_is_not_repeated(tmp_path: Path) -> Non
         ))
 
 
+def test_current_cta_replaces_legacy_completion_only_after_full_hd_render(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    directory = tmp_path / "cta"
+    directory.mkdir()
+    legacy = directory / "final_cta.mp4"
+    legacy.write_bytes(b"legacy 720p completion")
+    _save(directory / "completed.json", {
+        "schema_version": "casero-cta-final-v2",
+        "status": "completed",
+        "final": {"file": legacy.name, "sha256": _sha(legacy)},
+    })
+    a2v = directory / video._RUN_A2V_VIDEO
+    a2v.write_bytes(b"new run-v2 a2v")
+    motion = directory / "motion.mp4"
+    motion.write_bytes(b"motion")
+    master = directory / "master.wav"
+    master.write_bytes(b"master")
+    commands: list[list[str]] = []
+
+    def fake_ffmpeg(arguments: list[str]) -> None:
+        commands.append(arguments)
+        Path(arguments[-1]).write_bytes(b"full hd rendered CTA")
+
+    monkeypatch.setattr(video, "_ffmpeg", fake_ffmpeg)
+    result = video.compose_reusable_cta(
+        directory,
+        {
+            "files": {"motion": motion, "master": master},
+            "half_seconds": 2.0,
+            "duration_seconds": 4.0,
+        },
+    )
+
+    assert result.name == video._RUN_FINAL_VIDEO
+    assert result.read_bytes() == b"full hd rendered CTA"
+    assert legacy.read_bytes() == b"legacy 720p completion"
+    assert len(commands) == 1
+    filter_complex = commands[0][commands[0].index("-filter_complex") + 1]
+    assert "scale=1920:1080" in filter_complex
+    completed = json.loads((directory / "completed.json").read_text())
+    assert completed["schema_version"] == video._RUN_SCHEMA
+    assert completed["width"] == 1920
+    assert completed["height"] == 1080
+    assert completed["final"]["file"] == video._RUN_FINAL_VIDEO
+    assert completed["final"]["sha256"] == _sha(result)
+
+
 def test_motion_v2_state_and_local_legacy_upgrade_preserve_old_video(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
