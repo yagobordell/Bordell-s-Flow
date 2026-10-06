@@ -252,6 +252,9 @@ def _generate_one(
         "width": _TARGET_SIZE[0],
         "height": _TARGET_SIZE[1],
         "reference_sha256": reference_sha,
+        "quality": "low",
+        "openai_usage": generated.get("usage"),
+        "openai_created": generated.get("created"),
         "status": "completed",
     }
     state["status"] = "completed"
