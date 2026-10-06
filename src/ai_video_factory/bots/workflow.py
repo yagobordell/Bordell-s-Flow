@@ -559,9 +559,11 @@ class BPipelineResult:
                 validate_b3(
                     output, group_id=group_id, source=source, grid_locks=locks
                 )
-                assert output.beats is not None
-                for index, ((block_id, original), decision) in enumerate(
-                    zip(source, output.beats, strict=True)
+                decisions = output.beats
+                if decisions is None:
+                    raise BPipelineValidationError("Validated B3 output has no beats")
+                for index, ((block_id, _original), decision) in enumerate(
+                    zip(source, decisions, strict=True)
                 ):
                     previous_id = (
                         str(source[index - 1][1]["beat_id"]) if index > 0 else None
