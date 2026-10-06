@@ -298,15 +298,13 @@ class B3BeatDecision(StrictModel):
                     "continuous=true inherits the previous take and cannot start a shot"
                 )
         else:
-            if (
-                not isinstance(self.shot_video_prompt, str)
-                or not self.shot_video_prompt.strip()
-            ):
-                raise ValueError(
-                    "continuous=false requires a nonempty shot_video_prompt"
-                )
             if self.shot_prompt is not None and not self.shot_prompt.strip():
                 raise ValueError("B3 shot_prompt must be null or nonempty")
+            if (
+                self.shot_video_prompt is not None
+                and not self.shot_video_prompt.strip()
+            ):
+                raise ValueError("B3 shot_video_prompt must be null or nonempty")
         return self
 
 
