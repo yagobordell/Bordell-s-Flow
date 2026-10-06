@@ -493,6 +493,7 @@ class BPipelineResult:
     b11: B11Output
     b12: tuple[B12Output, ...]
     b2: tuple[B2Output | ProfessionalB2Output, ...]
+    b3: tuple[B3Output, ...] = ()
     visual_style: Literal["casero", "profesional"] = "casero"
     b2_correction_counts: dict[int, int] = field(default_factory=dict)
     b2_response_ids: dict[int, str] = field(default_factory=dict)
@@ -526,15 +527,71 @@ class BPipelineResult:
             "blocks": [item.blocks[0].model_dump() for item in self.b2 if item.blocks],
         }
 
+    def merged_b3_output(self) -> dict[str, object]:
+        """Application-owned join of whole-video spoken-run B3 decisions."""
+        return {
+            "schema_version": "b-pipeline-merged-v1",
+            "pipeline_stage": "B3",
+            "groups": [item.model_dump() for item in self.b3],
+        }
+
     def visual_plan(self) -> dict[str, object]:
-        """Application-owned ordered join, not a bot-owned B2 output object."""
+        """Application-owned ordered B2 plan enriched with B3 camera-take decisions."""
         if self.b11.narrative_core is None:
             raise BPipelineValidationError("B1.1 narrative core is missing")
+        blocks = [result.blocks[0].model_dump() for result in self.b2 if result.blocks]
+        if self.b3:
+            if self.visual_style != "profesional":
+                raise BPipelineValidationError("B3 is valid only for professional visuals")
+            professional = tuple(
+                item for item in self.b2 if isinstance(item, ProfessionalB2Output)
+            )
+            if len(professional) != len(self.b2):
+                raise BPipelineValidationError("Professional B3 requires professional B2")
+            locks = _professional_grid_locks(professional)
+            groups = _professional_audio_groups(professional)
+            if len(groups) != len(self.b3):
+                raise BPipelineValidationError("B3 group count differs from B2 audio runs")
+            annotations: dict[tuple[int, str], dict[str, object]] = {}
+            for group_id, (source, output) in enumerate(
+                zip(groups, self.b3, strict=True), start=1
+            ):
+                validate_b3(
+                    output, group_id=group_id, source=source, grid_locks=locks
+                )
+                assert output.beats is not None
+                for index, ((block_id, original), decision) in enumerate(
+                    zip(source, output.beats, strict=True)
+                ):
+                    previous_id = (
+                        str(source[index - 1][1]["beat_id"]) if index > 0 else None
+                    )
+                    lock = locks.get((block_id, decision.beat_id))
+                    annotations[(block_id, decision.beat_id)] = {
+                        "b3_group_id": group_id,
+                        "continuous": decision.continuous,
+                        "b3_shot_prompt": decision.shot_prompt,
+                        "b3_shot_video_prompt": decision.shot_video_prompt,
+                        "b3_reference_beat_id": (
+                            previous_id if decision.shot_prompt is not None else None
+                        ),
+                        **(
+                            {
+                                "b3_grid_id": lock.grid_id,
+                                "b3_grid_source": lock.source,
+                                "b3_grid_role": lock.role,
+                            }
+                            if lock is not None else {}
+                        ),
+                    }
+            for block in blocks:
+                for beat in block["beats"]:
+                    beat.update(annotations.get((block["block_id"], beat["beat_id"]), {}))
         return {
             "schema_version": "b-pipeline-v1",
             **({"visual_style": self.visual_style} if self.visual_style == "profesional" else {}),
             "narrative_core": self.b11.narrative_core.model_dump(),
-            "blocks": [result.blocks[0].model_dump() for result in self.b2 if result.blocks],
+            "blocks": blocks,
         }
 
 
