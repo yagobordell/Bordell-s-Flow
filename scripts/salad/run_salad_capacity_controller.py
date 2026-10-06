@@ -140,6 +140,7 @@ def main() -> None:
             services_path=args.services,
             postgres_dsn=postgres_dsn,
             salad_api_key=_required_env("SALAD_API_KEY"),
+            salad_read_retry_observer=leadership.heartbeat,
         )
         if not runtime.autoscaler.config.enabled:
             raise SystemExit(

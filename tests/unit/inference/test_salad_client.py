@@ -26,7 +26,11 @@ class _Response:
         return self._body
 
 
-def _client(*, warnings: list[str] | None = None) -> SaladClient:
+def _client(
+    *,
+    warnings: list[str] | None = None,
+    retry_observer=None,
+) -> SaladClient:
     return SaladClient(
         SaladDispatchConfig(
             api_key="test-key",
@@ -36,6 +40,7 @@ def _client(*, warnings: list[str] | None = None) -> SaladClient:
             container_group_name="test-group",
         ),
         warning_logger=(warnings.append if warnings is not None else lambda _message: None),
+        retry_observer=retry_observer,
     )
 
 
@@ -45,6 +50,7 @@ def test_get_retries_timeout_and_recovers(
     calls = 0
     delays: list[float] = []
     warnings: list[str] = []
+    retry_observations: list[str] = []
 
     def fake_urlopen(*_args: object, **_kwargs: object) -> _Response:
         nonlocal calls
@@ -56,12 +62,16 @@ def test_get_retries_timeout_and_recovers(
     monkeypatch.setattr(salad, "urlopen", fake_urlopen)
     monkeypatch.setattr(salad.time, "sleep", delays.append)
 
-    groups = _client(warnings=warnings).list_project_container_groups()
+    groups = _client(
+        warnings=warnings,
+        retry_observer=lambda: retry_observations.append("heartbeat"),
+    ).list_project_container_groups()
 
     assert groups == [{"name": "test-group"}]
     assert calls == 3
     assert delays == [2, 4]
     assert len(warnings) == 2
+    assert retry_observations == ["heartbeat", "heartbeat"]
     assert all("Salad GET transient failure" in warning for warning in warnings)
 
 

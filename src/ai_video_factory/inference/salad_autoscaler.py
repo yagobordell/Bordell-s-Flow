@@ -477,7 +477,7 @@ class PredictiveSaladAutoscaler:
     def reconcile(self) -> dict[str, AutoscaleResult]:
         if not self.config.enabled or not self.clients:
             return {}
-        self._assert_project_inventory_owned()
+        inventory_by_name = self._read_project_inventory()
         rows_by_stage = {
             stage: self.store.list_stage_jobs(
                 binding=self.bindings[stage],
@@ -505,9 +505,25 @@ class PredictiveSaladAutoscaler:
             demands=demands,
             project_max_replicas=self.config.project_max_replicas,
         )
-        groups = {
-            stage: self.clients[stage].describe_container_group() for stage in self.clients
-        }
+        if inventory_by_name is None:
+            groups = {
+                stage: self.clients[stage].describe_container_group()
+                for stage in self.clients
+            }
+        else:
+            groups: dict[str, dict[str, object]] = {}
+            for stage, client in self.clients.items():
+                group_name = client.container_group_name
+                if not group_name:
+                    raise AutoscalerReconciliationError(
+                        f"Salad managed group identity is missing for {stage}"
+                    )
+                group = inventory_by_name.get(group_name)
+                if group is None:
+                    raise AutoscalerReconciliationError(
+                        f"Salad managed container group is missing: {group_name}"
+                    )
+                groups[stage] = dict(group)
         group_status = {stage: _group_status(groups[stage]) for stage in self.clients}
         group_pending_change = {
             stage: bool(groups[stage].get("pending_change")) for stage in self.clients
@@ -761,16 +777,23 @@ class PredictiveSaladAutoscaler:
             )
         return results
 
-    def _assert_project_inventory_owned(self) -> None:
+    def _read_project_inventory(self) -> dict[str, dict[str, object]] | None:
         if self.managed_group_names is None:
-            return
+            return None
         inventory_client = next(iter(self.clients.values()))
         groups = inventory_client.list_project_container_groups()
-        remote_names = {
-            str(group.get("name") or "").strip()
-            for group in groups
-            if str(group.get("name") or "").strip()
-        }
+        groups_by_name: dict[str, dict[str, object]] = {}
+        for group in groups:
+            group_name = str(group.get("name") or "").strip()
+            if not group_name:
+                continue
+            if group_name in groups_by_name:
+                raise AutoscalerReconciliationError(
+                    f"Salad project inventory contains duplicate group name: {group_name}"
+                )
+            groups_by_name[group_name] = dict(group)
+
+        remote_names = set(groups_by_name)
         unmanaged = sorted(
             remote_names
             - self.managed_group_names
@@ -782,6 +805,13 @@ class PredictiveSaladAutoscaler:
                 "the managed services and explicit external-service allowlist: "
                 f"{', '.join(unmanaged)}"
             )
+        missing = sorted(self.managed_group_names - remote_names)
+        if missing:
+            raise AutoscalerReconciliationError(
+                "Salad project is missing managed container groups: "
+                f"{', '.join(missing)}"
+            )
+        return groups_by_name
 
     def _record_provider_bootstrap_progress(
         self,

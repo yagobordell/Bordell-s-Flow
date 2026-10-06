@@ -111,6 +111,8 @@ class FakeSaladClient:
         fail_list_instances: bool = False,
         update_time: str | None = None,
         project_groups: list[dict[str, object]] | None = None,
+        group_name: str | None = None,
+        fail_describe: bool = False,
     ) -> None:
         self.replicas = replicas
         self.status = status
@@ -122,6 +124,9 @@ class FakeSaladClient:
         self.fail_list_instances = fail_list_instances
         self.update_time = update_time
         self.project_groups = project_groups or []
+        self.container_group_name = str(group_name or "").strip()
+        self.fail_describe = fail_describe
+        self.describe_calls = 0
         self.replica_updates: list[int] = []
         self.deletion_cost_updates: list[tuple[str, int]] = []
         self.start_calls = 0
@@ -131,6 +136,9 @@ class FakeSaladClient:
         return [dict(item) for item in self.project_groups]
 
     def describe_container_group(self) -> dict[str, object]:
+        self.describe_calls += 1
+        if self.fail_describe:
+            raise RuntimeError("unexpected per-group describe")
         return {
             "replicas": self.replicas,
             "pending_change": self.pending_change,
@@ -235,6 +243,7 @@ def test_unmanaged_project_group_fails_reconciliation_before_capacity_writes() -
     stage = "ltx25"
     client = FakeSaladClient(
         replicas=1,
+        group_name="ai-video-factory-ltx25-worker-v2",
         project_groups=[
             {"name": "ai-video-factory-ltx25-worker-v2"},
             {"name": "rogue-unmanaged-gpu-group"},
@@ -264,8 +273,17 @@ def test_explicit_external_project_group_is_allowed_but_not_managed() -> None:
     stage = "ltx25"
     client = FakeSaladClient(
         replicas=1,
+        group_name="ai-video-factory-ltx25-worker-v2",
+        fail_describe=True,
         project_groups=[
-            {"name": "ai-video-factory-ltx25-worker-v2"},
+            {
+                "name": "ai-video-factory-ltx25-worker-v2",
+                "replicas": 1,
+                "pending_change": False,
+                "update_time": "2026-10-06T20:00:00+00:00",
+                "version": 1,
+                "current_state": {"status": "stopped"},
+            },
             {"name": "bordell-image-upscaler-v2"},
         ],
     )
@@ -284,6 +302,51 @@ def test_explicit_external_project_group_is_allowed_but_not_managed() -> None:
     assert result.stage == stage
     assert client.replica_updates == []
     assert client.start_calls == 0
+
+
+def test_project_inventory_snapshot_replaces_per_group_describe_reads() -> None:
+    stages = ("whisper", "ltx25")
+    group_names = {
+        "whisper": "ai-video-factory-whisper-worker-v5",
+        "ltx25": "ai-video-factory-ltx25-worker-v3",
+    }
+    inventory = [
+        {
+            "name": group_names[stage],
+            "replicas": 1,
+            "pending_change": False,
+            "update_time": "2026-10-06T20:00:00+00:00",
+            "version": 1,
+            "current_state": {"status": "stopped"},
+        }
+        for stage in stages
+    ]
+    clients = {
+        stage: FakeSaladClient(
+            replicas=1,
+            group_name=group_names[stage],
+            project_groups=inventory if stage == "whisper" else [],
+            fail_describe=True,
+        )
+        for stage in stages
+    }
+    autoscaler = PredictiveSaladAutoscaler(
+        config=_config(stages, project_max_replicas=2),
+        store=FakeStore(
+            rows={stage: [] for stage in stages},
+            runtimes={stage: [60.0] for stage in stages},
+        ),
+        clients=clients,
+        bindings={stage: _binding(stage, max_replicas=1) for stage in stages},
+        managed_group_names=set(group_names.values()),
+        logger=lambda _message: None,
+    )
+
+    result = autoscaler.reconcile()
+
+    assert set(result) == set(stages)
+    assert all(item.reason == "stable" for item in result.values())
+    assert all(client.describe_calls == 0 for client in clients.values())
 
 
 def test_project_quota_is_shared_across_global_stage_demands() -> None:

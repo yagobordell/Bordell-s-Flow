@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,6 +72,7 @@ def build_salad_capacity_runtime(
     postgres_dsn: str,
     salad_api_key: str,
     logger=print,
+    salad_read_retry_observer: Callable[[], None] | None = None,
 ) -> SaladCapacityRuntime:
     document = _load_services_document(services_path)
     stack = _required_object(document, "stack")
@@ -128,16 +130,17 @@ def build_salad_capacity_runtime(
                 organization_name=organization,
                 project_name=project,
                 container_group_name=group_name,
-            )
+            ),
+            retry_observer=salad_read_retry_observer,
         )
 
     config = load_predictive_autoscaler_config(stage_bindings=tuple(bindings.values()))
     total_stage_capacity = sum(config.stage_max_replicas.values())
     if config.project_max_replicas >= total_stage_capacity:
         logger(
-            "Warning: SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS="
-            f"{config.project_max_replicas} does not constrain the configured "
-            f"per-service maximum of {total_stage_capacity} replicas."
+            "Salad autoscaler project cap is non-binding: "
+            f"SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS={config.project_max_replicas}, "
+            f"configured per-service maximum={total_stage_capacity}."
         )
     store = PostgresAutoscalerStore(postgres_dsn)
     autoscaler = PredictiveSaladAutoscaler(

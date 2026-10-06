@@ -55,9 +55,15 @@ class SaladClient:
         config: SaladDispatchConfig,
         *,
         warning_logger: Callable[[str], None] | None = None,
+        retry_observer: Callable[[], None] | None = None,
     ) -> None:
         self.config = config
         self.warning_logger = warning_logger or print
+        self.retry_observer = retry_observer
+
+    @property
+    def container_group_name(self) -> str:
+        return str(self.config.container_group_name or "").strip()
 
     def start_container_group(self) -> None:
         self._validate_config()
@@ -229,6 +235,8 @@ class SaladClient:
             f"({attempt}/{READ_MAX_ATTEMPTS}) url={url} reason={reason}; "
             f"retrying in {delay_seconds} seconds."
         )
+        if self.retry_observer is not None:
+            self.retry_observer()
         time.sleep(delay_seconds)
 
     def _post(self, url: str) -> None:
