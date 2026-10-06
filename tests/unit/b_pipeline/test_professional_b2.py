@@ -243,7 +243,7 @@ def test_professional_b2_global_framing_sequence_progression_and_still_audio() -
     assert "Shot progression is ESPECIALLY important within continuous sequences" in instructions
     assert "near-duplicate images" in instructions
     assert "For media_image, audio MUST always be false" in instructions
-    assert "generated synchronized speech" in instructions
+    assert "NARRATOR-IN-SETUP NO-FREEZE RULE" in instructions
 
 
 @pytest.mark.parametrize(
