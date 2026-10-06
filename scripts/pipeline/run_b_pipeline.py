@@ -1084,6 +1084,9 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
             raise ImageGenerationError(str(exc)) from exc
         plan["b3_shot_assets"] = b3_shots
         manifest["b3_shot_assets"] = b3_shots
+        manifest["total_generation_jobs"] = int(
+            manifest.get("total_generation_jobs", 0)
+        ) + len(b3_shots)
         _write(output / "images" / "manifest.json", manifest)
     _write(output / "visual_plan.json", plan)
     return manifest
