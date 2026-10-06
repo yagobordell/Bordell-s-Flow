@@ -598,7 +598,16 @@ the event continuous. If a fixed shot is genuinely necessary, describe
 the meaningful changed state or detail rather than inventing an
 irrelevant angle solely for variety.
 
-A qualifying sequence may mix avatar_media, media_image, media_video and a regenerated avatar.
+A numbered continuity sequence is a grid sequence and MUST NOT contain avatar_media.
+Do not number avatar_media together with media_image, media_video or regenerated avatar
+assets. If a beat would otherwise use avatar_media but materially belongs inside a
+continuous grid sequence, choose the best faithful grid-compatible carrier instead
+(media_image, media_video or a regenerated avatar as appropriate) while preserving
+the beat's communicative purpose, narrator/audio rules and continuity anchor. Do not
+break a genuine visual sequence merely to keep avatar_media.
+
+A qualifying numbered sequence may mix media_image, media_video and a regenerated
+avatar, but never avatar_media.
 
 Do not number merely because generated beats are adjacent. Number only when visual continuity between them materially matters.
 
@@ -622,7 +631,7 @@ for every visible face depicted from the reference, describe a scene-specific fa
 decide audio from narrator ownership AND setup continuity: audio=true is allowed only for the supplied avatar narrator while preserving the reference narration setup and physical placement/posture class; if generated full-screen narrator coverage stays there, use media_video with reference=true and audio=true; otherwise use audio=false voice-over coverage;
 choose a purposeful shot scale, camera angle, crop and visual focus for EVERY generated beat, considering nearby similar subjects;
 write concise source-grounded still-image prompts and, for media_video, a distinct animation video_prompt describing action development, gestures and camera behavior consistent with the selected audio route;
-after the block is stable, identify shared visual continuity anchors and apply continuity numbering to qualifying sequences, including object-led sequences, then strengthen shot-to-shot progression within them;
+after the block is stable, identify shared visual continuity anchors and apply continuity numbering to qualifying grid-compatible sequences, including object-led sequences; never include avatar_media in a numbered sequence, and if necessary replace an otherwise suitable avatar_media choice with the best faithful grid-compatible carrier before numbering; then strengthen shot-to-shot progression within those sequences;
 validate the 120-character consecutive audio=true constraint as far as this block can know;
 validate the final output contract.
 Block-level review
