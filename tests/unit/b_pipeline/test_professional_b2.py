@@ -113,10 +113,13 @@ def test_professional_b2_video_only_reliability_rules_are_explicit() -> None:
     assert "opening something so letters appear" in prompt
     assert "writing a word that did not previously exist" in prompt
     assert "turning an object specifically so\nexact content is expected to appear" in prompt
-    assert "override the normal media_video preference" in prompt
-    assert "media_image showing the relevant before, after or completed state" in prompt
-    assert "safer adjacent media_video action" in prompt
+    assert "A forbidden motion is NOT a reason by itself to choose media_image" in prompt
+    assert "KEEP media_video" in prompt
+    assert "media_image is NOT an allowed fallback or\nsubstitution" in prompt
+    assert "re-stage only the fragile action as a nearby safe motion" in prompt
+    assert "showing an already completed\nstate while reacting to it" in prompt
     assert "Never move a listed forbidden action into video_prompt" in prompt
+    assert "media_image showing the relevant before, after or completed state" not in prompt
 
 
 def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions() -> None:
