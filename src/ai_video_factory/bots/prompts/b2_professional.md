@@ -110,6 +110,24 @@ Choose media_image for a genuinely still documentary visual: an object, stable r
 
 Choose media_video whenever a physical action, execution, interaction, trajectory, change or temporal development is the useful visual information. STRONG PRESENTER ACTION DEFAULT: if the referenced presenter performs a visible practical step (applying, pressing, blending, massaging, cleansing, dabbing, using or demonstrating a product in motion), prefer media_video even if a single photograph could summarize the instruction. A presenter who merely holds an object may be observational media with audio=false only when the shot is outside the active narration setup. If the presenter remains in the narration setup and keeps the same physical placement/posture established by the reference, the presenter must remain a speaking video, not a still.
 
+PRESENTER+PROP EXPLANATION PRECEDENCE: before reducing a narrator-owned explanatory
+beat to object-only coverage, first ask whether the supplied narrator can communicate
+the beat naturally from the preserved narration setup while holding, showing,
+indicating or referring to the relevant small object. This applies especially to
+deictic/explanatory wording such as "one of these", "this", "this part", "right
+here", or a first-person explanation built around a prop already established in the
+sequence. When that setup-based presenter composition is natural and the object's
+fine detail is not itself the primary visual information, prefer the narrator in
+the preserved setup and apply the narrator-in-setup format override:
+media_video, reference=true, audio=true. Do not choose an object-only media_image
+first and thereby make the narrator-in-setup override impossible to apply.
+
+Object-only media_image remains appropriate when the beat's useful information is
+specifically the object's detail, material, reverse side, result, evidence or other
+information that is better communicated without the presenter's face/body. A
+continuous sequence may therefore move from narrator+object in setup to object-only
+close-up/detail and back again.
+
 MEDIA_VIDEO GENERATION RELIABILITY RULE — VIDEO ONLY:
 The following restrictions apply ONLY to the fragile MOTION performed inside
 media_video. They do NOT ban these subjects, objects or completed states from
@@ -142,6 +160,13 @@ lowering it, pointing to an already visible detail, showing an already completed
 state while reacting to it, moving the object into view, picking it up, placing it
 down, shifting attention between the object and another person/device, or restrained
 presenter gestures while holding it.
+
+If the forbidden action belongs to the narrator and a safe adjacent gesture can be
+performed while the narrator remains in the preserved narration setup, KEEP the
+narrator in that setup and use media_video with reference=true and audio=true.
+Do not move the narrator to observational audio=false coverage merely because the
+literal hand action is forbidden. Change only the fragile motion; preserve the
+setup, identity and speaking route when they remain otherwise valid.
 
 For these forbidden-action cases, media_image is NOT an allowed fallback or
 substitution for the rejected motion. Re-stage the motion instead. The fact that
@@ -533,6 +558,18 @@ Do not create split screens, storyboards, before/after composites or several seq
 
 media_video still receives an image prompt. Describe one motion-ready start or mid-action key image for one coherent later action/process. Do not depict multiple temporal stages in the key image.
 
+PHYSICAL-STATE CHRONOLOGY: across adjacent beats in the same visual sequence, do
+not advance an object's physical state before the narration establishes that
+change. Preserve the last established state until the beat that introduces the
+transition. If the literal transition is forbidden or unreliable in generated
+video, re-stage the motion without prematurely showing the completed result.
+Only use the completed state once the narration has made that state true or
+clearly treats it as already completed. For example, a gift-card code area should
+remain covered in beats before the narration introduces scratching/revealing it;
+a safe re-staged scratching beat may keep the panel covered while the presenter
+indicates it, and a later beat may show the already-revealed result after that
+transition has been narratively established.
+
 Generated visuals must be physically plausible and human-observable at ordinary scale. For hidden mechanisms, prefer a visible human-scale referent, consequence or result rather than invented microscopic imagery.
 
 Reference consistency
@@ -686,7 +723,7 @@ freeze upstream fields;
 apply the immutable intro/close full-field anchor if this beat is a required boundary beat; keep it unchanged and skip discretionary steps 3-12;
 for every other beat, identify its primary communicative function;
 resolve the relevant person/character/object/place and narration ownership; when unquoted first-person narration explicitly assigns a visible action, state or possession to the speaker, lock the supplied presenter as that visible subject unless context clearly attributes the first person elsewhere; treat mentioned posture/location as binding only when it is materially important to the visual meaning, not merely conversational or deictic wording;
-decide whether presenter presence, presenter plus support, a documentary still or a documentary video is the most natural carrier without discarding any locked presenter identity; preserve the narration setup by default whenever the beat can be communicated faithfully there, and then apply the narrator-in-setup format override before ordinary static-versus-video reasoning to use media_video with reference=true and audio=true; only if a changed posture/placement/environment is itself materially relevant should a locked presenter-owned beat leave that setup, preserving the presenter with reference=true and audio=false while choosing media_image versus media_video from whether motion materially matters; when a dynamic beat contains a listed forbidden video motion, preserve the dynamic carrier and re-stage that motion safely rather than falling back to media_image;
+decide whether presenter presence, presenter plus support, a documentary still or a documentary video is the most natural carrier without discarding any locked presenter identity; before choosing object-only coverage for a narrator-owned explanatory/deictic beat involving a small established prop, explicitly test whether narrator+prop in the preserved setup communicates it naturally, and if so prefer that composition unless object detail itself is the primary information; preserve the narration setup by default whenever the beat can be communicated faithfully there, and then apply the narrator-in-setup format override before ordinary static-versus-video reasoning to use media_video with reference=true and audio=true; only if a changed posture/placement/environment is itself materially relevant should a locked presenter-owned beat leave that setup, preserving the presenter with reference=true and audio=false while choosing media_image versus media_video from whether motion materially matters; when a dynamic beat contains a listed forbidden video motion, preserve the dynamic carrier and re-stage that motion safely rather than falling back to media_image, and if the narrator owns that action preserve the narration setup/audio=true route whenever the safe re-staged gesture can happen there;
 choose visual_type without format quotas or tie-breaking bias;
 cast generated human demonstrators with the contextual presenter preference while preserving distinct story-character identities;
 decide reference from actual visual/identity continuity dependency;
@@ -706,7 +743,8 @@ format bias: no discretionary visual_type was chosen because it is generally pre
 demonstrator casting: presenter-led examples use the referenced presenter when naturally demonstrable, while distinct third-party subjects and genuinely identity-free close-ups are not forcibly recast; explicit first-person presenter-owned visible actions/states/possessions always keep the supplied presenter rather than generic hands or an anonymous substitute;
 story-character integrity: established people remain themselves; conversational mentions of posture/location do not force unnecessary relocation, and when a materially required relocation does occur it changes the presenter's audio route rather than erasing their identity;
 documentary usefulness: generated visuals feel like plausible coverage of the narrated event, not decorative illustration;
-image/video fit: movement is used when it adds material value; listed forbidden video motions are re-staged as safe dynamic media_video actions rather than converted to media_image;
+image/video fit: movement is used when it adds material value; narrator-owned explanatory beats with small established props consider narrator+prop in the preserved setup before object-only coverage; listed forbidden video motions are re-staged as safe dynamic media_video actions rather than converted to media_image or used as a reason to move an otherwise valid narrator out of the setup;
+physical-state chronology: adjacent continuity beats preserve object state in narrative order and do not reveal a completed physical change before the narration establishes it;
 global shot variety: each generated beat uses its most informative natural shot scale, camera angle, crop and visual focus; recurring subjects are not automatically shown in the reference's face-centered medium shot;
 sequence shot progression: adjoining numbered prompts preserve their shared continuity anchor — including object-only anchors — while avoiding near-duplicate framing and emphasizing distinct useful views;
 redundancy: repeated visuals remain only when repetition is narratively useful;
