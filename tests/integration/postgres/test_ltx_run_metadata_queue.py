@@ -6,6 +6,7 @@ import psycopg
 import pytest
 
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectOutput
+from ai_video_factory.inference.repository import PostgresJobRepository
 from ai_video_factory.providers.job_queue import QueueJobStatus
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 
@@ -149,5 +150,68 @@ def test_terminal_fatal_cuda_context_job_reopens_on_idempotent_resubmission() ->
         assert row == ("pending", 0, None, None, None, None, None, None)
     finally:
         queue.close()
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            connection.execute("DELETE FROM gpu.jobs WHERE job_id = %s", (job_id,))
+
+
+def test_fatal_infrastructure_release_preserves_retry_budget() -> None:
+    dsn = _postgres_dsn()
+    job_id = "ltx-fatal-infrastructure-release-budget"
+    request = InferenceJobRequest(
+        job_id=job_id,
+        task="video.ltx25.generate",
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/output.mp4",
+            content_type="video/mp4",
+        ),
+        max_attempts=1,
+    )
+    repository = PostgresJobRepository(dsn, max_connections=2)
+    try:
+        claim = repository.claim(
+            request,
+            request.fingerprint(),
+            owner="poisoned-worker",
+            lease_seconds=60,
+            transport_job_id=job_id,
+            instance_id=None,
+        )
+        assert claim.attempt_count == 1
+
+        repository.release_infrastructure_failure(
+            job_id,
+            request.fingerprint(),
+            owner="poisoned-worker",
+            error="AcceleratorError: CUDA error: unknown error",
+        )
+
+        with psycopg.connect(dsn) as connection:
+            row = connection.execute(
+                """
+                SELECT status, attempt_count, lease_owner, lease_expires_at, last_error
+                FROM gpu.jobs
+                WHERE job_id = %s
+                """,
+                (job_id,),
+            ).fetchone()
+        assert row is not None
+        assert row[0] == "retryable_failed"
+        assert row[1] == 0
+        assert row[2] is None
+        assert row[3] is None
+        assert row[4].startswith("InfrastructureRetryable:")
+        assert "CUDA error: unknown error" in row[4]
+
+        replacement = repository.claim(
+            request,
+            request.fingerprint(),
+            owner="replacement-worker",
+            lease_seconds=60,
+            transport_job_id=job_id,
+            instance_id=None,
+        )
+        assert replacement.attempt_count == 1
+    finally:
+        repository.close()
         with psycopg.connect(dsn, autocommit=True) as connection:
             connection.execute("DELETE FROM gpu.jobs WHERE job_id = %s", (job_id,))
