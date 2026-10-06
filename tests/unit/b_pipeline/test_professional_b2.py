@@ -287,16 +287,6 @@ def test_professional_contract_requires_speaking_generated_shots_to_be_video(
             ProfessionalB2Output.model_validate(data)
 
 
-@pytest.mark.parametrize(
-    "wording",
-    [
-        "No specified brands or product claims.",
-        "A product with a natural recognizable logo and packaging.",
-        "Show the real brand printed on the container.",
-        "Without specific branding.",
-        "No readable brand names.",
-    ],
-)
 def test_professional_speaking_media_video_requires_avatar_reference() -> None:
     beat = {
         "beat_id": "1A",
@@ -327,6 +317,16 @@ def test_professional_prompt_forbids_frozen_narrator_in_reference_setup() -> Non
     assert "different camera angle, crop or shot size is allowed" in prompt
 
 
+@pytest.mark.parametrize(
+    "wording",
+    [
+        "No specified brands or product claims.",
+        "A product with a natural recognizable logo and packaging.",
+        "Show the real brand printed on the container.",
+        "Without specific branding.",
+        "No readable brand names.",
+    ],
+)
 def test_professional_contract_leaves_branding_unrestricted(wording: str) -> None:
     beat = {
         "beat_id": "1A", "text": "Show a simple routine.",
