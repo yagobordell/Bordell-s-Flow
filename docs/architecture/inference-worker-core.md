@@ -67,14 +67,15 @@ leases provide distributed exclusivity across replicas.
 Each model has its own Salad container group. Horizontal parallelism comes from explicit replicas,
 bounded by `capacity.max_replicas` in `deploy/salad/services.json`.
 
-The pipeline checks R2/cache state before asking Salad for GPU capacity. Controlled wrappers then:
+The pipeline checks R2/cache state and publishes deterministic jobs to Postgres. The singleton
+Capacity Controller observes the global active backlog for each task-specific worker pool and
+adjusts Salad replicas within the configured ceilings. Application `run_id` values are retained
+for correlation only and never determine replica ownership or lifetime. A worker that finishes one
+video's job may immediately claim the oldest compatible job from another video.
 
-1. start the required number of replicas;
-2. submit deterministic jobs to Postgres;
-3. wait for application completion;
-4. stop the group and converge to `replicas=0`.
-
-No Salad Job Queue sidecar, queue attachment or queue autoscaler participates in this lifecycle.
+When backlog reaches zero, the controller drains active instances safely and converges the group to
+`replicas=0`. No Salad Job Queue sidecar, queue attachment or queue autoscaler participates in
+this lifecycle.
 
 ## Configuration
 
