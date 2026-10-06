@@ -2854,7 +2854,8 @@ async def main() -> None:
             planned_blocks = blocks
         if merged_output is not None:
             _write(output / stage / "merged_output.json", merged_output)
-        costs, timing_report = save_report("running", blocks)
+        report_count = planned_blocks if stage == "B3" else blocks
+        costs, timing_report = save_report("running", report_count)
         elapsed = timing_report["stages"][stage]["elapsed_seconds"]
         if elapsed is None:
             raise RuntimeError(f"Missing elapsed time for completed stage {stage}")
