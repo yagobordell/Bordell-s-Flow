@@ -60,10 +60,7 @@ def test_legacy_ltx_run_metadata_failure_rebinds_without_model_parameters() -> N
 
         snapshot = queue.submit(
             current,
-            metadata={
-                "run_id": "901d3792b69861844519",
-                "run_job_count": "5",
-            },
+            metadata={"run_id": "901d3792b69861844519"},
         )
 
         assert snapshot.status is QueueJobStatus.PENDING
