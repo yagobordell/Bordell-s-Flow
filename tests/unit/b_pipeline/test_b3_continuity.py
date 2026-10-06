@@ -1,5 +1,8 @@
 """Regression coverage for professional B3 spoken-run camera continuity."""
 
+import asyncio
+import json
+
 import pytest
 
 from ai_video_factory.bots.contracts import (
@@ -184,3 +187,131 @@ def test_ltx_groups_professional_audio_by_b3_continuous_boundaries() -> None:
         ("a2v", 2, 3),
         ("i2v", 4, 4),
     ]
+
+
+def test_b3_accepts_multiple_fixed_grid_starts_as_continuity_exception() -> None:
+    source = [
+        (1, beat.model_dump()) for beat in _professional_b2().blocks[0].beats
+    ]
+    locks = {
+        (1, "1A"): _B3GridLock(
+            grid_id="grid-a", source="numbered", role="speaker_start"
+        ),
+        (1, "1C"): _B3GridLock(
+            grid_id="grid-b", source="numbered", role="speaker_start"
+        ),
+    }
+    result = B3Output.model_validate({
+        "pipeline_stage": "B3",
+        "group_id": 1,
+        "beats": [
+            {
+                "beat_id": "1A", "continuous": False, "shot_prompt": None,
+                "shot_video_prompt": "Speak naturally from fixed grid A.",
+            },
+            {
+                "beat_id": "1B", "continuous": True, "shot_prompt": None,
+                "shot_video_prompt": None,
+            },
+            {
+                "beat_id": "1C", "continuous": False, "shot_prompt": None,
+                "shot_video_prompt": "Speak naturally from fixed grid B.",
+            },
+        ],
+        "error": None,
+    })
+    validate_b3(result, group_id=1, source=source, grid_locks=locks)
+
+
+def test_run_b_pipeline_b3_groups_audio_across_block_boundaries() -> None:
+    script = "Hello. Goodbye."
+    b11 = B11Output.model_validate({
+        "pipeline_stage": "B1.1",
+        "narrative_core": {"central_question": "Q", "final_answer": "A"},
+        "blocks": [
+            {
+                "block_id": 1, "type": "intro",
+                "emotional_entry": "A", "emotional_exit": "B",
+                "span": {"first_words": "Hello.", "last_words": "Hello."},
+            },
+            {
+                "block_id": 2, "type": "close",
+                "emotional_entry": "B", "emotional_exit": "C",
+                "span": {"first_words": "Goodbye.", "last_words": "Goodbye."},
+            },
+        ],
+        "error": None,
+    })
+    b12 = (
+        B12Output.model_validate({
+            "pipeline_stage": "B1.2", "block_id": 1,
+            "beats": [{"beat_id": "1A", "text": "Hello. ", "beat_type": "claim"}],
+            "error": None,
+        }),
+        B12Output.model_validate({
+            "pipeline_stage": "B1.2", "block_id": 2,
+            "beats": [{"beat_id": "2A", "text": "Goodbye.", "beat_type": "return"}],
+            "error": None,
+        }),
+    )
+    b3_inputs: list[dict] = []
+
+    class Provider:
+        async def generate_structured(
+            self, *, model, instructions, input_text, output_type,
+            input_image_url=None,
+        ):
+            payload = json.loads(input_text)
+            if output_type is ProfessionalB2Output:
+                block = payload["blocks"][0]
+                beat = block["beats"][0]
+                beat.update(
+                    visual_type="avatar",
+                    prompt=None,
+                    video_prompt=None,
+                    reference=False,
+                    audio=True,
+                )
+                return ProfessionalB2Output.model_validate({
+                    "pipeline_stage": "B2",
+                    "narrative_core": payload["narrative_core"],
+                    "blocks": [block],
+                    "error": None,
+                })
+            assert output_type is B3Output  # noqa: S101
+            b3_inputs.append(payload)
+            return B3Output.model_validate({
+                "pipeline_stage": "B3",
+                "group_id": payload["group_id"],
+                "beats": [
+                    {
+                        "beat_id": payload["beats"][0]["beat_id"],
+                        "continuous": False,
+                        "shot_prompt": None,
+                        "shot_video_prompt": "Natural synced speech.",
+                    },
+                    {
+                        "beat_id": payload["beats"][1]["beat_id"],
+                        "continuous": True,
+                        "shot_prompt": None,
+                        "shot_video_prompt": None,
+                    },
+                ],
+                "error": None,
+            })
+
+    result = asyncio.run(run_b_pipeline(
+        script,
+        provider=Provider(),
+        start_from="B2",
+        stop_after="B3",
+        previous_b11=b11,
+        previous_b12=b12,
+        visual_style="profesional",
+        avatar_image=b"avatar",
+    ))
+    assert len(b3_inputs) == 1
+    assert [beat["beat_id"] for beat in b3_inputs[0]["beats"]] == ["1A", "2A"]
+    plan = result.visual_plan()
+    assert plan["blocks"][0]["beats"][0]["continuous"] is False
+    assert plan["blocks"][1]["beats"][0]["continuous"] is True
