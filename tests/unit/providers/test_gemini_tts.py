@@ -83,6 +83,7 @@ def test_payload_voice_model_style_and_wav_contract(monkeypatch) -> None:
     assert part["text"] == "Hello, café."
     assert "Soft documentary voice." in part["speech_metadata"]["style"]
     assert "verbatim transcript" in part["speech_metadata"]["style"]
+    assert gemini._PROFESSIONAL_STYLE_PREFIX not in part["speech_metadata"]["style"]
     assert "Hello, café." not in part["speech_metadata"]["style"]
 
 
@@ -377,6 +378,10 @@ def test_custom_voice_in_professional_v3_preserves_individual_part_styles() -> N
     assert [part["text"] for part in parts] == ["Hello <breath>there.", "Next."]
     assert "Measured opening." in parts[0]["speech_metadata"]["style"]
     assert "Accelerating." in parts[1]["speech_metadata"]["style"]
+    assert all(
+        part["speech_metadata"]["style"].startswith(gemini._PROFESSIONAL_STYLE_PREFIX + "\n")
+        for part in parts
+    )
     assert all("verbatim transcript" in part["speech_metadata"]["style"] for part in parts)
 
 
