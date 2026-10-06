@@ -628,31 +628,23 @@ A later beat may show the completed state once narration has established it.
 
 12. Generated-video reliability
 
-These restrictions apply to generated media_video motion.
+These restrictions apply ONLY to the motion generated for media_video.
 
-They do not automatically prohibit the same subjects, objects or already-established
-states from appearing in still images.
+They do not determine whether static scene details, labels, branding, numbers,
+screens or documents should be visible, readable, generic, absent or indistinct.
+Do not add any such visibility/readability property unless the narration or the
+chosen scene actually requires it.
 
-Do not generate motion that depends on reliably creating new exact visible
-information.
+Re-stage motion whose success depends on either:
 
-This includes:
+- creating or revealing exact symbolic content during the motion; or
+- unusually precise hand-object interaction that generated video is unlikely to
+  reproduce reliably.
 
-- writing new visible text;
-- writing messages;
-- typing or entering visible numbers;
-- screens visibly generating new exact text/content;
-- scratching a card to reveal a code;
-- precision writing with a pen;
-- close-up cutting requiring exact hand/tool contact;
-- threading;
-- fastening or buckling;
-- inserting a card into a precise slot;
-- opening a small zipper or clasp;
-- manipulating a small coin over an exact target;
-- revealing exact new hidden content through motion;
-- turning an object specifically so exact previously hidden content must appear
-  correctly.
+Examples include entering a specific code, revealing a specific hidden code by
+scratching, precision writing, close-up cutting with exact tool contact, threading,
+fastening or buckling, inserting a card into a precise slot, opening a small zipper
+or clasp, or manipulating a small object over an exact target.
 
 Re-stage only the unreliable motion
 
@@ -689,26 +681,28 @@ starting image.
 
 13. Screens and documents
 
-Treat specific screen/document content primarily as narrative context.
+Choose screens, documents and other text-bearing objects from the same rule as every
+other scene element: describe only the visible information that materially helps
+communicate the beat.
 
-Do not require the image/video generator to reproduce exact:
+When narration names specific wording, numbers, messages, interface content,
+document content, charts or similar information, distinguish between:
 
-- UI layouts;
-- messages;
-- numbers;
-- document text;
-- charts;
-- interfaces.
+- narrative meaning that the scene needs for context; and
+- exact visible content that the image itself genuinely needs to reproduce.
 
-Choose the scene that best communicates the beat.
+If exact visible content is not required, simply omit that content specification
+from prompt and video_prompt. Do not convert that omission into instructions about
+readability, legibility, indistinctness, missing text, generic branding or hidden
+numbers.
 
-When specific mentioned content matters for understanding the generated scene, put
-it in a short parenthetical context note:
+When the narrative meaning still matters for understanding the scene, it may be
+kept in a short parenthetical context note:
 
 (For context: ...)
 
-The context note explains narrative meaning. It is not a request to render exact
-visible text or layout.
+A context note explains why the scene exists; it does not impose extra visual
+properties on the screen, document or object.
 
 The same principle applies to video_prompt.
 
@@ -766,6 +760,12 @@ result.
 Omit negative clauses, preventive exclusions and routine disclaimers from the final
 prompt text. Describe the desired visible state directly instead of saying what must
 not happen.
+
+If a scene contains a text-bearing object and exact content is not visually
+important, omit content/readability instructions altogether. Do not add qualifiers
+about whether its text, numbers, branding or interface are readable, unreadable,
+legible, illegible, indistinct, generic or absent unless that property is itself
+required by the narration.
 
 Do not add generic negative-prompt lists or decorative unsupported facts.
 
@@ -981,6 +981,9 @@ Reference and prompts
   boilerplate.
 - Final image/video prompts describe desired results affirmatively and contain no
   preventive negative clauses or exclusion-style instructions.
+- Text-bearing objects do not receive invented readability, legibility, branding,
+  text-absence or content-visibility constraints when those properties are not
+  required by the narration.
 
 Continuity
 
