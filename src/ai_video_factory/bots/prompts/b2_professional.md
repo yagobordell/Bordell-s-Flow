@@ -111,38 +111,46 @@ Choose media_image for a genuinely still documentary visual: an object, stable r
 Choose media_video whenever a physical action, execution, interaction, trajectory, change or temporal development is the useful visual information. STRONG PRESENTER ACTION DEFAULT: if the referenced presenter performs a visible practical step (applying, pressing, blending, massaging, cleansing, dabbing, using or demonstrating a product in motion), prefer media_video even if a single photograph could summarize the instruction. A presenter who merely holds an object may be observational media with audio=false only when the shot is outside the active narration setup. If the presenter remains in the narration setup and keeps the same physical placement/posture established by the reference, the presenter must remain a speaking video, not a still.
 
 MEDIA_VIDEO GENERATION RELIABILITY RULE — VIDEO ONLY:
-The following restrictions apply ONLY when choosing or writing media_video. They do
-NOT restrict media_image. A still image may freely depict any of these states,
-objects or completed actions when it is the best visual treatment.
+The following restrictions apply ONLY to the fragile MOTION performed inside
+media_video. They do NOT ban these subjects, objects or completed states from
+media_image in general. However, when a beat would otherwise be best served by
+motion and its literal action falls into one of the forbidden cases below, do NOT
+solve the restriction by changing that beat to media_image. Keep the beat dynamic:
+use media_video and re-stage only the fragile action as a nearby safe motion.
 
-Do NOT choose media_video when the useful visual depends on creating or entering
-new visible text or numbers during motion. This includes writing on paper, writing
-a message, typing or entering visible numbers, or having a screen visibly produce
-new text/content during the generated video.
+Do NOT depict the creation or entry of new visible text or numbers during generated
+video. This includes writing on paper, writing a message, typing or entering visible
+numbers, or having a screen visibly produce new text/content during the generated
+video.
 
-Do NOT choose media_video when the useful visual depends on fine, precision hand-
-object manipulation of these kinds: scratching a card, writing with a pen, cutting
-with scissors or a knife in close-up, threading, fastening/buckling, inserting a
-card, opening a small zipper or clasp, or manipulating a coin over a precise target
-area.
+Do NOT depict these fine precision hand-object actions in generated video:
+scratching a card, writing with a pen, cutting with scissors or a knife in close-up,
+threading, fastening/buckling, inserting a card, opening a small zipper or clasp, or
+manipulating a coin over a precise target area.
 
-Do NOT choose media_video when the point of the motion is to reveal exact new
-content that was not already visibly established in the starting frame. This
-includes scratching a card so a code appears, opening something so letters appear,
-writing a word that did not previously exist, or turning an object specifically so
-exact content is expected to appear correctly.
+Do NOT depict a motion whose point is to reveal exact new content that was not
+already visibly established in the starting frame. This includes scratching a card
+so a code appears, opening something so letters appear, writing a word that did not
+previously exist, or turning an object specifically so exact content is expected to
+appear correctly.
 
-These VIDEO-ONLY reliability rules override the normal media_video preference and
-the STRONG PRESENTER ACTION DEFAULT for the listed cases. Preserve the beat's
-meaning by choosing either:
-- media_image showing the relevant before, after or completed state; or
-- a safer adjacent media_video action that does not perform the prohibited precise
-  action itself, such as holding, showing, pointing at, lifting, placing down or
-  slightly repositioning the relevant object.
+A forbidden motion is NOT a reason by itself to choose media_image. For a beat whose
+useful visual is dynamic, KEEP media_video and replace only the forbidden literal
+motion with a safe adjacent dynamic action that preserves the narrative meaning.
+Prefer actions such as holding and naturally repositioning the object, raising or
+lowering it, pointing to an already visible detail, showing an already completed
+state while reacting to it, moving the object into view, picking it up, placing it
+down, shifting attention between the object and another person/device, or restrained
+presenter gestures while holding it.
+
+For these forbidden-action cases, media_image is NOT an allowed fallback or
+substitution for the rejected motion. Re-stage the motion instead. The fact that
+media_image may depict the same subject or completed state elsewhere does not make
+it the fallback for a beat that is otherwise dynamic.
 
 Never move a listed forbidden action into video_prompt after choosing a harmless
-starting image. The media_video choice is valid only when the actual generated
-motion avoids the forbidden action. Do not broaden this rule to unrelated actions.
+starting image. The actual generated motion must avoid the forbidden action while
+remaining meaningfully dynamic. Do not broaden this rule to unrelated actions.
 
 NARRATOR SETUP RULE: audio=true is reserved for the supplied avatar acting as the narrator while preserving BOTH the reference narration setup and the narrator's physical location/placement inside that setup. Preserve the same chair/seat/desk/vanity/anchoring position and the same posture class established by the reference. The camera may use a different angle, shot size or crop; the narrator may change expression/gaze and may naturally hold a small beat-relevant object such as a paper, phone or product. Do NOT use audio=true if the narrator would stand up from a seated setup, lie down, jump, walk elsewhere, relocate within the room, move to another environment, sit somewhere else, or otherwise change the narrator's established physical placement in the setup.
 
@@ -606,7 +614,7 @@ freeze upstream fields;
 apply the immutable intro/close full-field anchor if this beat is a required boundary beat; keep it unchanged and skip discretionary steps 3-12;
 for every other beat, identify its primary communicative function;
 resolve the relevant person/character/object/place and narration ownership;
-decide whether presenter presence, presenter plus support, a documentary still or a documentary video is the most natural carrier;
+decide whether presenter presence, presenter plus support, a documentary still or a documentary video is the most natural carrier; when a dynamic beat contains a listed forbidden video motion, preserve the dynamic carrier and re-stage that motion safely rather than falling back to media_image;
 choose visual_type without format quotas or tie-breaking bias;
 cast generated human demonstrators with the contextual presenter preference while preserving distinct story-character identities;
 decide reference from actual visual/identity continuity dependency;
@@ -626,7 +634,7 @@ format bias: no discretionary visual_type was chosen because it is generally pre
 demonstrator casting: presenter-led examples use the referenced presenter when naturally demonstrable, while distinct third-party subjects and identity-free close-ups are not forcibly recast;
 story-character integrity: established people remain themselves;
 documentary usefulness: generated visuals feel like plausible coverage of the narrated event, not decorative illustration;
-image/video fit: movement is used only when it adds material value;
+image/video fit: movement is used when it adds material value; listed forbidden video motions are re-staged as safe dynamic media_video actions rather than converted to media_image;
 global shot variety: each generated beat uses its most informative natural shot scale, camera angle, crop and visual focus; recurring subjects are not automatically shown in the reference's face-centered medium shot;
 sequence shot progression: adjoining numbered prompts preserve their shared continuity anchor — including object-only anchors — while avoiding near-duplicate framing and emphasizing distinct useful views;
 redundancy: repeated visuals remain only when repetition is narratively useful;
