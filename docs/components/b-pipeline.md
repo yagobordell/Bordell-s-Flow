@@ -128,9 +128,14 @@ shot distance, angle, crop and focus (including tighter close-ups and a
 slightly zoomed-in still composition). This changes the generated starting
 image's composition, not A2V camera animation; downstream Ken Burns still
 governs actual zoom movement for static `media_image` shots. For contiguous
-numbered steps, B2 applies a stronger shot-progression check so the same
-person and setting stay continuous while neighboring images emphasize
-different framing/details instead of duplicating nearly identical views.
+numbered steps, B2 applies a stronger shot-progression check around a shared
+visual continuity anchor. That anchor may be a person, but it may also be the
+same object/product, vehicle, location, setup or physical state. A sequence may
+therefore move from presenter+object to an object-only close-up or reverse/detail
+view without breaking continuity merely because the presenter disappears,
+visual_type changes, framing changes or reference=true/false changes. Neighboring
+images should preserve the relevant anchor while emphasizing different useful
+framing/details instead of duplicating nearly identical views.
 The professional image-grid prompt explicitly preserves each panel's
 distinct shot composition rather than normalizing all panels to one angle.
 Because B2 workers operate one block at a time, it uses the global framing
