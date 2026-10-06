@@ -2776,7 +2776,7 @@ async def main() -> None:
                     if report_blocks is not None else None
                 ) if stop_index >= 2 else 0,
                 "B3": (
-                    max(1, timings.call_count("B3"))
+                    timings.call_count("B3")
                     if visual_style == "profesional" and stop_index >= 3 else 0
                 ),
             }
@@ -2830,7 +2830,8 @@ async def main() -> None:
         merged_output: dict[str, object] | None,
     ) -> None:
         nonlocal planned_blocks
-        planned_blocks = blocks
+        if stage != "B3":
+            planned_blocks = blocks
         if merged_output is not None:
             _write(output / stage / "merged_output.json", merged_output)
         costs, timing_report = save_report("running", blocks)
