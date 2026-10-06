@@ -300,6 +300,8 @@ class ApiCostLedger:
         ) + sorted(
             historical_b2.glob("run-*/grids/*.json")
         ) + sorted(
+            historical_b2.glob("run-*/b3_shots/*.json")
+        ) + sorted(
             historical_b2.glob("run-*/replaced_states/block_*/*.json")
         ) + sorted(
             finished_archive.glob("run-*/block_*/*-native_grid_video.json")
