@@ -438,6 +438,13 @@ class ApiCostLedger:
             else 0,
         )
         expected["CTA image"] = sum(item["stage"] == "CTA image" for item in ordered)
+        b3_count = sum(item["stage"] == "B3" for item in ordered)
+        reported_b3 = expected_calls.get("B3") if expected_calls is not None else None
+        expected["B3"] = (
+            reported_b3
+            if type(reported_b3) is int and reported_b3 >= 0
+            else b3_count
+        )
         fish_count = sum(item["stage"] == "Fish director" for item in ordered)
         for v_stage in ("V1", "V2", "V3", "V4"):
             actual = sum(item["stage"] == v_stage for item in ordered)
