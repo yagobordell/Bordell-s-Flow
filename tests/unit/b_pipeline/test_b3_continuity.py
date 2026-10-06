@@ -416,3 +416,106 @@ def test_run_b_pipeline_b3_groups_audio_across_block_boundaries() -> None:
     assert plan["blocks"][0]["beats"][0]["b3_shot_video_prompt"] is None
     assert plan["blocks"][0]["beats"][1]["continuous"] is True
     assert plan["blocks"][1]["beats"][0]["continuous"] is True
+
+
+@pytest.mark.parametrize(
+    ("texts", "mixed"),
+    [
+        (["First sentence here.", "Second sentence here."], True),
+        (
+            [
+                "First sentence here.",
+                "Second sentence here.",
+                "Third sentence here.",
+            ],
+            False,
+        ),
+    ],
+)
+def test_run_b_pipeline_skips_ineligible_b3_groups(
+    texts: list[str],
+    mixed: bool,
+) -> None:
+    script = " ".join(texts)
+    b11 = B11Output.model_validate({
+        "pipeline_stage": "B1.1",
+        "narrative_core": {"central_question": "Q", "final_answer": "A"},
+        "blocks": [{
+            "block_id": 1,
+            "type": "development",
+            "emotional_entry": "A",
+            "emotional_exit": "B",
+            "span": {
+                "first_words": texts[0],
+                "last_words": texts[-1],
+            },
+        }],
+        "error": None,
+    })
+    b12 = (
+        B12Output.model_validate({
+            "pipeline_stage": "B1.2",
+            "block_id": 1,
+            "beats": [
+                {
+                    "beat_id": f"1{chr(ord('A') + index)}",
+                    "text": text + (" " if index < len(texts) - 1 else ""),
+                    "beat_type": "claim",
+                }
+                for index, text in enumerate(texts)
+            ],
+            "error": None,
+        }),
+    )
+
+    class Provider:
+        async def generate_structured(
+            self, *, model, instructions, input_text, output_type,
+            input_image_url=None,
+        ):
+            payload = json.loads(input_text)
+            if output_type is B3Output:
+                pytest.fail("B3 must not be called for an ineligible spoken run")
+            if output_type is not ProfessionalB2Output:
+                raise RuntimeError(f"Unexpected output type: {output_type}")
+            block = payload["blocks"][0]
+            for index, beat in enumerate(block["beats"]):
+                if mixed and index == 1:
+                    beat.update(
+                        visual_type="avatar_media",
+                        prompt="A fixed support image beside the narrator.",
+                        video_prompt=None,
+                        reference=False,
+                        audio=True,
+                    )
+                else:
+                    beat.update(
+                        visual_type="avatar",
+                        prompt=None,
+                        video_prompt=None,
+                        reference=False,
+                        audio=True,
+                    )
+            return ProfessionalB2Output.model_validate({
+                "pipeline_stage": "B2",
+                "narrative_core": payload["narrative_core"],
+                "blocks": [block],
+                "error": None,
+            })
+
+    result = asyncio.run(run_b_pipeline(
+        script,
+        provider=Provider(),
+        start_from="B2",
+        stop_after="B3",
+        previous_b11=b11,
+        previous_b12=b12,
+        visual_style="profesional",
+        avatar_image=b"avatar",
+    ))
+
+    assert result.b3 == ()
+    for beat in result.visual_plan()["blocks"][0]["beats"]:
+        assert "continuous" not in beat
+        assert "b3_shot_prompt" not in beat
+        assert "b3_shot_video_prompt" not in beat
