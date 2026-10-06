@@ -1220,6 +1220,8 @@ async def run_b_pipeline(
                 targeted_run_repair = ""
                 if (
                     visual_style == "profesional"
+                    and isinstance(error, BPipelineValidationError)
+                    and str(error).startswith("B2 consecutive audio=true beats")
                     and isinstance(candidate, ProfessionalB2Output)
                 ):
                     overflow = _overlong_avatar_run((candidate,))
