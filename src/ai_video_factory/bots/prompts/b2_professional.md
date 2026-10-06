@@ -533,7 +533,27 @@ the narrator setup/position rule merely to keep audio=true.
 
 Consecutive visual continuity
 
-Use continuity numbering only when 2–9 consecutive generated assets belong to the same narratively or physically continuous event and should preserve the same identities, location, wardrobe, objects, time context or physical state.
+Use continuity numbering when 2–9 consecutive generated assets belong to the
+same visual sequence and share a meaningful continuity anchor that should remain
+visually consistent across those assets.
+
+A continuity anchor may be the same person or character, the same object or
+product, the same vehicle, the same location/environment, the same wardrobe or
+appearance, the same physical setup/arrangement, or the same ongoing event/state.
+An OBJECT ALONE can be the continuity anchor.
+
+Continuity does NOT require the same person to remain visible, the same
+visual_type, the same camera framing, or the same reference=true/reference=false
+setting. A sequence may move from presenter+object to object-only close-up,
+detail insert, reverse view or result shot while remaining one continuous visual
+sequence when the shared object is still the relevant visual anchor.
+
+For example, this is one valid continuity sequence:
+1. A presenter holding a particular gift card.
+2. A close-up of that SAME gift card emphasizing its physical material.
+3. A detail of the reverse side of that SAME gift card.
+The presenter may disappear from later panels while the gift card continues to
+provide the visual continuity.
 
 Prefix each participating non-null prompt literally with:
 
@@ -542,16 +562,24 @@ Prefix each participating non-null prompt literally with:
 
 The sequence marker must be the first token in the B2 prompt. The application will inject the canonical image style after that numeric marker at generation time.
 
-Each numbered prompt must still be self-contained. Explicitly carry forward the relevant identities, environment, wardrobe, objects and physical state. Do not rely on the number alone.
+Each numbered prompt must still be self-contained. Explicitly identify and carry
+forward the relevant continuity anchor and every visible detail that must remain
+consistent. Do not rely on the number alone.
 
 Shot progression is ESPECIALLY important within continuous sequences.
-Preserve the SAME person, setting, wardrobe, event and physical continuity
-while deliberately evolving shot scale, viewpoint, crop or visual focus
-across adjacent generated assets when useful. A multi-step demonstration
-might establish the presenter in a medium shot, move to a close-up of
-product meeting skin, use a tighter side/detail crop for blending, then
-show a slightly wider angle or mirror view for localized touch-up or
-the result. This is an example, not a compulsory shot-size sequence.
+Preserve the SAME relevant continuity anchor — person, object, vehicle, location,
+environment, wardrobe, setup or physical state — while deliberately evolving shot
+scale, viewpoint, crop or visual focus across adjacent generated assets when useful.
+Do not interpret a change of visual_type, camera framing, presence of the presenter,
+or reference=true/reference=false as automatically ending continuity. What matters
+is whether the adjacent generated assets depict the same underlying visual reality.
+
+A multi-step demonstration might establish the presenter in a medium shot, move
+to a close-up of product meeting skin, use a tighter side/detail crop for blending,
+then show a slightly wider angle or mirror view for localized touch-up or the
+result. An object-led sequence might establish a person holding an object, move to
+an object-only close-up, then show a reverse/detail view of that same object. These
+are examples, not compulsory shot-size sequences.
 
 Do not write adjacent numbered prompts whose only substantive difference
 is a slight change in the same gesture while camera distance, viewpoint
@@ -586,7 +614,7 @@ for every visible face depicted from the reference, describe a scene-specific fa
 decide audio from narrator ownership AND setup continuity: audio=true is allowed only for the supplied avatar narrator while preserving the reference narration setup and physical placement/posture class; if generated full-screen narrator coverage stays there, use media_video with reference=true and audio=true; otherwise use audio=false voice-over coverage;
 choose a purposeful shot scale, camera angle, crop and visual focus for EVERY generated beat, considering nearby similar subjects;
 write concise source-grounded still-image prompts and, for media_video, a distinct animation video_prompt describing action development, gestures and camera behavior consistent with the selected audio route;
-after the block is stable, apply continuity numbering to genuine continuous events and strengthen shot-to-shot progression within those sequences;
+after the block is stable, identify shared visual continuity anchors and apply continuity numbering to qualifying sequences, including object-led sequences, then strengthen shot-to-shot progression within them;
 validate the 120-character consecutive audio=true constraint as far as this block can know;
 validate the final output contract.
 Block-level review
@@ -600,7 +628,7 @@ story-character integrity: established people remain themselves;
 documentary usefulness: generated visuals feel like plausible coverage of the narrated event, not decorative illustration;
 image/video fit: movement is used only when it adds material value;
 global shot variety: each generated beat uses its most informative natural shot scale, camera angle, crop and visual focus; recurring subjects are not automatically shown in the reference's face-centered medium shot;
-sequence shot progression: adjoining numbered prompts preserve continuity while avoiding near-duplicate framing and emphasizing distinct steps;
+sequence shot progression: adjoining numbered prompts preserve their shared continuity anchor — including object-only anchors — while avoiding near-duplicate framing and emphasizing distinct useful views;
 redundancy: repeated visuals remain only when repetition is narratively useful;
 prompt discipline: image and video prompts use affirmative, scene-specific descriptions of the intended result, free of exclusion clauses and stock negative-prompt lists;
 screens/documents: choose the beat's most useful scene freely, with or without a person; keep specific app/page/document content in the SAME brief parenthetical context note, not in the visible-scene description; apply this rule to still frames and video animation;
@@ -609,7 +637,7 @@ referenced visible faces: a natural beat-specific expression and relevant gaze/a
 still/video action fit: a referenced presenter actively demonstrating an ongoing practical step uses media_video rather than an inert still, while real result/portrait/pause shots remain eligible for media_image;
 animation specificity: each media_video has a nonempty video_prompt describing real-time action development consistent with its first image and speaking/voice-over routing;
 audio correctness: media_image always has audio=false, without speaking instructions; audio=true is reserved for the supplied avatar narrator in the preserved reference narration setup and physical placement/posture class; generated full-screen narrator coverage in that setup uses media_video with reference=true and audio=true, while leaving/changing that placement requires audio=false voice-over coverage;
-continuity: numbering is used for actual continuous events and omitted otherwise;
+continuity: numbering is used whenever adjacent generated assets share a meaningful visual continuity anchor that materially benefits consistency, including object-only continuity, and omitted otherwise;
 spoken-run limit: no avoidable >120-character consecutive audio=true run is created.
 Do not optimize whole-script format percentages. Runs of any format are acceptable when justified by content and technical constraints.
 
@@ -682,8 +710,8 @@ avatar and avatar_media have audio = true;
 media_image ALWAYS has audio=false and does not request visible speaking; it never freezes the narrator in the preserved narration setup; generated full-screen narrator coverage in that setup uses media_video with reference=true and audio=true;
 media_video audio was decided per beat using the mandatory setup rule: audio=true only for the supplied avatar narrator preserving the reference narration setup and physical placement/posture class; all other media_video uses audio=false;
 every generated beat uses a purposefully selected shot scale/crop/angle/focus without copying the reference photo's framing or demanding animated zoom;
-numbered sequences preserve identity and setting but also progress through meaningful, visually distinct framing/emphasis where appropriate;
-numbered continuity is current and represents one continuous event;
+numbered sequences preserve the relevant continuity anchor — person, object, vehicle, location, setup or state — while also progressing through meaningful, visually distinct framing/emphasis where appropriate;
+numbered continuity is current and represents one coherent visual sequence with an explicit shared continuity anchor;
 numbered prompts begin with the exact local sequence marker and contain no style prefix;
 no avoidable consecutive audio=true run exceeds 120 narration characters;
 generated media is source-grounded, physically plausible and contains no unsupported narrative facts.
