@@ -94,6 +94,31 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     assert "When audio=true, video_prompt is instead sent to the A2V" in prompt
 
 
+def test_professional_b2_video_only_reliability_rules_are_explicit() -> None:
+    prompt = (
+        files("ai_video_factory.bots.prompts")
+        .joinpath("b2_professional.md")
+        .read_text(encoding="utf-8")
+    )
+    assert "MEDIA_VIDEO GENERATION RELIABILITY RULE — VIDEO ONLY" in prompt
+    assert "They do\nNOT restrict media_image" in prompt
+    assert "writing on paper" in prompt
+    assert "typing or entering visible numbers" in prompt
+    assert "scratching a card" in prompt
+    assert "cutting\nwith scissors or a knife in close-up" in prompt
+    assert "threading, fastening/buckling, inserting a\ncard" in prompt
+    assert "opening a small zipper or clasp" in prompt
+    assert "manipulating a coin over a precise target\narea" in prompt
+    assert "scratching a card so a code appears" in prompt
+    assert "opening something so letters appear" in prompt
+    assert "writing a word that did not previously exist" in prompt
+    assert "turning an object specifically so\nexact content is expected to appear" in prompt
+    assert "override the normal media_video preference" in prompt
+    assert "media_image showing the relevant before, after or completed state" in prompt
+    assert "safer adjacent media_video action" in prompt
+    assert "Never move a listed forbidden action into video_prompt" in prompt
+
+
 def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions() -> None:
     prompt = (
         files("ai_video_factory.bots.prompts")
