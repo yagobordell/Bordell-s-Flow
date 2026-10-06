@@ -665,7 +665,7 @@ async def run_b_pipeline(
     enable_casero_cta: bool = False,
     avatar_image: bytes | None = None,
     start_from: Literal["B1.1", "B1.2", "B2"] = "B1.1",
-    stop_after: Literal["B1.1", "B1.2", "B2"] = "B2",
+    stop_after: Literal["B1.1", "B1.2", "B2", "B3"] = "B2",
     previous_b11: B11Output | None = None,
     previous_b12: tuple[B12Output, ...] | None = None,
     previous_b2: tuple[B2Output, ...] | None = None,
@@ -701,7 +701,7 @@ async def run_b_pipeline(
     if visual_style not in {"casero", "profesional"}:
         raise ValueError("Unknown B2 visual style")
     image_url: str | None = None
-    if stop_after == "B2":
+    if stop_after in {"B2", "B3"}:
         if visual_style == "profesional" and not avatar_image:
             raise ValueError("Professional B2 requires the selected avatar PNG")
         if avatar_image:
@@ -713,9 +713,12 @@ async def run_b_pipeline(
         raise ValueError("B2 block retries require start_from='B2'")
     if start_from not in {"B1.1", "B1.2", "B2"}:
         raise ValueError(f"Unknown start stage: {start_from}")
-    if stop_after not in {"B1.1", "B1.2", "B2"}:
+    if stop_after not in {"B1.1", "B1.2", "B2", "B3"}:
         raise ValueError(f"Unknown stop stage: {stop_after}")
-    if ("B1.1", "B1.2", "B2").index(stop_after) < ("B1.1", "B1.2", "B2").index(start_from):
+    if stop_after == "B3" and visual_style != "profesional":
+        raise ValueError("B3 is available only for professional visual style")
+    stage_order = ("B1.1", "B1.2", "B2", "B3")
+    if stage_order.index(stop_after) < stage_order.index(start_from):
         raise ValueError("--stop cannot be earlier than --from")
 
     b11_response_id: str | None = None
