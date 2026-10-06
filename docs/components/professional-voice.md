@@ -21,9 +21,10 @@ The obsolete legacy V3 code and its competing tag compiler have been removed. Ol
 legacy-V3 checkpoints are preserved but explicitly rejected when resuming;
 start a new modern V3→V4 voice run instead. Existing completed paid audio
 files are never automatically regenerated.
-B3 canonical scenes and B7.2 depictions do not exist in this repository's B2
-contract; the active V2/V3 prompts instead operate on immutable B2 beat IDs.
-They never invent scenes, pictures, timing or narration.
+The current B3 is a visual camera-continuity stage, not the historical B8
+"canonical scene" concept. V2/V3 voice planning still operates on immutable B2
+beat IDs and narration; B3 camera cuts do not rewrite the speech text or vocal
+ownership and therefore do not become voice-direction input.
 
 - **V1** reads the complete B2 film and assigns global curve and independent
   tempo and pressure baselines to each resulting voice block.
