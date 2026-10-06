@@ -1557,10 +1557,29 @@ def _resume_unfinished_images(output: Path, plan: dict[str, object]) -> bool:
         raise ImageGenerationError("Saved image manifest has an unexpected schema")
     if saved.get("status") != "completed":
         return True
-    return (
+    if (
         plan.get("visual_style") == "profesional"
         and saved.get("finishing_status") != "completed"
-    )
+    ):
+        return True
+    b3_root = output / "images" / "b3_shots"
+    if b3_root.is_symlink():
+        raise ImageGenerationError("Refusing linked B3 image state directory")
+    for state_path in b3_root.glob("*.json"):
+        if state_path.is_symlink():
+            raise ImageGenerationError("Refusing linked B3 image state")
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ImageGenerationError("Saved B3 image state is unreadable") from exc
+        if (
+            not isinstance(state, dict)
+            or state.get("schema_version") != "b3-shot-image-v1"
+        ):
+            raise ImageGenerationError("Saved B3 image state has an unexpected schema")
+        if state.get("status") != "completed":
+            return True
+    return False
 
 
 async def _run_images_only(
