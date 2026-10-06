@@ -49,9 +49,10 @@ def test_active_running_lease_stays_running() -> None:
     assert snapshot.status is QueueJobStatus.RUNNING
 
 
-def test_run_metadata_is_transport_only_and_validated() -> None:
-    assert _run_metadata({}) == (None, None)
-    assert _run_metadata({"run_id": "abc123", "run_job_count": "5"}) == ("abc123", 5)
+def test_run_metadata_is_correlation_only_and_legacy_count_is_ignored() -> None:
+    assert _run_metadata({}) is None
+    assert _run_metadata({"run_id": "abc123"}) == "abc123"
+    assert _run_metadata({"run_id": "abc123", "run_job_count": "5"}) == "abc123"
 
 
 def test_only_exact_legacy_validation_failure_can_rebind() -> None:
@@ -70,6 +71,8 @@ def test_only_exact_legacy_validation_failure_can_rebind() -> None:
     row = {
         "status": "failed",
         "request_sha256": legacy_sha,
+        "run_id": "901d3792b69861844519",
+        "run_job_count": 5,
         "last_error": (
             "ValidationError: run_id Extra inputs are not permitted [type=extra_forbidden]; "
             "run_job_count Extra inputs are not permitted [type=extra_forbidden]"
@@ -80,11 +83,9 @@ def test_only_exact_legacy_validation_failure_can_rebind() -> None:
         row,
         request,
         run_id="901d3792b69861844519",
-        run_job_count=5,
     ) is True
     assert _can_rebind_legacy_run_metadata_failure(
         {**row, "last_error": "CUDA out of memory"},
         request,
         run_id="901d3792b69861844519",
-        run_job_count=5,
     ) is False
