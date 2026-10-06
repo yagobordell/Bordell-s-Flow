@@ -36,7 +36,11 @@ from ai_video_factory.bots.fish_audio_workflow import (
     retranscribe_audio_block,
     unfinished_audio_runs,
 )
-from ai_video_factory.bots.professional_voice import generate_professional_audio
+from ai_video_factory.bots.professional_voice import (
+    ProfessionalAudioRegenerationLimitReached,
+    generate_professional_audio,
+    regenerate_professional_audio_block,
+)
 from ai_video_factory.bots.workflow import (
     materialize_blocks,
     validate_beats,
@@ -1488,6 +1492,25 @@ async def _preflight_stt_alignment_with_retries(
                     stt_client=stt_client,
                 )
             except SttRetryLimitReached as limit_exc:
+                if audio.get("provider") == "gemini":
+                    try:
+                        regeneration = await regenerate_professional_audio_block(
+                            output,
+                            plan,
+                            audio,
+                            exc.block_id,
+                            gemini_api_key=settings.gemini_api_key,
+                            stt_client=stt_client,
+                        )
+                    except ProfessionalAudioRegenerationLimitReached as regen_limit_exc:
+                        raise exc from regen_limit_exc
+                    print(
+                        f"  STT still mismatched in Gemini group {exc.block_id}; "
+                        f"regenerated that group {regeneration}/3 times with the "
+                        "same voice and V4 direction, then transcribed it.",
+                        flush=True,
+                    )
+                    continue
                 if not allow_audio_regeneration:
                     raise exc from limit_exc
                 try:
@@ -1500,8 +1523,8 @@ async def _preflight_stt_alignment_with_retries(
                         poll_timeout_seconds=settings.ai33_fish_poll_timeout_seconds,
                         poll_interval_seconds=settings.ai33_fish_poll_interval_seconds,
                     )
-                except AudioRegenerationLimitReached as limit_exc:
-                    raise exc from limit_exc
+                except AudioRegenerationLimitReached as regen_limit_exc:
+                    raise exc from regen_limit_exc
                 print(
                     f"  STT still mismatched in block {exc.block_id}; "
                     f"regenerated its audio {regeneration}/3 times and transcribed it.",
@@ -1530,14 +1553,10 @@ async def _preflight_saved_run_audio(
         or saved_audio.get("stt_complete") is not True
     ):
         return False
-    # Keep Casero's established call signature and retry policy unchanged.
-    # Professional Gemini intentionally forbids implicit paid Fish regeneration.
-    options = (
-        {"allow_audio_regeneration": False}
-        if saved_audio.get("provider") == "gemini" else {}
-    )
+    # Keep Casero/Fish recovery unchanged. Professional Gemini recovery
+    # regenerates only the mismatched Gemini voice group with the saved voice/V4.
     run_metadata["stt_alignment"] = await _preflight_stt_alignment_with_retries(
-        output, plan, saved_audio, **options,
+        output, plan, saved_audio,
     )
     return True
 
@@ -2115,7 +2134,6 @@ async def _run_audio_only(
                 output,
                 json.loads(plan_path.read_text(encoding="utf-8")),
                 artifact,
-                allow_audio_regeneration=artifact.get("provider") != "gemini",
             ) or {"status": "skipped"}
         except Exception as exc:
             report["run"]["stt_alignment"] = {"status": "failed", "error": str(exc)}
@@ -2126,6 +2144,14 @@ async def _run_audio_only(
             _refresh_audio_costs(report, output)
             _write(report_path, report)
             raise
+        if artifact.get("sha256") is not None and artifact["sha256"] != previous_sha:
+            # Preflight may have replaced only a mismatched Gemini voice group.
+            # Any preview/LTX derived from the prior narration is now stale.
+            report["run"]["video_preview"] = {"status": "stale_audio_regeneration"}
+            report["run"]["video_generation"] = {"status": "stale_audio_regeneration"}
+            report["run"]["audio_generation"] = artifact
+            if managed_target is not None:
+                await asyncio.to_thread(sync_managed_outputs, output, managed_target)
         _write(report_path, report)
     try:
         preview = await _preview_if_ready(output, report)

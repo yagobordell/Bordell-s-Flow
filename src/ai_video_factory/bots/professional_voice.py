@@ -179,6 +179,10 @@ class VoicePlanError(ValueError):
     """A V stage returned semantically invalid or unsafe direction."""
 
 
+class ProfessionalAudioRegenerationLimitReached(VoicePlanError):
+    """A Gemini voice group exhausted its automatic fidelity regenerations."""
+
+
 _TEMPO = ("held", "measured", "driving", "relentless")
 _PRESSURE = ("low", "moderate", "high", "extreme")
 
@@ -907,6 +911,285 @@ def _reuse_verified_block(
                 shutil.copyfile(previous_stt, target)
         return digest
     return None
+
+
+async def regenerate_professional_audio_block(
+    output: Path,
+    plan: dict[str, Any],
+    audio_artifact: dict[str, Any],
+    block_id: int,
+    *,
+    gemini_api_key: str | None,
+    stt_client: OpenAISttClient,
+    speech_provider: GeminiTtsSpeechProvider | None = None,
+) -> int:
+    """Regenerate one completed Gemini voice group after repeatable STT mismatch.
+
+    The existing audio remains authoritative until both a fresh Gemini WAV and its
+    fresh STT complete successfully. Each paid regeneration is durably recorded;
+    an uncertain paid request is never replayed automatically.
+    """
+    if audio_artifact.get("provider") != "gemini":
+        raise VoicePlanError("Professional audio regeneration requires a Gemini artifact")
+    if not gemini_api_key:
+        raise VoicePlanError("GEMINI_API_KEY is required for Gemini audio regeneration")
+    run_id = audio_artifact.get("run_id")
+    voice_id = audio_artifact.get("voice_id")
+    if (
+        not isinstance(run_id, str) or not run_id or Path(run_id).name != run_id
+        or not isinstance(voice_id, str) or not voice_id.strip()
+    ):
+        raise VoicePlanError("Gemini audio artifact has invalid run or voice identity")
+    run_dir = output / "audio" / "runs" / run_id
+    root_task_path = run_dir / "task.json"
+    root_task = _read(root_task_path)
+    if root_task.get("status") != "completed" or root_task.get("audio") != audio_artifact:
+        raise VoicePlanError("Saved Gemini audio run is not complete or has changed")
+
+    source_blocks = plan.get("blocks")
+    if not isinstance(source_blocks, list) or not source_blocks:
+        raise VoicePlanError("Gemini regeneration requires the saved B2 visual plan")
+    voice_blocks = _voice_blocks_for_audio(source_blocks, output)
+    matches = [block for block in voice_blocks if block.get("block_id") == block_id]
+    if len(matches) != 1:
+        raise VoicePlanError(
+            f"Gemini voice group {block_id} is missing or duplicated in the saved B2 plan"
+        )
+    voice_block = matches[0]
+
+    records = audio_artifact.get("blocks")
+    if not isinstance(records, list):
+        raise VoicePlanError("Gemini audio artifact has no block records")
+    record_matches = [item for item in records if item.get("block_id") == block_id]
+    if len(record_matches) != 1:
+        raise VoicePlanError(f"Gemini audio group {block_id} is missing or duplicated")
+    item = record_matches[0]
+
+    v4_path = output / "V4" / f"block_{block_id}" / "output.json"
+    direction = V4.model_validate(_read(v4_path))
+    turns = _v4_turns(direction, voice_block)
+
+    folder = run_dir / "blocks" / f"block_{block_id}"
+    block_task_path = folder / "task.json"
+    block_task = _read(block_task_path)
+    if block_task.get("status") != "completed":
+        raise VoicePlanError(f"Gemini audio group {block_id} is not completed")
+    current_audio_name = item.get("file")
+    current_sha = item.get("sha256")
+    if not isinstance(current_audio_name, str) or not isinstance(current_sha, str):
+        raise VoicePlanError(f"Gemini audio group {block_id} has invalid saved audio")
+    current_audio = output / current_audio_name
+    if (
+        current_audio.is_symlink() or not current_audio.is_file()
+        or hashlib.sha256(current_audio.read_bytes()).hexdigest() != current_sha
+    ):
+        raise VoicePlanError(f"Gemini audio group {block_id} WAV differs from saved SHA-256")
+
+    state_path = folder / "tts_regeneration_state.json"
+    if state_path.is_file():
+        state = _read(state_path)
+        if (
+            state.get("schema_version") != "gemini-tts-regenerations-v1"
+            or state.get("run_id") != run_id
+            or state.get("block_id") != block_id
+            or state.get("voice_id") != voice_id
+            or state.get("model") != DEFAULT_GEMINI_TTS_MODEL
+            or not isinstance(state.get("attempts"), list)
+        ):
+            raise VoicePlanError(f"Gemini regeneration state differs for group {block_id}")
+    else:
+        state = {
+            "schema_version": "gemini-tts-regenerations-v1",
+            "run_id": run_id,
+            "block_id": block_id,
+            "voice_id": voice_id,
+            "model": DEFAULT_GEMINI_TTS_MODEL,
+            "attempts": [],
+        }
+    attempts = state["attempts"]
+    if any(
+        isinstance(entry, dict)
+        and entry.get("status") in {
+            "tts_request_started_unknown",
+            "stt_request_started_unknown",
+        }
+        for entry in attempts
+    ):
+        raise VoicePlanError(
+            f"Gemini regeneration for group {block_id} has an uncertain paid request; "
+            f"reconcile {state_path} before another attempt"
+        )
+    used = [
+        entry.get("attempt")
+        for entry in attempts
+        if isinstance(entry, dict) and isinstance(entry.get("attempt"), int)
+    ]
+    attempt_number = max(used, default=0) + 1
+    if attempt_number > 3:
+        raise ProfessionalAudioRegenerationLimitReached(
+            f"Gemini voice group {block_id} already used all 3 fidelity regenerations"
+        )
+
+    attempt_dir = folder / "tts_regenerations"
+    if attempt_dir.is_symlink():
+        raise VoicePlanError(f"Refusing linked Gemini regeneration directory: {attempt_dir}")
+    attempt_dir.mkdir(parents=True, exist_ok=True)
+    attempt_audio = attempt_dir / f"attempt_{attempt_number}.wav"
+    attempt_stt = attempt_dir / f"attempt_{attempt_number}.stt.json"
+    if attempt_audio.exists() or attempt_stt.exists():
+        raise VoicePlanError(
+            f"Gemini regeneration attempt {attempt_number} already has unexpected artifacts"
+        )
+
+    attempt = {
+        "attempt": attempt_number,
+        "status": "tts_request_started_unknown",
+        "source_audio_sha256": current_sha,
+    }
+    state["attempts"] = [*attempts, attempt]
+    _json(state_path, state)
+
+    speech = speech_provider or GeminiTtsSpeechProvider(api_key=gemini_api_key)
+    try:
+        generated = await speech.generate_directed_speech(
+            turns=turns,
+            model=DEFAULT_GEMINI_TTS_MODEL,
+            voice=voice_id,
+        )
+    except Exception:
+        # The provider POST may have been billed. Keep the uncertain marker and
+        # never issue another automatic request for this attempt.
+        raise
+    attempt_audio.write_bytes(generated.content)
+    new_sha = hashlib.sha256(generated.content).hexdigest()
+    attempt = {
+        **attempt,
+        "status": "tts_completed",
+        "sha256": new_sha,
+        "bytes": len(generated.content),
+    }
+    state["attempts"] = [*attempts, attempt]
+    _json(state_path, state)
+
+    attempt = {**attempt, "status": "stt_request_started_unknown"}
+    state["attempts"] = [*attempts, attempt]
+    _json(state_path, state)
+    try:
+        transcript = await asyncio.to_thread(stt_client.transcribe, attempt_audio)
+    except Exception:
+        # As with TTS, never hide an uncertain paid STT submission behind an
+        # automatic replay.
+        raise
+    if (
+        transcript.get("model") != stt_client.model
+        or not isinstance(transcript.get("words"), list)
+        or not transcript["words"]
+    ):
+        raise VoicePlanError("Gemini regeneration STT returned an invalid transcript")
+    saved_transcript = {**transcript, "source_audio_sha256": new_sha}
+    _json(attempt_stt, saved_transcript)
+    attempt_stt_sha = hashlib.sha256(attempt_stt.read_bytes()).hexdigest()
+    attempt = {
+        **attempt,
+        "status": "stt_completed",
+        "stt_sha256": attempt_stt_sha,
+    }
+    state["attempts"] = [*attempts, attempt]
+    _json(state_path, state)
+
+    # Rebuild the complete narration from the candidate WAV before touching the
+    # active group. A local join failure therefore leaves the saved run intact.
+    candidate_narration = attempt_dir / f"attempt_{attempt_number}.narration.wav"
+    join_sources = [
+        attempt_audio if record is item else output / record["file"]
+        for record in records
+    ]
+    joined = await asyncio.to_thread(
+        join_audio_blocks,
+        join_sources,
+        candidate_narration,
+    )
+
+    # Preserve the replaced paid WAV/STT and retry ledger before committing the
+    # verified replacement as the active group.
+    prior_audio = attempt_dir / f"before_attempt_{attempt_number}.wav"
+    shutil.copyfile(current_audio, prior_audio)
+    current_stt_ref = item.get("stt")
+    if isinstance(current_stt_ref, dict) and isinstance(current_stt_ref.get("file"), str):
+        current_stt = output / current_stt_ref["file"]
+        if current_stt.is_file() and not current_stt.is_symlink():
+            shutil.copyfile(
+                current_stt,
+                attempt_dir / f"before_attempt_{attempt_number}.stt.json",
+            )
+    for name in ("stt_retry_state.json", "stt_request.json"):
+        path = folder / name
+        if path.is_file():
+            if path.is_symlink():
+                raise VoicePlanError(f"Refusing linked Gemini STT state: {path}")
+            path.replace(attempt_dir / f"before_attempt_{attempt_number}.{name}")
+    old_attempts_dir = folder / "stt_attempts"
+    if old_attempts_dir.exists():
+        if old_attempts_dir.is_symlink() or not old_attempts_dir.is_dir():
+            raise VoicePlanError(f"Unsafe Gemini STT attempts directory: {old_attempts_dir}")
+        shutil.move(
+            str(old_attempts_dir),
+            str(attempt_dir / f"before_attempt_{attempt_number}.stt_attempts"),
+        )
+
+    shutil.copyfile(attempt_audio, current_audio)
+    canonical_stt = folder / "stt.json"
+    _json(canonical_stt, saved_transcript)
+    canonical_stt_sha = hashlib.sha256(canonical_stt.read_bytes()).hexdigest()
+    prior_task_id = item.get("task_id")
+    if not isinstance(prior_task_id, str) or not prior_task_id:
+        prior_task_id = f"gemini-{block_id}"
+    item.update({
+        "task_id": f"{prior_task_id}-regen-{attempt_number}",
+        "sha256": new_sha,
+        "bytes": len(generated.content),
+        "format": "wav",
+        "stt": {
+            "file": canonical_stt.relative_to(output).as_posix(),
+            "sha256": canonical_stt_sha,
+            "model": stt_client.model,
+            "word_count": len(saved_transcript["words"]),
+        },
+    })
+
+    narration_path = run_dir / "narration.wav"
+    shutil.copyfile(candidate_narration, narration_path)
+    audio_artifact.update({
+        "file": narration_path.relative_to(output).as_posix(),
+        "sha256": joined["sha256"],
+        "format": "wav",
+        "bytes": joined["bytes"],
+        "duration_seconds": joined["duration_seconds"],
+        "block_start_seconds": joined["block_start_seconds"],
+        "block_end_seconds": joined["block_end_seconds"],
+        "block_durations_seconds": joined["block_durations_seconds"],
+        "stt_complete": True,
+    })
+    block_task.update({
+        "status": "completed",
+        "sha256": new_sha,
+        "regeneration_count": attempt_number,
+    })
+    _json(block_task_path, block_task)
+    root_task["audio"] = audio_artifact
+    _json(root_task_path, root_task)
+    _json(output / "audio" / "latest.json", audio_artifact)
+
+    attempt = {
+        **attempt,
+        "status": "completed",
+        "sha256": new_sha,
+        "stt_sha256": attempt_stt_sha,
+        "joined_sha256": joined["sha256"],
+    }
+    state["attempts"] = [*attempts, attempt]
+    _json(state_path, state)
+    return attempt_number
 
 
 async def generate_professional_audio(
