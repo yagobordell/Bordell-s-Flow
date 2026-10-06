@@ -111,6 +111,15 @@ class JobRepository(Protocol):
         retryable: bool,
     ) -> None: ...
 
+    def release_infrastructure_failure(
+        self,
+        job_id: str,
+        request_sha256: str,
+        *,
+        owner: str,
+        error: str,
+    ) -> None: ...
+
     def next_pending_request(
         self,
         task_names: tuple[str, ...],

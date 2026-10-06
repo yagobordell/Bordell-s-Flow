@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ai_video_factory.inference.contracts import InferenceJobRequest, InferenceJobResponse
+from ai_video_factory.inference.gpu_failures import is_fatal_gpu_context_failure
 
 from .job_queue import (
     JobQueueClient,
@@ -56,6 +57,24 @@ def _legacy_run_metadata(row: Mapping[str, Any]) -> tuple[str | None, int | None
     except (TypeError, ValueError):
         run_job_count = None
     return legacy_run_id, run_job_count
+
+
+def _is_fatal_gpu_context_error(error: object) -> bool:
+    if not isinstance(error, str) or not error.strip():
+        return False
+    return is_fatal_gpu_context_failure(RuntimeError(error))
+
+
+def _can_reopen_fatal_gpu_context_failure(
+    row: Mapping[str, Any],
+    *,
+    request_sha256: str,
+) -> bool:
+    return (
+        str(row.get("status") or "") == "failed"
+        and str(row.get("request_sha256") or "") == request_sha256
+        and _is_fatal_gpu_context_error(row.get("last_error"))
+    )
 
 
 def _can_rebind_legacy_run_metadata_failure(
@@ -222,6 +241,37 @@ class PostgresJobQueueClient(JobQueueClient):
                         (run_id, request.job_id),
                     )
                     row = {**row, "run_id": run_id}
+
+                if _can_reopen_fatal_gpu_context_failure(
+                    row,
+                    request_sha256=request_sha256,
+                ):
+                    connection.execute(
+                        """
+                        UPDATE gpu.jobs
+                        SET status = 'pending',
+                            attempt_count = 0,
+                            lease_owner = NULL,
+                            lease_expires_at = NULL,
+                            result = NULL,
+                            last_error = NULL,
+                            started_at = NULL,
+                            finished_at = NULL,
+                            updated_at = now()
+                        WHERE job_id = %s
+                          AND request_sha256 = %s
+                          AND status = 'failed'
+                        """,
+                        (request.job_id, request_sha256),
+                    )
+                    row = {
+                        **row,
+                        "status": "pending",
+                        "attempt_count": 0,
+                        "lease_expires_at": None,
+                        "result": None,
+                        "last_error": None,
+                    }
 
             status = str(row["status"])
             lease_expires_at = row["lease_expires_at"]

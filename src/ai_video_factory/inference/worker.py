@@ -16,6 +16,7 @@ from .bundle_publication import (
 )
 from .contracts import InferenceJobRequest, InferenceJobResponse, OutputArtifact
 from .errors import (
+    FatalGpuContextError,
     InputIntegrityError,
     JobBusyError,
     JobConflictError,
@@ -26,7 +27,12 @@ from .errors import (
     UnsupportedTaskError,
 )
 from .gpu_diagnostics import GpuJobDiagnostics, diagnostic_checkpoint, gpu_diagnostics_scope
-from .gpu_failures import classify_gpu_failure, cleanup_cuda_memory, is_retryable_gpu_failure
+from .gpu_failures import (
+    classify_gpu_failure,
+    cleanup_cuda_memory,
+    is_fatal_gpu_context_failure,
+    is_retryable_gpu_failure,
+)
 from .ports import (
     ClaimDecision,
     JobRepository,
@@ -124,6 +130,7 @@ class InferenceWorker:
         self.heartbeat_seconds = heartbeat_seconds
         self.gpu_retry_cooldown_seconds = gpu_retry_cooldown_seconds
         self._execution_lock = threading.Lock()
+        self._fatal_gpu_context = threading.Event()
 
     def prepare(self) -> None:
         self.runners.prepare()
@@ -134,6 +141,10 @@ class InferenceWorker:
         *,
         transport_job_id: str | None = None,
     ) -> InferenceJobResponse:
+        if self._fatal_gpu_context.is_set():
+            raise JobBusyError(
+                f"worker {self.worker_id} has a poisoned GPU context and cannot claim work"
+            )
         if not self._execution_lock.acquire(blocking=False):
             raise JobBusyError(
                 f"worker {self.worker_id} is already executing another inference job"
@@ -211,6 +222,25 @@ class InferenceWorker:
         except Exception as exc:
             gpu_failure_kind = classify_gpu_failure(exc)
             retryable_gpu_failure = is_retryable_gpu_failure(exc)
+            if is_fatal_gpu_context_failure(exc):
+                self._fatal_gpu_context.set()
+                self._release_infrastructure_failure(
+                    request,
+                    request_sha256,
+                    exc,
+                )
+                logger.critical(
+                    "INFERENCE_WORKER_GPU_CONTEXT_FATAL task=%s job_id=%s "
+                    "attempt=%d gpu_failure=%s worker_id=%s",
+                    request.task,
+                    request.job_id,
+                    claim.attempt_count,
+                    gpu_failure_kind,
+                    self.worker_id,
+                )
+                raise FatalGpuContextError(
+                    f"fatal GPU context loss while executing {request.job_id}"
+                ) from exc
             # A repeated A2V OOM with identical parameters wastes paid GPU time.
             # Permit one clean-pipeline retry; keep the global five-attempt
             # budget for unrelated tasks and non-memory failures.
@@ -725,6 +755,25 @@ class InferenceWorker:
             etag=stored.etag,
         )
 
+    def _release_infrastructure_failure(
+        self,
+        request: InferenceJobRequest,
+        request_sha256: str,
+        error: BaseException,
+    ) -> None:
+        try:
+            self.repository.release_infrastructure_failure(
+                request.job_id,
+                request_sha256,
+                owner=self.worker_id,
+                error=self._failure_detail(error),
+            )
+        except Exception:
+            logger.exception(
+                "failed to release fatal infrastructure failure for %s",
+                request.job_id,
+            )
+
     def _mark_failed(
         self,
         request: InferenceJobRequest,
@@ -755,6 +804,8 @@ class InferenceWorker:
         return detail
 
     def next_pending_request(self) -> InferenceJobRequest | None:
+        if self._fatal_gpu_context.is_set():
+            return None
         if (
             self.salad_instance_id is not None
             and self.repository.is_instance_draining(self.salad_instance_id)
@@ -763,6 +814,10 @@ class InferenceWorker:
         return self.repository.next_pending_request(self.runners.task_names)
 
     def ready(self) -> None:
+        if self._fatal_gpu_context.is_set():
+            raise FatalGpuContextError(
+                f"worker {self.worker_id} has a poisoned GPU context"
+            )
         self.repository.ping()
         self.storage.ping()
         self.runners.ready()

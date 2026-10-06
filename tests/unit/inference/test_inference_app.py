@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from ai_video_factory.inference.app import create_app
-from ai_video_factory.inference.errors import ModelBootstrapPendingError
+from ai_video_factory.inference.errors import FatalGpuContextError, ModelBootstrapPendingError
 from ai_video_factory.inference.repository import InMemoryJobRepository
 from ai_video_factory.inference.storage import LocalObjectStorage, sha256_file
 from ai_video_factory.inference.tasks import CopyTaskRunner, TaskRunnerRegistry
@@ -104,5 +104,57 @@ def test_background_prepare_serves_health_while_models_are_missing() -> None:
         assert response.json() == {"status": "ready"}
         assert worker.prepare_calls >= 2
         assert worker.ready_calls >= 1
+
+    assert worker.closed is True
+
+
+class _FatalGpuPollWorker:
+    def __init__(self) -> None:
+        self.claims = 0
+        self.closed = False
+
+    def prepare(self) -> None:
+        pass
+
+    def ready(self) -> None:
+        pass
+
+    def next_pending_request(self):
+        self.claims += 1
+        return type(
+            "Request",
+            (),
+            {"task": "video.ltx25.generate", "job_id": "fatal-cuda-job"},
+        )()
+
+    def process(self, *_args, **_kwargs) -> None:
+        raise FatalGpuContextError("fatal GPU context loss")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_fatal_gpu_context_requests_immediate_process_exit_and_stops_polling() -> None:
+    worker = _FatalGpuPollWorker()
+    exit_codes: list[int] = []
+
+    with TestClient(
+        create_app(
+            worker,  # type: ignore[arg-type]
+            poll_jobs_from_repository=True,
+            job_poll_seconds=0.01,
+            fatal_worker_exit=exit_codes.append,
+        )
+    ) as client:
+        deadline = time.monotonic() + 2
+        while not exit_codes and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        assert exit_codes == [75]
+        assert worker.claims == 1
+        assert client.get("/health").status_code == 503
+        assert client.get("/ready").status_code == 503
+        time.sleep(0.05)
+        assert worker.claims == 1
 
     assert worker.closed is True

@@ -36,3 +36,7 @@ class NonRetryableTaskError(InferenceInfrastructureError):
 
 class JobExecutionError(InferenceInfrastructureError):
     """A retryable infrastructure or task execution failure occurred."""
+
+
+class FatalGpuContextError(JobExecutionError):
+    """The live CUDA process is poisoned and must be replaced before retrying."""

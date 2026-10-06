@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from ai_video_factory.inference.bundle_publication import bundle_manifest_key
 from ai_video_factory.inference.contracts import InferenceJobRequest, ObjectInput, ObjectOutput
 from ai_video_factory.inference.errors import (
+    FatalGpuContextError,
     InputIntegrityError,
     JobBusyError,
     JobConflictError,
@@ -221,6 +222,61 @@ def test_worker_validation_error_is_terminal_on_first_attempt(tmp_path: Path) ->
         worker.process(request)
 
     assert runner.calls == 1
+
+
+def test_fatal_cuda_context_poisoning_releases_job_without_retry_spend(
+    tmp_path: Path,
+) -> None:
+    class FatalCudaRunner:
+        task_name = "video.ltx25.generate"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, request, inputs, work_dir):
+            del request, inputs, work_dir
+            self.calls += 1
+            raise RuntimeError("torch.AcceleratorError: CUDA error: unknown error")
+
+    storage = LocalObjectStorage(tmp_path / "objects-fatal-cuda")
+    repository = InMemoryJobRepository()
+    runner = FatalCudaRunner()
+    worker = InferenceWorker(
+        storage=storage,
+        repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-fatal-cuda",
+        salad_instance_id="instance-fatal-cuda",
+        temp_dir=tmp_path / "temp-fatal-cuda",
+        lease_seconds=60,
+        heartbeat_seconds=10,
+    )
+    digest = seed(
+        storage,
+        tmp_path / "source-fatal-cuda.txt",
+        "inputs/source.txt",
+        b"hello\n",
+    )
+    request = build_request("job-fatal-cuda", digest).model_copy(
+        update={"task": runner.task_name, "max_attempts": 1}
+    )
+
+    with pytest.raises(FatalGpuContextError, match="fatal GPU context loss"):
+        worker.process(request)
+
+    row = repository._jobs[request.job_id]
+    assert row.status == "retryable_failed"
+    assert row.attempt_count == 0
+    assert row.last_error is not None
+    assert row.last_error.startswith("InfrastructureRetryable:")
+    assert "CUDA error: unknown error" in row.last_error
+    assert runner.calls == 1
+
+    assert worker.next_pending_request() is None
+    with pytest.raises(JobBusyError, match="poisoned GPU context"):
+        worker.process(request)
+    with pytest.raises(FatalGpuContextError, match="poisoned GPU context"):
+        worker.ready()
 
 
 def test_worker_default_retry_budget_stops_after_five_attempts(tmp_path: Path) -> None:
