@@ -102,8 +102,14 @@ natural gestures, hand/object interaction, gaze, framing and realistic pacing.
 For `avatar`, `avatar_media` and `media_image`, `video_prompt` is exactly
 `null`. Referenced presenter demonstrations with visible practical action
 default to `media_video`; static portraits, pauses and completed results can
-still use `media_image`. A narrow schema guard rejects clearly active
-referenced-presenter still prompts and triggers the existing correction retry.
+still use `media_image`. For the explicit video-reliability blacklist in B2
+(writing/entering new visible text or numbers, selected precision hand-object
+actions, and motions that reveal exact new content), the restriction applies to
+the fragile motion rather than to the `media_video` carrier. If such a beat is
+otherwise dynamic, B2 keeps `media_video` and re-stages the motion as a nearby
+safe action; `media_image` is not an allowed fallback for that prohibited-motion
+case. A narrow schema guard rejects clearly active referenced-presenter still
+prompts and triggers the existing correction retry.
 
 For `media_video + audio:false`, the planner sends `video_prompt` verbatim
 as LTX I2V's animation prompt, independently of the image-generation prompt.
