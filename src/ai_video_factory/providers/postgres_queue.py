@@ -71,7 +71,7 @@ def _can_reopen_fatal_gpu_context_failure(
     request_sha256: str,
 ) -> bool:
     return (
-        str(row.get("status") or "") == "failed"
+        str(row.get("status") or "") in {"failed", "retryable_failed"}
         and str(row.get("request_sha256") or "") == request_sha256
         and _is_fatal_gpu_context_error(row.get("last_error"))
     )
@@ -260,7 +260,7 @@ class PostgresJobQueueClient(JobQueueClient):
                             updated_at = now()
                         WHERE job_id = %s
                           AND request_sha256 = %s
-                          AND status = 'failed'
+                          AND status IN ('failed', 'retryable_failed')
                         """,
                         (request.job_id, request_sha256),
                     )
