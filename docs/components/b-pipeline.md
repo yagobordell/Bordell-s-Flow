@@ -156,10 +156,13 @@ numeric continuity marker.
 ## B3 profesional: continuidad de cámara en rachas habladas
 
 B3 se ejecuta solo en estilo profesional, después de que B2 haya quedado
-validado. Recibe cada racha máxima del vídeo completo formada por beats
-consecutivos con `audio:true`, incluso cuando la racha cruza límites de bloque.
-B3 no cambia texto, IDs, `audio`, `visual_type`, `prompt`, `video_prompt`
-ni `reference`; añade una capa de planificación de toma.
+validado, y únicamente para rachas máximas de `audio:true` que tengan **más de
+dos beats** y contengan **al menos un beat cuyo `visual_type` no sea
+`avatar`**. Las rachas de uno o dos beats y las rachas compuestas enteramente
+por `avatar` no entran en B3 y permanecen exactamente como B2 las dejó. Las
+rachas elegibles pueden cruzar límites de bloque. B3 no cambia texto, IDs,
+`audio`, `visual_type`, `prompt`, `video_prompt` ni `reference`; añade
+solo una capa de planificación de toma.
 
 Cada beat hablado recibe `continuous`. `continuous:true` significa que el
 beat continúa exactamente la misma generación A2V/toma iniciada antes.
@@ -170,10 +173,14 @@ por tanto no necesita obligatoriamente una nueva imagen.
 B3 puede cortar entre beats para cambiar de framing, ángulo o crop cuando ese
 cambio mejora de forma útil la claridad, el énfasis o el ritmo. No puede usar el
 corte para cambiar el setup de narración ni la posición/postura lógica del
-avatar. Un corte nuevo no fijado por B2 lleva `b3_shot_prompt`; su start image
-se genera secuencialmente usando la imagen efectiva de la toma anterior como
-referencia. Los beats `continuous:true` no generan otra start image y se
-agrupan en el mismo trabajo A2V.
+avatar. La regla por defecto es **preservar B2**: `b3_shot_video_prompt` es
+opcional y queda en null si el movimiento ya decidido por B2 sirve. Un primer
+beat `avatar` normal puede arrancar la toma con `continuous:false`,
+`b3_shot_prompt:null` y `b3_shot_video_prompt:null`. Un corte nuevo no
+fijado por B2 lleva `b3_shot_prompt`; su start image se genera secuencialmente
+usando la imagen efectiva de la toma anterior como referencia. Los beats
+`continuous:true` no generan otra start image y se agrupan en el mismo trabajo
+A2V.
 
 Antes de llamar a B3, el runtime calcula el plan real de grids de B2, incluidos
 los paneles filler. Esos paneles son inmutables: nunca se extraen del grid para
