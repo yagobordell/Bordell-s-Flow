@@ -225,6 +225,28 @@ class InMemoryJobRepository:
                 row.lease_owner = None
                 row.lease_expires_at = None
 
+    def release_infrastructure_failure(
+        self,
+        job_id: str,
+        request_sha256: str,
+        *,
+        owner: str,
+        error: str,
+    ) -> None:
+        with self._lock:
+            row = self._jobs.get(job_id)
+            if (
+                row is not None
+                and row.request_sha256 == request_sha256
+                and row.status == "running"
+                and row.lease_owner == owner
+            ):
+                row.status = "retryable_failed"
+                row.attempt_count = max(row.attempt_count - 1, 0)
+                row.last_error = f"InfrastructureRetryable: {error}"[:4000]
+                row.lease_owner = None
+                row.lease_expires_at = None
+
     def next_pending_request(
         self,
         task_names: tuple[str, ...],
@@ -571,6 +593,39 @@ class PostgresJobRepository:
                 (
                     "retryable_failed" if retryable else "failed",
                     error[:4000],
+                    job_id,
+                    request_sha256,
+                    owner,
+                ),
+            )
+
+    def release_infrastructure_failure(
+        self,
+        job_id: str,
+        request_sha256: str,
+        *,
+        owner: str,
+        error: str,
+    ) -> None:
+        """Release a poisoned-device attempt without spending the model retry budget."""
+
+        with self._pool.connection() as connection:
+            connection.execute(
+                """
+                UPDATE gpu.jobs
+                SET status = 'retryable_failed',
+                    attempt_count = GREATEST(attempt_count - 1, 0),
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    last_error = %s,
+                    updated_at = now()
+                WHERE job_id = %s
+                  AND request_sha256 = %s
+                  AND status = 'running'
+                  AND lease_owner = %s
+                """,
+                (
+                    f"InfrastructureRetryable: {error}"[:4000],
                     job_id,
                     request_sha256,
                     owner,
