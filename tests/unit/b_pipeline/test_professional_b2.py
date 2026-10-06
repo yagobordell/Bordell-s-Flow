@@ -77,11 +77,14 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     # The same photo can preserve identity without freezing expression and gaze.
     assert "Never rely on the reference photo's fixed smile" in prompt
     assert "If the face is not visible" in prompt
-    # Voice sync is allowed for simple speaking-compatible demonstrations, not
-    # misrepresented as complex action animation from the A2V model.
-    assert "Visible-presenter speech preference" in prompt
+    # Voice sync is restricted to the narrator's stable reference setup.
+    assert "NARRATOR SETUP RULE" in prompt
+    assert "audio=true is reserved for the supplied avatar" in prompt
+    assert "physical location/placement" in prompt
+    assert "stand up from a seated setup" in prompt
+    assert "paper, phone or product" in prompt
+    assert "NARRATOR-IN-SETUP NO-FREEZE RULE" in prompt
     assert "A2V does not guarantee detailed" in prompt
-    assert "use audio=false and observational media_video" in prompt
     # Branding choices are deliberately outside the B2 policy.
     for token in ("branding", "brands", "logos", "packaging"):
         assert token not in prompt.lower()
@@ -240,7 +243,7 @@ def test_professional_b2_global_framing_sequence_progression_and_still_audio() -
     assert "Shot progression is ESPECIALLY important within continuous sequences" in instructions
     assert "near-duplicate images" in instructions
     assert "For media_image, audio MUST always be false" in instructions
-    assert "generated synchronized speech" in instructions
+    assert "NARRATOR-IN-SETUP NO-FREEZE RULE" in instructions
 
 
 @pytest.mark.parametrize(
@@ -269,7 +272,10 @@ def test_professional_contract_requires_speaking_generated_shots_to_be_video(
                     "One beat-specific motion from the first frame."
                     if visual_type == "media_video" else None
                 ),
-                "reference": False, "audio": audio,
+                "reference": (
+                    visual_type == "media_video" and audio
+                ),
+                "audio": audio,
             }],
         }],
         "error": None,
@@ -279,6 +285,39 @@ def test_professional_contract_requires_speaking_generated_shots_to_be_video(
     else:
         with pytest.raises(ValidationError, match="media_image must have audio=false"):
             ProfessionalB2Output.model_validate(data)
+
+
+def test_professional_speaking_media_video_requires_avatar_reference() -> None:
+    beat = {
+        "beat_id": "1A",
+        "text": "I am still speaking from my usual setup.",
+        "beat_type": "claim",
+        "visual_type": "media_video",
+        "prompt": "The narrator remains seated in the reference setup.",
+        "video_prompt": "She speaks naturally with one small hand gesture.",
+        "reference": False,
+        "audio": True,
+    }
+    with pytest.raises(ValidationError, match="Speaking media_video must use"):
+        ProfessionalVisualBeat.model_validate(beat)
+
+    beat["reference"] = True
+    assert ProfessionalVisualBeat.model_validate(beat).audio is True
+
+
+def test_professional_prompt_forbids_frozen_narrator_in_reference_setup() -> None:
+    prompt = (
+        files("ai_video_factory.bots.prompts")
+        .joinpath("b2_professional.md")
+        .read_text(encoding="utf-8")
+    )
+    assert (
+        "NEVER show the narrator sitting/placed in the preserved narration setup "
+        "as a frozen still"
+    ) in prompt
+    assert "Never use media_image or media_video with audio=false" in prompt
+    assert "physical placement/posture class" in prompt
+    assert "different camera angle, crop or shot size is allowed" in prompt
 
 
 @pytest.mark.parametrize(

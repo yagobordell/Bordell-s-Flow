@@ -19,6 +19,7 @@ from ai_video_factory.bots.workflow import (
     _beat_suffix,
     _instructions,
     materialize_blocks,
+    repair_frozen_b2_text,
     run_b_pipeline,
     validate_beats,
     validate_visuals,
@@ -371,8 +372,9 @@ def test_invalid_b2_upstream_mutation_is_rejected() -> None:
             "blocks": [tampered], "error": None,
         }
     )
-    with pytest.raises(BPipelineValidationError, match="frozen B1.2 beat"):
-        validate_visuals(returned, supplied)
+    repaired = repair_frozen_b2_text(returned, supplied)
+    validate_visuals(repaired, supplied)
+    assert repaired.blocks[0].beats[0].text == "Uno."
 
 
 def test_intro_first_beat_is_not_forced_to_avatar() -> None:

@@ -75,6 +75,7 @@ from ai_video_factory.providers.avatar_library import (
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.avatar_style import ensure_avatar_style
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice, valid_voice_provider
+from ai_video_factory.providers.b3_shots import B3ShotImageError, generate_b3_shot_images
 from ai_video_factory.providers.ebook_covers import ensure_ebook_covers
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE, GridPlanError
@@ -99,8 +100,11 @@ from ai_video_factory.workflows.casero_cta import prepare_casero_cta
 
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
-_STAGES = ("B1.1", "B1.2", "B2")
-_METRIC_STAGES = ("B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "V1", "V2", "V3", "V4")
+_STAGES = ("B1.1", "B1.2", "B2", "B3")
+_METRIC_STAGES = (
+    "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "B3",
+    "V1", "V2", "V3", "V4",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -1065,6 +1069,28 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
         }
         for item in manifest["items"] if item.get("grid") is not None
     ]
+    has_b3 = any(
+        isinstance(beat.get("continuous"), bool)
+        for block in plan["blocks"] for beat in block["beats"]
+        if beat.get("audio") is True
+    )
+    if professional and has_b3:
+        try:
+            b3_shots = await asyncio.to_thread(
+                generate_b3_shot_images,
+                output,
+                plan,
+                api_key=settings.openai_api_key,
+                options=_image_options(),
+            )
+        except B3ShotImageError as exc:
+            raise ImageGenerationError(str(exc)) from exc
+        plan["b3_shot_assets"] = b3_shots
+        manifest["b3_shot_assets"] = b3_shots
+        manifest["total_generation_jobs"] = int(
+            manifest.get("total_generation_jobs", 0)
+        ) + len(b3_shots)
+        _write(output / "images" / "manifest.json", manifest)
     _write(output / "visual_plan.json", plan)
     return manifest
 
@@ -1531,10 +1557,29 @@ def _resume_unfinished_images(output: Path, plan: dict[str, object]) -> bool:
         raise ImageGenerationError("Saved image manifest has an unexpected schema")
     if saved.get("status") != "completed":
         return True
-    return (
+    if (
         plan.get("visual_style") == "profesional"
         and saved.get("finishing_status") != "completed"
-    )
+    ):
+        return True
+    b3_root = output / "images" / "b3_shots"
+    if b3_root.is_symlink():
+        raise ImageGenerationError("Refusing linked B3 image state directory")
+    for state_path in b3_root.glob("*.json"):
+        if state_path.is_symlink():
+            raise ImageGenerationError("Refusing linked B3 image state")
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ImageGenerationError("Saved B3 image state is unreadable") from exc
+        if (
+            not isinstance(state, dict)
+            or state.get("schema_version") != "b3-shot-image-v1"
+        ):
+            raise ImageGenerationError("Saved B3 image state has an unexpected schema")
+        if state.get("status") != "completed":
+            return True
+    return False
 
 
 async def _run_images_only(
@@ -2222,8 +2267,10 @@ class BotArtifacts:
                 raise ValueError(f"{stage} must not have a block ID")
             return self._output / stage
         if block_id is None or block_id < 1:
-            raise ValueError(f"{stage} requires a positive block ID")
-        return self._output / stage / f"block_{block_id}"
+            raise ValueError(f"{stage} requires a positive block/group ID")
+        return self._output / stage / (
+            f"group_{block_id}" if stage == "B3" else f"block_{block_id}"
+        )
 
     def input(self, stage: str, block_id: int | None, payload: dict[str, object]) -> None:
         directory = self._folder(stage, block_id)
@@ -2262,6 +2309,32 @@ class BotArtifacts:
             self._folder("B2", block_id) / f"rejected_attempt_{attempt}.json",
             {"attempt": attempt, "validation_error": error, "response": payload},
         )
+
+    def rejected_b3(
+        self, group_id: int, attempt: int, error: str, payload: dict[str, object]
+    ) -> None:
+        _write(
+            self._folder("B3", group_id) / f"rejected_attempt_{attempt}.json",
+            {"attempt": attempt, "validation_error": error, "response": payload},
+        )
+
+    def require_b3_group_outputs(self, group_count: int) -> None:
+        """Fail closed unless every completed B3 call has durable input/output JSON."""
+        if group_count < 0:
+            raise ValueError("B3 group count cannot be negative")
+        root = self._output / "B3"
+        if root.is_symlink():
+            raise RuntimeError("Refusing linked B3 artifact directory")
+        for group_id in range(1, group_count + 1):
+            folder = self._folder("B3", group_id)
+            if folder.is_symlink():
+                raise RuntimeError(f"Refusing linked B3 group directory: {folder}")
+            for filename in ("input.json", "output.json"):
+                path = folder / filename
+                if path.is_symlink() or not path.is_file():
+                    raise RuntimeError(
+                        f"B3 group {group_id} completed without durable {filename}"
+                    )
 
 
 class TimingLedger:
@@ -2531,7 +2604,11 @@ async def main() -> None:
     resume_elapsed_offset = 0.0
     resume_expected_calls: dict[str, int | None] | None = None
     stop_stage = getattr(args, "stop_stage", None)
-    stop_index = _STAGES.index(stop_stage) if stop_stage is not None else len(_STAGES) - 1
+    stop_index = (
+        _STAGES.index(stop_stage)
+        if stop_stage is not None
+        else _STAGES.index("B3" if visual_style == "profesional" else "B2")
+    )
     planned_blocks: int | None = None
     previous_b11: B11Output | None = None
     previous_b12: tuple[B12Output, ...] | None = None
@@ -2613,7 +2690,8 @@ async def main() -> None:
                     (block_count - len(previous_partial_b12)
                      if stage == "B1.2" else
                      block_count - len(previous_partial_b2)
-                     if stage == "B2" else block_count)
+                     if stage == "B2" else
+                     0 if stage == "B3" else block_count)
                     if rerun_from_index <= stage_index <= stop_index else 0
                 )
                 for stage_index, stage in enumerate(_STAGES)
@@ -2735,6 +2813,10 @@ async def main() -> None:
                     max(report_blocks, timings.call_count("B2"))
                     if report_blocks is not None else None
                 ) if stop_index >= 2 else 0,
+                "B3": (
+                    timings.call_count("B3")
+                    if visual_style == "profesional" and stop_index >= 3 else 0
+                ),
             }
         else:
             expected_calls = dict(resume_expected_calls)
@@ -2751,6 +2833,10 @@ async def main() -> None:
                 if stop_index >= 2:
                     expected_calls["B2"] = max(
                         expected_calls["B2"] or 0, report_blocks, timings.call_count("B2")
+                    )
+                if visual_style == "profesional" and stop_index >= 3:
+                    expected_calls["B3"] = max(
+                        expected_calls.get("B3") or 0, timings.call_count("B3")
                     )
         ledger.sync_professional_voice_usage(output)
         ledger.sync_fish_director_usage(output)
@@ -2782,10 +2868,14 @@ async def main() -> None:
         merged_output: dict[str, object] | None,
     ) -> None:
         nonlocal planned_blocks
-        planned_blocks = blocks
+        if stage != "B3":
+            planned_blocks = blocks
+        else:
+            artifacts.require_b3_group_outputs(blocks)
         if merged_output is not None:
             _write(output / stage / "merged_output.json", merged_output)
-        costs, timing_report = save_report("running", blocks)
+        report_count = planned_blocks if stage == "B3" else blocks
+        costs, timing_report = save_report("running", report_count)
         elapsed = timing_report["stages"][stage]["elapsed_seconds"]
         if elapsed is None:
             raise RuntimeError(f"Missing elapsed time for completed stage {stage}")
@@ -2890,7 +2980,9 @@ async def main() -> None:
             enable_casero_cta=visual_style == "casero",
             avatar_image=avatar_bytes,
             start_from=args.from_stage,
-            stop_after=stop_stage or "B2",
+            stop_after=stop_stage or (
+                "B3" if visual_style == "profesional" else "B2"
+            ),
             previous_b11=previous_b11,
             previous_b12=previous_b12,
             **(
@@ -2906,6 +2998,7 @@ async def main() -> None:
             on_rejected_output=artifacts.rejected_b11,
             on_rejected_b12_output=artifacts.rejected_b12,
             on_rejected_b2_output=artifacts.rejected_b2,
+            on_rejected_b3_output=artifacts.rejected_b3,
             on_api_response=ledger.record,
             on_call_duration=timings.record_call,
             on_stage_duration=timings.record_stage,
@@ -3029,7 +3122,9 @@ async def main() -> None:
                         visual_style=visual_style,
                         avatar_image=avatar_bytes,
                         start_from="B2",
-                        stop_after="B2",
+                        stop_after=(
+                            "B3" if visual_style == "profesional" else "B2"
+                        ),
                         previous_b11=result.b11,
                         previous_b12=result.b12,
                         previous_b2=result.b2,
@@ -3040,6 +3135,7 @@ async def main() -> None:
                         on_input=artifacts.input,
                         on_output=output_and_start_audio,
                         on_rejected_b2_output=artifacts.rejected_b2,
+                        on_rejected_b3_output=artifacts.rejected_b3,
                         on_api_response=ledger.record,
                         on_call_duration=timings.record_call,
                         on_stage_duration=timings.record_stage,

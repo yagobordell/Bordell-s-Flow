@@ -415,6 +415,15 @@ def build_stt_beat_timeline(
                    if "prompt" in beat else {}),
                 **({"video_prompt": beat["video_prompt"]}
                    if "video_prompt" in beat else {}),
+                **({
+                    key: beat[key]
+                    for key in (
+                        "continuous", "b3_group_id", "b3_shot_prompt",
+                        "b3_shot_video_prompt", "b3_reference_beat_id",
+                        "b3_grid_id", "b3_grid_source", "b3_grid_role",
+                    )
+                    if key in beat
+                }),
                 "start_seconds": float(start),
                 "first_word_seconds": float(
                     starts[index] + aligned_words[first_word_index]["start"]
@@ -571,6 +580,16 @@ def generate_static_preview(
         if key in assets:
             raise StaticPreviewError("Duplicate generated PNG for one B2 beat")
         assets[key] = _verified_asset(output, item.get("file"), item.get("sha256"))
+    b3_assets: dict[tuple[int, str], Path] = {}
+    for item in plan.get("b3_shot_assets", []):
+        if not isinstance(item, dict):
+            raise StaticPreviewError("Invalid B3 shot asset")
+        key = item.get("block_id"), item.get("beat_id")
+        if not isinstance(key[0], int) or not isinstance(key[1], str):
+            raise StaticPreviewError("Invalid B3 shot asset identity")
+        b3_assets[key] = _verified_asset(
+            output, item.get("file"), item.get("sha256")
+        )
     preview = output / "preview"
     if preview.is_symlink():
         raise StaticPreviewError("Refusing linked preview directory")
@@ -582,18 +601,53 @@ def generate_static_preview(
     if concat.is_symlink():
         raise StaticPreviewError("Refusing linked FFmpeg manifest")
     entries = ["ffconcat version 1.0"]
+    active_presenter: Path | None = None
     for index, beat in enumerate(timeline["beats"]):
         key = beat["block_id"], beat["beat_id"]
         frame_name = f"{index:04d}_{beat['beat_id']}.png"
         frame = frames / frame_name
         if frame.is_symlink():
             raise StaticPreviewError("Refusing linked preview frame")
+
+        if beat.get("audio") is True and "continuous" in beat:
+            if beat["continuous"]:
+                if active_presenter is None:
+                    raise StaticPreviewError(
+                        f"B3 beat {beat['beat_id']} continues without an active shot"
+                    )
+            else:
+                if beat.get("b3_shot_prompt") is not None:
+                    active_presenter = b3_assets.get(key)
+                    if active_presenter is None:
+                        raise StaticPreviewError(
+                            f"B3 start image {beat['beat_id']} is missing"
+                        )
+                elif beat["visual_type"] == "media_video" or (
+                    beat["visual_type"] == "avatar"
+                    and beat.get("prompt") is not None
+                ):
+                    active_presenter = assets.get(key)
+                    if active_presenter is None:
+                        raise StaticPreviewError(
+                            f"B2 start image {beat['beat_id']} is missing"
+                        )
+                else:
+                    active_presenter = avatar
+        elif beat.get("audio") is not True:
+            active_presenter = None
+
         presenter_image = avatar
-        if beat["visual_type"] == "avatar" and beat.get("prompt") is not None:
+        media_image = assets.get(key)
+        if beat.get("audio") is True and active_presenter is not None:
+            presenter_image = active_presenter
+            if beat["visual_type"] in {"avatar", "media_video"}:
+                media_image = active_presenter
+        elif beat["visual_type"] == "avatar" and beat.get("prompt") is not None:
             presenter_image = assets.get(key)
             if presenter_image is None:
                 raise StaticPreviewError(f"Regenerated avatar {beat['beat_id']} has no PNG")
-        _beat_frame(presenter_image, assets.get(key), beat["visual_type"], frame)
+
+        _beat_frame(presenter_image, media_image, beat["visual_type"], frame)
         entries.append(f"file 'frames/{frame_name}'")
         entries.append(f"duration {beat['duration_seconds']:.9f}")
     entries.append(entries[-2])  # Repeated last frame preserves its last duration.

@@ -1,8 +1,9 @@
-# B1.1 → B1.2 → B2: flujo actual
+# B1.1 → B1.2 → B2 → B3: flujo actual
 
 El acceso de producción es `run.ps1`, que selecciona el estilo del
-avatar y ejecuta los bots B1.1 → B1.2 → B2. El estilo profesional
-continúa con V1 → V2 → V3 → V4 y Gemini TTS por bloques;
+avatar y ejecuta B1.1 → B1.2 → B2. En estilo profesional añade B3
+antes de generar las imágenes/vídeo; Casero termina la planificación visual
+en B2. El estilo profesional continúa además con V1 → V2 → V3 → V4 y Gemini TTS;
 Casero conserva su propia ruta de voz y CTA. Las etapas de voz
 preservan los textos, identificadores y decisiones visuales de B2.
 Consulta [voz profesional](professional-voice.md).
@@ -84,15 +85,14 @@ honor each panel's chosen composition without adding a person or forcing
 a device/document orientation. The legacy `casero` prompt and grid
 are unchanged.
 
-A clearly visible presenter making a simple, speaking-compatible
-demonstration can use `audio: true`, including on a `media_video` beat;
-the current LTX grouping routes that beat to A2V with the narration audio.
-A2V currently has a fixed speaking-to-camera prompt, so its suitability
-for detailed independent hand/action animation is limited. Choose
-`audio: false` with observational I2V/voice-over when the movement itself
-must be shown accurately, the mouth is obstructed, or the face is cropped
-out. These are editorial prompt instructions, not a deterministic
-computer-vision validator of generated facial expressions.
+Professional `audio:true` is reserved for the supplied avatar narrator while
+the reference narration setup and the narrator's physical placement/posture
+class are preserved. Camera angle, framing and crop may vary, and small props
+such as a phone, paper or product are allowed. Standing up from a seated setup,
+lying down, walking elsewhere, changing seats/positions or moving to another
+environment requires `audio:false` voice-over coverage. A narrator who remains
+in the narration setup is never represented as a frozen still: generated
+full-screen coverage uses `media_video + reference:true + audio:true`.
 
 A professional beat now adds a dedicated `video_prompt` field alongside
 `prompt`, `reference`, `audio` and `visual_type`. For `media_video`,
@@ -152,6 +152,50 @@ The `casero` bot's output contract and grid prompt are unchanged.
 The code-owned high-end phone-photography style remains separate from B2:
 `effective_image_prompt()` injects it during generation, after any
 numeric continuity marker.
+
+## B3 profesional: continuidad de cámara en rachas habladas
+
+B3 se ejecuta solo en estilo profesional, después de que B2 haya quedado
+validado, y únicamente para rachas máximas de `audio:true` que tengan **más de
+dos beats** y contengan **al menos un beat cuyo `visual_type` no sea
+`avatar`**. Las rachas de uno o dos beats y las rachas compuestas enteramente
+por `avatar` no entran en B3 y permanecen exactamente como B2 las dejó. Las
+rachas elegibles pueden cruzar límites de bloque. B3 no cambia texto, IDs,
+`audio`, `visual_type`, `prompt`, `video_prompt` ni `reference`; añade
+solo una capa de planificación de toma.
+
+Cada beat hablado recibe `continuous`. `continuous:true` significa que el
+beat continúa exactamente la misma generación A2V/toma iniciada antes.
+`continuous:false` abre una nueva toma. El primer beat de cada racha siempre
+abre una toma, pero puede reutilizar el avatar base o una imagen B2 existente y
+por tanto no necesita obligatoriamente una nueva imagen.
+
+B3 puede cortar entre beats para cambiar de framing, ángulo o crop cuando ese
+cambio mejora de forma útil la claridad, el énfasis o el ritmo. No puede usar el
+corte para cambiar el setup de narración ni la posición/postura lógica del
+avatar. La regla por defecto es **preservar B2**: `b3_shot_video_prompt` es
+opcional y queda en null si el movimiento ya decidido por B2 sirve. Un primer
+beat `avatar` normal puede arrancar la toma con `continuous:false`,
+`b3_shot_prompt:null` y `b3_shot_video_prompt:null`. Un corte nuevo no
+fijado por B2 lleva `b3_shot_prompt`; su start image se genera secuencialmente
+usando la imagen efectiva de la toma anterior como referencia. Los beats
+`continuous:true` no generan otra start image y se agrupan en el mismo trabajo
+A2V.
+
+Antes de llamar a B3, el runtime calcula el plan real de grids de B2, incluidos
+los paneles filler. Esos paneles son inmutables: nunca se extraen del grid para
+regenerarlos de forma aislada. Un panel hablado que actúa como start image fija
+obliga a empezar una nueva toma y B3 adapta los beats libres alrededor de él.
+Un panel `avatar_media` es solo apoyo visual y no fuerza por sí mismo otro
+A2V. Si dos o más grids fijos dentro de una misma racha hablada no pueden
+mantener continuidad entre sí, ambos se respetan tal como vienen; esa es la
+única excepción permitida a la continuidad visual normal de B3.
+
+El `visual_plan.json` conserva B2 intacto y añade la metadata B3
+(`b3_group_id`, `continuous`, prompts de toma, referencia al beat anterior y,
+cuando corresponde, metadata del grid). Las nuevas start images de B3 se
+guardan aparte bajo `images/b3_shots/`; sus estados de petición pagada se
+protegen y contabilizan igual que el resto de imágenes.
 
 ## Scripts, avatares y checkpoints del flujo administrado
 
@@ -273,8 +317,8 @@ Markdown code fence is replaced by the schema transport, with all semantic and
 field-level rules unchanged.
 
 Outputs are grouped directly under `data/output/<script-name>/`, within the
-`B1.1/`, `B1.2/block_<id>/` and `B2/block_<id>/` directories, with
-`B1.2/merged_output.json`, `B2/merged_output.json`, the application-owned
+`B1.1/`, `B1.2/block_<id>/`, `B2/block_<id>/` and `B3/group_<id>/` directories, with
+`B1.2/merged_output.json`, `B2/merged_output.json`, `B3/merged_output.json`, the application-owned
 `visual_plan.json` and the consolidated `run_report.json`. No previous phase artifacts are generated.
 
 The previous planning bots and their one-command production orchestration have

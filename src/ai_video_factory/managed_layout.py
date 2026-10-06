@@ -82,7 +82,7 @@ def sync_managed_outputs(work: Path, target: Path) -> None:
     staging = target / (".outputs-" + uuid4().hex + ".partial")
     staging.mkdir()
     try:
-        for stage in ("B1.1", "B1.2", "B2", "CTA"):
+        for stage in ("B1.1", "B1.2", "B2", "B3", "CTA"):
             folder = work / stage
             if folder.exists():
                 _copy_tree(folder, staging / stage)

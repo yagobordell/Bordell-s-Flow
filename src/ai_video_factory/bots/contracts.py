@@ -1,4 +1,4 @@
-"""Strict source-preserving interfaces for the B1.1 / B1.2 / B2 bots.
+"""Strict source-preserving interfaces for the B1.1 / B1.2 / B2 / B3 bots.
 
 Models describe the exact JSON object on the wire. API Structured Outputs already
 provide JSON transport, so the Markdown code fences requested by the human-readable
@@ -223,6 +223,11 @@ class ProfessionalVisualBeat(Beat):
             raise ValueError(
                 "media_image must have audio=false; use media_video for synchronized speech"
             )
+        if self.visual_type == "media_video" and self.audio and not self.reference:
+            raise ValueError(
+                "Speaking media_video must use the supplied avatar reference; "
+                "audio=true is reserved for the narrator in the preserved narration setup"
+            )
         if self.visual_type == "avatar" and self.prompt is not None and not self.reference:
             raise ValueError("Regenerated presenter images require the avatar reference")
         return self
@@ -274,4 +279,52 @@ class ProfessionalB2Output(StrictModel):
                 raise ValueError("Professional B2 output must contain exactly one block")
         elif any(v is not None for v in (self.pipeline_stage, self.narrative_core, self.blocks)):
             raise ValueError("Professional B2 error must null out success fields")
+        return self
+
+
+class B3BeatDecision(StrictModel):
+    """Camera-continuity decision for one already-spoken professional B2 beat."""
+
+    beat_id: str = Field(min_length=2)
+    continuous: bool
+    shot_prompt: str | None
+    shot_video_prompt: str | None
+
+    @model_validator(mode="after")
+    def valid_shot_decision(self) -> "B3BeatDecision":
+        if self.continuous:
+            if self.shot_prompt is not None or self.shot_video_prompt is not None:
+                raise ValueError(
+                    "continuous=true inherits the previous take and cannot start a shot"
+                )
+        else:
+            if self.shot_prompt is not None and not self.shot_prompt.strip():
+                raise ValueError("B3 shot_prompt must be null or nonempty")
+            if (
+                self.shot_video_prompt is not None
+                and not self.shot_video_prompt.strip()
+            ):
+                raise ValueError("B3 shot_video_prompt must be null or nonempty")
+        return self
+
+
+class B3Error(StrictModel):
+    stage: Literal["B3"]
+    code: Literal["INVALID_UPSTREAM_INPUT"]
+    message: str = Field(min_length=1)
+
+
+class B3Output(StrictModel):
+    pipeline_stage: Literal["B3"] | None
+    group_id: int | None
+    beats: list[B3BeatDecision] | None
+    error: B3Error | None
+
+    @model_validator(mode="after")
+    def valid_success_or_error(self) -> "B3Output":
+        if self.error is None:
+            if self.pipeline_stage != "B3" or self.group_id is None or not self.beats:
+                raise ValueError("B3 success requires a group ID and nonempty beat decisions")
+        elif any(v is not None for v in (self.pipeline_stage, self.group_id, self.beats)):
+            raise ValueError("B3 error must null out success fields")
         return self

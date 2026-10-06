@@ -27,7 +27,7 @@ _IMAGE_PRICING = {
     "image_output": Decimal("30.00"),
 }
 _STAGES = (
-    "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2",
+    "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "B3",
     "V1", "V2", "V3", "V4", "Fish director", _IMAGE_STAGE, "CTA image",
 )
 
@@ -286,6 +286,8 @@ class ApiCostLedger:
         active = sorted(root.glob("block_*/*.json")) + sorted(
             (root / "grids").glob("*.json")
         ) + sorted(
+            (root / "b3_shots").glob("*.json")
+        ) + sorted(
             (root / "finishing_state").glob("block_*/*-native_grid_video.json")
         ) + sorted(
             (root / "professional_finished").glob("block_*/*-native_grid_video.json")
@@ -297,6 +299,8 @@ class ApiCostLedger:
             historical_b2.glob("run-*/block_*/*.json")
         ) + sorted(
             historical_b2.glob("run-*/grids/*.json")
+        ) + sorted(
+            historical_b2.glob("run-*/b3_shots/*.json")
         ) + sorted(
             historical_b2.glob("run-*/replaced_states/block_*/*.json")
         ) + sorted(
@@ -310,10 +314,13 @@ class ApiCostLedger:
             state = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(state, dict) or state.get("schema_version") not in {
                 "openai-image-v1", "professional-image-finishing-v1",
+                "b3-shot-image-v1",
             }:
                 raise ValueError(f"Invalid image accounting state: {path}")
             status = state.get("status")
-            if status not in ("completed", "direct_submitting_unknown"):
+            if status not in (
+                "completed", "direct_submitting_unknown", "submitting_unknown"
+            ):
                 continue  # direct_pending has not been submitted to the paid API.
             if (path.is_relative_to(archive) or path.is_relative_to(finished_archive)
                 or path.is_relative_to(historical_b2)):
@@ -414,7 +421,7 @@ class ApiCostLedger:
         expected = (
             {"B1.1": max(1, expected_b11_calls), "CTA": 0, "CTA Ebook": 0,
              "CTA Motion": 0,
-             "B1.2": blocks, "B2": blocks, "CTA image": 0}
+             "B1.2": blocks, "B2": blocks, "B3": None, "CTA image": 0}
             if expected_calls is None
             else {
                 stage: expected_calls.get(
@@ -431,6 +438,13 @@ class ApiCostLedger:
             else 0,
         )
         expected["CTA image"] = sum(item["stage"] == "CTA image" for item in ordered)
+        b3_count = sum(item["stage"] == "B3" for item in ordered)
+        reported_b3 = expected_calls.get("B3") if expected_calls is not None else None
+        expected["B3"] = (
+            reported_b3
+            if type(reported_b3) is int and reported_b3 >= 0
+            else b3_count
+        )
         fish_count = sum(item["stage"] == "Fish director" for item in ordered)
         for v_stage in ("V1", "V2", "V3", "V4"):
             actual = sum(item["stage"] == v_stage for item in ordered)

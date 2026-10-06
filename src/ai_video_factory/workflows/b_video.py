@@ -142,8 +142,25 @@ def _source_assets(
     return avatar, assets
 
 
+def _b3_shot_assets(
+    output: Path, plan: dict[str, Any],
+) -> dict[tuple[int, str], Path]:
+    assets: dict[tuple[int, str], Path] = {}
+    for item in plan.get("b3_shot_assets", []):
+        if not isinstance(item, dict):
+            raise B2VideoError("Invalid B3 shot asset record")
+        block_id, beat_id = item.get("block_id"), item.get("beat_id")
+        if not isinstance(block_id, int) or not isinstance(beat_id, str):
+            raise B2VideoError("Invalid B3 shot asset identity")
+        key = block_id, beat_id
+        if key in assets:
+            raise B2VideoError(f"Duplicate B3 shot image for {beat_id}")
+        assets[key] = _verified_asset(output, item.get("file"), item.get("sha256"))
+    return assets
+
+
 def _group_beats(beats: list[dict[str, Any]]) -> list[tuple[str, int, int]]:
-    """Group consecutive speech beats only when they share the same start image."""
+    """Group A2V by B3 take boundaries when present, else by historical source."""
     groups: list[tuple[str, int, int]] = []
     avatar_start: int | None = None
     avatar_source: tuple[object, ...] | None = None
@@ -156,6 +173,22 @@ def _group_beats(beats: list[dict[str, Any]]) -> list[tuple[str, int, int]]:
             )
         speaks = kind in {"avatar", "avatar_media"} or beat.get("audio") is True
         if speaks:
+            if "continuous" in beat:
+                continuous = beat.get("continuous")
+                if not isinstance(continuous, bool):
+                    raise B2VideoError(
+                        f"B3 continuous flag is invalid for {beat['beat_id']}"
+                    )
+                if not continuous:
+                    if avatar_start is not None:
+                        groups.append(("a2v", avatar_start, index - 1))
+                    avatar_start = index
+                    avatar_source = ("b3_take", beat["beat_id"])
+                elif avatar_start is None:
+                    raise B2VideoError(
+                        f"B3 beat {beat['beat_id']} continues without a take start"
+                    )
+                continue
             if kind in {"media_image", "media_video"} or (
                 kind == "avatar" and beat.get("prompt") is not None
             ):
@@ -226,6 +259,7 @@ def _fingerprint(
     assets: dict[tuple[int, str], Path], avatar: Path,
     *, profile: str | None = None,
     i2v_profile: str | None = LTX_PRODUCTION_I2V_PROFILE,
+    b3_assets: dict[tuple[int, str], Path] | None = None,
 ) -> str:
     relevant = {
         "schema": _SCHEMA,
@@ -235,6 +269,10 @@ def _fingerprint(
         "image_sha256": [
             [block_id, beat_id, sha256_file(path)]
             for (block_id, beat_id), path in sorted(assets.items())
+        ],
+        "b3_image_sha256": [
+            [block_id, beat_id, sha256_file(path)]
+            for (block_id, beat_id), path in sorted((b3_assets or {}).items())
         ],
         "profile": profile or LTX_A2V_RUN_OPTIMIZED_PROFILE,
         "positive_prompt": AVATAR_PROMPT,
@@ -274,6 +312,7 @@ def build_b2_video_plan(
     if previous_frame != round(timeline["duration_seconds"] * _FPS):
         raise B2VideoError("B2 frame timeline differs from master audio duration")
     avatar, assets = _source_assets(output, plan, images)
+    b3_assets = _b3_shot_assets(output, plan)
     for beat in beats:
         key = beat["block_id"], beat["beat_id"]
         if (
@@ -290,7 +329,7 @@ def build_b2_video_plan(
                 raise B2VideoError(
                     f"Missing media_video video_prompt for {beat['beat_id']}"
                 )
-    digest = _fingerprint(timeline, audio, assets, avatar)
+    digest = _fingerprint(timeline, audio, assets, avatar, b3_assets=b3_assets)
     run_dir = output / "video" / "runs" / digest[:20]
     if run_dir.is_symlink() or run_dir.parent.is_symlink():
         raise B2VideoError("Refusing linked B2 LTX run directory")
@@ -375,21 +414,29 @@ def build_b2_video_plan(
             audio_path = None
         else:
             first_beat = selection[0]
-            if first_beat["visual_type"] in {"media_image", "media_video"} or (
+            key = first_beat["block_id"], first_beat["beat_id"]
+            if first_beat.get("b3_shot_prompt") is not None:
+                if key not in b3_assets:
+                    raise B2VideoError(
+                        f"Missing B3 start image for {first_beat['beat_id']}"
+                    )
+                image = b3_assets[key]
+            elif first_beat["visual_type"] in {"media_image", "media_video"} or (
                 first_beat["visual_type"] == "avatar"
                 and first_beat.get("prompt") is not None
             ):
-                image = assets[(first_beat["block_id"], first_beat["beat_id"])]
+                image = assets[key]
             else:
                 image = avatar
             image_sha = sha256_file(image)
             a2v_prompt = AVATAR_PROMPT
-            if (
+            if isinstance(first_beat.get("b3_shot_video_prompt"), str):
+                a2v_prompt += " " + first_beat["b3_shot_video_prompt"]
+            elif (
                 first_beat["visual_type"] == "media_video"
                 and isinstance(first_beat.get("video_prompt"), str)
             ):
-                # Preserve the pinned speaking instruction and augment only
-                # generated speaking media with its beat-specific motion.
+                # Historical B2-only plans still use their speaking motion prompt.
                 a2v_prompt += " " + first_beat["video_prompt"]
             audio_path = run_dir / "audio" / f"{beat_ids[0]}-{beat_ids[-1]}.wav"
             audio_sha = _extract_pcm(master, audio_path, start, end)

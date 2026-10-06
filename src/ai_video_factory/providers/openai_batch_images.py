@@ -726,6 +726,7 @@ def clear_b2_images_for_rerun(output: Path) -> int:
     for state_path in chain(
         image_root.glob("block_*/*.json"),
         (image_root / "grids").glob("*.json"),
+        (image_root / "b3_shots").glob("*.json"),
     ):
         if state_path.is_symlink():
             raise ImageGenerationError(f"Refusing linked image state: {state_path}")
@@ -751,6 +752,7 @@ def clear_b2_images_for_rerun(output: Path) -> int:
     paid_states = [
         *image_root.glob("block_*/*.json"),
         *(image_root / "grids").glob("*.json"),
+        *(image_root / "b3_shots").glob("*.json"),
         *((image_root / "replaced_states").glob("block_*/*.json")),
     ]
     if paid_states:
@@ -812,6 +814,7 @@ def has_pending_image_tasks(output: Path) -> bool:
     for state_path in chain(
         (output / "images").glob("block_*/*.json"),
         (output / "images" / "grids").glob("*.json"),
+        (output / "images" / "b3_shots").glob("*.json"),
     ):
         if state_path.is_symlink():
             return True

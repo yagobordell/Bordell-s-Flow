@@ -1,4 +1,4 @@
-"""Hard 120-character presenter-run checks for both B2 visual styles."""
+"""Hard 120-character narration-run checks for both B2 visual styles."""
 
 import asyncio
 import json
@@ -25,6 +25,7 @@ def _b2_pair(
     visuals: list[str],
     *,
     professional: bool = False,
+    audios: list[bool] | None = None,
 ) -> tuple[B2Input, B2Output | ProfessionalB2Output]:
     source = B2Input.model_validate(
         {
@@ -50,17 +51,22 @@ def _b2_pair(
         }
     )
     block = source.blocks[0].model_dump()
-    for beat, visual in zip(block["beats"], visuals, strict=True):
+    for index, (beat, visual) in enumerate(zip(block["beats"], visuals, strict=True)):
         beat["visual_type"] = visual
         if professional:
+            audio = (
+                audios[index]
+                if audios is not None
+                else visual in {"avatar", "avatar_media"}
+            )
             beat.update(
                 prompt=None if visual == "avatar" else "Faithful source-grounded image.",
                 video_prompt=(
                     "One natural continuous motion from the reference frame."
                     if visual == "media_video" else None
                 ),
-                reference=False,
-                audio=visual in {"avatar", "avatar_media"},
+                reference=visual == "media_video" and audio,
+                audio=audio,
             )
         else:
             beat["description"] = None if visual == "avatar" else "Faithful scene."
@@ -98,6 +104,41 @@ def test_non_presenter_visual_resets_run() -> None:
         [90, 13, 90], ["avatar", "media_image", "avatar_media"]
     )
     validate_visuals(result, supplied)
+
+
+def test_professional_media_video_audio_true_extends_120_character_run() -> None:
+    supplied, result = _b2_pair(
+        [60, 61],
+        ["avatar", "media_video"],
+        professional=True,
+        audios=[True, True],
+    )
+    with pytest.raises(
+        BPipelineValidationError,
+        match=r"consecutive audio=true beats .* total 121 characters",
+    ):
+        validate_visuals(result, supplied)
+
+
+def test_professional_audio_false_resets_run_even_for_media_video() -> None:
+    supplied, result = _b2_pair(
+        [90, 13, 90],
+        ["avatar", "media_video", "avatar_media"],
+        professional=True,
+        audios=[True, False, True],
+    )
+    validate_visuals(result, supplied)
+
+
+def test_professional_visual_type_change_does_not_reset_spoken_run() -> None:
+    supplied, result = _b2_pair(
+        [40, 40, 41],
+        ["avatar", "avatar_media", "media_video"],
+        professional=True,
+        audios=[True, True, True],
+    )
+    with pytest.raises(BPipelineValidationError, match="total 121 characters"):
+        validate_visuals(result, supplied)
 
 
 def _checkpoint(

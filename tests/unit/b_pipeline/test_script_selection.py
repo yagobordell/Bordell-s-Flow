@@ -270,6 +270,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         on_rejected_output,
         on_rejected_b12_output,
         on_rejected_b2_output,
+        on_rejected_b3_output,
         visual_style,
         enable_casero_cta,
         avatar_image,
@@ -279,11 +280,12 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         previous_b12,
     ):
         assert start_from == "B1.1"
-        assert stop_after == "B2"
+        assert stop_after == "B3"
         assert previous_b11 is None and previous_b12 is None
         assert callable(on_rejected_output)
         assert callable(on_rejected_b12_output)
         assert callable(on_rejected_b2_output)
+        assert callable(on_rejected_b3_output)
         assert visual_style == "profesional"
         assert enable_casero_cta is False
         assert avatar_image.startswith(b"\x89PNG\r\n\x1a\n")
@@ -299,7 +301,11 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         on_output("B1.2", 1, {"pipeline_stage": "B1.2", "block_id": 1})
         on_input("B2", 1, {"current_block_id": 1, "blocks": [{"beats": []}]})
         on_output("B2", 1, {"pipeline_stage": "B2", "blocks": []})
-        for stage, block_id in (("B1.1", None), ("B1.2", 1), ("B2", 1)):
+        on_input("B3", 1, {"group_id": 1, "beats": []})
+        on_output("B3", 1, {"pipeline_stage": "B3", "group_id": 1, "beats": []})
+        for stage, block_id in (
+            ("B1.1", None), ("B1.2", 1), ("B2", 1), ("B3", 1)
+        ):
             on_api_response(
                 stage,
                 block_id,
@@ -320,13 +326,18 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             on_call_duration(stage, block_id, 0.125)
             on_stage_duration(stage, 0.250)
             merged = (
-                None if stage == "B1.1"
+                None
+                if stage == "B1.1"
+                else {"pipeline_stage": "B3", "groups": []}
+                if stage == "B3"
                 else {"pipeline_stage": stage, "blocks": [{"block_id": 1, "beats": []}]}
             )
             on_stage_complete(stage, 1, merged)
             streamed_stages.append(stage)
             completed_this_run = streamed_stages[call_start:]
-            assert completed_this_run == ["B1.1", "B1.2", "B2"][:len(completed_this_run)]
+            assert completed_this_run == [
+                "B1.1", "B1.2", "B2", "B3"
+            ][:len(completed_this_run)]
             assert printed_events[print_start:] == completed_this_run
             report_path = tmp_path / "output" / ("roma" if "Uno." in script else "japon")
             partial = json.loads((report_path / "run_report.json").read_text(encoding="utf-8"))
@@ -343,6 +354,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             b11=SimpleNamespace(model_dump=lambda: {"pipeline_stage": "B1.1"}),
             b12=[SimpleNamespace(block_id=1)],
             b2=[],
+            b3=[],
             visual_plan=lambda: {
                 "blocks": [{
                     "beats": [
@@ -415,14 +427,30 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         assert (destination / "B1.2" / "block_1" / "output.json").is_file()
         assert (destination / "B2" / "block_1" / "input.json").is_file()
         assert (destination / "B2" / "block_1" / "output.json").is_file()
+        assert (destination / "B3" / "group_1" / "input.json").is_file()
+        assert (destination / "B3" / "group_1" / "output.json").is_file()
+        b3_input = json.loads(
+            (destination / "B3" / "group_1" / "input.json").read_text(encoding="utf-8")
+        )
+        b3_output = json.loads(
+            (destination / "B3" / "group_1" / "output.json").read_text(encoding="utf-8")
+        )
+        assert b3_input == {"group_id": 1, "beats": []}
+        assert b3_output == {
+            "pipeline_stage": "B3", "group_id": 1, "beats": []
+        }
         b12_merged = json.loads(
             (destination / "B1.2" / "merged_output.json").read_text(encoding="utf-8")
         )
         b2_merged = json.loads(
             (destination / "B2" / "merged_output.json").read_text(encoding="utf-8")
         )
+        b3_merged = json.loads(
+            (destination / "B3" / "merged_output.json").read_text(encoding="utf-8")
+        )
         assert [block["block_id"] for block in b12_merged["blocks"]] == [1]
         assert [block["block_id"] for block in b2_merged["blocks"]] == [1]
+        assert b3_merged == {"pipeline_stage": "B3", "groups": []}
         consolidated = json.loads(
             (destination / "run_report.json").read_text(encoding="utf-8")
         )
@@ -459,7 +487,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             (destination / "B2" / "block_1" / "output.json").read_text(encoding="utf-8")
         )
         assert consolidated["api_costs"]["pricing_status"] == "complete"
-        assert consolidated["api_costs"]["estimated_total_usd"] == "0.00006000"
+        assert consolidated["api_costs"]["estimated_total_usd"] == "0.00008000"
         timing = consolidated["timings"]
         assert timing["status"] == "completed"
         assert timing["run_elapsed_seconds"] >= 0
@@ -473,26 +501,29 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     assert (folder / "roma.txt").read_bytes() == b"  Uno.\r\n\r\nDos.  "
     terminal = capsys.readouterr().out
     lines = terminal.splitlines()
-    assert len(lines) == 15
-    for offset in (0, 5, 10):
-        assert lines[offset:offset + 3] == [
+    assert len(lines) == 18
+    for offset in (0, 6, 12):
+        assert lines[offset:offset + 4] == [
             "  B1.1 total: 0.250 s $0.00002000",
             "  B1.2 total: 0.250 s $0.00002000",
             "  B2 total: 0.250 s $0.00002000",
+            "  B3 total: 0.250 s $0.00002000",
         ]
         assert re.fullmatch(
             r"  B2 images total: \d+\.\d{3} s \$0\.00000000",
-            lines[offset + 3],
-        ) is not None
-        assert re.fullmatch(
-            r"  Run total: \d+\.\d{3} s \$0\.00006000",
             lines[offset + 4],
         ) is not None
-    assert streamed_stages == ["B1.1", "B1.2", "B2"] * 3
-    assert printed_events == ["B1.1", "B1.2", "B2", "B2 images", "Run"] * 3
+        assert re.fullmatch(
+            r"  Run total: \d+\.\d{3} s \$0\.00008000",
+            lines[offset + 5],
+        ) is not None
+    assert streamed_stages == ["B1.1", "B1.2", "B2", "B3"] * 3
+    assert printed_events == [
+        "B1.1", "B1.2", "B2", "B3", "B2 images", "Run"
+    ] * 3
     assert "This token-based estimate is not an OpenAI invoice" not in terminal
 
-    # The new alias must stop after B2, preserving all planning artifacts.
+    # Skipping images still preserves the complete professional B3 plan.
     async def image_stage_must_not_run(_destination, _plan):
         pytest.fail("--no-image must not invoke AI33 or the official OpenAI fallback")
 
@@ -501,6 +532,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     asyncio.run(runner.main())
     skipped_output = tmp_path / "output" / "roma"
     assert (skipped_output / "B2" / "merged_output.json").is_file()
+    assert (skipped_output / "B3" / "merged_output.json").is_file()
     assert (skipped_output / "visual_plan.json").is_file()
     assert not (skipped_output / "images").exists()
     skipped_report = json.loads(
@@ -592,3 +624,25 @@ def test_single_text_model_and_medium_reasoning_configuration() -> None:
     assert fields["openai_reasoning_effort"].default == "medium"
     assert "openai_b_model" not in fields
     assert "openai_b_reasoning_effort" not in fields
+
+
+def test_b3_artifacts_fail_closed_until_input_and_output_are_durable(
+    tmp_path: Path,
+) -> None:
+    artifacts = runner.BotArtifacts(tmp_path)
+    artifacts.input("B3", 1, {"group_id": 1, "beats": []})
+
+    with pytest.raises(RuntimeError, match="durable output.json"):
+        artifacts.require_b3_group_outputs(1)
+
+    artifacts.output(
+        "B3", 1, {"pipeline_stage": "B3", "group_id": 1, "beats": []}
+    )
+    artifacts.require_b3_group_outputs(1)
+
+    assert json.loads(
+        (tmp_path / "B3" / "group_1" / "input.json").read_text(encoding="utf-8")
+    ) == {"group_id": 1, "beats": []}
+    assert json.loads(
+        (tmp_path / "B3" / "group_1" / "output.json").read_text(encoding="utf-8")
+    ) == {"pipeline_stage": "B3", "group_id": 1, "beats": []}
