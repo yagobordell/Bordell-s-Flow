@@ -350,6 +350,8 @@ def managed_complete(tmp_path: Path) -> tuple[Path, Path, Path]:
     for name in ("B1.1", "B1.2", "B2"):
         _json(work, f"{name}/block_1/input.json", {"stage": name})
         _json(work, f"{name}/block_1/output.json", {"stage": name})
+    _json(work, "B3/group_1/input.json", {"stage": "B3"})
+    _json(work, "B3/group_1/output.json", {"stage": "B3"})
     avatar_sha = _put(work, "avatar.png", b"avatar image bytes")
     qr_sha = _put(work, "qr.png", b"qr image bytes")
     _json(work, "avatar_voice.json", {"voice_id": "x"})
@@ -437,6 +439,8 @@ def test_partial_run_exposes_bot_outputs_before_final_video(
     sync_managed_outputs(work, target)
     assert (target / "outputs" / "B1.1" / "block_1" / "input.json").is_file()
     assert (target / "outputs" / "B2" / "block_1" / "output.json").is_file()
+    assert (target / "outputs" / "B3" / "group_1" / "input.json").is_file()
+    assert (target / "outputs" / "B3" / "group_1" / "output.json").is_file()
     assert not (target / "manifest.json").exists()
 
 
