@@ -1089,6 +1089,13 @@ async def regenerate_professional_audio_block(
     saved_transcript = {**transcript, "source_audio_sha256": new_sha}
     _json(attempt_stt, saved_transcript)
     attempt_stt_sha = hashlib.sha256(attempt_stt.read_bytes()).hexdigest()
+    attempt = {
+        **attempt,
+        "status": "stt_completed",
+        "stt_sha256": attempt_stt_sha,
+    }
+    state["attempts"] = [*attempts, attempt]
+    _json(state_path, state)
 
     # Rebuild the complete narration from the candidate WAV before touching the
     # active group. A local join failure therefore leaves the saved run intact.
@@ -1134,8 +1141,11 @@ async def regenerate_professional_audio_block(
     canonical_stt = folder / "stt.json"
     _json(canonical_stt, saved_transcript)
     canonical_stt_sha = hashlib.sha256(canonical_stt.read_bytes()).hexdigest()
+    prior_task_id = item.get("task_id")
+    if not isinstance(prior_task_id, str) or not prior_task_id:
+        prior_task_id = f"gemini-{block_id}"
     item.update({
-        "task_id": f"{item.get('task_id', f'gemini-{block_id}')}-regen-{attempt_number}",
+        "task_id": f"{prior_task_id}-regen-{attempt_number}",
         "sha256": new_sha,
         "bytes": len(generated.content),
         "format": "wav",
