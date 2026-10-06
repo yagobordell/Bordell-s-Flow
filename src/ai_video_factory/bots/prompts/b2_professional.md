@@ -551,6 +551,29 @@ audio = false is required for:
 Do not add dialogue, visible speaking or lip-sync instructions to audio=false
 coverage.
 
+Operational audio-run limit
+
+The application enforces a hard maximum of 120 narration characters across every
+maximal run of consecutive audio=true beats in whole-video order. For this B2
+worker, enforce the same limit within the current block. Beat characters are counted
+from the frozen beat text after trimming only boundary whitespace; spaces and
+punctuation inside the beat count.
+
+Any audio=false beat breaks the spoken run. Changing visual_type alone does NOT
+break the run when audio remains true.
+
+This is a technical generation constraint, not a carrier quota or a preference
+against the narrator. Mandatory intro/close anchors remain immutable even when they
+participate in a run.
+
+Before returning success, inspect every consecutive audio=true run in the current
+block. If one exceeds 120 characters, choose a discretionary beat whose narration
+can remain fully faithful as voice-over and assign it a coherent audio=false
+media_image or media_video treatment. Prefer a break position that leaves both
+neighboring audio=true segments at or below 120 characters. Keep the frozen
+narration unchanged and do not alter unrelated valid visual decisions merely to
+create cadence.
+
 9. reference
 
 reference is a JSON boolean indicating whether the supplied avatar reference image
@@ -960,6 +983,8 @@ Narrator
 - A narrator visibly occupying the active setup is never a frozen media_image or an
   audio=false media_video.
 - Presenter coverage outside the setup uses audio=false.
+- Every maximal consecutive audio=true run inside this block contains at most 120
+  frozen narration characters; audio=false beats are the only run separators.
 - Incidental posture/location wording did not force unnecessary relocation.
 - Regenerated avatar remains fundamentally talking-head presenter delivery; scenes
   requiring beat-specific generated motion use media_video.

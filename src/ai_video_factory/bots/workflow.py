@@ -338,6 +338,76 @@ def _avatar_run_error(
     )
 
 
+@dataclass(frozen=True)
+class _AvatarRunBreak:
+    beat_id: str
+    left_characters: int
+    right_characters: int
+
+    @property
+    def sufficient(self) -> bool:
+        return max(self.left_characters, self.right_characters) <= (
+            _MAX_CONSECUTIVE_AVATAR_CHARACTERS
+        )
+
+
+def _preferred_avatar_run_break(
+    outputs: tuple[B2Output | ProfessionalB2Output, ...],
+    run: list[_AvatarRunBeat],
+    characters: int,
+    *,
+    professional: bool,
+) -> _AvatarRunBreak | None:
+    """Choose the most balanced discretionary beat for breaking one overlong run."""
+    blocks = {
+        output.blocks[0].block_id: output.blocks[0]
+        for output in outputs
+        if output.blocks
+    }
+    candidates: list[tuple[int, int, str, int, int]] = []
+    offset = 0
+    for beat in run:
+        left = offset
+        right = characters - left - beat.characters
+        offset += beat.characters
+        block = blocks.get(beat.block_id)
+        if block is None:
+            continue
+        index = next(
+            (
+                item_index
+                for item_index, item in enumerate(block.beats)
+                if item.beat_id == beat.beat_id
+            ),
+            None,
+        )
+        if index is None:
+            continue
+        mandatory = professional and (
+            (block.type == "intro" and index == 0)
+            or (block.type == "close" and index == len(block.beats) - 1)
+        )
+        if mandatory:
+            continue
+        candidates.append(
+            (
+                max(left, right),
+                -beat.characters,
+                beat.beat_id,
+                left,
+                right,
+            )
+        )
+    if not candidates:
+        return None
+    _, _, beat_id, left, right = min(candidates)
+    return _AvatarRunBreak(
+        beat_id=beat_id,
+        left_characters=left,
+        right_characters=right,
+    )
+
+
 def repair_frozen_b2_text(
     result: B2Output | ProfessionalB2Output,
     supplied: B2Input,
@@ -1147,6 +1217,46 @@ async def run_b_pipeline(
                     if getattr(provider, "supports_response_continuation", False)
                     else None
                 )
+                targeted_run_repair = ""
+                if (
+                    visual_style == "profesional"
+                    and isinstance(error, BPipelineValidationError)
+                    and str(error).startswith("B2 consecutive audio=true beats")
+                    and isinstance(candidate, ProfessionalB2Output)
+                ):
+                    overflow = _overlong_avatar_run((candidate,))
+                    if overflow is not None:
+                        run, total = overflow
+                        preferred = _preferred_avatar_run_break(
+                            (candidate,),
+                            run,
+                            total,
+                            professional=True,
+                        )
+                        if preferred is not None:
+                            if preferred.sufficient:
+                                split_detail = (
+                                    "This single cut is sufficient: it leaves adjacent "
+                                    f"audio=true segments of {preferred.left_characters} and "
+                                    f"{preferred.right_characters} characters, both within "
+                                    f"the {_MAX_CONSECUTIVE_AVATAR_CHARACTERS}-character limit. "
+                                )
+                            else:
+                                split_detail = (
+                                    "This is the most balanced first cut, but another "
+                                    "audio=false break may still be required afterward. "
+                                )
+                            targeted_run_repair = (
+                                " This validation failure is specifically the professional "
+                                "audio-run limit. Change beat "
+                                f"{preferred.beat_id} to a faithful audio=false media_image "
+                                "or media_video treatment and update its prompt, video_prompt "
+                                "and reference fields coherently for that carrier. "
+                                + split_detail
+                                + "Keep every other valid beat unchanged unless an additional "
+                                "break is still required."
+                            )
+
                 feedback = validation_feedback(
                     "B2 " + visual_style, error, block_id=block_id,
                     previous=candidate.model_dump() if candidate else None,
@@ -1174,6 +1284,7 @@ async def run_b_pipeline(
                             "reuse the original avatar without regeneration."
                             if visual_style == "profesional" else ""
                         )
+                        + targeted_run_repair
                     ),
                 )
 

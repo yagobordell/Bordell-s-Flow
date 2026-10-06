@@ -15,6 +15,7 @@ from ai_video_factory.bots.contracts import (
 from ai_video_factory.bots.workflow import (
     BPipelineValidationError,
     _overlong_avatar_run,
+    _preferred_avatar_run_break,
     run_b_pipeline,
     validate_visuals,
 )
@@ -139,6 +140,31 @@ def test_professional_visual_type_change_does_not_reset_spoken_run() -> None:
     )
     with pytest.raises(BPipelineValidationError, match="total 121 characters"):
         validate_visuals(result, supplied)
+
+
+def test_professional_retry_targets_only_single_break_that_solves_39_29_78_47() -> None:
+    _supplied, result = _b2_pair(
+        [39, 29, 78, 47],
+        ["avatar", "avatar", "avatar", "avatar"],
+        professional=True,
+        audios=[True, True, True, True],
+    )
+    overflow = _overlong_avatar_run((result,))
+    assert overflow is not None
+    run, total = overflow
+
+    preferred = _preferred_avatar_run_break(
+        (result,),
+        run,
+        total,
+        professional=True,
+    )
+
+    assert preferred is not None
+    assert preferred.beat_id == "1C"
+    assert preferred.left_characters == 68
+    assert preferred.right_characters == 47
+    assert preferred.sufficient is True
 
 
 def _checkpoint(
