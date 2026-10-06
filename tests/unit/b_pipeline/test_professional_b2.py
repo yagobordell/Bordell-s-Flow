@@ -101,7 +101,7 @@ def test_professional_b2_video_only_reliability_rules_are_explicit() -> None:
         .read_text(encoding="utf-8")
     )
     assert "MEDIA_VIDEO GENERATION RELIABILITY RULE — VIDEO ONLY" in prompt
-    assert "They do\nNOT restrict media_image" in prompt
+    assert "They do NOT ban these subjects, objects or completed states from\nmedia_image in general" in prompt
     assert "writing on paper" in prompt
     assert "typing or entering visible numbers" in prompt
     assert "scratching a card" in prompt
