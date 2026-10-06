@@ -690,3 +690,264 @@ def test_tagged_modern_v3_checkpoint_is_repaired_only_for_its_block(tmp_path):
     ] == "Measured, conversational"
     rejected = tmp_path / "V3" / "block_1" / "rejected_v3_inline_tags.json"
     assert "<sigh>" in rejected.read_text(encoding="utf-8")
+
+
+def test_gemini_fidelity_regeneration_replaces_only_failed_group(
+    tmp_path, monkeypatch,
+) -> None:
+    block = _block()
+    plan = {"blocks": [block]}
+    v4_path = tmp_path / "V4" / "block_1" / "output.json"
+    v4_path.parent.mkdir(parents=True)
+    v4_path.write_text(
+        json.dumps(_v4().model_dump(mode="json", by_alias=True)),
+        encoding="utf-8",
+    )
+
+    run_id = "gemini-test-run"
+    run_dir = tmp_path / "audio" / "runs" / run_id
+    folder = run_dir / "blocks" / "block_1"
+    folder.mkdir(parents=True)
+    old_audio = _wav(48000)
+    old_sha = hashlib.sha256(old_audio).hexdigest()
+    (folder / "audio.wav").write_bytes(old_audio)
+    old_stt_dir = folder / "stt_attempts"
+    old_stt_dir.mkdir()
+    old_stt = old_stt_dir / "attempt_2.json"
+    old_stt_payload = {
+        "model": "whisper-1",
+        "source_audio_sha256": old_sha,
+        "words": [{"word": "wrong", "start": 0.0, "end": 0.05}],
+    }
+    old_stt.write_text(json.dumps(old_stt_payload), encoding="utf-8")
+    (folder / "stt_retry_state.json").write_text(
+        json.dumps({
+            "schema_version": "fish-stt-retries-v1",
+            "source_audio_sha256": old_sha,
+            "model": "whisper-1",
+            "attempts": [
+                {"attempt": 1, "status": "completed"},
+                {"attempt": 2, "status": "completed"},
+            ],
+        }),
+        encoding="utf-8",
+    )
+    old_stt_sha = hashlib.sha256(old_stt.read_bytes()).hexdigest()
+    item = {
+        "block_id": 1,
+        "source_block_ids": [1],
+        "task_id": "gemini-old-1",
+        "file": (folder / "audio.wav").relative_to(tmp_path).as_posix(),
+        "sha256": old_sha,
+        "format": "wav",
+        "bytes": len(old_audio),
+        "credit_cost": None,
+        "director_usage": None,
+        "stt": {
+            "file": old_stt.relative_to(tmp_path).as_posix(),
+            "sha256": old_stt_sha,
+            "model": "whisper-1",
+            "word_count": 1,
+        },
+    }
+    narration = run_dir / "narration.wav"
+    narration.write_bytes(_wav(48000))
+    artifact = {
+        "status": "completed",
+        "provider": "gemini",
+        "voice_source": "gemini",
+        "voice_id": "Algenib",
+        "run_id": run_id,
+        "file": narration.relative_to(tmp_path).as_posix(),
+        "sha256": hashlib.sha256(narration.read_bytes()).hexdigest(),
+        "format": "wav",
+        "bytes": narration.stat().st_size,
+        "duration_seconds": 0.1,
+        "pause_between_blocks_seconds": 0.5,
+        "block_start_seconds": [0.0],
+        "block_end_seconds": [0.1],
+        "block_durations_seconds": [0.1],
+        "stt_complete": True,
+        "stt_model": "whisper-1",
+        "block_count": 1,
+        "blocks": [item],
+        "credit_cost": None,
+        "director_model": "test",
+    }
+    (folder / "task.json").write_text(
+        json.dumps({"status": "completed", "sha256": old_sha}),
+        encoding="utf-8",
+    )
+    (run_dir / "task.json").write_text(
+        json.dumps({
+            "status": "completed",
+            "model": pv.DEFAULT_GEMINI_TTS_MODEL,
+            "voice": "Algenib",
+            "run_id": run_id,
+            "audio": artifact,
+        }),
+        encoding="utf-8",
+    )
+
+    new_audio = _wav(24000)
+
+    class Speech:
+        calls = 0
+
+        async def generate_directed_speech(self, **kwargs):
+            self.calls += 1
+            assert kwargs["voice"] == "Algenib"
+            assert kwargs["turns"][0]["text"] == (
+                "Hola, <breath>mundo. Esa es la realidad."
+            )
+            return SimpleNamespace(content=new_audio)
+
+    class Stt:
+        model = "whisper-1"
+
+        def transcribe(self, path):
+            assert path.name == "attempt_1.wav"
+            return {
+                "model": self.model,
+                "text": "Hola mundo Esa es la realidad",
+                "language": "es",
+                "words": [
+                    {"word": "Hola", "start": 0.0, "end": 0.01},
+                    {"word": "mundo", "start": 0.01, "end": 0.02},
+                ],
+            }
+
+    def join(paths, destination):
+        assert paths == [folder / "audio.wav"]
+        joined = _wav(48000)
+        destination.write_bytes(joined)
+        return {
+            "sha256": hashlib.sha256(joined).hexdigest(),
+            "format": "wav",
+            "bytes": len(joined),
+            "duration_seconds": 0.1,
+            "block_start_seconds": [0.0],
+            "block_end_seconds": [0.1],
+            "block_durations_seconds": [0.1],
+        }
+
+    monkeypatch.setattr(pv, "join_audio_blocks", join)
+    speech = Speech()
+    attempt = asyncio.run(pv.regenerate_professional_audio_block(
+        tmp_path,
+        plan,
+        artifact,
+        1,
+        gemini_api_key="test-key",
+        stt_client=Stt(),
+        speech_provider=speech,
+    ))
+
+    assert attempt == 1
+    assert speech.calls == 1
+    new_sha = hashlib.sha256(new_audio).hexdigest()
+    assert artifact["blocks"][0]["sha256"] == new_sha
+    assert artifact["blocks"][0]["task_id"].endswith("-regen-1")
+    assert artifact["blocks"][0]["stt"]["file"].endswith("/block_1/stt.json")
+    assert hashlib.sha256((folder / "audio.wav").read_bytes()).hexdigest() == new_sha
+    history = folder / "tts_regenerations"
+    assert (history / "before_attempt_1.wav").read_bytes() == old_audio
+    assert (history / "before_attempt_1.stt.json").is_file()
+    assert (history / "before_attempt_1.stt_retry_state.json").is_file()
+    assert (history / "before_attempt_1.stt_attempts").is_dir()
+    state = json.loads((folder / "tts_regeneration_state.json").read_text())
+    assert state["attempts"][-1]["status"] == "completed"
+    assert json.loads((run_dir / "task.json").read_text())["audio"] == artifact
+    assert json.loads((tmp_path / "audio" / "latest.json").read_text()) == artifact
+
+
+def test_gemini_fidelity_regeneration_stops_after_three_paid_replacements(
+    tmp_path,
+) -> None:
+    block = _block()
+    plan = {"blocks": [block]}
+    v4_path = tmp_path / "V4" / "block_1" / "output.json"
+    v4_path.parent.mkdir(parents=True)
+    v4_path.write_text(
+        json.dumps(_v4().model_dump(mode="json", by_alias=True)),
+        encoding="utf-8",
+    )
+    run_id = "gemini-limit-run"
+    run_dir = tmp_path / "audio" / "runs" / run_id
+    folder = run_dir / "blocks" / "block_1"
+    folder.mkdir(parents=True)
+    audio_bytes = _wav()
+    digest = hashlib.sha256(audio_bytes).hexdigest()
+    audio_path = folder / "audio.wav"
+    audio_path.write_bytes(audio_bytes)
+    stt_path = folder / "stt.json"
+    stt_path.write_text(json.dumps({
+        "model": "whisper-1",
+        "source_audio_sha256": digest,
+        "words": [{"word": "Hola", "start": 0.0, "end": 0.05}],
+    }), encoding="utf-8")
+    item = {
+        "block_id": 1,
+        "source_block_ids": [1],
+        "task_id": "gemini-limit-1",
+        "file": audio_path.relative_to(tmp_path).as_posix(),
+        "sha256": digest,
+        "format": "wav",
+        "bytes": len(audio_bytes),
+        "stt": {
+            "file": stt_path.relative_to(tmp_path).as_posix(),
+            "sha256": hashlib.sha256(stt_path.read_bytes()).hexdigest(),
+            "model": "whisper-1",
+            "word_count": 1,
+        },
+    }
+    narration = run_dir / "narration.wav"
+    narration.write_bytes(audio_bytes)
+    artifact = {
+        "status": "completed",
+        "provider": "gemini",
+        "voice_id": "Algenib",
+        "run_id": run_id,
+        "file": narration.relative_to(tmp_path).as_posix(),
+        "sha256": digest,
+        "format": "wav",
+        "bytes": len(audio_bytes),
+        "duration_seconds": 0.1,
+        "block_start_seconds": [0.0],
+        "block_end_seconds": [0.1],
+        "block_durations_seconds": [0.1],
+        "stt_complete": True,
+        "blocks": [item],
+    }
+    (folder / "task.json").write_text(
+        json.dumps({"status": "completed", "sha256": digest}),
+        encoding="utf-8",
+    )
+    (run_dir / "task.json").write_text(
+        json.dumps({"status": "completed", "audio": artifact}),
+        encoding="utf-8",
+    )
+    (folder / "tts_regeneration_state.json").write_text(json.dumps({
+        "schema_version": "gemini-tts-regenerations-v1",
+        "run_id": run_id,
+        "block_id": 1,
+        "voice_id": "Algenib",
+        "model": pv.DEFAULT_GEMINI_TTS_MODEL,
+        "attempts": [
+            {"attempt": number, "status": "completed"}
+            for number in (1, 2, 3)
+        ],
+    }), encoding="utf-8")
+
+    with pytest.raises(
+        pv.ProfessionalAudioRegenerationLimitReached,
+        match="all 3 fidelity regenerations",
+    ):
+        asyncio.run(pv.regenerate_professional_audio_block(
+            tmp_path,
+            plan,
+            artifact,
+            1,
+            gemini_api_key="test-key",
+            stt_client=SimpleNamespace(model="whisper-1"),
+        ))
