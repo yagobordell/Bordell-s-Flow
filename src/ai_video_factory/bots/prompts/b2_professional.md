@@ -154,6 +154,21 @@ remaining meaningfully dynamic. Do not broaden this rule to unrelated actions.
 
 NARRATOR SETUP RULE: audio=true is reserved for the supplied avatar acting as the narrator while preserving BOTH the reference narration setup and the narrator's physical location/placement inside that setup. Preserve the same chair/seat/desk/vanity/anchoring position and the same posture class established by the reference. The camera may use a different angle, shot size or crop; the narrator may change expression/gaze and may naturally hold a small beat-relevant object such as a paper, phone or product. Do NOT use audio=true if the narrator would stand up from a seated setup, lie down, jump, walk elsewhere, relocate within the room, move to another environment, sit somewhere else, or otherwise change the narrator's established physical placement in the setup.
 
+NARRATOR-IN-SETUP FORMAT OVERRIDE: when the most natural composition for a beat
+shows the supplied narrator remaining in the preserved narration setup and the same
+physical placement/posture class, that fact OVERRIDES the ordinary static-versus-
+video format decision. Even if the visible moment could otherwise be summarized by
+a still image — for example the narrator sitting in the established setup while
+holding, showing or referring to a card, phone, paper or product — do NOT move the
+narrator out of the setup and do NOT convert that composition to media_image merely
+to satisfy normal still-image reasoning.
+
+Instead use media_video with reference=true and audio=true. The image prompt may
+describe an essentially still speaking composition in the preserved setup; the
+video_prompt should add synchronized speech, natural facial movement, small gaze
+changes and restrained secondary gestures compatible with A2V. This is an explicit
+exception to the ordinary rule that a visually static moment would use media_image.
+
 For generated full-screen narrator coverage that satisfies this setup rule, use media_video with reference=true and audio=true. Never use media_image or media_video with audio=false for the narrator while they remain in that preserved narration setup. If the beat requires the narrator outside that setup or in a substantially different body position, use observational coverage with audio=false and let the narration remain voice-over.
 
 Also choose media_video whenever a generated full-screen shot must show synchronized visible speech (audio=true), even if its starting frame is photograph-like. The pipeline animates that image as an A2V video.
@@ -609,6 +624,16 @@ break a genuine visual sequence merely to keep avatar_media.
 A qualifying numbered sequence may mix media_image, media_video and a regenerated
 avatar, but never avatar_media.
 
+The narrator-in-setup format override remains fully valid inside a numbered
+continuity/grid sequence. A grid may therefore progress naturally from a
+media_video beat with the narrator speaking in the preserved setup while holding
+the continuity-anchor object, to one or more media_image close-ups/details of that
+same object, and then back to another compatible generated asset if useful. Do NOT
+relocate the narrator, disable audio, or choose observational media_video merely
+because a neighboring grid panel is better represented as media_image. Mixed
+media_video/media_image continuity is valid and expected when each carrier is the
+best treatment for its own beat.
+
 Do not number merely because generated beats are adjacent. Number only when visual continuity between them materially matters.
 
 An avatar beat with prompt = null ends the generated-asset sequence because no new image is generated.
@@ -623,7 +648,7 @@ freeze upstream fields;
 apply the immutable intro/close full-field anchor if this beat is a required boundary beat; keep it unchanged and skip discretionary steps 3-12;
 for every other beat, identify its primary communicative function;
 resolve the relevant person/character/object/place and narration ownership;
-decide whether presenter presence, presenter plus support, a documentary still or a documentary video is the most natural carrier; when a dynamic beat contains a listed forbidden video motion, preserve the dynamic carrier and re-stage that motion safely rather than falling back to media_image;
+decide whether presenter presence, presenter plus support, a documentary still or a documentary video is the most natural carrier; if the most natural composition keeps the narrator in the preserved narration setup/position, apply the narrator-in-setup format override before ordinary static-versus-video reasoning and use media_video with reference=true and audio=true; when a dynamic beat contains a listed forbidden video motion, preserve the dynamic carrier and re-stage that motion safely rather than falling back to media_image;
 choose visual_type without format quotas or tie-breaking bias;
 cast generated human demonstrators with the contextual presenter preference while preserving distinct story-character identities;
 decide reference from actual visual/identity continuity dependency;
@@ -653,7 +678,7 @@ reference correctness: every dependency on the supplied image is explicit and un
 referenced visible faces: a natural beat-specific expression and relevant gaze/attention are explicit rather than inherited from the input photo;
 still/video action fit: a referenced presenter actively demonstrating an ongoing practical step uses media_video rather than an inert still, while real result/portrait/pause shots remain eligible for media_image;
 animation specificity: each media_video has a nonempty video_prompt describing real-time action development consistent with its first image and speaking/voice-over routing;
-audio correctness: media_image always has audio=false, without speaking instructions; audio=true is reserved for the supplied avatar narrator in the preserved reference narration setup and physical placement/posture class; generated full-screen narrator coverage in that setup uses media_video with reference=true and audio=true, while leaving/changing that placement requires audio=false voice-over coverage;
+audio correctness: media_image always has audio=false, without speaking instructions; audio=true is reserved for the supplied avatar narrator in the preserved reference narration setup and physical placement/posture class; generated full-screen narrator coverage in that setup uses media_video with reference=true and audio=true even when the visual moment is essentially static, and neighboring media_image grid panels do not justify relocating the narrator or disabling audio; leaving/changing that placement requires audio=false voice-over coverage;
 continuity: numbering is used whenever adjacent generated assets share a meaningful visual continuity anchor that materially benefits consistency, including object-only continuity, and omitted otherwise;
 spoken-run limit: no avoidable >120-character consecutive audio=true run is created.
 Do not optimize whole-script format percentages. Runs of any format are acceptable when justified by content and technical constraints.
