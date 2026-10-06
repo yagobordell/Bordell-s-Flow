@@ -109,7 +109,8 @@ def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions()
     assert "13. screens and documents" in lowered
     assert "simply omit that content specification" in lowered
     assert "(for context:" in lowered
-    assert "it does not impose extra visual properties" in lowered
+    assert "it does not impose extra visual" in lowered
+    assert "properties on the screen, document or object" in lowered
 
 def _professional_anchor_output(
     kind: str, beats: list[dict],
@@ -231,7 +232,8 @@ def test_professional_b2_global_framing_sequence_progression_and_still_audio() -
     assert "14. camera and composition" in lowered
     assert "for every generated beat" in lowered
     assert "do not vary framing solely for variety" in lowered
-    assert "a tighter image composition is a framing choice" in lowered
+    assert "a tighter image" in lowered
+    assert "composition is a framing choice" in lowered
     assert "avoid accidental near-duplicate adjacent shots" in lowered
     assert "18. continuity shot progression" in lowered
     assert "media_image always uses audio=false" in lowered
