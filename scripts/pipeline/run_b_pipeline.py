@@ -2318,6 +2318,24 @@ class BotArtifacts:
             {"attempt": attempt, "validation_error": error, "response": payload},
         )
 
+    def require_b3_group_outputs(self, group_count: int) -> None:
+        """Fail closed unless every completed B3 call has durable input/output JSON."""
+        if group_count < 0:
+            raise ValueError("B3 group count cannot be negative")
+        root = self._output / "B3"
+        if root.is_symlink():
+            raise RuntimeError("Refusing linked B3 artifact directory")
+        for group_id in range(1, group_count + 1):
+            folder = self._folder("B3", group_id)
+            if folder.is_symlink():
+                raise RuntimeError(f"Refusing linked B3 group directory: {folder}")
+            for filename in ("input.json", "output.json"):
+                path = folder / filename
+                if path.is_symlink() or not path.is_file():
+                    raise RuntimeError(
+                        f"B3 group {group_id} completed without durable {filename}"
+                    )
+
 
 class TimingLedger:
     """Monotonic wall-clock timing; parallel calls are not added into stage wall time."""
@@ -2852,6 +2870,8 @@ async def main() -> None:
         nonlocal planned_blocks
         if stage != "B3":
             planned_blocks = blocks
+        else:
+            artifacts.require_b3_group_outputs(blocks)
         if merged_output is not None:
             _write(output / stage / "merged_output.json", merged_output)
         report_count = planned_blocks if stage == "B3" else blocks
