@@ -60,8 +60,10 @@ def test_professional_b2_keeps_global_image_style_out_of_bot_prompt() -> None:
         .joinpath("b2_professional.md")
         .read_text(encoding="utf-8")
     )
-    assert "iPhone 16/17 Pro Max" not in instructions
-    assert "application injects the canonical image style" in instructions.lower()
+    lowered = instructions.lower()
+    assert "iphone 16/17 pro max" not in lowered
+    assert "application owns the" in lowered
+    assert "global visual style" in lowered
 
 
 def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
@@ -70,29 +72,24 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
         .joinpath("b2_professional.md")
         .read_text(encoding="utf-8")
     )
-    # Casting preference must not become a media/presenter visual_type quota.
-    assert "Visual format and human casting are independent decisions" in prompt
-    assert "prefer using the actual presenter" in prompt
-    assert "story characters keep their own identity" in prompt
-    # The same photo can preserve identity without freezing expression and gaze.
-    assert "Never rely on the reference photo's fixed smile" in prompt
-    assert "If the face is not visible" in prompt
-    # Voice sync is restricted to the narrator's stable reference setup.
-    assert "NARRATOR SETUP RULE" in prompt
-    assert "audio=true is reserved for the supplied avatar" in prompt
-    assert "physical location/placement" in prompt
-    assert "stand up from a seated setup" in prompt
-    assert "paper, phone or product" in prompt
-    assert "NARRATOR-IN-SETUP NO-FREEZE RULE" in prompt
-    assert "A2V does not guarantee detailed" in prompt
-    # Branding choices are deliberately outside the B2 policy.
-    for token in ("branding", "brands", "logos", "packaging"):
-        assert token not in prompt.lower()
-    assert "STRONG PRESENTER ACTION DEFAULT" in prompt
-    assert "Video animation prompt (video_prompt)" in prompt
-    assert "When audio=false, video_prompt is sent DIRECTLY to I2V" in prompt
-    assert "When audio=true, video_prompt is instead sent to the A2V" in prompt
-
+    lowered = prompt.lower()
+    # Carrier choice must remain semantic rather than quota-driven.
+    assert "do not optimize carrier percentages, cadence or visual variety" in lowered
+    # Narrative identity must win over convenient presenter substitution.
+    assert "do not replace an established third-party person with the presenter" in lowered
+    assert "presenter identity was not erased where semantically required" in lowered
+    # Reference identity does not freeze expression, gaze or framing.
+    assert "expression" in lowered
+    assert "gaze/attention" in lowered
+    assert "preserve identity, not the source image's fixed expression or pose" in lowered
+    # Voice sync is restricted to the narrator's preserved setup.
+    assert "preserve setup when possible" in lowered
+    assert "audio = true is valid for" in lowered
+    assert "media_video showing the supplied narrator in the preserved narration setup" in lowered
+    assert "leaving the setup changes the speaking route" in lowered
+    # Text-bearing objects must not acquire invented readability/branding constraints.
+    assert "do not convert that omission into instructions about" in lowered
+    assert "readability, legibility, indistinctness, missing text, generic branding" in lowered
 
 def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions() -> None:
     prompt = (
@@ -100,24 +97,19 @@ def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions()
         .joinpath("b2_professional.md")
         .read_text(encoding="utf-8")
     )
-    assert "The FIRST beat of every type=intro block MUST" in prompt
-    assert "The LAST beat of every type=close block MUST" in prompt
-    assert "prompt=null, video_prompt=null, reference=false, audio=true" in prompt
-    assert "skip discretionary steps 3-12" in prompt
-    assert "Write every image prompt as an affirmative description" in prompt
-    assert "omit\nnegative prompt clauses, preventive exclusions" in prompt
-    # Keep these assertions synchronized with main's current screen/document
-    # context section. B2 prompt policy itself is out of scope for this A2V PR.
-    assert "Screens and documents: context belongs outside the visible scene" in prompt
-    assert "Choose the visible scene, subject, shot size and camera viewpoint" in prompt
-    assert "(For context:" in prompt
-    assert "Apply the same separation in video_prompt" in prompt
-    assert "Preserve the same relevant" in prompt
-    assert "specific app, page or document content only as parenthetical context" in prompt
-    # Avoid replacing one brand rule with another, including in this correction.
-    for word in ("brands", "branding", "logos", "packaging"):
-        assert word not in prompt.lower()
-
+    lowered = prompt.lower()
+    assert "for the first beat of an intro block:" in lowered
+    assert "for the last beat of a close block:" in lowered
+    assert "prompt = null" in lowered
+    assert "reference = false" in lowered
+    assert "audio = true" in lowered
+    assert "skip discretionary" in lowered
+    assert "write image and video prompts as concise affirmative descriptions" in lowered
+    assert "omit negative clauses, preventive exclusions and routine disclaimers" in lowered
+    assert "13. screens and documents" in lowered
+    assert "simply omit that content specification" in lowered
+    assert "(for context:" in lowered
+    assert "it does not impose extra visual properties" in lowered
 
 def _professional_anchor_output(
     kind: str, beats: list[dict],
@@ -235,15 +227,16 @@ def test_professional_b2_global_framing_sequence_progression_and_still_audio() -
         .joinpath("b2_professional.md")
         .read_text(encoding="utf-8")
     )
-    assert "Global shot composition and camera-angle freedom" in instructions
-    assert "For EVERY generated beat throughout the video" in instructions
-    assert "not only in numbered" in instructions
-    assert "slightly zoomed-in COMPOSITION" in instructions
-    assert "Downstream\nKen Burns handles still-image motion" in instructions
-    assert "Shot progression is ESPECIALLY important within continuous sequences" in instructions
-    assert "near-duplicate images" in instructions
-    assert "For media_image, audio MUST always be false" in instructions
-    assert "NARRATOR-IN-SETUP NO-FREEZE RULE" in instructions
+    lowered = instructions.lower()
+    assert "14. camera and composition" in lowered
+    assert "for every generated beat" in lowered
+    assert "do not vary framing solely for variety" in lowered
+    assert "a tighter image composition is a framing choice" in lowered
+    assert "avoid accidental near-duplicate adjacent shots" in lowered
+    assert "18. continuity shot progression" in lowered
+    assert "media_image always uses audio=false" in lowered
+    assert "never show the narrator occupying the preserved narration setup as a frozen" in lowered
+
 
 
 @pytest.mark.parametrize(
@@ -311,13 +304,17 @@ def test_professional_prompt_forbids_frozen_narrator_in_reference_setup() -> Non
         .joinpath("b2_professional.md")
         .read_text(encoding="utf-8")
     )
+    lowered = prompt.lower()
+    assert "never show the narrator occupying the preserved narration setup as a frozen" in lowered
     assert (
-        "NEVER show the narrator sitting/placed in the preserved narration setup "
-        "as a frozen still"
-    ) in prompt
-    assert "Never use media_image or media_video with audio=false" in prompt
-    assert "physical placement/posture class" in prompt
-    assert "different camera angle, crop or shot size is allowed" in prompt
+        "never use media_image or media_video with audio=false for a narrator visibly"
+        in lowered
+    )
+    assert "same physical placement/posture class" in lowered
+    assert "camera angle" in lowered
+    assert "shot size" in lowered
+    assert "crop" in lowered
+
 
 
 @pytest.mark.parametrize(
