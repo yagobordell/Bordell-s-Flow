@@ -66,6 +66,7 @@ from ai_video_factory.inference.salad_image_upscaler_start import (
 )
 from ai_video_factory.managed_layout import publish_managed_run, sync_managed_outputs
 from ai_video_factory.providers import OpenAIProvider
+from ai_video_factory.providers.b3_shots import B3ShotImageError, generate_b3_shot_images
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
 from ai_video_factory.providers.avatar_library import (
     avatar_directory,
@@ -1065,6 +1066,25 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
         }
         for item in manifest["items"] if item.get("grid") is not None
     ]
+    has_b3 = any(
+        isinstance(beat.get("continuous"), bool)
+        for block in plan["blocks"] for beat in block["beats"]
+        if beat.get("audio") is True
+    )
+    if professional and has_b3:
+        try:
+            b3_shots = await asyncio.to_thread(
+                generate_b3_shot_images,
+                output,
+                plan,
+                api_key=settings.openai_api_key,
+                options=_image_options(),
+            )
+        except B3ShotImageError as exc:
+            raise ImageGenerationError(str(exc)) from exc
+        plan["b3_shot_assets"] = b3_shots
+        manifest["b3_shot_assets"] = b3_shots
+        _write(output / "images" / "manifest.json", manifest)
     _write(output / "visual_plan.json", plan)
     return manifest
 
