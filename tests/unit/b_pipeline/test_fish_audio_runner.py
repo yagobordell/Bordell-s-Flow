@@ -494,3 +494,62 @@ def test_stop_saves_resumable_stages_without_audio_or_images(
             assert not (output / relative).exists()
         assert not (output / "audio").exists()
 
+
+
+def test_preflight_regenerates_same_gemini_group_after_stt_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audio = {
+        "status": "completed",
+        "provider": "gemini",
+        "stt_complete": True,
+        "blocks": [],
+    }
+    plan = {"blocks": [{"block_id": 3, "beats": []}]}
+    checks = 0
+    regenerations: list[int] = []
+
+    def fake_preflight(_output, _plan, candidate):
+        nonlocal checks
+        checks += 1
+        if not candidate.get("regenerated"):
+            raise runner.SttAlignmentError(3, "repeatable Gemini mismatch")
+        return {"status": "completed"}
+
+    async def fake_retranscribe(*_args, **_kwargs):
+        raise runner.SttRetryLimitReached(
+            "STT block 3 already used both attempts for this audio"
+        )
+
+    async def fake_regenerate(
+        output, saved_plan, candidate, block_id, *, gemini_api_key, stt_client,
+    ):
+        assert output == tmp_path
+        assert saved_plan is plan
+        assert block_id == 3
+        assert gemini_api_key == "gemini-key"
+        assert stt_client is stt
+        regenerations.append(block_id)
+        candidate["regenerated"] = True
+        return 1
+
+    stt = object()
+    monkeypatch.setattr(runner, "_preflight_stt_alignment", fake_preflight)
+    monkeypatch.setattr(runner, "retranscribe_audio_block", fake_retranscribe)
+    monkeypatch.setattr(
+        runner, "regenerate_professional_audio_block", fake_regenerate,
+    )
+    monkeypatch.setattr(runner, "OpenAISttClient", lambda *, api_key: stt)
+    monkeypatch.setattr(runner.settings, "openai_api_key", "openai-key")
+    monkeypatch.setattr(runner.settings, "gemini_api_key", "gemini-key")
+
+    result = asyncio.run(runner._preflight_stt_alignment_with_retries(
+        tmp_path,
+        plan,
+        audio,
+        allow_audio_regeneration=False,
+    ))
+
+    assert result == {"status": "completed"}
+    assert checks == 2
+    assert regenerations == [3]
