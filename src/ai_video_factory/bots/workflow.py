@@ -338,6 +338,33 @@ def _avatar_run_error(
     )
 
 
+def repair_frozen_b2_text(
+    result: B2Output | ProfessionalB2Output,
+    supplied: B2Input,
+) -> B2Output | ProfessionalB2Output:
+    """Restore B1.2 narration before visual validation, without a retry.
+
+    B2 owns visual decisions only. If the model changes the text of an
+    otherwise structurally matching beat (including CRLF/LF normalization),
+    the frozen B1.2 text is authoritative and is restored locally.
+    Structural changes such as changed beat IDs or beat counts remain errors.
+    """
+    if result.error is not None or not result.blocks:
+        return result
+    actual = result.blocks[0]
+    expected = supplied.blocks[0]
+    if (
+        len(actual.beats) != len(expected.beats)
+        or [beat.beat_id for beat in actual.beats]
+        != [beat.beat_id for beat in expected.beats]
+    ):
+        return result
+    repaired = result.model_copy(deep=True)
+    for visual, upstream in zip(repaired.blocks[0].beats, expected.beats, strict=True):
+        visual.text = upstream.text
+    return repaired
+
+
 def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input) -> None:
     _require_success("B2", result.error)
     if result.narrative_core != supplied.narrative_core or not result.blocks:
@@ -1089,6 +1116,7 @@ async def run_b_pipeline(
                 candidate = await call_b2(feedback, previous_response_id)
                 if candidate.error is not None:
                     _require_success("B2", candidate.error)
+                candidate = repair_frozen_b2_text(candidate, b2_input)
                 validate_visuals(candidate, b2_input)
                 if on_output is not None:
                     on_output("B2", block_id, candidate.model_dump())
@@ -1286,7 +1314,8 @@ async def run_b_pipeline(
             )
             if on_rejected_b2_output is not None:
                 on_rejected_b2_output(
-                    block_id, b2_call_numbers[block_id], str(error), previous.model_dump()
+                    block_id, b2_call_numbers.get(block_id, 1),
+                    str(error), previous.model_dump()
                 )
             suffix = validation_feedback(
                 "B2 " + visual_style, error, block_id=block_id,
