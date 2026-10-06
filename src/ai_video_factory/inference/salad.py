@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import json
 import ssl
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 DEFAULT_SALAD_API_BASE_URL = "https://api.salad.com/api/public"
-REQUEST_TIMEOUT_SECONDS = 20
+REQUEST_TIMEOUT_SECONDS = 30
+READ_MAX_ATTEMPTS = 6
+TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 DEFAULT_USER_AGENT = "ai-video-factory-salad-client/1.0"
 
 
@@ -32,15 +35,29 @@ class SaladRequestError(RuntimeError):
         return self.message
 
 
+class SaladTransientRequestError(RuntimeError):
+    """Retryable Salad transport failure such as timeout or disconnect."""
+
+
 def build_salad_ssl_context() -> ssl.SSLContext:
     return ssl.create_default_context()
+
+
+def _read_retry_delay_seconds(attempt: int) -> int:
+    return min(15, 2 * attempt)
 
 
 class SaladClient:
     """Minimal Salad Container Groups client used by the host-owned autoscaler."""
 
-    def __init__(self, config: SaladDispatchConfig) -> None:
+    def __init__(
+        self,
+        config: SaladDispatchConfig,
+        *,
+        warning_logger: Callable[[str], None] | None = None,
+    ) -> None:
         self.config = config
+        self.warning_logger = warning_logger or print
 
     def start_container_group(self) -> None:
         self._validate_config()
@@ -173,11 +190,46 @@ class SaladClient:
         return headers
 
     def _get(self, url: str) -> dict[str, object]:
-        request = Request(url, method="GET", headers=self._headers())
-        status_code, detail = self._request(request)
-        if status_code != 200:
-            self._raise_request_error(status_code=status_code, url=url, detail=detail)
-        return _decode_object(detail, url=url)
+        for attempt in range(1, READ_MAX_ATTEMPTS + 1):
+            request = Request(url, method="GET", headers=self._headers())
+            try:
+                status_code, detail = self._request(request)
+            except SaladTransientRequestError as error:
+                if attempt >= READ_MAX_ATTEMPTS:
+                    raise
+                self._warn_read_retry(
+                    url=url,
+                    attempt=attempt,
+                    reason=str(error),
+                )
+                continue
+            if status_code == 200:
+                return _decode_object(detail, url=url)
+            if (
+                status_code in TRANSIENT_HTTP_STATUS_CODES
+                and attempt < READ_MAX_ATTEMPTS
+            ):
+                self._warn_read_retry(
+                    url=url,
+                    attempt=attempt,
+                    reason=f"HTTP {status_code}",
+                )
+                continue
+            self._raise_request_error(
+                status_code=status_code,
+                url=url,
+                detail=detail,
+            )
+        raise AssertionError("Salad GET retry loop exhausted unexpectedly")
+
+    def _warn_read_retry(self, *, url: str, attempt: int, reason: str) -> None:
+        delay_seconds = _read_retry_delay_seconds(attempt)
+        self.warning_logger(
+            "Warning: Salad GET transient failure "
+            f"({attempt}/{READ_MAX_ATTEMPTS}) url={url} reason={reason}; "
+            f"retrying in {delay_seconds} seconds."
+        )
+        time.sleep(delay_seconds)
 
     def _post(self, url: str) -> None:
         request = Request(url, data=b"", method="POST", headers=self._headers())
@@ -214,8 +266,8 @@ class SaladClient:
                 int(error.code),
                 error.read().decode("utf-8", errors="replace").strip(),
             )
-        except URLError as error:
-            raise RuntimeError(
+        except (TimeoutError, URLError, ConnectionError) as error:
+            raise SaladTransientRequestError(
                 f"Salad request failed url={request.full_url} error={error}"
             ) from error
 
