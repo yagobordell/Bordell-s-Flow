@@ -575,9 +575,9 @@ def test_all_ltx_jobs_are_published_before_first_wait(
     assert {value["run_id"] for value in submitted_metadata.values()} == {
         result["fingerprint"]
     }
-    assert sorted(
-        value["run_job_count"] for value in submitted_metadata.values()
-    ) == ["1", "2", "2"]
+    assert all(
+        "run_job_count" not in value for value in submitted_metadata.values()
+    )
 
 
 def test_legacy_run_metadata_manifest_is_migrated_in_place(

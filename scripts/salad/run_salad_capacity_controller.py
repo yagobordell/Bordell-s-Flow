@@ -52,7 +52,7 @@ def _validate_autoscaling_schema(postgres_dsn: str) -> None:
         with psycopg.connect(postgres_dsn) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    "SELECT started_at, finished_at, run_id, run_job_count FROM gpu.jobs LIMIT 0"
+                    "SELECT started_at, finished_at, run_id FROM gpu.jobs LIMIT 0"
                 )
                 cursor.execute(
                     """

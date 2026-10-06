@@ -1215,34 +1215,23 @@ def test_ltx_groups_have_independent_runtime_and_cold_start_calibration(
     assert config.zero_demand_stable_polls == 1
 
 
-def test_run_ltx_cost_contract_rejects_early_scale_overrides(
+def test_ltx_backlog_scaling_allows_cost_ceiling_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA", "29")
-    with pytest.raises(RuntimeError, match="jobs_per_replica=30"):
-        load_predictive_autoscaler_config(
-            stage_bindings=(_binding("ltx25", max_replicas=2),)
-        )
-
-    monkeypatch.delenv("SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA", raising=False)
+    monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA", "40")
     monkeypatch.setenv("SALAD_AUTOSCALER_LTX25_MAX_REPLICAS", "1")
-    with pytest.raises(RuntimeError, match="at least 2 configured replicas"):
-        load_predictive_autoscaler_config(
-            stage_bindings=(_binding("ltx25", max_replicas=2),)
-        )
+    monkeypatch.setenv("SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS", "1")
 
-    monkeypatch.delenv("SALAD_AUTOSCALER_LTX25_MAX_REPLICAS", raising=False)
-    monkeypatch.setenv("SALAD_AUTOSCALER_PROJECT_MAX_REPLICAS", "3")
-    with pytest.raises(RuntimeError, match="must be >= 4"):
-        load_predictive_autoscaler_config(
-            stage_bindings=(
-                _binding("ltx25_i2v", max_replicas=2),
-                _binding("ltx25", max_replicas=2),
-            )
-        )
+    config = load_predictive_autoscaler_config(
+        stage_bindings=(_binding("ltx25", max_replicas=2),)
+    )
+
+    assert config.project_max_replicas == 1
+    assert config.stage_max_replicas["ltx25"] == 1
+    assert config.stage_jobs_per_replica == {"ltx25": 40}
 
 
-def test_run_ltx_defaults_scale_second_gpu_only_above_thirty_jobs(
+def test_ltx_defaults_scale_from_global_backlog_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     for name in (
@@ -1277,33 +1266,39 @@ def test_run_ltx_defaults_scale_second_gpu_only_above_thirty_jobs(
         assert demands["ltx25"].ideal_replicas == expected
 
 
-def test_large_run_keeps_second_ltx_gpu_after_backlog_drops_below_thirty(
+def test_ltx_capacity_ignores_run_boundaries_and_legacy_run_size(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    for name in (
-        "SALAD_AUTOSCALER_LTX25_I2V_JOBS_PER_REPLICA",
-        "SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA",
-    ):
-        monkeypatch.delenv(name, raising=False)
-
+    monkeypatch.delenv("SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA", raising=False)
     config = load_predictive_autoscaler_config(
         stage_bindings=(_binding("ltx25", max_replicas=2),)
     )
-    rows = _pending_rows(8)
-    for row in rows:
-        row["run_id"] = "run-large"
-        row["run_job_count"] = 40
 
+    rows = _pending_rows(40)
+    for index, row in enumerate(rows):
+        row["run_id"] = "run-a" if index < 20 else "run-b"
     demand = build_global_demands(
         rows_by_stage={"ltx25": rows},
         runtime_by_stage={"ltx25": 200.0},
         config=config,
         now=datetime(2026, 10, 5, tzinfo=UTC),
     )["ltx25"]
-
     assert demand.ideal_replicas == 2
-    assert demand.jobs_per_replica == 30
-    assert demand.job_count_target == 2
+    assert demand.run_counts == {"run-a": 20, "run-b": 20}
+
+    tail = _pending_rows(29)
+    for index, row in enumerate(tail):
+        row["run_id"] = "run-a" if index < 15 else "run-b"
+        row["run_job_count"] = 100  # legacy metadata must not pin a second GPU
+    tail_demand = build_global_demands(
+        rows_by_stage={"ltx25": tail},
+        runtime_by_stage={"ltx25": 200.0},
+        config=config,
+        now=datetime(2026, 10, 5, tzinfo=UTC),
+    )["ltx25"]
+    assert tail_demand.ideal_replicas == 1
+    assert tail_demand.jobs_per_replica == 30
+    assert tail_demand.job_count_target == 1
 
 
 def test_cold_start_longer_than_drain_window_never_exceeds_active_jobs() -> None:

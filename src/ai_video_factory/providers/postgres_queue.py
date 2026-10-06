@@ -15,15 +15,20 @@ from .job_queue import (
 )
 
 
-def _run_metadata(metadata: Mapping[str, str]) -> tuple[str | None, int | None]:
+def _run_metadata(metadata: Mapping[str, str]) -> str | None:
+    """Return application correlation metadata without coupling it to capacity."""
+
     run_id = str(metadata.get("run_id") or "").strip() or None
+    # Rolling deployments may still send the retired field. Validate it only for
+    # compatibility, but never persist or use it for scheduling new work.
     raw_count = str(metadata.get("run_job_count") or "").strip()
-    run_job_count = int(raw_count) if raw_count else None
-    if run_job_count is not None and run_job_count < 1:
-        raise ValueError("run_job_count must be >= 1")
-    if (run_id is None) != (run_job_count is None):
-        raise ValueError("run_id and run_job_count must be supplied together")
-    return run_id, run_job_count
+    if raw_count:
+        run_job_count = int(raw_count)
+        if run_job_count < 1:
+            raise ValueError("run_job_count must be >= 1")
+        if run_id is None:
+            raise ValueError("run_id is required when legacy run_job_count is supplied")
+    return run_id
 
 
 def _legacy_run_metadata_fingerprint(
@@ -34,14 +39,37 @@ def _legacy_run_metadata_fingerprint(
     return request.model_copy(update={"parameters": parameters}).fingerprint()
 
 
+def _legacy_run_metadata(row: Mapping[str, Any]) -> tuple[str | None, int | None]:
+    legacy_run_id = str(row.get("run_id") or "").strip() or None
+    legacy_count = row.get("run_job_count")
+    request = row.get("request")
+    if isinstance(request, Mapping):
+        parameters = request.get("parameters")
+        if isinstance(parameters, Mapping):
+            legacy_run_id = legacy_run_id or (
+                str(parameters.get("run_id") or "").strip() or None
+            )
+            if legacy_count is None:
+                legacy_count = parameters.get("run_job_count")
+    try:
+        run_job_count = int(legacy_count) if legacy_count is not None else None
+    except (TypeError, ValueError):
+        run_job_count = None
+    return legacy_run_id, run_job_count
+
+
 def _can_rebind_legacy_run_metadata_failure(
     row: Mapping[str, Any],
     request: InferenceJobRequest,
     *,
     run_id: str | None,
-    run_job_count: int | None,
 ) -> bool:
-    if run_id is None or run_job_count is None or str(row.get("status")) != "failed":
+    if str(row.get("status")) != "failed":
+        return False
+    legacy_run_id, legacy_run_job_count = _legacy_run_metadata(row)
+    if legacy_run_id is None or legacy_run_job_count is None:
+        return False
+    if run_id is not None and run_id != legacy_run_id:
         return False
     error = str(row.get("last_error") or "")
     if not (
@@ -53,8 +81,8 @@ def _can_rebind_legacy_run_metadata_failure(
         return False
     return str(row.get("request_sha256") or "") == _legacy_run_metadata_fingerprint(
         request,
-        run_id=run_id,
-        run_job_count=run_job_count,
+        run_id=legacy_run_id,
+        run_job_count=legacy_run_job_count,
     )
 
 
@@ -83,7 +111,7 @@ class PostgresJobQueueClient(JobQueueClient):
     ) -> QueueJobSnapshot:
         from psycopg.types.json import Jsonb
 
-        run_id, run_job_count = _run_metadata(metadata)
+        run_id = _run_metadata(metadata)
         request_sha256 = request.fingerprint()
         manifest = request.model_dump(mode="json", exclude_none=True)
         with self._pool.connection() as connection, connection.transaction():
@@ -96,9 +124,8 @@ class PostgresJobQueueClient(JobQueueClient):
                     request,
                     output_key,
                     transport_job_id,
-                    run_id,
-                    run_job_count
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    run_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (job_id) DO NOTHING
                 """,
                 (
@@ -109,12 +136,11 @@ class PostgresJobQueueClient(JobQueueClient):
                     request.output.key,
                     request.job_id,
                     run_id,
-                    run_job_count,
                 ),
             )
             row = connection.execute(
                 """
-                SELECT job_id, request_sha256, status, attempt_count, lease_expires_at,
+                SELECT job_id, request_sha256, request, status, attempt_count, lease_expires_at,
                        result, last_error, run_id, run_job_count
                 FROM gpu.jobs
                 WHERE job_id = %s
@@ -129,11 +155,12 @@ class PostgresJobQueueClient(JobQueueClient):
                     row,
                     request,
                     run_id=run_id,
-                    run_job_count=run_job_count,
                 ):
                     raise RuntimeError(
                         f"job_id {request.job_id!r} is already bound to a different request"
                     )
+                legacy_run_id, legacy_run_job_count = _legacy_run_metadata(row)
+                resolved_run_id = run_id or legacy_run_id
                 connection.execute(
                     """
                     UPDATE gpu.jobs
@@ -161,8 +188,8 @@ class PostgresJobQueueClient(JobQueueClient):
                         Jsonb(manifest),
                         request.output.key,
                         request.job_id,
-                        run_id,
-                        run_job_count,
+                        resolved_run_id,
+                        legacy_run_job_count,
                         request.job_id,
                         row["request_sha256"],
                     ),
@@ -175,41 +202,26 @@ class PostgresJobQueueClient(JobQueueClient):
                     "lease_expires_at": None,
                     "result": None,
                     "last_error": None,
-                    "run_id": run_id,
-                    "run_job_count": run_job_count,
+                    "run_id": resolved_run_id,
+                    "run_job_count": legacy_run_job_count,
                 }
             else:
                 existing_run_id = row.get("run_id")
-                existing_run_job_count = row.get("run_job_count")
-                if (
-                    run_id is not None
-                    and existing_run_id not in (None, run_id)
-                ) or (
-                    run_job_count is not None
-                    and existing_run_job_count not in (None, run_job_count)
-                ):
+                if run_id is not None and existing_run_id not in (None, run_id):
                     raise RuntimeError(
                         f"job_id {request.job_id!r} is already bound to different run metadata"
                     )
-                if (
-                    run_id is not None
-                    and (existing_run_id is None or existing_run_job_count is None)
-                ):
+                if run_id is not None and existing_run_id is None:
                     connection.execute(
                         """
                         UPDATE gpu.jobs
                         SET run_id = %s,
-                            run_job_count = %s,
                             updated_at = now()
                         WHERE job_id = %s
                         """,
-                        (run_id, run_job_count, request.job_id),
+                        (run_id, request.job_id),
                     )
-                    row = {
-                        **row,
-                        "run_id": run_id,
-                        "run_job_count": run_job_count,
-                    }
+                    row = {**row, "run_id": run_id}
 
             status = str(row["status"])
             lease_expires_at = row["lease_expires_at"]

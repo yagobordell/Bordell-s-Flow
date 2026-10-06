@@ -649,7 +649,6 @@ def generate_b2_ltx_video(
 
     timeline, jobs, run_dir = build_b2_video_plan(output, plan, audio, images)
     digest = run_dir.name
-    run_job_counts = Counter(job.kind for job in jobs)
     manifest_path = run_dir / "manifest.json"
     expected = _new_manifest(jobs, audio, digest)
     if manifest_path.is_symlink():
@@ -754,7 +753,6 @@ def generate_b2_ltx_video(
             metadata={
                 "capability": f"b2-ltx-{job.kind}",
                 "run_id": digest,
-                "run_job_count": str(run_job_counts[job.kind]),
             },
         )
         print(
@@ -777,7 +775,6 @@ def generate_b2_ltx_video(
             metadata={
                 "capability": f"b2-ltx-{job.kind}",
                 "run_id": digest,
-                "run_job_count": str(run_job_counts[job.kind]),
             },
         )
         print(
