@@ -1090,6 +1090,19 @@ async def regenerate_professional_audio_block(
     _json(attempt_stt, saved_transcript)
     attempt_stt_sha = hashlib.sha256(attempt_stt.read_bytes()).hexdigest()
 
+    # Rebuild the complete narration from the candidate WAV before touching the
+    # active group. A local join failure therefore leaves the saved run intact.
+    candidate_narration = attempt_dir / f"attempt_{attempt_number}.narration.wav"
+    join_sources = [
+        attempt_audio if record is item else output / record["file"]
+        for record in records
+    ]
+    joined = await asyncio.to_thread(
+        join_audio_blocks,
+        join_sources,
+        candidate_narration,
+    )
+
     # Preserve the replaced paid WAV/STT and retry ledger before committing the
     # verified replacement as the active group.
     prior_audio = attempt_dir / f"before_attempt_{attempt_number}.wav"
@@ -1135,11 +1148,7 @@ async def regenerate_professional_audio_block(
     })
 
     narration_path = run_dir / "narration.wav"
-    joined = await asyncio.to_thread(
-        join_audio_blocks,
-        [output / record["file"] for record in records],
-        narration_path,
-    )
+    shutil.copyfile(candidate_narration, narration_path)
     audio_artifact.update({
         "file": narration_path.relative_to(output).as_posix(),
         "sha256": joined["sha256"],
