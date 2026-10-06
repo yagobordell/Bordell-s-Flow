@@ -88,7 +88,10 @@ compiler version prevents recycling paid audio created under the obsolete
 V4 authority contract.
 
 Gemini remains `gemini-3.8-flash-tts`; voice selection, original B2 beat
-identities, STT and join behavior are unaffected.
+identities, STT and join behavior are unaffected. Every professional Gemini
+style sent to TTS is prefixed with
+`Respect the next style indications while keeping a normal voice speed, not paused, its for a youtube video:`
+before the V4-authored style.
 
 Reference: https://ai.google.dev/gemini-api/docs/speech-generation
 
