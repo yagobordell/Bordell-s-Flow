@@ -2653,7 +2653,8 @@ async def main() -> None:
                     (block_count - len(previous_partial_b12)
                      if stage == "B1.2" else
                      block_count - len(previous_partial_b2)
-                     if stage == "B2" else block_count)
+                     if stage == "B2" else
+                     0 if stage == "B3" else block_count)
                     if rerun_from_index <= stage_index <= stop_index else 0
                 )
                 for stage_index, stage in enumerate(_STAGES)
