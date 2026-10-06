@@ -399,10 +399,31 @@ avatar reference and preserve the presenter's recognizable identity.
 This is a contextual casting preference, never a quota or format preference.
 Do not force the presenter into established third-party stories, evidence of
 real events, another person's lived experience or scenes where their appearance
-would be staged or misleading. Product-only or hands-only details need not
-show an identifiable person when identity adds no meaningful value. Established
-story characters keep their own identity. Preserve the same correctly cast
-person across consecutive shots of a continuous demonstration.
+would be staged or misleading.
+
+EXPLICIT FIRST-PERSON PRESENTER OWNERSHIP OVERRIDE: when unquoted narration
+explicitly assigns a visible action, state, body position or possession to the
+speaker — for example "I am standing here holding the card", "I still have it in
+my hand", or "I pick this up" — the visible subject for that claimed action/state
+MUST be the supplied presenter unless the surrounding context clearly attributes
+the first person to someone else. Do not replace that presenter with generic
+hands, an anonymous person or an object-only composition merely because identity
+would be unnecessary for explaining the object itself.
+
+Leaving the narration setup changes the AUDIO route, not the narrator's narrative
+identity. If the explicitly presenter-owned action/state preserves the narration
+setup and placement, use the narrator-in-setup override: media_video,
+reference=true, audio=true. If that same presenter-owned action/state requires
+standing up, relocating or otherwise leaving the preserved setup, keep the SAME
+presenter with reference=true but use observational coverage with audio=false;
+choose media_image for a genuinely static state or media_video when useful motion
+adds material value.
+
+Product-only or hands-only details need not show an identifiable person only when
+the beat does NOT make that person's identity part of the visual meaning. This
+exception must never erase an explicit first-person presenter-owned action/state.
+Established story characters keep their own identity. Preserve the same correctly
+cast person across consecutive shots of a continuous demonstration.
 
 Reference identity does not mean copying irrelevant reference wardrobe, background,
 lighting, camera framing, pose or facial expression. Preserve wardrobe and setting
@@ -455,13 +476,17 @@ dialogue, speaking or lip-movement instructions into audio=false prompts.
 
 Presenter identity, reference=true and first-person narration do not
 automatically force audio=true. The setup-and-position rule is mandatory.
+An explicitly presenter-owned first-person action/state may therefore require the
+presenter's identity with reference=true while still using audio=false when that
+action/state places the presenter outside the preserved narration setup.
 
 Narrative identity
 
 Resolve who owns the selected action/state before choosing actors.
 
 preserve named or contextually established story characters through pronouns/coreference;
-unquoted first-person presenter narration may establish the presenter as the subject when the action/state genuinely belongs to the presenter;
+unquoted first-person presenter narration that explicitly assigns a visible action, state, body position or possession to the speaker establishes the supplied presenter as that subject; this identity is mandatory unless context clearly attributes the first person to someone else;
+first-person narration that is abstract, rhetorical or does not visually assign a concrete speaker-owned action/state does not by itself require presenter coverage;
 first person inside attributed dialogue/thought belongs to that established speaker;
 second person does not imply presenter presence;
 third-person people remain those people.
@@ -569,7 +594,11 @@ Continuity does NOT require the same person to remain visible, the same
 visual_type, the same camera framing, or the same reference=true/reference=false
 setting. A sequence may move from presenter+object to object-only close-up,
 detail insert, reverse view or result shot while remaining one continuous visual
-sequence when the shared object is still the relevant visual anchor.
+sequence when the shared object is still the relevant visual anchor. However, an
+object continuity anchor never makes a human identity optional on a beat that
+explicitly assigns the visible action/state/position/possession to that person.
+In particular, do not turn an explicitly presenter-owned first-person beat into
+generic hands or object-only coverage merely to preserve an object-led grid.
 
 For example, this is one valid continuity sequence:
 1. A presenter holding a particular gift card.
@@ -647,8 +676,8 @@ For each beat:
 freeze upstream fields;
 apply the immutable intro/close full-field anchor if this beat is a required boundary beat; keep it unchanged and skip discretionary steps 3-12;
 for every other beat, identify its primary communicative function;
-resolve the relevant person/character/object/place and narration ownership;
-decide whether presenter presence, presenter plus support, a documentary still or a documentary video is the most natural carrier; if the most natural composition keeps the narrator in the preserved narration setup/position, apply the narrator-in-setup format override before ordinary static-versus-video reasoning and use media_video with reference=true and audio=true; when a dynamic beat contains a listed forbidden video motion, preserve the dynamic carrier and re-stage that motion safely rather than falling back to media_image;
+resolve the relevant person/character/object/place and narration ownership; when unquoted first-person narration explicitly assigns a visible action, state, body position or possession to the speaker, lock the supplied presenter as that visible subject unless context clearly attributes the first person elsewhere;
+decide whether presenter presence, presenter plus support, a documentary still or a documentary video is the most natural carrier without discarding any locked presenter identity; if the most natural composition keeps the narrator in the preserved narration setup/position, apply the narrator-in-setup format override before ordinary static-versus-video reasoning and use media_video with reference=true and audio=true; if a locked presenter-owned beat leaves that setup, preserve the presenter with reference=true and audio=false while choosing media_image versus media_video from whether motion materially matters; when a dynamic beat contains a listed forbidden video motion, preserve the dynamic carrier and re-stage that motion safely rather than falling back to media_image;
 choose visual_type without format quotas or tie-breaking bias;
 cast generated human demonstrators with the contextual presenter preference while preserving distinct story-character identities;
 decide reference from actual visual/identity continuity dependency;
@@ -665,8 +694,8 @@ Before output, review the block for:
 
 mandatory intro/close anchors: the first beat of intro and last beat of close use the unchanged base-avatar assignment in full, including null prompt/video_prompt, reference=false and audio=true;
 format bias: no discretionary visual_type was chosen because it is generally preferred;
-demonstrator casting: presenter-led examples use the referenced presenter when naturally demonstrable, while distinct third-party subjects and identity-free close-ups are not forcibly recast;
-story-character integrity: established people remain themselves;
+demonstrator casting: presenter-led examples use the referenced presenter when naturally demonstrable, while distinct third-party subjects and genuinely identity-free close-ups are not forcibly recast; explicit first-person presenter-owned visible actions/states/positions/possessions always keep the supplied presenter rather than generic hands or an anonymous substitute;
+story-character integrity: established people remain themselves, and leaving the narration setup changes the presenter's audio route rather than erasing their identity;
 documentary usefulness: generated visuals feel like plausible coverage of the narrated event, not decorative illustration;
 image/video fit: movement is used when it adds material value; listed forbidden video motions are re-staged as safe dynamic media_video actions rather than converted to media_image;
 global shot variety: each generated beat uses its most informative natural shot scale, camera angle, crop and visual focus; recurring subjects are not automatically shown in the reference's face-centered medium shot;
