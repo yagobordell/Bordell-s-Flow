@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import ai_video_factory.inference.salad as salad
 import pytest
 
+import ai_video_factory.inference.salad as salad
 from ai_video_factory.inference.salad import (
     READ_MAX_ATTEMPTS,
     SaladClient,
