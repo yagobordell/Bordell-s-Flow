@@ -20,11 +20,18 @@ from pydantic import BaseModel, ValidationError
 
 from ai_video_factory.config import settings
 from ai_video_factory.providers.base import StructuredTextProvider
+from ai_video_factory.providers.image_grids import (
+    BLACK_PANEL_SOURCE,
+    GridPlanError,
+    plan_image_jobs,
+)
+from ai_video_factory.providers.openai_batch_images import described_beats
 
 from .contracts import (
     B2Input,
     B2InputBlock,
     B2Output,
+    B3Output,
     B11Output,
     B12Input,
     B12Output,
@@ -374,6 +381,111 @@ def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input)
                 *overflow, professional=isinstance(result, ProfessionalB2Output)
             )
         )
+
+
+@dataclass(frozen=True)
+class _B3GridLock:
+    grid_id: str
+    source: str
+    role: Literal["speaker_start", "support"]
+
+
+def _professional_grid_locks(
+    outputs: list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
+) -> dict[tuple[int, str], _B3GridLock]:
+    """Freeze the exact B2 grid assignment before B3 can plan camera takes."""
+    plan = {
+        "visual_style": "profesional",
+        "blocks": [item.blocks[0].model_dump() for item in outputs if item.blocks],
+    }
+    jobs = plan_image_jobs(plan, described_beats(plan))
+    beats = {
+        (block["block_id"], beat["beat_id"]): beat
+        for block in plan["blocks"] for beat in block["beats"]
+    }
+    locks: dict[tuple[int, str], _B3GridLock] = {}
+    for job in jobs:
+        if job.get("grid") is None:
+            continue
+        grid_id = f"{job['block_id']}:{job['beat_id']}"
+        for panel in job["panels"]:
+            if panel.get("source") == BLACK_PANEL_SOURCE:
+                continue
+            key = panel["block_id"], panel["beat_id"]
+            beat = beats[key]
+            role: Literal["speaker_start", "support"] = (
+                "support"
+                if beat["visual_type"] == "avatar_media"
+                else "speaker_start"
+            )
+            locks[key] = _B3GridLock(
+                grid_id=grid_id,
+                source=str(panel.get("source") or "filler"),
+                role=role,
+            )
+    return locks
+
+
+def _professional_audio_groups(
+    outputs: list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
+) -> list[list[tuple[int, dict[str, object]]]]:
+    """Return maximal whole-video runs of consecutive audio=true beats."""
+    groups: list[list[tuple[int, dict[str, object]]]] = []
+    current: list[tuple[int, dict[str, object]]] = []
+    for output in outputs:
+        if not output.blocks:
+            raise BPipelineValidationError("Professional B2 output is missing its block")
+        block = output.blocks[0]
+        for beat in block.beats:
+            if beat.audio:
+                current.append((block.block_id, beat.model_dump()))
+            elif current:
+                groups.append(current)
+                current = []
+    if current:
+        groups.append(current)
+    return groups
+
+
+def validate_b3(
+    result: B3Output,
+    *,
+    group_id: int,
+    source: list[tuple[int, dict[str, object]]],
+    grid_locks: dict[tuple[int, str], _B3GridLock],
+) -> None:
+    """B3 may choose cuts only; B2 narration and fixed grids remain authoritative."""
+    _require_success("B3", result.error)
+    if result.group_id != group_id or result.beats is None:
+        raise BPipelineValidationError("B3 returned the wrong spoken group")
+    expected_ids = [str(beat["beat_id"]) for _block_id, beat in source]
+    if [beat.beat_id for beat in result.beats] != expected_ids:
+        raise BPipelineValidationError("B3 changed spoken beat IDs or order")
+    if result.beats[0].continuous:
+        raise BPipelineValidationError("The first B3 beat must start a take")
+    for index, ((block_id, original), decision) in enumerate(
+        zip(source, result.beats, strict=True)
+    ):
+        if original.get("audio") is not True:
+            raise BPipelineValidationError("B3 received a beat without audio=true")
+        lock = grid_locks.get((block_id, decision.beat_id))
+        if lock is not None and lock.role == "speaker_start":
+            if decision.continuous or decision.shot_prompt is not None:
+                raise BPipelineValidationError(
+                    f"B3 grid speaker beat {decision.beat_id} must start from its fixed panel"
+                )
+        elif not decision.continuous and index > 0:
+            if not isinstance(decision.shot_prompt, str) or not decision.shot_prompt.strip():
+                raise BPipelineValidationError(
+                    f"B3 new take {decision.beat_id} requires a continuity shot_prompt"
+                )
+        if (
+            isinstance(decision.shot_prompt, str)
+            and re.match(r"^\s*[1-9]\.\s+", decision.shot_prompt)
+        ):
+            raise BPipelineValidationError(
+                f"B3 shot_prompt {decision.beat_id} must not create grid numbering"
+            )
 
 
 @dataclass(frozen=True)
