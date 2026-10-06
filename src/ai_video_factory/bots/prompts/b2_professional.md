@@ -106,9 +106,13 @@ Choose avatar when seeing the presenter deliver the beat is itself the most natu
 
 Choose avatar_media when the presenter should remain visibly present and one supporting still adds distinct information at the same time.
 
-Choose media_image for a genuinely still documentary visual: an object, stable result, portrait, waiting moment, relationship or meaningful frozen state. media_image is always a STILL with audio=false, even when the soundtrack contains narration as voice-over; it cannot depict synchronized speaking.
+Choose media_image for a genuinely still documentary visual: an object, stable result, portrait, waiting moment, relationship or meaningful frozen state. media_image is always a STILL with audio=false, even when the soundtrack contains narration as voice-over; it cannot depict synchronized speaking. A media_image may depict the presenter only as observational coverage outside the active narration setup; NEVER show the narrator sitting/placed in the preserved narration setup as a frozen still.
 
-Choose media_video whenever a physical action, execution, interaction, trajectory, change or temporal development is the useful visual information. STRONG PRESENTER ACTION DEFAULT: if the referenced presenter performs a visible practical step (applying, pressing, blending, massaging, cleansing, dabbing, using or demonstrating a product in motion), prefer media_video even if a single photograph could summarize the instruction. A presenter who merely holds an object in a genuinely static explanatory portrait MAY remain media_image if movement does not serve the beat. Choose media_image for a real still result, pause or portrait, not for an in-progress hand/product/skin demonstration. The static versus temporal decision is about what needs to be SEEN, not whether the beat_type happens to be 'action'.
+Choose media_video whenever a physical action, execution, interaction, trajectory, change or temporal development is the useful visual information. STRONG PRESENTER ACTION DEFAULT: if the referenced presenter performs a visible practical step (applying, pressing, blending, massaging, cleansing, dabbing, using or demonstrating a product in motion), prefer media_video even if a single photograph could summarize the instruction. A presenter who merely holds an object may be observational media with audio=false only when the shot is outside the active narration setup. If the presenter remains in the narration setup and keeps the same physical placement/posture established by the reference, the presenter must remain a speaking video, not a still.
+
+NARRATOR SETUP RULE: audio=true is reserved for the supplied avatar acting as the narrator while preserving BOTH the reference narration setup and the narrator's physical location/placement inside that setup. Preserve the same chair/seat/desk/vanity/anchoring position and the same posture class established by the reference. The camera may use a different angle, shot size or crop; the narrator may change expression/gaze and may naturally hold a small beat-relevant object such as a paper, phone or product. Do NOT use audio=true if the narrator would stand up from a seated setup, lie down, jump, walk elsewhere, relocate within the room, move to another environment, sit somewhere else, or otherwise change the narrator's established physical placement in the setup.
+
+For generated full-screen narrator coverage that satisfies this setup rule, use media_video with reference=true and audio=true. Never use media_image or media_video with audio=false for the narrator while they remain in that preserved narration setup. If the beat requires the narrator outside that setup or in a substantially different body position, use observational coverage with audio=false and let the narration remain voice-over.
 
 Also choose media_video whenever a generated full-screen shot must show synchronized visible speech (audio=true), even if its starting frame is photograph-like. The pipeline animates that image as an A2V video.
 
@@ -164,8 +168,10 @@ sequences. For each new scene, ask which distance, viewpoint and subject
 detail best supports the narration. Vary recurring subjects and actions
 when a different framing reveals new information or improves pacing.
 Do not automatically inherit the avatar reference photo's head-on angle
-or crop. Reference identity is independent of camera angle, shot size,
-pose and scene-specific expression.
+or crop. Reference identity is independent of camera angle, shot size and scene-specific
+expression. Pose is also free for audio=false documentary coverage, but an
+audio=true narrator shot is the exception: it must preserve the narrator's
+physical placement/posture class inside the reference narration setup.
 
 Framing variation is purposeful, not a prescribed wide/medium/close quota:
 do not force an angle change when the same view is necessary, sacrifice
@@ -270,12 +276,17 @@ natural looks or converse with each other when the established scene
 warrants it. Keep the movement continuous and naturally paced.
 
 When audio=true, video_prompt is instead sent to the A2V speaking
-generator alongside the actual beat speech audio. Describe facial
-engagement, mouth visibility, natural lip/jaw movement in synchrony with
-the provided audio, restrained head and hand gestures compatible with
-speaking and the simple accompanying action. Give A2V speaking-compatible
-actions and natural synced mouth movement; detailed independent motion
-remains secondary to reliable speech. The canonical
+generator alongside the actual beat speech audio. audio=true is allowed
+only for the supplied avatar narrator while preserving the reference
+narration setup and the narrator's physical placement/posture class in it.
+Describe facial engagement, mouth visibility, natural lip/jaw movement in
+synchrony with the provided audio, restrained head and hand gestures
+compatible with speaking and any simple prop handling. The narrator may
+hold a paper, phone or product and the framing may change, but the motion
+must not make the narrator stand up, lie down, jump, walk away, relocate,
+change seats/positions or leave the established setup. Give A2V
+speaking-compatible actions and natural synced mouth movement; detailed
+independent motion remains secondary to reliable speech. The canonical
 speaking-to-camera prompt and static-camera recipe remain controlled
 by application code; video_prompt adds beat-specific details to it.
 
@@ -344,38 +355,49 @@ audio
 
 audio is a JSON boolean.
 
-For avatar and avatar_media, audio is always true.
+For avatar and avatar_media, audio is always true. These visual types keep the
+base talking-head presenter layer, so the narrator remains in the reference
+narration setup and the final output is animated through A2V rather than shown
+as a frozen image.
 
 For media_image, audio MUST always be false. It remains a still visual,
 whether ordinary voice-over is heard on the soundtrack or not. Never
 write a media_image prompt showing someone speaking, moving their lips
-or delivering dialogue. For a visibly speaking generated subject, use
-media_video with audio=true instead.
+or delivering dialogue. In particular, never depict the narrator frozen
+in the preserved narration setup; that combination must be speaking video.
 
 For media_video:
 
-audio = true when the visible person in the selected visual is the person delivering/reading that beat and the composition is compatible with speaking;
-audio = false when narration functions as voice-over, the visible person is only observational documentary coverage, or no speaking face is visible.
-Visible-presenter speech preference: when the presenter demonstrates their own
-simple advice or action, prefer audio=true if the presenter can naturally
-speak while doing it and their face/mouth remain visibly available. Choose a
-composition, expression and gaze compatible with that intent. This
-audio=true preference applies to avatar, avatar_media or media_video,
-never media_image. Gently pressing skincare onto the cheeks with the
-mouth unobstructed may support natural speech.
+audio = true ONLY when the visible speaker is the supplied avatar narrator AND
+the shot preserves the reference narration setup AND the narrator's established
+physical location/placement/posture class inside it. reference MUST be true.
+A different camera angle, crop or shot size is allowed. Natural expression,
+gaze, small speaking gestures and holding a paper, phone, product or similar
+small object are allowed when they do not change the narrator's placement.
+
+audio = false for every other media_video: voice-over coverage, third-party
+subjects, hands-only details, no visible speaker, or any scene where the avatar
+stands up from a seated setup, lies down, jumps, walks elsewhere, relocates,
+changes seats/positions, moves to another environment, or otherwise leaves the
+reference narrator placement.
+
+NARRATOR-IN-SETUP NO-FREEZE RULE: if generated full-screen coverage depicts the
+avatar narrator still occupying the preserved narration setup and position, it
+MUST be media_video with reference=true and audio=true. Do not use media_image
+and do not use media_video with audio=false for that situation. If visible
+speech is not appropriate, choose coverage that does not show the narrator
+occupying the narration setup.
 
 Technical A2V limitation: an audio=true media beat is animated through the
 pipeline's existing speaking-focused A2V prompt; A2V does not guarantee detailed,
-independent hand-action animation. Use audio=true for a demonstration only when
-visible speech is plausible as the primary motion and any hand action is simple
-and secondary. If showing the movement accurately is the primary purpose, the
-face is cropped/obscured or the action demands sustained visual attention,
-use audio=false and observational media_video with voice-over. Never put
-dialogue, speaking or lip-movement instructions into audio=false image prompts.
+independent hand-action animation. Keep any hand/object action simple and
+secondary to speech. If precise action movement is the primary purpose, change
+the visual concept so the narrator is no longer shown occupying the narration
+setup, then use audio=false observational coverage with voice-over. Never put
+dialogue, speaking or lip-movement instructions into audio=false prompts.
 
 Presenter identity, reference=true and first-person narration do not
-automatically force audio=true. Evaluate each beat rather than applying a
-blanket speaking or voice-over default.
+automatically force audio=true. The setup-and-position rule is mandatory.
 
 Narrative identity
 
@@ -397,13 +419,14 @@ When visual_type = avatar, reuse the supplied avatar image by default:
 prompt = null;
 reference = false;
 audio = true.
-Regenerate avatar only when the beat still works primarily as presenter delivery but materially requires a visible presenter state, appearance, pose, object interaction or setting that the base image cannot provide.
+Regenerate avatar only when the beat still works primarily as presenter delivery and the new image can preserve the SAME narration setup and the narrator's SAME physical placement/posture class in that setup. Valid changes include a different camera angle/crop, a beat-specific expression/gaze, small speaking gestures or naturally holding a paper, phone, product or similar object.
 
-Do not regenerate merely for variety, topical background matching or neighboring-scene continuity.
+Do not regenerate merely for variety, topical background matching or neighboring-scene continuity. Do not regenerate an audio=true avatar standing, lying, jumping, walking elsewhere, changing seats/positions, moving to another environment or otherwise leaving the reference narrator placement. If the beat needs that coverage, use audio=false media instead.
 
 When regenerating:
 
 prompt must preserve the same presenter from the supplied avatar reference image;
+prompt must explicitly preserve the reference narration setup and the narrator's physical placement/posture class within it;
 reference = true;
 audio = true.
 Generated-image invariants
@@ -431,8 +454,10 @@ an established environment;
 wardrobe/appearance within the same event.
 Do not preserve wardrobe automatically across unrelated times or events. Preserve
 it when the sequence is meant to be the same occasion. A consistent identity
-does not require repeating the expression, gaze or pose of the reference photo
-or the previous beat; adapt visible expressions to the current scene.
+does not require repeating the expression or gaze of the reference photo or
+previous beat; adapt them to the current scene. Pose is also free for audio=false
+coverage. For audio=true narrator shots, however, preserve the reference
+narration setup and the narrator's physical placement/posture class within it.
 
 Do not copy unrelated background, lighting, objects or composition merely because they appear in the reference.
 
@@ -440,22 +465,37 @@ Static versus temporal choice
 
 Use media_image when one still communicates essentially all useful visual
 information and no generated on-screen person needs synchronized speech.
+Exception: never use a still of the narrator occupying the preserved narration
+setup and position; that would read as a frozen presenter.
 
 Use media_video when seeing how something moves, changes, unfolds or is
 performed adds material understanding, OR when the full-screen generated
-subject must speak on screen with audio=true and synchronized lips.
+avatar narrator remains in the preserved narration setup and must speak with
+audio=true and synchronized lips.
 
-A genuine static hold, result or portrait can remain media_image. When the referenced presenter or another visible demonstrator is actively performing a practical step, motion ordinarily adds value: choose media_video by default, with separate image-start and video-animation prompts.
+A genuine static hold, result or portrait can remain media_image only when it is
+not the narrator frozen in the active narration setup. When the referenced
+presenter or another visible demonstrator is actively performing a practical
+step, motion ordinarily adds value: choose media_video by default, with separate
+image-start and video-animation prompts. If the presenter leaves the narration
+setup/position for that action, use audio=false voice-over.
 
 A failed or complex video candidate does not automatically become avatar. Reconsider whether a still, presenter view or presenter-plus-support is the most faithful alternative.
 
-Operational presenter-run limit
+Operational spoken-run limit
 
-The application enforces a maximum of 120 narration characters across consecutive avatar/avatar_media beats in whole-video order. Interior spaces and punctuation count after trimming beat boundaries. media_image and media_video reset the run.
+For professional B2, the application enforces a maximum of 120 narration
+characters across consecutive audio=true beats in whole-video order, regardless
+of visual_type. Interior spaces and punctuation count after trimming beat
+boundaries. Any audio=false beat resets the run.
 
-This is a technical constraint, not a preference. Within it, do not minimize or maximize presenter use by quota.
+This is a technical constraint, not a preference. Within it, do not minimize or
+maximize presenter use by quota.
 
-If a local choice would create an obviously overlong presenter run, choose the next-best faithful non-presenter visual for a beat that can naturally carry it. Never invent content merely to break the run.
+If a local choice would create an obviously overlong audio=true run, choose the
+next-best faithful audio=false visual for a discretionary beat that can naturally
+carry voice-over. Never invent content merely to break the run and never violate
+the narrator setup/position rule merely to keep audio=true.
 
 Consecutive visual continuity
 
@@ -509,11 +549,11 @@ choose visual_type without format quotas or tie-breaking bias;
 cast generated human demonstrators with the contextual presenter preference while preserving distinct story-character identities;
 decide reference from actual visual/identity continuity dependency;
 for every visible face depicted from the reference, describe a scene-specific facial expression, demeanor and useful gaze/attention without copying the source image's expression;
-decide audio from the visible person's speaking role AND whether the actual A2V speaking-focused route can plausibly support the shot; if visible speech needs generated media, use media_video, NEVER media_image with audio=true;
+decide audio from narrator ownership AND setup continuity: audio=true is allowed only for the supplied avatar narrator while preserving the reference narration setup and physical placement/posture class; if generated full-screen narrator coverage stays there, use media_video with reference=true and audio=true; otherwise use audio=false voice-over coverage;
 choose a purposeful shot scale, camera angle, crop and visual focus for EVERY generated beat, considering nearby similar subjects;
 write concise source-grounded still-image prompts and, for media_video, a distinct animation video_prompt describing action development, gestures and camera behavior consistent with the selected audio route;
 after the block is stable, apply continuity numbering to genuine continuous events and strengthen shot-to-shot progression within those sequences;
-validate the 120-character presenter-run constraint as far as this block can know;
+validate the 120-character consecutive audio=true constraint as far as this block can know;
 validate the final output contract.
 Block-level review
 
@@ -534,9 +574,9 @@ reference correctness: every dependency on the supplied image is explicit and un
 referenced visible faces: a natural beat-specific expression and relevant gaze/attention are explicit rather than inherited from the input photo;
 still/video action fit: a referenced presenter actively demonstrating an ongoing practical step uses media_video rather than an inert still, while real result/portrait/pause shots remain eligible for media_image;
 animation specificity: each media_video has a nonempty video_prompt describing real-time action development consistent with its first image and speaking/voice-over routing;
-audio correctness: media_image always has audio=false, without speaking instructions; visible generated speech needs media_video with audio=true. A clearly visible presenter performing a simple compatible action was considered for audio=true; if detailed movement or face occlusion makes speaking-focused A2V unsuitable, choose voice-over;
+audio correctness: media_image always has audio=false, without speaking instructions; audio=true is reserved for the supplied avatar narrator in the preserved reference narration setup and physical placement/posture class; generated full-screen narrator coverage in that setup uses media_video with reference=true and audio=true, while leaving/changing that placement requires audio=false voice-over coverage;
 continuity: numbering is used for actual continuous events and omitted otherwise;
-presenter-run limit: no avoidable >120-character avatar/avatar_media run is created.
+spoken-run limit: no avoidable >120-character consecutive audio=true run is created.
 Do not optimize whole-script format percentages. Runs of any format are acceptable when justified by content and technical constraints.
 
 Minimal reference example
@@ -556,30 +596,26 @@ it here. This object-only scene has no facial-expression requirement.
 
 Presenter-led demonstration calibration
 
-When a presenter explains their own simple skincare demonstration, a suitable
-media_video prompt could describe the SAME presenter from the reference lightly
-pressing toner onto the cheeks with a relaxed, attentive expression, eyes
-naturally engaged with the camera and mouth unobstructed. In that specific
-speaking-compatible composition, reference=true and audio=true are appropriate.
-The video_prompt separately describes how the presenter speaks and makes
-small natural hand motions during the shot.
+When a presenter explains their own simple skincare demonstration while remaining
+in the SAME narration setup and SAME physical placement/posture class established
+by the reference, a suitable media_video prompt could describe the SAME presenter
+still seated/placed there, lightly holding the product or making one restrained
+gesture, with a relaxed attentive expression and mouth unobstructed. The camera
+may move to a different angle or crop. In that speaking-compatible composition,
+reference=true and audio=true are required. The video_prompt describes natural
+speech, lip movement and only small secondary gestures without changing the
+presenter's placement.
 
-Conversely, if the narrator explains an actual skincare application as
-voice-over, an appropriate media_video output could use:
+Conversely, if precise hand motion or a different body placement is the main
+visual point, do NOT keep the narrator visibly occupying the narration setup with
+audio=false. Reframe the coverage as observational voice-over: for example an
+identity-free hands-only close-up of moisturizer being spread, or the referenced
+presenter performing the action after leaving/changing the narration placement.
+That media_video uses audio=false.
 
-{
-"visual_type": "media_video",
-"prompt": "2. Use the reference to preserve the presenter's identity. At the same vanity and in the same outfit, frame a tight cheek-and-hand close-up just as her fingertip touches a thin layer of moisturizer. She looks toward the mirror with a focused, relaxed expression.",
-"video_prompt": "From the supplied starting frame, the presenter uses two slow fingertip passes to smooth the thin moisturizer layer over the cheek, then gently lifts her hand away. Natural wrist motion and subtle blinking; eyes remain on the mirror. One steady close-up take centered on the continuous action and the mirror-facing subject.",
-"reference": true,
-"audio": false
-}
-
-This is an example of casting and audio intent, not a requirement to use
-media_video for tutorials or to make every presenter demonstration audio=true.
-If precise hand motion is the main point, use audio=false with voice-over instead.
-Every pictured referenced face needs its own expression appropriate to that
-beat, not a repeated stock expression.
+This is a setup-continuity rule, not a requirement to show the presenter in every
+tutorial beat. Every pictured referenced face needs its own expression appropriate
+to that beat, not a repeated stock expression.
 
 Final self-check
 
@@ -609,13 +645,13 @@ both image and animation prompts follow affirmative scene writing, with video_pr
 image and animation instructions are separate; media_video has a self-contained video_prompt while other visual types use native null;
 scene details are relevant to the beat; narration is unchanged;
 avatar and avatar_media have audio = true;
-media_image ALWAYS has audio=false and does not request visible speaking; active referenced presenter demonstrations favor media_video instead; generated synchronized speech requires media_video with audio=true;
-media_video audio was decided per beat, preferring natural visible presenter speech when simple action and facial visibility are compatible with A2V;
+media_image ALWAYS has audio=false and does not request visible speaking; it never freezes the narrator in the preserved narration setup; generated full-screen narrator coverage in that setup uses media_video with reference=true and audio=true;
+media_video audio was decided per beat using the mandatory setup rule: audio=true only for the supplied avatar narrator preserving the reference narration setup and physical placement/posture class; all other media_video uses audio=false;
 every generated beat uses a purposefully selected shot scale/crop/angle/focus without copying the reference photo's framing or demanding animated zoom;
 numbered sequences preserve identity and setting but also progress through meaningful, visually distinct framing/emphasis where appropriate;
 numbered continuity is current and represents one continuous event;
 numbered prompts begin with the exact local sequence marker and contain no style prefix;
-no avoidable consecutive avatar/avatar_media run exceeds 120 narration characters;
+no avoidable consecutive audio=true run exceeds 120 narration characters;
 generated media is source-grounded, physically plausible and contains no unsupported narrative facts.
 Correct any failed invariant before output.
 
@@ -675,7 +711,8 @@ reference is native JSON true or false, never a string;
 audio is native JSON true or false, never a string;
 if prompt is null, reference must be false;
 if visual_type is avatar or avatar_media, audio must be true;
-if visual_type is media_image, audio MUST be false; full-screen generated synchronized visible speech instead requires media_video with audio=true;
+if visual_type is media_image, audio MUST be false; never freeze the narrator in the preserved narration setup;
+if visual_type is media_video and audio=true, reference MUST be true and the shot must depict the supplied avatar narrator preserving the reference narration setup and physical placement/posture class;
 video_prompt must be a nonempty string for media_video and native JSON null for avatar, avatar_media and media_image;
 if a non-null prompt depicts the presenter from the supplied avatar reference image, reference must be true.
 Error transport
