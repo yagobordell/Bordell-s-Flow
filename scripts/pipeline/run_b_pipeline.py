@@ -100,8 +100,11 @@ from ai_video_factory.workflows.casero_cta import prepare_casero_cta
 
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
-_STAGES = ("B1.1", "B1.2", "B2")
-_METRIC_STAGES = ("B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "V1", "V2", "V3", "V4")
+_STAGES = ("B1.1", "B1.2", "B2", "B3")
+_METRIC_STAGES = (
+    "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "B3",
+    "V1", "V2", "V3", "V4",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -2245,8 +2248,10 @@ class BotArtifacts:
                 raise ValueError(f"{stage} must not have a block ID")
             return self._output / stage
         if block_id is None or block_id < 1:
-            raise ValueError(f"{stage} requires a positive block ID")
-        return self._output / stage / f"block_{block_id}"
+            raise ValueError(f"{stage} requires a positive block/group ID")
+        return self._output / stage / (
+            f"group_{block_id}" if stage == "B3" else f"block_{block_id}"
+        )
 
     def input(self, stage: str, block_id: int | None, payload: dict[str, object]) -> None:
         directory = self._folder(stage, block_id)
@@ -2283,6 +2288,14 @@ class BotArtifacts:
     ) -> None:
         _write(
             self._folder("B2", block_id) / f"rejected_attempt_{attempt}.json",
+            {"attempt": attempt, "validation_error": error, "response": payload},
+        )
+
+    def rejected_b3(
+        self, group_id: int, attempt: int, error: str, payload: dict[str, object]
+    ) -> None:
+        _write(
+            self._folder("B3", group_id) / f"rejected_attempt_{attempt}.json",
             {"attempt": attempt, "validation_error": error, "response": payload},
         )
 
@@ -2554,7 +2567,11 @@ async def main() -> None:
     resume_elapsed_offset = 0.0
     resume_expected_calls: dict[str, int | None] | None = None
     stop_stage = getattr(args, "stop_stage", None)
-    stop_index = _STAGES.index(stop_stage) if stop_stage is not None else len(_STAGES) - 1
+    stop_index = (
+        _STAGES.index(stop_stage)
+        if stop_stage is not None
+        else _STAGES.index("B3" if visual_style == "profesional" else "B2")
+    )
     planned_blocks: int | None = None
     previous_b11: B11Output | None = None
     previous_b12: tuple[B12Output, ...] | None = None
@@ -2758,6 +2775,10 @@ async def main() -> None:
                     max(report_blocks, timings.call_count("B2"))
                     if report_blocks is not None else None
                 ) if stop_index >= 2 else 0,
+                "B3": (
+                    max(1, timings.call_count("B3"))
+                    if visual_style == "profesional" and stop_index >= 3 else 0
+                ),
             }
         else:
             expected_calls = dict(resume_expected_calls)
@@ -2774,6 +2795,10 @@ async def main() -> None:
                 if stop_index >= 2:
                     expected_calls["B2"] = max(
                         expected_calls["B2"] or 0, report_blocks, timings.call_count("B2")
+                    )
+                if visual_style == "profesional" and stop_index >= 3:
+                    expected_calls["B3"] = max(
+                        expected_calls.get("B3") or 0, timings.call_count("B3")
                     )
         ledger.sync_professional_voice_usage(output)
         ledger.sync_fish_director_usage(output)
@@ -2913,7 +2938,9 @@ async def main() -> None:
             enable_casero_cta=visual_style == "casero",
             avatar_image=avatar_bytes,
             start_from=args.from_stage,
-            stop_after=stop_stage or "B2",
+            stop_after=stop_stage or (
+                "B3" if visual_style == "profesional" else "B2"
+            ),
             previous_b11=previous_b11,
             previous_b12=previous_b12,
             **(
@@ -2929,6 +2956,7 @@ async def main() -> None:
             on_rejected_output=artifacts.rejected_b11,
             on_rejected_b12_output=artifacts.rejected_b12,
             on_rejected_b2_output=artifacts.rejected_b2,
+            on_rejected_b3_output=artifacts.rejected_b3,
             on_api_response=ledger.record,
             on_call_duration=timings.record_call,
             on_stage_duration=timings.record_stage,
