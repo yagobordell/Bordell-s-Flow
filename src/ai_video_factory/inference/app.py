@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, status
 
 from .contracts import InferenceJobRequest, InferenceJobResponse
 from .errors import (
+    FatalGpuContextError,
     InputIntegrityError,
     JobBusyError,
     JobConflictError,
@@ -30,12 +33,14 @@ def create_app(
     prepare_retry_seconds: float = 5.0,
     poll_jobs_from_repository: bool = False,
     job_poll_seconds: float = 2.0,
+    fatal_worker_exit: Callable[[int], None] | None = None,
 ) -> FastAPI:
     if prepare_retry_seconds <= 0:
         raise ValueError("prepare_retry_seconds must be positive")
     if job_poll_seconds <= 0:
         raise ValueError("job_poll_seconds must be positive")
 
+    fatal_exit = fatal_worker_exit or os._exit
     preparation_complete = threading.Event()
     preparation_stop = threading.Event()
     job_poll_stop = threading.Event()
@@ -87,6 +92,16 @@ def create_app(
                 worker.process(request, transport_job_id=request.job_id)
             except JobBusyError:
                 job_poll_stop.wait(job_poll_seconds)
+            except FatalGpuContextError as exc:
+                preparation_error = exc
+                job_poll_stop.set()
+                logger.critical(
+                    "INFERENCE_WORKER_PROCESS_EXIT_FATAL_GPU job_id=%s",
+                    request.job_id,
+                    exc_info=True,
+                )
+                fatal_exit(75)
+                return
             except NonRetryableTaskError as exc:
                 if (
                     request.task == "video.ltx25.audio_to_video_experimental"
@@ -181,6 +196,11 @@ def create_app(
 
     @app.get("/health")
     def health() -> dict[str, str]:
+        if isinstance(preparation_error, FatalGpuContextError):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="worker GPU context is poisoned",
+            )
         return {"status": "ok"}
 
     @app.get("/ready")
@@ -201,9 +221,23 @@ def create_app(
         request: InferenceJobRequest,
         salad_job_id: str | None = Header(default=None, alias="Salad-Job-Id"),
     ) -> InferenceJobResponse:
+        nonlocal preparation_error
         ensure_prepared()
         try:
             return worker.process(request, transport_job_id=salad_job_id)
+        except FatalGpuContextError as exc:
+            preparation_error = exc
+            job_poll_stop.set()
+            logger.critical(
+                "INFERENCE_WORKER_PROCESS_EXIT_FATAL_GPU job_id=%s",
+                request.job_id,
+                exc_info=True,
+            )
+            fatal_exit(75)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="worker GPU context is poisoned",
+            ) from exc
         except JobBusyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
