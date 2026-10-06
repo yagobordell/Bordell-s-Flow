@@ -818,7 +818,10 @@ def test_gemini_fidelity_regeneration_replaces_only_failed_group(
             }
 
     def join(paths, destination):
-        assert paths == [folder / "audio.wav"]
+        assert paths == [folder / "tts_regenerations" / "attempt_1.wav"]
+        assert destination == (
+            folder / "tts_regenerations" / "attempt_1.narration.wav"
+        )
         joined = _wav(48000)
         destination.write_bytes(joined)
         return {
