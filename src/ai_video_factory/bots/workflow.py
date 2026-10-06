@@ -274,15 +274,26 @@ class _AvatarRunBeat:
 def _overlong_avatar_run(
     outputs: list[B2Output | ProfessionalB2Output] | tuple[B2Output | ProfessionalB2Output, ...],
 ) -> tuple[list[_AvatarRunBeat], int] | None:
-    """Find the first overlong presenter run in whole-video beat order."""
+    """Find the first overlong spoken run in whole-video beat order.
+
+    Professional B2 defines a run by consecutive audio=true beats, regardless of
+    visual_type. Casero has no audio flag, so it retains the historical
+    avatar/avatar_media presenter-run rule.
+    """
     run: list[_AvatarRunBeat] = []
     characters = 0
     for output in outputs:
         if not output.blocks:
             raise BPipelineValidationError("B2 output is missing its block")
         block = output.blocks[0]
+        professional = isinstance(output, ProfessionalB2Output)
         for beat in block.beats:
-            if beat.visual_type not in _PRESENTER_VISUAL_TYPES:
+            continues_run = (
+                beat.audio
+                if professional
+                else beat.visual_type in _PRESENTER_VISUAL_TYPES
+            )
+            if not continues_run:
                 if characters > _MAX_CONSECUTIVE_AVATAR_CHARACTERS:
                     return run, characters
                 run = []
@@ -302,8 +313,17 @@ def _overlong_avatar_run(
     return None
 
 
-def _avatar_run_error(run: list[_AvatarRunBeat], characters: int) -> str:
+def _avatar_run_error(
+    run: list[_AvatarRunBeat], characters: int, *, professional: bool = False,
+) -> str:
     beats = ", ".join(f"{beat.beat_id} ({beat.characters})" for beat in run)
+    if professional:
+        return (
+            f"B2 consecutive audio=true beats {beats} total {characters} characters "
+            f"(maximum {_MAX_CONSECUTIVE_AVATAR_CHARACTERS}); assign a faithful "
+            "audio=false visual to a discretionary beat without changing frozen "
+            "narration or mandatory anchors"
+        )
     return (
         f"B2 consecutive avatar/avatar_media beats {beats} total {characters} characters "
         f"(maximum {_MAX_CONSECUTIVE_AVATAR_CHARACTERS}); assign a faithful non-presenter "
@@ -349,7 +369,11 @@ def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input)
             )
     overflow = _overlong_avatar_run((result,))
     if overflow is not None:
-        raise BPipelineValidationError(_avatar_run_error(*overflow))
+        raise BPipelineValidationError(
+            _avatar_run_error(
+                *overflow, professional=isinstance(result, ProfessionalB2Output)
+            )
+        )
 
 
 @dataclass(frozen=True)
@@ -909,9 +933,14 @@ async def run_b_pipeline(
                         "Fix the invalid visual assignments, prompts, video_prompt, "
                         "descriptions, reference/audio flags and any mandatory "
                         "presenter anchors according to the selected B2 schema. "
-                        "For professional style, presenter practical actions must "
-                        "use media_video and media_image must have audio=false. "
-                        "Do not change any valid visual decision unnecessarily. "
+                        "For professional style, audio=true is reserved for the "
+                        "narrator while preserving the reference narration setup and "
+                        "the narrator's physical position within that setup. A generated "
+                        "full-screen narrator who stays in that setup must use "
+                        "media_video with reference=true and audio=true; if the narrator "
+                        "leaves that setup or changes position substantially, use "
+                        "audio=false voice-over coverage. media_image must have "
+                        "audio=false. Do not change any valid visual decision unnecessarily. "
                         + (
                             "For professional B2, only a reused avatar may have a null "
                             "prompt; all other visuals require a nonempty prompt. "
@@ -1054,7 +1083,11 @@ async def run_b_pipeline(
                 )
             _, _, block_id, target_beat_id = min(candidates)
             previous = b2_results[block_id - 1]
-            error = BPipelineValidationError(_avatar_run_error(run, total))
+            error = BPipelineValidationError(
+                _avatar_run_error(
+                    run, total, professional=visual_style == "profesional"
+                )
+            )
             if on_rejected_b2_output is not None:
                 on_rejected_b2_output(
                     block_id, b2_call_numbers[block_id], str(error), previous.model_dump()
@@ -1067,13 +1100,29 @@ async def run_b_pipeline(
                     and getattr(provider, "supports_response_continuation", False)
                 ),
                 instructions=(
-                    "B2 whole-video avatar-run correction: the joined video has "
-                    "more than 120 consecutive avatar/avatar_media narration characters. "
-                    f"Change visual assignment {target_beat_id} to a faithful "
-                    "non-presenter media_image or media_video visual, or break the "
-                    "run at another discretionary beat within THIS block. "
-                    "Never change mandatory professional intro/close anchors. "
-                    "Keep all frozen narration and upstream fields unchanged."
+                    (
+                        "B2 whole-video audio-run correction: the joined professional "
+                        "video has more than 120 consecutive audio=true narration "
+                        "characters. "
+                        f"Change visual assignment {target_beat_id} to a faithful "
+                        "audio=false media_image or media_video beat, or break the "
+                        "spoken run at another discretionary beat within THIS block. "
+                        "audio=true is reserved for the narrator while preserving the "
+                        "reference narration setup and the narrator's physical position "
+                        "within that setup. Never change mandatory professional "
+                        "intro/close anchors. Keep all frozen narration and upstream "
+                        "fields unchanged."
+                    )
+                    if visual_style == "profesional"
+                    else (
+                        "B2 whole-video avatar-run correction: the joined video has "
+                        "more than 120 consecutive avatar/avatar_media narration "
+                        "characters. "
+                        f"Change visual assignment {target_beat_id} to a faithful "
+                        "non-presenter media_image or media_video visual, or break the "
+                        "run at another discretionary beat within THIS block. "
+                        "Keep all frozen narration and upstream fields unchanged."
+                    )
                 ),
             )
             index = block_id - 1
