@@ -254,6 +254,23 @@ def test_professional_boundary_cannot_regenerate_avatar(kind: str) -> None:
         ProfessionalB2Output.model_validate(_professional_anchor_output(kind, [beat]))
 
 
+def test_professional_b2_continuity_can_be_anchored_by_an_object() -> None:
+    instructions = (
+        files("ai_video_factory.bots.prompts")
+        .joinpath("b2_professional.md")
+        .read_text(encoding="utf-8")
+    )
+    assert "An OBJECT ALONE can be the continuity anchor" in instructions
+    assert "presenter+object to object-only close-up" in instructions
+    assert "A presenter holding a particular gift card" in instructions
+    assert "detail of the reverse side of that SAME gift card" in instructions
+    assert "presence of the presenter" in instructions
+    assert "reference=true/reference=false" in instructions
+    assert "same underlying visual reality" in instructions
+    assert "object-led sequence" in instructions
+    assert "including object-only anchors" in instructions
+
+
 def test_professional_b2_global_framing_sequence_progression_and_still_audio() -> None:
     instructions = (
         files("ai_video_factory.bots.prompts")
