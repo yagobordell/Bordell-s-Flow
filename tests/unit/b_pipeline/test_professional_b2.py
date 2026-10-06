@@ -87,6 +87,11 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     assert "audio = true is valid for" in lowered
     assert "media_video showing the supplied narrator in the preserved narration setup" in lowered
     assert "leaving the setup changes the speaking route" in lowered
+    # The model must know the same hard audio-run limit enforced by Python validation.
+    assert "hard maximum of 120 narration characters" in lowered
+    assert "any audio=false beat breaks the spoken run" in lowered
+    assert "prefer a break position that leaves both" in lowered
+    assert "neighboring audio=true segments at or below 120 characters" in lowered
     # Text-bearing objects must not acquire invented readability/branding constraints.
     assert "do not convert that omission into instructions about" in lowered
     assert "readability, legibility, indistinctness, missing text, generic branding" in lowered
