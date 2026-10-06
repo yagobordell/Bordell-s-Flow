@@ -71,7 +71,9 @@ Apply decisions in this order. Earlier decisions have priority over later ones.
 5. If the narrator appears, decide whether the narration setup can be preserved.
 6. Choose the visual carrier.
 7. Assign audio and reference.
-8. Adapt only unreliable generated motion if necessary.
+8. If the intended scene is dynamic, preserve that dynamic intent while adapting
+   only unreliable generated motion; do not downgrade a dynamic beat to a still
+   merely because its literal motion is unreliable.
 9. Preserve physical and visual continuity.
 10. Apply grid numbering when appropriate.
 11. Write prompt and video_prompt.
@@ -204,12 +206,18 @@ Phrases such as:
 
 may simply emphasize continued presence, possession or rhetorical immediacy.
 
-A mentioned posture or location is visually binding only when changing or omitting
-that posture/location would materially alter the beat's meaning.
+Use this test before treating a mentioned posture or location as visually binding:
 
-If the actual meaning is that the presenter still physically has an object,
-showing the presenter in the established narration setup holding that object can be
-fully faithful even if the narration casually says “standing here”.
+If the posture/location can be omitted from the visual while preserving the beat's
+main proposition, then it is NOT visually material and must NOT change the
+narration setup.
+
+Only treat posture/location as visually binding when omitting it would remove or
+change information the beat is actually trying to communicate.
+
+For example, when the main proposition is that the presenter still physically has
+an object, showing the presenter in the established narration setup holding that
+object is fully faithful even if the narration casually says “standing here”.
 
 3. Choose the scene before the carrier
 
@@ -411,7 +419,13 @@ adds real communicative value.
 media_image
 
 Use media_image when one still communicates essentially all useful visual
-information.
+information AND the beat is not naturally dynamic apart from an unreliable
+generated motion.
+
+If the beat's useful visual is fundamentally an action, interaction, transition,
+process or other temporal event, do not choose media_image merely because the
+literal motion may be unreliable. Choose the dynamic carrier first, then re-stage
+only the unreliable motion under the generated-video reliability rules.
 
 Typical uses include:
 
@@ -438,13 +452,15 @@ media_image.
 
 media_video
 
-Use media_video when:
+Use media_video whenever the beat's useful visual is fundamentally dynamic, even
+if the literal action later needs to be safely re-staged.
 
-- motion materially improves understanding;
-- an action/process matters;
-- an interaction unfolds;
+This includes when:
+
+- the beat communicates a physical action, execution or interaction;
+- a process, trajectory, transition or temporal development is the useful visual;
 - a physical state changes;
-- temporal development is useful;
+- seeing motion materially improves understanding;
 - or a newly generated full-screen narrator shot must visibly speak and the scene
   is more than a simple talking-head portrait update.
 
@@ -640,7 +656,7 @@ This includes:
 
 Re-stage only the unreliable motion
 
-A forbidden/unreliable motion is not by itself a reason to:
+A forbidden/unreliable motion is not a reason to:
 
 - change the scene;
 - change the subject;
@@ -648,8 +664,9 @@ A forbidden/unreliable motion is not by itself a reason to:
 - leave the narration setup;
 - switch to media_image.
 
-If motion remains useful, keep the intended dynamic carrier and replace only the
-fragile action with a nearby safe action such as:
+For a beat whose useful visual is fundamentally dynamic, media_image is NOT an
+allowed fallback or substitution for the rejected motion. Keep media_video and
+replace only the fragile action with a nearby safe action such as:
 
 - holding;
 - raising/lowering;
@@ -665,9 +682,10 @@ If the narrator owns the action and the safe substitute can happen in the
 narration setup, preserve narrator identity, narration setup, reference=true and
 audio=true.
 
-The final video_prompt must describe only the safe replacement motion. Never put,
-request or defer the rejected/unreliable action inside video_prompt after selecting
-a safe starting image.
+The final video_prompt must describe only the safe replacement motion in affirmative
+terms. Do not mention the rejected/unreliable action at all — not as a request,
+warning, prohibition, exclusion or deferred instruction — after selecting a safe
+starting image.
 
 13. Screens and documents
 
@@ -742,7 +760,12 @@ Write the shortest self-contained prompt that fully controls what matters:
 - relevant expression/gaze;
 - continuity-critical details.
 
-Prefer concise affirmative scene descriptions.
+Write image and video prompts as concise affirmative descriptions of the intended
+result.
+
+Omit negative clauses, preventive exclusions and routine disclaimers from the final
+prompt text. Describe the desired visible state directly instead of saying what must
+not happen.
 
 Do not add generic negative-prompt lists or decorative unsupported facts.
 
@@ -935,9 +958,12 @@ Narrator
 Motion and chronology
 
 - media_video is used when useful motion materially matters.
+- A beat that is fundamentally dynamic did not fall back to media_image merely
+  because its literal motion was unreliable.
 - Unreliable precision/state-changing motion is safely re-staged.
 - Re-staging changed only the fragile motion, not unrelated semantics.
-- Rejected motion does not reappear inside video_prompt.
+- Rejected motion does not reappear anywhere inside video_prompt, including as a
+  negative or preventive clause.
 - Object/scene state follows narrative chronology.
 
 Reference and prompts
@@ -953,6 +979,8 @@ Reference and prompts
 - media_video audio=true uses reference=true and preserves the narrator setup.
 - Non-null prompts contain beat-specific scene instructions rather than global style
   boilerplate.
+- Final image/video prompts describe desired results affirmatively and contain no
+  preventive negative clauses or exclusion-style instructions.
 
 Continuity
 
