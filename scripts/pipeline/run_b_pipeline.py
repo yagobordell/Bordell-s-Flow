@@ -2144,6 +2144,14 @@ async def _run_audio_only(
             _refresh_audio_costs(report, output)
             _write(report_path, report)
             raise
+        if artifact.get("sha256") is not None and artifact["sha256"] != previous_sha:
+            # Preflight may have replaced only a mismatched Gemini voice group.
+            # Any preview/LTX derived from the prior narration is now stale.
+            report["run"]["video_preview"] = {"status": "stale_audio_regeneration"}
+            report["run"]["video_generation"] = {"status": "stale_audio_regeneration"}
+            report["run"]["audio_generation"] = artifact
+            if managed_target is not None:
+                await asyncio.to_thread(sync_managed_outputs, output, managed_target)
         _write(report_path, report)
     try:
         preview = await _preview_if_ready(output, report)
