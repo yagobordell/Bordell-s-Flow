@@ -65,19 +65,22 @@ Apply decisions in this order. Earlier decisions have priority over later ones.
    mandatory anchor, keep the full anchor assignment and skip discretionary
    visual selection for that beat.
 1. Understand the beat in block context.
-2. Resolve discourse state and narrative ownership.
-3. Resolve who or what belongs in the scene.
-4. Choose the most useful scene.
-5. If the narrator appears, decide whether the narration setup can be preserved.
-6. Choose the visual carrier.
-7. Assign audio and reference.
-8. If the intended scene is dynamic, preserve that dynamic intent while adapting
+2. Separate the beat's main proposition from incidental posture, placement,
+   location and deictic delivery wording.
+3. Resolve discourse state and narrative ownership using only the resulting
+   visual requirements.
+4. Resolve who or what belongs in the scene.
+5. Choose the most useful scene.
+6. If the narrator appears, decide whether the narration setup can be preserved.
+7. Choose the visual carrier.
+8. Assign audio and reference.
+9. If the intended scene is dynamic, preserve that dynamic intent while adapting
    only unreliable generated motion; do not downgrade a dynamic beat to a still
    merely because its literal motion is unreliable.
-9. Preserve physical and visual continuity.
-10. Apply grid numbering when appropriate.
-11. Write prompt and video_prompt.
-12. Validate the final semantic invariants.
+10. Preserve physical and visual continuity.
+11. Apply grid numbering when appropriate.
+12. Write prompt and video_prompt.
+13. Validate the final semantic invariants.
 
 Do not let a later technical decision silently rewrite an earlier semantic one.
 
@@ -176,15 +179,44 @@ Do not replace an explicitly presenter-owned visible action/state with anonymous
 hands or a generic person merely because identity is unnecessary to explain the
 object.
 
+Incidental posture/location filtering
+
+Before resolving first-person ownership or composing the scene, separate the beat's
+main proposition from incidental delivery wording.
+
+Apply this omission test to every mentioned posture, placement, location or deictic
+phrase:
+
+If that detail can be omitted from the visual while preserving the same main
+proposition, classify it as incidental and remove it from the beat's visual
+requirements.
+
+Only keep posture, placement or location as a visual requirement when omitting it
+would remove or change information the beat is actually trying to communicate.
+
+Phrases such as “standing here”, “sitting here”, “right here” or “I'm here” may
+therefore express continued presence, possession or rhetorical immediacy rather
+than a required body position or location.
+
+Once a posture, placement or location detail has been classified as incidental, it
+must not be used later to justify leaving the narration setup, changing posture
+class, disabling audio or choosing observational presenter coverage. All later
+scene, carrier and audio decisions operate on the filtered main proposition.
+
 Unquoted first-person presenter ownership
 
-Unquoted first-person narration establishes the supplied presenter as the visible
-subject when the narration materially assigns the speaker a concrete:
+After incidental posture/location wording has been filtered out, unquoted
+first-person narration establishes the supplied presenter as the visible subject
+when the remaining main proposition materially assigns the speaker:
 
-- action;
-- state;
-- possession;
-- interaction.
+- a concrete action;
+- a materially relevant visible state;
+- a possession;
+- an interaction.
+
+A visible state is materially relevant only when that state itself carries the
+beat's information. It does not include posture, placement or location that failed
+the omission test above.
 
 Examples include the speaker holding, showing, using or demonstrating something,
 or explicitly still possessing an established object.
@@ -192,32 +224,9 @@ or explicitly still possessing an established object.
 This establishes identity. It does not by itself determine carrier, camera framing
 or audio.
 
-Incidental wording is not a visual command
-
-Do not literalize conversational wording when its literal detail is not material to
-the beat's meaning.
-
-Phrases such as:
-
-- “standing here”
-- “sitting here”
-- “right here”
-- “I'm here”
-
-may simply emphasize continued presence, possession or rhetorical immediacy.
-
-Use this test before treating a mentioned posture or location as visually binding:
-
-If the posture/location can be omitted from the visual while preserving the beat's
-main proposition, then it is NOT visually material and must NOT change the
-narration setup.
-
-Only treat posture/location as visually binding when omitting it would remove or
-change information the beat is actually trying to communicate.
-
 For example, when the main proposition is that the presenter still physically has
 an object, showing the presenter in the established narration setup holding that
-object is fully faithful even if the narration casually says “standing here”.
+object is fully faithful even if incidental wording mentions a different posture.
 
 3. Choose the scene before the carrier
 
