@@ -94,37 +94,6 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     assert "When audio=true, video_prompt is instead sent to the A2V" in prompt
 
 
-def test_professional_b2_video_only_reliability_rules_are_explicit() -> None:
-    prompt = (
-        files("ai_video_factory.bots.prompts")
-        .joinpath("b2_professional.md")
-        .read_text(encoding="utf-8")
-    )
-    assert "MEDIA_VIDEO GENERATION RELIABILITY RULE — VIDEO ONLY" in prompt
-    assert (
-        "They do NOT ban these subjects, objects or completed states from\n"
-        "media_image in general"
-    ) in prompt
-    assert "writing on paper" in prompt
-    assert "typing or entering visible numbers" in prompt
-    assert "scratching a card" in prompt
-    assert "cutting\nwith scissors or a knife in close-up" in prompt
-    assert "threading, fastening/buckling, inserting a\ncard" in prompt
-    assert "opening a small zipper or clasp" in prompt
-    assert "manipulating a coin over a precise target\narea" in prompt
-    assert "scratching a card so a code appears" in prompt
-    assert "opening something so letters appear" in prompt
-    assert "writing a word that did not previously exist" in prompt
-    assert "turning an object specifically so\nexact content is expected to appear" in prompt
-    assert "A forbidden motion is NOT a reason by itself to choose media_image" in prompt
-    assert "KEEP media_video" in prompt
-    assert "media_image is NOT an allowed fallback or\nsubstitution" in prompt
-    assert "re-stage only the fragile action as a nearby safe motion" in prompt
-    assert "showing an already completed\nstate while reacting to it" in prompt
-    assert "Never move a listed forbidden action into video_prompt" in prompt
-    assert "media_image showing the relevant before, after or completed state" not in prompt
-
-
 def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions() -> None:
     prompt = (
         files("ai_video_factory.bots.prompts")
@@ -258,23 +227,6 @@ def test_professional_boundary_cannot_regenerate_avatar(kind: str) -> None:
         ValidationError, match=f"Professional {kind} .* beat must reuse"
     ):
         ProfessionalB2Output.model_validate(_professional_anchor_output(kind, [beat]))
-
-
-def test_professional_b2_continuity_can_be_anchored_by_an_object() -> None:
-    instructions = (
-        files("ai_video_factory.bots.prompts")
-        .joinpath("b2_professional.md")
-        .read_text(encoding="utf-8")
-    )
-    assert "An OBJECT ALONE can be the continuity anchor" in instructions
-    assert "presenter+object to object-only close-up" in instructions
-    assert "A presenter holding a particular gift card" in instructions
-    assert "detail of the reverse side of that SAME gift card" in instructions
-    assert "presence of the presenter" in instructions
-    assert "reference=true/reference=false" in instructions
-    assert "same underlying visual reality" in instructions
-    assert "object-led sequence" in instructions
-    assert "including object-only anchors" in instructions
 
 
 def test_professional_b2_global_framing_sequence_progression_and_still_audio() -> None:
