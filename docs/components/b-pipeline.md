@@ -102,14 +102,8 @@ natural gestures, hand/object interaction, gaze, framing and realistic pacing.
 For `avatar`, `avatar_media` and `media_image`, `video_prompt` is exactly
 `null`. Referenced presenter demonstrations with visible practical action
 default to `media_video`; static portraits, pauses and completed results can
-still use `media_image`. For the explicit video-reliability blacklist in B2
-(writing/entering new visible text or numbers, selected precision hand-object
-actions, and motions that reveal exact new content), the restriction applies to
-the fragile motion rather than to the `media_video` carrier. If such a beat is
-otherwise dynamic, B2 keeps `media_video` and re-stages the motion as a nearby
-safe action; `media_image` is not an allowed fallback for that prohibited-motion
-case. A narrow schema guard rejects clearly active referenced-presenter still
-prompts and triggers the existing correction retry.
+still use `media_image`. A narrow schema guard rejects clearly active
+referenced-presenter still prompts and triggers the existing correction retry.
 
 For `media_video + audio:false`, the planner sends `video_prompt` verbatim
 as LTX I2V's animation prompt, independently of the image-generation prompt.
@@ -134,14 +128,9 @@ shot distance, angle, crop and focus (including tighter close-ups and a
 slightly zoomed-in still composition). This changes the generated starting
 image's composition, not A2V camera animation; downstream Ken Burns still
 governs actual zoom movement for static `media_image` shots. For contiguous
-numbered steps, B2 applies a stronger shot-progression check around a shared
-visual continuity anchor. That anchor may be a person, but it may also be the
-same object/product, vehicle, location, setup or physical state. A sequence may
-therefore move from presenter+object to an object-only close-up or reverse/detail
-view without breaking continuity merely because the presenter disappears,
-visual_type changes, framing changes or reference=true/false changes. Neighboring
-images should preserve the relevant anchor while emphasizing different useful
-framing/details instead of duplicating nearly identical views.
+numbered steps, B2 applies a stronger shot-progression check so the same
+person and setting stay continuous while neighboring images emphasize
+different framing/details instead of duplicating nearly identical views.
 The professional image-grid prompt explicitly preserves each panel's
 distinct shot composition rather than normalizing all panels to one angle.
 Because B2 workers operate one block at a time, it uses the global framing
