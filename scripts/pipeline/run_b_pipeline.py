@@ -66,7 +66,6 @@ from ai_video_factory.inference.salad_image_upscaler_start import (
 )
 from ai_video_factory.managed_layout import publish_managed_run, sync_managed_outputs
 from ai_video_factory.providers import OpenAIProvider
-from ai_video_factory.providers.b3_shots import B3ShotImageError, generate_b3_shot_images
 from ai_video_factory.providers.ai33_speech import AI33SpeechClient
 from ai_video_factory.providers.avatar_library import (
     avatar_directory,
@@ -76,6 +75,7 @@ from ai_video_factory.providers.avatar_library import (
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
 from ai_video_factory.providers.avatar_style import ensure_avatar_style
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice, valid_voice_provider
+from ai_video_factory.providers.b3_shots import B3ShotImageError, generate_b3_shot_images
 from ai_video_factory.providers.ebook_covers import ensure_ebook_covers
 from ai_video_factory.providers.grid_crops import crop_grid_assets
 from ai_video_factory.providers.image_grids import BLACK_PANEL_SOURCE, GridPlanError
