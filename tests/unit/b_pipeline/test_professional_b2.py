@@ -311,7 +311,10 @@ def test_professional_prompt_forbids_frozen_narrator_in_reference_setup() -> Non
         .joinpath("b2_professional.md")
         .read_text(encoding="utf-8")
     )
-    assert "NEVER show the narrator sitting/placed in the preserved narration setup as a frozen still" in prompt
+    assert (
+        "NEVER show the narrator sitting/placed in the preserved narration setup "
+        "as a frozen still"
+    ) in prompt
     assert "Never use media_image or media_video with audio=false" in prompt
     assert "same physical placement/posture class" in prompt
     assert "different camera angle, crop or shot size is allowed" in prompt
