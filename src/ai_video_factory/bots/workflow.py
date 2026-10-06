@@ -684,6 +684,9 @@ async def run_b_pipeline(
     on_rejected_b2_output: (
         Callable[[int, int, str, dict[str, object]], None] | None
     ) = None,
+    on_rejected_b3_output: (
+        Callable[[int, int, str, dict[str, object]], None] | None
+    ) = None,
     on_api_response: Callable[[str, int | None, object], None] | None = None,
     on_call_duration: Callable[[str, int | None, float], None] | None = None,
     on_stage_duration: Callable[[str, float], None] | None = None,
@@ -1301,9 +1304,61 @@ async def run_b_pipeline(
             b2_results[index] = await b2_one(
                 b11.blocks[index], materialized[index], b12_results[index], suffix,
             )
+        if visual_style == "profesional" and stop_after == "B3":
+            # B3 must see the exact immutable grid assignment, including fillers.
+            # Repair invalid B2 numbering now, before any B3 model call or paid image work.
+            while True:
+                professional_results = [
+                    item for item in b2_results
+                    if isinstance(item, ProfessionalB2Output)
+                ]
+                if len(professional_results) != len(b2_results):
+                    raise BPipelineValidationError(
+                        "Professional B3 requires professional B2 outputs"
+                    )
+                try:
+                    _professional_grid_locks(professional_results)
+                    break
+                except GridPlanError as error:
+                    match = re.search(r"(?:at |description at )(\d+)[A-Z]+", str(error))
+                    if match is None:
+                        raise BPipelineValidationError(
+                            f"B2 grid preflight failed before B3: {error}"
+                        ) from error
+                    block_id = int(match.group(1))
+                    if b2_correction_counts.get(block_id, 0) >= MAX_VALIDATION_RETRIES:
+                        raise BPipelineValidationError(
+                            f"B2 block {block_id} exhausted retries before B3 grid preflight"
+                        ) from error
+                    previous = b2_results[block_id - 1]
+                    correction = BPipelineValidationError(str(error))
+                    if on_rejected_b2_output is not None:
+                        on_rejected_b2_output(
+                            block_id, b2_call_numbers.get(block_id, 1),
+                            str(correction), previous.model_dump(),
+                        )
+                    suffix = validation_feedback(
+                        "B2 profesional", correction, block_id=block_id,
+                        previous=previous.model_dump(),
+                        continued=(
+                            bool(b2_last_response_ids.get(block_id))
+                            and getattr(provider, "supports_response_continuation", False)
+                        ),
+                        instructions=(
+                            "Repair only the failed B2 image-grid continuity numbering. "
+                            "Keep every frozen beat and every valid visual decision. "
+                            "B3 has not run yet and must receive the exact final grid plan."
+                        ),
+                    )
+                    index = block_id - 1
+                    b2_results[index] = await b2_one(
+                        b11.blocks[index], materialized[index],
+                        b12_results[index], suffix,
+                    )
     finally:
         if on_stage_duration is not None:
             on_stage_duration("B2", perf_counter() - b2_started)
+
     result = BPipelineResult(
         b11=b11,
         b12=tuple(b12_results),
@@ -1314,4 +1369,117 @@ async def run_b_pipeline(
     )
     if on_stage_complete is not None:
         on_stage_complete("B2", len(b2_results), result.merged_b2_output())
+    if stop_after == "B2":
+        return result
+
+    professional_results = tuple(
+        item for item in b2_results if isinstance(item, ProfessionalB2Output)
+    )
+    if len(professional_results) != len(b2_results):
+        raise BPipelineValidationError("B3 requires professional B2 outputs")
+    grid_locks = _professional_grid_locks(professional_results)
+    audio_groups = _professional_audio_groups(professional_results)
+
+    async def b3_one(
+        group_id: int,
+        source: list[tuple[int, dict[str, object]]],
+    ) -> B3Output:
+        payload_beats: list[dict[str, object]] = []
+        for block_id, beat in source:
+            lock = grid_locks.get((block_id, str(beat["beat_id"])))
+            payload_beats.append({
+                "block_id": block_id,
+                **beat,
+                "grid_id": lock.grid_id if lock is not None else None,
+                "grid_source": lock.source if lock is not None else None,
+                "grid_role": lock.role if lock is not None else None,
+            })
+        payload: dict[str, object] = {
+            "narrative_core": b11.narrative_core.model_dump(),
+            "group_id": group_id,
+            "beats": payload_beats,
+        }
+        feedback = ""
+        for attempt in range(1, MAX_VALIDATION_RETRIES + 2):
+            candidate: B3Output | None = None
+            try:
+                async with semaphore:
+                    candidate = await _call_stage(
+                        "B3",
+                        group_id,
+                        payload,
+                        provider=provider,
+                        model=model,
+                        prompt="b3_professional.md",
+                        instructions_suffix="\n\n" + feedback if feedback else "",
+                        output_type=B3Output,
+                        input_image_url=image_url,
+                        on_input=on_input,
+                        on_api_response=on_api_response,
+                        on_call_duration=on_call_duration,
+                    )
+                validate_b3(
+                    candidate,
+                    group_id=group_id,
+                    source=source,
+                    grid_locks=grid_locks,
+                )
+                if on_output is not None:
+                    on_output("B3", group_id, candidate.model_dump())
+                return candidate
+            except (ValidationError, BPipelineValidationError, RuntimeError) as error:
+                if isinstance(error, RuntimeError) and not is_schema_failure(error):
+                    raise
+                rejected = candidate.model_dump() if candidate is not None else {
+                    "unparsed_response": True,
+                    "validation_error": str(error),
+                }
+                if on_rejected_b3_output is not None:
+                    on_rejected_b3_output(group_id, attempt, str(error), rejected)
+                if attempt > MAX_VALIDATION_RETRIES:
+                    raise BPipelineValidationError(
+                        f"B3 group {group_id} failed validation after "
+                        f"{MAX_VALIDATION_RETRIES} retries: {error}"
+                    ) from error
+                feedback = validation_feedback(
+                    "B3 profesional",
+                    error,
+                    block_id=group_id,
+                    previous=candidate.model_dump() if candidate else None,
+                    instructions=(
+                        "Repair only the B3 camera-continuity decisions. "
+                        "Do not change beat IDs or B2 decisions. The first beat starts "
+                        "a take; fixed grid speaker-start beats also start takes and "
+                        "must keep shot_prompt=null. Every other non-first new take "
+                        "requires a continuity shot_prompt using the preceding effective "
+                        "shot as reference. continuous=true has no shot prompts."
+                    ),
+                )
+        raise AssertionError("Unreachable B3 retry state")
+
+    b3_started = perf_counter()
+    try:
+        outcomes = await asyncio.gather(
+            *(b3_one(index, group) for index, group in enumerate(audio_groups, start=1)),
+            return_exceptions=True,
+        )
+        failures = [item for item in outcomes if isinstance(item, BaseException)]
+        if failures:
+            raise failures[0]
+        b3_results = tuple(item for item in outcomes if isinstance(item, B3Output))
+    finally:
+        if on_stage_duration is not None:
+            on_stage_duration("B3", perf_counter() - b3_started)
+
+    result = BPipelineResult(
+        b11=b11,
+        b12=tuple(b12_results),
+        b2=tuple(b2_results),
+        b3=b3_results,
+        visual_style=visual_style,
+        b2_correction_counts=b2_correction_counts,
+        b2_response_ids=b2_last_response_ids,
+    )
+    if on_stage_complete is not None:
+        on_stage_complete("B3", len(b3_results), result.merged_b3_output())
     return result
