@@ -15,6 +15,7 @@ from ai_video_factory.bots.workflow import (
     BPipelineResult,
     BPipelineValidationError,
     _B3GridLock,
+    run_b_pipeline,
     validate_b3,
 )
 from ai_video_factory.workflows.b_video import _group_beats
@@ -278,7 +279,8 @@ def test_run_b_pipeline_b3_groups_audio_across_block_boundaries() -> None:
                     "blocks": [block],
                     "error": None,
                 })
-            assert output_type is B3Output  # noqa: S101
+            if output_type is not B3Output:
+                raise RuntimeError(f"Unexpected output type: {output_type}")
             b3_inputs.append(payload)
             return B3Output.model_validate({
                 "pipeline_stage": "B3",
