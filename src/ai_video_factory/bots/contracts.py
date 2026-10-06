@@ -223,6 +223,11 @@ class ProfessionalVisualBeat(Beat):
             raise ValueError(
                 "media_image must have audio=false; use media_video for synchronized speech"
             )
+        if self.visual_type == "media_video" and self.audio and not self.reference:
+            raise ValueError(
+                "Speaking media_video must use the supplied avatar reference; "
+                "audio=true is reserved for the narrator in the preserved narration setup"
+            )
         if self.visual_type == "avatar" and self.prompt is not None and not self.reference:
             raise ValueError("Regenerated presenter images require the avatar reference")
         return self
