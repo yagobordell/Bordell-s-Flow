@@ -427,14 +427,30 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         assert (destination / "B1.2" / "block_1" / "output.json").is_file()
         assert (destination / "B2" / "block_1" / "input.json").is_file()
         assert (destination / "B2" / "block_1" / "output.json").is_file()
+        assert (destination / "B3" / "group_1" / "input.json").is_file()
+        assert (destination / "B3" / "group_1" / "output.json").is_file()
+        b3_input = json.loads(
+            (destination / "B3" / "group_1" / "input.json").read_text(encoding="utf-8")
+        )
+        b3_output = json.loads(
+            (destination / "B3" / "group_1" / "output.json").read_text(encoding="utf-8")
+        )
+        assert b3_input == {"group_id": 1, "beats": []}
+        assert b3_output == {
+            "pipeline_stage": "B3", "group_id": 1, "beats": []
+        }
         b12_merged = json.loads(
             (destination / "B1.2" / "merged_output.json").read_text(encoding="utf-8")
         )
         b2_merged = json.loads(
             (destination / "B2" / "merged_output.json").read_text(encoding="utf-8")
         )
+        b3_merged = json.loads(
+            (destination / "B3" / "merged_output.json").read_text(encoding="utf-8")
+        )
         assert [block["block_id"] for block in b12_merged["blocks"]] == [1]
         assert [block["block_id"] for block in b2_merged["blocks"]] == [1]
+        assert b3_merged == {"pipeline_stage": "B3", "groups": []}
         consolidated = json.loads(
             (destination / "run_report.json").read_text(encoding="utf-8")
         )
@@ -608,3 +624,25 @@ def test_single_text_model_and_medium_reasoning_configuration() -> None:
     assert fields["openai_reasoning_effort"].default == "medium"
     assert "openai_b_model" not in fields
     assert "openai_b_reasoning_effort" not in fields
+
+
+def test_b3_artifacts_fail_closed_until_input_and_output_are_durable(
+    tmp_path: Path,
+) -> None:
+    artifacts = runner.BotArtifacts(tmp_path)
+    artifacts.input("B3", 1, {"group_id": 1, "beats": []})
+
+    with pytest.raises(RuntimeError, match="durable output.json"):
+        artifacts.require_b3_group_outputs(1)
+
+    artifacts.output(
+        "B3", 1, {"pipeline_stage": "B3", "group_id": 1, "beats": []}
+    )
+    artifacts.require_b3_group_outputs(1)
+
+    assert json.loads(
+        (tmp_path / "B3" / "group_1" / "input.json").read_text(encoding="utf-8")
+    ) == {"group_id": 1, "beats": []}
+    assert json.loads(
+        (tmp_path / "B3" / "group_1" / "output.json").read_text(encoding="utf-8")
+    ) == {"pipeline_stage": "B3", "group_id": 1, "beats": []}
