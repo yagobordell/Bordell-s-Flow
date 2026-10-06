@@ -32,6 +32,10 @@ _KNOWN_PREBUILT_VOICES = frozenset({
 })
 
 _VERBATIM = "The text is the verbatim transcript. Do not add, omit, or rewrite words."
+_PROFESSIONAL_STYLE_PREFIX = (
+    "Respect the next style indications while keeping a normal voice speed, "
+    "not paused, its for a youtube video:"
+)
 
 
 class GeminiTtsError(RuntimeError):
@@ -209,13 +213,16 @@ def _build_directed_payload(*, turns: list[dict[str, str]], voice: str) -> dict[
         spoken, style = turn.get("text"), turn.get("style")
         if not isinstance(spoken, str) or not spoken.strip():
             raise ValueError("Gemini directed TTS requires non-empty transcript turns")
-        if (not isinstance(style, str) or not style.strip()
-            or len((style.strip() + "\n" + _VERBATIM).encode("utf-8"))
-            > (6000 if len(turns) == 1 else 1500)):
+        if not isinstance(style, str) or not style.strip():
+            raise ValueError("Gemini directed TTS requires a concise style on each turn")
+        rendered_style = (
+            _PROFESSIONAL_STYLE_PREFIX + "\n" + style.strip() + "\n" + _VERBATIM
+        )
+        if len(rendered_style.encode("utf-8")) > (6000 if len(turns) == 1 else 1500):
             raise ValueError("Gemini directed TTS requires a concise style on each turn")
         parts.append({
             "text": spoken,
-            "speech_metadata": {"style": style.strip() + "\n" + _VERBATIM},
+            "speech_metadata": {"style": rendered_style},
         })
     return {
         "contents": [{"role": "user", "parts": parts}],
