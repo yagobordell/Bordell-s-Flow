@@ -215,3 +215,65 @@ def test_fatal_infrastructure_release_preserves_retry_budget() -> None:
         repository.close()
         with psycopg.connect(dsn, autocommit=True) as connection:
             connection.execute("DELETE FROM gpu.jobs WHERE job_id = %s", (job_id,))
+
+
+def test_partial_fatal_cuda_context_job_reopens_with_clean_budget() -> None:
+    dsn = _postgres_dsn()
+    job_id = "ltx-i2v-partial-fatal-cuda-context-recovery"
+    request = InferenceJobRequest(
+        job_id=job_id,
+        task="video.ltx25.generate",
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/output.mp4",
+            content_type="video/mp4",
+        ),
+        parameters={"prompt": "Static camera."},
+    )
+    queue = PostgresJobQueueClient(dsn=dsn, max_connections=2)
+    try:
+        queue.submit(request, metadata={"run_id": "fatal-cuda-partial-test"})
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            connection.execute(
+                """
+                UPDATE gpu.jobs
+                SET status = 'retryable_failed',
+                    attempt_count = 2,
+                    lease_owner = NULL,
+                    lease_expires_at = NULL,
+                    result = NULL,
+                    last_error = %s,
+                    started_at = now() - interval '5 seconds',
+                    finished_at = now(),
+                    updated_at = now()
+                WHERE job_id = %s
+                """,
+                (
+                    "AcceleratorError: CUDA error: unknown error; "
+                    "diagnostic_phase=i2v.video_decode",
+                    job_id,
+                ),
+            )
+
+        snapshot = queue.submit(
+            request,
+            metadata={"run_id": "fatal-cuda-partial-test"},
+        )
+
+        assert snapshot.status is QueueJobStatus.PENDING
+        assert snapshot.provider_payload["attempt_count"] == 0
+        assert snapshot.provider_payload["last_error"] is None
+        with psycopg.connect(dsn) as connection:
+            row = connection.execute(
+                """
+                SELECT status, attempt_count, lease_owner, lease_expires_at,
+                       result, last_error, started_at, finished_at
+                FROM gpu.jobs
+                WHERE job_id = %s
+                """,
+                (job_id,),
+            ).fetchone()
+        assert row == ("pending", 0, None, None, None, None, None, None)
+    finally:
+        queue.close()
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            connection.execute("DELETE FROM gpu.jobs WHERE job_id = %s", (job_id,))

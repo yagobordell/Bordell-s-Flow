@@ -116,6 +116,10 @@ def test_only_fatal_cuda_context_terminal_failure_can_auto_reopen() -> None:
         request_sha256="b" * 64,
     ) is False
     assert _can_reopen_fatal_gpu_context_failure(
+        {**row, "status": "retryable_failed", "attempt_count": 2},
+        request_sha256="a" * 64,
+    ) is True
+    assert _can_reopen_fatal_gpu_context_failure(
         {**row, "status": "cancelled"},
         request_sha256="a" * 64,
     ) is False
