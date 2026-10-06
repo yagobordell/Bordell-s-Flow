@@ -110,6 +110,40 @@ Choose media_image for a genuinely still documentary visual: an object, stable r
 
 Choose media_video whenever a physical action, execution, interaction, trajectory, change or temporal development is the useful visual information. STRONG PRESENTER ACTION DEFAULT: if the referenced presenter performs a visible practical step (applying, pressing, blending, massaging, cleansing, dabbing, using or demonstrating a product in motion), prefer media_video even if a single photograph could summarize the instruction. A presenter who merely holds an object may be observational media with audio=false only when the shot is outside the active narration setup. If the presenter remains in the narration setup and keeps the same physical placement/posture established by the reference, the presenter must remain a speaking video, not a still.
 
+MEDIA_VIDEO GENERATION RELIABILITY RULE — VIDEO ONLY:
+The following restrictions apply ONLY when choosing or writing media_video. They do
+NOT restrict media_image. A still image may freely depict any of these states,
+objects or completed actions when it is the best visual treatment.
+
+Do NOT choose media_video when the useful visual depends on creating or entering
+new visible text or numbers during motion. This includes writing on paper, writing
+a message, typing or entering visible numbers, or having a screen visibly produce
+new text/content during the generated video.
+
+Do NOT choose media_video when the useful visual depends on fine, precision hand-
+object manipulation of these kinds: scratching a card, writing with a pen, cutting
+with scissors or a knife in close-up, threading, fastening/buckling, inserting a
+card, opening a small zipper or clasp, or manipulating a coin over a precise target
+area.
+
+Do NOT choose media_video when the point of the motion is to reveal exact new
+content that was not already visibly established in the starting frame. This
+includes scratching a card so a code appears, opening something so letters appear,
+writing a word that did not previously exist, or turning an object specifically so
+exact content is expected to appear correctly.
+
+These VIDEO-ONLY reliability rules override the normal media_video preference and
+the STRONG PRESENTER ACTION DEFAULT for the listed cases. Preserve the beat's
+meaning by choosing either:
+- media_image showing the relevant before, after or completed state; or
+- a safer adjacent media_video action that does not perform the prohibited precise
+  action itself, such as holding, showing, pointing at, lifting, placing down or
+  slightly repositioning the relevant object.
+
+Never move a listed forbidden action into video_prompt after choosing a harmless
+starting image. The media_video choice is valid only when the actual generated
+motion avoids the forbidden action. Do not broaden this rule to unrelated actions.
+
 NARRATOR SETUP RULE: audio=true is reserved for the supplied avatar acting as the narrator while preserving BOTH the reference narration setup and the narrator's physical location/placement inside that setup. Preserve the same chair/seat/desk/vanity/anchoring position and the same posture class established by the reference. The camera may use a different angle, shot size or crop; the narrator may change expression/gaze and may naturally hold a small beat-relevant object such as a paper, phone or product. Do NOT use audio=true if the narrator would stand up from a seated setup, lie down, jump, walk elsewhere, relocate within the room, move to another environment, sit somewhere else, or otherwise change the narrator's established physical placement in the setup.
 
 For generated full-screen narrator coverage that satisfies this setup rule, use media_video with reference=true and audio=true. Never use media_image or media_video with audio=false for the narrator while they remain in that preserved narration setup. If the beat requires the narrator outside that setup or in a substantially different body position, use observational coverage with audio=false and let the narration remain voice-over.
