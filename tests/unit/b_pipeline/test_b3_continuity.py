@@ -15,6 +15,7 @@ from ai_video_factory.bots.workflow import (
     BPipelineResult,
     BPipelineValidationError,
     _B3GridLock,
+    _professional_b3_groups,
     run_b_pipeline,
     validate_b3,
 )
@@ -39,7 +40,9 @@ def _professional_b2() -> ProfessionalB2Output:
                 },
                 {
                     "beat_id": "1B", "text": "Two.", "beat_type": "claim",
-                    "visual_type": "avatar", "prompt": None, "video_prompt": None,
+                    "visual_type": "avatar_media",
+                    "prompt": "A fixed support image beside the narrator.",
+                    "video_prompt": None,
                     "reference": False, "audio": True,
                 },
                 {
@@ -60,7 +63,7 @@ def _b3() -> B3Output:
         "beats": [
             {
                 "beat_id": "1A", "continuous": False, "shot_prompt": None,
-                "shot_video_prompt": "Natural synced speech in the base shot.",
+                "shot_video_prompt": None,
             },
             {
                 "beat_id": "1B", "continuous": True, "shot_prompt": None,
@@ -77,6 +80,62 @@ def _b3() -> B3Output:
         ],
         "error": None,
     })
+
+
+def test_b3_runs_only_for_three_plus_beats_with_non_avatar_visual() -> None:
+    eligible = _professional_b2()
+
+    all_avatar_payload = eligible.model_dump()
+    for beat in all_avatar_payload["blocks"][0]["beats"]:
+        beat.update(
+            visual_type="avatar",
+            prompt=None,
+            video_prompt=None,
+            reference=False,
+            audio=True,
+        )
+    all_avatar = ProfessionalB2Output.model_validate(all_avatar_payload)
+
+    short_payload = eligible.model_dump()
+    short_payload["blocks"][0]["beats"] = short_payload["blocks"][0]["beats"][:2]
+    short_payload["blocks"][0]["span"]["last_words"] = "Two"
+    short = ProfessionalB2Output.model_validate(short_payload)
+
+    assert _professional_b3_groups((eligible,)) != []
+    assert _professional_b3_groups((all_avatar,)) == []
+    assert _professional_b3_groups((short,)) == []
+
+
+def test_b3_take_start_may_preserve_b2_without_video_prompt() -> None:
+    result = B3Output.model_validate({
+        "pipeline_stage": "B3",
+        "group_id": 1,
+        "beats": [
+            {
+                "beat_id": "1A",
+                "continuous": False,
+                "shot_prompt": None,
+                "shot_video_prompt": None,
+            },
+            {
+                "beat_id": "1B",
+                "continuous": True,
+                "shot_prompt": None,
+                "shot_video_prompt": None,
+            },
+            {
+                "beat_id": "1C",
+                "continuous": True,
+                "shot_prompt": None,
+                "shot_video_prompt": None,
+            },
+        ],
+        "error": None,
+    })
+    source = [
+        (1, beat.model_dump()) for beat in _professional_b2().blocks[0].beats
+    ]
+    validate_b3(result, group_id=1, source=source, grid_locks={})
 
 
 def test_b3_visual_plan_adds_take_boundaries_without_rewriting_b2() -> None:
@@ -225,7 +284,7 @@ def test_b3_accepts_multiple_fixed_grid_starts_as_continuity_exception() -> None
 
 
 def test_run_b_pipeline_b3_groups_audio_across_block_boundaries() -> None:
-    script = "Hello. Goodbye."
+    script = "Hello from here. Middle section now. Goodbye for now."
     b11 = B11Output.model_validate({
         "pipeline_stage": "B1.1",
         "narrative_core": {"central_question": "Q", "final_answer": "A"},
@@ -233,12 +292,18 @@ def test_run_b_pipeline_b3_groups_audio_across_block_boundaries() -> None:
             {
                 "block_id": 1, "type": "intro",
                 "emotional_entry": "A", "emotional_exit": "B",
-                "span": {"first_words": "Hello.", "last_words": "Hello."},
+                "span": {
+                    "first_words": "Hello from here.",
+                    "last_words": "Middle section now.",
+                },
             },
             {
                 "block_id": 2, "type": "close",
                 "emotional_entry": "B", "emotional_exit": "C",
-                "span": {"first_words": "Goodbye.", "last_words": "Goodbye."},
+                "span": {
+                    "first_words": "Goodbye for now.",
+                    "last_words": "Goodbye for now.",
+                },
             },
         ],
         "error": None,
@@ -246,12 +311,27 @@ def test_run_b_pipeline_b3_groups_audio_across_block_boundaries() -> None:
     b12 = (
         B12Output.model_validate({
             "pipeline_stage": "B1.2", "block_id": 1,
-            "beats": [{"beat_id": "1A", "text": "Hello. ", "beat_type": "claim"}],
+            "beats": [
+                {
+                    "beat_id": "1A",
+                    "text": "Hello from here. ",
+                    "beat_type": "claim",
+                },
+                {
+                    "beat_id": "1B",
+                    "text": "Middle section now. ",
+                    "beat_type": "claim",
+                },
+            ],
             "error": None,
         }),
         B12Output.model_validate({
             "pipeline_stage": "B1.2", "block_id": 2,
-            "beats": [{"beat_id": "2A", "text": "Goodbye.", "beat_type": "return"}],
+            "beats": [{
+                "beat_id": "2A",
+                "text": "Goodbye for now.",
+                "beat_type": "return",
+            }],
             "error": None,
         }),
     )
@@ -265,14 +345,23 @@ def test_run_b_pipeline_b3_groups_audio_across_block_boundaries() -> None:
             payload = json.loads(input_text)
             if output_type is ProfessionalB2Output:
                 block = payload["blocks"][0]
-                beat = block["beats"][0]
-                beat.update(
-                    visual_type="avatar",
-                    prompt=None,
-                    video_prompt=None,
-                    reference=False,
-                    audio=True,
-                )
+                for index, beat in enumerate(block["beats"]):
+                    if block["block_id"] == 1 and index == 1:
+                        beat.update(
+                            visual_type="avatar_media",
+                            prompt="A fixed support image beside the narrator.",
+                            video_prompt=None,
+                            reference=False,
+                            audio=True,
+                        )
+                    else:
+                        beat.update(
+                            visual_type="avatar",
+                            prompt=None,
+                            video_prompt=None,
+                            reference=False,
+                            audio=True,
+                        )
                 return ProfessionalB2Output.model_validate({
                     "pipeline_stage": "B2",
                     "narrative_core": payload["narrative_core"],
@@ -290,10 +379,16 @@ def test_run_b_pipeline_b3_groups_audio_across_block_boundaries() -> None:
                         "beat_id": payload["beats"][0]["beat_id"],
                         "continuous": False,
                         "shot_prompt": None,
-                        "shot_video_prompt": "Natural synced speech.",
+                        "shot_video_prompt": None,
                     },
                     {
                         "beat_id": payload["beats"][1]["beat_id"],
+                        "continuous": True,
+                        "shot_prompt": None,
+                        "shot_video_prompt": None,
+                    },
+                    {
+                        "beat_id": payload["beats"][2]["beat_id"],
                         "continuous": True,
                         "shot_prompt": None,
                         "shot_video_prompt": None,
@@ -313,7 +408,11 @@ def test_run_b_pipeline_b3_groups_audio_across_block_boundaries() -> None:
         avatar_image=b"avatar",
     ))
     assert len(b3_inputs) == 1
-    assert [beat["beat_id"] for beat in b3_inputs[0]["beats"]] == ["1A", "2A"]
+    assert [beat["beat_id"] for beat in b3_inputs[0]["beats"]] == [
+        "1A", "1B", "2A"
+    ]
     plan = result.visual_plan()
     assert plan["blocks"][0]["beats"][0]["continuous"] is False
+    assert plan["blocks"][0]["beats"][0]["b3_shot_video_prompt"] is None
+    assert plan["blocks"][0]["beats"][1]["continuous"] is True
     assert plan["blocks"][1]["beats"][0]["continuous"] is True
