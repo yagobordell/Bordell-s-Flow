@@ -447,6 +447,23 @@ def _professional_audio_groups(
     return groups
 
 
+def _professional_b3_groups(
+    outputs: list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
+) -> list[list[tuple[int, dict[str, object]]]]:
+    """Return only spoken runs complex enough to justify B3 intervention.
+
+    B3 is skipped for runs of one or two beats and for longer runs whose
+    visual_type is uniformly the base avatar. Those cases keep the exact B2
+    plan and historical downstream grouping without B3 annotations.
+    """
+    return [
+        group
+        for group in _professional_audio_groups(outputs)
+        if len(group) > 2
+        and any(beat["visual_type"] != "avatar" for _block_id, beat in group)
+    ]
+
+
 def validate_b3(
     result: B3Output,
     *,
@@ -549,9 +566,11 @@ class BPipelineResult:
             if len(professional) != len(self.b2):
                 raise BPipelineValidationError("Professional B3 requires professional B2")
             locks = _professional_grid_locks(professional)
-            groups = _professional_audio_groups(professional)
+            groups = _professional_b3_groups(professional)
             if len(groups) != len(self.b3):
-                raise BPipelineValidationError("B3 group count differs from B2 audio runs")
+                raise BPipelineValidationError(
+                    "B3 group count differs from eligible B2 audio runs"
+                )
             annotations: dict[tuple[int, str], dict[str, object]] = {}
             for group_id, (source, output) in enumerate(
                 zip(groups, self.b3, strict=True), start=1
@@ -1380,7 +1399,7 @@ async def run_b_pipeline(
     if len(professional_results) != len(b2_results):
         raise BPipelineValidationError("B3 requires professional B2 outputs")
     grid_locks = _professional_grid_locks(professional_results)
-    audio_groups = _professional_audio_groups(professional_results)
+    audio_groups = _professional_b3_groups(professional_results)
 
     async def b3_one(
         group_id: int,
@@ -1450,11 +1469,16 @@ async def run_b_pipeline(
                     previous=candidate.model_dump() if candidate else None,
                     instructions=(
                         "Repair only the B3 camera-continuity decisions. "
-                        "Do not change beat IDs or B2 decisions. The first beat starts "
-                        "a take; fixed grid speaker-start beats also start takes and "
-                        "must keep shot_prompt=null. Every other non-first new take "
-                        "requires a continuity shot_prompt using the preceding effective "
-                        "shot as reference. continuous=true has no shot prompts."
+                        "Do not change beat IDs or B2 decisions. Preserve the B2 "
+                        "image/video motion decision unless the surrounding beats make "
+                        "a change necessary. The first beat starts a take but normally "
+                        "keeps shot_prompt=null and shot_video_prompt=null when its B2 "
+                        "source already works. Fixed grid speaker-start beats also start "
+                        "takes and must keep shot_prompt=null. Every other non-first new "
+                        "take requires a continuity shot_prompt using the preceding "
+                        "effective shot as reference. shot_video_prompt is optional and "
+                        "must stay null unless B3 genuinely needs to override/add motion. "
+                        "continuous=true has no shot prompts."
                     ),
                 )
         raise AssertionError("Unreachable B3 retry state")
