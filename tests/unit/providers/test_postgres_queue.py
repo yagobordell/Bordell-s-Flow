@@ -5,6 +5,7 @@ from ai_video_factory.providers.job_queue import QueueJobStatus
 from ai_video_factory.providers.postgres_queue import (
     PostgresJobQueueClient,
     _can_rebind_legacy_run_metadata_failure,
+    _can_reopen_fatal_gpu_context_failure,
     _legacy_run_metadata_fingerprint,
     _run_metadata,
 )
@@ -88,4 +89,33 @@ def test_only_exact_legacy_validation_failure_can_rebind() -> None:
         {**row, "last_error": "CUDA out of memory"},
         request,
         run_id="901d3792b69861844519",
+    ) is False
+
+
+def test_only_fatal_cuda_context_terminal_failure_can_auto_reopen() -> None:
+    row = _row(
+        "failed",
+        attempt_count=5,
+        last_error="AcceleratorError: CUDA error: unknown error",
+    )
+
+    assert _can_reopen_fatal_gpu_context_failure(
+        row,
+        request_sha256="a" * 64,
+    ) is True
+    assert _can_reopen_fatal_gpu_context_failure(
+        {**row, "last_error": "RuntimeError: CUDA out of memory"},
+        request_sha256="a" * 64,
+    ) is False
+    assert _can_reopen_fatal_gpu_context_failure(
+        {**row, "last_error": "ValueError: invalid tensor shape"},
+        request_sha256="a" * 64,
+    ) is False
+    assert _can_reopen_fatal_gpu_context_failure(
+        row,
+        request_sha256="b" * 64,
+    ) is False
+    assert _can_reopen_fatal_gpu_context_failure(
+        {**row, "status": "cancelled"},
+        request_sha256="a" * 64,
     ) is False
