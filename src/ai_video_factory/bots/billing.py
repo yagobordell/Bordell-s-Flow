@@ -419,7 +419,7 @@ class ApiCostLedger:
         expected = (
             {"B1.1": max(1, expected_b11_calls), "CTA": 0, "CTA Ebook": 0,
              "CTA Motion": 0,
-             "B1.2": blocks, "B2": blocks, "CTA image": 0}
+             "B1.2": blocks, "B2": blocks, "B3": None, "CTA image": 0}
             if expected_calls is None
             else {
                 stage: expected_calls.get(
