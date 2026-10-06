@@ -303,7 +303,13 @@ def generate_b3_shot_images(
                 continue
             prompt = beat.get("b3_shot_prompt")
             if prompt is not None:
-                reference = active if active is not None else avatar
+                reference = (
+                    active
+                    if active is not None
+                    else _b2_start_source(
+                        beat, block_id=block_id, avatar=avatar, assets=assets
+                    )
+                )
                 artifact = _generate_one(
                     output=output,
                     block_id=block_id,
