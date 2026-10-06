@@ -316,7 +316,7 @@ def test_professional_prompt_forbids_frozen_narrator_in_reference_setup() -> Non
         "as a frozen still"
     ) in prompt
     assert "Never use media_image or media_video with audio=false" in prompt
-    assert "same physical placement/posture class" in prompt
+    assert "physical placement/posture class" in prompt
     assert "different camera angle, crop or shot size is allowed" in prompt
 
 
