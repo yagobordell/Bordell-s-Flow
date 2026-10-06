@@ -3081,7 +3081,9 @@ async def main() -> None:
                         visual_style=visual_style,
                         avatar_image=avatar_bytes,
                         start_from="B2",
-                        stop_after="B2",
+                        stop_after=(
+                            "B3" if visual_style == "profesional" else "B2"
+                        ),
                         previous_b11=result.b11,
                         previous_b12=result.b12,
                         previous_b2=result.b2,
@@ -3092,6 +3094,7 @@ async def main() -> None:
                         on_input=artifacts.input,
                         on_output=output_and_start_audio,
                         on_rejected_b2_output=artifacts.rejected_b2,
+                        on_rejected_b3_output=artifacts.rejected_b3,
                         on_api_response=ledger.record,
                         on_call_duration=timings.record_call,
                         on_stage_duration=timings.record_stage,
