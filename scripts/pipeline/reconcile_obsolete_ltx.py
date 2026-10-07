@@ -15,8 +15,9 @@ from ai_video_factory.workflows.b_video import (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Cancel/supersede obsolete LTX jobs after an explicit B2 image regeneration. "
-            "Actively leased jobs are never force-cancelled."
+            "Cancel/supersede obsolete LTX jobs after a B2 source or production recipe "
+            "change. Reusable immutable jobs are preserved and actively leased jobs are "
+            "never force-cancelled."
         )
     )
     parser.add_argument(
