@@ -315,9 +315,13 @@ def test_b21_receives_complete_merged_b2_and_code_marked_candidates() -> None:
     assert b21_image_urls[0].startswith("data:image/png;base64,")
     payload = b21_inputs[0]
     assert [block["block_id"] for block in payload["blocks"]] == [1, 2]
-    assert [
-        item["beat_id"] for item in payload["b21_review"]["split_candidates"]
-    ] == ["1A", "2A"]
+    assert payload["b21_review"] == {
+        "split_candidates": [
+            {"block_id": 1, "beat_id": "1A"},
+            {"block_id": 2, "beat_id": "2A"},
+        ],
+        "required_images_per_candidate": 2,
+    }
     assert result.b21 is not None
     assert [
         beat["visual_subshots"][1]["asset_id"]

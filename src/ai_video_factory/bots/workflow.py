@@ -1623,12 +1623,10 @@ async def run_b_pipeline(
                 continued=bool(b2_last_response_ids.get(meta.block_id))
                 and getattr(provider, "supports_response_continuation", False),
                 instructions=(
-                    "Repair only the failed B2 image-grid preflight in this block. "
-                    "Keep every numbered continuity sequence intact. If a numbered "
-                    "sequence has inconsistent reference flags, make its reference "
-                    "flag consistent across all panels while preserving the frozen "
-                    "beats and valid visual decisions. Use grid-compatible visual "
-                    "types throughout. Do not split or renumber the sequence."
+                    "Repair the failed image-grid continuity numbering for ONLY "
+                    "this B2 block. Keep frozen beats and all other valid visuals, "
+                    "while correcting the visual descriptions/prompts whose "
+                    "numbering caused the image preflight error."
                 ),
             )
             return await b2_one(meta, block, b12, suffix)
@@ -1813,13 +1811,9 @@ async def run_b_pipeline(
                             and getattr(provider, "supports_response_continuation", False)
                         ),
                         instructions=(
-                            "Repair only the failed B2 image-grid preflight. Keep every "
-                            "numbered continuity sequence intact. If a numbered sequence "
-                            "has inconsistent reference flags, make its reference flag "
-                            "consistent across all panels while preserving every frozen "
-                            "beat and valid visual decision. Do not split or renumber the "
-                            "sequence. Use grid-compatible visual types throughout. B3 has "
-                            "not run yet and must receive the exact final grid plan."
+                            "Repair only the failed B2 image-grid continuity numbering. "
+                            "Keep every frozen beat and every valid visual decision. "
+                            "B3 has not run yet and must receive the exact final grid plan."
                         ),
                     )
                     index = block_id - 1
@@ -1854,9 +1848,10 @@ async def run_b_pipeline(
     split_candidates = _b21_split_candidates(source_plan)
     b21_payload = result.merged_b2_output()
     b21_payload["b21_review"] = {
-        "split_threshold_characters": _B21_IMAGE_SPLIT_THRESHOLD,
-        "split_candidates": split_candidates,
-        "character_counting": "application_counted_exact_text_including_spaces",
+        "split_candidates": [
+            {"block_id": item["block_id"], "beat_id": item["beat_id"]}
+            for item in split_candidates
+        ],
         "required_images_per_candidate": 2,
     }
 

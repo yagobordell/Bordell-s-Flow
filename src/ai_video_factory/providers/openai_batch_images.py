@@ -107,14 +107,13 @@ class ImageOptions:
 
 
 def _job_quality(job: dict[str, Any], options: ImageOptions) -> str:
-    """Use high for Sunburst grids, medium for other grid/context jobs."""
-    if job.get("grid") is not None:
-        if options.model_id == "gpt-image-2.5-sunburst":
-            return "high"
-        return _GRID_IMAGE_QUALITY
-    if _FOR_CONTEXT.search(job["description"]) is not None:
-        return _GRID_IMAGE_QUALITY
-    return options.quality
+    """Use medium only for grids or a beat's own (For context...) marker."""
+    return (
+        _GRID_IMAGE_QUALITY
+        if job.get("grid") is not None
+        or _FOR_CONTEXT.search(job["description"]) is not None
+        else options.quality
+    )
 
 
 def effective_image_prompt(
@@ -600,10 +599,7 @@ def generate_b2_images(
         "model_id": options.model_id,
         "size": options.size,
         "quality": options.quality,
-        "grid_quality": (
-            "high" if options.model_id == "gpt-image-2.5-sunburst"
-            else _GRID_IMAGE_QUALITY
-        ),
+        "grid_quality": _GRID_IMAGE_QUALITY,
         "max_parallel_images": min(options.max_parallel_images or len(jobs), len(jobs)),
         "status": "running",
         "total_described_beats": len({

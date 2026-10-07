@@ -176,32 +176,15 @@ def plan_image_jobs(
         finish()
 
     grid_runs: list[list[dict[str, Any]]] = []
+    standalone_numbered: set[tuple[int, str]] = set()
     for run in runs:
-        reference_values = {bool(asset.get("reference")) for asset in run}
-        if len(reference_values) > 1:
-            asset_ids = ", ".join(
-                str(asset.get("asset_id", asset["beat_id"])) for asset in run
-            )
-            raise GridPlanError(
-                "Numbered continuity sequence at "
-                f"{run[0]['beat_id']} mixes reference values ({asset_ids}); "
-                "keep the sequence intact and use the same reference value "
-                "for every panel."
-            )
         avatar_media_count = sum(
             asset["visual_type"] == "avatar_media" for asset in run
         )
         if 0 < avatar_media_count < len(run):
-            asset_ids = ", ".join(
-                str(asset.get("asset_id", asset["beat_id"])) for asset in run
-            )
-            raise GridPlanError(
-                "Numbered continuity sequence at "
-                f"{run[0]['beat_id']} mixes avatar_media with other visual "
-                f"types ({asset_ids}); keep the sequence intact and use "
-                "grid-compatible visual types for every panel."
-            )
-        grid_runs.append(run)
+            standalone_numbered.update(key(asset) for asset in run)
+        else:
+            grid_runs.append(run)
 
     numbered = {
         key(asset) for run in grid_runs for asset in run
@@ -210,7 +193,7 @@ def plan_image_jobs(
         key(asset) for asset in described
         if asset.get("generation") == "independent"
     }
-    standalone_keys = forced_independent
+    standalone_keys = standalone_numbered | forced_independent
     described_by_key = {key(asset): asset for asset in described}
     standalone = {
         asset_key: described_by_key[asset_key] for asset_key in standalone_keys
@@ -228,8 +211,6 @@ def plan_image_jobs(
         avatar_media_grid = all(
             asset["visual_type"] == "avatar_media" for asset in run
         )
-        grid_reference = bool(run[0].get("reference"))
-
         first = positions[key(run[0])]
         last = positions[key(run[-1])]
         forward = sorted(
@@ -240,7 +221,6 @@ def plan_image_jobs(
                     and (
                         available[asset_key]["visual_type"] == "avatar_media"
                     ) == avatar_media_grid
-                    and bool(available[asset_key].get("reference")) == grid_reference
                 )
             ),
             key=positions.__getitem__,
@@ -254,7 +234,6 @@ def plan_image_jobs(
                     and (
                         available[asset_key]["visual_type"] == "avatar_media"
                     ) == avatar_media_grid
-                    and bool(available[asset_key].get("reference")) == grid_reference
                 )
             ),
             key=positions.__getitem__,
@@ -311,7 +290,6 @@ def plan_image_jobs(
             "beat_id": anchor["beat_id"],
             "asset_id": anchor.get("asset_id", anchor["beat_id"]),
             "visual_type": anchor["visual_type"],
-            "reference": grid_reference,
             "description": _grid_prompt(
                 panels, columns, rows, visual_style=visual_style,
                 panel_aspect="8:9" if avatar_media_grid else "16:9",
