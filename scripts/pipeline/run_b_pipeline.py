@@ -15,7 +15,7 @@ from time import perf_counter
 from typing import Literal
 from uuid import uuid4
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 from PIL import Image
 
 from ai_video_factory.bots import run_b_pipeline
@@ -109,6 +109,25 @@ _METRIC_STAGES = (
     "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "B3",
     "V1", "V2", "V3", "V4",
 )
+
+
+def _runtime_env_value(name: str) -> str:
+    """Read env with Settings-compatible precedence without mutating os.environ."""
+    process_value = os.getenv(name)
+    if process_value is not None and process_value.strip():
+        return process_value.strip()
+
+    repo_root = Path(__file__).resolve().parents[2]
+    selected = ""
+    for path in (
+        repo_root / ".env",
+        repo_root / "config" / "app.env",
+        repo_root / "config" / "salad.env",
+    ):
+        value = dotenv_values(path).get(name)
+        if isinstance(value, str) and value.strip():
+            selected = value.strip()
+    return selected
 
 
 def parse_args() -> argparse.Namespace:
@@ -1240,10 +1259,7 @@ def _require_ltx_capacity_controller() -> None:
 def _require_ltx_safe_a2v_worker() -> None:
     """Refuse paid run A2V until the NEW static-FP8 image is pinned in Salad."""
     repo_root = Path(__file__).resolve().parents[2]
-    load_dotenv(repo_root / "config" / "app.env", override=False)
-    load_dotenv(repo_root / "config" / "salad.env", override=False)
-    load_dotenv(repo_root / ".env", override=False)
-    expected = os.getenv("SALAD_LTX25_RUN_V2_IMAGE", "").strip()
+    expected = _runtime_env_value("SALAD_LTX25_RUN_V2_IMAGE")
     if not re.fullmatch(r"[^ ]+@sha256:[0-9a-fA-F]{64}", expected):
         raise RuntimeError(
             "Promoted A2V run-v2 requires SALAD_LTX25_RUN_V2_IMAGE="
@@ -1252,8 +1268,8 @@ def _require_ltx_safe_a2v_worker() -> None:
             "Triton + progressive-group8 runtime, then Prepare the stopped "
             "ltx25 group with that exact digest."
         )
-    previous_run = os.getenv("SALAD_LTX25_RUN_STATIC_FP8_IMAGE", "").strip()
-    legacy = os.getenv("SALAD_LTX25_PAGEABLE_A2V_IMAGE", "").strip()
+    previous_run = _runtime_env_value("SALAD_LTX25_RUN_STATIC_FP8_IMAGE")
+    legacy = _runtime_env_value("SALAD_LTX25_PAGEABLE_A2V_IMAGE")
     if expected and expected in {previous_run, legacy}:
         raise RuntimeError(
             "Promoted A2V run-v2 cannot reuse an older run-v1/pageable worker digest. "
@@ -1271,9 +1287,10 @@ def _require_ltx_safe_a2v_worker() -> None:
     client = SaladClient(
         SaladDispatchConfig(
             api_key=settings.salad_api_key,
-            api_base_url=os.getenv("SALAD_API_BASE_URL", DEFAULT_SALAD_API_BASE_URL),
-            organization_name=os.getenv("SALAD_ORGANIZATION"),
-            project_name=os.getenv("SALAD_PROJECT"),
+            api_base_url=_runtime_env_value("SALAD_API_BASE_URL")
+            or DEFAULT_SALAD_API_BASE_URL,
+            organization_name=_runtime_env_value("SALAD_ORGANIZATION") or None,
+            project_name=_runtime_env_value("SALAD_PROJECT") or None,
             container_group_name=group_name,
         )
     )
@@ -1291,10 +1308,7 @@ def _require_ltx_safe_a2v_worker() -> None:
 def _require_ltx_safe_i2v_worker() -> None:
     """Fail before paid I2V if Salad is not serving the reviewed FP8 resident image."""
     repo_root = Path(__file__).resolve().parents[2]
-    load_dotenv(repo_root / "config" / "app.env", override=False)
-    load_dotenv(repo_root / "config" / "salad.env", override=False)
-    load_dotenv(repo_root / ".env", override=False)
-    expected = os.getenv("SALAD_LTX25_FP8_I2V_IMAGE", "").strip()
+    expected = _runtime_env_value("SALAD_LTX25_FP8_I2V_IMAGE")
     if not re.fullmatch(r"[^ ]+@sha256:[0-9a-fA-F]{64}", expected):
         raise RuntimeError(
             "Promoted full-resolution FP8 no-offload I2V requires "
@@ -1385,18 +1399,13 @@ async def _video_if_ready(
                 access_key_id=settings.r2_access_key_id,
                 secret_access_key=settings.r2_secret_access_key,
             )
-            # Pydantic reads the config files but does not export Salad settings to os.environ.
-            repo_root = Path(__file__).resolve().parents[2]
-            load_dotenv(repo_root / "config" / "app.env", override=False)
-            load_dotenv(repo_root / "config" / "salad.env", override=False)
-            load_dotenv(repo_root / ".env", override=False)
             with SaladCostMeter(
                 output,
                 services_path=Path(__file__).resolve().parents[2]
                 / "deploy" / "salad" / "services.json",
                 api_key=settings.salad_api_key,
-                organization=os.getenv("SALAD_ORGANIZATION"),
-                project=os.getenv("SALAD_PROJECT"),
+                organization=_runtime_env_value("SALAD_ORGANIZATION") or None,
+                project=_runtime_env_value("SALAD_PROJECT") or None,
             ):
                 cta_dir = (
                     Path(run["cta_cache_dir"])
