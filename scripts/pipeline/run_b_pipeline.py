@@ -1305,15 +1305,15 @@ def _require_ltx_safe_a2v_worker() -> None:
 
 
 def _require_ltx_safe_i2v_worker() -> None:
-    """Fail before paid I2V if Salad is not serving the reviewed FP8 resident image."""
+    """Fail before paid I2V if Salad is not serving the reviewed FP8 worker image."""
     repo_root = Path(__file__).resolve().parents[2]
     expected = _runtime_env_value("SALAD_LTX25_FP8_I2V_IMAGE")
     if not re.fullmatch(r"[^ ]+@sha256:[0-9a-fA-F]{64}", expected):
         raise RuntimeError(
-            "Promoted full-resolution FP8 no-offload I2V requires "
+            "Production full-resolution FP8 I2V requires "
             "SALAD_LTX25_FP8_I2V_IMAGE=<repository>@sha256:<64-hex-digest> "
-            "in config/salad.env. Prepare the reviewed standard I2V image "
-            "before generating new I2V clips."
+            "in config/salad.env. The reviewed worker must support the "
+            "memory-safe CPU-offload profile before generating new I2V clips."
         )
     document = json.loads(
         (repo_root / "deploy" / "salad" / "services.json").read_text(encoding="utf-8")
@@ -1338,7 +1338,8 @@ def _require_ltx_safe_i2v_worker() -> None:
         raise RuntimeError(
             "Salad LTX I2V worker image mismatch; no paid inference submitted. "
             f"Expected reviewed FP8 image {expected}, group reports {actual!r}. "
-            "Prepare the exact digest for ltx25_i2v; leave A2V untouched."
+            "Prepare the exact digest for the memory-safe ltx25_i2v worker; "
+            "leave A2V untouched."
         )
 
 
