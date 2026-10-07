@@ -19,6 +19,8 @@ from ai_video_factory.workers.ltx25.model import (
     LTX_CFG_BATCH2_SILENT_PROFILE,
     LTX_CFG_BATCH2_TRITON_PROFILE,
     LTX_DEFAULT_SILENT_VERIFY_PROFILE,
+    LTX_FAST_VANILLA_PROFILE,
+    LTX_FULLRES_NO_OFFLOAD_PROFILES,
     LTX_GENERATION_PROFILE,
     LTX_PRODUCTION_I2V_PROFILE,
     LTX_SUPPORTED_I2V_PROFILES,
@@ -80,6 +82,8 @@ def test_production_i2v_accepts_public_1080p_on_padded_model_grid() -> None:
         num_frames=121,
     )
 
+    assert LTX_PRODUCTION_I2V_PROFILE == LTX_FAST_VANILLA_PROFILE
+    assert LTX_PRODUCTION_I2V_PROFILE not in LTX_FULLRES_NO_OFFLOAD_PROFILES
     assert ltx_model._pipeline_dimensions(parameters) == (1920, 1088)
 
 

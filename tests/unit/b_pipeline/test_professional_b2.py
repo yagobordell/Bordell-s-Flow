@@ -74,7 +74,7 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     )
     lowered = prompt.lower()
     # Carrier choice must remain semantic rather than quota-driven.
-    assert "do not optimize carrier percentages, cadence or visual variety" in lowered
+    assert "no carrier quotas, cadence targets or variety quotas influenced selection" in lowered
     # Narrative identity must win over convenient presenter substitution.
     assert "do not replace an established third-party person with the presenter" in lowered
     assert "presenter identity was not erased where semantically required" in lowered
@@ -93,8 +93,12 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     assert "prefer a break position that leaves both" in lowered
     assert "neighboring audio=true segments at or below 120 characters" in lowered
     # Text-bearing objects must not acquire invented readability/branding constraints.
-    assert "do not convert that omission into instructions about" in lowered
-    assert "readability, legibility, indistinctness, missing text, generic branding" in lowered
+    assert "do not add any such visibility/readability property unless" in lowered
+    assert (
+        "text-bearing objects do not receive invented readability, legibility, branding,"
+        in lowered
+    )
+    assert "text-absence or content-visibility constraints" in lowered
 
 def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions() -> None:
     prompt = (
@@ -112,10 +116,16 @@ def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions()
     assert "write image and video prompts as concise affirmative descriptions" in lowered
     assert "omit negative clauses, preventive exclusions and routine disclaimers" in lowered
     assert "13. screens and documents" in lowered
-    assert "simply omit that content specification" in lowered
+    assert (
+        "must not describe, summarize, identify, characterize, or otherwise specify "
+        "any content shown within the screen or document"
+    ) in lowered
     assert "(for context:" in lowered
-    assert "it does not impose extra visual" in lowered
-    assert "properties on the screen, document or object" in lowered
+    assert (
+        "must not be repeated, paraphrased, or converted into a description of visible "
+        "screen or document content elsewhere in the prompt"
+    ) in lowered
+    assert "must not predetermine what that visible content should be" in lowered
 
 def _professional_anchor_output(
     kind: str, beats: list[dict],
@@ -317,7 +327,8 @@ def test_professional_prompt_forbids_frozen_narrator_in_reference_setup() -> Non
         "never use media_image or media_video with audio=false for a narrator visibly"
         in lowered
     )
-    assert "same physical placement/posture class" in lowered
+    assert "physical location" in lowered
+    assert "posture class" in lowered
     assert "camera angle" in lowered
     assert "shot size" in lowered
     assert "crop" in lowered
@@ -761,7 +772,9 @@ def test_professional_video_prompt_reaches_i2v_and_owns_paid_identity(
     assert jobs[0].kind == "i2v"
     assert jobs[0].request.parameters["prompt"] == video_prompt
     assert jobs[0].request.parameters["generation_profile"] == b_video.LTX_PRODUCTION_I2V_PROFILE
-    assert "fp8none" in jobs[0].request.parameters["generation_profile"]
+    assert "fp8cpu" in jobs[0].request.parameters["generation_profile"]
+    assert "fp8none" not in jobs[0].request.parameters["generation_profile"]
+    assert jobs[0].request.max_attempts == 2
     first_id = jobs[0].request.job_id
     # A production recipe change must not reuse an old completed guided I2V run.
     legacy_digest = b_video._fingerprint(

@@ -241,11 +241,13 @@ class InferenceWorker:
                 raise FatalGpuContextError(
                     f"fatal GPU context loss while executing {request.job_id}"
                 ) from exc
-            # A repeated A2V OOM with identical parameters wastes paid GPU time.
-            # Permit one clean-pipeline retry; keep the global five-attempt
-            # budget for unrelated tasks and non-memory failures.
+            # A repeated LTX OOM with identical parameters wastes paid GPU time.
+            # Permit one clean-pipeline retry for both I2V and A2V; keep the
+            # global five-attempt budget for unrelated tasks and non-memory
+            # failures.
             budget = request.effective_max_attempts
             if request.task in {
+                "video.ltx25.generate",
                 "video.ltx25.audio_to_video",
                 "video.ltx25.audio_to_video_experimental",
             }:
