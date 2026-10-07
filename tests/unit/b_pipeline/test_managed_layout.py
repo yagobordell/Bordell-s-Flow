@@ -930,3 +930,89 @@ def test_legacy_v_checkpoints_are_exported_without_mutating_old_run(
     publish_managed_run(work, script, target)
     assert (target / "outputs" / "V1" / "pass_1" / "output.json").is_file()
     assert (work / "voice_direction" / "V1" / "pass_1" / "output.json").is_file()
+
+
+def test_professional_subshot_assets_publish_by_asset_id(tmp_path: Path) -> None:
+    target = tmp_path / "data" / "Enzo" / "test07"
+    target.mkdir(parents=True)
+    (target / "test07.txt").write_text("Narration.", encoding="utf-8")
+    work = tmp_path / ".video_factory_work" / "Enzo" / "test07"
+    work.mkdir(parents=True)
+
+    avatar_sha = _put(work, "avatar.png", b"avatar")
+    first_sha = _put(work, "images/block_1/1A__1.png", b"first finished image")
+    second_sha = _put(work, "images/block_1/1A__2.png", b"second finished image")
+    plan = {
+        "visual_style": "profesional",
+        "avatar": {"file": "avatar.png", "sha256": avatar_sha},
+        "blocks": [{
+            "block_id": 1,
+            "beats": [{
+                "beat_id": "1A",
+                "text": "Narration.",
+                "visual_type": "media_image",
+                "prompt": "Parent prompt.",
+                "reference": False,
+                "audio": False,
+                "visual_subshots": [
+                    {
+                        "subshot_index": 1,
+                        "subshot_count": 2,
+                        "asset_id": "1A__1",
+                        "generation": "independent",
+                        "prompt": "First view.",
+                    },
+                    {
+                        "subshot_index": 2,
+                        "subshot_count": 2,
+                        "asset_id": "1A__2",
+                        "generation": "independent",
+                        "prompt": "Second view.",
+                    },
+                ],
+            }],
+        }],
+    }
+    _json(work, "visual_plan.json", plan)
+    _json(work, "images/manifest.json", {
+        "schema_version": "openai-b2-images-v1",
+        "status": "completed",
+        "total_generation_jobs": 2,
+        "items": [
+            {"block_id": 1, "beat_id": "1A", "asset_id": "1A__1"},
+            {"block_id": 1, "beat_id": "1A", "asset_id": "1A__2"},
+        ],
+        "panel_assets": [],
+        "finishing_status": "completed",
+        "final_assets": [
+            {
+                "block_id": 1,
+                "beat_id": "1A",
+                "asset_id": "1A__1",
+                "file": "images/block_1/1A__1.png",
+                "sha256": first_sha,
+            },
+            {
+                "block_id": 1,
+                "beat_id": "1A",
+                "asset_id": "1A__2",
+                "file": "images/block_1/1A__2.png",
+                "sha256": second_sha,
+            },
+        ],
+    })
+    _json(work, "run_report.json", {
+        "run": {
+            "status": "failed",
+            "image_generation": {"status": "completed", "count": 2},
+        },
+    })
+
+    sync_managed_outputs(work, target)
+
+    assert (
+        target / "media" / "images" / "block_1" / "1A__1.png"
+    ).read_bytes() == b"first finished image"
+    assert (
+        target / "media" / "images" / "block_1" / "1A__2.png"
+    ).read_bytes() == b"second finished image"
