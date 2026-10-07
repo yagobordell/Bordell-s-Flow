@@ -108,8 +108,9 @@ while A2V loads lazily on the first generation for a profile. A retryable GPU fa
 shared retry cooldown. The retry then rebuilds from the already-downloaded local checkpoints instead
 of forcing another Hugging Face bootstrap or Salad cold start. Repeated LTX OOMs are capped at one
 clean-pipeline retry (two physical attempts total) for both I2V and A2V so an immutable request that
-cannot fit does not consume the generic five-attempt budget. Non-GPU failures do not discard a
-healthy resident pipeline.
+cannot fit does not consume the generic five-attempt budget. Production B2 I2V requests also carry
+`max_attempts=2`, so already-deployed workers that predate the task-aware OOM cap still enforce the
+same paid-attempt ceiling. Non-GPU failures do not discard a healthy resident pipeline.
 
 I2V emits pipeline-load and inference timing metrics; A2V already records model-load, inference,
 encode/mux and pipeline-reuse metrics. Generic worker logs record task start/end and durable artifact
