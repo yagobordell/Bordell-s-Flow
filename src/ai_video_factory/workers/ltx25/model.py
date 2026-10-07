@@ -46,9 +46,13 @@ LTX_FAST_LOWRES_PROFILE = "ltx25-fast-vanilla-silent-1024x576-fp8cpu-eager-a95ab
 LTX_FAST_LOWRES_TRITON_PROFILE = "ltx25-fast-vanilla-silent-1024x576-fp8cpu-triton-a95ab-v1"
 LTX_FAST_LOWRES_NO_OFFLOAD_PROFILE = "ltx25-fast-vanilla-silent-1024x576-fp8none-eager-a95ab-v1"
 LTX_FAST_FULLRES_NO_OFFLOAD_PROFILE = "ltx25-fast-vanilla-silent-native-fp8none-eager-a95ab-v1"
-# Production I2V uses the RTX 5090 full-resolution FP8 no-offload profile.
-# Preserve LTX_GENERATION_PROFILE for legacy guided jobs and v4 clip reuse.
-LTX_PRODUCTION_I2V_PROFILE = LTX_FAST_FULLRES_NO_OFFLOAD_PROFILE
+# Production 1080p I2V uses the full-resolution FP8 CPU-offload profile.
+# The previously promoted no-offload profile was validated at 720p but can OOM
+# on the 1920x1088 internal grid used by 1080p delivery. Reusing the existing
+# CPU-offload profile gives the 1080p recipe a distinct paid-job identity
+# without requiring a new worker image; preserve LTX_GENERATION_PROFILE for
+# legacy guided jobs and historical clip reuse.
+LTX_PRODUCTION_I2V_PROFILE = LTX_FAST_VANILLA_PROFILE
 LTX_FAST_FULLRES_TRITON_PROFILE = "ltx25-fast-vanilla-silent-native-fp8cpu-triton-a95ab-v1"
 LTX_FAST_FULLRES_NVFP4_PROFILE = "ltx25-fast-vanilla-silent-native-nvfp4none-eager-a95ab-v1"
 _NVFP4_TRANSFORMER = "diffusion_models/ltx-2.5-22b-distilled-transformer-nvfp4.safetensors"
