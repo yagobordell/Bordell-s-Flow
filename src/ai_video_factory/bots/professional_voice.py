@@ -717,10 +717,7 @@ async def plan_professional_voice(
             on_stage_duration,
         )
         rhythm_by_id = {r.block_id: r for r in v1.block_rhythms}
-        # Voice synthesis has tighter provider rate limits than the director bots.
-    # Keep its burst small even when the rest of the pipeline uses wider concurrency.
-    tts_parallel_calls = min(max_parallel_calls, 2)
-    semaphore = asyncio.Semaphore(tts_parallel_calls)
+        semaphore = asyncio.Semaphore(max_parallel_calls)
 
         async def one(
             block: dict[str, Any],
@@ -1269,7 +1266,10 @@ async def generate_professional_audio(
                          "block_ids": [b["block_id"] for b in voice_blocks]})
     speech = speech_provider or GeminiTtsSpeechProvider(api_key=gemini_api_key)
     stt = stt_client or OpenAISttClient(api_key=settings.openai_api_key)
-    semaphore = asyncio.Semaphore(max_parallel_calls)
+    # Voice synthesis has tighter provider rate limits than the director bots.
+    # Keep its burst small even when the rest of the pipeline uses wider concurrency.
+    tts_parallel_calls = min(max_parallel_calls, 2)
+    semaphore = asyncio.Semaphore(tts_parallel_calls)
 
     async def one(
         block: dict[str, Any], direction: V3, compiler: V4,
