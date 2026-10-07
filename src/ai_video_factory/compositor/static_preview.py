@@ -551,6 +551,19 @@ def _media_image_motion_filter(timeline: dict[str, Any]) -> str:
     )
 
 
+def _ffmpeg_video_filter_args(video_filter: str, preview: Path) -> list[str]:
+    """Keep long filter graphs out of the Windows command line."""
+    if len(video_filter) <= 16_000:
+        return ["-vf", video_filter]
+    filter_script = preview / "ken_burns.fffilter"
+    if filter_script.is_symlink():
+        raise StaticPreviewError("Refusing linked Ken Burns filter script")
+    filter_script.write_text(video_filter + "\n", encoding="utf-8")
+    # FFmpeg deprecated -filter_script in favor of the generic file-backed
+    # option syntax and modern builds may no longer expose the legacy alias.
+    return ["-/filter:v", str(filter_script)]
+
+
 def generate_static_preview(
     output: Path, plan: dict[str, Any], audio: dict[str, Any],
     image_manifest: dict[str, Any],
@@ -734,18 +747,7 @@ def generate_static_preview(
     entries.append(entries[-2])  # Repeated last frame preserves its last duration.
     concat.write_text("\n".join(entries) + "\n", encoding="utf-8")
     video_filter = _media_image_motion_filter(timeline)
-    # On Windows an inline FFmpeg graph has a command-line size limit.
-    # A filter script supports long B2 timelines without changing the graph.
-    filter_args = ["-vf", video_filter]
-    if len(video_filter) > 16_000:
-        filter_script = preview / "ken_burns.fffilter"
-        if filter_script.is_symlink():
-            raise StaticPreviewError("Refusing linked Ken Burns filter script")
-        filter_script.write_text(video_filter + "\n", encoding="utf-8")
-        # Modern FFmpeg removed the legacy -filter_script:v alias.
-        # The generic file-backed option syntax keeps long Windows commands out
-        # of the process command line while remaining the documented interface.
-        filter_args = ["-/filter:v", str(filter_script)]
+    filter_args = _ffmpeg_video_filter_args(video_filter, preview)
     _save_json(preview / "timeline.json", timeline)
 
     target = preview / "static_preview.mp4"
