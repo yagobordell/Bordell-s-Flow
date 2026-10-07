@@ -663,3 +663,29 @@ def test_b3_artifacts_fail_closed_until_input_and_output_are_durable(
     assert json.loads(
         (tmp_path / "B3" / "group_1" / "output.json").read_text(encoding="utf-8")
     ) == {"pipeline_stage": "B3", "group_id": 1, "beats": []}
+
+
+def test_completed_image_checkpoint_is_reused_without_provider_work(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "output"
+    manifest_path = output / "images" / "manifest.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest = {
+        "schema_version": "openai-b2-images-v1",
+        "status": "completed",
+        "finishing_status": "completed",
+        "items": [{"asset_id": "1A__1"}],
+        "final_assets": [{"asset_id": "1A__1"}],
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert runner._completed_saved_image_manifest(
+        output, {"visual_style": "profesional"}
+    ) == manifest
+
+    manifest["finishing_status"] = "incomplete"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert runner._completed_saved_image_manifest(
+        output, {"visual_style": "profesional"}
+    ) is None
