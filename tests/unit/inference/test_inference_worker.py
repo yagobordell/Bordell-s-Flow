@@ -342,6 +342,43 @@ def test_ltx_a2v_oom_has_only_one_clean_retry(tmp_path: Path) -> None:
         worker.process(request)
     assert runner.calls == 2
 
+
+def test_ltx_i2v_oom_has_only_one_clean_retry(tmp_path: Path) -> None:
+    """Do not burn five identical I2V attempts when the 1080p recipe stays OOM."""
+
+    class OomRunner:
+        task_name = "video.ltx25.generate"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def run(self, request, inputs, work_dir):
+            del request, inputs, work_dir
+            self.calls += 1
+            raise RuntimeError("AcceleratorError: CUDA error: out of memory")
+
+    storage = LocalObjectStorage(tmp_path / "objects")
+    repository = InMemoryJobRepository()
+    runner = OomRunner()
+    worker = InferenceWorker(
+        storage=storage, repository=repository,
+        runners=TaskRunnerRegistry([runner]),
+        worker_id="worker-1", temp_dir=tmp_path / "temp",
+        lease_seconds=60, heartbeat_seconds=10,
+    )
+    digest = seed(storage, tmp_path / "source.txt", "inputs/source.txt", b"hello\n")
+    request = build_request("i2v-oom-twice", digest).model_copy(
+        update={"task": runner.task_name, "max_attempts": 5}
+    )
+    with pytest.raises(JobExecutionError, match="execution failed"):
+        worker.process(request)
+    with pytest.raises(NonRetryableTaskError, match="out of memory"):
+        worker.process(request)
+    with pytest.raises(NonRetryableTaskError, match="out of memory"):
+        worker.process(request)
+    assert runner.calls == 2
+
+
 def test_ltx_a2v_unsatisfiable_diffvae_budget_never_retries(tmp_path: Path) -> None:
     class ImpossibleTileRunner:
         task_name = "video.ltx25.audio_to_video"
