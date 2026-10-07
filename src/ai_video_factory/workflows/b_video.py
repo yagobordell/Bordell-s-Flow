@@ -641,6 +641,8 @@ def reconcile_obsolete_b2_video_runs(
             job_id = record.get("job_id")
             if not isinstance(job_id, str) or not job_id:
                 raise B2VideoError("Previous LTX job has no durable ID")
+            if job_id in reusable_job_ids:
+                continue
             try:
                 snapshot = queue.get(job_id)
             except QueueJobNotFoundError:
