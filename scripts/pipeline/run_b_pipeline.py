@@ -1583,6 +1583,47 @@ async def _preflight_saved_run_audio(
     return True
 
 
+def _completed_saved_image_manifest(
+    output: Path, plan: dict[str, object]
+) -> dict[str, object] | None:
+    """Load a fully finished image checkpoint without restarting paid work."""
+    manifest_path = output / "images" / "manifest.json"
+    if manifest_path.is_symlink() or manifest_path.parent.is_symlink():
+        raise ImageGenerationError("Refusing linked saved image manifest")
+    if not manifest_path.is_file():
+        return None
+    try:
+        saved = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ImageGenerationError("Saved image manifest is unreadable; reconcile it") from exc
+    if not isinstance(saved, dict) or saved.get("schema_version") != "openai-b2-images-v1":
+        raise ImageGenerationError("Saved image manifest has an unexpected schema")
+    if saved.get("status") != "completed":
+        return None
+    if (
+        plan.get("visual_style") == "profesional"
+        and saved.get("finishing_status") != "completed"
+    ):
+        return None
+    b3_root = output / "images" / "b3_shots"
+    if b3_root.is_symlink():
+        raise ImageGenerationError("Refusing linked B3 image state directory")
+    for state_path in b3_root.glob("*.json"):
+        if state_path.is_symlink():
+            raise ImageGenerationError("Refusing linked B3 image state")
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ImageGenerationError("Saved B3 image state is unreadable") from exc
+        if (
+            not isinstance(state, dict)
+            or state.get("schema_version") != "b3-shot-image-v1"
+            or state.get("status") != "completed"
+        ):
+            return None
+    return saved
+
+
 def _resume_unfinished_images(output: Path, plan: dict[str, object]) -> bool:
     """Preserve paid GPT originals when image generation/finishing is unfinished."""
     manifest_path = output / "images" / "manifest.json"
@@ -1683,16 +1724,24 @@ async def _run_images_only(
     _refresh_audio_costs(report, output)
     _write(report_path, report)
     try:
-        if _resume_unfinished_images(output, plan):
+        completed_manifest = _completed_saved_image_manifest(output, plan)
+        if completed_manifest is not None:
             print(
-                "  Resuming unfinished images: keeping previously paid GPT originals.",
+                "  Reusing completed images; continuing downstream recovery.",
                 flush=True,
             )
+            manifest = completed_manifest
         else:
-            removed_images = await asyncio.to_thread(clear_b2_images_for_rerun, output)
-            if removed_images:
-                print(f"Removed {removed_images} previous B2 image(s).", flush=True)
-        manifest = await _generate_images(output, plan)
+            if _resume_unfinished_images(output, plan):
+                print(
+                    "  Resuming unfinished images: keeping previously paid GPT originals.",
+                    flush=True,
+                )
+            else:
+                removed_images = await asyncio.to_thread(clear_b2_images_for_rerun, output)
+                if removed_images:
+                    print(f"Removed {removed_images} previous B2 image(s).", flush=True)
+            manifest = await _generate_images(output, plan)
     except Exception:
         report["run"]["image_generation"] = {"status": "incomplete"}
         report["run"]["status"] = "failed"
@@ -2010,6 +2059,7 @@ async def _run_audio_only(
     *,
     resume: bool,
     no_video: bool = False,
+    max_parallel_calls: int = 8,
     results_root: Path = Path("data/results"),
     managed_target: Path | None = None,
 ) -> None:
@@ -2128,7 +2178,7 @@ async def _run_audio_only(
                     generation_nonce=nonce,
                     on_timing=prior_timing.record_call,
                     on_stage_duration=prior_timing.record_stage,
-                    max_parallel_calls=8,
+                    max_parallel_calls=max_parallel_calls,
                 )
             else:
                 artifact = await _generate_audio(
@@ -2585,6 +2635,7 @@ async def main() -> None:
             output_root,
             resume=bool(getattr(args, "resume_audio", False)),
             no_video=bool(getattr(args, "no_video", False)),
+            max_parallel_calls=args.max_parallel_calls,
             results_root=results_root,
             managed_target=getattr(args, "managed_target", None),
         )
