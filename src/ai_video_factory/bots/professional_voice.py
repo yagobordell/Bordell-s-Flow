@@ -717,7 +717,10 @@ async def plan_professional_voice(
             on_stage_duration,
         )
         rhythm_by_id = {r.block_id: r for r in v1.block_rhythms}
-        semaphore = asyncio.Semaphore(max_parallel_calls)
+        # Voice synthesis has tighter provider rate limits than the director bots.
+    # Keep its burst small even when the rest of the pipeline uses wider concurrency.
+    tts_parallel_calls = min(max_parallel_calls, 2)
+    semaphore = asyncio.Semaphore(tts_parallel_calls)
 
         async def one(
             block: dict[str, Any],
