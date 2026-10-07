@@ -695,7 +695,7 @@ def test_explicit_image_reconciliation_cancels_only_unresolved_old_jobs(
     saved = json.loads(previous.read_text(encoding="utf-8"))
     assert saved["status"] == "superseded"
     assert saved["superseded_by"] == new_run.name
-    assert saved["superseded_reason"] == "explicit image regeneration"
+    assert saved["superseded_reason"] == "explicit B2 video reconciliation"
 
 
 def test_explicit_image_reconciliation_preserves_jobs_reused_by_new_run(
