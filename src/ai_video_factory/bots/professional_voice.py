@@ -717,10 +717,7 @@ async def plan_professional_voice(
             on_stage_duration,
         )
         rhythm_by_id = {r.block_id: r for r in v1.block_rhythms}
-        # Gemini TTS has tighter request limits than the planning stages.
-    # Keep V1-V4 concurrency configurable, but cap paid TTS submissions so
-    # one narration cannot create a large burst of simultaneous 429s.
-    semaphore = asyncio.Semaphore(min(max_parallel_calls, 2))
+        semaphore = asyncio.Semaphore(max_parallel_calls)
 
         async def one(
             block: dict[str, Any],
@@ -1269,7 +1266,9 @@ async def generate_professional_audio(
                          "block_ids": [b["block_id"] for b in voice_blocks]})
     speech = speech_provider or GeminiTtsSpeechProvider(api_key=gemini_api_key)
     stt = stt_client or OpenAISttClient(api_key=settings.openai_api_key)
-    semaphore = asyncio.Semaphore(max_parallel_calls)
+    # Keep V1-V4 planning concurrency configurable, but cap paid Gemini TTS
+    # submissions so one narration cannot create a large simultaneous burst.
+    semaphore = asyncio.Semaphore(min(max_parallel_calls, 2))
 
     async def one(
         block: dict[str, Any], direction: V3, compiler: V4,
