@@ -593,6 +593,92 @@ def has_pending_b2_video(output: Path) -> bool:
     return False
 
 
+def reconcile_obsolete_b2_video_runs(
+    output: Path,
+    plan: dict[str, Any],
+    audio: dict[str, Any],
+    images: dict[str, Any],
+    *,
+    queue: JobQueueClient,
+) -> dict[str, object]:
+    """Cancel unresolved jobs from older image fingerprints without touching other runs.
+
+    This is an explicit maintenance operation for the case where images were
+    intentionally regenerated after a prior LTX run had already published work.
+    Succeeded/failed/cancelled jobs are preserved as historical paid artifacts.
+    Pending/retryable work is cancelled. Actively leased work is never force-cancelled.
+    """
+    _timeline, _jobs, run_dir = build_b2_video_plan(output, plan, audio, images)
+    new_digest = run_dir.name
+    runs = output / "video" / "runs"
+    if runs.is_symlink():
+        raise B2VideoError("Refusing linked LTX video runs directory")
+    if not runs.exists():
+        return {"new_digest": new_digest, "superseded_runs": 0, "cancelled_jobs": 0}
+
+    superseded = 0
+    cancelled = 0
+    for previous_path in sorted(runs.glob("*/manifest.json")):
+        if previous_path.is_symlink() or previous_path.parent.is_symlink():
+            raise B2VideoError("Refusing linked previous LTX manifest")
+        old = json.loads(previous_path.read_text(encoding="utf-8"))
+        if not isinstance(old, dict) or not isinstance(old.get("jobs"), list):
+            raise B2VideoError(f"Invalid previous LTX manifest: {previous_path}")
+        if old.get("fingerprint") == new_digest or old.get("status") in {
+            "completed", "superseded",
+        }:
+            continue
+        if old.get("master_audio_sha256") != audio.get("sha256"):
+            raise B2VideoError(
+                "A previous incomplete LTX run has a different soundtrack; "
+                "refusing image-only reconciliation"
+            )
+
+        for record in old["jobs"]:
+            if not isinstance(record, dict):
+                raise B2VideoError("Invalid previous LTX job record")
+            job_id = record.get("job_id")
+            if not isinstance(job_id, str) or not job_id:
+                raise B2VideoError("Previous LTX job has no durable ID")
+            try:
+                snapshot = queue.get(job_id)
+            except QueueJobNotFoundError:
+                if record.get("status") == "pending":
+                    continue
+                raise B2VideoError(
+                    f"Previous LTX job {job_id} is missing from Postgres"
+                ) from None
+
+            if snapshot.status in {
+                QueueJobStatus.SUCCEEDED,
+                QueueJobStatus.FAILED,
+                QueueJobStatus.CANCELLED,
+            }:
+                continue
+            try:
+                queue.cancel(job_id)
+            except RuntimeError as exc:
+                raise B2VideoError(
+                    f"Previous LTX job {job_id} is still actively leased; "
+                    "refusing to force-cancel paid inference"
+                ) from exc
+            cancelled += 1
+
+        previous_status = old.get("status")
+        old["status"] = "superseded"
+        old["superseded_by"] = new_digest
+        old["superseded_reason"] = "explicit image regeneration"
+        old["previous_status"] = previous_status
+        _save_json(previous_path, old)
+        superseded += 1
+
+    return {
+        "new_digest": new_digest,
+        "superseded_runs": superseded,
+        "cancelled_jobs": cancelled,
+    }
+
+
 def _reconcile_prior_failed_video_runs(
     output: Path,
     *,
