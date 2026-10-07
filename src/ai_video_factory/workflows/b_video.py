@@ -71,6 +71,7 @@ if AVATAR_NEGATIVE_PROMPT != LTX_A2V_STATIC_NEGATIVE_PROMPT:
 _FPS = 24
 _WIDTH = 1920
 _HEIGHT = 1080
+_I2V_MAX_ATTEMPTS = 2
 _RATE = 48000
 _A2V_MAX_RAW_FRAMES = 1024
 _SCHEMA = "b2-ltx-video-v2-1080p"
@@ -396,6 +397,10 @@ def build_b2_video_plan(
             key = f"b2-ltx/inputs/images/{image_sha}.png"
             request = InferenceJobRequest(
                 job_id=job_id, task=LTX_VIDEO_TASK,
+                # Defense in depth for already-deployed workers that predate the
+                # task-aware I2V OOM cap: expensive 1080p I2V never gets the
+                # generic five-attempt budget.
+                max_attempts=_I2V_MAX_ATTEMPTS,
                 inputs=[ObjectInput(
                     name="keyframe", key=key, sha256=image_sha,
                     content_type="image/png",
