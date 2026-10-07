@@ -206,6 +206,33 @@ def test_incomplete_saved_audio_does_not_start_stt_recovery(
     assert "stt_alignment" not in run_metadata
 
 
+def test_images_only_refuses_to_replace_images_while_ltx_is_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script, root, output = _saved_preview(tmp_path)
+    pending = output / "video" / "runs" / "old" / "manifest.json"
+    pending.parent.mkdir(parents=True)
+    pending.write_text(
+        json.dumps({"status": "running", "jobs": [{"status": "pending"}]}),
+        encoding="utf-8",
+    )
+
+    async def forbidden_async(*_args: object, **_kwargs: object) -> dict:
+        raise AssertionError("Paid/image work must not start while LTX is incomplete")
+
+    def forbidden_sync(*_args: object, **_kwargs: object) -> int:
+        raise AssertionError("Existing B2 images must not be deleted")
+
+    monkeypatch.setattr(
+        runner, "_preflight_stt_alignment_with_retries", forbidden_async,
+    )
+    monkeypatch.setattr(runner, "clear_b2_images_for_rerun", forbidden_sync)
+    monkeypatch.setattr(runner, "_generate_images", forbidden_async)
+
+    with pytest.raises(SystemExit, match="paid LTX jobs"):
+        asyncio.run(runner._run_images_only(script, root))
+
+
 def test_no_video_images_resume_still_builds_preview_without_ltx(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
