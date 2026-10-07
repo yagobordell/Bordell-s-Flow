@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageChops, ImageDraw
 
+from ai_video_factory.compositor import static_preview
 from ai_video_factory.compositor.ken_burns import (
     MOTION_VERSION,
     build_clip_ken_burns_filter,
@@ -151,3 +152,25 @@ def test_ffmpeg_fractional_ken_burns_preserves_exact_frame_count(
     first = Image.frombytes("RGB", (160, 90), result.stdout[:frame_bytes])
     last = Image.frombytes("RGB", (160, 90), result.stdout[-frame_bytes:])
     assert ImageChops.difference(first, last).getbbox() is not None
+
+
+def test_static_preview_long_filter_uses_modern_ffmpeg_file_option(
+    tmp_path: Path,
+) -> None:
+    graph = "x" * 16_001
+
+    args = static_preview._ffmpeg_video_filter_args(graph, tmp_path)
+
+    script = tmp_path / "ken_burns.fffilter"
+    assert args == ["-/filter:v", str(script)]
+    assert script.read_text(encoding="utf-8") == graph + "\n"
+    assert "-filter_script:v" not in args
+
+
+def test_static_preview_short_filter_stays_inline(tmp_path: Path) -> None:
+    graph = "fps=30,format=yuv420p"
+
+    args = static_preview._ffmpeg_video_filter_args(graph, tmp_path)
+
+    assert args == ["-vf", graph]
+    assert not (tmp_path / "ken_burns.fffilter").exists()
