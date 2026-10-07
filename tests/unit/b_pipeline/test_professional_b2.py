@@ -94,7 +94,10 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     assert "neighboring audio=true segments at or below 120 characters" in lowered
     # Text-bearing objects must not acquire invented readability/branding constraints.
     assert "do not add any such visibility/readability property unless" in lowered
-    assert "text-bearing objects do not receive invented readability, legibility, branding," in lowered
+    assert (
+        "text-bearing objects do not receive invented readability, legibility, branding,"
+        in lowered
+    )
     assert "text-absence or content-visibility constraints" in lowered
 
 def test_professional_prompt_requires_boundary_anchors_and_no_stock_exclusions() -> None:
