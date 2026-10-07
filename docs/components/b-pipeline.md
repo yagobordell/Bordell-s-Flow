@@ -121,6 +121,11 @@ old generic I2V/A2V behavior when resumed.
 The professional image grid uses only `prompt` to create its still key
 images; it never feeds `video_prompt` to the image model. The legacy
 `casero` grid remains unchanged.
+Professional grids keep `reference` homogeneous: referenced panels group
+only with other `reference:true` panels, and non-referenced panels only with
+`reference:false` panels. Fillers follow the same rule. Numbered continuity
+sequences are never split; a sequence with inconsistent reference flags fails
+preflight and must be corrected as a whole before image generation.
 
 The professional bot also has **global shot-framing freedom** for every
 generated beat, not only numbered sequences: it deliberately chooses useful
@@ -464,7 +469,8 @@ La generación individual usa calidad `low` por defecto, incluida la
 imagen inicial destinada a vídeo (1920×1088 en Profesional). Solo pasa a
 `medium` cuando su prompt contiene una variante de `(For context`
 (independientemente de mayúsculas, espacios, dos puntos o cierre de
-paréntesis). **Todas las rejillas usan `medium`.** El campo global
+paréntesis). Los grids con `gpt-image-2.5-sunburst` usan `high`; con
+`gpt-image-2.5-flare` mantienen `medium`. El campo global
 `quality=low` del manifiesto indica el valor por defecto; la calidad
 real se registra por solicitud y forma parte del fingerprint que impide
 repetir inadvertidamente generaciones de pago. Actualiza también

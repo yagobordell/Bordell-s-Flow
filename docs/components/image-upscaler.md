@@ -81,8 +81,10 @@ from a high-resolution mixed 2x2 grid (`1920x1080`) becomes
 separate 8:9 geometry and become `1536x1728`.
 
 The generation quality policy is uniform across professional and Casero:
-**medium for full grids and individual prompts containing a case-insensitive
-`(For context` marker with optional whitespace; low otherwise.** In
+**high for full grids with `gpt-image-2.5-sunburst`; medium for full grids
+with other supported models and individual prompts containing a
+case-insensitive `(For context` marker with optional whitespace; low
+otherwise.** In
 particular, independently generated professional I2V/A2V keyframes
 (`media_video` and regenerated `avatar`) use `1920x1088` at **low**
 unless they include `For context`. These independent keyframes are
@@ -96,7 +98,7 @@ is nominally `1280x720`. When **any** participating panel is intended
 for video (including an unnumbered filler), a 2x2 grid uses
 `3840x2160` so each panel is nominally `1920x1080`. Larger 3x2 and
 3x3 grids are already at the supported canvas limit and therefore retain
-`1280x720` panels. All grids use medium. Exclusive avatar_media grids
+`1280x720` panels. Exclusive avatar_media grids
 retain their special 8:9 sizes.
 
 After cropping, grid-video panels are used directly as the video source,
