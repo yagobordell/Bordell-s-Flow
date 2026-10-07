@@ -354,6 +354,44 @@ def test_ltx_runtime_env_precedence_matches_application_settings(
     assert runner._runtime_env_value("SALAD_LTX25_FP8_I2V_IMAGE") == "process"
 
 
+
+def test_i2v_worker_guard_uses_runtime_env_file_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pinned = "docker.io/yagobordell/ai-video-factory@sha256:" + "c" * 64
+    values = {
+        "SALAD_LTX25_FP8_I2V_IMAGE": pinned,
+        "SALAD_API_BASE_URL": "https://salad.invalid/api/public",
+        "SALAD_ORGANIZATION": "env-file-org",
+        "SALAD_PROJECT": "env-file-project",
+    }
+    monkeypatch.setattr(runner.settings, "salad_api_key", "test-key")
+    monkeypatch.delenv("SALAD_ORGANIZATION", raising=False)
+    monkeypatch.delenv("SALAD_PROJECT", raising=False)
+    monkeypatch.delenv("SALAD_API_BASE_URL", raising=False)
+    monkeypatch.setattr(
+        runner, "_runtime_env_value", lambda name: values.get(name, "")
+    )
+
+    class FakeSaladClient:
+        def __init__(self, config: object) -> None:
+            assert config.api_key == "test-key"
+            assert config.api_base_url == "https://salad.invalid/api/public"
+            assert config.organization_name == "env-file-org"
+            assert config.project_name == "env-file-project"
+            assert config.container_group_name == (
+                "ai-video-factory-ltx25-i2v-worker-v1"
+            )
+
+        def describe_container_group(self) -> dict:
+            return {"container": {"image": pinned}}
+
+    monkeypatch.setattr(runner, "SaladClient", FakeSaladClient)
+
+    runner._require_ltx_safe_i2v_worker()
+
+
+
 def test_promoted_a2v_run_v2_requires_exact_new_deployed_image_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
