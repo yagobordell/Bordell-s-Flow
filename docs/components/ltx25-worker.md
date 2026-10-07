@@ -25,6 +25,14 @@ That eight-pixel internal height margin is removed after decoding. The public I2
 The current `run` path does not use a video upscaler after LTX; LTX delivers the final
 1920x1080 clip geometry directly.
 
+Production I2V at this geometry uses the full-resolution fast vanilla profile with
+`FP8_CAST`, CPU offload and eager DiffVAE decoding. The older full-resolution
+`FP8_CAST` no-offload profile remains available for controlled experiments, but it is
+not the production 1080p recipe: it was validated at 1280x720 and can exhaust a 32-GB
+RTX 5090 on the 1920x1088 internal grid. Because the generation profile is part of the
+application job identity, switching production back to CPU offload creates fresh I2V
+job IDs instead of replaying terminal no-offload failures.
+
 ## Container and bootstrap
 
 The image lives under `docker/workers/ltx25` and packages the pinned LTX runtime plus the shared
@@ -98,7 +106,9 @@ Healthy jobs reuse a resident pipeline within one replica: I2V loads during work
 while A2V loads lazily on the first generation for a profile. A retryable GPU failure
 (`oom`, `cuda_device` or `cudnn_sdpa`) invalidates the affected resident pipeline before the
 shared retry cooldown. The retry then rebuilds from the already-downloaded local checkpoints instead
-of forcing another Hugging Face bootstrap or Salad cold start. Non-GPU failures do not discard a
+of forcing another Hugging Face bootstrap or Salad cold start. Repeated LTX OOMs are capped at one
+clean-pipeline retry (two physical attempts total) for both I2V and A2V so an immutable request that
+cannot fit does not consume the generic five-attempt budget. Non-GPU failures do not discard a
 healthy resident pipeline.
 
 I2V emits pipeline-load and inference timing metrics; A2V already records model-load, inference,
