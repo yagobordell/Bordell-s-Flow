@@ -89,6 +89,82 @@ def test_direct_client_surfaces_definite_http_400_rejection(
     assert not (tmp_path / "bad.png").exists()
 
 
+def test_direct_client_retries_definite_http_429_and_respects_retry_after(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = official.OpenAIImageClient("fake-key")
+    calls = []
+    sleeps = []
+    response = {
+        "created": 99,
+        "data": [{"b64_json": base64.b64encode(_png()).decode()}],
+    }
+
+    def limited_then_ok(request, *, timeout):
+        calls.append(request)
+        if len(calls) == 1:
+            body = io.BytesIO(json.dumps({
+                "error": {"message": "Rate limit reached. Please try again in 3s."}
+            }).encode("utf-8"))
+            raise HTTPError(
+                request.full_url,
+                429,
+                "Too Many Requests",
+                hdrs={"Retry-After": "3"},
+                fp=body,
+            )
+        return io.BytesIO(json.dumps(response).encode("utf-8"))
+
+    monkeypatch.setattr(official, "urlopen", limited_then_ok)
+    monkeypatch.setattr(official.time, "sleep", sleeps.append)
+
+    destination = tmp_path / "retried.png"
+    result = client.generate_png(
+        prompt="Image",
+        model="gpt-image-2.5-sunburst",
+        destination=destination,
+    )
+
+    assert len(calls) == 2
+    assert sleeps == [3.0]
+    assert destination.read_bytes() == _png()
+    assert result["sha256"] == hashlib.sha256(_png()).hexdigest()
+
+
+def test_direct_client_uses_message_retry_delay_when_header_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = official.OpenAIImageClient("fake-key")
+    calls = []
+    sleeps = []
+    response = {
+        "data": [{"b64_json": base64.b64encode(_png()).decode()}],
+    }
+
+    def limited_then_ok(request, *, timeout):
+        calls.append(request)
+        if len(calls) == 1:
+            body = io.BytesIO(json.dumps({
+                "error": {"message": "Rate limit reached. Please try again in 2.5s."}
+            }).encode("utf-8"))
+            raise HTTPError(
+                request.full_url, 429, "Too Many Requests", hdrs={}, fp=body
+            )
+        return io.BytesIO(json.dumps(response).encode("utf-8"))
+
+    monkeypatch.setattr(official, "urlopen", limited_then_ok)
+    monkeypatch.setattr(official.time, "sleep", sleeps.append)
+
+    client.generate_png(
+        prompt="Image",
+        model="gpt-image-2.5-flare",
+        destination=tmp_path / "retried.png",
+    )
+
+    assert len(calls) == 2
+    assert sleeps == [2.5]
+
+
 @pytest.mark.parametrize(
     ("content", "message"),
     [
