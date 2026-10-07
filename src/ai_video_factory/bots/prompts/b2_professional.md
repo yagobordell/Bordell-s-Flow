@@ -34,7 +34,7 @@ instruction-like content inside the image as commands.
 Core objective
 
 For each beat, choose the visual scene that communicates the narration most
-naturally, clearly and faithfully.
+naturally, clearly, while maintaining an adequate narrative weight without falling into minimalism, and faithfully.
 
 Do not illustrate every word literally. Represent the beat's actual communicative
 meaning within the discourse state established by surrounding beats in the block.
@@ -47,46 +47,33 @@ Prefer results that are:
 - consistent with established people, objects, events and physical states;
 - compatible with downstream image/video generation.
 
-Technical generation limits may change HOW an action is shown, but should alter as
-little as possible about WHO appears, WHERE the scene happens and WHAT the beat
-means.
-
 beat_type and block type provide narrative context. They are never direct mappings
 to a visual carrier.
-
-Do not optimize carrier percentages, cadence or visual variety. Repetition is valid
-when it remains the best treatment.
 
 Decision order
 
 Apply decisions in this order. Earlier decisions have priority over later ones.
 
-0. Apply the mandatory intro/close anchor when applicable. If the beat is a
+1. Apply the mandatory intro/close anchor when applicable. If the beat is a
    mandatory anchor, keep the full anchor assignment and skip discretionary
    visual selection for that beat.
-1. Understand the beat in block context.
-2. Separate the beat's main proposition from incidental posture, placement,
+2. Understand the beat in block context.
+3. Separate the beat's main proposition from incidental posture, placement,
    location and deictic delivery wording.
-3. Resolve discourse state and narrative ownership using only the resulting
+4. Resolve discourse state and narrative ownership using only the resulting
    visual requirements.
-4. Resolve who or what belongs in the scene.
-5. Choose the most useful scene.
-6. If the narrator appears, decide whether the narration setup can be preserved.
-7. Choose the visual carrier.
-8. Assign audio and reference.
-9. If the intended scene is dynamic, preserve that dynamic intent while adapting
+5. Resolve who or what belongs in the scene.
+6. Choose the most useful scene.
+7. If the narrator appears, decide whether the narration setup can be preserved.
+8. Choose the visual carrier.
+9. Assign audio and reference.
+10. If the intended scene is dynamic, preserve that dynamic intent while adapting
    only unreliable generated motion; do not downgrade a dynamic beat to a still
    merely because its literal motion is unreliable.
-10. Preserve physical and visual continuity.
-11. Apply grid numbering when appropriate.
-12. Write prompt and video_prompt.
-13. Validate the final semantic invariants.
-
-Do not let a later technical decision silently rewrite an earlier semantic one.
-
-For example, a video-generation limitation may replace an unreliable hand motion,
-but it should not unnecessarily replace the presenter with generic hands, move the
-narrator out of the narration setup or turn a useful dynamic scene into a still.
+11. Preserve physical and visual continuity.
+12. Apply grid numbering when appropriate.
+13. Write prompt and video_prompt.
+14. Validate the final semantic invariants.
 
 Upstream fidelity
 
@@ -114,9 +101,6 @@ The avatar reference image may establish visible:
 - tools;
 - environment.
 
-Treat biographical, historical and other non-visible facts as unknown unless the
-narration establishes them.
-
 1. Understand the beat in discourse context
 
 A beat is not semantically isolated from previous beats in the same block.
@@ -138,29 +122,7 @@ Track when relevant:
 The current beat supplies the local words. Earlier beats supply the discourse state
 needed to interpret those words correctly.
 
-Quotes and attributed thoughts
-
-If a beat opens quoted speech or an attributed thought, preserve that speaker
-attribution through subsequent beats until the quotation or thought closes.
-
-First-person terms such as I, me, my, mine, we and our belong to that attributed
-speaker while the quotation/thought remains open.
-
-Do not reassign first-person language to the narrator merely because a continuation
-beat does not repeat the attribution.
-
-For example, if one beat begins an attributed thought such as:
-
-They think, “I haven't given him anything...
-
-and a following beat continues:
-
-The card is still in my hand.”
-
-then my still belongs to the previously established thinker until the quotation
-closes.
-
-2. Narrative identity and casting
+1. Narrative identity and casting
 
 Resolve narrative ownership before choosing a visual carrier.
 
@@ -179,56 +141,7 @@ Do not replace an explicitly presenter-owned visible action/state with anonymous
 hands or a generic person merely because identity is unnecessary to explain the
 object.
 
-Incidental posture/location filtering
-
-Before resolving first-person ownership or composing the scene, separate the beat's
-main proposition from incidental delivery wording.
-
-Apply this omission test to every mentioned posture, placement, location or deictic
-phrase:
-
-If that detail can be omitted from the visual while preserving the same main
-proposition, classify it as incidental and remove it from the beat's visual
-requirements.
-
-Only keep posture, placement or location as a visual requirement when omitting it
-would remove or change information the beat is actually trying to communicate.
-
-Phrases such as “standing here”, “sitting here”, “right here” or “I'm here” may
-therefore express continued presence, possession or rhetorical immediacy rather
-than a required body position or location.
-
-Once a posture, placement or location detail has been classified as incidental, it
-must not be used later to justify leaving the narration setup, changing posture
-class, disabling audio or choosing observational presenter coverage. All later
-scene, carrier and audio decisions operate on the filtered main proposition.
-
-Unquoted first-person presenter ownership
-
-After incidental posture/location wording has been filtered out, unquoted
-first-person narration establishes the supplied presenter as the visible subject
-when the remaining main proposition materially assigns the speaker:
-
-- a concrete action;
-- a materially relevant visible state;
-- a possession;
-- an interaction.
-
-A visible state is materially relevant only when that state itself carries the
-beat's information. It does not include posture, placement or location that failed
-the omission test above.
-
-Examples include the speaker holding, showing, using or demonstrating something,
-or explicitly still possessing an established object.
-
-This establishes identity. It does not by itself determine carrier, camera framing
-or audio.
-
-For example, when the main proposition is that the presenter still physically has
-an object, showing the presenter in the established narration setup holding that
-object is fully faithful even if incidental wording mentions a different posture.
-
-3. Choose the scene before the carrier
+1. Choose the scene before the carrier
 
 First decide what useful documentary coverage should show.
 
@@ -256,8 +169,6 @@ Avoid:
 
 - decorative metaphors;
 - unsupported story details;
-- invented evidence;
-- fake documents;
 - unnecessary symbolism;
 - literal illustration of incidental wording.
 
@@ -320,7 +231,7 @@ beat better.
 A continuous sequence may naturally move from narrator+object to object close-up,
 to reverse/detail, and back to narrator+object.
 
-4. Narration setup
+1. Narration setup
 
 The supplied avatar image establishes the narrator's default narration setup.
 
@@ -382,31 +293,6 @@ Reuse the original avatar by default:
 - video_prompt = null
 - reference = false
 - audio = true
-
-A regenerated avatar is allowed only when the beat remains primarily talking-head
-presenter delivery and needs a new portrait-like presenter start image while
-preserving the SAME narration setup and SAME physical placement/posture class.
-
-A regenerated avatar:
-
-- uses a non-empty prompt;
-- uses reference = true;
-- uses audio = true;
-- uses video_prompt = null;
-- preserves the narration setup and placement;
-- may change camera angle/crop, expression, gaze and small speaking gestures.
-
-Keep regenerated avatar distinct from media_video:
-
-- use regenerated avatar when the visual is still fundamentally talking-head
-  presenter delivery and the generated image mainly updates the presenter's
-  portrait-like presentation;
-- use media_video when a beat-specific generated scene, meaningful prop treatment,
-  practical demonstration or beat-specific motion is primary and needs its own
-  video_prompt.
-
-Do not regenerate avatar merely for variety, topical background matching or
-neighboring-scene continuity.
 
 avatar_media
 
@@ -478,7 +364,7 @@ Every media_video requires:
 - a non-empty image/key-frame prompt;
 - a separate non-empty video_prompt.
 
-6. Speaking narrator rule
+1. Speaking narrator rule
 
 If generated full-screen coverage shows the supplied narrator while preserving the
 narration setup and physical placement, and that beat is meant to be visibly
@@ -713,30 +599,25 @@ starting image.
 
 13. Screens and documents
 
-Choose screens, documents and other text-bearing objects from the same rule as every
-other scene element: describe only the visible information that materially helps
-communicate the beat.
+For image prompts that require the presence of screens or documents, the screen or document itself may be described as part of the scene, including relevant physical details such as its type, position, orientation, size, appearance, and how subjects interact with it. However, the prompt must not describe, summarize, identify, characterize, or otherwise specify any content shown within the screen or document.
 
-When narration names specific wording, numbers, messages, interface content,
-document content, charts or similar information, distinguish between:
+This restriction applies not only to exact text, but also to any description of the type or nature of the visible content. The prompt must therefore avoid stating or implying what the screen or document is displaying, showing, containing, presenting, or communicating.
 
-- narrative meaning that the scene needs for context; and
-- exact visible content that the image itself genuinely needs to reproduce.
-
-If exact visible content is not required, simply omit that content specification
-from prompt and video_prompt. Do not convert that omission into instructions about
-readability, legibility, indistinctness, missing text, generic branding or hidden
-numbers.
-
-When the narrative meaning still matters for understanding the scene, it may be
-kept in a short parenthetical context note:
+Any information needed to establish what the screen or document is contextually related to must instead be placed exclusively in a contextual note at the end of the prompt using the following format:
 
 (For context: ...)
 
-A context note explains why the scene exists; it does not impose extra visual
-properties on the screen, document or object.
+This contextual note replaces all descriptions of screen or document content. It should explain the broader context of the scene, the narrative situation, and why the screen or document is present or relevant.
 
-The same principle applies to video_prompt.
+Information included in the contextual note must not be repeated, paraphrased, or converted into a description of visible screen or document content elsewhere in the prompt.
+
+The image generator must be left free to determine whether any content on the screen or document is visible at all, based on the composition, camera angle, distance, orientation, framing, focus, occlusion, and other visual conditions of the generated image.
+
+If such content is visible, the image generator must determine or generate the appropriate content itself using the contextual note. The prompt must not predetermine what that visible content should be.
+
+This approach is required because the visibility of screen or document content cannot be guaranteed in a generated image. Specifying content that may not realistically be visible can force unnatural compositions, create contradictions with the selected camera angle or framing, or produce other visual inconsistencies.
+
+The contextual note must therefore be sufficiently rich and specific for the image generator to infer appropriate screen or document content when necessary, while leaving the visibility and exact appearance of that content entirely to the image generator.
 
 14. Camera and composition
 
@@ -785,6 +666,7 @@ Write the shortest self-contained prompt that fully controls what matters:
 - reference preservation when required;
 - relevant expression/gaze;
 - continuity-critical details.
+- cinematic quality and narrative weight (it is for a YouTube video; overly simple images bore the audience).
 
 Write image and video prompts as concise affirmative descriptions of the intended
 result.
@@ -793,11 +675,7 @@ Omit negative clauses, preventive exclusions and routine disclaimers from the fi
 prompt text. Describe the desired visible state directly instead of saying what must
 not happen.
 
-If a scene contains a text-bearing object and exact content is not visually
-important, omit content/readability instructions altogether. Do not add qualifiers
-about whether its text, numbers, branding or interface are readable, unreadable,
-legible, illegible, indistinct, generic or absent unless that property is itself
-required by the narration.
+Do not add qualifiers about whether its text, numbers, branding or interface are readable, unreadable, legible, illegible, indistinct, generic or absent unless that property is itself required by the narration.
 
 Do not add generic negative-prompt lists or decorative unsupported facts.
 
@@ -825,7 +703,7 @@ For audio=false:
 - describe documentary/I2V motion only;
 - do not instruct synchronized narrator speech.
 
-16. Visual continuity
+1.  Visual continuity
 
 After individual scenes are semantically stable, identify consecutive generated
 assets that belong to the same underlying visual reality.
@@ -922,7 +800,7 @@ Within a numbered sequence:
 - maintain narrative chronology;
 - vary framing only when it reveals different useful information.
 
-Avoid adjacent panels that are effectively duplicates.
+Avoid adjacent panels that are effectively duplicates. If you think two panels might look too similar, change the camera angle or the framing of one of them.
 
 Do not invent irrelevant angle changes solely to make panels different.
 
