@@ -277,3 +277,64 @@ def test_partial_fatal_cuda_context_job_reopens_with_clean_budget() -> None:
         queue.close()
         with psycopg.connect(dsn, autocommit=True) as connection:
             connection.execute("DELETE FROM gpu.jobs WHERE job_id = %s", (job_id,))
+
+
+def test_identical_job_can_be_shared_across_run_ids_and_cancelled_old_run_can_reopen() -> None:
+    dsn = _postgres_dsn()
+    job_id = "ltx-shared-job-across-runs"
+    request = InferenceJobRequest(
+        job_id=job_id,
+        task="video.ltx25.audio_to_video",
+        output=ObjectOutput(
+            key=f"jobs/{job_id}/output.mp4",
+            content_type="video/mp4",
+        ),
+        parameters={
+            "generation_profile": "test-profile",
+            "prompt": "A Person speaking to the camera.",
+        },
+    )
+    queue = PostgresJobQueueClient(dsn=dsn, max_connections=2)
+    try:
+        first = queue.submit(request, metadata={"run_id": "run-old"})
+        assert first.status is QueueJobStatus.PENDING
+
+        shared = queue.submit(request, metadata={"run_id": "run-new"})
+        assert shared.status is QueueJobStatus.PENDING
+        with psycopg.connect(dsn) as connection:
+            row = connection.execute(
+                "SELECT run_id, status, attempt_count FROM gpu.jobs WHERE job_id = %s",
+                (job_id,),
+            ).fetchone()
+        assert row == ("run-old", "pending", 0)
+
+        queue.cancel(job_id)
+        same_run = queue.submit(request, metadata={"run_id": "run-old"})
+        assert same_run.status is QueueJobStatus.CANCELLED
+
+        reopened = queue.submit(request, metadata={"run_id": "run-replacement"})
+        assert reopened.status is QueueJobStatus.PENDING
+        assert reopened.provider_payload["attempt_count"] == 0
+        with psycopg.connect(dsn) as connection:
+            row = connection.execute(
+                """
+                SELECT run_id, status, attempt_count, lease_owner, lease_expires_at,
+                       result, last_error, started_at, finished_at
+                FROM gpu.jobs
+                WHERE job_id = %s
+                """,
+                (job_id,),
+            ).fetchone()
+        assert row == (
+            "run-replacement", "pending", 0, None, None, None, None, None, None
+        )
+
+        conflicting = request.model_copy(
+            update={"parameters": {**request.parameters, "prompt": "Different prompt."}}
+        )
+        with pytest.raises(RuntimeError, match="different request"):
+            queue.submit(conflicting, metadata={"run_id": "run-conflict"})
+    finally:
+        queue.close()
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            connection.execute("DELETE FROM gpu.jobs WHERE job_id = %s", (job_id,))
