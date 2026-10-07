@@ -226,10 +226,6 @@ class PostgresJobQueueClient(JobQueueClient):
                 }
             else:
                 existing_run_id = row.get("run_id")
-                if run_id is not None and existing_run_id not in (None, run_id):
-                    raise RuntimeError(
-                        f"job_id {request.job_id!r} is already bound to different run metadata"
-                    )
                 if run_id is not None and existing_run_id is None:
                     connection.execute(
                         """
@@ -241,6 +237,50 @@ class PostgresJobQueueClient(JobQueueClient):
                         (run_id, request.job_id),
                     )
                     row = {**row, "run_id": run_id}
+                    existing_run_id = run_id
+
+                # run_id is correlation metadata only. An immutable request may be
+                # referenced by multiple application runs; the canonical job identity
+                # remains (job_id, request_sha256). Preserve active/succeeded state
+                # instead of rejecting an identical request from another run.
+                #
+                # A cancelled job is different: cancellation is scoped to the run that
+                # requested it. If another run needs the exact same immutable request,
+                # reopen it with a fresh attempt budget and bind the execution to the
+                # new run. Same-run resubmission remains cancelled/idempotent.
+                if (
+                    str(row["status"]) == "cancelled"
+                    and run_id is not None
+                    and existing_run_id not in (None, run_id)
+                ):
+                    connection.execute(
+                        """
+                        UPDATE gpu.jobs
+                        SET status = 'pending',
+                            attempt_count = 0,
+                            lease_owner = NULL,
+                            lease_expires_at = NULL,
+                            result = NULL,
+                            last_error = NULL,
+                            started_at = NULL,
+                            finished_at = NULL,
+                            run_id = %s,
+                            updated_at = now()
+                        WHERE job_id = %s
+                          AND request_sha256 = %s
+                          AND status = 'cancelled'
+                        """,
+                        (run_id, request.job_id, request_sha256),
+                    )
+                    row = {
+                        **row,
+                        "status": "pending",
+                        "attempt_count": 0,
+                        "lease_expires_at": None,
+                        "result": None,
+                        "last_error": None,
+                        "run_id": run_id,
+                    }
 
                 if _can_reopen_fatal_gpu_context_failure(
                     row,

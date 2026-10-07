@@ -608,8 +608,9 @@ def reconcile_obsolete_b2_video_runs(
     Succeeded/failed/cancelled jobs are preserved as historical paid artifacts.
     Pending/retryable work is cancelled. Actively leased work is never force-cancelled.
     """
-    _timeline, _jobs, run_dir = build_b2_video_plan(output, plan, audio, images)
+    _timeline, jobs, run_dir = build_b2_video_plan(output, plan, audio, images)
     new_digest = run_dir.name
+    reusable_job_ids = {job.request.job_id for job in jobs}
     runs = output / "video" / "runs"
     if runs.is_symlink():
         raise B2VideoError("Refusing linked LTX video runs directory")
@@ -640,6 +641,8 @@ def reconcile_obsolete_b2_video_runs(
             job_id = record.get("job_id")
             if not isinstance(job_id, str) or not job_id:
                 raise B2VideoError("Previous LTX job has no durable ID")
+            if job_id in reusable_job_ids:
+                continue
             try:
                 snapshot = queue.get(job_id)
             except QueueJobNotFoundError:

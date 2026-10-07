@@ -681,6 +681,52 @@ def test_explicit_image_reconciliation_cancels_only_unresolved_old_jobs(
     assert saved["superseded_reason"] == "explicit image regeneration"
 
 
+def test_explicit_image_reconciliation_preserves_jobs_reused_by_new_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.providers.job_queue import QueueJobSnapshot, QueueJobStatus
+
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    _timeline, jobs, new_run = b_video.build_b2_video_plan(
+        tmp_path, plan, audio, images
+    )
+    reusable_id = jobs[0].request.job_id
+    previous = tmp_path / "video" / "runs" / "old-images" / "manifest.json"
+    previous.parent.mkdir(parents=True)
+    previous.write_text(json.dumps({
+        "fingerprint": "old-images",
+        "master_audio_sha256": audio["sha256"],
+        "status": "running",
+        "jobs": [
+            {"job_id": reusable_id, "status": "pending"},
+            {"job_id": "obsolete-pending", "status": "pending"},
+        ],
+    }), encoding="utf-8")
+    cancelled: list[str] = []
+    looked_up: list[str] = []
+
+    class Queue:
+        def get(self, job_id: str) -> QueueJobSnapshot:
+            looked_up.append(job_id)
+            assert job_id == "obsolete-pending"
+            return QueueJobSnapshot(id=job_id, status=QueueJobStatus.PENDING)
+
+        def cancel(self, job_id: str) -> None:
+            cancelled.append(job_id)
+
+    result = b_video.reconcile_obsolete_b2_video_runs(
+        tmp_path, plan, audio, images, queue=Queue()
+    )
+
+    assert result == {
+        "new_digest": new_run.name,
+        "superseded_runs": 1,
+        "cancelled_jobs": 1,
+    }
+    assert looked_up == ["obsolete-pending"]
+    assert cancelled == ["obsolete-pending"]
+
+
 def test_explicit_image_reconciliation_never_force_cancels_active_lease(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
