@@ -1632,6 +1632,12 @@ async def _run_images_only(
     if report.get("run", {}).get("script_sha256") != source_sha:
         raise SystemExit("The selected script differs from the saved B2 image source")
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    if has_pending_b2_video(output):
+        raise SystemExit(
+            "--images-only refuses to replace images while paid LTX jobs are "
+            "still incomplete. Stop LTX capacity and reconcile the obsolete "
+            "video run before regenerating images."
+        )
     try:
         report["run"]["stt_alignment"] = await _preflight_stt_alignment_with_retries(
             output,
