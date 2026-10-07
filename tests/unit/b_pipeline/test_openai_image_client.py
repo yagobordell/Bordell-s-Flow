@@ -56,6 +56,53 @@ def test_direct_client_uses_the_same_model_prompt_size_quality_and_single_image(
     assert destination.read_bytes() == _png()
 
 
+
+def test_direct_client_retries_http_429_and_honors_retry_after(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = official.OpenAIImageClient("fake-key")
+    calls = []
+    sleeps = []
+    body = {
+        "data": [{"b64_json": base64.b64encode(_png()).decode()}],
+    }
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def read(self):
+            return json.dumps(body).encode("utf-8")
+
+    def limited_then_ok(request, *, timeout):
+        calls.append(request)
+        if len(calls) == 1:
+            raise HTTPError(
+                request.full_url, 429, "Too Many Requests",
+                {"Retry-After": "3"}, io.BytesIO(b"rate limited"),
+            )
+        response = Response()
+        # json.load expects a file-like object, not only read().
+        response.read = io.BytesIO(json.dumps(body).encode("utf-8")).read
+        return response
+
+    monkeypatch.setattr(official, "urlopen", limited_then_ok)
+    monkeypatch.setattr(official.time, "sleep", sleeps.append)
+
+    result = client.generate_png(
+        prompt="Image", model="gpt-image-2.5-sunburst",
+        destination=tmp_path / "retried.png",
+    )
+
+    assert len(calls) == 2
+    assert sleeps == [3.0]
+    assert result["sha256"] == hashlib.sha256(_png()).hexdigest()
+
+
+
 def test_direct_client_surfaces_definite_http_400_rejection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
