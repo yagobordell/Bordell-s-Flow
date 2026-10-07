@@ -25,6 +25,7 @@ from ai_video_factory.workers.ltx25.a2v import (
     LTXAudioToVideoParameters,
 )
 from ai_video_factory.workers.ltx25.model import (
+    LTX_FAST_FULLRES_NO_OFFLOAD_PROFILE,
     LTX_GENERATION_PROFILE,
     LTX_VIDEO_TASK,
     LTXVideoParameters,
@@ -185,8 +186,23 @@ def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     assert {item.name for item in first.request.inputs} == {"image", "audio"}
     assert video.request.task == LTX_VIDEO_TASK
     assert video.request.job_id.startswith("b2-1D-")
+    assert video.request.parameters["generation_profile"] == (
+        b_video.LTX_PRODUCTION_I2V_PROFILE
+    )
     assert video.request.parameters["prompt"] == "A bird takes off."
     assert video.request.parameters["num_frames"] == 17
+    old_no_offload_job_id = "b2-1D-" + b_video.ltx_video_application_job_id(
+        shot_id=2,
+        prompt=video.request.parameters["prompt"],
+        keyframe_sha256=video.request.inputs[0].sha256,
+        seed=video.request.parameters["seed"],
+        width=video.request.parameters["width"],
+        height=video.request.parameters["height"],
+        fps=video.request.parameters["fps"],
+        num_frames=video.request.parameters["num_frames"],
+        generation_profile=LTX_FAST_FULLRES_NO_OFFLOAD_PROFILE,
+    )
+    assert video.request.job_id != old_no_offload_job_id
     assert _run_dir.name
     for job in jobs:
         assert "run_id" not in job.request.parameters
