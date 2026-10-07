@@ -10,6 +10,8 @@ import base64
 import binascii
 import hashlib
 import json
+import re
+import time
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -35,6 +37,36 @@ _SUPPORTED_SIZES = {
     *_GRID_SIZES,
     *_AVATAR_MEDIA_GRID_SIZES,
 }
+_RATE_LIMIT_RETRY_DELAYS = (1.0, 2.0, 4.0)
+_RETRY_AFTER_MESSAGE = re.compile(
+    r"try again in\s+(\d+(?:\.\d+)?)s", flags=re.IGNORECASE
+)
+
+
+def _http_error_message(exc: HTTPError) -> str:
+    try:
+        raw = exc.read().decode("utf-8", errors="replace")
+        payload_error = json.loads(raw)
+        detail = payload_error.get("error") if isinstance(payload_error, dict) else None
+        message = detail.get("message") if isinstance(detail, dict) else None
+        if isinstance(message, str) and message.strip():
+            return message.strip()
+        return raw.strip() or str(exc.reason or "request rejected")
+    except (OSError, ValueError, TypeError):
+        return str(exc.reason or "request rejected")
+
+
+def _retry_delay(exc: HTTPError, message: str, attempt: int) -> float:
+    header = exc.headers.get("Retry-After") if exc.headers is not None else None
+    if header is not None:
+        try:
+            return min(max(float(header), 0.0), 60.0)
+        except ValueError:
+            pass
+    matched = _RETRY_AFTER_MESSAGE.search(message)
+    if matched is not None:
+        return min(max(float(matched.group(1)), 0.0), 60.0)
+    return _RATE_LIMIT_RETRY_DELAYS[attempt]
 
 
 class OpenAIImageError(RuntimeError):
@@ -61,35 +93,34 @@ class OpenAIImageClient:
     def _request_json(
         self, url: str, payload: dict[str, object]
     ) -> dict[str, Any]:
-        request = Request(
-            url,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        try:
-            with urlopen(request, timeout=180) as response:
-                result = json.load(response)
-        except HTTPError as exc:
-            # A 4xx response is a definite server rejection, not an ambiguous
-            # transport outcome. Preserve the API message so callers can safely
-            # mark the request retryable only on a later explicit run.
-            if 400 <= exc.code < 500:
-                try:
-                    raw = exc.read().decode("utf-8", errors="replace")
-                    payload_error = json.loads(raw)
-                    detail = payload_error.get("error") if isinstance(payload_error, dict) else None
-                    message = detail.get("message") if isinstance(detail, dict) else None
-                    if not isinstance(message, str) or not message.strip():
-                        message = raw.strip() or exc.reason or "request rejected"
-                except (OSError, ValueError, TypeError):
-                    message = str(exc.reason or "request rejected")
-                raise OpenAIImageRequestRejected(exc.code, message) from exc
-            raise
+        for attempt in range(len(_RATE_LIMIT_RETRY_DELAYS) + 1):
+            request = Request(
+                url,
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            try:
+                with urlopen(request, timeout=180) as response:
+                    result = json.load(response)
+                break
+            except HTTPError as exc:
+                # HTTP 429 is a definite rejection, so retrying it cannot
+                # duplicate a successfully accepted paid image request.
+                if 400 <= exc.code < 500:
+                    message = _http_error_message(exc)
+                    if (
+                        exc.code == 429
+                        and attempt < len(_RATE_LIMIT_RETRY_DELAYS)
+                    ):
+                        time.sleep(_retry_delay(exc, message, attempt))
+                        continue
+                    raise OpenAIImageRequestRejected(exc.code, message) from exc
+                raise
         if not isinstance(result, dict):
             raise OpenAIImageError("Official OpenAI image API returned non-object JSON")
         return result
