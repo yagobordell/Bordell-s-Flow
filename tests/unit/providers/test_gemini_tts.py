@@ -183,7 +183,7 @@ def test_request_sends_key_only_in_header_and_valid_json(monkeypatch) -> None:
     assert json.loads(req.data)["text"] == "café"
 
 
-@pytest.mark.parametrize("code", [400, 401, 429, 500, 503])
+@pytest.mark.parametrize("code", [400, 401, 500, 503])
 def test_http_error_does_not_echo_key_or_retry(monkeypatch, code) -> None:
     calls = []
     secret = "very-private-key"
@@ -205,6 +205,75 @@ def test_http_error_does_not_echo_key_or_retry(monkeypatch, code) -> None:
         )
     assert secret not in str(caught.value)
     assert len(calls) == 1
+
+
+def test_http_429_retries_after_retry_after_without_revealing_key(monkeypatch) -> None:
+    calls = []
+    sleeps = []
+    secret = "very-private-key"
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"candidates": []}'
+
+    def rate_limited_then_ok(request, *, timeout):
+        calls.append(request)
+        if len(calls) == 1:
+            raise HTTPError(
+                request.full_url,
+                429,
+                f"error mentions {secret}",
+                {"Retry-After": "3"},
+                io.BytesIO(f"debug: {secret}".encode()),
+            )
+        return Response()
+
+    monkeypatch.setattr(gemini, "urlopen", rate_limited_then_ok)
+    monkeypatch.setattr(gemini.time, "sleep", sleeps.append)
+
+    result = gemini._post_json(
+        url="https://example.test/generate",
+        api_key=secret,
+        payload={},
+        timeout_seconds=3.0,
+    )
+
+    assert result == {"candidates": []}
+    assert len(calls) == 2
+    assert sleeps == [3.0]
+    assert all(secret not in request.full_url for request in calls)
+
+
+def test_http_429_stops_after_bounded_backoff(monkeypatch) -> None:
+    calls = []
+    sleeps = []
+
+    def always_limited(request, *, timeout):
+        calls.append(request)
+        raise HTTPError(
+            request.full_url, 429, "Too Many Requests", {},
+            io.BytesIO(b"rate limited"),
+        )
+
+    monkeypatch.setattr(gemini, "urlopen", always_limited)
+    monkeypatch.setattr(gemini.time, "sleep", sleeps.append)
+
+    with pytest.raises(gemini.GeminiTtsError, match="HTTP 429"):
+        gemini._post_json(
+            url="https://example.test/generate",
+            api_key="secret",
+            payload={},
+            timeout_seconds=3.0,
+        )
+
+    assert len(calls) == 4
+    assert sleeps == [1.0, 2.0, 4.0]
 
 
 def test_transport_error_does_not_retry_or_reveal_key(monkeypatch) -> None:
