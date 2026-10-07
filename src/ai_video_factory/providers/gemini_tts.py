@@ -8,6 +8,7 @@ import binascii
 import io
 import json
 import math
+import time
 import wave
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -22,6 +23,7 @@ DEFAULT_GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_SAMPLE_RATE_HZ = 24_000
 DEFAULT_CHANNELS = 1
 MAX_STYLE_PROMPT_BYTES = 4_000
+_RATE_LIMIT_RETRY_DELAYS = (1.0, 2.0, 4.0)
 
 _KNOWN_PREBUILT_VOICES = frozenset({
     "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede",
@@ -40,6 +42,16 @@ _PROFESSIONAL_STYLE_PREFIX = (
 
 class GeminiTtsError(RuntimeError):
     """The Gemini response or its audio did not satisfy the TTS contract."""
+
+
+def _retry_delay(exc: HTTPError, attempt: int) -> float:
+    header = exc.headers.get("Retry-After") if exc.headers is not None else None
+    if header is not None:
+        try:
+            return min(max(float(header), 0.0), 60.0)
+        except ValueError:
+            pass
+    return _RATE_LIMIT_RETRY_DELAYS[attempt]
 
 
 def _fit_utf8(value: str, *, max_bytes: int) -> str:
@@ -232,23 +244,29 @@ def _build_directed_payload(*, turns: list[dict[str, str]], voice: str) -> dict[
 def _post_json(
     *, url: str, api_key: str, payload: dict[str, Any], timeout_seconds: float
 ) -> dict[str, Any]:
-    request = Request(
-        url,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
-        method="POST",
-    )
-    try:
-        with urlopen(request, timeout=timeout_seconds) as response:
-            raw = response.read()
-    except HTTPError as exc:
-        # Do not echo server-controlled error bodies; they may contain credentials.
-        raise GeminiTtsError(f"Gemini TTS returned HTTP {exc.code}") from None
-    except (URLError, TimeoutError, OSError) as exc:
-        # A failed POST may have been billed. Never retry it automatically.
-        raise GeminiTtsError(
-            "Gemini TTS transport failed; submission outcome may be unknown"
-        ) from exc
+    for attempt in range(len(_RATE_LIMIT_RETRY_DELAYS) + 1):
+        request = Request(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                raw = response.read()
+            break
+        except HTTPError as exc:
+            # A 429 is a definite provider rejection, so it is safe to replay.
+            # Never echo the provider body: it may contain sensitive request data.
+            if exc.code == 429 and attempt < len(_RATE_LIMIT_RETRY_DELAYS):
+                time.sleep(_retry_delay(exc, attempt))
+                continue
+            raise GeminiTtsError(f"Gemini TTS returned HTTP {exc.code}") from None
+        except (URLError, TimeoutError, OSError) as exc:
+            # A failed POST may have been billed. Never retry it automatically.
+            raise GeminiTtsError(
+                "Gemini TTS transport failed; submission outcome may be unknown"
+            ) from exc
 
     try:
         decoded = json.loads(raw)
