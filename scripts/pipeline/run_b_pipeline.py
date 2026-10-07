@@ -104,9 +104,9 @@ from ai_video_factory.workflows.casero_cta import prepare_casero_cta
 
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
-_STAGES = ("B1.1", "B1.2", "B2", "B3")
+_STAGES = ("B1.1", "B1.2", "B2", "B2.1", "B3")
 _METRIC_STAGES = (
-    "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "B3",
+    "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2", "B2", "B2.1", "B3",
     "V1", "V2", "V3", "V4",
 )
 
@@ -1071,6 +1071,16 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
         {
             "block_id": item["block_id"],
             "beat_id": item["beat_id"],
+            "asset_id": item.get("asset_id", item["beat_id"]),
+            **(
+                {
+                    "subshot_index": item["subshot_index"],
+                    "subshot_count": item["subshot_count"],
+                }
+                if isinstance(item.get("subshot_index"), int)
+                and isinstance(item.get("subshot_count"), int)
+                else {}
+            ),
             "file": item["file"],
             "sha256": item["sha256"],
             "provider": item.get("provider", "ai33"),
@@ -1143,6 +1153,9 @@ def _image_summary(manifest: dict[str, object]) -> dict[str, object]:
             item.get("grid") is not None for item in items
         )
         summary["beat_count"] = manifest["total_described_beats"]
+        summary["asset_count"] = manifest.get(
+            "total_described_assets", manifest["total_described_beats"]
+        )
         summary["cropped_panel_count"] = len(manifest.get("panel_assets", []))
     return summary
 
@@ -2303,7 +2316,7 @@ class BotArtifacts:
     def _folder(self, stage: str, block_id: int | None) -> Path:
         if stage not in (*_STAGES, "CTA"):
             raise ValueError(f"Unknown B pipeline stage: {stage}")
-        if stage in {"B1.1", "CTA"}:
+        if stage in {"B1.1", "B2.1", "CTA"}:
             if block_id is not None:
                 raise ValueError(f"{stage} must not have a block ID")
             return self._output / stage
@@ -2348,6 +2361,14 @@ class BotArtifacts:
     ) -> None:
         _write(
             self._folder("B2", block_id) / f"rejected_attempt_{attempt}.json",
+            {"attempt": attempt, "validation_error": error, "response": payload},
+        )
+
+    def rejected_b21(
+        self, attempt: int, error: str, payload: dict[str, object]
+    ) -> None:
+        _write(
+            self._folder("B2.1", None) / f"rejected_attempt_{attempt}.json",
             {"attempt": attempt, "validation_error": error, "response": payload},
         )
 
@@ -2732,6 +2753,7 @@ async def main() -> None:
                      if stage == "B1.2" else
                      block_count - len(previous_partial_b2)
                      if stage == "B2" else
+                     1 if stage == "B2.1" else
                      0 if stage == "B3" else block_count)
                     if rerun_from_index <= stage_index <= stop_index else 0
                 )
@@ -2854,13 +2876,18 @@ async def main() -> None:
                     max(report_blocks, timings.call_count("B2"))
                     if report_blocks is not None else None
                 ) if stop_index >= 2 else 0,
+                "B2.1": (
+                    max(1, timings.call_count("B2.1"))
+                    if visual_style == "profesional" and stop_index >= 3 else 0
+                ),
                 "B3": (
                     timings.call_count("B3")
-                    if visual_style == "profesional" and stop_index >= 3 else 0
+                    if visual_style == "profesional" and stop_index >= 4 else 0
                 ),
             }
         else:
             expected_calls = dict(resume_expected_calls)
+            expected_calls.setdefault("B2.1", 0)
             expected_calls["CTA"] = timings.call_count("CTA")
             expected_calls["CTA Ebook"] = timings.call_count("CTA Ebook")
             expected_calls["CTA Motion"] = timings.call_count("CTA Motion")
@@ -2876,6 +2903,12 @@ async def main() -> None:
                         expected_calls["B2"] or 0, report_blocks, timings.call_count("B2")
                     )
                 if visual_style == "profesional" and stop_index >= 3:
+                    expected_calls["B2.1"] = max(
+                        expected_calls.get("B2.1") or 0,
+                        1,
+                        timings.call_count("B2.1"),
+                    )
+                if visual_style == "profesional" and stop_index >= 4:
                     expected_calls["B3"] = max(
                         expected_calls.get("B3") or 0, timings.call_count("B3")
                     )
@@ -2909,13 +2942,13 @@ async def main() -> None:
         merged_output: dict[str, object] | None,
     ) -> None:
         nonlocal planned_blocks
-        if stage != "B3":
+        if stage not in {"B2.1", "B3"}:
             planned_blocks = blocks
-        else:
+        elif stage == "B3":
             artifacts.require_b3_group_outputs(blocks)
         if merged_output is not None:
             _write(output / stage / "merged_output.json", merged_output)
-        report_count = planned_blocks if stage == "B3" else blocks
+        report_count = planned_blocks if stage in {"B2.1", "B3"} else blocks
         costs, timing_report = save_report("running", report_count)
         elapsed = timing_report["stages"][stage]["elapsed_seconds"]
         if elapsed is None:
@@ -3039,6 +3072,7 @@ async def main() -> None:
             on_rejected_output=artifacts.rejected_b11,
             on_rejected_b12_output=artifacts.rejected_b12,
             on_rejected_b2_output=artifacts.rejected_b2,
+            on_rejected_b21_output=artifacts.rejected_b21,
             on_rejected_b3_output=artifacts.rejected_b3,
             on_api_response=ledger.record,
             on_call_duration=timings.record_call,
@@ -3176,6 +3210,7 @@ async def main() -> None:
                         on_input=artifacts.input,
                         on_output=output_and_start_audio,
                         on_rejected_b2_output=artifacts.rejected_b2,
+                        on_rejected_b21_output=artifacts.rejected_b21,
                         on_rejected_b3_output=artifacts.rejected_b3,
                         on_api_response=ledger.record,
                         on_call_duration=timings.record_call,

@@ -421,6 +421,7 @@ def build_stt_beat_timeline(
                         "continuous", "b3_group_id", "b3_shot_prompt",
                         "b3_shot_video_prompt", "b3_reference_beat_id",
                         "b3_grid_id", "b3_grid_source", "b3_grid_role",
+                        "visual_subshots",
                     )
                     if key in beat
                 }),
@@ -498,29 +499,49 @@ def _beat_frame(
 
 
 def _media_image_motion_filter(timeline: dict[str, Any]) -> str:
-    """Animate media_image beats with deterministic bidirectional Ken Burns."""
+    """Animate every still subshot independently with deterministic Ken Burns."""
 
     intervals: list[tuple[int, int, str]] = []
     image_index = 0
     for beat in timeline["beats"]:
         if beat["visual_type"] != "media_image":
             continue
-
-        start_frame = beat["start_frame"]
-        end_frame = beat["end_frame"]
-        if end_frame - start_frame < 2:
-            raise StaticPreviewError(
-                f"media_image {beat['beat_id']} needs at least two preview "
-                "frames for visible motion"
+        ranges = beat.get("render_subshots")
+        if not isinstance(ranges, list) or not ranges:
+            ranges = [{
+                "start_frame": beat["start_frame"],
+                "end_frame": beat["end_frame"],
+            }]
+        motions: list[dict[str, object]] = []
+        for item in ranges:
+            start_frame = int(item["start_frame"])
+            end_frame = int(item["end_frame"])
+            if end_frame - start_frame < 2:
+                raise StaticPreviewError(
+                    f"media_image {beat['beat_id']} subshot needs at least two "
+                    "preview frames for visible motion"
+                )
+            direction = motion_direction_for_index(image_index)
+            image_index += 1
+            metadata = motion_metadata(
+                (end_frame - start_frame) / _FPS,
+                direction=direction,
             )
-
-        direction = motion_direction_for_index(image_index)
-        image_index += 1
-        beat["motion"] = motion_metadata(
-            (end_frame - start_frame) / _FPS,
-            direction=direction,
+            motions.append({
+                **metadata,
+                **(
+                    {"asset_id": item["asset_id"]}
+                    if isinstance(item.get("asset_id"), str) else {}
+                ),
+            })
+            intervals.append((start_frame, end_frame, direction))
+        beat["motion"] = (
+            motions[0] if len(motions) == 1 else {
+                "version": _MOTION_VERSION,
+                "mode": "ken_burns_subshots",
+                "subshots": motions,
+            }
         )
-        intervals.append((start_frame, end_frame, direction))
 
     return build_timeline_ken_burns_filter(
         intervals,
@@ -547,8 +568,11 @@ def generate_static_preview(
         item for item in image_manifest.get("items", [])
         if item.get("grid") is not None
     ]
+    def asset_key(item: dict[str, Any]) -> tuple[int, str]:
+        return item["block_id"], item.get("asset_id", item["beat_id"])
+
     expected_panels = [
-        (panel["block_id"], panel["beat_id"])
+        asset_key(panel)
         for grid in grids for panel in grid["panels"]
         if panel.get("source") != BLACK_PANEL_SOURCE
     ]
@@ -556,18 +580,18 @@ def generate_static_preview(
     if expected_panels and (
         len(cropped) != len(expected_panels)
         or len(set(expected_panels)) != len(expected_panels)
-        or {(item["block_id"], item["beat_id"]) for item in cropped}
-        != set(expected_panels)
+        or {asset_key(item) for item in cropped} != set(expected_panels)
     ):
         raise StaticPreviewError(
-            "Grid panel crops are incomplete or do not match the saved B2 panel map"
+            "Grid panel crops are incomplete or do not match the saved B2 asset map"
         )
     timeline = build_stt_beat_timeline(output, plan, audio)
     avatar_meta = plan.get("avatar")
     if not isinstance(avatar_meta, dict):
         raise StaticPreviewError("Static preview requires the saved avatar")
     avatar = _verified_asset(output, avatar_meta.get("file"), avatar_meta.get("sha256"))
-    assets: dict[tuple[int, str], Path] = {}
+    assets: dict[tuple[int, str], list[tuple[int, str, Path]]] = {}
+    seen_assets: set[tuple[int, str]] = set()
     for item in (
         image_manifest["final_assets"]
         if plan.get("visual_style") == "profesional"
@@ -576,10 +600,30 @@ def generate_static_preview(
             *cropped,
         ]
     ):
-        key = item.get("block_id"), item.get("beat_id")
-        if key in assets:
-            raise StaticPreviewError("Duplicate generated PNG for one B2 beat")
-        assets[key] = _verified_asset(output, item.get("file"), item.get("sha256"))
+        identity = asset_key(item)
+        if identity in seen_assets:
+            raise StaticPreviewError(f"Duplicate generated PNG asset {identity[1]}")
+        seen_assets.add(identity)
+        parent = item.get("block_id"), item.get("beat_id")
+        subshot_index = item.get("subshot_index", 1)
+        if (
+            not isinstance(parent[0], int)
+            or not isinstance(parent[1], str)
+            or not isinstance(subshot_index, int)
+            or subshot_index < 1
+        ):
+            raise StaticPreviewError("Invalid generated B2 image asset identity")
+        assets.setdefault(parent, []).append((
+            subshot_index,
+            identity[1],
+            _verified_asset(output, item.get("file"), item.get("sha256")),
+        ))
+    for records in assets.values():
+        records.sort(key=lambda item: item[0])
+
+    def primary_asset(key: tuple[int, str]) -> Path | None:
+        records = assets.get(key)
+        return records[0][2] if records else None
     b3_assets: dict[tuple[int, str], Path] = {}
     for item in plan.get("b3_shot_assets", []):
         if not isinstance(item, dict):
@@ -604,10 +648,6 @@ def generate_static_preview(
     active_presenter: Path | None = None
     for index, beat in enumerate(timeline["beats"]):
         key = beat["block_id"], beat["beat_id"]
-        frame_name = f"{index:04d}_{beat['beat_id']}.png"
-        frame = frames / frame_name
-        if frame.is_symlink():
-            raise StaticPreviewError("Refusing linked preview frame")
 
         if beat.get("audio") is True and "continuous" in beat:
             if beat["continuous"]:
@@ -626,7 +666,7 @@ def generate_static_preview(
                     beat["visual_type"] == "avatar"
                     and beat.get("prompt") is not None
                 ):
-                    active_presenter = assets.get(key)
+                    active_presenter = primary_asset(key)
                     if active_presenter is None:
                         raise StaticPreviewError(
                             f"B2 start image {beat['beat_id']} is missing"
@@ -637,16 +677,57 @@ def generate_static_preview(
             active_presenter = None
 
         presenter_image = avatar
-        media_image = assets.get(key)
+        media_image = primary_asset(key)
         if beat.get("audio") is True and active_presenter is not None:
             presenter_image = active_presenter
             if beat["visual_type"] in {"avatar", "media_video"}:
                 media_image = active_presenter
         elif beat["visual_type"] == "avatar" and beat.get("prompt") is not None:
-            presenter_image = assets.get(key)
+            presenter_image = primary_asset(key)
             if presenter_image is None:
-                raise StaticPreviewError(f"Regenerated avatar {beat['beat_id']} has no PNG")
+                raise StaticPreviewError(
+                    f"Regenerated avatar {beat['beat_id']} has no PNG"
+                )
 
+        media_records = assets.get(key, [])
+        if beat["visual_type"] == "media_image" and len(media_records) > 1:
+            total_frames = beat["end_frame"] - beat["start_frame"]
+            count = len(media_records)
+            if total_frames < count * 2:
+                raise StaticPreviewError(
+                    f"media_image {beat['beat_id']} is too short for {count} subshots"
+                )
+            base, remainder = divmod(total_frames, count)
+            start_frame = beat["start_frame"]
+            rendered: list[dict[str, object]] = []
+            for subindex, (_order, asset_id, source) in enumerate(
+                media_records, start=1
+            ):
+                frames_for_subshot = base + (1 if subindex <= remainder else 0)
+                end_frame = start_frame + frames_for_subshot
+                frame_name = f"{index:04d}_{beat['beat_id']}__{subindex}.png"
+                frame = frames / frame_name
+                if frame.is_symlink():
+                    raise StaticPreviewError("Refusing linked preview subshot frame")
+                _beat_frame(avatar, source, "media_image", frame)
+                entries.append(f"file 'frames/{frame_name}'")
+                duration = (
+                    beat["duration_seconds"] * frames_for_subshot / total_frames
+                )
+                entries.append(f"duration {duration:.9f}")
+                rendered.append({
+                    "asset_id": asset_id,
+                    "start_frame": start_frame,
+                    "end_frame": end_frame,
+                })
+                start_frame = end_frame
+            beat["render_subshots"] = rendered
+            continue
+
+        frame_name = f"{index:04d}_{beat['beat_id']}.png"
+        frame = frames / frame_name
+        if frame.is_symlink():
+            raise StaticPreviewError("Refusing linked preview frame")
         _beat_frame(presenter_image, media_image, beat["visual_type"], frame)
         entries.append(f"file 'frames/{frame_name}'")
         entries.append(f"duration {beat['duration_seconds']:.9f}")

@@ -9,6 +9,7 @@ from ai_video_factory.bots.contracts import (
     B3Output,
     B11Output,
     B12Output,
+    B21Output,
     ProfessionalB2Output,
 )
 from ai_video_factory.bots.workflow import (
@@ -368,6 +369,12 @@ def test_run_b_pipeline_b3_groups_audio_across_block_boundaries() -> None:
                     "blocks": [block],
                     "error": None,
                 })
+            if output_type is B21Output:
+                return B21Output.model_validate({
+                    "pipeline_stage": "B2.1",
+                    "modified_beats": [],
+                    "error": None,
+                })
             if output_type is not B3Output:
                 raise RuntimeError(f"Unexpected output type: {output_type}")
             b3_inputs.append(payload)
@@ -474,6 +481,12 @@ def test_run_b_pipeline_skips_ineligible_b3_groups(
             input_image_url=None,
         ):
             payload = json.loads(input_text)
+            if output_type is B21Output:
+                return B21Output.model_validate({
+                    "pipeline_stage": "B2.1",
+                    "modified_beats": [],
+                    "error": None,
+                })
             if output_type is B3Output:
                 pytest.fail("B3 must not be called for an ineligible spoken run")
             if output_type is not ProfessionalB2Output:

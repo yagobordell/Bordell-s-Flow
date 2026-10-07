@@ -17,6 +17,7 @@ from typing import Any
 from PIL import Image
 
 from ai_video_factory.image_upscaling import ImageUpscaler
+from ai_video_factory.providers.openai_batch_images import described_beats
 from ai_video_factory.providers.openai_images import OpenAIImageClient
 from ai_video_factory.providers.professional_image_state import finishing_state_path
 
@@ -87,7 +88,7 @@ def _video_crop(data: bytes) -> bytes:
 
 
 def _asset_key(item: dict[str, Any]) -> tuple[int, str]:
-    return item["block_id"], item["beat_id"]
+    return item["block_id"], item.get("asset_id", item["beat_id"])
 
 
 def _record(
@@ -97,6 +98,16 @@ def _record(
     return {
         "block_id": item["block_id"],
         "beat_id": item["beat_id"],
+        "asset_id": item.get("asset_id", item["beat_id"]),
+        **(
+            {
+                "subshot_index": item["subshot_index"],
+                "subshot_count": item["subshot_count"],
+            }
+            if isinstance(item.get("subshot_index"), int)
+            and isinstance(item.get("subshot_count"), int)
+            else {}
+        ),
         "visual_type": item["visual_type"],
         "file": file,
         "sha256": _digest(content),
@@ -331,9 +342,8 @@ def finish_professional_images(
         *manifest.get("panel_assets", []),
     ]
     expected = {
-        (block["block_id"], beat["beat_id"])
-        for block in plan["blocks"] for beat in block["beats"]
-        if beat.get("prompt") is not None
+        (item["block_id"], item.get("asset_id", item["beat_id"]))
+        for item in described_beats(plan)
     }
     if {_asset_key(item) for item in originals} != expected or len(originals) != len(expected):
         raise ProfessionalImageFinishingError("Professional original image assets are incomplete")
@@ -365,7 +375,8 @@ def finish_professional_images(
                     # A grid crop is the FINAL source for video. Do not upscale
                     # it or create a second paid GPT image from it.
                     prior_state = finishing_state_path(
-                        output, item["block_id"], item["beat_id"], "native_grid_video"
+                        output, item["block_id"],
+                        item.get("asset_id", item["beat_id"]), "native_grid_video"
                     )
                     if prior_state.exists() or prior_state.is_symlink():
                         # Do not silently discard a previously paid edit or an

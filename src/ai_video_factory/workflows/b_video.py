@@ -112,23 +112,12 @@ def _save_json(path: Path, data: dict[str, Any]) -> None:
         part.unlink(missing_ok=True)
 
 
-def _source_assets(
+def _image_asset_maps(
     output: Path, plan: dict[str, Any], images: dict[str, Any],
-) -> tuple[Path, dict[tuple[int, str], Path]]:
-    if images.get("status") != "completed":
-        raise B2VideoError("LTX requires a completed B2 image manifest")
-    avatar_meta = plan.get("avatar")
-    if not isinstance(avatar_meta, dict):
-        raise B2VideoError("LTX requires the saved run avatar")
-    avatar = _verified_asset(output, avatar_meta.get("file"), avatar_meta.get("sha256"))
+) -> tuple[dict[tuple[int, str], Path], dict[tuple[int, str], Path]]:
+    """Return parent-beat primary assets plus every immutable image asset."""
     assets: dict[tuple[int, str], Path] = {}
-    if plan.get("visual_style") == "profesional" and (
-        images.get("finishing_status") != "completed"
-    ):
-        raise B2VideoError(
-            "Professional LTX requires finished still images "
-            "and verified video sources"
-        )
+    all_assets: dict[tuple[int, str], Path] = {}
     for item in (
         images["final_assets"] if plan.get("visual_style") == "profesional"
         else [
@@ -136,12 +125,49 @@ def _source_assets(
             *images.get("panel_assets", []),
         ]
     ):
-        key = item["block_id"], item["beat_id"]
+        block_id, beat_id = item["block_id"], item["beat_id"]
+        asset_id = item.get("asset_id", beat_id)
+        identity = block_id, asset_id
+        if identity in all_assets:
+            raise B2VideoError(f"Duplicate B2 image asset for {identity}")
+        path = _verified_asset(output, item.get("file"), item.get("sha256"))
+        all_assets[identity] = path
+        if item.get("subshot_index") not in (None, 1):
+            continue
+        key = block_id, beat_id
         if key in assets:
-            raise B2VideoError(f"Duplicate B2 image for {key}")
-        assets[key] = _verified_asset(output, item.get("file"), item.get("sha256"))
+            raise B2VideoError(f"Duplicate primary B2 image for {key}")
+        assets[key] = path
+    return assets, all_assets
+
+
+def _source_assets(
+    output: Path, plan: dict[str, Any], images: dict[str, Any],
+) -> tuple[Path, dict[tuple[int, str], Path]]:
+    """Return the historical LTX contract: avatar plus one primary image per beat."""
+    if images.get("status") != "completed":
+        raise B2VideoError("LTX requires a completed B2 image manifest")
+    avatar_meta = plan.get("avatar")
+    if not isinstance(avatar_meta, dict):
+        raise B2VideoError("LTX requires the saved run avatar")
+    avatar = _verified_asset(output, avatar_meta.get("file"), avatar_meta.get("sha256"))
+    if plan.get("visual_style") == "profesional" and (
+        images.get("finishing_status") != "completed"
+    ):
+        raise B2VideoError(
+            "Professional LTX requires finished still images "
+            "and verified video sources"
+        )
+    assets, _all_assets = _image_asset_maps(output, plan, images)
     return avatar, assets
 
+
+def _has_visual_subshots(plan: dict[str, Any]) -> bool:
+    return any(
+        isinstance(beat.get("visual_subshots"), list)
+        for block in plan.get("blocks", [])
+        for beat in block.get("beats", [])
+    )
 
 def _b3_shot_assets(
     output: Path, plan: dict[str, Any],
@@ -261,6 +287,7 @@ def _fingerprint(
     *, profile: str | None = None,
     i2v_profile: str | None = LTX_PRODUCTION_I2V_PROFILE,
     b3_assets: dict[tuple[int, str], Path] | None = None,
+    all_assets: dict[tuple[int, str], Path] | None = None,
 ) -> str:
     relevant = {
         "schema": _SCHEMA,
@@ -268,8 +295,10 @@ def _fingerprint(
         "master_audio_sha256": audio["sha256"],
         "avatar_sha256": sha256_file(avatar),
         "image_sha256": [
-            [block_id, beat_id, sha256_file(path)]
-            for (block_id, beat_id), path in sorted(assets.items())
+            [block_id, asset_id, sha256_file(path)]
+            for (block_id, asset_id), path in sorted(
+                (all_assets or assets).items()
+            )
         ],
         "b3_image_sha256": [
             [block_id, beat_id, sha256_file(path)]
@@ -313,6 +342,11 @@ def build_b2_video_plan(
     if previous_frame != round(timeline["duration_seconds"] * _FPS):
         raise B2VideoError("B2 frame timeline differs from master audio duration")
     avatar, assets = _source_assets(output, plan, images)
+    all_assets = (
+        _image_asset_maps(output, plan, images)[1]
+        if _has_visual_subshots(plan)
+        else assets
+    )
     b3_assets = _b3_shot_assets(output, plan)
     for beat in beats:
         key = beat["block_id"], beat["beat_id"]
@@ -330,7 +364,10 @@ def build_b2_video_plan(
                 raise B2VideoError(
                     f"Missing media_video video_prompt for {beat['beat_id']}"
                 )
-    digest = _fingerprint(timeline, audio, assets, avatar, b3_assets=b3_assets)
+    digest = _fingerprint(
+        timeline, audio, assets, avatar,
+        b3_assets=b3_assets, all_assets=all_assets,
+    )
     run_dir = output / "video" / "runs" / digest[:20]
     if run_dir.is_symlink() or run_dir.parent.is_symlink():
         raise B2VideoError("Refusing linked B2 LTX run directory")
@@ -397,9 +434,8 @@ def build_b2_video_plan(
             key = f"b2-ltx/inputs/images/{image_sha}.png"
             request = InferenceJobRequest(
                 job_id=job_id, task=LTX_VIDEO_TASK,
-                # Defense in depth for already-deployed workers that predate the
-                # task-aware I2V OOM cap: expensive 1080p I2V never gets the
-                # generic five-attempt budget.
+                # Defense in depth for deployed workers: expensive 1080p I2V
+                # never receives the generic five-attempt budget.
                 max_attempts=_I2V_MAX_ATTEMPTS,
                 inputs=[ObjectInput(
                     name="keyframe", key=key, sha256=image_sha,

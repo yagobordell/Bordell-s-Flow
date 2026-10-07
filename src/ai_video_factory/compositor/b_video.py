@@ -103,13 +103,12 @@ def _image_records(images: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _motion_filter(beat: dict[str, Any], frames: int, image_index: int) -> str:
+def _motion_recipe(
+    frames: int, image_index: int,
+) -> tuple[str, dict[str, object]]:
     duration_seconds = frames / _FPS
     direction = motion_direction_for_index(image_index)
-    beat["motion"] = motion_metadata(
-        duration_seconds,
-        direction=direction,
-    )
+    metadata = motion_metadata(duration_seconds, direction=direction)
     filter_chain = build_clip_ken_burns_filter(
         width=_WIDTH,
         height=_HEIGHT,
@@ -118,9 +117,15 @@ def _motion_filter(beat: dict[str, Any], frames: int, image_index: int) -> str:
         direction=direction,
     )
     return (
-        f"{filter_chain},trim=end_frame={frames},"
-        "setpts=PTS-STARTPTS"
+        f"{filter_chain},trim=end_frame={frames},setpts=PTS-STARTPTS",
+        metadata,
     )
+
+
+def _motion_filter(beat: dict[str, Any], frames: int, image_index: int) -> str:
+    filter_chain, metadata = _motion_recipe(frames, image_index)
+    beat["motion"] = metadata
+    return filter_chain
 
 
 def render_b2_ltx_video(
@@ -138,12 +143,31 @@ def render_b2_ltx_video(
         output, manifest.get("avatar_file", "avatar.png"),
         manifest.get("avatar_sha256", sha256_file(output / "avatar.png")),
     )
-    assets: dict[tuple[int, str], Path] = {}
+    assets: dict[tuple[int, str], list[tuple[int, str, Path]]] = {}
+    seen_assets: set[tuple[int, str]] = set()
     for item in _image_records(images):
-        key = item["block_id"], item["beat_id"]
-        if key in assets:
-            raise B2VideoCompositionError(f"Duplicate PNG for {key}")
-        assets[key] = _verified_asset(output, item["file"], item["sha256"])
+        parent = item["block_id"], item["beat_id"]
+        asset_id = item.get("asset_id", item["beat_id"])
+        identity = item["block_id"], asset_id
+        if identity in seen_assets:
+            raise B2VideoCompositionError(f"Duplicate PNG asset for {identity}")
+        seen_assets.add(identity)
+        subshot_index = item.get("subshot_index", 1)
+        if not isinstance(subshot_index, int) or subshot_index < 1:
+            raise B2VideoCompositionError("Invalid B2 image subshot index")
+        assets.setdefault(parent, []).append((
+            subshot_index,
+            asset_id,
+            _verified_asset(output, item["file"], item["sha256"]),
+        ))
+    for records in assets.values():
+        records.sort(key=lambda item: item[0])
+
+    def primary_asset(key: tuple[int, str]) -> Path:
+        records = assets.get(key)
+        if not records:
+            raise B2VideoCompositionError(f"Missing B2 PNG for {key}")
+        return records[0][2]
 
     by_index: dict[int, tuple[B2VideoJob, dict[str, Any], Path]] = {}
     for job, record in zip(jobs, manifest["jobs"], strict=True):
@@ -183,16 +207,80 @@ def render_b2_ltx_video(
         temporary.unlink(missing_ok=True)
         try:
             if kind == "media_image" and index not in by_index:
-                source = assets[key]
-                frame = stills / f"{index:04d}_{beat['beat_id']}.png"
-                if frame.is_symlink():
-                    raise B2VideoCompositionError("Refusing linked B2 still frame")
-                _beat_frame(avatar, source, kind, frame)
-                command = [
-                    "-loop", "1", "-framerate", str(_FPS), "-i", str(frame),
-                    "-vf", _motion_filter(beat, frames, image_count),
-                ]
-                image_count += 1
+                records = assets.get(key)
+                if not records:
+                    raise B2VideoCompositionError(
+                        f"Missing B2 still image for {beat['beat_id']}"
+                    )
+                if len(records) == 1:
+                    source = records[0][2]
+                    frame = stills / f"{index:04d}_{beat['beat_id']}.png"
+                    if frame.is_symlink():
+                        raise B2VideoCompositionError("Refusing linked B2 still frame")
+                    _beat_frame(avatar, source, kind, frame)
+                    command = [
+                        "-loop", "1", "-framerate", str(_FPS), "-i", str(frame),
+                        "-vf", _motion_filter(beat, frames, image_count),
+                    ]
+                    image_count += 1
+                else:
+                    count = len(records)
+                    if frames < count:
+                        raise B2VideoCompositionError(
+                            f"Beat {beat['beat_id']} is too short for {count} still subshots"
+                        )
+                    base, remainder = divmod(frames, count)
+                    inputs: list[str] = []
+                    filters: list[str] = []
+                    labels: list[str] = []
+                    motions: list[dict[str, object]] = []
+                    rendered: list[dict[str, object]] = []
+                    cursor = first
+                    for subindex, (_order, asset_id, source) in enumerate(
+                        records, start=1
+                    ):
+                        subframes = base + (1 if subindex <= remainder else 0)
+                        frame = stills / (
+                            f"{index:04d}_{beat['beat_id']}__{subindex}.png"
+                        )
+                        if frame.is_symlink():
+                            raise B2VideoCompositionError(
+                                "Refusing linked B2 still subshot frame"
+                            )
+                        _beat_frame(avatar, source, kind, frame)
+                        inputs.extend([
+                            "-loop", "1", "-framerate", str(_FPS),
+                            "-i", str(frame),
+                        ])
+                        recipe, metadata = _motion_recipe(
+                            subframes, image_count
+                        )
+                        image_count += 1
+                        label = f"v{subindex - 1}"
+                        filters.append(f"[{subindex - 1}:v]{recipe}[{label}]")
+                        labels.append(f"[{label}]")
+                        motions.append({"asset_id": asset_id, **metadata})
+                        rendered.append({
+                            "asset_id": asset_id,
+                            "start_frame": cursor,
+                            "end_frame": cursor + subframes,
+                        })
+                        cursor += subframes
+                    filters.append(
+                        "".join(labels)
+                        + f"concat=n={count}:v=1:a=0,format=yuv420p[v]"
+                    )
+                    command = [
+                        *inputs,
+                        "-filter_complex", ";".join(filters),
+                        "-map", "[v]",
+                    ]
+                    beat["motion"] = {
+                        "version": motions[0]["version"],
+                        "mode": "ken_burns_subshots",
+                        "subshots": motions,
+                    }
+                    beat["render_subshots"] = rendered
             else:
                 item = by_index.get(index)
                 if item is None:
@@ -213,7 +301,7 @@ def render_b2_ltx_video(
                     f"trim=end_frame={frames},setpts=PTS-STARTPTS"
                 )
                 if kind == "avatar_media":
-                    media = assets[key]
+                    media = primary_asset(key)
                     command.extend(["-loop", "1", "-i", str(media)])
                     command.extend([
                         "-filter_complex",

@@ -282,6 +282,61 @@ class ProfessionalB2Output(StrictModel):
         return self
 
 
+B21SplitMode = Literal["grid", "independent"]
+
+
+class B21BeatPatch(StrictModel):
+    """Visual-only replacement for one professional B2 beat."""
+
+    block_id: int = Field(ge=1)
+    beat_id: str = Field(min_length=2)
+    prompt: str = Field(min_length=1)
+    video_prompt: str | None
+    second_prompt: str | None
+    split_mode: B21SplitMode | None
+
+    @model_validator(mode="after")
+    def valid_patch_shape(self) -> "B21BeatPatch":
+        if not self.prompt.strip():
+            raise ValueError("B2.1 prompt must be nonempty")
+        if self.video_prompt is not None and not self.video_prompt.strip():
+            raise ValueError("B2.1 video_prompt must be null or nonempty")
+        if self.second_prompt is None:
+            if self.split_mode is not None:
+                raise ValueError("B2.1 split_mode requires second_prompt")
+        else:
+            if not self.second_prompt.strip():
+                raise ValueError("B2.1 second_prompt must be nonempty")
+            if self.split_mode is None:
+                raise ValueError("B2.1 second_prompt requires split_mode")
+            if self.second_prompt.strip() == self.prompt.strip():
+                raise ValueError("B2.1 split prompts cannot be textually identical")
+        return self
+
+
+class B21Error(StrictModel):
+    stage: Literal["B2.1"]
+    code: Literal["INVALID_UPSTREAM_INPUT"]
+    message: str = Field(min_length=1)
+
+
+class B21Output(StrictModel):
+    """Whole-video visual review. Only beats that change are emitted."""
+
+    pipeline_stage: Literal["B2.1"] | None
+    modified_beats: list[B21BeatPatch] | None
+    error: B21Error | None
+
+    @model_validator(mode="after")
+    def valid_success_or_error(self) -> "B21Output":
+        if self.error is None:
+            if self.pipeline_stage != "B2.1" or self.modified_beats is None:
+                raise ValueError("B2.1 success requires a modified_beats list")
+        elif self.pipeline_stage is not None or self.modified_beats is not None:
+            raise ValueError("B2.1 error must null out success fields")
+        return self
+
+
 class B3BeatDecision(StrictModel):
     """Camera-continuity decision for one already-spoken professional B2 beat."""
 

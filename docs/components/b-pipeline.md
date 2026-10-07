@@ -121,7 +121,6 @@ old generic I2V/A2V behavior when resumed.
 The professional image grid uses only `prompt` to create its still key
 images; it never feeds `video_prompt` to the image model. The legacy
 `casero` grid remains unchanged.
-
 The professional bot also has **global shot-framing freedom** for every
 generated beat, not only numbered sequences: it deliberately chooses useful
 shot distance, angle, crop and focus (including tighter close-ups and a
