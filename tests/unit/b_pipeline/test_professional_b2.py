@@ -107,6 +107,8 @@ def test_professional_prompt_has_no_stock_exclusions() -> None:
         .read_text(encoding="utf-8")
     )
     lowered = prompt.lower()
+    assert "for the last beat of a close block:" in lowered
+    assert "including the first beat of an intro block" in lowered
     assert "skip discretionary" in lowered
     assert "write image and video prompts as concise affirmative descriptions" in lowered
     assert "omit negative clauses, preventive exclusions and routine disclaimers" in lowered
@@ -183,55 +185,60 @@ def test_professional_intro_close_require_exact_base_avatar(
     ).blocks[0].beats[-1].visual_type == visuals[-1]
 
 
-@pytest.mark.parametrize(
-    ("kind", "replacement"),
-    [
-        ("intro", "media_image"),
-        ("intro", "avatar_media"),
-        ("intro", "media_video"),
-        ("close", "media_image"),
-        ("close", "avatar_media"),
-        ("close", "media_video"),
-    ],
-)
-def test_professional_boundary_may_use_media(
-    kind: str, replacement: str,
-) -> None:
+@pytest.mark.parametrize("replacement", ["media_image", "avatar_media", "media_video"])
+def test_professional_intro_first_beat_may_use_media(replacement: str) -> None:
     beats = [_professional_beat("1A", visual_type=replacement)]
     validated = ProfessionalB2Output.model_validate(
-        _professional_anchor_output(kind, beats)
+        _professional_anchor_output("intro", beats)
     )
     assert validated.blocks[0].beats[0].visual_type == replacement
 
 
-@pytest.mark.parametrize(
-    ("kind", "visuals"),
-    [
-        ("intro", ("media_image", "avatar", "media_video")),
-        ("close", ("media_image", "avatar", "media_video")),
-    ],
-)
-def test_professional_avatar_may_appear_on_an_adjacent_beat(
-    kind: str, visuals: tuple[str, ...],
-) -> None:
+@pytest.mark.parametrize("replacement", ["media_image", "avatar_media", "media_video"])
+def test_professional_close_last_beat_must_reuse_avatar(replacement: str) -> None:
+    beats = [_professional_beat("1A", visual_type=replacement)]
+    with pytest.raises(
+        ValidationError, match="Professional close last beat must reuse"
+    ):
+        ProfessionalB2Output.model_validate(_professional_anchor_output("close", beats))
+
+
+def test_professional_intro_avatar_may_appear_on_an_adjacent_beat() -> None:
+    visuals = ("media_image", "avatar", "media_video")
     beats = [
         _professional_beat(f"1{chr(ord('A') + index)}", visual_type=visual)
         for index, visual in enumerate(visuals)
     ]
     validated = ProfessionalB2Output.model_validate(
-        _professional_anchor_output(kind, beats)
+        _professional_anchor_output("intro", beats)
     )
     assert tuple(beat.visual_type for beat in validated.blocks[0].beats) == visuals
 
 
-@pytest.mark.parametrize("kind", ["intro", "close"])
-def test_professional_boundary_may_regenerate_avatar(kind: str) -> None:
+def test_professional_close_avatar_cannot_move_off_last_beat() -> None:
+    visuals = ("media_image", "avatar", "media_video")
+    beats = [
+        _professional_beat(f"1{chr(ord('A') + index)}", visual_type=visual)
+        for index, visual in enumerate(visuals)
+    ]
+    with pytest.raises(ValidationError, match="Professional close last beat must reuse"):
+        ProfessionalB2Output.model_validate(_professional_anchor_output("close", beats))
+
+
+def test_professional_intro_first_beat_may_regenerate_avatar() -> None:
     beat = _professional_beat("1A")
     beat.update(prompt="Generate a new presenter image", reference=True)
     validated = ProfessionalB2Output.model_validate(
-        _professional_anchor_output(kind, [beat])
+        _professional_anchor_output("intro", [beat])
     )
     assert validated.blocks[0].beats[0].reference is True
+
+
+def test_professional_close_last_beat_cannot_regenerate_avatar() -> None:
+    beat = _professional_beat("1A")
+    beat.update(prompt="Generate a new presenter image", reference=True)
+    with pytest.raises(ValidationError, match="Professional close last beat must reuse"):
+        ProfessionalB2Output.model_validate(_professional_anchor_output("close", [beat]))
 
 
 def test_professional_b2_global_framing_sequence_progression_and_still_audio() -> None:
@@ -596,14 +603,14 @@ def test_speaking_presenter_media_video_uses_a2v_not_unsynced_i2v() -> None:
 
 
 @pytest.mark.parametrize("block_type", ["intro", "close"])
-def test_professional_schema_accepts_non_avatar_boundary(
+def test_professional_schema_boundary_matches_current_contract(
     block_type: str,
 ) -> None:
     script = "A clear introduction and conclusion for our video."
     attempts: list[str] = []
     rejected: list[tuple] = []
 
-    class MediaBoundary:
+    class BoundaryProvider:
         async def generate_structured(
             self, *, model, instructions, input_text, output_type,
             input_image_url=None,
@@ -635,11 +642,17 @@ def test_professional_schema_accepts_non_avatar_boundary(
             assert output_type is ProfessionalB2Output
             attempts.append(instructions)
             block = json.loads(input_text)["blocks"][0]
-            block["beats"][0].update(
-                visual_type="media_image",
-                prompt="A quiet still-life photograph",
-                video_prompt=None, reference=False, audio=False,
-            )
+            if block_type == "close" and len(attempts) > 1:
+                block["beats"][0].update(
+                    visual_type="avatar",
+                    prompt=None, video_prompt=None, reference=False, audio=True,
+                )
+            else:
+                block["beats"][0].update(
+                    visual_type="media_image",
+                    prompt="A quiet still-life photograph",
+                    video_prompt=None, reference=False, audio=False,
+                )
             return ProfessionalB2Output.model_validate({
                 "pipeline_stage": "B2",
                 "narrative_core": {
@@ -649,16 +662,22 @@ def test_professional_schema_accepts_non_avatar_boundary(
             })
 
     result = asyncio.run(run_b_pipeline(
-        script, provider=MediaBoundary(),
+        script, provider=BoundaryProvider(),
         visual_style="profesional", avatar_image=_avatar_png(),
         on_rejected_b2_output=lambda *args: rejected.append(args),
     ))
-    assert len(attempts) == 1
-    assert rejected == []
     beat = result.b2[0].blocks[0].beats[0]
-    assert (beat.visual_type, beat.prompt, beat.reference, beat.audio) == (
-        "media_image", "A quiet still-life photograph", False, False
-    )
+    if block_type == "intro":
+        assert len(attempts) == 1
+        assert rejected == []
+        assert (beat.visual_type, beat.audio) == ("media_image", False)
+    else:
+        assert len(attempts) == 2
+        assert len(rejected) == 1
+        assert "LAST beat of a close" in attempts[1]
+        assert (beat.visual_type, beat.prompt, beat.reference, beat.audio) == (
+            "avatar", None, False, True
+        )
 
 
 def test_professional_schema_retry_recovers_from_speaking_still() -> None:
