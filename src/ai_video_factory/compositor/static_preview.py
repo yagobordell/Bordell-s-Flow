@@ -742,7 +742,10 @@ def generate_static_preview(
         if filter_script.is_symlink():
             raise StaticPreviewError("Refusing linked Ken Burns filter script")
         filter_script.write_text(video_filter + "\n", encoding="utf-8")
-        filter_args = ["-filter_script:v", str(filter_script)]
+        # Modern FFmpeg removed the legacy -filter_script:v alias.
+        # The generic file-backed option syntax keeps long Windows commands out
+        # of the process command line while remaining the documented interface.
+        filter_args = ["-/filter:v", str(filter_script)]
     _save_json(preview / "timeline.json", timeline)
 
     target = preview / "static_preview.mp4"
