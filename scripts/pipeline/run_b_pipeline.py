@@ -1338,9 +1338,10 @@ def _require_ltx_safe_i2v_worker() -> None:
     client = SaladClient(
         SaladDispatchConfig(
             api_key=settings.salad_api_key,
-            api_base_url=os.getenv("SALAD_API_BASE_URL", DEFAULT_SALAD_API_BASE_URL),
-            organization_name=os.getenv("SALAD_ORGANIZATION"),
-            project_name=os.getenv("SALAD_PROJECT"),
+            api_base_url=_runtime_env_value("SALAD_API_BASE_URL")
+            or DEFAULT_SALAD_API_BASE_URL,
+            organization_name=_runtime_env_value("SALAD_ORGANIZATION") or None,
+            project_name=_runtime_env_value("SALAD_PROJECT") or None,
             container_group_name=definition["group_name"],
         )
     )
