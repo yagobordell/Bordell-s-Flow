@@ -1695,6 +1695,11 @@ async def _run_images_only(
     if report.get("run", {}).get("script_sha256") != source_sha:
         raise SystemExit("The selected script differs from the saved B2 image source")
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    previous_image_generation = report.get("run", {}).get("image_generation")
+    images_were_completed = (
+        isinstance(previous_image_generation, dict)
+        and previous_image_generation.get("status") == "completed"
+    )
     if has_pending_b2_video(output):
         raise SystemExit(
             "--images-only refuses to replace images while paid LTX jobs are "
@@ -1724,7 +1729,10 @@ async def _run_images_only(
     _refresh_audio_costs(report, output)
     _write(report_path, report)
     try:
-        completed_manifest = _completed_saved_image_manifest(output, plan)
+        completed_manifest = (
+            _completed_saved_image_manifest(output, plan)
+            if images_were_completed else None
+        )
         if completed_manifest is not None:
             print(
                 "  Reusing completed images; continuing downstream recovery.",
