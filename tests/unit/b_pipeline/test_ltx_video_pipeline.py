@@ -315,10 +315,31 @@ def test_automatic_ltx_activation_requires_complete_audio_and_transport(
 
 
 
+def test_ltx_runtime_env_precedence_matches_application_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SALAD_LTX25_FP8_I2V_IMAGE", raising=False)
+
+    def fake_dotenv_values(path: Path) -> dict[str, str]:
+        path = Path(path)
+        if path.name == ".env":
+            return {"SALAD_LTX25_FP8_I2V_IMAGE": "base"}
+        if path.name == "app.env":
+            return {"SALAD_LTX25_FP8_I2V_IMAGE": "app"}
+        if path.name == "salad.env":
+            return {"SALAD_LTX25_FP8_I2V_IMAGE": "salad"}
+        return {}
+
+    monkeypatch.setattr(runner, "dotenv_values", fake_dotenv_values)
+    assert runner._runtime_env_value("SALAD_LTX25_FP8_I2V_IMAGE") == "salad"
+
+    monkeypatch.setenv("SALAD_LTX25_FP8_I2V_IMAGE", "process")
+    assert runner._runtime_env_value("SALAD_LTX25_FP8_I2V_IMAGE") == "process"
+
+
 def test_promoted_a2v_run_v2_requires_exact_new_deployed_image_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(runner, "load_dotenv", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(runner.settings, "salad_api_key", "test-key")
     monkeypatch.setenv("SALAD_ORGANIZATION", "org")
     monkeypatch.setenv("SALAD_PROJECT", "project")

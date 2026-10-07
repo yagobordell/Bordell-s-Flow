@@ -872,7 +872,7 @@ def test_promoted_i2v_deployment_guard_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     expected = "docker.io/yagobordell/ai-video-factory@sha256:" + "a" * 64
-    monkeypatch.setattr(pipeline_cli, "load_dotenv", lambda *args, **kwargs: False)
+    monkeypatch.setattr(pipeline_cli, "dotenv_values", lambda _path: {})
     monkeypatch.delenv("SALAD_LTX25_FP8_I2V_IMAGE", raising=False)
     with pytest.raises(RuntimeError, match="SALAD_LTX25_FP8_I2V_IMAGE"):
         pipeline_cli._require_ltx_safe_i2v_worker()
