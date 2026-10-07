@@ -1258,7 +1258,6 @@ def _require_ltx_capacity_controller() -> None:
 
 def _require_ltx_safe_a2v_worker() -> None:
     """Refuse paid run A2V until the NEW static-FP8 image is pinned in Salad."""
-    repo_root = Path(__file__).resolve().parents[2]
     expected = _runtime_env_value("SALAD_LTX25_RUN_V2_IMAGE")
     if not re.fullmatch(r"[^ ]+@sha256:[0-9a-fA-F]{64}", expected):
         raise RuntimeError(
