@@ -242,29 +242,21 @@ def validate_beats(result: B12Output, block: MaterializedBlock) -> list[Beat]:
             f"expected {expected_words[mismatch:mismatch + 25]!r}, "
             f"received {actual_words[mismatch:mismatch + 25]!r}"
         )
-    length_errors = _beat_character_length_errors(result.beats, block)
+    length_errors = _beat_character_length_errors(result.beats)
     if length_errors:
         raise BPipelineValidationError("; ".join(length_errors))
     return result.beats
 
 
-def _beat_character_length_errors(
-    beats: list[Beat], block: MaterializedBlock
-) -> list[str]:
-    """Count decoded narration characters, excluding boundary whitespace."""
+def _beat_character_length_errors(beats: list[Beat]) -> list[str]:
+    """Enforce the decoded narration character maximum, excluding boundary whitespace."""
     errors: list[str] = []
-    only_short_block = len(beats) == 1 and len(block.text.strip()) <= 12
     for beat in beats:
         characters = len(beat.text.strip())
         if characters > 100:
             errors.append(
                 f"B1.2 beat {beat.beat_id} has {characters} characters (maximum 100); "
                 "split it into two or more beats"
-            )
-        elif characters <= 12 and not only_short_block:
-            errors.append(
-                f"B1.2 beat {beat.beat_id} has {characters} characters (minimum 13); "
-                "merge it with the previous or next beat in the same block"
             )
     return errors
 
