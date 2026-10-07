@@ -377,9 +377,10 @@ def _preferred_avatar_run_break(
         )
         if index is None:
             continue
-        mandatory = professional and (
-            (block.type == "intro" and index == 0)
-            or (block.type == "close" and index == len(block.beats) - 1)
+        mandatory = (
+            professional
+            and block.type == "close"
+            and index == len(block.beats) - 1
         )
         if mandatory:
             continue
@@ -1577,8 +1578,8 @@ async def run_b_pipeline(
                             "prompt; all other visuals require a nonempty prompt. "
                             "media_image ALWAYS requires audio=false; media_video requires "
                             "a nonempty video_prompt for synchronized speech. "
-                            "The FIRST beat of an intro and LAST beat of a close must "
-                            "reuse the original avatar without regeneration."
+                            "The LAST beat of a close must reuse the original avatar "
+                            "without regeneration."
                             if visual_style == "profesional" else ""
                         )
                         + targeted_run_repair
@@ -1694,10 +1695,10 @@ async def run_b_pipeline(
                     i for i, item in enumerate(current_block.beats)
                     if item.beat_id == beat.beat_id
                 )
-                mandatory = visual_style == "profesional" and (
-                    (current_block.type == "intro" and index == 0)
-                    or (current_block.type == "close"
-                        and index == len(current_block.beats) - 1)
+                mandatory = (
+                    visual_style == "profesional"
+                    and current_block.type == "close"
+                    and index == len(current_block.beats) - 1
                 )
                 if not mandatory and (
                     b2_correction_counts.get(beat.block_id, 0) < MAX_VALIDATION_RETRIES
@@ -1742,8 +1743,8 @@ async def run_b_pipeline(
                         "spoken run at another discretionary beat within THIS block. "
                         "audio=true is reserved for the narrator while preserving the "
                         "reference narration setup and the narrator's physical position "
-                        "within that setup. Never change mandatory professional "
-                        "intro/close anchors. Keep all frozen narration and upstream "
+                        "within that setup. Never change the mandatory professional "
+                        "close anchor. Keep all frozen narration and upstream "
                         "fields unchanged."
                     )
                     if visual_style == "profesional"

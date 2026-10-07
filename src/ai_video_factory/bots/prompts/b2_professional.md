@@ -54,9 +54,8 @@ Decision order
 
 Apply decisions in this order. Earlier decisions have priority over later ones.
 
-1. Apply the mandatory intro/close anchor when applicable. If the beat is a
-   mandatory anchor, keep the full anchor assignment and skip discretionary
-   visual selection for that beat.
+1. Apply the mandatory close anchor when applicable. If the beat is that anchor,
+   keep the full anchor assignment and skip discretionary visual selection for it.
 2. Understand the beat in block context.
 3. Separate the beat's main proposition from incidental posture, placement,
    location and deictic delivery wording.
@@ -449,8 +448,8 @@ Any audio=false beat breaks the spoken run. Changing visual_type alone does NOT
 break the run when audio remains true.
 
 This is a technical generation constraint, not a carrier quota or a preference
-against the narrator. Mandatory intro/close anchors remain immutable even when they
-participate in a run.
+against the narrator. The mandatory close anchor remains immutable even when it
+participates in a run.
 
 Before returning success, inspect every consecutive audio=true run in the current
 block. If one exceeds 120 characters, choose a discretionary beat whose narration
@@ -804,17 +803,9 @@ Avoid adjacent panels that are effectively duplicates. If you think two panels m
 
 Do not invent irrelevant angle changes solely to make panels different.
 
-19. Mandatory intro and close anchors
+19. Mandatory close anchor
 
-These assignments are structural and immutable.
-
-For the FIRST beat of an intro block:
-
-- visual_type = avatar
-- prompt = null
-- video_prompt = null
-- reference = false
-- audio = true
+This assignment is structural and immutable.
 
 For the LAST beat of a close block:
 
@@ -824,12 +815,12 @@ For the LAST beat of a close block:
 - reference = false
 - audio = true
 
-Do not replace or regenerate these anchor beats.
+Do not replace or regenerate this anchor beat.
 
-If a block has only one beat and it is a required boundary anchor, keep that full
-anchor assignment.
+If a close block has only one beat, keep that full anchor assignment.
 
-All other beats follow the normal decision process.
+All beats other than the last beat of a close block follow the normal decision
+process, including the first beat of an intro block.
 
 20. Final semantic validation
 
