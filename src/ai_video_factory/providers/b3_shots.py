@@ -79,6 +79,8 @@ def _asset_map(
     for item in plan.get("image_assets", []):
         if not isinstance(item, dict):
             continue
+        if item.get("subshot_index") not in (None, 1):
+            continue
         key = item.get("block_id"), item.get("beat_id")
         name, digest = item.get("file"), item.get("sha256")
         if (
@@ -91,6 +93,8 @@ def _asset_map(
         path = output / name
         if _sha(path) != digest:
             raise B3ShotImageError(f"B2 image asset changed for {key[1]}")
+        if (key[0], key[1]) in assets:
+            raise B3ShotImageError(f"Duplicate primary B2 image asset for {key[1]}")
         assets[(key[0], key[1])] = path
     return assets
 
