@@ -189,6 +189,7 @@ def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     assert video.request.parameters["generation_profile"] == (
         b_video.LTX_PRODUCTION_I2V_PROFILE
     )
+    assert video.request.max_attempts == 2
     assert video.request.parameters["prompt"] == "A bird takes off."
     assert video.request.parameters["num_frames"] == 17
     old_no_offload_job_id = "b2-1D-" + b_video.ltx_video_application_job_id(
