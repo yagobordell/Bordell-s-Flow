@@ -16,7 +16,7 @@ from scripts.pipeline.run_b_pipeline import BotArtifacts
 
 FIRST = "La primera descripción explica un detalle concreto y permite comprender el contexto. "
 SECOND = "La segunda descripción aporta un dato distinto y conserva el orden original."
-SHORT = " Sí. "
+SHORT = " No lo sé. "
 
 
 def _block(text: str) -> MaterializedBlock:
@@ -78,7 +78,7 @@ class RepairProvider:
 
 @pytest.mark.parametrize(
     ("length", "valid"),
-    [(12, False), (13, True), (100, True), (101, False)],
+    [(1, True), (12, True), (13, True), (100, True), (101, False)],
 )
 def test_beat_character_boundaries(length: int, valid: bool) -> None:
     first = "x" * length + " "
@@ -98,15 +98,15 @@ def test_character_count_ignores_only_boundary_whitespace() -> None:
     assert validate_beats(_output(first, remaining), _block(first + remaining))
 
 
-def test_short_sole_beat_of_a_frozen_block_is_unavoidable_exception() -> None:
+def test_short_sole_beat_of_a_frozen_block_is_valid() -> None:
     assert validate_beats(_output("  Sí.  "), _block("  Sí.  "))
 
 
-def test_short_beat_in_multibeat_block_must_be_merged() -> None:
-    assert 13 <= len(FIRST.strip()) <= 100
-    assert 13 <= len(SECOND.strip()) <= 100
-    with pytest.raises(BPipelineValidationError, match="merge"):
-        validate_beats(_output(FIRST, SHORT, SECOND), _block(FIRST + SHORT + SECOND))
+def test_short_beat_in_multibeat_block_is_not_rejected_by_character_count() -> None:
+    assert len(SHORT.strip()) <= 12
+    assert validate_beats(
+        _output(FIRST, SHORT, SECOND), _block(FIRST + SHORT + SECOND)
+    )
 
 
 def test_overlong_beat_is_repaired_once_before_saving_b12_and_starting_b2() -> None:
@@ -146,9 +146,9 @@ def test_overlong_beat_is_repaired_once_before_saving_b12_and_starting_b2() -> N
     assert "".join(beat.text for beat in result.b12[0].beats) == script
 
 
-def test_short_beat_repair_merges_with_adjacent_beat() -> None:
+def test_short_beat_does_not_trigger_character_repair() -> None:
     script = FIRST + SHORT + SECOND
-    provider = RepairProvider(_output(FIRST, SHORT, SECOND), _output(FIRST + SHORT, SECOND))
+    provider = RepairProvider(_output(FIRST, SHORT, SECOND))
     result = asyncio.run(
         run_b_pipeline(
             script,
@@ -159,9 +159,9 @@ def test_short_beat_repair_merges_with_adjacent_beat() -> None:
             previous_b11=_b11(script),
         )
     )
-    assert len(provider.calls) == 2
-    assert [beat.text for beat in result.b12[0].beats] == [FIRST + SHORT, SECOND]
-    assert all(13 <= len(beat.text.strip()) <= 100 for beat in result.b12[0].beats)
+    assert len(provider.calls) == 1
+    assert [beat.text for beat in result.b12[0].beats] == [FIRST, SHORT, SECOND]
+    assert all(len(beat.text.strip()) <= 100 for beat in result.b12[0].beats)
 
 
 def test_second_invalid_repair_fails_closed_with_both_rejections() -> None:
