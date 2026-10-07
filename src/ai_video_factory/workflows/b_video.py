@@ -606,12 +606,13 @@ def reconcile_obsolete_b2_video_runs(
     *,
     queue: JobQueueClient,
 ) -> dict[str, object]:
-    """Cancel unresolved jobs from older image fingerprints without touching other runs.
+    """Cancel unresolved jobs from an obsolete B2 video recipe/source fingerprint.
 
-    This is an explicit maintenance operation for the case where images were
-    intentionally regenerated after a prior LTX run had already published work.
+    This explicit maintenance operation is used when images or the production
+    LTX recipe change after a prior run already published paid work.
     Succeeded/failed/cancelled jobs are preserved as historical paid artifacts.
-    Pending/retryable work is cancelled. Actively leased work is never force-cancelled.
+    Jobs reusable by the new immutable plan are untouched. Pending/retryable
+    obsolete work is cancelled. Actively leased work is never force-cancelled.
     """
     _timeline, jobs, run_dir = build_b2_video_plan(output, plan, audio, images)
     new_digest = run_dir.name
@@ -637,7 +638,7 @@ def reconcile_obsolete_b2_video_runs(
         if old.get("master_audio_sha256") != audio.get("sha256"):
             raise B2VideoError(
                 "A previous incomplete LTX run has a different soundtrack; "
-                "refusing image-only reconciliation"
+                "refusing B2 video reconciliation"
             )
 
         for record in old["jobs"]:
@@ -675,7 +676,7 @@ def reconcile_obsolete_b2_video_runs(
         previous_status = old.get("status")
         old["status"] = "superseded"
         old["superseded_by"] = new_digest
-        old["superseded_reason"] = "explicit image regeneration"
+        old["superseded_reason"] = "explicit B2 video reconciliation"
         old["previous_status"] = previous_status
         _save_json(previous_path, old)
         superseded += 1
