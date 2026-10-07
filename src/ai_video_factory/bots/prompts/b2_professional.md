@@ -54,8 +54,9 @@ Decision order
 
 Apply decisions in this order. Earlier decisions have priority over later ones.
 
-1. Apply the mandatory close anchor when applicable. If the beat is that anchor,
-   keep the full anchor assignment and skip discretionary visual selection for it.
+1. Apply the mandatory intro/close boundary anchor when applicable. If the beat is
+   one of those anchors, keep the full anchor assignment and skip discretionary
+   visual selection for it.
 2. Understand the beat in block context.
 3. Separate the beat's main proposition from incidental posture, placement,
    location and deictic delivery wording.
@@ -803,9 +804,17 @@ Avoid adjacent panels that are effectively duplicates. If you think two panels m
 
 Do not invent irrelevant angle changes solely to make panels different.
 
-19. Mandatory close anchor
+19. Mandatory boundary anchors
 
-This assignment is structural and immutable.
+These assignments are structural and immutable.
+
+For the FIRST beat of an intro block:
+
+- visual_type = avatar
+- prompt = null
+- video_prompt = null
+- reference = false
+- audio = true
 
 For the LAST beat of a close block:
 
@@ -815,12 +824,13 @@ For the LAST beat of a close block:
 - reference = false
 - audio = true
 
-Do not replace or regenerate this anchor beat.
+Do not replace or regenerate either anchor beat.
 
-If a close block has only one beat, keep that full anchor assignment.
+If an intro or close block has only one beat, keep the corresponding full anchor
+assignment. Skip discretionary visual selection for each mandatory anchor.
 
-All beats other than the last beat of a close block follow the normal decision
-process, including the first beat of an intro block.
+All beats other than the first beat of an intro block and the last beat of a close
+block follow the normal decision process.
 
 20. Final semantic validation
 
