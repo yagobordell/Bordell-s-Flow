@@ -194,6 +194,7 @@ def _avatar_reference(
 
 
 def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expand each B2 beat into one or more independently addressable image assets."""
     blocks = plan.get("blocks")
     if not isinstance(blocks, list):
         raise ImageGenerationError("B2 visual plan is missing its blocks")
@@ -202,6 +203,48 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
     if visual_style not in {"casero", "profesional"}:
         raise ImageGenerationError("Unknown B2 visual style")
     seen: set[tuple[int, str]] = set()
+
+    def append_asset(
+        *,
+        block_id: int,
+        beat: dict[str, Any],
+        beat_id: str,
+        description: str,
+        asset_id: str,
+        subshot_index: int = 1,
+        subshot_count: int = 1,
+        generation: str | None = None,
+    ) -> None:
+        if (
+            not isinstance(description, str)
+            or not description.strip()
+            or not isinstance(asset_id, str)
+            or not asset_id
+        ):
+            raise ImageGenerationError("Invalid described B2 image asset")
+        key = block_id, asset_id
+        if key in seen:
+            raise ImageGenerationError(f"Duplicate described B2 asset: {asset_id}")
+        seen.add(key)
+        result.append({
+            "block_id": block_id,
+            "beat_id": beat_id,
+            "asset_id": asset_id,
+            "subshot_index": subshot_index,
+            "subshot_count": subshot_count,
+            "visual_type": beat.get("visual_type"),
+            "text": beat.get("text"),
+            "description": description,
+            **({"generation": generation} if generation is not None else {}),
+            **(
+                {
+                    "reference": beat["reference"],
+                    "visual_style": visual_style,
+                }
+                if visual_style == "profesional" else {}
+            ),
+        })
+
     for block in blocks:
         block_id = block.get("block_id")
         if not isinstance(block_id, int) or isinstance(block_id, bool) or block_id < 1:
@@ -210,16 +253,58 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(beats, list):
             raise ImageGenerationError("Invalid B2 beats")
         for beat in beats:
+            beat_id = beat.get("beat_id")
+            if (
+                not isinstance(beat_id, str)
+                or not _BEAT_ID.fullmatch(beat_id)
+                or not beat_id.startswith(str(block_id))
+            ):
+                raise ImageGenerationError("Invalid B2 beat identifier")
             if visual_style == "profesional":
-                if (not isinstance(beat.get("reference"), bool)
-                    or not isinstance(beat.get("audio"), bool)):
-                    raise ImageGenerationError("Professional B2 requires reference/audio booleans")
+                if (
+                    not isinstance(beat.get("reference"), bool)
+                    or not isinstance(beat.get("audio"), bool)
+                ):
+                    raise ImageGenerationError(
+                        "Professional B2 requires reference/audio booleans"
+                    )
+                subshots = beat.get("visual_subshots")
+                if subshots is not None:
+                    if beat.get("visual_type") != "media_image" or (
+                        not isinstance(subshots, list) or len(subshots) != 2
+                    ):
+                        raise ImageGenerationError(
+                            f"Invalid B2.1 visual_subshots for {beat_id}"
+                        )
+                    for expected_index, item in enumerate(subshots, start=1):
+                        if (
+                            not isinstance(item, dict)
+                            or item.get("subshot_index") != expected_index
+                            or item.get("subshot_count") != 2
+                            or item.get("asset_id") != f"{beat_id}__{expected_index}"
+                            or item.get("generation") not in {"grid", "independent"}
+                        ):
+                            raise ImageGenerationError(
+                                f"Invalid B2.1 subshot metadata for {beat_id}"
+                            )
+                        append_asset(
+                            block_id=block_id,
+                            beat=beat,
+                            beat_id=beat_id,
+                            description=item.get("prompt"),
+                            asset_id=item["asset_id"],
+                            subshot_index=expected_index,
+                            subshot_count=2,
+                            generation=item["generation"],
+                        )
+                    continue
+
                 description = beat.get("prompt")
                 if description is None:
                     if beat.get("visual_type") != "avatar" or beat["reference"]:
                         raise ImageGenerationError("Only a reused avatar can omit its prompt")
                     continue
-                if (beat.get("visual_type") == "avatar" and not beat["reference"]):
+                if beat.get("visual_type") == "avatar" and not beat["reference"]:
                     raise ImageGenerationError("Regenerated avatar requires reference=true")
             else:
                 description = beat.get("description")
@@ -227,33 +312,20 @@ def described_beats(plan: dict[str, Any]) -> list[dict[str, Any]]:
                     isinstance(description, str) and not description.strip()
                 ):
                     continue
-            beat_id = beat.get("beat_id")
-            if (
-                not isinstance(description, str)
-                or not isinstance(beat_id, str)
-                or not _BEAT_ID.fullmatch(beat_id)
-                or not beat_id.startswith(str(block_id))
-            ):
-                raise ImageGenerationError("Invalid described B2 beat")
-            key = (block_id, beat_id)
-            if key in seen:
-                raise ImageGenerationError(f"Duplicate described B2 beat: {beat_id}")
-            seen.add(key)
-            result.append({
-                "block_id": block_id,
-                "beat_id": beat_id,
-                "visual_type": beat.get("visual_type"),
-                "text": beat.get("text"),
-                "description": description,
-                **({"reference": beat["reference"], "visual_style": visual_style}
-                   if visual_style == "profesional" else {}),
-            })
-    return result
 
+            append_asset(
+                block_id=block_id,
+                beat=beat,
+                beat_id=beat_id,
+                description=description,
+                asset_id=beat_id,
+            )
+    return result
 
 def _fingerprint(job: dict[str, Any], options: ImageOptions) -> str:
     identity = {
         "beat_id": job["beat_id"],
+        "asset_id": job.get("asset_id", job["beat_id"]),
         "block_id": job["block_id"],
         **options.request(
             job["description"], size=job.get("size"),
@@ -287,12 +359,13 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
 def _job_paths(
     output: Path, job: dict[str, Any]
 ) -> tuple[Path, Path, Path]:
+    asset_id = job.get("asset_id", job["beat_id"])
     if job.get("grid") is not None:
         folder = output / "images" / "grids"
-        stem = f"block_{job['block_id']}_{job['beat_id']}"
+        stem = f"block_{job['block_id']}_{asset_id}"
     else:
         folder = output / "images" / f"block_{job['block_id']}"
-        stem = job["beat_id"]
+        stem = asset_id
     return folder, folder / f"{stem}.json", folder / f"{stem}.png"
 
 
@@ -381,7 +454,7 @@ def _one_image(
                 accepted = finished_in_place_sha(
                     output, file=image_path.relative_to(output).as_posix(),
                     source_sha256=state["sha256"], block=job["block_id"],
-                    beat=job["beat_id"], recipes=(recipe,),
+                    beat=job.get("asset_id", job["beat_id"]), recipes=(recipe,),
                 )
                 if accepted == actual_sha:
                     return state["artifact"]
@@ -486,7 +559,7 @@ def generate_b2_images(
             for panel in job["panels"]:
                 old_state = (
                     output / "images" / f"block_{panel['block_id']}"
-                    / f"{panel['beat_id']}.json"
+                    / f"{panel.get('asset_id', panel['beat_id'])}.json"
                 )
                 if old_state.exists() or old_state.is_symlink():
                     raise ImageGenerationError(
@@ -529,7 +602,10 @@ def generate_b2_images(
         "grid_quality": _GRID_IMAGE_QUALITY,
         "max_parallel_images": min(options.max_parallel_images or len(jobs), len(jobs)),
         "status": "running",
-        "total_described_beats": len(described),
+        "total_described_beats": len({
+            (item["block_id"], item["beat_id"]) for item in described
+        }),
+        "total_described_assets": len(described),
         "total_generation_jobs": len(jobs),
         "grid_count": sum(job.get("grid") is not None for job in jobs),
         "openai_direct_count": 0,
@@ -547,7 +623,7 @@ def generate_b2_images(
                         _one_image, job, output, options, api_key=api_key,
                         direct_client=direct_client,
                         avatar_image_url=reference[1] if reference is not None else None,
-                    ): (i, job["beat_id"])
+                    ): (i, job.get("asset_id", job["beat_id"]))
                     for i, job in enumerate(jobs)
                 }
                 for future in as_completed(futures):
@@ -629,8 +705,11 @@ def clear_previous_b2_images(output: Path, plan: dict[str, Any]) -> int:
             if actual != crop_sha:
                 finishing = None
                 for beat in described:
-                    if (beat["block_id"] == job["block_id"]
-                        and beat["beat_id"] == job["beat_id"]):
+                    if (
+                        beat["block_id"] == job["block_id"]
+                        and beat.get("asset_id", beat["beat_id"])
+                        == job.get("asset_id", job["beat_id"])
+                    ):
                         recipe = (
                             "image_x2"
                             if beat["visual_type"] in {"media_image", "avatar_media"}
@@ -639,7 +718,8 @@ def clear_previous_b2_images(output: Path, plan: dict[str, Any]) -> int:
                         finishing = finished_in_place_sha(
                             output, file=image_path.relative_to(output).as_posix(),
                             source_sha256=crop_sha, block=beat["block_id"],
-                            beat=beat["beat_id"], recipes=(recipe,),
+                            beat=beat.get("asset_id", beat["beat_id"]),
+                            recipes=(recipe,),
                         )
                         break
                 if finishing != actual:

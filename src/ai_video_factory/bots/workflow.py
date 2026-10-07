@@ -7,6 +7,7 @@ runner can be enabled; no lossy integer-shot conversion is performed.
 
 import asyncio
 import base64
+import copy
 import json
 import re
 import unicodedata
@@ -35,6 +36,7 @@ from .contracts import (
     B11Output,
     B12Input,
     B12Output,
+    B21Output,
     Beat,
     BlockMeta,
     MaterializedBlock,
@@ -480,6 +482,290 @@ def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input)
         )
 
 
+_B21_IMAGE_SPLIT_THRESHOLD = 50
+_B21_NUMBERED_PROMPT = re.compile(r"^\s*([1-9])\.\s+(.+)$", re.DOTALL)
+
+
+def _b21_prompt_body(prompt: str) -> str:
+    matched = _B21_NUMBERED_PROMPT.match(prompt)
+    return matched.group(2).strip() if matched is not None else prompt.strip()
+
+
+def _professional_plan(
+    outputs: list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
+) -> dict[str, object]:
+    return {
+        "visual_style": "profesional",
+        "blocks": [item.blocks[0].model_dump() for item in outputs if item.blocks],
+    }
+
+
+def _b21_split_candidates(plan: dict[str, object]) -> list[dict[str, object]]:
+    candidates: list[dict[str, object]] = []
+    for block in plan["blocks"]:
+        for beat in block["beats"]:
+            if beat.get("visual_type") != "media_image":
+                continue
+            characters = len(str(beat.get("text", "")))
+            if characters >= _B21_IMAGE_SPLIT_THRESHOLD:
+                candidates.append({
+                    "block_id": block["block_id"],
+                    "beat_id": beat["beat_id"],
+                    "character_count": characters,
+                })
+    return candidates
+
+
+def _b21_numbered_runs(block: dict[str, object]) -> list[list[str]]:
+    """Return valid source-numbered B2 runs without changing their prompts."""
+    runs: list[list[str]] = []
+    current: list[str] = []
+    for beat in block["beats"]:
+        prompt = beat.get("prompt")
+        matched = (
+            _B21_NUMBERED_PROMPT.match(prompt)
+            if isinstance(prompt, str) else None
+        )
+        if matched is None:
+            if current:
+                runs.append(current)
+                current = []
+            continue
+        number = int(matched.group(1))
+        if number == 1:
+            if current:
+                runs.append(current)
+            current = [beat["beat_id"]]
+        elif current and number == len(current) + 1:
+            current.append(beat["beat_id"])
+        else:
+            # Raw B2 grid preflight owns the detailed error. Treat malformed
+            # numbering as a boundary here so B2.1 never tries to repair it.
+            if current:
+                runs.append(current)
+            current = []
+    if current:
+        runs.append(current)
+    return [run for run in runs if len(run) >= 2]
+
+
+def validate_b21(
+    result: B21Output,
+    *,
+    source_plan: dict[str, object],
+    split_candidates: list[dict[str, object]],
+) -> None:
+    """B2.1 may change visual prompts only; all B2 structure stays frozen."""
+    _require_success("B2.1", result.error)
+    if result.modified_beats is None:
+        raise BPipelineValidationError("B2.1 returned no modified_beats list")
+    source = {
+        (block["block_id"], beat["beat_id"]): beat
+        for block in source_plan["blocks"] for beat in block["beats"]
+    }
+    candidate_keys = {
+        (item["block_id"], item["beat_id"]) for item in split_candidates
+    }
+    numbered_keys = {
+        (block["block_id"], beat_id)
+        for block in source_plan["blocks"]
+        for run in _b21_numbered_runs(block)
+        for beat_id in run
+    }
+    seen: set[tuple[int, str]] = set()
+    split_seen: set[tuple[int, str]] = set()
+    for patch in result.modified_beats:
+        key = patch.block_id, patch.beat_id
+        if key in seen:
+            raise BPipelineValidationError(
+                f"B2.1 emitted duplicate patch for {patch.beat_id}"
+            )
+        seen.add(key)
+        original = source.get(key)
+        if original is None:
+            raise BPipelineValidationError(
+                f"B2.1 emitted unknown beat {patch.beat_id}"
+            )
+        if original.get("prompt") is None:
+            raise BPipelineValidationError(
+                f"B2.1 cannot edit reused base avatar {patch.beat_id}"
+            )
+        visual_type = original.get("visual_type")
+        if visual_type == "media_video":
+            if (
+                not isinstance(patch.video_prompt, str)
+                or not patch.video_prompt.strip()
+                or patch.second_prompt is not None
+                or patch.split_mode is not None
+            ):
+                raise BPipelineValidationError(
+                    f"B2.1 media_video patch {patch.beat_id} has invalid visual fields"
+                )
+        else:
+            if patch.video_prompt is not None:
+                raise BPipelineValidationError(
+                    f"B2.1 {patch.beat_id} cannot add a video_prompt"
+                )
+            should_split = key in candidate_keys
+            if should_split:
+                if (
+                    visual_type != "media_image"
+                    or patch.second_prompt is None
+                    or patch.split_mode is None
+                ):
+                    raise BPipelineValidationError(
+                        f"B2.1 split candidate {patch.beat_id} requires two image prompts"
+                    )
+                if key in numbered_keys and patch.split_mode != "grid":
+                    raise BPipelineValidationError(
+                        f"B2.1 numbered image {patch.beat_id} must stay in its grid"
+                    )
+                split_seen.add(key)
+            elif patch.second_prompt is not None or patch.split_mode is not None:
+                raise BPipelineValidationError(
+                    f"B2.1 may split only deterministic media_image candidates: "
+                    f"{patch.beat_id}"
+                )
+    missing = candidate_keys - split_seen
+    if missing:
+        names = ", ".join(beat_id for _block, beat_id in sorted(missing))
+        raise BPipelineValidationError(
+            "B2.1 omitted required long-image split candidates: " + names
+        )
+
+
+def _b21_pack_grid_units(
+    units: list[tuple[dict[str, object], list[str]]],
+) -> list[list[tuple[dict[str, object], list[str]]]]:
+    """Pack a numbered continuity run into <=9-panel grids without splitting a beat pair."""
+    chunks: list[list[tuple[dict[str, object], list[str]]]] = []
+    current: list[tuple[dict[str, object], list[str]]] = []
+    count = 0
+    for unit in units:
+        size = len(unit[1])
+        if current and count + size > 9:
+            chunks.append(current)
+            current, count = [], 0
+        current.append(unit)
+        count += size
+    if current:
+        chunks.append(current)
+
+    def panels(chunk: list[tuple[dict[str, object], list[str]]]) -> int:
+        return sum(len(prompts) for _beat, prompts in chunk)
+
+    if len(chunks) > 1 and panels(chunks[-1]) == 1:
+        previous = chunks[-2]
+        if len(previous) < 2:
+            raise BPipelineValidationError(
+                "B2.1 cannot reflow a numbered grid without orphaning a panel"
+            )
+        moved = previous.pop()
+        chunks[-1].insert(0, moved)
+        if panels(previous) < 2:
+            raise BPipelineValidationError(
+                "B2.1 grid reflow would create an orphan numbered panel"
+            )
+    return chunks
+
+
+def apply_b21_review(
+    source_plan: dict[str, object],
+    result: B21Output,
+) -> dict[str, object]:
+    """Apply the validated visual-only patch and deterministically reflow grids."""
+    reviewed = copy.deepcopy(source_plan)
+    patches = {
+        (patch.block_id, patch.beat_id): patch
+        for patch in result.modified_beats or []
+    }
+    source_runs = {
+        block["block_id"]: _b21_numbered_runs(block)
+        for block in source_plan["blocks"]
+    }
+    source_run_keys = {
+        (block_id, beat_id)
+        for block_id, runs in source_runs.items()
+        for run in runs for beat_id in run
+    }
+
+    for block in reviewed["blocks"]:
+        for beat in block["beats"]:
+            key = block["block_id"], beat["beat_id"]
+            patch = patches.get(key)
+            if patch is None:
+                continue
+            beat["prompt"] = patch.prompt.strip()
+            if beat["visual_type"] == "media_video":
+                beat["video_prompt"] = patch.video_prompt
+            if patch.second_prompt is not None:
+                generation = patch.split_mode
+                first = _b21_prompt_body(patch.prompt)
+                second = _b21_prompt_body(patch.second_prompt)
+                if generation == "grid" and key not in source_run_keys:
+                    first, second = f"1. {first}", f"2. {second}"
+                beat["visual_subshots"] = [
+                    {
+                        "asset_id": f"{beat['beat_id']}__1",
+                        "subshot_index": 1,
+                        "subshot_count": 2,
+                        "prompt": first,
+                        "generation": generation,
+                    },
+                    {
+                        "asset_id": f"{beat['beat_id']}__2",
+                        "subshot_index": 2,
+                        "subshot_count": 2,
+                        "prompt": second,
+                        "generation": generation,
+                    },
+                ]
+                beat["prompt"] = first
+
+    # Existing B2 numbered continuity is authoritative. Insert any new subshot
+    # immediately after its source image, then shift/restart numbering in code.
+    reviewed_by_block = {
+        block["block_id"]: block for block in reviewed["blocks"]
+    }
+    for block_id, runs in source_runs.items():
+        block = reviewed_by_block[block_id]
+        beats = {beat["beat_id"]: beat for beat in block["beats"]}
+        for run in runs:
+            units: list[tuple[dict[str, object], list[str]]] = []
+            for beat_id in run:
+                beat = beats[beat_id]
+                subshots = beat.get("visual_subshots")
+                if isinstance(subshots, list):
+                    prompts = [
+                        _b21_prompt_body(str(item["prompt"])) for item in subshots
+                    ]
+                else:
+                    prompts = [_b21_prompt_body(str(beat["prompt"]))]
+                units.append((beat, prompts))
+            for chunk in _b21_pack_grid_units(units):
+                number = 1
+                for beat, prompts in chunk:
+                    subshots = beat.get("visual_subshots")
+                    if isinstance(subshots, list):
+                        for item, body in zip(subshots, prompts, strict=True):
+                            item["generation"] = "grid"
+                            item["prompt"] = f"{number}. {body}"
+                            number += 1
+                        beat["prompt"] = subshots[0]["prompt"]
+                    else:
+                        beat["prompt"] = f"{number}. {prompts[0]}"
+                        number += 1
+    return reviewed
+
+
+def _reviewed_professional_plan(
+    outputs: list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
+    b21: B21Output | None,
+) -> dict[str, object]:
+    plan = _professional_plan(outputs)
+    return apply_b21_review(plan, b21) if b21 is not None else plan
+
+
 @dataclass(frozen=True)
 class _B3GridLock:
     grid_id: str
@@ -488,13 +774,11 @@ class _B3GridLock:
 
 
 def _professional_grid_locks(
-    outputs: list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
+    plan: dict[str, object] | list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
 ) -> dict[tuple[int, str], _B3GridLock]:
-    """Freeze the exact B2 grid assignment before B3 can plan camera takes."""
-    plan = {
-        "visual_style": "profesional",
-        "blocks": [item.blocks[0].model_dump() for item in outputs if item.blocks],
-    }
+    """Freeze the exact reviewed grid assignment before B3 plans camera takes."""
+    if not isinstance(plan, dict):
+        plan = _professional_plan(plan)
     jobs = plan_image_jobs(plan, described_beats(plan))
     beats = {
         (block["block_id"], beat["beat_id"]): beat
@@ -504,17 +788,26 @@ def _professional_grid_locks(
     for job in jobs:
         if job.get("grid") is None:
             continue
-        grid_id = f"{job['block_id']}:{job['beat_id']}"
+        grid_id = f"{job['block_id']}:{job.get('asset_id', job['beat_id'])}"
         for panel in job["panels"]:
             if panel.get("source") == BLACK_PANEL_SOURCE:
                 continue
             key = panel["block_id"], panel["beat_id"]
             beat = beats[key]
+            # B3 only consumes audio=true beats. A split media_image may create
+            # two panels with the same parent beat_id, but it is voice-over and
+            # therefore must never create or overwrite a B3 speaker lock.
+            if beat.get("audio") is not True:
+                continue
             role: Literal["speaker_start", "support"] = (
                 "support"
                 if beat["visual_type"] == "avatar_media"
                 else "speaker_start"
             )
+            if key in locks:
+                raise BPipelineValidationError(
+                    f"Multiple reviewed grid panels target speaking beat {beat['beat_id']}"
+                )
             locks[key] = _B3GridLock(
                 grid_id=grid_id,
                 source=str(panel.get("source") or "filler"),
@@ -524,18 +817,17 @@ def _professional_grid_locks(
 
 
 def _professional_audio_groups(
-    outputs: list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
+    plan: dict[str, object] | list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
 ) -> list[list[tuple[int, dict[str, object]]]]:
-    """Return maximal whole-video runs of consecutive audio=true beats."""
+    """Return maximal whole-video runs of consecutive reviewed audio=true beats."""
+    if not isinstance(plan, dict):
+        plan = _professional_plan(plan)
     groups: list[list[tuple[int, dict[str, object]]]] = []
     current: list[tuple[int, dict[str, object]]] = []
-    for output in outputs:
-        if not output.blocks:
-            raise BPipelineValidationError("Professional B2 output is missing its block")
-        block = output.blocks[0]
-        for beat in block.beats:
-            if beat.audio:
-                current.append((block.block_id, beat.model_dump()))
+    for block in plan["blocks"]:
+        for beat in block["beats"]:
+            if beat.get("audio") is True:
+                current.append((block["block_id"], beat))
             elif current:
                 groups.append(current)
                 current = []
@@ -545,21 +837,15 @@ def _professional_audio_groups(
 
 
 def _professional_b3_groups(
-    outputs: list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
+    plan: dict[str, object] | list[ProfessionalB2Output] | tuple[ProfessionalB2Output, ...],
 ) -> list[list[tuple[int, dict[str, object]]]]:
-    """Return only spoken runs complex enough to justify B3 intervention.
-
-    B3 is skipped for runs of one or two beats and for longer runs whose
-    visual_type is uniformly the base avatar. Those cases keep the exact B2
-    plan and historical downstream grouping without B3 annotations.
-    """
+    """Return only reviewed spoken runs complex enough for B3 intervention."""
     return [
         group
-        for group in _professional_audio_groups(outputs)
+        for group in _professional_audio_groups(plan)
         if len(group) > 2
         and any(beat["visual_type"] != "avatar" for _block_id, beat in group)
     ]
-
 
 def validate_b3(
     result: B3Output,
@@ -607,6 +893,7 @@ class BPipelineResult:
     b11: B11Output
     b12: tuple[B12Output, ...]
     b2: tuple[B2Output | ProfessionalB2Output, ...]
+    b21: B21Output | None = None
     b3: tuple[B3Output, ...] = ()
     visual_style: Literal["casero", "profesional"] = "casero"
     b2_correction_counts: dict[int, int] = field(default_factory=dict)
@@ -641,6 +928,12 @@ class BPipelineResult:
             "blocks": [item.blocks[0].model_dump() for item in self.b2 if item.blocks],
         }
 
+    def merged_b21_output(self) -> dict[str, object]:
+        """B2.1 is already a whole-video sparse patch; never re-emit B2."""
+        if self.b21 is None:
+            raise BPipelineValidationError("B2.1 output is missing")
+        return self.b21.model_dump()
+
     def merged_b3_output(self) -> dict[str, object]:
         """Application-owned join of whole-video spoken-run B3 decisions."""
         return {
@@ -653,17 +946,26 @@ class BPipelineResult:
         """Application-owned ordered B2 plan enriched with B3 camera-take decisions."""
         if self.b11.narrative_core is None:
             raise BPipelineValidationError("B1.1 narrative core is missing")
-        blocks = [result.blocks[0].model_dump() for result in self.b2 if result.blocks]
-        if self.b3:
-            if self.visual_style != "profesional":
-                raise BPipelineValidationError("B3 is valid only for professional visuals")
+        if self.visual_style == "profesional":
             professional = tuple(
                 item for item in self.b2 if isinstance(item, ProfessionalB2Output)
             )
             if len(professional) != len(self.b2):
-                raise BPipelineValidationError("Professional B3 requires professional B2")
-            locks = _professional_grid_locks(professional)
-            groups = _professional_b3_groups(professional)
+                raise BPipelineValidationError(
+                    "Professional visual plan requires professional B2"
+                )
+            reviewed = _reviewed_professional_plan(professional, self.b21)
+            blocks = reviewed["blocks"]
+        else:
+            blocks = [
+                result.blocks[0].model_dump() for result in self.b2 if result.blocks
+            ]
+        if self.b3:
+            if self.visual_style != "profesional":
+                raise BPipelineValidationError("B3 is valid only for professional visuals")
+            reviewed = {"visual_style": "profesional", "blocks": blocks}
+            locks = _professional_grid_locks(reviewed)
+            groups = _professional_b3_groups(reviewed)
             if len(groups) != len(self.b3):
                 raise BPipelineValidationError(
                     "B3 group count differs from eligible B2 audio runs"
@@ -783,7 +1085,7 @@ async def run_b_pipeline(
     enable_casero_cta: bool = False,
     avatar_image: bytes | None = None,
     start_from: Literal["B1.1", "B1.2", "B2"] = "B1.1",
-    stop_after: Literal["B1.1", "B1.2", "B2", "B3"] = "B2",
+    stop_after: Literal["B1.1", "B1.2", "B2", "B2.1", "B3"] = "B2",
     previous_b11: B11Output | None = None,
     previous_b12: tuple[B12Output, ...] | None = None,
     previous_b2: tuple[B2Output, ...] | None = None,
@@ -801,6 +1103,9 @@ async def run_b_pipeline(
     ) = None,
     on_rejected_b2_output: (
         Callable[[int, int, str, dict[str, object]], None] | None
+    ) = None,
+    on_rejected_b21_output: (
+        Callable[[int, str, dict[str, object]], None] | None
     ) = None,
     on_rejected_b3_output: (
         Callable[[int, int, str, dict[str, object]], None] | None
@@ -822,7 +1127,7 @@ async def run_b_pipeline(
     if visual_style not in {"casero", "profesional"}:
         raise ValueError("Unknown B2 visual style")
     image_url: str | None = None
-    if stop_after in {"B2", "B3"}:
+    if stop_after in {"B2", "B2.1", "B3"}:
         if visual_style == "profesional" and not avatar_image:
             raise ValueError("Professional B2 requires the selected avatar PNG")
         if avatar_image:
@@ -834,11 +1139,11 @@ async def run_b_pipeline(
         raise ValueError("B2 block retries require start_from='B2'")
     if start_from not in {"B1.1", "B1.2", "B2"}:
         raise ValueError(f"Unknown start stage: {start_from}")
-    if stop_after not in {"B1.1", "B1.2", "B2", "B3"}:
+    if stop_after not in {"B1.1", "B1.2", "B2", "B2.1", "B3"}:
         raise ValueError(f"Unknown stop stage: {stop_after}")
-    if stop_after == "B3" and visual_style != "profesional":
-        raise ValueError("B3 is available only for professional visual style")
-    stage_order = ("B1.1", "B1.2", "B2", "B3")
+    if stop_after in {"B2.1", "B3"} and visual_style != "profesional":
+        raise ValueError("B2.1 and B3 are available only for professional visual style")
+    stage_order = ("B1.1", "B1.2", "B2", "B2.1", "B3")
     if stage_order.index(stop_after) < stage_order.index(start_from):
         raise ValueError("--stop cannot be earlier than --from")
 
@@ -1465,7 +1770,7 @@ async def run_b_pipeline(
             b2_results[index] = await b2_one(
                 b11.blocks[index], materialized[index], b12_results[index], suffix,
             )
-        if visual_style == "profesional" and stop_after == "B3":
+        if visual_style == "profesional" and stop_after in {"B2.1", "B3"}:
             # B3 must see the exact immutable grid assignment, including fillers.
             # Repair invalid B2 numbering now, before any B3 model call or paid image work.
             while True:
@@ -1478,7 +1783,7 @@ async def run_b_pipeline(
                         "Professional B3 requires professional B2 outputs"
                     )
                 try:
-                    _professional_grid_locks(professional_results)
+                    _professional_grid_locks(_professional_plan(professional_results))
                     break
                 except GridPlanError as error:
                     match = re.search(r"(?:at |description at )(\d+)[A-Z]+", str(error))
@@ -1537,9 +1842,108 @@ async def run_b_pipeline(
         item for item in b2_results if isinstance(item, ProfessionalB2Output)
     )
     if len(professional_results) != len(b2_results):
-        raise BPipelineValidationError("B3 requires professional B2 outputs")
-    grid_locks = _professional_grid_locks(professional_results)
-    audio_groups = _professional_b3_groups(professional_results)
+        raise BPipelineValidationError("B2.1 requires professional B2 outputs")
+
+    source_plan = _professional_plan(professional_results)
+    split_candidates = _b21_split_candidates(source_plan)
+    b21_payload = result.merged_b2_output()
+    b21_payload["b21_review"] = {
+        "split_candidates": [
+            {"block_id": item["block_id"], "beat_id": item["beat_id"]}
+            for item in split_candidates
+        ],
+        "required_images_per_candidate": 2,
+    }
+
+    b21_started = perf_counter()
+    try:
+        feedback = ""
+        b21: B21Output | None = None
+        for attempt in range(1, MAX_VALIDATION_RETRIES + 2):
+            candidate: B21Output | None = None
+            try:
+                async with semaphore:
+                    candidate = await _call_stage(
+                        "B2.1",
+                        None,
+                        b21_payload,
+                        provider=provider,
+                        model=model,
+                        prompt="b2_1_professional.md",
+                        instructions_suffix="\n\n" + feedback if feedback else "",
+                        output_type=B21Output,
+                        input_image_url=image_url,
+                        on_input=on_input,
+                        on_api_response=on_api_response,
+                        on_call_duration=on_call_duration,
+                    )
+                validate_b21(
+                    candidate,
+                    source_plan=source_plan,
+                    split_candidates=split_candidates,
+                )
+                # Preflight the exact reviewed plan before B3 or any paid images.
+                reviewed_plan = apply_b21_review(source_plan, candidate)
+                _professional_grid_locks(reviewed_plan)
+                b21 = candidate
+                if on_output is not None:
+                    on_output("B2.1", None, candidate.model_dump())
+                break
+            except (
+                ValidationError,
+                BPipelineValidationError,
+                GridPlanError,
+                RuntimeError,
+            ) as error:
+                if isinstance(error, RuntimeError) and not is_schema_failure(error):
+                    raise
+                rejected = candidate.model_dump() if candidate is not None else {
+                    "unparsed_response": True,
+                    "validation_error": str(error),
+                }
+                if on_rejected_b21_output is not None:
+                    on_rejected_b21_output(attempt, str(error), rejected)
+                if attempt > MAX_VALIDATION_RETRIES:
+                    raise BPipelineValidationError(
+                        f"B2.1 failed validation after {MAX_VALIDATION_RETRIES} "
+                        f"retries: {error}"
+                    ) from error
+                feedback = validation_feedback(
+                    "B2.1 profesional",
+                    error,
+                    previous=candidate.model_dump() if candidate else None,
+                    instructions=(
+                        "Repair only the sparse B2.1 visual patch. Never change frozen "
+                        "B2 structure, IDs, narration, visual_type, reference or audio. "
+                        "Every deterministic split candidate must have exactly two "
+                        "non-identical still prompts. A numbered source must remain in "
+                        "grid mode. Non-candidates cannot gain a second image. "
+                        "Keep unrelated valid patches unchanged."
+                    ),
+                )
+        if b21 is None:
+            raise BPipelineValidationError("B2.1 did not produce a validated output")
+    finally:
+        if on_stage_duration is not None:
+            on_stage_duration("B2.1", perf_counter() - b21_started)
+
+    result = BPipelineResult(
+        b11=b11,
+        b12=tuple(b12_results),
+        b2=tuple(b2_results),
+        b21=b21,
+        visual_style=visual_style,
+        b2_correction_counts=b2_correction_counts,
+        b2_response_ids=b2_last_response_ids,
+    )
+    if on_stage_complete is not None:
+        on_stage_complete("B2.1", 1, result.merged_b21_output())
+    if stop_after == "B2.1":
+        return result
+
+    reviewed_plan = _reviewed_professional_plan(professional_results, b21)
+    grid_locks = _professional_grid_locks(reviewed_plan)
+    audio_groups = _professional_b3_groups(reviewed_plan)
 
     async def b3_one(
         group_id: int,
@@ -1641,6 +2045,7 @@ async def run_b_pipeline(
         b11=b11,
         b12=tuple(b12_results),
         b2=tuple(b2_results),
+        b21=b21,
         b3=b3_results,
         visual_style=visual_style,
         b2_correction_counts=b2_correction_counts,

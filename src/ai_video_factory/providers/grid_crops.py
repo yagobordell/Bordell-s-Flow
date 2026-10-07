@@ -21,6 +21,7 @@ from .professional_image_state import finished_in_place_sha
 
 _SHA256 = re.compile(r"[0-9a-f]{64}", flags=re.ASCII)
 _BEAT_ID = re.compile(r"[1-9][0-9]*[A-Z]+", flags=re.ASCII)
+_ASSET_ID = re.compile(r"[1-9][0-9]*[A-Z]+(?:__[1-9][0-9]*)?", flags=re.ASCII)
 _DEFAULT_IMAGE_SIZE = (1280, 720)
 _CROP_VERSION = "b2-white-divider-crop-v1"
 
@@ -217,7 +218,9 @@ def _write_panel(output: Path, metadata: dict[str, Any], data: bytes) -> None:
         )
         finished = finished_in_place_sha(
             output, file=metadata["file"], source_sha256=metadata["sha256"],
-            block=metadata["block_id"], beat=metadata["beat_id"], recipes=(recipe,),
+            block=metadata["block_id"],
+            beat=metadata.get("asset_id", metadata["beat_id"]),
+            recipes=(recipe,),
         )
         if actual == finished:
             return  # The derived panel has already been replaced and verified.
@@ -289,16 +292,20 @@ def crop_grid_assets(
                 # image assets.
                 continue
             block_id, beat_id = panel["block_id"], panel["beat_id"]
+            asset_id = panel.get("asset_id", beat_id)
             if (
                 not isinstance(block_id, int) or isinstance(block_id, bool)
                 or block_id < 1 or not isinstance(beat_id, str)
                 or _BEAT_ID.fullmatch(beat_id) is None
                 or not beat_id.startswith(str(block_id))
+                or not isinstance(asset_id, str)
+                or _ASSET_ID.fullmatch(asset_id) is None
+                or not asset_id.startswith(beat_id)
             ):
-                raise GridCropError("Invalid grid panel beat identifier")
-            key = block_id, beat_id
+                raise GridCropError("Invalid grid panel beat/asset identifier")
+            key = block_id, asset_id
             if key in seen:
-                raise GridCropError(f"Duplicate crop panel: {beat_id}")
+                raise GridCropError(f"Duplicate crop panel: {asset_id}")
             seen.add(key)
             # Preserve the full photographic interior even if GPT's panel
             # ratio differs slightly from the requested geometry.
@@ -311,12 +318,22 @@ def crop_grid_assets(
             metadata = {
                 "block_id": block_id,
                 "beat_id": beat_id,
+                "asset_id": asset_id,
+                **(
+                    {
+                        "subshot_index": panel["subshot_index"],
+                        "subshot_count": panel["subshot_count"],
+                    }
+                    if isinstance(panel.get("subshot_index"), int)
+                    and isinstance(panel.get("subshot_count"), int)
+                    else {}
+                ),
                 "visual_type": panel["visual_type"],
                 **(
                     {"reference": panel["reference"]}
                     if isinstance(panel.get("reference"), bool) else {}
                 ),
-                "file": f"images/block_{block_id}/{beat_id}.png",
+                "file": f"images/block_{block_id}/{asset_id}.png",
                 "sha256": hashlib.sha256(data).hexdigest(),
                 "provider": "grid_crop",
                 "source_provider": grid["provider"],

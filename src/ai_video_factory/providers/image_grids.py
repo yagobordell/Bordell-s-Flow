@@ -2,9 +2,9 @@
 
 The numbered beats are protected: fillers come only from unnumbered, still
 unassigned described beats. When there are not enough described beats to fill
-a grid, the remaining cells are explicit black panels. Each source beat
-belongs to exactly one job. No panel is cropped or materialized as a separate
-image in this stage.
+a grid, the remaining cells are explicit black panels.
+Each visual asset belongs to exactly one job; a reviewed beat may own two assets.
+No panel is cropped or materialized as a separate image in this stage.
 """
 
 from __future__ import annotations
@@ -95,18 +95,29 @@ def _grid_prompt(
 def plan_image_jobs(
     plan: dict[str, Any], described: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Group 2-9 consecutive numbered beats, filling forward then backward.
+    """Group 2-9 consecutive numbered visual assets, preserving B2.1 subshots.
 
-    Numbering belongs to each original B2 block. Fillers may come from other
-    blocks, but only if not numbered and not already assigned to another grid.
-    The output ordering remains the original script ordering.
+    A beat may now own two image assets. Asset identity, not parent beat identity,
+    determines generation state and grid position. Parent beat_id is retained for
+    narration/timing downstream.
     """
     visual_style = plan.get("visual_style", "casero")
     if visual_style not in {"casero", "profesional"}:
         raise GridPlanError("Unknown B2 visual style")
+
+    def key(item: dict[str, Any]) -> tuple[int, str]:
+        return item["block_id"], item.get("asset_id", item["beat_id"])
+
+    described_by_beat: dict[tuple[int, str], list[dict[str, Any]]] = {}
+    for item in described:
+        described_by_beat.setdefault(
+            (item["block_id"], item["beat_id"]), []
+        ).append(item)
+    for items in described_by_beat.values():
+        items.sort(key=lambda item: int(item.get("subshot_index", 1)))
+
     positions: dict[tuple[int, str], int] = {}
     runs: list[list[dict[str, Any]]] = []
-    described_by_key = {(b["block_id"], b["beat_id"]): b for b in described}
     cursor = 0
     for block in plan["blocks"]:
         current: list[dict[str, Any]] = []
@@ -122,77 +133,89 @@ def plan_image_jobs(
                 current = []
 
         for beat in block["beats"]:
-            key = block["block_id"], beat["beat_id"]
-            positions[key] = cursor
-            cursor += 1
-            source = described_by_key.get(key)
-            if source is None:
+            sources = described_by_beat.get(
+                (block["block_id"], beat["beat_id"]), []
+            )
+            if not sources:
                 finish()
+                cursor += 1
                 continue
-            matched = _NUMBERED.match(source["description"].lstrip())
-            if matched is None:
-                finish()
-                continue
-            number = int(matched.group(1))
-            if number == 1:
-                finish()
-                current = [source]
-            elif current and number == len(current) + 1:
-                current.append(source)
-            else:
-                raise GridPlanError(
-                    f"Invalid B2 continuity numbering at {source['beat_id']}: "
-                    f"expected {len(current) + 1 if current else 1}, got {number}"
-                )
-            if len(current) == 9:
-                finish()
+            for source in sources:
+                source_key = key(source)
+                if source_key in positions:
+                    raise GridPlanError(
+                        f"Duplicate visual asset position: {source_key[1]}"
+                    )
+                positions[source_key] = cursor
+                cursor += 1
+                if source.get("generation") == "independent":
+                    finish()
+                    continue
+                matched = _NUMBERED.match(source["description"].lstrip())
+                if matched is None:
+                    finish()
+                    continue
+                number = int(matched.group(1))
+                if number == 1:
+                    finish()
+                    current = [source]
+                elif current and number == len(current) + 1:
+                    current.append(source)
+                else:
+                    raise GridPlanError(
+                        f"Invalid B2 continuity numbering at {source['beat_id']}: "
+                        f"expected {len(current) + 1 if current else 1}, got {number}"
+                    )
+                if len(current) == 9:
+                    finish()
         finish()
 
     grid_runs: list[list[dict[str, Any]]] = []
     standalone_numbered: set[tuple[int, str]] = set()
     for run in runs:
         avatar_media_count = sum(
-            beat["visual_type"] == "avatar_media" for beat in run
+            asset["visual_type"] == "avatar_media" for asset in run
         )
         if 0 < avatar_media_count < len(run):
-            standalone_numbered.update(
-                (beat["block_id"], beat["beat_id"]) for beat in run
-            )
+            standalone_numbered.update(key(asset) for asset in run)
         else:
             grid_runs.append(run)
 
     numbered = {
-        (beat["block_id"], beat["beat_id"])
-        for run in grid_runs for beat in run
+        key(asset) for run in grid_runs for asset in run
     }
+    forced_independent = {
+        key(asset) for asset in described
+        if asset.get("generation") == "independent"
+    }
+    standalone_keys = standalone_numbered | forced_independent
+    described_by_key = {key(asset): asset for asset in described}
     standalone = {
-        key: described_by_key[key] for key in standalone_numbered
+        asset_key: described_by_key[asset_key] for asset_key in standalone_keys
     }
     available = {
-        (beat["block_id"], beat["beat_id"]): beat
-        for beat in described
-        if (
-            (beat["block_id"], beat["beat_id"]) not in numbered
-            and (beat["block_id"], beat["beat_id"]) not in standalone_numbered
-        )
+        key(asset): asset
+        for asset in described
+        if key(asset) not in numbered and key(asset) not in standalone_keys
     }
+
     grids: list[dict[str, Any]] = []
     for run in grid_runs:
         columns, rows = _SHAPES[len(run)]
         count = columns * rows
         avatar_media_grid = all(
-            beat["visual_type"] == "avatar_media" for beat in run
+            asset["visual_type"] == "avatar_media" for asset in run
         )
 
-        first = positions[run[0]["block_id"], run[0]["beat_id"]]
-        last = positions[run[-1]["block_id"], run[-1]["beat_id"]]
+        first = positions[key(run[0])]
+        last = positions[key(run[-1])]
         forward = sorted(
             (
-                key for key in available
+                asset_key for asset_key in available
                 if (
-                    positions[key] > last
+                    positions[asset_key] > last
                     and (
-                        available[key]["visual_type"] == "avatar_media"
+                        available[asset_key]["visual_type"] == "avatar_media"
                     ) == avatar_media_grid
                 )
             ),
@@ -201,25 +224,24 @@ def plan_image_jobs(
         missing = count - len(run) - len(forward)
         backward = sorted(
             (
-                key for key in available
+                asset_key for asset_key in available
                 if (
-                    positions[key] < first
+                    positions[asset_key] < first
                     and (
-                        available[key]["visual_type"] == "avatar_media"
+                        available[asset_key]["visual_type"] == "avatar_media"
                     ) == avatar_media_grid
                 )
             ),
             key=positions.__getitem__,
             reverse=True,
         )[:missing]
-        selected = [available[key] for key in forward + backward] + run
-        for key in forward + backward:
-            del available[key]
-        selected.sort(key=lambda b: positions[b["block_id"], b["beat_id"]])
-        # Size the canvas from the ACTUAL selected panels, including fillers.
-        # Only 2x2 landscape grids can reach native 1920x1080 per video panel.
+        selected = [available[asset_key] for asset_key in forward + backward] + run
+        for asset_key in forward + backward:
+            del available[asset_key]
+        selected.sort(key=lambda asset: positions[key(asset)])
+
         has_video = any(
-            beat["visual_type"] in {"media_video", "avatar"} for beat in selected
+            asset["visual_type"] in {"media_video", "avatar"} for asset in selected
         )
         panel_width, panel_height = (
             (_AVATAR_MEDIA_PANEL_WIDTH, _AVATAR_MEDIA_PANEL_HEIGHT)
@@ -235,6 +257,10 @@ def plan_image_jobs(
                     f"{run[0]['block_id']}BLACKPANEL"
                     f"{chr(ord('A') + index)}"
                 ),
+                "asset_id": (
+                    f"{run[0]['block_id']}BLACKPANEL"
+                    f"{chr(ord('A') + index)}"
+                ),
                 "visual_type": "media_image",
                 "description": BLACK_PANEL_DESCRIPTION,
                 "source": BLACK_PANEL_SOURCE,
@@ -244,22 +270,21 @@ def plan_image_jobs(
         )
         panels = [
             {
-                **beat,
+                **asset,
                 "row": index // columns,
                 "column": index % columns,
-                "source": beat.get("source") or (
-                    "numbered"
-                    if (beat["block_id"], beat["beat_id"]) in numbered
-                    else "filler"
+                "source": asset.get("source") or (
+                    "numbered" if key(asset) in numbered else "filler"
                 ),
             }
-            for index, beat in enumerate(selected)
+            for index, asset in enumerate(selected)
         ]
         anchor = run[0]
         grids.append({
             "kind": "grid",
             "block_id": anchor["block_id"],
             "beat_id": anchor["beat_id"],
+            "asset_id": anchor.get("asset_id", anchor["beat_id"]),
             "visual_type": anchor["visual_type"],
             "description": _grid_prompt(
                 panels, columns, rows, visual_style=visual_style,
@@ -272,36 +297,40 @@ def plan_image_jobs(
                 "panel_width": panel_width, "panel_height": panel_height,
                 "width": columns * panel_width,
                 "height": rows * panel_height,
-                "numbered_beat_ids": [beat["beat_id"] for beat in run],
+                "numbered_beat_ids": [asset["beat_id"] for asset in run],
+                "numbered_asset_ids": [
+                    asset.get("asset_id", asset["beat_id"]) for asset in run
+                ],
             },
             "panels": panels,
             **({"video_panel_ids": [
-                p["beat_id"] for p in panels
-                if p.get("source") != BLACK_PANEL_SOURCE
-                and p["visual_type"] in {"media_video", "avatar"}
+                panel["beat_id"] for panel in panels
+                if panel.get("source") != BLACK_PANEL_SOURCE
+                and panel["visual_type"] in {"media_video", "avatar"}
             ]} if visual_style == "profesional" else {}),
         })
+
     individuals = [*available.values(), *standalone.values()]
     jobs = [
         {
-            **beat,
+            **asset,
             **(
                 {"size": f"{_AVATAR_MEDIA_PANEL_WIDTH}x{_AVATAR_MEDIA_PANEL_HEIGHT}"}
-                if beat["visual_type"] == "avatar_media"
+                if asset["visual_type"] == "avatar_media"
                 else {"size": "1920x1088", "video_source": True}
                 if visual_style == "profesional"
-                and beat["visual_type"] in {"media_video", "avatar"}
+                and asset["visual_type"] in {"media_video", "avatar"}
                 else {}
             ),
         }
-        for beat in individuals
+        for asset in individuals
     ] + grids
 
     def job_position(job: dict[str, Any]) -> int:
         if job.get("grid") is None:
-            return positions[job["block_id"], job["beat_id"]]
+            return positions[key(job)]
         return min(
-            positions[panel["block_id"], panel["beat_id"]]
+            positions[key(panel)]
             for panel in job["panels"]
             if panel.get("source") != BLACK_PANEL_SOURCE
         )
