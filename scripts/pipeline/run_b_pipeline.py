@@ -971,7 +971,10 @@ def _image_options() -> ImageOptions:
     )
 
 
-async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, object]:
+async def _generate_images(
+    output: Path, plan: dict[str, object], *,
+    allow_ambiguous_upscale_resume: bool = False,
+) -> dict[str, object]:
     professional = plan.get("visual_style") == "profesional"
     needs_x2 = professional and any(
         beat.get("prompt") is not None
@@ -1061,6 +1064,7 @@ async def _generate_images(output: Path, plan: dict[str, object]) -> dict[str, o
                     manifest,
                     upscaler=upscaler,
                     api_key=settings.openai_api_key,
+                    allow_ambiguous_upscale_resume=allow_ambiguous_upscale_resume,
                 )
 
         try:
@@ -1729,7 +1733,9 @@ async def _run_images_only(
                 removed_images = await asyncio.to_thread(clear_b2_images_for_rerun, output)
                 if removed_images:
                     print(f"Removed {removed_images} previous B2 image(s).", flush=True)
-            manifest = await _generate_images(output, plan)
+            manifest = await _generate_images(
+                output, plan, allow_ambiguous_upscale_resume=True,
+            )
         except Exception:
             report["run"]["image_generation"] = {"status": "incomplete"}
             report["run"]["status"] = "failed"
