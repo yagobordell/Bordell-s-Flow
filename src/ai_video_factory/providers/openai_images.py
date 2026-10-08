@@ -7,15 +7,15 @@ generate_png. Never automatically retry a POST with an unknown outcome.
 from __future__ import annotations
 
 import base64
-from collections import deque
 import binascii
 import hashlib
 import json
 import math
 import time
-from threading import Lock
+from collections import deque
 from io import BytesIO
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
