@@ -179,13 +179,21 @@ Long GPU inference can outlive the synchronous Container Gateway request. The cl
 objects, waits for the output to appear, and retries the same Runtime HTTP envelope to recover
 the result evidence through the upstream idempotent output path.
 
-HTTP `503` is also treated as transient during that recovery window. This is important because
-the serial upstream HTTP server can temporarily make the instance unavailable to the Gateway
-while a previous inference is still occupying it. Retries keep the same execution envelope and
-do not create a different semantic image-upscale request.
+HTTP `502` and `503` are also transient within that recovery window. Just after
+starting a Salad replica, the Gateway can return `502` even while Salad reports
+the instance as ready; the serial runtime can also be busy. The client reuses
+the exact same execution envelope and deterministic R2 output key.
 
-Non-transient HTTP errors still fail immediately, and ambiguous failures preserve the R2 objects
-so a later retry can reconcile the same deterministic output safely.
+If the recovery window is exhausted, the saved professional finishing state
+remains `upscale_submitting_unknown`. An **explicit** `--images-only` resume
+reconciles an already written, dimension-verified PNG from the exact R2 output
+key before attempting the same deterministic GPU upscale request again.
+The paid GPT originals are never regenerated. This recovery may reconsume
+Salad GPU time when an earlier request finished without leaving an R2 output;
+ordinary planning runs continue to reject ambiguous finishing states.
+
+Non-transient HTTP errors still fail immediately; ambiguous failures preserve
+request-scoped R2 objects rather than deleting potentially in-flight outputs.
 
 ## Real inference smoke
 
