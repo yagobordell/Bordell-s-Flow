@@ -7,11 +7,13 @@ generate_png. Never automatically retry a POST with an unknown outcome.
 from __future__ import annotations
 
 import base64
+from collections import deque
 import binascii
 import hashlib
 import json
 import math
 import time
+from threading import Lock
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -52,6 +54,30 @@ class OpenAIImageRequestRejected(OpenAIImageError):
         super().__init__(f"OpenAI image API HTTP {status_code}: {message}")
 
 
+class _ImageStartLimiter:
+    """Bound the start rate across worker threads that share one image client."""
+
+    def __init__(self, *, per_minute: int = 18, window_seconds: float = 60.0) -> None:
+        if per_minute < 1 or window_seconds <= 0:
+            raise ValueError("Image request rate limits must be positive")
+        self._per_minute = per_minute
+        self._window_seconds = window_seconds
+        self._starts: deque[float] = deque()
+        self._lock = Lock()
+
+    def acquire(self) -> None:
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                while self._starts and now - self._starts[0] >= self._window_seconds:
+                    self._starts.popleft()
+                if len(self._starts) < self._per_minute:
+                    self._starts.append(now)
+                    return
+                delay = max(0.001, self._window_seconds - (now - self._starts[0]))
+            time.sleep(delay)
+
+
 class OpenAIImageClient:
     """Generate one PNG through the standard official OpenAI image API."""
 
@@ -59,6 +85,7 @@ class OpenAIImageClient:
         if not api_key.strip():
             raise ValueError("OPENAI_API_KEY is required for official image generation")
         self._api_key = api_key
+        self._request_limiter = _ImageStartLimiter()
 
     @staticmethod
     def _retry_after_seconds(exc: HTTPError, attempt: int) -> float:
@@ -85,7 +112,10 @@ class OpenAIImageClient:
             },
             method="POST",
         )
-        for attempt in range(4):
+        # Every attempt, including a definite 429 retry, consumes a rate slot.
+        # A batch shares one client and limiter across all of its worker threads.
+        for attempt in range(12):
+            self._request_limiter.acquire()
             try:
                 with urlopen(request, timeout=180) as response:
                     result = json.load(response)
@@ -93,7 +123,7 @@ class OpenAIImageClient:
             except HTTPError as exc:
                 # A 429 is a definite rejection before an image artifact exists,
                 # so retrying it after Retry-After cannot duplicate paid output.
-                if exc.code == 429 and attempt < 3:
+                if exc.code == 429 and attempt < 11:
                     time.sleep(self._retry_after_seconds(exc, attempt))
                     continue
                 # Other 4xx responses remain explicit, non-retryable rejections.
