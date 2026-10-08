@@ -38,7 +38,7 @@ def build_whisper_job_request(
         model_id=model,
     )
     input_key = f"phase5/whisper/inputs/{audio_sha256}{suffix.lower()}"
-    return InferenceJobRequest(
+    request = InferenceJobRequest(
         job_id=job_id,
         task=WHISPER_TRANSCRIPTION_TASK,
         inputs=[
@@ -59,6 +59,9 @@ def build_whisper_job_request(
             "language": language,
         },
     )
+    from ai_video_factory.workflows.r2_run_scope import scope_inference_request
+
+    return scope_inference_request(request)
 
 
 class SaladWhisperTranscriptionProvider:
