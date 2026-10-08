@@ -102,6 +102,28 @@ def test_standard_requests_generate_one_image_per_job_and_cache_results(
 
 
 
+def test_real_image_batch_shares_one_rate_limited_client_and_caps_parallelism(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructed: list[FakeDirect] = []
+
+    def make_client(api_key: str) -> FakeDirect:
+        assert api_key == "test-key"
+        client = FakeDirect()
+        constructed.append(client)
+        return client
+
+    monkeypatch.setattr(images, "OpenAIImageClient", make_client)
+    plan = _plan(*(f"Scene number {number}" for number in range(9)))
+    result = images.generate_b2_images(
+        tmp_path, plan, api_key="test-key", options=_opts(),
+    )
+    assert result["status"] == "completed"
+    assert result["max_parallel_images"] == 6
+    assert len(constructed) == 1
+    assert len(constructed[0].calls) == 9
+
+
 @pytest.mark.parametrize(("scene", "expected"), [
     ("A table with a glass of water", "low"),
     ("A laptop. (For context: the page contains a report.)", "medium"),
