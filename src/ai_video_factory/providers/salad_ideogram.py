@@ -81,7 +81,7 @@ def build_ideogram_job_request(
         model_id=model_id,
     )
     seed = ideogram_seed_for_job(job_id)
-    return InferenceJobRequest(
+    request = InferenceJobRequest(
         job_id=job_id,
         task=task_name,
         output=ObjectOutput(
@@ -97,6 +97,9 @@ def build_ideogram_job_request(
             "seed": seed,
         },
     )
+    from ai_video_factory.workflows.r2_run_scope import scope_inference_request
+
+    return scope_inference_request(request)
 
 
 def reference_caption_variants(caption: str, *, task_name: str) -> list[tuple[str, str]]:
