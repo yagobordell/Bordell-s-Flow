@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from ai_video_factory.compositor.static_preview import StaticPreviewError
 from ai_video_factory.workflows import r2_cleanup
 
 
@@ -95,7 +96,7 @@ def test_cleanup_rejects_unverified_or_incomplete_runs(
     assert r2_cleanup.cleanup_published_video_jobs(
         output, {**video, "status": "deferred"},
     ) == 0
-    with pytest.raises(Exception):
+    with pytest.raises(StaticPreviewError):
         r2_cleanup.cleanup_published_video_jobs(output, {**video, "sha256": "bad"})
     with pytest.raises(ValueError):
         r2_cleanup.cleanup_published_video_jobs(
