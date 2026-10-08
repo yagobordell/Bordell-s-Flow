@@ -161,7 +161,7 @@ class PostgresJobQueueClient(JobQueueClient):
             row = connection.execute(
                 """
                 SELECT job_id, request_sha256, request, status, attempt_count, lease_expires_at,
-                       result, last_error, run_id, run_job_count
+                       result, last_error, run_id, run_job_count, r2_pruned_at
                 FROM gpu.jobs
                 WHERE job_id = %s
                 FOR UPDATE
@@ -226,6 +226,38 @@ class PostgresJobQueueClient(JobQueueClient):
                     "run_job_count": legacy_run_job_count,
                 }
             else:
+                # R2 output bundles are disposable after a verified final MP4.
+                # Preserve the succeeded row/timestamps for predictive autoscaling,
+                # but explicitly reopen pruned requests if regeneration is needed.
+                if row.get("r2_pruned_at") is not None:
+                    connection.execute(
+                        """
+                        UPDATE gpu.jobs
+                        SET status = 'pending',
+                            attempt_count = 0,
+                            lease_owner = NULL,
+                            lease_expires_at = NULL,
+                            result = NULL,
+                            last_error = NULL,
+                            started_at = NULL,
+                            finished_at = NULL,
+                            r2_pruned_at = NULL,
+                            updated_at = now()
+                        WHERE job_id = %s
+                          AND request_sha256 = %s
+                          AND r2_pruned_at IS NOT NULL
+                        """,
+                        (request.job_id, request_sha256),
+                    )
+                    row = {
+                        **row,
+                        "status": "pending",
+                        "attempt_count": 0,
+                        "lease_expires_at": None,
+                        "result": None,
+                        "last_error": None,
+                        "r2_pruned_at": None,
+                    }
                 existing_run_id = row.get("run_id")
                 if run_id is not None and existing_run_id is None:
                     connection.execute(
@@ -562,14 +594,17 @@ class PostgresJobQueueClient(JobQueueClient):
             yield ids
             result = connection.execute(
                 """
-                DELETE FROM gpu.jobs
+                UPDATE gpu.jobs
+                SET r2_pruned_at = now(),
+                    updated_at = now()
                 WHERE job_id = ANY(%s)
                   AND status IN ('succeeded', 'failed', 'cancelled')
+                  AND r2_pruned_at IS NULL
                 """,
                 (ids,),
             )
             if result.rowcount != len(ids):
-                raise RuntimeError("R2 cleanup queue invalidation was incomplete")
+                raise RuntimeError("R2 cleanup cache-pruning marker was incomplete")
 
     def close(self) -> None:
         self._pool.close()
