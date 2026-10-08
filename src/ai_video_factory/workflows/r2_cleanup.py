@@ -103,8 +103,8 @@ def cleanup_published_video_jobs(output: Path, video: dict[str, Any]) -> int:
         )
         client = storage._client
         deleted = 0
-        with queue.prune_scoped_completed_video_jobs(job_ids):
-            for job_id in sorted(job_ids):
+        with queue.prune_scoped_video_run(scope, job_ids) as scoped_job_ids:
+            for job_id in scoped_job_ids:
                 prefix = f"jobs/{job_id}/"
                 while True:
                     response = client.list_objects_v2(
