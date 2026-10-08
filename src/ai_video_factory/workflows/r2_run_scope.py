@@ -88,11 +88,11 @@ def scope_inference_request(request: InferenceJobRequest) -> InferenceJobRequest
         name: contract.model_copy(
             update={"key": f"{prefix}/{Path(contract.key).name}"}
         )
-        for name, contract in request.sidecar_outputs.items()
+        for name, contract in (request.sidecar_outputs or {}).items()
     }
     return request.model_copy(update={
         "job_id": job_id,
         "inputs": inputs,
         "output": output,
-        "sidecar_outputs": sidecars,
+        "sidecar_outputs": sidecars or None,
     })
