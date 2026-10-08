@@ -42,7 +42,7 @@ _PROFESSIONAL_IMAGE_PREFIX = (
     "not luxury editorial."
 )
 _NUMBERED_PROFESSIONAL_PROMPT = re.compile(r"^([1-9]\.\s+)(.+)$", flags=re.DOTALL)
-_GRID_IMAGE_QUALITY = "medium"
+_GRID_IMAGE_QUALITY = "high"
 # Tolerate spaces, punctuation after the marker, case and line breaks.
 _FOR_CONTEXT = re.compile(r"\(\s*for\s+context\b", flags=re.IGNORECASE)
 _AVATAR_REFERENCE_PROMPT_SUFFIX = (
@@ -107,11 +107,10 @@ class ImageOptions:
 
 
 def _job_quality(job: dict[str, Any], options: ImageOptions) -> str:
-    """Use medium only for grids or a beat's own (For context...) marker."""
+    """Use high for grids, medium for context-marked standalone images."""
     return (
-        _GRID_IMAGE_QUALITY
-        if job.get("grid") is not None
-        or _FOR_CONTEXT.search(job["description"]) is not None
+        _GRID_IMAGE_QUALITY if job.get("grid") is not None
+        else "medium" if _FOR_CONTEXT.search(job["description"]) is not None
         else options.quality
     )
 
