@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: I001
+
 import hashlib
 import json
 from contextlib import contextmanager
