@@ -622,12 +622,17 @@ class PredictiveSaladAutoscaler:
                 current[stage] = 0
                 continue
             current[stage] = configured
+        quota_targets = dict(targets)
         targets = apply_downscale_hysteresis(
             demands=demands,
             targets=targets,
             current_replicas=current,
             config=self.config,
         )
+        hysteresis_holds = {
+            stage: targets[stage] > quota_targets[stage]
+            for stage in self.clients
+        }
         initial_current = dict(current)
         results: dict[str, AutoscaleResult] = {}
         hard_failures: dict[str, str] = {}
@@ -784,7 +789,15 @@ class PredictiveSaladAutoscaler:
                 applied_replicas=current[stage],
                 changed=current[stage] != previous,
                 demand=demands[stage],
-                reason="reconciled" if current[stage] != previous else "stable",
+                reason=(
+                    "reconciled"
+                    if current[stage] != previous
+                    else (
+                        "downscale_hysteresis_hold"
+                        if hysteresis_holds[stage]
+                        else "stable"
+                    )
+                ),
             )
             results[stage] = result
             self._log_result(result)
