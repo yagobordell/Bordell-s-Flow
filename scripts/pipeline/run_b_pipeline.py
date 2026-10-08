@@ -664,6 +664,22 @@ def _publish_if_ready(
         publish_completed_run(output, script_file, results_root)
     )
     print(f"  Published result: {result}", flush=True)
+    # Clean only the completed video's private GPU job outputs after its
+    # verified MP4 has been published locally. Never delete shared inputs,
+    # persistent voice references, or objects from another run.
+    if _ltx_transport_configured():
+        try:
+            from ai_video_factory.workflows.r2_cleanup import cleanup_published_video_jobs
+
+            deleted = cleanup_published_video_jobs(output, video)
+            print(f"  R2 completed video job cleanup: {deleted} object(s)", flush=True)
+        except Exception as exc:
+            # Cleanup must never invalidate or force regeneration of the MP4.
+            print(
+                f"  R2 cleanup deferred ({type(exc).__name__}); "
+                "verified MP4 retained.",
+                flush=True,
+            )
     # Independent post-publication distribution. Never let YouTube failure
     # invalidate a verified local result or re-run costly generation stages.
     if settings.youtube_enabled:
