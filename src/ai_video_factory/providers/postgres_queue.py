@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -493,6 +494,68 @@ class PostgresJobQueueClient(JobQueueClient):
                 """,
                 (transport_job_id,),
             )
+
+    @contextmanager
+    def prune_scoped_completed_video_jobs(
+        self, job_ids: Sequence[str],
+    ) -> Iterator[None]:
+        """Lock verified, run-isolated jobs during R2 cleanup, then evict cache rows.
+
+        Do not leave a succeeded row pointing at an R2 artifact we deleted.
+        Existing legacy/global jobs and shared inputs are never eligible.
+        """
+        ids = sorted(set(job_ids))
+        if not ids:
+            raise ValueError("No R2 cleanup jobs supplied")
+        with self._pool.connection() as connection, connection.transaction():
+            rows = connection.execute(
+                """
+                SELECT job_id, status, request
+                FROM gpu.jobs
+                WHERE job_id = ANY(%s)
+                ORDER BY job_id
+                FOR UPDATE
+                """,
+                (ids,),
+            ).fetchall()
+            if [row["job_id"] for row in rows] != ids:
+                raise RuntimeError("R2 cleanup requires all authoritative queue rows")
+            for row in rows:
+                job_id = row["job_id"]
+                request = row["request"]
+                prefix = f"jobs/{job_id}/"
+                if row["status"] != "succeeded" or not isinstance(request, dict):
+                    raise RuntimeError("R2 cleanup requires completed, valid GPU requests")
+                inputs = request.get("inputs")
+                output = request.get("output")
+                sidecars = request.get("sidecar_outputs", {})
+                if (
+                    not isinstance(inputs, list)
+                    or not inputs
+                    or not all(
+                        isinstance(item, dict)
+                        and str(item.get("key", "")).startswith(prefix + "inputs/")
+                        for item in inputs
+                    )
+                    or not isinstance(output, dict)
+                    or not str(output.get("key", "")).startswith(prefix)
+                    or not isinstance(sidecars, dict)
+                    or not all(
+                        isinstance(item, dict)
+                        and str(item.get("key", "")).startswith(prefix)
+                        for item in sidecars.values()
+                    )
+                ):
+                    raise RuntimeError(
+                        f"R2 cleanup refused shared or unscoped request: {job_id}"
+                    )
+            yield
+            result = connection.execute(
+                "DELETE FROM gpu.jobs WHERE job_id = ANY(%s) AND status = 'succeeded'",
+                (ids,),
+            )
+            if result.rowcount != len(ids):
+                raise RuntimeError("R2 cleanup queue invalidation was incomplete")
 
     def close(self) -> None:
         self._pool.close()
