@@ -2603,10 +2603,20 @@ async def main() -> None:
         return
     if getattr(args, "videos_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
-        await _run_videos_only(
-            script_file, output_root, results_root=results_root,
-            managed_target=getattr(args, "managed_target", None),
+        from ai_video_factory.workflows.r2_run_scope import (
+            reset_active_video_scope,
+            saved_video_scope,
+            set_active_video_scope,
         )
+
+        token = set_active_video_scope(saved_video_scope(output_root / script_file.stem))
+        try:
+            await _run_videos_only(
+                script_file, output_root, results_root=results_root,
+                managed_target=getattr(args, "managed_target", None),
+            )
+        finally:
+            reset_active_video_scope(token)
         return
     if getattr(args, "images_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
@@ -2618,15 +2628,25 @@ async def main() -> None:
         return
     if getattr(args, "regenerate_audio", False) or getattr(args, "resume_audio", False):
         output_root = args.output if args.output is not None else settings.output_dir
-        await _run_audio_only(
-            script_file,
-            output_root,
-            resume=bool(getattr(args, "resume_audio", False)),
-            max_parallel_calls=args.max_parallel_calls,
-            no_video=bool(getattr(args, "no_video", False)),
-            results_root=results_root,
-            managed_target=getattr(args, "managed_target", None),
+        from ai_video_factory.workflows.r2_run_scope import (
+            reset_active_video_scope,
+            saved_video_scope,
+            set_active_video_scope,
         )
+
+        token = set_active_video_scope(saved_video_scope(output_root / script_file.stem))
+        try:
+            await _run_audio_only(
+                script_file,
+                output_root,
+                resume=bool(getattr(args, "resume_audio", False)),
+                max_parallel_calls=args.max_parallel_calls,
+                no_video=bool(getattr(args, "no_video", False)),
+                results_root=results_root,
+                managed_target=getattr(args, "managed_target", None),
+            )
+        finally:
+            reset_active_video_scope(token)
         return
 
     avatar_file = select_avatar(avatars_dir=args.avatars_dir, avatar_name=args.avatar)
@@ -2834,6 +2854,21 @@ async def main() -> None:
                 avatar_file, args.avatars_dir, reference_audio=voice.audio_filename
             )
         _clear_outputs_from(output, args.from_stage)
+
+    from ai_video_factory.workflows.r2_run_scope import (
+        saved_video_scope,
+        set_active_video_scope,
+        video_run_scope,
+    )
+
+    # A fresh run receives unique GPU cache identities from its first paid
+    # stage; resumes reuse that identity. Legacy runs stay unscoped.
+    r2_scope = (
+        video_run_scope(output, output / "video" / "runs" / "__new__")
+        if args.from_stage == "B1.1"
+        else saved_video_scope(output)
+    )
+    set_active_video_scope(r2_scope)
 
     # Bind the voice to the run, not merely the mutable avatar library or .env.
     voice_snapshot = voice.snapshot()
