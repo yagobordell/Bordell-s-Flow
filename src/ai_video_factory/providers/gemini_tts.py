@@ -35,7 +35,7 @@ _KNOWN_PREBUILT_VOICES = frozenset({
 _VERBATIM = "The text is the verbatim transcript. Do not add, omit, or rewrite words."
 _PROFESSIONAL_STYLE_PREFIX = (
     "Respect the next style indications while keeping a normal voice speed, "
-    "not paused, its for a youtube video:"
+    "not paused:"
 )
 
 
