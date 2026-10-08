@@ -64,12 +64,12 @@ def test_salad_manager_resolves_gpu_names_through_organization_api() -> None:
     assert "gpu_classes = $GpuClassIds" in script
 
 
-def test_ltx_capacity_is_exactly_two_way_for_i2v_and_a2v() -> None:
+def test_ltx_capacity_allows_four_way_i2v_and_a2v_scaling() -> None:
     document = _document()["services"]
     for service_name in ("ltx25_i2v", "ltx25"):
         service = document[service_name]
         assert service["image"].endswith("ltx25-isolated-tasks-v11")
-        assert service["capacity"] == {"start_replicas": 1, "max_replicas": 2}
+        assert service["capacity"] == {"start_replicas": 1, "max_replicas": 4}
         assert "queue_name" not in service
         assert "autoscaler" not in service
 
