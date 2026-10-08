@@ -61,9 +61,10 @@ def test_cleanup_only_targets_private_job_and_invalidates_cache(
 
     class Queue:
         @contextmanager
-        def prune_scoped_completed_video_jobs(self, job_ids):
+        def prune_scoped_video_run(self, scope, job_ids):
+            assert scope == _SCOPE
             assert job_ids == [_JOB_ID]
-            yield
+            yield job_ids
             evicted.extend(job_ids)
 
         def close(self):
@@ -137,8 +138,8 @@ def test_delete_error_keeps_queue_and_does_not_write_success_receipt(
 
     class Queue:
         @contextmanager
-        def prune_scoped_completed_video_jobs(self, job_ids):
-            yield
+        def prune_scoped_video_run(self, scope, job_ids):
+            yield job_ids
             committed.extend(job_ids)
 
         def close(self):
