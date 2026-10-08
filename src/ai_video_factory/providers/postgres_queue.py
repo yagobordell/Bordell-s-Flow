@@ -599,7 +599,6 @@ class PostgresJobQueueClient(JobQueueClient):
                     updated_at = now()
                 WHERE job_id = ANY(%s)
                   AND status IN ('succeeded', 'failed', 'cancelled')
-                  AND r2_pruned_at IS NULL
                 """,
                 (ids,),
             )
