@@ -2868,7 +2868,7 @@ async def main() -> None:
         if args.from_stage == "B1.1"
         else saved_video_scope(output)
     )
-    set_active_video_scope(r2_scope)
+    active_scope_token = set_active_video_scope(r2_scope)
 
     # Bind the voice to the run, not merely the mutable avatar library or .env.
     voice_snapshot = voice.snapshot()
@@ -3388,6 +3388,10 @@ async def main() -> None:
         _print_metric("Run", timing_report["run_elapsed_seconds"], None)
         _print_observed_salad_total(costs)
         raise
+    finally:
+        from ai_video_factory.workflows.r2_run_scope import reset_active_video_scope
+
+        reset_active_video_scope(active_scope_token)
 
     costs, timing_report = save_report("completed", len(result.b12))
     await asyncio.to_thread(
