@@ -43,6 +43,7 @@ _PROFESSIONAL_IMAGE_PREFIX = (
 )
 _NUMBERED_PROFESSIONAL_PROMPT = re.compile(r"^([1-9]\.\s+)(.+)$", flags=re.DOTALL)
 _GRID_IMAGE_QUALITY = "high"
+_DEFAULT_MAX_PARALLEL_IMAGES = 6
 # Tolerate spaces, punctuation after the marker, case and line breaks.
 _FOR_CONTEXT = re.compile(r"\(\s*for\s+context\b", flags=re.IGNORECASE)
 _AVATAR_REFERENCE_PROMPT_SUFFIX = (
@@ -590,6 +591,13 @@ def generate_b2_images(
             )
     if jobs and direct_client is None and not api_key:
         raise ImageGenerationError("OPENAI_API_KEY is required for official GPT images")
+    # One real client is shared by all workers so its sliding-window quota
+    # protects the whole batch rather than resetting for each image job.
+    if jobs and direct_client is None:
+        direct_client = OpenAIImageClient(api_key)
+    worker_count = min(
+        options.max_parallel_images or _DEFAULT_MAX_PARALLEL_IMAGES, len(jobs)
+    ) if jobs else 0
 
     manifest_path = output / "images" / "manifest.json"
     manifest: dict[str, Any] = {
@@ -599,7 +607,7 @@ def generate_b2_images(
         "size": options.size,
         "quality": options.quality,
         "grid_quality": _GRID_IMAGE_QUALITY,
-        "max_parallel_images": min(options.max_parallel_images or len(jobs), len(jobs)),
+        "max_parallel_images": worker_count,
         "status": "running",
         "total_described_beats": len({
             (item["block_id"], item["beat_id"]) for item in described
@@ -615,7 +623,6 @@ def generate_b2_images(
     failures: list[tuple[str, Exception]] = []
     try:
         if jobs:
-            worker_count = min(options.max_parallel_images or len(jobs), len(jobs))
             with ThreadPoolExecutor(max_workers=worker_count) as pool:
                 futures = {
                     pool.submit(
