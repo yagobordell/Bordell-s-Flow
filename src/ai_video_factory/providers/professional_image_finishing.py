@@ -19,6 +19,7 @@ from PIL import Image
 from ai_video_factory.image_upscaling import ImageUpscaler
 from ai_video_factory.providers.openai_batch_images import described_beats
 from ai_video_factory.providers.openai_images import OpenAIImageClient
+from ai_video_factory.providers.optium_image_upscaler import OptiumLabsImageUpscaler
 from ai_video_factory.providers.professional_image_state import finishing_state_path
 
 _VIDEO_SOURCE = (1920, 1088)
@@ -124,6 +125,7 @@ def _materialize(
     output: Path, item: dict[str, Any], *, recipe: str,
     target: tuple[int, int], fingerprint: str,
     upscaler: ImageUpscaler | None,
+    allow_ambiguous_upscale_resume: bool = False,
 ) -> dict[str, Any]:
     block, beat = _asset_key(item)
     png = output / item["file"]
@@ -220,9 +222,19 @@ def _materialize(
             _save_json(state, saved)
             return completed_record(saved)
         if saved.get("status") != "pending":
-            raise ProfessionalImageFinishingError(
-                f"Unknown outcome for {beat} ({recipe}); reconcile before any resubmission"
-            )
+            # Only an explicit --images-only recovery may resume an ambiguous
+            # Salad x2 request. The real provider checks the deterministic R2
+            # output first and, if still missing, reuses the exact same GPU
+            # request identity. Never retry ambiguous paid GPT-image POSTs.
+            if not (
+                saved.get("status") == "upscale_submitting_unknown"
+                and recipe == "image_x2"
+                and allow_ambiguous_upscale_resume
+                and isinstance(upscaler, OptiumLabsImageUpscaler)
+            ):
+                raise ProfessionalImageFinishingError(
+                    f"Unknown outcome for {beat} ({recipe}); reconcile before any resubmission"
+                )
     else:
         legacy_folder = output / "images" / "professional_finished" / f"block_{block}"
         legacy_state = legacy_folder / f"{beat}-{recipe}.json"
@@ -330,6 +342,7 @@ def finish_professional_images(
     output: Path, plan: dict[str, Any], manifest: dict[str, Any],
     *, upscaler: ImageUpscaler | None,
     api_key: str | None, direct_client: OpenAIImageClient | None = None,
+    allow_ambiguous_upscale_resume: bool = False,
 ) -> list[dict[str, Any]]:
     """Replace each beat PNG only after verified and recoverable finishing.
 
@@ -369,6 +382,7 @@ def finish_professional_images(
                     output, item, recipe="image_x2",
                     target=(width * 2, height * 2), fingerprint="exact-image-x2",
                     upscaler=upscaler,
+                    allow_ambiguous_upscale_resume=allow_ambiguous_upscale_resume,
                 )
             elif item["visual_type"] in {"media_video", "avatar"}:
                 if item.get("provider") == "grid_crop":
