@@ -708,3 +708,59 @@ def test_images_only_resume_keeps_incomplete_paid_states(tmp_path):
         "finishing_status": "completed",
     }), encoding="utf-8")
     assert not runner._resume_unfinished_images(tmp_path, plan)
+
+
+
+def test_images_only_replays_only_same_ambiguous_optium_x2_request(tmp_path):
+    from ai_video_factory.providers.optium_image_upscaler import (
+        ImageUpscalerError,
+        OptiumLabsImageUpscaler,
+    )
+
+    class StubOptium(OptiumLabsImageUpscaler):
+        def __init__(self, *, fail: bool) -> None:
+            self.fail = fail
+            self.calls = 0
+
+        def upscale(self, image_bytes, *, target_width, target_height):
+            self.calls += 1
+            if self.fail:
+                raise ImageUpscalerError("HTTP 502", status_code=502)
+            return RecordingUpscaler().upscale(
+                image_bytes, target_width=target_width, target_height=target_height,
+            )
+
+    plan = professional(beat("1B", "media_image", "Landscape"))
+    direct = RecordingGPT()
+    manifest = gpt.generate_b2_images(
+        tmp_path, plan, api_key=None, options=gpt.ImageOptions(),
+        direct_client=direct,
+    )
+    original = tmp_path / "images" / "block_1" / "1B.png"
+    source_sha = hashlib.sha256(original.read_bytes()).hexdigest()
+    failed = StubOptium(fail=True)
+    with pytest.raises(ImageUpscalerError, match="502"):
+        finish_professional_images(
+            tmp_path, plan, manifest, upscaler=failed, api_key=None,
+        )
+    assert failed.calls == 1
+    saved = list((tmp_path / "images" / "finishing_state").rglob("*.json"))
+    assert len(saved) == 1
+    assert json.loads(saved[0].read_text())["status"] == "upscale_submitting_unknown"
+    assert hashlib.sha256(original.read_bytes()).hexdigest() == source_sha
+
+    recovered = StubOptium(fail=False)
+    with pytest.raises(ProfessionalImageFinishingError, match="Unknown outcome"):
+        finish_professional_images(
+            tmp_path, plan, manifest, upscaler=recovered, api_key=None,
+        )
+    assert recovered.calls == 0
+
+    result = finish_professional_images(
+        tmp_path, plan, manifest, upscaler=recovered, api_key=None,
+        allow_ambiguous_upscale_resume=True,
+    )
+    assert result[0]["width"] == 2560
+    assert recovered.calls == 1
+    assert len(direct.calls) == 1
+    assert json.loads(saved[0].read_text())["status"] == "completed"
