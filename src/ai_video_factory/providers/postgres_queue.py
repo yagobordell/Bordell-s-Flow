@@ -496,45 +496,56 @@ class PostgresJobQueueClient(JobQueueClient):
             )
 
     @contextmanager
-    def prune_scoped_completed_video_jobs(
-        self, job_ids: Sequence[str],
-    ) -> Iterator[None]:
-        """Lock verified, run-isolated jobs during R2 cleanup, then evict cache rows.
+    def prune_scoped_video_run(
+        self, scope: str, required_job_ids: Sequence[str],
+    ) -> Iterator[list[str]]:
+        """Lock and retire every terminal, isolated GPU request in a video run.
 
-        Do not leave a succeeded row pointing at an R2 artifact we deleted.
-        Existing legacy/global jobs and shared inputs are never eligible.
+        All jobs are validated before deleting a single R2 object. In-flight
+        jobs prevent pruning. The queue cache rows are removed only after R2
+        deletion succeeds, so fresh requests never replay an evicted success.
         """
-        ids = sorted(set(job_ids))
-        if not ids:
-            raise ValueError("No R2 cleanup jobs supplied")
+        if len(scope) != 24 or any(char not in "0123456789abcdef" for char in scope):
+            raise ValueError("Invalid R2 run scope")
+        required = set(required_job_ids)
+        if not required:
+            raise ValueError("No required LTX jobs for cleanup")
+        suffix = f"-r{scope}"
         with self._pool.connection() as connection, connection.transaction():
             rows = connection.execute(
                 """
                 SELECT job_id, status, request
                 FROM gpu.jobs
-                WHERE job_id = ANY(%s)
+                WHERE job_id LIKE %s
                 ORDER BY job_id
                 FOR UPDATE
                 """,
-                (ids,),
+                (f"%{suffix}",),
             ).fetchall()
-            if [row["job_id"] for row in rows] != ids:
-                raise RuntimeError("R2 cleanup requires all authoritative queue rows")
+            found = {str(row["job_id"]) for row in rows}
+            if not required.issubset(found):
+                raise RuntimeError("R2 cleanup requires all completed LTX queue rows")
             for row in rows:
-                job_id = row["job_id"]
+                job_id = str(row["job_id"])
                 request = row["request"]
                 prefix = f"jobs/{job_id}/"
-                if row["status"] != "succeeded" or not isinstance(request, dict):
-                    raise RuntimeError("R2 cleanup requires completed, valid GPU requests")
-                inputs = request.get("inputs")
+                if row["status"] not in {"succeeded", "failed", "cancelled"}:
+                    raise RuntimeError("R2 cleanup deferred: GPU job is not terminal")
+                if not isinstance(request, dict):
+                    raise RuntimeError("R2 cleanup requires a valid immutable request")
+                inputs = request.get("inputs", [])
                 output = request.get("output")
                 sidecars = request.get("sidecar_outputs", {})
                 if (
                     not isinstance(inputs, list)
-                    or not inputs
                     or not all(
                         isinstance(item, dict)
-                        and str(item.get("key", "")).startswith(prefix + "inputs/")
+                        and (
+                            (item.get("name") == "reference_audio"
+                             and isinstance(item.get("key"), str)
+                             and bool(item["key"]))
+                            or str(item.get("key", "")).startswith(prefix + "inputs/")
+                        )
                         for item in inputs
                     )
                     or not isinstance(output, dict)
@@ -546,12 +557,15 @@ class PostgresJobQueueClient(JobQueueClient):
                         for item in sidecars.values()
                     )
                 ):
-                    raise RuntimeError(
-                        f"R2 cleanup refused shared or unscoped request: {job_id}"
-                    )
-            yield
+                    raise RuntimeError(f"R2 cleanup refused an unscoped input: {job_id}")
+            ids = sorted(found)
+            yield ids
             result = connection.execute(
-                "DELETE FROM gpu.jobs WHERE job_id = ANY(%s) AND status = 'succeeded'",
+                """
+                DELETE FROM gpu.jobs
+                WHERE job_id = ANY(%s)
+                  AND status IN ('succeeded', 'failed', 'cancelled')
+                """,
                 (ids,),
             )
             if result.rowcount != len(ids):
