@@ -183,6 +183,39 @@ def test_professional_voice_is_separate_and_persistent(tmp_path):
         ensure_professional_avatar_voice(avatar_file=avatar, input_voice_id="Puck")
 
 
+def test_professional_voice_loads_saved_studio_name_with_period(tmp_path, monkeypatch):
+    avatar = tmp_path / "Enzo" / "Enzo.png"
+    avatar.parent.mkdir()
+    avatar.write_bytes(b"avatar for voice-selection test")
+    config = avatar.parent / "meta" / "gemini_voice.json"
+    config.parent.mkdir()
+    config.write_text(
+        json.dumps({"provider": "gemini", "voice_id": "Enzo m. 3"}),
+        encoding="utf-8",
+    )
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps({"voices": [
+                {"id": "voice_enzo_m3", "displayName": "Enzo m. 3"},
+            ]}).encode("utf-8")
+
+    monkeypatch.setattr(gemini_tts, "urlopen", lambda *_args, **_kwargs: Response())
+    voice = ensure_professional_avatar_voice(
+        avatar_file=avatar, gemini_api_key="test-key", interactive=False,
+    )
+    assert voice.voice_id == "voice_enzo_m3"
+    assert json.loads(config.read_text(encoding="utf-8")) == {
+        "provider": "gemini", "voice_id": "voice_enzo_m3",
+    }
+
+
 class FakeProvider:
     def __init__(self, invalid_v3=False):
         self.invalid_v3 = invalid_v3
