@@ -36,7 +36,7 @@ def video_run_scope(output: Path, run_dir: Path) -> str | None:
     except FileExistsError:
         token = marker.read_text(encoding="ascii").strip()
         if not _SCOPE_RE.fullmatch(token):
-            raise ValueError("Invalid concurrently saved video R2 scope marker")
+            raise ValueError("Invalid concurrently saved video R2 scope marker") from None
     return token
 
 _ACTIVE_SCOPE: ContextVar[str | None] = ContextVar("video_r2_scope", default=None)
