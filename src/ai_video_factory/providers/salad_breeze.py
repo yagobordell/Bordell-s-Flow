@@ -51,7 +51,7 @@ def build_breeze_job_request(
         seed=seed,
         model_id=model_id,
     )
-    return InferenceJobRequest(
+    request = InferenceJobRequest(
         job_id=job_id,
         task=BREEZE_TTS2_TASK,
         output=ObjectOutput(
@@ -69,6 +69,9 @@ def build_breeze_job_request(
             "seed": seed,
         },
     )
+    from ai_video_factory.workflows.r2_run_scope import scope_inference_request
+
+    return scope_inference_request(request)
 
 
 class BreezeFallbackEligibleError(RuntimeError):
