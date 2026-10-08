@@ -111,7 +111,7 @@ def _cta_request(directory: Path, assets: dict[str, Any]) -> InferenceJobRequest
         width=_WIDTH, height=_HEIGHT, fps=_FPS,
         generation_profile=LTX_A2V_RUN_OPTIMIZED_PROFILE,
     )
-    return InferenceJobRequest(
+    request = InferenceJobRequest(
         job_id=job_id, task=LTX_A2V_TASK, max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
         inputs=[
             ObjectInput(name="image", key=f"cta/inputs/images/{image_sha}.png",
@@ -131,6 +131,9 @@ def _cta_request(directory: Path, assets: dict[str, Any]) -> InferenceJobRequest
             "progressive_block_group_size": LTX_A2V_RUN_PROGRESSIVE_BLOCK_GROUP_SIZE,
         },
     )
+    from ai_video_factory.workflows.r2_run_scope import scope_inference_request
+
+    return scope_inference_request(request)
 
 
 def current_cta_ready(directory: Path) -> bool:
