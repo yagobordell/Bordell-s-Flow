@@ -320,15 +320,15 @@ def test_numbered_sequence_uses_one_standard_request_for_grid(tmp_path: Path) ->
     assert result["openai_direct_count"] == 1
     assert len(direct.calls) == 1
     assert direct.calls[0]["size"] == "2560x1440"
-    assert direct.calls[0]["quality"] == "medium"
+    assert direct.calls[0]["quality"] == "high"
     assert result["quality"] == "low"
-    assert result["grid_quality"] == "medium"
-    assert result["items"][0]["quality"] == "medium"
+    assert result["grid_quality"] == "high"
+    assert result["items"][0]["quality"] == "high"
     saved_grid = json.loads(
         (tmp_path / "images/grids/block_1_1B.json").read_text(encoding="utf-8")
     )
-    assert saved_grid["quality"] == "medium"
-    assert saved_grid["artifact"]["quality"] == "medium"
+    assert saved_grid["quality"] == "high"
+    assert saved_grid["artifact"]["quality"] == "high"
     assert result["items"][0]["provider"] == "openai_direct"
     assert result["items"][0]["grid"]["columns"] == 2
     assert (
@@ -432,10 +432,10 @@ def test_mixed_grid_and_individual_jobs_use_separate_qualities(
     assert manifest["grid_count"] == 1
     assert manifest["total_generation_jobs"] == 2
     assert {(call["size"], call["quality"]) for call in direct.calls} == {
-        ("2560x1440", "medium"), ("1280x720", "low"),
+        ("2560x1440", "high"), ("1280x720", "low"),
     }
     assert {(item["size"], item["quality"]) for item in manifest["items"]} == {
-        ("2560x1440", "medium"), ("1280x720", "low"),
+        ("2560x1440", "high"), ("1280x720", "low"),
     }
     assert len(direct.calls) == 2
 
@@ -447,7 +447,7 @@ def test_mixed_grid_and_individual_jobs_use_separate_qualities(
     assert len(direct.calls) == 2
 
 
-def test_saved_low_quality_grid_cannot_be_silently_resubmitted_as_medium(
+def test_saved_low_quality_grid_cannot_be_silently_resubmitted_as_high(
     tmp_path: Path,
 ) -> None:
     plan = _plan("1. First", "2. Second")
