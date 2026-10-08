@@ -329,6 +329,22 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
             object_prefix = f"image-upscaler/runtime/{semantic_id}"
             input_key = f"{object_prefix}/input.{extension}"
             output_key = f"{object_prefix}/output.png"
+            # An earlier gateway failure may have hidden a successful GPU
+            # inference. Reconcile the exact content-addressed R2 result
+            # before submitting anything to Salad again.
+            if self._storage.stat(output_key) is not None:
+                self._storage.download(output_key, output_path)
+                recovered = output_path.read_bytes()
+                _validate_output_bytes(
+                    recovered,
+                    target_width=target_width,
+                    target_height=target_height,
+                )
+                self._best_effort_delete(input_key)
+                self._best_effort_delete(output_key)
+                logger.info("Recovered completed image upscale from its R2 output")
+                return recovered
+
             uploaded = False
             request_sent = False
             request_completed = False
