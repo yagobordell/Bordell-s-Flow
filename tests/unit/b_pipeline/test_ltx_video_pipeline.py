@@ -100,6 +100,41 @@ def _case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict, dict, 
     return plan, audio, images
 
 
+
+def test_ltx_plan_keeps_legacy_keys_without_explicit_r2_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    _, jobs, _ = b_video.build_b2_video_plan(tmp_path, plan, audio, images)
+    assert not (tmp_path / "video" / "r2_run_scope.txt").exists()
+    assert any(
+        item.key.startswith("b2-ltx/inputs/audio/")
+        for job in jobs for item in job.request.inputs
+    )
+    assert all("-r" not in job.request.job_id for job in jobs)
+
+
+def test_ltx_plan_uses_private_inputs_when_pipeline_initializes_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ai_video_factory.workflows.r2_run_scope import video_run_scope
+
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    scope = video_run_scope(tmp_path, tmp_path / "video" / "runs" / "new")
+    assert scope is not None
+    _, jobs, _ = b_video.build_b2_video_plan(tmp_path, plan, audio, images)
+    for job in jobs:
+        assert job.request.job_id.endswith(f"-r{scope}")
+        prefix = f"jobs/{job.request.job_id}/"
+        assert job.request.output.key.startswith(prefix)
+        assert all(item.key.startswith(prefix + "inputs/") for item in job.request.inputs)
+    # Repeated planning and future --videos-only retries must reuse the same IDs.
+    _, retry, _ = b_video.build_b2_video_plan(tmp_path, plan, audio, images)
+    assert [job.request.fingerprint() for job in jobs] == [
+        job.request.fingerprint() for job in retry
+    ]
+
+
 def test_final_compositor_uses_professional_finished_asset_identity() -> None:
     from ai_video_factory.compositor import b_video as compositor
 
