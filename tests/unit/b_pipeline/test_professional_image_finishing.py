@@ -162,7 +162,7 @@ def test_professional_mixed_grid_upscales_only_stills_and_uses_video_crop(tmp_pa
     assert original["grid_count"] == 1
     assert len(direct.calls) == 1
     assert direct.calls[0]["size"] == "3840x2160"
-    assert direct.calls[0]["quality"] == "medium"
+    assert direct.calls[0]["quality"] == "high"
     crop_grid_assets(tmp_path, original)
     crop_hashes = {p["beat_id"]: p["sha256"] for p in original["panel_assets"]}
     upscaler = RecordingUpscaler()
@@ -230,7 +230,7 @@ def test_large_grid_video_panels_stay_at_native_720p_without_gpt_edits(
     )
     assert len(direct.calls) == 1
     assert direct.calls[0]["size"] == canvas
-    assert direct.calls[0]["quality"] == "medium"
+    assert direct.calls[0]["quality"] == "high"
     panels = crop_grid_assets(tmp_path, manifest)
     assert len(panels) == count
     assert all((p["width"], p["height"]) == (1280, 720) for p in panels)
