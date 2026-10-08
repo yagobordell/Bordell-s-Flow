@@ -10,6 +10,8 @@ import base64
 import binascii
 import hashlib
 import json
+import math
+import time
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -58,6 +60,18 @@ class OpenAIImageClient:
             raise ValueError("OPENAI_API_KEY is required for official image generation")
         self._api_key = api_key
 
+    @staticmethod
+    def _retry_after_seconds(exc: HTTPError, attempt: int) -> float:
+        header = exc.headers.get("Retry-After") if exc.headers is not None else None
+        if isinstance(header, str):
+            try:
+                value = float(header.strip())
+            except ValueError:
+                value = -1.0
+            if math.isfinite(value) and value >= 0:
+                return min(value, 60.0)
+        return min(float(2 ** attempt), 30.0)
+
     def _request_json(
         self, url: str, payload: dict[str, object]
     ) -> dict[str, Any]:
@@ -71,25 +85,37 @@ class OpenAIImageClient:
             },
             method="POST",
         )
-        try:
-            with urlopen(request, timeout=180) as response:
-                result = json.load(response)
-        except HTTPError as exc:
-            # A 4xx response is a definite server rejection, not an ambiguous
-            # transport outcome. Preserve the API message so callers can safely
-            # mark the request retryable only on a later explicit run.
-            if 400 <= exc.code < 500:
-                try:
-                    raw = exc.read().decode("utf-8", errors="replace")
-                    payload_error = json.loads(raw)
-                    detail = payload_error.get("error") if isinstance(payload_error, dict) else None
-                    message = detail.get("message") if isinstance(detail, dict) else None
-                    if not isinstance(message, str) or not message.strip():
-                        message = raw.strip() or exc.reason or "request rejected"
-                except (OSError, ValueError, TypeError):
-                    message = str(exc.reason or "request rejected")
-                raise OpenAIImageRequestRejected(exc.code, message) from exc
-            raise
+        for attempt in range(4):
+            try:
+                with urlopen(request, timeout=180) as response:
+                    result = json.load(response)
+                break
+            except HTTPError as exc:
+                # A 429 is a definite rejection before an image artifact exists,
+                # so retrying it after Retry-After cannot duplicate paid output.
+                if exc.code == 429 and attempt < 3:
+                    time.sleep(self._retry_after_seconds(exc, attempt))
+                    continue
+                # Other 4xx responses remain explicit, non-retryable rejections.
+                if 400 <= exc.code < 500:
+                    try:
+                        raw = exc.read().decode("utf-8", errors="replace")
+                        payload_error = json.loads(raw)
+                        detail = (
+                            payload_error.get("error")
+                            if isinstance(payload_error, dict) else None
+                        )
+                        message = (
+                            detail.get("message") if isinstance(detail, dict) else None
+                        )
+                        if not isinstance(message, str) or not message.strip():
+                            message = raw.strip() or exc.reason or "request rejected"
+                    except (OSError, ValueError, TypeError):
+                        message = str(exc.reason or "request rejected")
+                    raise OpenAIImageRequestRejected(exc.code, message) from exc
+                raise
+        else:  # pragma: no cover - loop always exits by success or exception.
+            raise OpenAIImageError("OpenAI image retry loop exhausted")
         if not isinstance(result, dict):
             raise OpenAIImageError("Official OpenAI image API returned non-object JSON")
         return result

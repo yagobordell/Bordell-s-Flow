@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ai_video_factory.providers.openai_batch_images import described_beats
 from ai_video_factory.providers.professional_image_state import finished_in_place_sha
 from ai_video_factory.publishing import PublicationError, _digest, _json, _safe_file
 
@@ -112,11 +113,14 @@ def _image_sources(
         if manifest.get("finishing_status") == "completed":
             visual_data = _json(work, "visual_plan.json")
             expected = {
-                (block["block_id"], beat["beat_id"])
-                for block in visual_data["blocks"] for beat in block["beats"]
-                if beat.get("prompt") is not None
+                (item["block_id"], item.get("asset_id", item["beat_id"]))
+                for item in described_beats(visual_data)
             }
-            keys = {(item.get("block_id"), item.get("beat_id")) for item in final}
+            keys = {
+                (item.get("block_id"), item.get("asset_id", item.get("beat_id")))
+                for item in final
+                if isinstance(item, dict)
+            }
             if keys != expected or len(final) != len(expected):
                 raise PublicationError("Professional finished images do not match B2")
     else:

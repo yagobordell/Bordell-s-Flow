@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from ai_video_factory import managed_media
 from ai_video_factory.managed_layout import publish_managed_run, sync_managed_outputs
 from ai_video_factory.managed_media import public_report
 from ai_video_factory.publishing import PublicationError
@@ -930,3 +931,60 @@ def test_legacy_v_checkpoints_are_exported_without_mutating_old_run(
     publish_managed_run(work, script, target)
     assert (target / "outputs" / "V1" / "pass_1" / "output.json").is_file()
     assert (work / "voice_direction" / "V1" / "pass_1" / "output.json").is_file()
+
+
+def test_professional_finished_subshots_match_b2_by_asset_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    work = tmp_path / "work"
+    first = b"finished-subshot-one"
+    second = b"finished-subshot-two"
+    avatar = b"avatar"
+    first_sha = _put(work, "images/12A__1.png", first)
+    second_sha = _put(work, "images/12A__2.png", second)
+    avatar_sha = _put(work, "avatar.png", avatar)
+
+    _json(work, "visual_plan.json", {
+        "visual_style": "profesional",
+        "avatar": {"file": "avatar.png", "sha256": avatar_sha},
+        "blocks": [{"block_id": 12, "beats": [{"beat_id": "12A"}]}],
+    })
+    final = [
+        {
+            "block_id": 12, "beat_id": "12A", "asset_id": "12A__1",
+            "visual_type": "media_image", "file": "images/12A__1.png",
+            "sha256": first_sha,
+        },
+        {
+            "block_id": 12, "beat_id": "12A", "asset_id": "12A__2",
+            "visual_type": "media_image", "file": "images/12A__2.png",
+            "sha256": second_sha,
+        },
+    ]
+    _json(work, "images/manifest.json", {
+        "status": "completed",
+        "total_generation_jobs": 2,
+        "items": [
+            {**final[0], "provider": "openai_direct"},
+            {**final[1], "provider": "openai_direct"},
+        ],
+        "panel_assets": [],
+        "finishing_status": "completed",
+        "final_assets": final,
+    })
+    monkeypatch.setattr(
+        managed_media,
+        "described_beats",
+        lambda _plan: [
+            {"block_id": 12, "beat_id": "12A", "asset_id": "12A__1"},
+            {"block_id": 12, "beat_id": "12A", "asset_id": "12A__2"},
+        ],
+    )
+
+    status, entries = managed_media._image_sources(
+        work,
+        {"image_generation": {"status": "completed", "count": 2}},
+    )
+
+    assert status == "completed"
+    assert set(entries) == {"12A__1.png", "12A__2.png", "avatar.png"}

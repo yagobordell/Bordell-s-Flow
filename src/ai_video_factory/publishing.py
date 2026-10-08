@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ai_video_factory.providers.openai_batch_images import described_beats
+
 
 class PublicationError(RuntimeError):
     """A source or published snapshot is unsafe, incomplete or inconsistent."""
@@ -101,13 +103,19 @@ def _collect(
         if images.get("finishing_status") != "completed":
             raise PublicationError("Publication requires finished professional image sources")
         expected = {
-            (block["block_id"], beat["beat_id"])
-            for block in plan["blocks"] for beat in block["beats"]
-            if beat.get("prompt") is not None
+            (item["block_id"], item.get("asset_id", item["beat_id"]))
+            for item in described_beats(plan)
         }
-        if (not isinstance(final_assets, list)
+        keys = {
+            (entry.get("block_id"), entry.get("asset_id", entry.get("beat_id")))
+            for entry in final_assets
+            if isinstance(entry, dict)
+        } if isinstance(final_assets, list) else set()
+        if (
+            not isinstance(final_assets, list)
             or len(final_assets) != len(expected)
-            or {(entry["block_id"], entry["beat_id"]) for entry in final_assets} != expected):
+            or keys != expected
+        ):
             raise PublicationError("Finished professional image assets differ from B2")
     avatar = plan.get("avatar")
     if not isinstance(avatar, dict):

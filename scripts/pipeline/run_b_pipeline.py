@@ -1338,9 +1338,10 @@ def _require_ltx_safe_i2v_worker() -> None:
     client = SaladClient(
         SaladDispatchConfig(
             api_key=settings.salad_api_key,
-            api_base_url=os.getenv("SALAD_API_BASE_URL", DEFAULT_SALAD_API_BASE_URL),
-            organization_name=os.getenv("SALAD_ORGANIZATION"),
-            project_name=os.getenv("SALAD_PROJECT"),
+            api_base_url=_runtime_env_value("SALAD_API_BASE_URL")
+            or DEFAULT_SALAD_API_BASE_URL,
+            organization_name=_runtime_env_value("SALAD_ORGANIZATION") or None,
+            project_name=_runtime_env_value("SALAD_PROJECT") or None,
             container_group_name=definition["group_name"],
         )
     )
@@ -1675,31 +1676,51 @@ async def _run_images_only(
         _refresh_audio_costs(report, output)
         _write(report_path, report)
         raise
-    report["run"]["video_preview"] = {"status": "stale_image_regeneration"}
-    report["run"]["video_generation"] = {"status": "stale_image_regeneration"}
-    report["run"]["image_generation"] = {"status": "running"}
     report["run"]["status"] = "running"
     report.setdefault("timings", {})["status"] = "running"
-    _refresh_audio_costs(report, output)
-    _write(report_path, report)
-    try:
-        if _resume_unfinished_images(output, plan):
-            print(
-                "  Resuming unfinished images: keeping previously paid GPT originals.",
-                flush=True,
+    manifest_path = output / "images" / "manifest.json"
+    saved_manifest = None
+    if manifest_path.is_file() and not manifest_path.is_symlink():
+        candidate = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if (
+            isinstance(candidate, dict)
+            and candidate.get("status") == "completed"
+            and (
+                plan.get("visual_style") != "profesional"
+                or candidate.get("finishing_status") == "completed"
             )
-        else:
-            removed_images = await asyncio.to_thread(clear_b2_images_for_rerun, output)
-            if removed_images:
-                print(f"Removed {removed_images} previous B2 image(s).", flush=True)
-        manifest = await _generate_images(output, plan)
-    except Exception:
-        report["run"]["image_generation"] = {"status": "incomplete"}
-        report["run"]["status"] = "failed"
-        report.setdefault("timings", {})["status"] = "failed"
+        ):
+            saved_manifest = candidate
+    if saved_manifest is not None:
+        # A previous run may have finished every paid image and failed only while
+        # syncing/publishing. Reuse that verified checkpoint instead of clearing
+        # and paying for the same images again.
+        manifest = saved_manifest
+        print("  Reusing completed images; continuing after prior downstream failure.", flush=True)
+    else:
+        report["run"]["video_preview"] = {"status": "stale_image_regeneration"}
+        report["run"]["video_generation"] = {"status": "stale_image_regeneration"}
+        report["run"]["image_generation"] = {"status": "running"}
         _refresh_audio_costs(report, output)
         _write(report_path, report)
-        raise
+        try:
+            if _resume_unfinished_images(output, plan):
+                print(
+                    "  Resuming unfinished images: keeping previously paid GPT originals.",
+                    flush=True,
+                )
+            else:
+                removed_images = await asyncio.to_thread(clear_b2_images_for_rerun, output)
+                if removed_images:
+                    print(f"Removed {removed_images} previous B2 image(s).", flush=True)
+            manifest = await _generate_images(output, plan)
+        except Exception:
+            report["run"]["image_generation"] = {"status": "incomplete"}
+            report["run"]["status"] = "failed"
+            report.setdefault("timings", {})["status"] = "failed"
+            _refresh_audio_costs(report, output)
+            _write(report_path, report)
+            raise
     report["run"]["image_generation"] = _image_summary(manifest)
     _refresh_audio_costs(report, output)
     _write(report_path, report)
@@ -2009,6 +2030,7 @@ async def _run_audio_only(
     output_root: Path,
     *,
     resume: bool,
+    max_parallel_calls: int = 8,
     no_video: bool = False,
     results_root: Path = Path("data/results"),
     managed_target: Path | None = None,
@@ -2128,7 +2150,7 @@ async def _run_audio_only(
                     generation_nonce=nonce,
                     on_timing=prior_timing.record_call,
                     on_stage_duration=prior_timing.record_stage,
-                    max_parallel_calls=8,
+                    max_parallel_calls=max_parallel_calls,
                 )
             else:
                 artifact = await _generate_audio(
@@ -2584,6 +2606,7 @@ async def main() -> None:
             script_file,
             output_root,
             resume=bool(getattr(args, "resume_audio", False)),
+            max_parallel_calls=args.max_parallel_calls,
             no_video=bool(getattr(args, "no_video", False)),
             results_root=results_root,
             managed_target=getattr(args, "managed_target", None),

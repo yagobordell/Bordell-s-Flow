@@ -8,6 +8,7 @@ import binascii
 import io
 import json
 import math
+import time
 import wave
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -229,6 +230,18 @@ def _build_directed_payload(*, turns: list[dict[str, str]], voice: str) -> dict[
         "generationConfig": _generation_config(voice),
     }
 
+def _retry_after_seconds(exc: HTTPError, attempt: int) -> float:
+    header = exc.headers.get("Retry-After") if exc.headers is not None else None
+    if isinstance(header, str):
+        try:
+            value = float(header.strip())
+        except ValueError:
+            value = -1.0
+        if math.isfinite(value) and value >= 0:
+            return min(value, 60.0)
+    return min(float(2 ** attempt), 30.0)
+
+
 def _post_json(
     *, url: str, api_key: str, payload: dict[str, Any], timeout_seconds: float
 ) -> dict[str, Any]:
@@ -238,17 +251,25 @@ def _post_json(
         headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         method="POST",
     )
-    try:
-        with urlopen(request, timeout=timeout_seconds) as response:
-            raw = response.read()
-    except HTTPError as exc:
-        # Do not echo server-controlled error bodies; they may contain credentials.
-        raise GeminiTtsError(f"Gemini TTS returned HTTP {exc.code}") from None
-    except (URLError, TimeoutError, OSError) as exc:
-        # A failed POST may have been billed. Never retry it automatically.
-        raise GeminiTtsError(
-            "Gemini TTS transport failed; submission outcome may be unknown"
-        ) from exc
+    for attempt in range(4):
+        try:
+            with urlopen(request, timeout=timeout_seconds) as response:
+                raw = response.read()
+            break
+        except HTTPError as exc:
+            # HTTP 429 is a definite rejection: Gemini did not accept the paid
+            # generation, so it is safe to retry after the server's delay.
+            if exc.code == 429 and attempt < 3:
+                time.sleep(_retry_after_seconds(exc, attempt))
+                continue
+            raise GeminiTtsError(f"Gemini TTS returned HTTP {exc.code}") from None
+        except (URLError, TimeoutError, OSError) as exc:
+            # A failed POST may have been billed. Never retry it automatically.
+            raise GeminiTtsError(
+                "Gemini TTS transport failed; submission outcome may be unknown"
+            ) from exc
+    else:  # pragma: no cover - loop always exits by success or exception.
+        raise GeminiTtsError("Gemini TTS retry loop exhausted")
 
     try:
         decoded = json.loads(raw)
