@@ -371,9 +371,12 @@ def build_b2_video_plan(
     run_dir = output / "video" / "runs" / digest[:20]
     if run_dir.is_symlink() or run_dir.parent.is_symlink():
         raise B2VideoError("Refusing linked B2 LTX run directory")
-    from ai_video_factory.workflows.r2_run_scope import video_run_scope
+    from ai_video_factory.workflows.r2_run_scope import saved_video_scope
 
-    scope = video_run_scope(output, run_dir)
+    # Only the top-level pipeline may opt a fresh run into private R2 keys.
+    # Building a plan for tests, legacy resumes or inspection must not
+    # silently change paid-job identities or their content-addressed inputs.
+    scope = saved_video_scope(output)
     groups = _group_beats(beats)
     master = _verified_asset(output, audio.get("file"), audio.get("sha256"))
 
