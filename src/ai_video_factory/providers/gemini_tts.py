@@ -65,14 +65,14 @@ def _build_style(instructions: str, speed: float) -> str:
 def validate_gemini_voice_name(value: str) -> str:
     """Accept legacy provider IDs and exact Google Studio display names.
 
-    Names may contain ordinary spaces, e.g. "Uncle Enzo 3". Never silently
+    Names may contain spaces and periods, e.g. "Enzo m. 3". Never silently
     normalize internal whitespace: Google resolves the literal selected name.
     """
     if (
         not isinstance(value, str) or not 2 <= len(value) <= 256
         or value != value.strip() or not value[0].isalnum()
         or not value[-1].isalnum()
-        or any(not (char.isalnum() or char in " -_") for char in value)
+        or any(not (char.isalnum() or char in " -_.") for char in value)
         or "  " in value
     ):
         raise ValueError("Gemini voice must be a valid ID or exact Studio display name")
