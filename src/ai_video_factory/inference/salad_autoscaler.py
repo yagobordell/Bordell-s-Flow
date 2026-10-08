@@ -1188,6 +1188,7 @@ def build_global_demands(
         )
     return demands
 
+
 def allocate_project_quota(
     *,
     demands: dict[str, StageDemand],
@@ -1210,7 +1211,8 @@ def allocate_project_quota(
             candidates,
             key=lambda candidate: (
                 demands[candidate].remaining_work_seconds / (allocation[candidate] + 1),
-                -tuple(demands).index(candidate),
+                demands[candidate].expected_runtime_seconds,
+                candidate,
             ),
         )
         allocation[stage] += 1
