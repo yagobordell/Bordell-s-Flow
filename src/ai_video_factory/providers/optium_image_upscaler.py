@@ -454,12 +454,13 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
                     wait_for_output = True
                     last_error = exc
                     continue
-                if exc.status_code == 503:
+                if exc.status_code in {502, 503}:
                     if last_error is None:
                         logger.warning(
-                            "Image upscaler gateway returned HTTP 503; the single-threaded "
-                            "runtime may still be serving an earlier inference. Retrying "
-                            "the same request until the gateway becomes available."
+                            "Image upscaler gateway returned HTTP %s; the container may "
+                            "still be warming up or serving an earlier inference. "
+                            "Retrying the same deterministic request until it recovers.",
+                            exc.status_code,
                         )
                     last_error = exc
                     continue
