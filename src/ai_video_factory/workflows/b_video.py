@@ -371,6 +371,9 @@ def build_b2_video_plan(
     run_dir = output / "video" / "runs" / digest[:20]
     if run_dir.is_symlink() or run_dir.parent.is_symlink():
         raise B2VideoError("Refusing linked B2 LTX run directory")
+    from ai_video_factory.workflows.r2_run_scope import video_run_scope
+
+    scope = video_run_scope(output, run_dir)
     groups = _group_beats(beats)
     master = _verified_asset(output, audio.get("file"), audio.get("sha256"))
 
@@ -431,7 +434,12 @@ def build_b2_video_plan(
                 seed=seed, width=_WIDTH, height=_HEIGHT, fps=_FPS,
                 num_frames=num_frames, generation_profile=LTX_PRODUCTION_I2V_PROFILE,
             )
-            key = f"b2-ltx/inputs/images/{image_sha}.png"
+            if scope is not None:
+                job_id += f"-r{scope}"
+            key = (
+                f"jobs/{job_id}/inputs/keyframe.png" if scope is not None
+                else f"b2-ltx/inputs/images/{image_sha}.png"
+            )
             request = InferenceJobRequest(
                 job_id=job_id, task=LTX_VIDEO_TASK,
                 # Defense in depth for deployed workers: expensive 1080p I2V
@@ -487,15 +495,23 @@ def build_b2_video_plan(
                 audio_sha256=audio_sha, seed=seed, width=_WIDTH, height=_HEIGHT,
                 fps=_FPS, generation_profile=LTX_A2V_RUN_OPTIMIZED_PROFILE,
             )
+            if scope is not None:
+                job_id += f"-r{scope}"
             request = InferenceJobRequest(
                 job_id=job_id, task=LTX_A2V_TASK, max_attempts=DEFAULT_GPU_MAX_ATTEMPTS,
                 inputs=[
                     ObjectInput(
-                        name="image", key=f"b2-ltx/inputs/avatars/{image_sha}.png",
+                        name="image", key=(
+                            f"jobs/{job_id}/inputs/image.png" if scope is not None
+                            else f"b2-ltx/inputs/avatars/{image_sha}.png"
+                        ),
                         sha256=image_sha, content_type="image/png",
                     ),
                     ObjectInput(
-                        name="audio", key=f"b2-ltx/inputs/audio/{audio_sha}.wav",
+                        name="audio", key=(
+                            f"jobs/{job_id}/inputs/audio.wav" if scope is not None
+                            else f"b2-ltx/inputs/audio/{audio_sha}.wav"
+                        ),
                         sha256=audio_sha, content_type="audio/wav",
                     ),
                 ],
