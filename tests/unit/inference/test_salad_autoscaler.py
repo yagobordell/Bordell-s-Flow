@@ -232,6 +232,7 @@ def _config(
         provider_pending_max_seconds=provider_pending_max_seconds,
     )
 
+
 def _pending_rows(count: int) -> list[dict[str, object]]:
     return [
         {
@@ -375,7 +376,6 @@ def test_project_quota_is_shared_across_global_stage_demands() -> None:
 
     assert sum(allocation.values()) == 3
     assert all(value <= demands[stage].ideal_replicas for stage, value in allocation.items())
-
 
 
 @pytest.mark.parametrize(
