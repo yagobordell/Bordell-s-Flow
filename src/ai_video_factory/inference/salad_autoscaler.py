@@ -16,12 +16,13 @@ ACTIVE_STATUSES = (
     "running",
 )
 
-# LTX scales by the global active backlog for each task-specific Salad pool,
-# independent of which application run produced the jobs. A new video therefore
-# never creates capacity by itself; only aggregate queue demand can do so.
-_DEFAULT_JOBS_PER_REPLICA = {
-    "ltx25_i2v": 30,
-    "ltx25": 30,
+# LTX capacity is driven by aggregate GPU-work remaining in each shared task pool.
+# The one-hour defaults reflect the production wall-clock objective for large LTX
+# workloads while remaining configurable per stage.
+_TIME_BASED_LTX_STAGES = frozenset({"ltx25_i2v", "ltx25"})
+_DEFAULT_STAGE_TARGET_DRAIN_MINUTES = {
+    "ltx25_i2v": 60.0,
+    "ltx25": 60.0,
 }
 
 _PROVIDER_STABLE_STATUSES = {"running", "stopped"}
@@ -68,6 +69,8 @@ class PredictiveAutoscalerConfig:
     fallback_runtime_seconds: dict[str, float]
     stage_cold_start_seconds: dict[str, float] | None = None
     stage_jobs_per_replica: dict[str, int] | None = None
+    stage_target_drain_seconds: dict[str, float] | None = None
+    downscale_headroom_ratio: float = 0.90
     zero_demand_stable_polls: int = 1
     drain_grace_seconds: float = 5.0
     drain_ttl_seconds: float = 120.0
@@ -88,6 +91,9 @@ class StageDemand:
     ideal_replicas: int
     jobs_per_replica: int | None = None
     job_count_target: int | None = None
+    target_drain_seconds: float = 0.0
+    effective_drain_seconds: float = 0.0
+    estimated_drain_seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,10 +334,16 @@ def load_predictive_autoscaler_config(
         180.0,
         minimum=0.0,
     )
+    global_target_drain_minutes = _float_env(
+        "SALAD_AUTOSCALER_TARGET_DRAIN_MINUTES",
+        20.0,
+        minimum=1.0,
+    )
     stage_max: dict[str, int] = {}
     fallback_runtime: dict[str, float] = {}
     stage_cold_start: dict[str, float] = {}
     stage_jobs_per_replica: dict[str, int] = {}
+    stage_target_drain: dict[str, float] = {}
     for binding in stage_bindings:
         configured_max = _int_env(
             f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_MAX_REPLICAS",
@@ -349,23 +361,19 @@ def load_predictive_autoscaler_config(
             cold_start_seconds,
             minimum=0.0,
         )
-        default_jobs_per_replica = _DEFAULT_JOBS_PER_REPLICA.get(binding.workload)
-        if default_jobs_per_replica is not None:
-            configured_jobs_per_replica = _int_env(
-                f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_JOBS_PER_REPLICA",
-                default_jobs_per_replica,
-                minimum=1,
-            )
-            stage_jobs_per_replica[binding.workload] = configured_jobs_per_replica
+        default_target_minutes = _DEFAULT_STAGE_TARGET_DRAIN_MINUTES.get(
+            binding.workload,
+            global_target_drain_minutes,
+        )
+        stage_target_drain[binding.workload] = _float_env(
+            f"SALAD_AUTOSCALER_{binding.autoscaler_env_prefix}_TARGET_DRAIN_MINUTES",
+            default_target_minutes,
+            minimum=1.0,
+        ) * 60.0
     return PredictiveAutoscalerConfig(
         enabled=_bool_env("SALAD_AUTOSCALER_ENABLED", default=False),
         project_max_replicas=project_max,
-        target_drain_seconds=_float_env(
-            "SALAD_AUTOSCALER_TARGET_DRAIN_MINUTES",
-            20.0,
-            minimum=1.0,
-        )
-        * 60.0,
+        target_drain_seconds=global_target_drain_minutes * 60.0,
         cold_start_seconds=cold_start_seconds,
         target_utilization=_bounded_float_env(
             "SALAD_AUTOSCALER_TARGET_UTILIZATION",
@@ -423,6 +431,13 @@ def load_predictive_autoscaler_config(
         fallback_runtime_seconds=fallback_runtime,
         stage_cold_start_seconds=stage_cold_start,
         stage_jobs_per_replica=stage_jobs_per_replica,
+        stage_target_drain_seconds=stage_target_drain,
+        downscale_headroom_ratio=_bounded_float_env(
+            "SALAD_AUTOSCALER_DOWNSCALE_HEADROOM_RATIO",
+            0.90,
+            minimum=0.5,
+            maximum=1.0,
+        ),
         drain_grace_seconds=_float_env(
             "SALAD_AUTOSCALER_DRAIN_GRACE_SECONDS",
             5.0,
@@ -607,6 +622,12 @@ class PredictiveSaladAutoscaler:
                 current[stage] = 0
                 continue
             current[stage] = configured
+        targets = apply_downscale_hysteresis(
+            demands=demands,
+            targets=targets,
+            current_replicas=current,
+            config=self.config,
+        )
         initial_current = dict(current)
         results: dict[str, AutoscaleResult] = {}
         hard_failures: dict[str, str] = {}
@@ -1021,6 +1042,8 @@ class PredictiveSaladAutoscaler:
             tuple(sorted(demand.status_counts.items())),
             tuple(sorted(demand.run_counts.items())),
             round(demand.expected_runtime_seconds, 1),
+            round(demand.remaining_work_seconds, 1),
+            round(demand.target_drain_seconds, 1),
             demand.jobs_per_replica,
             demand.job_count_target,
             result.reason,
@@ -1034,13 +1057,28 @@ class PredictiveSaladAutoscaler:
             )
             or "empty"
         )
+        current_eta = (
+            demand.remaining_work_seconds / result.current_replicas
+            if result.current_replicas > 0
+            else None
+        )
+        target_eta = (
+            demand.remaining_work_seconds / result.target_replicas
+            if result.target_replicas > 0
+            else None
+        )
+        current_eta_text = f"{current_eta:.1f}s" if current_eta is not None else "inf"
+        target_eta_text = f"{target_eta:.1f}s" if target_eta is not None else "inf"
         self.logger(
             f"Autoscaler {result.stage}: replicas "
             f"{result.current_replicas}->{result.applied_replicas} "
             f"(target={result.target_replicas}), jobs [{statuses}], "
             f"runs={len(demand.run_counts)}, runtime_p="
             f"{demand.expected_runtime_seconds:.1f}s, remaining_work="
-            f"{demand.remaining_work_seconds:.1f}s"
+            f"{demand.remaining_work_seconds:.1f}s, "
+            f"eta_current={current_eta_text}, eta_target={target_eta_text}, "
+            f"target_drain={demand.target_drain_seconds / 60.0:.1f}m, "
+            f"effective_drain={demand.effective_drain_seconds / 60.0:.1f}m"
             + (
                 f", jobs_per_replica={demand.jobs_per_replica}, "
                 f"job_target={demand.job_count_target}"
@@ -1061,16 +1099,24 @@ def build_global_demands(
     observed_at = now or datetime.now(UTC)
     demands: dict[str, StageDemand] = {}
     jobs_per_replica_by_stage = config.stage_jobs_per_replica or {}
+    target_drain_by_stage = config.stage_target_drain_seconds or {}
     for stage, rows in rows_by_stage.items():
+        target_drain_seconds = max(
+            target_drain_by_stage.get(stage, config.target_drain_seconds),
+            60.0,
+        )
         cold_start_seconds = config.cold_start_seconds
         if config.stage_cold_start_seconds is not None:
             cold_start_seconds = config.stage_cold_start_seconds.get(
                 stage,
                 cold_start_seconds,
             )
-        available_drain_seconds = max(
-            config.target_drain_seconds - cold_start_seconds,
-            60.0,
+        # LTX intentionally ignores model/bootstrap time for capacity policy in this
+        # iteration. The target describes inference drain time once capacity exists.
+        effective_drain_seconds = (
+            target_drain_seconds
+            if stage in _TIME_BASED_LTX_STAGES
+            else max(target_drain_seconds - cold_start_seconds, 60.0)
         )
         expected_runtime = max(float(runtime_by_stage[stage]), 1.0)
         status_counts = Counter(str(row.get("status") or "unknown") for row in rows)
@@ -1090,7 +1136,11 @@ def build_global_demands(
         forecast_blocked = 0
         work_seconds = queued_count * expected_runtime + running_work
         active_job_count = queued_count + len(running_rows)
-        jobs_per_replica = jobs_per_replica_by_stage.get(stage)
+        jobs_per_replica = (
+            None
+            if stage in _TIME_BASED_LTX_STAGES
+            else jobs_per_replica_by_stage.get(stage)
+        )
         job_count_target: int | None = None
         if jobs_per_replica is not None:
             job_count_target = (
@@ -1098,10 +1148,6 @@ def build_global_demands(
                 if active_job_count > 0
                 else 0
             )
-            # Clip-count targets may intentionally fall below the number of
-            # currently running workers. Safe active draining prevents those
-            # workers from claiming another clip and waits for them to finish
-            # before the provider resize is issued.
             ideal = min(
                 job_count_target,
                 active_job_count,
@@ -1113,7 +1159,7 @@ def build_global_demands(
                     len(running_rows),
                     math.ceil(
                         work_seconds
-                        / (available_drain_seconds * config.target_utilization)
+                        / (effective_drain_seconds * config.target_utilization)
                     ),
                 )
                 if work_seconds > 0
@@ -1123,6 +1169,7 @@ def build_global_demands(
                 len(running_rows),
                 min(ideal, active_job_count, config.stage_max_replicas[stage]),
             )
+        estimated_drain_seconds = work_seconds / ideal if ideal > 0 else 0.0
         demands[stage] = StageDemand(
             stage=stage,
             rows=tuple(dict(row) for row in rows),
@@ -1135,9 +1182,11 @@ def build_global_demands(
             ideal_replicas=ideal,
             jobs_per_replica=jobs_per_replica,
             job_count_target=job_count_target,
+            target_drain_seconds=target_drain_seconds,
+            effective_drain_seconds=effective_drain_seconds,
+            estimated_drain_seconds=estimated_drain_seconds,
         )
     return demands
-
 
 def allocate_project_quota(
     *,
@@ -1167,6 +1216,54 @@ def allocate_project_quota(
         allocation[stage] += 1
         capacity -= 1
     return allocation
+
+
+def apply_downscale_hysteresis(
+    *,
+    demands: Mapping[str, StageDemand],
+    targets: Mapping[str, int],
+    current_replicas: Mapping[str, int],
+    config: PredictiveAutoscalerConfig,
+) -> dict[str, int]:
+    """Keep warm LTX capacity through a configurable ETA deadband before downscale."""
+
+    adjusted = dict(targets)
+    quota_constrained = any(
+        adjusted[stage] < demand.ideal_replicas
+        for stage, demand in demands.items()
+    )
+    if quota_constrained:
+        # When the project cap is binding, retaining surplus capacity in one pool
+        # would starve another pool whose ETA is already quota-constrained.
+        return adjusted
+
+    for stage, demand in demands.items():
+        target = adjusted[stage]
+        current = max(int(current_replicas.get(stage, 0)), 0)
+        if (
+            stage not in _TIME_BASED_LTX_STAGES
+            or demand.remaining_work_seconds <= 0
+            or target >= current
+        ):
+            continue
+        downscale_window_seconds = (
+            demand.effective_drain_seconds
+            * config.target_utilization
+            * config.downscale_headroom_ratio
+        )
+        if downscale_window_seconds <= 0:
+            continue
+        active_job_count = sum(demand.status_counts.values())
+        hysteresis_floor = math.ceil(
+            demand.remaining_work_seconds / downscale_window_seconds
+        )
+        hysteresis_floor = min(
+            hysteresis_floor,
+            active_job_count,
+            config.stage_max_replicas[stage],
+        )
+        adjusted[stage] = min(current, max(target, hysteresis_floor))
+    return adjusted
 
 
 def _remaining_running_seconds(
