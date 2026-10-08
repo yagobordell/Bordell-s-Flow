@@ -108,6 +108,73 @@ def test_publishes_expected_layout_and_keeps_working_files(
     assert "publication" not in public_report["run"]
 
 
+
+def test_professional_subshots_publish_by_asset_id(
+    completed: tuple[Path, Path, Path],
+) -> None:
+    work, script, root = completed
+    plan = json.loads((work / "visual_plan.json").read_text(encoding="utf-8"))
+    plan["visual_style"] = "profesional"
+    plan["blocks"] = [{
+        "block_id": 1,
+        "beats": [{
+            "beat_id": "1B",
+            "text": "Two related visual moments.",
+            "visual_type": "media_image",
+            "prompt": "First moment.",
+            "reference": False,
+            "audio": False,
+            "visual_subshots": [
+                {
+                    "asset_id": "1B__1",
+                    "subshot_index": 1,
+                    "subshot_count": 2,
+                    "generation": "independent",
+                    "prompt": "First moment.",
+                },
+                {
+                    "asset_id": "1B__2",
+                    "subshot_index": 2,
+                    "subshot_count": 2,
+                    "generation": "independent",
+                    "prompt": "Second moment.",
+                },
+            ],
+        }],
+    }]
+    _json(work, "visual_plan.json", plan)
+
+    first_sha = _put(work, "images/block_1/1B__1.png", b"finished one")
+    second_sha = _put(work, "images/block_1/1B__2.png", b"finished two")
+    final_assets = [
+        {
+            "block_id": 1, "beat_id": "1B", "asset_id": "1B__1",
+            "file": "images/block_1/1B__1.png", "sha256": first_sha,
+        },
+        {
+            "block_id": 1, "beat_id": "1B", "asset_id": "1B__2",
+            "file": "images/block_1/1B__2.png", "sha256": second_sha,
+        },
+    ]
+    _json(work, "images/manifest.json", {
+        "status": "completed",
+        "finishing_status": "completed",
+        "items": [],
+        "panel_assets": [],
+        "final_assets": final_assets,
+    })
+
+    published = publish_completed_run(work, script, root)
+
+    assert (
+        published / "Media" / "imagenes" / "block_1" / "1B__1.png"
+    ).read_bytes() == b"finished one"
+    assert (
+        published / "Media" / "imagenes" / "block_1" / "1B__2.png"
+    ).read_bytes() == b"finished two"
+
+
+
 def test_retry_reuses_and_verifies_same_immutable_snapshot(
     completed: tuple[Path, Path, Path],
 ) -> None:
