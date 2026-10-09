@@ -15,13 +15,15 @@ from collections.abc import Callable
 from importlib.resources import files
 from typing import Any
 
+from ai_video_factory.bots.contracts import ProfessionalVisualBeat
 from ai_video_factory.bots.professional_cta import (
     ProfessionalCTADetection,
     ProfessionalCTAVisualBeat,
     ProfessionalCTAVisuals,
 )
-from ai_video_factory.bots.contracts import ProfessionalVisualBeat
 from ai_video_factory.bots.validation_retries import MAX_VALIDATION_RETRIES
+
+
 def prompt_instructions(name: str) -> str:
     return files("ai_video_factory.bots.prompts").joinpath(name).read_text(encoding="utf-8")
 
@@ -90,7 +92,8 @@ def _reflow_numbered_cta_edges(block: dict[str, Any]) -> None:
         if pending:
             for index, beat in enumerate(pending, 1):
                 matched = _NUMBERED.match(beat["prompt"])
-                assert matched is not None
+                if matched is None:
+                    raise ValueError("Invalid numbered CTA grid")
                 beat["prompt"] = (
                     f"{index}. {matched.group(1).strip()}" if len(pending) > 1
                     else matched.group(1).strip()
