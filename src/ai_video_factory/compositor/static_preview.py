@@ -421,7 +421,7 @@ def build_stt_beat_timeline(
                         "continuous", "b3_group_id", "b3_shot_prompt",
                         "b3_shot_video_prompt", "b3_reference_beat_id",
                         "b3_grid_id", "b3_grid_source", "b3_grid_role",
-                        "visual_subshots",
+                        "visual_subshots", "cta_group_id",
                     )
                     if key in beat
                 }),
