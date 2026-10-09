@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -105,7 +104,7 @@ def apply_professional_ebook_qr(
     return {
         **rendered,
         "file": destination.relative_to(output).as_posix(),
-        "sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
+        "sha256": sha256_file(destination),
         "professional_ebook_qr": {
             "qr_sha256": qr_meta["sha256"],
             "position": "top_right",
