@@ -639,7 +639,8 @@ class PostgresJobRepository:
 
         fields = (
             "job_id", "request_sha256", "attempt_count", "instance_id",
-            "instance_identity_source", "worker_id", "stage", "profile", "width", "height", "num_frames",
+            "instance_identity_source", "worker_id", "stage", "profile",
+            "width", "height", "num_frames",
             "task_seconds", "inference_seconds", "pipeline_load_seconds",
             "stage1_seconds", "stage2_seconds", "video_decode_seconds",
             "encode_seconds", "pipeline_reused",
