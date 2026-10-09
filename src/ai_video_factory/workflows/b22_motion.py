@@ -215,6 +215,9 @@ async def _call_group(
     )
     last_beat = around[-1].beat_ids[-1]
     last_idx = next(i for i, beat in enumerate(timeline_beats) if beat["beat_id"] == last_beat)
+    # Include neighboring static images even when there is no later video job.
+    first_idx = max(0, first_idx - 2)
+    last_idx = min(len(timeline_beats) - 1, last_idx + 2)
     context_image_manifest: list[dict[str, str]] = []
     for beat in timeline_beats[first_idx:last_idx + 1]:
         if len(context_image_manifest) >= _MAX_CONTEXT_IMAGES:
