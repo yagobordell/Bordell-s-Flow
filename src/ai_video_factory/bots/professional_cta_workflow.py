@@ -211,7 +211,7 @@ async def direct_professional_cta(
 
     available = {
         beat["beat_id"]: {**beat, "block_id": block["block_id"],
-                          "block_type": block["type"]}
+                          "block_type": block.get("type")}
         for block in merged_b12["blocks"] for beat in block["beats"]
     }
     payload = {
