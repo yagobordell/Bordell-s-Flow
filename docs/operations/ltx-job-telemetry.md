@@ -56,3 +56,52 @@ three-instance classifier for normalized JSONL observations.
 
 Do not activate cost-aware autoscaling until telemetry proves forecasts agree
 with real jobs and global project replica quota has been tested.
+
+## Controlled setup for joint B2.2 + LTX testing
+
+The chatbot cannot apply this migration or deploy to Salad without the operator's
+private Postgres, Docker Registry and Salad credentials. Run the checked-in
+rollout script **locally** from the unified feature branch.
+
+The script defaults to a true dry run:
+
+```powershell
+.\scripts\salad\prepare_ltx_telemetry.ps1
+```
+
+Before applying, ensure the **singleton Capacity Controller is stopped**
+via the normal operator procedure, no in-flight GPU jobs remain, and both
+`ltx25_i2v` and `ltx25` groups are stably stopped. The script refuses
+a live or pending group; it never uses the manual controller override.
+
+Once those conditions and local `POSTGRES_DSN`, Salad credentials, Docker
+login, and `uv` are ready, explicitly apply:
+
+```powershell
+.\scripts\salad\prepare_ltx_telemetry.ps1 -Apply
+```
+
+The procedure verifies both groups are stopped **before touching Postgres**,
+applies migration 009, builds and pushes the shared LTX Dockerfile only once
+under an immutable commit-specific tag, pins its SHA-256 digest, prepares both
+Salad groups with that digest, and verifies that they remain stopped. It does
+**not** start a GPU or launch a video. A failed step may leave the SQL migration
+applied or one service prepared; repeat only after inspecting remote state.
+Deployments are deliberately not transactional across services.
+
+You can also run the SQL check or migration independently:
+
+```powershell
+uv run --locked --extra dev python scripts/salad/apply_ltx_telemetry_migration.py
+uv run --locked --extra dev python scripts/salad/apply_ltx_telemetry_migration.py --apply
+```
+
+When prepared, resume the normal Capacity Controller via its established
+operator procedure. Do not start parallel controllers, bypass its advisory
+lock, enable cost-aware autoscaling, or set nonzero GPU replicas as a smoke test.
+The workers will generate new telemetry only on **future successful jobs**;
+old deleted R2 job objects cannot be recovered through this migration.
+
+Rollback, if necessary: do **not** roll back the new table; restore the
+previous pinned container image while stopped using the existing guarded
+Salad manager, and keep the telemetry table for offline analysis.
