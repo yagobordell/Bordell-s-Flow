@@ -183,7 +183,7 @@ def apply_professional_ebook_qr(
         "[1:v]scale=280:280:flags=neighbor,format=rgba[qr];"
         "[0:v][qr]overlay=x=main_w-overlay_w-34:y=34:"
         f"enable='{_enable_windows(qr_windows, inclusive_end=True)}':"
-        f"eval=frame:format={'auto' if website_windows else 'yuv420p'}"
+        f"eval=frame:format={'auto' if website_windows else 'yuv420'}"
         f"[{'qr_base' if website_windows else 'v'}]"
     )
     arguments = [
@@ -200,7 +200,7 @@ def apply_professional_ebook_qr(
             "x=(main_w-overlay_w)/2:"
             f"y=main_h-overlay_h-{_WEBSITE_BOTTOM_MARGIN_PX}:"
             f"enable='{_enable_windows(website_windows, inclusive_end=False)}':"
-            "eval=frame:format=yuv420p[v]"
+            "eval=frame:format=yuv420[v]"
         )
     arguments.extend([
         "-filter_complex", filter_graph,
