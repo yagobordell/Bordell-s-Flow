@@ -569,6 +569,7 @@ class DirectLTX25Backend:
             raise FileNotFoundError(f"LTX keyframe input does not exist: {keyframe_path}")
 
         generation_started = time.monotonic()
+        self._last_generation_metrics: dict[str, Any] | None = None
         requested_backend = (
             "triton"
             if parameters.generation_profile
@@ -740,6 +741,13 @@ class DirectLTX25Backend:
                     time.monotonic() - generation_started
                 )
                 self._pipeline_successful_generations += 1
+                self._last_generation_metrics = {
+                    "pipeline_reused": pipeline_reused,
+                    "internal_width": pipeline_width,
+                    "internal_height": pipeline_height,
+                    "frames": parameters.num_frames,
+                    **metrics.timings,
+                }
                 logger.info(
                     "LTX25_I2V_PHASE_METRICS %s",
                     json.dumps(
@@ -932,7 +940,11 @@ class LTXVideoTaskRunner:
             raise
         if not output.is_file() or output.stat().st_size <= 0:
             raise ValueError("LTX-2.5 backend did not produce a non-empty MP4 artifact")
-        return LocalArtifact(path=output, content_type="video/mp4")
+        return LocalArtifact(
+            path=output,
+            content_type="video/mp4",
+            telemetry=getattr(self._backend, "_last_generation_metrics", None),
+        )
 
     def _validate_request(
         self,

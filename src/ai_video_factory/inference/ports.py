@@ -144,6 +144,7 @@ class LocalArtifact:
     path: Path
     content_type: str
     sidecars: tuple[LocalSidecarArtifact, ...] = ()
+    telemetry: Mapping[str, Any] | None = None
 
 
 class TaskRunner(Protocol):
