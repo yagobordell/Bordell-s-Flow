@@ -54,3 +54,19 @@ project-wide allocation by itself.
 This is a model, not a live A/B result. High/Medium/Low/Lowest Salad price
 tiers must be compared with real interruption and retry data before any
 production change; the tools do not change service priorities.
+
+When a configured forward pool budget cannot accommodate **any** worker and
+none is already warm, the opt-in policy leaves that pool at zero and marks ETA
+as not scheduled. Already-running jobs are not interrupted; their future cost
+cannot be capped exactly. Remove or raise the budget to resume queued work.
+This is **not** a durable per-video budget-guard on PostgreSQL claims.
+
+## Priority what-if (price only)
+
+Salad's published October 2026 RTX 5090 rates are High $0.500/h,
+Medium $0.417/h, Low $0.333/h, and Lowest $0.250/h. They are not pinned
+permanently. High is protected from priority preemption, while Medium and
+Low may be preempted and Lowest is the most interruptible. A lower sticker
+price is **not** evidence of lower per-video cost if retries waste inference
+or capacity becomes unavailable. No tool changes production priorities.
+Reference: https://salad.com/pricing/

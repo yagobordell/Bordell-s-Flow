@@ -42,8 +42,13 @@ def evaluate_scenario(document: dict[str, Any]) -> dict[str, Any]:
             "as billable from t=0; no availability/retry/interruption modeling"
         ),
         "stages": selections,
-        "projected_parallel_finish_seconds": max(
-            selection["selected"]["eta_seconds"] for selection in selections
+        "projected_parallel_finish_seconds": (
+            max(selection["selected"]["eta_seconds"] for selection in selections)
+            if all(
+                selection["selected"]["eta_seconds"] is not None
+                for selection in selections
+            )
+            else None
         ),
         "projected_usd": round(sum(
             selection["selected"]["projected_usd"] for selection in selections

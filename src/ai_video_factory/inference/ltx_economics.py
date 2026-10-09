@@ -17,7 +17,7 @@ class LtxCapacityOption:
     replicas: int
     warm_replicas: int
     cold_replicas: int
-    eta_seconds: float
+    eta_seconds: float | None
     projected_gpu_seconds: float
     projected_usd: float
     meets_deadline: bool
@@ -77,6 +77,11 @@ def plan_ltx_capacity(
         return LtxCapacityDecision(idle, (idle,), "no_remaining_work")
 
     limit = min(active_jobs, max_replicas)
+    if not limit:
+        paused = LtxCapacityOption(
+            0, 0, 0, None, 0.0, 0.0, False, True,
+        )
+        return LtxCapacityDecision(paused, (paused,), "service_capacity_disabled")
     options: list[LtxCapacityOption] = []
     for replicas in range(max(1, running_jobs), limit + 1):
         warm = min(current_replicas, replicas)
@@ -119,8 +124,17 @@ def plan_ltx_capacity(
             option for option in options
             if option.replicas <= max(current_replicas, running_jobs)
         ]
+        if not existing:
+            # No warm or active replica to preserve. A strict *opt-in* pool
+            # budget must not launch the first worker if no plan is affordable.
+            paused = LtxCapacityOption(
+                0, 0, 0, None, 0.0, 0.0, False, True,
+            )
+            return LtxCapacityDecision(
+                paused, tuple(options), "projected_pool_budget_blocks_new_capacity",
+            )
         selected = min(
-            existing or options,
+            existing,
             key=lambda option: (option.projected_usd, option.replicas),
         )
         return LtxCapacityDecision(

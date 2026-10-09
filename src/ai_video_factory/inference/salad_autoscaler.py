@@ -672,12 +672,21 @@ class PredictiveSaladAutoscaler:
                 adjusted_demands[stage] = replace(
                     demand,
                     ideal_replicas=choice.replicas,
-                    estimated_drain_seconds=choice.eta_seconds,
+                    estimated_drain_seconds=(
+                        choice.eta_seconds
+                        if choice.eta_seconds is not None
+                        else demand.estimated_drain_seconds
+                    ),
+                )
+                eta_label = (
+                    f"{choice.eta_seconds:.0f}s"
+                    if choice.eta_seconds is not None
+                    else "not_scheduled"
                 )
                 self.logger(
                     f"Autoscaler {stage}: cost-aware projection "
                     f"replicas={choice.replicas}, warm={choice.warm_replicas}, "
-                    f"cold={choice.cold_replicas}, eta={choice.eta_seconds:.0f}s, "
+                    f"cold={choice.cold_replicas}, eta={eta_label}, "
                     f"estimated_usd={choice.projected_usd:.4f} "
                     f"(not invoice), reason={decision.reason}."
                 )

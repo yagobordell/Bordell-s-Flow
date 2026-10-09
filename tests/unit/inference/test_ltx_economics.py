@@ -88,3 +88,23 @@ def test_cold_start_is_included_in_eta_and_conservative_cost():
 def test_invalid_projections_fail_closed(bad):
     with pytest.raises(ValueError):
         _plan(**bad)
+
+
+def test_zero_warm_capacity_and_unaffordable_budget_pause_new_work():
+    decision = _plan(
+        remaining_work_seconds=12000.0,
+        current_replicas=0,
+        projected_pool_budget_usd=0.001,
+    )
+    assert decision.selected.replicas == 0
+    assert decision.selected.eta_seconds is None
+    assert decision.reason == "projected_pool_budget_blocks_new_capacity"
+
+
+def test_zero_service_limit_defers_without_publishing_jobs():
+    decision = _plan(
+        current_replicas=0,
+        max_replicas=0,
+    )
+    assert decision.selected.replicas == 0
+    assert decision.reason == "service_capacity_disabled"
