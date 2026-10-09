@@ -1111,6 +1111,8 @@ async def run_b_pipeline(
     enable_casero_cta: bool = False,
     avatar_image: bytes | None = None,
     ebook_image: bytes | None = None,
+    previous_cta_groups: tuple[tuple[str, ...], ...] | None = None,
+    previous_cta_overrides: dict[str, ProfessionalCTAVisualBeat] | None = None,
     start_from: Literal["B1.1", "B1.2", "B2"] = "B1.1",
     stop_after: Literal["B1.1", "B1.2", "B2", "B2.1", "B3"] = "B2",
     previous_b11: B11Output | None = None,
@@ -1446,13 +1448,26 @@ async def run_b_pipeline(
     cta_merged_b12 = BPipelineResult(
         b11=b11, b12=tuple(b12_results), b2=(),
     ).merged_b12_output()
+    if previous_cta_groups is not None:
+        from .professional_cta import ProfessionalCTADetection
+        from .professional_cta_workflow import validate_cta_detection
+
+        validate_cta_detection(
+            ProfessionalCTADetection(
+                cta_groups=[list(group) for group in previous_cta_groups],
+            ),
+            cta_merged_b12,
+        )
     cta_detection_task = (
         asyncio.create_task(detect_professional_ctas(
             cta_merged_b12, provider=provider, model=model, semaphore=semaphore,
             on_input=on_input, on_output=on_output,
             on_api_response=on_api_response, on_call_duration=on_call_duration,
         ))
-        if visual_style == "profesional" and ebook_image is not None else None
+        if (
+            visual_style == "profesional" and ebook_image is not None
+            and previous_cta_groups is None
+        ) else None
     )
 
     # One shared retry budget per B2 block. Global avatar-run repairs consume
@@ -1865,11 +1880,14 @@ async def run_b_pipeline(
         if on_stage_duration is not None:
             on_stage_duration("B2", perf_counter() - b2_started)
 
-    cta_groups: tuple[tuple[str, ...], ...] = ()
-    cta_overrides: dict[str, ProfessionalCTAVisualBeat] = {}
+    cta_groups: tuple[tuple[str, ...], ...] = previous_cta_groups or ()
+    cta_overrides: dict[str, ProfessionalCTAVisualBeat] = dict(
+        previous_cta_overrides or {}
+    )
     if cta_detection_task is not None:
         cta_groups = await cta_detection_task
-        if cta_groups:
+    if cta_groups:
+        if not cta_overrides:
             if not avatar_image or not ebook_image:
                 raise BPipelineValidationError("CTA images missing")
             async def direct_one(
@@ -1889,6 +1907,7 @@ async def run_b_pipeline(
             ))
             for values in directed:
                 cta_overrides.update(values)
+    if cta_groups:
             # Validate global spoken continuity and numbered-grid semantics
             # only after B2 has been overwritten with accepted CTA decisions.
             for attempt in range(MAX_VALIDATION_RETRIES + 1):
