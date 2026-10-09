@@ -77,7 +77,7 @@ def test_completed_video_persists_telemetry_without_affecting_success(
             sha256=sha256_file(source),
         )],
         output=ObjectOutput(
-            key="outputs/ltx-observed-job.mp4",
+            key="jobs/ltx-observed-job/output.mp4",
             content_type="video/mp4",
         ),
         parameters={
