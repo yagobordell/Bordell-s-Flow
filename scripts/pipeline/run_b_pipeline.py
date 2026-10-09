@@ -36,6 +36,11 @@ from ai_video_factory.bots.fish_audio_workflow import (
     retranscribe_audio_block,
     unfinished_audio_runs,
 )
+from ai_video_factory.bots.professional_cta import (
+    ProfessionalCTADetection,
+    ProfessionalCTAVisualBeat,
+    ProfessionalCTAVisuals,
+)
 from ai_video_factory.bots.professional_voice import (
     ProfessionalAudioRegenerationLimitReached,
     generate_professional_audio,
@@ -77,11 +82,6 @@ from ai_video_factory.providers.avatar_library import (
     organize_avatar,
 )
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
-from ai_video_factory.bots.professional_cta import (
-    ProfessionalCTADetection,
-    ProfessionalCTAVisualBeat,
-    ProfessionalCTAVisuals,
-)
 from ai_video_factory.providers.avatar_style import ensure_avatar_style
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice, valid_voice_provider
 from ai_video_factory.providers.b3_shots import B3ShotImageError, generate_b3_shot_images
