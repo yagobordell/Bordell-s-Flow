@@ -561,9 +561,17 @@ de la solicitud. Ninguna referencia se sustituye silenciosamente.
 `qr.png` auténtico y validado por SHA-256 en la esquina superior derecha
 durante cada grupo CTA. Desde el inicio del primer CTA hasta 90 segundos
 después de su final permanece visible, incluso sobre beats narrativos
-posteriores. Los intervalos usan la timeline STT exacta; no se vuelve a grabar
-la narración original. Ningún beat posterior necesita instrucciones sobre el
-QR. El vídeo con overlay se verifica antes de declararse completado.
+posteriores. **Además, `zellenne.com` aparece al pronunciar por primera vez
+«QR» dentro de cada CTA** y desaparece al acabar ese CTA, sin heredar los
+90 segundos adicionales del QR. El comienzo se deriva de la palabra ya
+alineada con OpenAI STT (campo `qr_spoken_seconds` de la timeline); si ese
+CTA no contiene un «QR» pronunciado, no aparece la web. El texto se genera
+por código, blanco con contorno negro fino (2 px), centrado horizontalmente,
+a 145 px del margen inferior para situarse por encima de subtítulos habituales.
+No se incorpora a los prompts ni a los fotogramas LTX. Los intervalos usan la
+timeline STT exacta; no se vuelve a grabar la narración original. Ningún beat
+posterior necesita instrucciones sobre el QR. El vídeo con overlay se verifica
+antes de declararse completado.
 
 Artefactos:
 - `CTA Detector/output.json` — únicamente grupos de beat IDs.
