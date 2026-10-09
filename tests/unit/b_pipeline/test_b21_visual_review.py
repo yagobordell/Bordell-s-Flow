@@ -65,23 +65,23 @@ def _review(*patches: dict[str, object]) -> B21Output:
 
 def test_split_candidates_are_marked_by_exact_code_count() -> None:
     plan = _plan([
-        _beat("1A", "x" * 49, "First image."),
-        _beat("1B", "x" * 49 + " ", "Second image."),
-        _beat("1C", "x" * 50, "Third image."),
+        _beat("1A", "x" * 69, "First image."),
+        _beat("1B", "x" * 69 + " ", "Second image."),
+        _beat("1C", "x" * 70, "Third image."),
     ])
 
     candidates = _b21_split_candidates(plan)
 
     assert [(item["beat_id"], item["character_count"]) for item in candidates] == [
-        ("1B", 50),
-        ("1C", 50),
+        ("1B", 70),
+        ("1C", 70),
     ]
 
 
 def test_numbered_grid_split_inserts_panel_and_shifts_following_numbers() -> None:
     source = _plan([
         _beat("1A", "Short.", "1. Same subject in a wide shot."),
-        _beat("1B", "This narration is deliberately longer than fifty characters total.",
+        _beat("1B", "This narration is deliberately longer than seventy characters total for testing.",
               "2. Same subject in a medium shot."),
         _beat("1C", "Short again.", "3. Same subject in a close shot."),
     ])
@@ -183,7 +183,7 @@ def test_numbered_split_cannot_escape_its_grid() -> None:
         _beat("1A", "Short.", "1. First view."),
         _beat(
             "1B",
-            "This second numbered image has well over fifty narration characters.",
+            "This second numbered image has well over seventy narration characters in its original line.",
             "2. Second view.",
         ),
     ])
@@ -204,7 +204,7 @@ def test_numbered_split_cannot_escape_its_grid() -> None:
 
 def test_b21_receives_complete_merged_b2_and_code_marked_candidates() -> None:
     first = "The first visual sentence is deliberately long enough for two images. "
-    second = "The second block also carries enough narration for two still images."
+    second = "The second block also carries enough narration for two still images in the scene."
     script = first + second
     b11 = B11Output.model_validate({
         "pipeline_stage": "B1.1",
