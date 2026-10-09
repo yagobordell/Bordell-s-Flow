@@ -3165,10 +3165,17 @@ async def main() -> None:
             visual_style=visual_style,
             enable_casero_cta=visual_style == "casero",
             avatar_image=avatar_bytes,
-            ebook_image=(covers.files[0].read_bytes()
-                         if visual_style == "profesional" and covers is not None else None),
-            previous_cta_groups=prior_cta_groups,
-            previous_cta_overrides=prior_cta_overrides,
+            **(
+                {"ebook_image": covers.files[0].read_bytes()}
+                if visual_style == "profesional" and covers is not None else {}
+            ),
+            **(
+                {
+                    "previous_cta_groups": prior_cta_groups,
+                    "previous_cta_overrides": prior_cta_overrides,
+                }
+                if prior_cta_groups is not None else {}
+            ),
             start_from=args.from_stage,
             stop_after=stop_stage or (
                 "B3" if visual_style == "profesional" else "B2"
@@ -3212,7 +3219,7 @@ async def main() -> None:
             if visual_style == "profesional":
                 visual_plan["ebook_reference"] = ebook_reference
                 visual_plan["ebook_cta_groups"] = [
-                    list(group) for group in result.cta_groups
+                    list(group) for group in getattr(result, "cta_groups", ())
                 ]
             _write(output / "visual_plan.json", visual_plan)
         if professional_audio_enabled:
@@ -3317,11 +3324,15 @@ async def main() -> None:
                         max_parallel_calls=args.max_parallel_calls,
                         visual_style=visual_style,
                         avatar_image=avatar_bytes,
-                        ebook_image=(covers.files[0].read_bytes()
-                                     if visual_style == "profesional"
-                                     and covers is not None else None),
-                        previous_cta_groups=result.cta_groups,
-                        previous_cta_overrides=result.cta_overrides,
+                        **(
+                            {
+                                "ebook_image": covers.files[0].read_bytes(),
+                                "previous_cta_groups": result.cta_groups,
+                                "previous_cta_overrides": result.cta_overrides,
+                            }
+                            if visual_style == "profesional" and covers is not None
+                            else {}
+                        ),
                         start_from="B2",
                         stop_after=(
                             "B3" if visual_style == "profesional" else "B2"
@@ -3348,7 +3359,7 @@ async def main() -> None:
                     if visual_style == "profesional":
                         visual_plan["ebook_reference"] = ebook_reference
                         visual_plan["ebook_cta_groups"] = [
-                            list(group) for group in result.cta_groups
+                            list(group) for group in getattr(result, "cta_groups", ())
                         ]
                     _write(output / "visual_plan.json", visual_plan)
                     if professional_audio_enabled:
