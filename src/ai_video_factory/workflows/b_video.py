@@ -301,7 +301,13 @@ def _fingerprint(
 ) -> str:
     relevant = {
         "schema": _SCHEMA,
-        "timeline": timeline["beats"],
+        # Website word timestamps only affect final composition. Never
+        # invalidate paid LTX GPU jobs for a CTA text-overlay-only change.
+        "timeline": [
+            {key: value for key, value in beat.items()
+             if key != "qr_spoken_seconds"}
+            for beat in timeline["beats"]
+        ],
         "master_audio_sha256": audio["sha256"],
         "avatar_sha256": sha256_file(avatar),
         "image_sha256": [
