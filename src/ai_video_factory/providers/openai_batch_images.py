@@ -551,6 +551,18 @@ def _one_image(
             "destination": image_path,
         }
         if ordered_urls:
+            ordered_labels = ", ".join(
+                f"reference image {i}: {source}"
+                for i, source in enumerate(cta_sources, start=1)
+            )
+            kwargs["prompt"] += (
+                "\n\nAttached references in this exact order: "
+                + ordered_labels
+                + ". Preserve the recognizable presenter's identity whenever"
+                " presenter is selected. Reproduce the actual ebook cover"
+                " artwork and lettering faithfully whenever ebook is selected."
+                " Do not invent a QR code: a real QR is composited later."
+            )
             kwargs["reference_image_urls"] = ordered_urls
         elif reference_url is not None:
             kwargs["reference_image_url"] = reference_url
