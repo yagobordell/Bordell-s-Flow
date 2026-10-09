@@ -191,7 +191,15 @@ def _group_beats(beats: list[dict[str, Any]]) -> list[tuple[str, int, int]]:
     groups: list[tuple[str, int, int]] = []
     avatar_start: int | None = None
     avatar_source: tuple[object, ...] | None = None
+    previous_cta: int | None = None
     for index, beat in enumerate(beats):
+        # CTA speaking takes must not cross their group boundaries even
+        # when B3 skips short (1-2 beat) groups.
+        current_cta = beat.get("cta_group_id")
+        if index and current_cta != previous_cta and avatar_start is not None:
+            groups.append(("a2v", avatar_start, index - 1))
+            avatar_start, avatar_source = None, None
+        previous_cta = current_cta
         kind = beat["visual_type"]
         if kind == "media_image" and beat.get("audio") is True:
             raise B2VideoError(
@@ -289,6 +297,7 @@ def _fingerprint(
     b3_assets: dict[tuple[int, str], Path] | None = None,
     all_assets: dict[tuple[int, str], Path] | None = None,
     motion_overrides: dict[str, str] | None = None,
+    cta_signature: dict[str, Any] | None = None,
 ) -> str:
     relevant = {
         "schema": _SCHEMA,
@@ -321,6 +330,8 @@ def _fingerprint(
         relevant["i2v_profile"] = i2v_profile
     if motion_overrides:
         relevant["b22_motion_overrides"] = sorted(motion_overrides.items())
+    if cta_signature:
+        relevant["professional_ebook_cta"] = cta_signature
     canonical = json.dumps(relevant, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -372,6 +383,13 @@ def build_b2_video_plan(
         timeline, audio, assets, avatar,
         b3_assets=b3_assets, all_assets=all_assets,
         motion_overrides=motion_overrides,
+        cta_signature={
+            "cta_groups": plan.get("ebook_cta_groups", []),
+            "qr_sha256": (
+                plan.get("avatar", {}).get("qr", {}).get("sha256")
+                if plan.get("ebook_cta_groups") else None
+            ),
+        } if plan.get("ebook_cta_groups") else None,
     )
     run_dir = output / "video" / "runs" / digest[:20]
     if run_dir.is_symlink() or run_dir.parent.is_symlink():
