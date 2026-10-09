@@ -527,6 +527,49 @@ que requieren LTX. El controlador de capacidad de Salad sigue siendo un servicio
 independiente: el runner no despliega GPUs.
 
 
+## CTA ebook en Profesional: detector + director + merge protegido
+
+Tras B1.2, el **merged B1.2 completo** alimenta a CTA Detector en paralelo
+con el B2 Profesional habitual. El detector devuelve exclusivamente grupos
+cronológicos de IDs de beats completos que promocionan el ebook; nunca cambia
+texto ni segmenta beats. El bot **B2 CTA Profesional** recibe cada grupo, la
+imagen original del avatar y la portada persistente del ebook, y asigna con
+libertad creativa `visual_type`, `prompt`, `video_prompt`, `audio`,
+`reference` y `reference_sources` (presenter, ebook o ambas referencias).
+El campo `reference` sigue siendo booleano para compatibilidad con B2.1 y B3.
+La selección real se guarda separada como `cta_reference_sources`.
+
+La asignación B2 original se preserva en sus checkpoints; el **merged B2**
+y `visual_plan.json` sustituyen únicamente las asignaciones visuales de los
+beats detectados. Las salidas CTA son inmutables para B2.1: todo parche de
+B2.1 que toque esos IDs se descarta; también se excluyen de sus split
+candidates. El merge revalida límites consecutivos de `audio=true` y grids
+antes de continuar. Los grupos A2V de B3 y los trabajos LTX cortan
+forzosamente al entrar y salir de un CTA, sin compartir tomas con la narración
+normal. B2.2 sigue refinando el movimiento post-B3 contra los PNG definitivos.
+
+La biblioteca del avatar fija la portada original con
+`ensure_ebook_covers` (selección inicial mediante `--ebook-cover` y posterior
+reutilización). Cada run Profesional guarda la copia verificable
+`ebook/cover_1.png`. El generador OpenAI Images recibe realmente los PNG
+correspondientes a cada `cta_reference_sources` y los vincula al fingerprint
+de la solicitud. Ninguna referencia se sustituye silenciosamente.
+
+**QR:** no es parte de ningún prompt de imagen ni LTX. El compositor inserta
+`qr.png` auténtico y validado por SHA-256 en la esquina superior derecha
+durante cada grupo CTA. Desde el inicio del primer CTA hasta 90 segundos
+después de su final permanece visible, incluso sobre beats narrativos
+posteriores. Los intervalos usan la timeline STT exacta; no se vuelve a grabar
+la narración original. Ningún beat posterior necesita instrucciones sobre el
+QR. El vídeo con overlay se verifica antes de declararse completado.
+
+Artefactos:
+- `CTA Detector/output.json` — únicamente grupos de beat IDs.
+- `B2 CTA/group_N/output.json` — decisiones creativas del CTA.
+- `visual_plan.json` — `ebook_cta_groups`, `ebook_reference`,
+  `cta_group_id` y `cta_reference_sources`.
+- `video/runs/<fingerprint>/with_ebook_qr.mp4` — composición final.
+
 ## B2.2 profesional: adaptación del movimiento después de B3
 
 La generación LTX profesional aplica **B2.2** tras B2.1, B3, los PNG finales
