@@ -146,3 +146,51 @@ def test_no_spoken_qr_uses_only_existing_qr_overlay(tmp_path, monkeypatch):
     assert cmd.count("-loop") == 1
     assert not (run_dir / "ebook_cta_website.png").exists()
     assert result["professional_ebook_qr"]["website_overlay"]["windows_seconds"] == []
+
+
+def test_canonical_stt_timeline_uses_real_qr_word_onset(tmp_path):
+    import json
+    import wave
+
+    from ai_video_factory.compositor.static_preview import build_stt_beat_timeline
+
+    wav = tmp_path / "voice.wav"
+    with wave.open(str(wav), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(48000)
+        output.writeframes(b"\x00\x00" * 48000 * 2)
+    wav_hash = sha256_file(wav)
+    transcript = tmp_path / "words.json"
+    transcript.write_text(json.dumps({
+        "model": "whisper-1", "source_audio_sha256": wav_hash,
+        "words": [
+            {"word": "Scan", "start": 0.15, "end": 0.25},
+            {"word": "the", "start": 0.30, "end": 0.43},
+            {"word": "QR", "start": 0.63, "end": 0.75},
+            {"word": "now", "start": 0.80, "end": 0.91},
+        ],
+    }), encoding="utf-8")
+    plan = {"blocks": [{"block_id": 1, "beats": [{
+        "beat_id": "1A", "text": "Scan the QR now.",
+        "visual_type": "media_image", "audio": False,
+        "cta_group_id": 1,
+    }]}]}
+    audio = {
+        "file": "voice.wav", "sha256": wav_hash,
+        "duration_seconds": 2.0, "stt_complete": True,
+        "block_start_seconds": [0.0],
+        "block_durations_seconds": [2.0],
+        "blocks": [{
+            "block_id": 1, "sha256": wav_hash,
+            "stt": {
+                "file": "words.json", "sha256": sha256_file(transcript),
+                "model": "whisper-1",
+            },
+        }],
+    }
+    timeline = build_stt_beat_timeline(tmp_path, plan, audio)
+    assert timeline["beats"][0]["qr_spoken_seconds"] == [0.63]
+    assert professional_cta_website_windows(
+        timeline, {"ebook_cta_groups": [["1A"]]},
+    ) == [(0.63, 2.0)]
