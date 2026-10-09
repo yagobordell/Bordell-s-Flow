@@ -31,6 +31,11 @@ class ProfessionalCTAVisualBeat(StrictModel):
         if self.visual_type == "avatar" and self.prompt is None:
             if self.reference_sources:
                 raise ValueError("Reused avatar must not regenerate an image")
+        if (
+            self.visual_type == "avatar" and self.prompt is not None
+            and "presenter" not in self.reference_sources
+        ):
+            raise ValueError("Regenerated CTA presenter needs the real avatar reference")
         if self.audio and self.visual_type == "media_video":
             if "presenter" not in self.reference_sources:
                 raise ValueError("Speaking CTA media_video must reference the real presenter")
