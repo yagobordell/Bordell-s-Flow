@@ -12,6 +12,7 @@ import copy
 import json
 import re
 from collections.abc import Callable
+from importlib.resources import files
 from typing import Any
 
 from ai_video_factory.bots.professional_cta import (
@@ -21,7 +22,9 @@ from ai_video_factory.bots.professional_cta import (
 )
 from ai_video_factory.bots.contracts import ProfessionalVisualBeat
 from ai_video_factory.bots.validation_retries import MAX_VALIDATION_RETRIES
-from ai_video_factory.bots.workflow_helpers import prompt_instructions
+def prompt_instructions(name: str) -> str:
+    return files("ai_video_factory.bots.prompts").joinpath(name).read_text(encoding="utf-8")
+
 
 _NUMBERED = re.compile(r"^\s*[1-9]\.\s+(.+)$", re.DOTALL)
 
