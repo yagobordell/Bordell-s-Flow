@@ -215,7 +215,10 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
     import json
 
     from ai_video_factory.bots.contracts import (
-        B11Output, B12Output, B21Output, ProfessionalB2Output,
+        B11Output,
+        B12Output,
+        B21Output,
+        ProfessionalB2Output,
     )
     from ai_video_factory.bots.professional_cta import ProfessionalCTAVisuals
     from ai_video_factory.bots.workflow import run_b_pipeline
