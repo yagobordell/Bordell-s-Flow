@@ -121,16 +121,22 @@ SALAD_AUTOSCALER_LTX25_I2V_COLD_START_SECONDS=...
 SALAD_AUTOSCALER_LTX25_COLD_START_SECONDS=...
 SALAD_AUTOSCALER_LTX25_I2V_RUNTIME_SECONDS=...
 SALAD_AUTOSCALER_LTX25_RUNTIME_SECONDS=...
-SALAD_AUTOSCALER_LTX25_I2V_JOBS_PER_REPLICA=30
-SALAD_AUTOSCALER_LTX25_JOBS_PER_REPLICA=30
+SALAD_AUTOSCALER_LTX25_I2V_TARGET_DRAIN_MINUTES=60
+SALAD_AUTOSCALER_LTX25_TARGET_DRAIN_MINUTES=60
 ```
 
-LTX I2V y A2V usan una política de backlog por número de clips: por defecto el
-target es `ceil(active_jobs / 30)` de forma independiente para cada pool. Los
-otros servicios mantienen el cálculo predictivo por runtime y ventana de
-drenaje. El target LTX sigue limitado por el máximo de réplicas declarado en
-`deploy/salad/services.json` (actualmente 4 por pool) y por el presupuesto
-global del proyecto.
+LTX I2V y A2V usan demanda temporal global: trabajos pendientes multiplicados
+por su runtime histórico (percentil configurado), más el trabajo restante de
+clips activos. Para cada pool, el target es aproximadamente
+`ceil(remaining_gpu_seconds / (drain_target_seconds * utilization))`, con
+límite por clips activos, réplicas ocupadas, máximo del servicio y cuota total
+del proyecto. Ya no se utiliza la regla antigua de 30 clips por réplica.
+El autoscaler por defecto *todavía ignora el arranque de nuevas GPUs en LTX*.
+
+Existe una política coste/latencia opt-in, descrita en
+`docs/operations/ltx-cost-aware-planner.md`, que compara explícitamente ETA,
+workers calientes, arranque y coste proyectado antes de añadir réplicas.
+No debe activarse sin calibrar los tiempos y precios sobre ejecuciones reales.
 
 Los workers LTX consumen una cola Postgres compartida; el controlador no asigna
 bloques de clips a instancias concretas. Durante un downscale puede marcar una
