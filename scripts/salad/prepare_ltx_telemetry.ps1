@@ -29,7 +29,7 @@ function Get-StoppedStatus {
     $Status = ($Result -join " ").Trim()
     if ($Status -notmatch '(?:^|\s)status=stopped(?:\s|$)' -or
         $Status -notmatch '(?:^|\s)pending=[Ff]alse(?:\s|$)') {
-        throw "Refusing to update $Service: it must be stably stopped (status: $Status). " +
+        throw "Refusing to update ${Service}: it must be stably stopped (status: $Status). " +
               "Safely stop the singleton controller and drain in-flight work first; " +
               "never bypass its advisory lock."
     }
@@ -111,7 +111,7 @@ try {
         if (-not $?) { throw "Prepare failed for $Service; do not start any GPU workers." }
         $State = Get-StoppedStatus -Service $Service
         if (-not $State.Contains("image=$Pinned")) {
-            throw "Salad reports unexpected image after preparing $Service: $State"
+            throw "Salad reports unexpected image after preparing ${Service}: $State"
         }
         Write-Host "Verified $Service stopped on immutable image $Pinned" -ForegroundColor Green
     }
