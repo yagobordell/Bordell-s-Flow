@@ -2753,10 +2753,20 @@ async def main() -> None:
             )
         if visual_style in {"casero", "profesional"}:
             ensure_avatar_meta(avatar_file, args.avatars_dir)
-            data_root = args.avatars_dir if managed_target is not None else args.avatars_dir.parent
-            covers = ensure_ebook_covers(
-                avatar_file, data_dir=data_root, names=getattr(args, "ebook_cover", None),
+            cover_selected = (
+                visual_style == "casero"
+                or bool(getattr(args, "ebook_cover", None))
+                or (avatar_file.parent / "meta" / "ebook_covers.json").is_file()
             )
+            if cover_selected:
+                data_root = (
+                    args.avatars_dir if managed_target is not None
+                    else args.avatars_dir.parent
+                )
+                covers = ensure_ebook_covers(
+                    avatar_file, data_dir=data_root,
+                    names=getattr(args, "ebook_cover", None),
+                )
         output = _prepare_output(output_root, script_file, avatar_file=avatar_file)
     else:
         output = _prepare_resume_output(output_root, script_file, avatar_file=avatar_file)
@@ -2829,16 +2839,24 @@ async def main() -> None:
                 avatar_file, args.avatars_dir, reference_audio=voice.audio_filename
             )
         _clear_outputs_from(output, args.from_stage)
-        if visual_style == "profesional":
-            data_root = args.avatars_dir if managed_target is not None else args.avatars_dir.parent
+        if (
+            visual_style == "profesional"
+            and (
+                bool(getattr(args, "ebook_cover", None))
+                or (avatar_file.parent / "meta" / "ebook_covers.json").is_file()
+            )
+        ):
+            data_root = (
+                args.avatars_dir if managed_target is not None
+                else args.avatars_dir.parent
+            )
             covers = ensure_ebook_covers(
-                avatar_file, data_dir=data_root, names=getattr(args, "ebook_cover", None),
+                avatar_file, data_dir=data_root,
+                names=getattr(args, "ebook_cover", None),
             )
 
     ebook_reference: dict[str, str] | None = None
-    if visual_style == "profesional":
-        if covers is None:
-            raise RuntimeError("Professional ebook cover selection is required")
+    if visual_style == "profesional" and covers is not None:
         ebook_copy = output / "ebook" / "cover_1.png"
         source_ebook = covers.files[0].read_bytes()
         if ebook_copy.is_symlink() or ebook_copy.parent.is_symlink():
