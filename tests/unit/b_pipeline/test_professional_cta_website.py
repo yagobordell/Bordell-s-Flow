@@ -194,3 +194,20 @@ def test_canonical_stt_timeline_uses_real_qr_word_onset(tmp_path):
     assert professional_cta_website_windows(
         timeline, {"ebook_cta_groups": [["1A"]]},
     ) == [(0.63, 2.0)]
+
+
+def test_qr_word_timing_does_not_change_paid_ltx_run_fingerprint(tmp_path):
+    from ai_video_factory.workflows.b_video import _fingerprint
+
+    avatar = tmp_path / "avatar.png"
+    avatar.write_bytes(b"verified-avatar-identity")
+    beat = {"beat_id": "1A", "visual_type": "media_image", "audio": False}
+    baseline = _fingerprint(
+        {"beats": [beat]}, {"sha256": "unchanged-audio"},
+        {}, avatar, i2v_profile=None,
+    )
+    with_url_timing = _fingerprint(
+        {"beats": [{**beat, "qr_spoken_seconds": [0.63]}]},
+        {"sha256": "unchanged-audio"}, {}, avatar, i2v_profile=None,
+    )
+    assert with_url_timing == baseline
