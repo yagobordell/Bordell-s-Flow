@@ -126,6 +126,7 @@ def plan_image_jobs(
     cursor = 0
     for block in plan["blocks"]:
         current: list[dict[str, Any]] = []
+        previous_cta: int | None = None
 
         def finish() -> None:
             nonlocal current
@@ -138,6 +139,9 @@ def plan_image_jobs(
                 current = []
 
         for beat in block["beats"]:
+            if beat.get("cta_group_id") != previous_cta:
+                finish()
+            previous_cta = beat.get("cta_group_id")
             sources = described_by_beat.get(
                 (block["block_id"], beat["beat_id"]), []
             )
@@ -218,6 +222,7 @@ def plan_image_jobs(
                 asset_key for asset_key in available
                 if (
                     positions[asset_key] > last
+                    and available[asset_key].get("cta_group_id") == run[0].get("cta_group_id")
                     and (
                         available[asset_key]["visual_type"] == "avatar_media"
                     ) == avatar_media_grid
@@ -231,6 +236,7 @@ def plan_image_jobs(
                 asset_key for asset_key in available
                 if (
                     positions[asset_key] < first
+                    and available[asset_key].get("cta_group_id") == run[0].get("cta_group_id")
                     and (
                         available[asset_key]["visual_type"] == "avatar_media"
                     ) == avatar_media_grid

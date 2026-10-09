@@ -92,6 +92,7 @@ class OpenAIProvider:
         input_text: str,
         output_type: type[StructuredOutputT],
         input_image_url: str | None = None,
+        input_image_urls: list[str] | None = None,
         previous_response_id: str | None = None,
     ) -> tuple[StructuredOutputT, Any]:
         """Return validated structured output and its original, usage-bearing API response.
@@ -99,16 +100,22 @@ class OpenAIProvider:
         Opt-in for metered pipelines. API usage is returned unchanged; estimated
         token counts never replace the provider's reported usage.
         """
+        if input_image_url is not None and input_image_urls is not None:
+            raise ValueError("Pass either one image or an ordered image list")
+        urls = input_image_urls if input_image_urls is not None else (
+            [input_image_url] if input_image_url is not None else []
+        )
+        input_payload = (
+            [{"role": "user", "content": [
+                {"type": "input_text", "text": input_text},
+                *({"type": "input_image", "image_url": url} for url in urls),
+            ]}]
+            if urls else input_text
+        )
         response = await self._parse_with_flex_fallback(
             model=model,
             instructions=instructions,
-            input=(
-                [{"role": "user", "content": [
-                    {"type": "input_text", "text": input_text},
-                    {"type": "input_image", "image_url": input_image_url},
-                ]}]
-                if input_image_url is not None else input_text
-            ),
+            input=input_payload,
             text_format=output_type,
             **({"previous_response_id": previous_response_id} if previous_response_id else {}),
         )
