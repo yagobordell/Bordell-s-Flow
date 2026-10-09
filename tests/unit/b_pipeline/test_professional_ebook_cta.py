@@ -278,6 +278,9 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
 
         async def generate_structured_with_response(self, **kwargs):
             typ = kwargs["output_type"]
+            if typ in {ProfessionalB2Output, B21Output}:
+                result = await self.generate_structured(**kwargs)
+                return result, SimpleNamespace(usage=None)
             if typ is ProfessionalCTADetection:
                 return (
                     ProfessionalCTADetection(cta_groups=[["1B"]]),
