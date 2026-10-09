@@ -209,3 +209,98 @@ def test_b3_never_combines_speaking_cta_with_normal_run():
         [beat["beat_id"] for _, beat in group]
         for group in _professional_audio_groups(plan)
     ] == [["1A"], ["1B", "1C"], ["1D"]]
+
+
+def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
+    import json
+
+    from ai_video_factory.bots.contracts import (
+        B11Output, B12Output, B21Output, ProfessionalB2Output,
+    )
+    from ai_video_factory.bots.professional_cta import ProfessionalCTAVisuals
+    from ai_video_factory.bots.workflow import run_b_pipeline
+
+    script = "First scene. Buy my ebook. Last scene."
+    b11 = B11Output.model_validate({
+        "pipeline_stage": "B1.1",
+        "narrative_core": {"central_question": "Q", "final_answer": "A"},
+        "blocks": [{
+            "block_id": 1, "type": "development",
+            "emotional_entry": "A", "emotional_exit": "B",
+            "span": {"first_words": "First scene.", "last_words": "Last scene."},
+        }], "error": None,
+    })
+    b12 = (B12Output.model_validate({
+        "pipeline_stage": "B1.2", "block_id": 1, "error": None,
+        "beats": [
+            {"beat_id": "1A", "text": "First scene. ", "beat_type": "claim"},
+            {"beat_id": "1B", "text": "Buy my ebook. ", "beat_type": "claim"},
+            {"beat_id": "1C", "text": "Last scene.", "beat_type": "claim"},
+        ],
+    }),)
+    assert "".join(beat.text for beat in b12[0].beats) == script
+    captured_b21 = []
+
+    class Provider:
+        async def generate_structured(
+            self, *, model, instructions, input_text, output_type,
+            input_image_url=None,
+        ):
+            payload = json.loads(input_text)
+            if output_type is ProfessionalB2Output:
+                block = payload["blocks"][0]
+                for beat in block["beats"]:
+                    beat.update({
+                        "visual_type": "media_image", "audio": False,
+                        "reference": False, "video_prompt": None,
+                        "prompt": "Ordinary B2 static composition.",
+                    })
+                return ProfessionalB2Output.model_validate({
+                    "pipeline_stage": "B2",
+                    "narrative_core": payload["narrative_core"],
+                    "blocks": [block], "error": None,
+                })
+            if output_type is B21Output:
+                captured_b21.append(payload)
+                return B21Output.model_validate({
+                    "pipeline_stage": "B2.1", "error": None,
+                    "modified_beats": [{
+                        "block_id": 1, "beat_id": "1B",
+                        "prompt": "MUST BE DISCARDED",
+                        "video_prompt": "MUST BE DISCARDED",
+                        "second_prompt": None, "split_mode": None,
+                    }],
+                })
+            raise RuntimeError("Unexpected model call")
+
+        async def generate_structured_with_response(self, **kwargs):
+            typ = kwargs["output_type"]
+            if typ is ProfessionalCTADetection:
+                return (
+                    ProfessionalCTADetection(cta_groups=[["1B"]]),
+                    SimpleNamespace(usage=None),
+                )
+            if typ is ProfessionalCTAVisuals:
+                return ProfessionalCTAVisuals(beats=[_visual("1B")]), SimpleNamespace(
+                    usage=None,
+                )
+            raise RuntimeError("Unexpected CTA output type")
+
+    result = asyncio.run(run_b_pipeline(
+        script, provider=Provider(), start_from="B2", stop_after="B3",
+        visual_style="profesional",
+        avatar_image=b"presenter", ebook_image=b"ebook",
+        previous_b11=b11, previous_b12=b12,
+    ))
+    assert result.cta_groups == (("1B",),)
+    normal = result.b2[0].blocks[0].beats[1]
+    assert normal.prompt == "Ordinary B2 static composition."
+    final = result.visual_plan()["blocks"][0]["beats"]
+    assert final[0]["prompt"] == "Ordinary B2 static composition."
+    assert final[1]["prompt"] == _visual("1B").prompt
+    assert final[1]["visual_type"] == "media_video"
+    assert final[1]["reference"] is True
+    assert final[1]["cta_reference_sources"] == ["ebook"]
+    assert final[2]["prompt"] == "Ordinary B2 static composition."
+    assert captured_b21
+    assert "cta_reference_sources" not in captured_b21[0]["blocks"][0]["beats"][1]
