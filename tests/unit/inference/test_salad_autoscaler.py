@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -1736,3 +1737,59 @@ def test_nonconvergence_counter_resets_when_capacity_target_recovers() -> None:
     ]
     deferred = autoscaler.reconcile()[stage]
     assert deferred.reason == "active_instance_mapping_incomplete"
+
+
+def test_opt_in_cost_aware_controller_does_not_buy_useless_cold_replica() -> None:
+    stage = "ltx25_i2v"
+    client = FakeSaladClient(replicas=1, status="running")
+    store = FakeStore(
+        rows={stage: _pending_rows(10)},
+        runtimes={stage: [100.0]},
+    )
+    config = replace(
+        _config(
+            (stage,),
+            target_drain_seconds=600,
+            stage_target_drain_seconds={stage: 600},
+            stage_cold_start_seconds={stage: 1400},
+        ),
+        ltx_cost_aware=True,
+    )
+    scaler = PredictiveSaladAutoscaler(
+        config=config,
+        store=store,
+        clients={stage: client},
+        bindings={stage: _binding(stage)},
+    )
+    result = scaler.reconcile()[stage]
+    assert result.target_replicas == 1
+    assert client.replica_updates == []
+
+
+def test_opt_in_cost_aware_controller_can_request_more_for_large_backlog() -> None:
+    stage = "ltx25_i2v"
+    client = FakeSaladClient(replicas=0, status="stopped")
+    store = FakeStore(
+        rows={stage: _pending_rows(52)},
+        runtimes={stage: [235.0]},
+    )
+    config = replace(
+        _config(
+            (stage,),
+            target_drain_seconds=3600,
+            target_utilization=0.85,
+            stage_target_drain_seconds={stage: 3600},
+            stage_cold_start_seconds={stage: 900},
+        ),
+        ltx_cost_aware=True,
+    )
+    scaler = PredictiveSaladAutoscaler(
+        config=config,
+        store=store,
+        clients={stage: client},
+        bindings={stage: _binding(stage)},
+    )
+    result = scaler.reconcile()[stage]
+    assert result.target_replicas == 4
+    assert client.replica_updates == [4]
+    assert result.reason == "resize_before_start_pending_confirmation"

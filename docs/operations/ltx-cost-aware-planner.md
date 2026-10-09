@@ -38,3 +38,19 @@ A2V already has FP8 and Triton; do not alter those production settings for
 an autoscaling experiment. For the pinned I2V setup, 1080p CPU offload and
 memory-safety restrictions remain authoritative. A separate GPU experiment
 must establish the cost and output quality of torch.compile or new kernels.
+
+## Offline scenario comparison
+
+Use `uv run --locked --extra dev python scripts/salad/simulate_ltx_capacity.py
+scenario.json --json-output projection.json` with each pool's
+`remaining_work_seconds`, `active_jobs`, `running_jobs`,
+`current_replicas`, `max_replicas`, `bootstrap_seconds`,
+`target_seconds`, `utilization`, and `hourly_usd`.
+This reports each replica-count candidate and aggregate projected pool costs.
+If multiple pools share a tight project cap, the singleton controller's
+quota allocator remains authoritative; the simulator does not claim a feasible
+project-wide allocation by itself.
+
+This is a model, not a live A/B result. High/Medium/Low/Lowest Salad price
+tiers must be compared with real interruption and retry data before any
+production change; the tools do not change service priorities.
