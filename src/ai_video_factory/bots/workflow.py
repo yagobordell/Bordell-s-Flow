@@ -1969,6 +1969,10 @@ async def run_b_pipeline(
     )
     split_candidates = _b21_split_candidates(source_plan)
     b21_payload = result.merged_b2_output()
+    for block in b21_payload["blocks"]:
+        for beat in block["beats"]:
+            beat.pop("cta_group_id", None)
+            beat.pop("cta_reference_sources", None)
     b21_payload["b21_review"] = {
         "split_candidates": [
             {"block_id": item["block_id"], "beat_id": item["beat_id"]}
@@ -2088,9 +2092,15 @@ async def run_b_pipeline(
         payload_beats: list[dict[str, object]] = []
         for block_id, beat in source:
             lock = grid_locks.get((block_id, str(beat["beat_id"])))
+            # B3 receives only its normal boolean reference contract.
+            # CTA-only reference selection stays in the application plan.
+            clean_beat = {
+                key: value for key, value in beat.items()
+                if key not in {"cta_group_id", "cta_reference_sources"}
+            }
             payload_beats.append({
                 "block_id": block_id,
-                **beat,
+                **clean_beat,
                 "grid_id": lock.grid_id if lock is not None else None,
                 "grid_source": lock.source if lock is not None else None,
                 "grid_role": lock.role if lock is not None else None,
