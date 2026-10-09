@@ -19,3 +19,12 @@ def test_telemetry_rollout_requires_explicit_apply_and_stopped_workers() -> None
     assert "-AllowControllerOverride" not in text
     assert "-Recreate" not in text
     assert "docker buildx build" in text.split('if (-not $Apply)')[1]
+
+
+def test_rollout_checks_docker_before_mutating_postgres() -> None:
+    text = Path("scripts/salad/prepare_ltx_telemetry.ps1").read_text(encoding="utf-8")
+    assert text.index("& docker version") < text.index("python $Migration --apply")
+    assert text.index("& docker info --format") < text.index("python $Migration --apply")
+    assert text.index("& docker buildx version") < text.index("python $Migration --apply")
+    assert "Docker availability (start Docker Desktop and use Linux containers)" in text
+    assert "docker version *> $null" not in text
