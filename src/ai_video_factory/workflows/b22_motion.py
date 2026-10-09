@@ -222,6 +222,35 @@ async def _call_group(
                 "beat_id": beat["beat_id"], "image_id": include(path),
             })
 
+    # Place images on the wire in true beat chronology, including stills
+    # between two video shots; retain the explicit image_id bindings.
+    beat_positions = {
+        beat["beat_id"]: index for index, beat in enumerate(timeline_beats)
+    }
+    image_position: dict[str, int] = {}
+    for shot in shot_manifest:
+        identifier = shot["start_image_id"]
+        image_position[identifier] = min(
+            image_position.get(identifier, len(timeline_beats)),
+            beat_positions[shot["start_beat_id"]],
+        )
+    for still in context_image_manifest:
+        identifier = still["image_id"]
+        image_position[identifier] = min(
+            image_position.get(identifier, len(timeline_beats)),
+            beat_positions[still["beat_id"]],
+        )
+    image_parts.sort(key=lambda item: image_position[item[0]])
+    renames = {
+        previous: f"image_{index + 1}"
+        for index, (previous, _path) in enumerate(image_parts)
+    }
+    image_parts = [(renames[name], path) for name, path in image_parts]
+    for shot in shot_manifest:
+        shot["start_image_id"] = renames[shot["start_image_id"]]
+    for still in context_image_manifest:
+        still["image_id"] = renames[still["image_id"]]
+
     manifest = {
         "group_id": f"{selected[0].beat_id}-{selected[-1].beat_id}",
         "group_context": "All timeline beats are ordered and authoritative; preserve future events.",
