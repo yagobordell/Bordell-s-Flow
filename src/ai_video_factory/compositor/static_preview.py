@@ -403,6 +403,19 @@ def build_stt_beat_timeline(
                 )
             first_word_index = min(mapped_words)
             last_word_index = max(mapped_words)
+            qr_spoken_seconds: list[float] = []
+            if beat.get("cta_group_id") is not None:
+                for token_index, token in enumerate(tokens):
+                    if token != "qr":
+                        continue
+                    aligned_index = word_alignment[cursor + token_index]
+                    if aligned_index is None:
+                        raise SttAlignmentError(
+                            f"Cannot align spoken QR in CTA beat {beat_id}"
+                        )
+                    qr_spoken_seconds.append(float(
+                        starts[index] + aligned_words[aligned_index]["start"]
+                    ))
             start = starts[index] if beat_index == 0 else (
                 starts[index] + aligned_words[first_word_index]["start"]
             )
@@ -433,6 +446,10 @@ def build_stt_beat_timeline(
                     starts[index] + aligned_words[last_word_index]["end"]
                 ),
                 "word_count": len(tokens),
+                **(
+                    {"qr_spoken_seconds": qr_spoken_seconds}
+                    if qr_spoken_seconds else {}
+                ),
             })
             cursor += len(tokens)
 
