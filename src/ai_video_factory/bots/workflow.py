@@ -45,7 +45,9 @@ from .contracts import (
 from .cta import CTAPlacement, validate_placement
 from .professional_cta import ProfessionalCTAVisualBeat
 from .professional_cta_workflow import (
-    apply_cta_visuals, detect_professional_ctas, direct_professional_cta,
+    apply_cta_visuals,
+    detect_professional_ctas,
+    direct_professional_cta,
 )
 from .validation_retries import MAX_VALIDATION_RETRIES, is_schema_failure, validation_feedback
 
