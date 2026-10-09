@@ -475,7 +475,7 @@ def validate_visuals(result: B2Output | ProfessionalB2Output, supplied: B2Input)
         )
 
 
-_B21_IMAGE_SPLIT_THRESHOLD = 50
+_B21_IMAGE_SPLIT_THRESHOLD = 70
 _B21_NUMBERED_PROMPT = re.compile(r"^\s*([1-9])\.\s+(.+)$", re.DOTALL)
 
 
