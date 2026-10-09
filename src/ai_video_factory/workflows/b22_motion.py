@@ -200,13 +200,19 @@ async def _call_group(
             "b2_video_prompt": first.get("video_prompt"),
             "b3_shot_video_prompt": first.get("b3_shot_video_prompt"),
             "eligible_for_b22": shot in selected,
-            "speaking_setup": "Frozen B3 speaker setup; fixed camera" if shot.kind == "a2v" else None,
+            "speaking_setup": (
+                "Frozen B3 speaker setup; fixed camera"
+                if shot.kind == "a2v" else None
+            ),
         })
 
     # Still beats between video shots can constrain prop state even when they do
     # not generate a paid LTX job. Limit supporting image tokens deterministically.
     timeline_beats = timeline["beats"]
-    first_idx = next(i for i, beat in enumerate(timeline_beats) if beat["beat_id"] == around[0].beat_id)
+    first_idx = next(
+        i for i, beat in enumerate(timeline_beats)
+        if beat["beat_id"] == around[0].beat_id
+    )
     last_beat = around[-1].beat_ids[-1]
     last_idx = next(i for i, beat in enumerate(timeline_beats) if beat["beat_id"] == last_beat)
     context_image_manifest: list[dict[str, str]] = []
@@ -253,7 +259,9 @@ async def _call_group(
 
     manifest = {
         "group_id": f"{selected[0].beat_id}-{selected[-1].beat_id}",
-        "group_context": "All timeline beats are ordered and authoritative; preserve future events.",
+        "group_context": (
+            "All timeline beats are ordered and authoritative; preserve future events."
+        ),
         "timeline": _chronology(timeline),
         "shots": shot_manifest,
         "context_images": context_image_manifest,
@@ -274,7 +282,8 @@ async def _call_group(
     cached = _safe_cache(output / "video" / "b22" / "groups", digest)
     expected = manifest["expected_output_beat_ids"]
     if cached.exists():
-        return _validate(B22Result.model_validate_json(cached.read_text(encoding="utf-8")), expected)
+        restored = B22Result.model_validate_json(cached.read_text(encoding="utf-8"))
+        return _validate(restored, expected)
 
     urls = [
         "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
