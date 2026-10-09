@@ -1072,6 +1072,14 @@ def generate_b2_ltx_video(
             )
         return manifest
     result = render_b2_ltx_video(output, run_dir, timeline, jobs, manifest, images, audio)
+    if plan.get("visual_style") == "profesional" and plan.get("ebook_cta_groups"):
+        from ai_video_factory.compositor.professional_cta_qr import (
+            apply_professional_ebook_qr,
+        )
+
+        result = apply_professional_ebook_qr(
+            output, run_dir, result, timeline, plan,
+        )
     if casero_cta_dir is not None:
         finish_cta(casero_cta_dir, cta_submitted, executor)
         raw = json.loads((output / "B1.1" / "input.json").read_text(encoding="utf-8"))
