@@ -288,6 +288,7 @@ def _fingerprint(
     i2v_profile: str | None = LTX_PRODUCTION_I2V_PROFILE,
     b3_assets: dict[tuple[int, str], Path] | None = None,
     all_assets: dict[tuple[int, str], Path] | None = None,
+    motion_overrides: dict[str, str] | None = None,
 ) -> str:
     relevant = {
         "schema": _SCHEMA,
@@ -318,13 +319,16 @@ def _fingerprint(
         for beat in timeline["beats"]
     ):
         relevant["i2v_profile"] = i2v_profile
+    if motion_overrides:
+        relevant["b22_motion_overrides"] = sorted(motion_overrides.items())
     canonical = json.dumps(relevant, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def build_b2_video_plan(
     output: Path, plan: dict[str, Any], audio: dict[str, Any],
-    images: dict[str, Any],
+    images: dict[str, Any], *,
+    motion_overrides: dict[str, str] | None = None,
 ) -> tuple[dict[str, Any], list[B2VideoJob], Path]:
     """Validate all sources and durations BEFORE queuing any paid inference."""
     timeline = build_stt_beat_timeline(output, plan, audio)
@@ -367,6 +371,7 @@ def build_b2_video_plan(
     digest = _fingerprint(
         timeline, audio, assets, avatar,
         b3_assets=b3_assets, all_assets=all_assets,
+        motion_overrides=motion_overrides,
     )
     run_dir = output / "video" / "runs" / digest[:20]
     if run_dir.is_symlink() or run_dir.parent.is_symlink():
@@ -426,6 +431,8 @@ def build_b2_video_plan(
                     f"by the narration: {beat['text']}. "
                     "Preserve the image identity, setting and framing; no cuts or invented events."
                 )
+            if motion_overrides and beat_ids[0] in motion_overrides:
+                prompt = motion_overrides[beat_ids[0]]
             job_id = f"b2-{beat_ids[0]}-" + ltx_video_application_job_id(
                 shot_id=ordinal, prompt=prompt, keyframe_sha256=image_sha,
                 seed=seed, width=_WIDTH, height=_HEIGHT, fps=_FPS,
@@ -479,6 +486,10 @@ def build_b2_video_plan(
             ):
                 # Historical B2-only plans still use their speaking motion prompt.
                 a2v_prompt += " " + first_beat["video_prompt"]
+            if motion_overrides and first_beat["beat_id"] in motion_overrides:
+                a2v_prompt = (
+                    AVATAR_PROMPT + " " + motion_overrides[first_beat["beat_id"]]
+                )
             audio_path = run_dir / "audio" / f"{beat_ids[0]}-{beat_ids[-1]}.wav"
             audio_sha = _extract_pcm(master, audio_path, start, end)
             job_id = ltx_a2v_application_job_id(
@@ -826,6 +837,19 @@ def generate_b2_ltx_video(
     )
 
     timeline, jobs, run_dir = build_b2_video_plan(output, plan, audio, images)
+    if plan.get("visual_style") == "profesional":
+        # B2.2 sees the real finalized LTX start PNGs *after* B3 grouping.
+        # Produce and validate every override before any paid job submission.
+        from ai_video_factory.workflows.b22_motion import adapt_b22_motion
+
+        _avatar, context_images = _source_assets(output, plan, images)
+        motion_overrides = adapt_b22_motion(
+            output, timeline, jobs, context_images,
+        )
+        if motion_overrides:
+            timeline, jobs, run_dir = build_b2_video_plan(
+                output, plan, audio, images, motion_overrides=motion_overrides,
+            )
     digest = run_dir.name
     manifest_path = run_dir / "manifest.json"
     expected = _new_manifest(jobs, audio, digest)
