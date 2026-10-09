@@ -1066,6 +1066,16 @@ def generate_b2_ltx_video(
 
     if manifest.get("status") == "completed":
         _verified_asset(output, manifest.get("file"), manifest.get("sha256"))
+        if plan.get("visual_style") == "profesional" and plan.get("ebook_cta_groups"):
+            website = (
+                manifest.get("professional_ebook_qr", {})
+                .get("website_overlay", {})
+            )
+            if website.get("version") != 1 or website.get("text") != "zellenne.com":
+                raise B2VideoError(
+                    "Completed professional CTA video predates spoken-QR website"
+                    " overlay; reconcile compositor output before reuse"
+                )
         if casero_cta_dir is not None and "cta_insertion" not in manifest:
             raise B2VideoError(
                 "Completed video predates CTA insertion; reconcile prior publication"
