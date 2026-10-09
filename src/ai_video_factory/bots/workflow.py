@@ -682,7 +682,14 @@ def apply_b21_review(
         for patch in result.modified_beats or []
     }
     source_runs = {
-        block["block_id"]: _b21_numbered_runs(block)
+        block["block_id"]: [
+            run for run in _b21_numbered_runs(block)
+            if not any(
+                beat.get("cta_group_id") is not None
+                for beat in block["beats"]
+                if beat["beat_id"] in run
+            )
+        ]
         for block in source_plan["blocks"]
     }
     source_run_keys = {
