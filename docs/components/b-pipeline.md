@@ -527,6 +527,34 @@ que requieren LTX. El controlador de capacidad de Salad sigue siendo un servicio
 independiente: el runner no despliega GPUs.
 
 
+## B2.2 profesional: adaptación del movimiento después de B3
+
+La generación LTX profesional aplica **B2.2** tras B2.1, B3, los PNG finales
+(incluido el acabado/recorte de grids y las nuevas tomas B3) y el alineamiento
+STT, pero antes de enviar trabajos pagados a Postgres/Salad. B2.2 es un adaptador
+multimodal: ve los fotogramas iniciales **reales** de los trabajos, las
+instrucciones de movimiento efectivas post-B3 y el desarrollo cronológico del
+guion, incluidos los beats estáticos intermedios. Retorna estrictamente pares
+`beat_id` y `video_prompt` por trabajo elegible; no cambia `visual_plan.json`.
+
+Solo se adapta I2V `media_video + audio:false` y tomas A2V cuyo primer beat
+no sea `avatar` y ya tengan un movimiento efectivo. Un A2V que agrupa beats
+produce una sola instrucción, identificada por el primer beat. El código mantiene
+intactos el prefijo canónico de habla, el negativo fijo A2V, el audio y los
+cortes/cámara de B3. Si la imagen contradice la intención de B2, el bot
+reestructura la acción para que pueda animarse en lugar de bloquearla.
+
+B2.2 manda los vídeos elegibles en grupos cronológicos multimodales acotados,
+con el texto completo de los beats posteriores y fotogramas próximos para
+evitar anticipar movimientos o repetir acciones. Los resultados se validan
+por conjunto exacto y orden de identificadores. La respuesta validada se
+cachea por hashes de imágenes, prompts, contexto, instrucciones y modelo en
+`video/b22/groups/`; la identidad de trabajos LTX se vuelve a calcular con
+los nuevos prompts. Un fallo de validación no encola trabajos pagados.
+
+Bot: `src/ai_video_factory/bots/prompts/b2_2_professional.md`.
+Código: `src/ai_video_factory/workflows/b22_motion.py`.
+
 ## Integración LTX para B2 (I2V y A2V agrupado)
 
 El runner inicia LTX después de terminar los PNG de B2 y la alineación de
