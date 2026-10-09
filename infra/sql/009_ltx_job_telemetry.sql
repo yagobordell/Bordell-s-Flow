@@ -7,7 +7,9 @@ CREATE TABLE IF NOT EXISTS gpu.ltx_job_telemetry (
     request_sha256 character(64) NOT NULL,
     attempt_count integer NOT NULL CHECK (attempt_count > 0),
     recorded_at timestamptz NOT NULL DEFAULT now(),
-    instance_id text,
+    instance_id text NOT NULL,
+    instance_identity_source text NOT NULL
+        CHECK (instance_identity_source IN ('salad_instance', 'worker_process')),
     worker_id text NOT NULL,
     stage text NOT NULL CHECK (stage IN ('ltx25', 'ltx25_i2v')),
     profile text NOT NULL,

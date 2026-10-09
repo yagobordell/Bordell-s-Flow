@@ -40,7 +40,8 @@ def main() -> None:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT job_id, attempt_count, instance_id, stage, profile,
+                SELECT job_id, attempt_count, instance_id, instance_identity_source,
+                       stage, profile,
                        width, height, num_frames, inference_seconds,
                        task_seconds, pipeline_load_seconds, stage1_seconds,
                        stage2_seconds, video_decode_seconds, encode_seconds,

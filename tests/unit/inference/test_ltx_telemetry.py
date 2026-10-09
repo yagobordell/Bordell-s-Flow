@@ -36,6 +36,7 @@ def test_i2v_telemetry_captures_only_approved_timings() -> None:
     )
     assert row is not None
     assert row["stage"] == "ltx25_i2v"
+    assert row["instance_identity_source"] == "salad_instance"
     assert row["height"] == 1088
     assert row["inference_seconds"] == 160.5
     assert row["stage1_seconds"] == 95.0
@@ -118,3 +119,17 @@ def test_comparison_keeps_profiles_and_dimensions_separate() -> None:
     result = compare_ltx_telemetry(rows)
     assert len(result) == 2
     assert all(x["classification"] == "insufficient_exact_frame_matches" for x in result)
+
+
+def test_missing_provider_instance_uses_worker_process_surrogate() -> None:
+    row = build_ltx_job_telemetry(
+        _request(),
+        {"pipeline_call_seconds": 7.5},
+        worker_id="host-1234",
+        instance_id=None,
+        attempt_count=1,
+        task_seconds=8.0,
+    )
+    assert row is not None
+    assert row["instance_id"] == "host-1234"
+    assert row["instance_identity_source"] == "worker_process"

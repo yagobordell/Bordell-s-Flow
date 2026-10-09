@@ -30,6 +30,14 @@ overlap can occur (e.g. pipeline_call includes stage1/stage2 and prompt);
 not Salad billing, preemption downtime, retries after crashed containers or
 provider allocation delay.
 
+Instance correlation: when the worker receives `SALAD_INSTANCE_ID`, telemetry
+uses that provider instance ID (`instance_identity_source=salad_instance`).
+If this variable is missing, it records the stable `worker_id` for the
+worker process as a surrogate (`worker_process`). **A worker-process ID
+does not prove physical host identity and must not be used for GPU
+quarantine.** Export both the identifier and its source so comparisons
+are interpreted correctly.
+
 ## Offline read-only export
 
 On a machine with DB read permission and configured `POSTGRES_DSN`:
