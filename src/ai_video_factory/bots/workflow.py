@@ -1887,62 +1887,62 @@ async def run_b_pipeline(
     if cta_detection_task is not None:
         cta_groups = await cta_detection_task
     if cta_groups:
-        if not cta_overrides:
-            if not avatar_image or not ebook_image:
-                raise BPipelineValidationError("CTA images missing")
-            async def direct_one(
-                group_number: int, group: tuple[str, ...], feedback: str = "",
-            ) -> dict[str, ProfessionalCTAVisualBeat]:
-                return await direct_professional_cta(
-                    group_number, group, cta_merged_b12,
-                    presenter=avatar_image, ebook=ebook_image,
-                    provider=provider, model=model, semaphore=semaphore,
-                    on_input=on_input, on_output=on_output,
-                    on_api_response=on_api_response,
-                    on_call_duration=on_call_duration, correction=feedback,
-                )
+        if not avatar_image or not ebook_image:
+            raise BPipelineValidationError("CTA images missing")
 
+        async def direct_one(
+            group_number: int, group: tuple[str, ...], feedback: str = "",
+        ) -> dict[str, ProfessionalCTAVisualBeat]:
+            return await direct_professional_cta(
+                group_number, group, cta_merged_b12,
+                presenter=avatar_image, ebook=ebook_image,
+                provider=provider, model=model, semaphore=semaphore,
+                on_input=on_input, on_output=on_output,
+                on_api_response=on_api_response,
+                on_call_duration=on_call_duration, correction=feedback,
+            )
+
+        if not cta_overrides:
             directed = await asyncio.gather(*(
                 direct_one(i, group) for i, group in enumerate(cta_groups, 1)
             ))
             for values in directed:
                 cta_overrides.update(values)
-    if cta_groups:
-            # Validate global spoken continuity and numbered-grid semantics
-            # only after B2 has been overwritten with accepted CTA decisions.
-            for attempt in range(MAX_VALIDATION_RETRIES + 1):
-                try:
-                    final_cta_plan = _professional_plan(
-                        [x for x in b2_results if isinstance(x, ProfessionalB2Output)],
-                        cta_groups=cta_groups, cta_overrides=cta_overrides,
-                    )
-                    spoken_run = 0
-                    for block in final_cta_plan["blocks"]:
-                        for beat in block["beats"]:
-                            if beat["audio"]:
-                                spoken_run += len(beat["text"].strip())
-                                if spoken_run > _MAX_CONSECUTIVE_AVATAR_CHARACTERS:
-                                    raise BPipelineValidationError(
-                                        "CTA merged audio=true run exceeds 120 characters"
-                                    )
-                            else:
-                                spoken_run = 0
-                    _professional_grid_locks(final_cta_plan)
-                    break
-                except (BPipelineValidationError, GridPlanError, ValueError) as exc:
-                    if attempt >= MAX_VALIDATION_RETRIES:
-                        raise BPipelineValidationError(
-                            f"CTA merged plan failed validation: {exc}"
-                        ) from exc
-                    # B2 assignments are frozen; CTA director alone repairs
-                    # the new merged constraint rather than silently editing B2.
-                    repaired = await asyncio.gather(*(
-                        direct_one(i, group, str(exc))
-                        for i, group in enumerate(cta_groups, 1)
-                    ))
-                    cta_overrides = {
-                        k: v for values in repaired for k, v in values.items()
-                    }
+
+        # The merged CTA and ordinary B2 must obey the global audio/grid
+        # constraints before B2.1 or any paid image work.
+        for attempt in range(MAX_VALIDATION_RETRIES + 1):
+            try:
+                final_cta_plan = _professional_plan(
+                    [x for x in b2_results if isinstance(x, ProfessionalB2Output)],
+                    cta_groups=cta_groups, cta_overrides=cta_overrides,
+                )
+                spoken_run = 0
+                for block in final_cta_plan["blocks"]:
+                    for beat in block["beats"]:
+                        if beat["audio"]:
+                            spoken_run += len(beat["text"].strip())
+                            if spoken_run > _MAX_CONSECUTIVE_AVATAR_CHARACTERS:
+                                raise BPipelineValidationError(
+                                    "CTA merged audio=true run exceeds 120 characters"
+                                )
+                        else:
+                            spoken_run = 0
+                _professional_grid_locks(final_cta_plan)
+                break
+            except (BPipelineValidationError, GridPlanError, ValueError) as exc:
+                if attempt >= MAX_VALIDATION_RETRIES:
+                    raise BPipelineValidationError(
+                        f"CTA merged plan failed validation: {exc}"
+                    ) from exc
+                # B2 is frozen. Only B2 CTA may correct the invalid merge.
+                repaired = await asyncio.gather(*(
+                    direct_one(i, group, str(exc))
+                    for i, group in enumerate(cta_groups, 1)
+                ))
+                cta_overrides = {
+                    k: v for values in repaired for k, v in values.items()
+                }
 
     result = BPipelineResult(
         b11=b11,
