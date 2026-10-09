@@ -27,13 +27,13 @@ from .errors import (
     UnsupportedTaskError,
 )
 from .gpu_diagnostics import GpuJobDiagnostics, diagnostic_checkpoint, gpu_diagnostics_scope
-from .ltx_telemetry import build_ltx_job_telemetry
 from .gpu_failures import (
     classify_gpu_failure,
     cleanup_cuda_memory,
     is_fatal_gpu_context_failure,
     is_retryable_gpu_failure,
 )
+from .ltx_telemetry import build_ltx_job_telemetry
 from .ports import (
     ClaimDecision,
     JobRepository,
