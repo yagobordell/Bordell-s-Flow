@@ -168,3 +168,44 @@ def test_detector_and_director_both_use_model_with_exact_ids_and_two_images():
     assert set(selected) == {"1B", "1C"}
     assert len(provider.inputs[1]["input_image_urls"]) == 2
     assert provider.inputs[1]["output_type"] is ProfessionalCTAVisuals
+
+
+def test_b21_never_changes_cta_prompts_even_when_patch_is_provided():
+    from ai_video_factory.bots.contracts import B21Output
+    from ai_video_factory.bots.workflow import apply_b21_review
+
+    original = {
+        "visual_style": "profesional",
+        "blocks": [{"block_id": 1, "beats": [{
+            "beat_id": "1B", "visual_type": "media_video",
+            "prompt": "CTA director image.", "video_prompt": "CTA movement.",
+            "cta_group_id": 1,
+        }]}],
+    }
+    patch = B21Output.model_validate({
+        "pipeline_stage": "B2.1",
+        "error": None,
+        "modified_beats": [{
+            "block_id": 1, "beat_id": "1B",
+            "prompt": "B2.1 replacement.", "video_prompt": "Wrong motion.",
+            "second_prompt": None, "split_mode": None,
+        }],
+    })
+    output = apply_b21_review(original, patch)
+    assert output["blocks"][0]["beats"][0]["prompt"] == "CTA director image."
+    assert output["blocks"][0]["beats"][0]["video_prompt"] == "CTA movement."
+
+
+def test_b3_never_combines_speaking_cta_with_normal_run():
+    from ai_video_factory.bots.workflow import _professional_audio_groups
+
+    plan = {"visual_style": "profesional", "blocks": [{"block_id": 1, "beats": [
+        {"beat_id": "1A", "audio": True},
+        {"beat_id": "1B", "audio": True, "cta_group_id": 1},
+        {"beat_id": "1C", "audio": True, "cta_group_id": 1},
+        {"beat_id": "1D", "audio": True},
+    ]}]}
+    assert [
+        [beat["beat_id"] for _, beat in group]
+        for group in _professional_audio_groups(plan)
+    ] == [["1A"], ["1B", "1C"], ["1D"]]
