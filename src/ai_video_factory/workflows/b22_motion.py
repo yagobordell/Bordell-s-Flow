@@ -222,7 +222,7 @@ async def _call_group(
     for beat in timeline_beats[first_idx:last_idx + 1]:
         if len(context_image_manifest) >= _MAX_CONTEXT_IMAGES:
             break
-        if beat["visual_type"] != "media_image":
+        if beat["visual_type"] not in {"media_image", "avatar_media"}:
             continue
         key = (beat["block_id"], beat["beat_id"])
         path = context_images.get(key)
