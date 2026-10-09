@@ -83,11 +83,22 @@ try {
         Get-StoppedStatus -Service $Service | Write-Host
     }
 
+    # Probe Docker before touching the database to avoid a partial rollout
+    # when Docker Desktop is not running or the engine is unavailable.
+    # Do not suppress Docker's diagnostic output.
+    & docker version
+    Assert-Success "Docker availability (start Docker Desktop and use Linux containers)"
+    $DockerOS = @(& docker info --format '{{.OSType}}')
+    Assert-Success "Docker daemon status"
+    if (($DockerOS -join "").Trim() -ne "linux") {
+        throw "LTX requires a Linux Docker engine, got: $($DockerOS -join ', '). Switch Docker Desktop to Linux containers."
+    }
+    & docker buildx version
+    Assert-Success "Docker Buildx availability"
+
     & uv run --locked --extra dev python $Migration --apply
     Assert-Success "Telemetry Postgres migration"
 
-    & docker version *> $null
-    Assert-Success "Docker availability"
     $Dockerfile = Join-Path $RepoRoot ([string]$Document.services.ltx25.dockerfile)
     & docker buildx build --platform linux/amd64 --file $Dockerfile --tag $Tag --push .
     Assert-Success "LTX image build/push"
