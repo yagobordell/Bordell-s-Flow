@@ -550,8 +550,10 @@ normal. B2.2 sigue refinando el movimiento post-B3 contra los PNG definitivos.
 
 La biblioteca del avatar fija la portada original con
 `ensure_ebook_covers` (selección inicial mediante `--ebook-cover` y posterior
-reutilización). Cada run Profesional guarda la copia verificable
-`ebook/cover_1.png`. El generador OpenAI Images recibe realmente los PNG
+reutilización). **Solo se activa el circuito CTA del ebook cuando hay una portada
+configurada**; las ejecuciones Profesional existentes sin ebook siguen el
+pipeline habitual sin requerir nuevas entradas. Cuando está configurado, cada
+run Profesional guarda la copia verificable `ebook/cover_1.png`. El generador OpenAI Images recibe realmente los PNG
 correspondientes a cada `cta_reference_sources` y los vincula al fingerprint
 de la solicitud. Ninguna referencia se sustituye silenciosamente.
 
