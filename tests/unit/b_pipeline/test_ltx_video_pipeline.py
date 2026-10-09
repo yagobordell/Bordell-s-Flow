@@ -153,6 +153,33 @@ def test_final_compositor_alternates_media_image_zoom_direction() -> None:
     assert "1.000000+(1.020000-1.000000)" in second_filter
 
 
+def test_b22_override_changes_only_target_paid_job_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, audio, images = _case(tmp_path, monkeypatch)
+    _original_timeline, original, original_run = b_video.build_b2_video_plan(
+        tmp_path, plan, audio, images,
+    )
+    _new_timeline, updated, adapted_run = b_video.build_b2_video_plan(
+        tmp_path, plan, audio, images,
+        motion_overrides={"1D": "The bird launches smoothly from its perch."},
+    )
+    original_by_type = {job.beats[0]: job for job in original}
+    updated_by_type = {job.beats[0]: job for job in updated}
+
+    assert original_run != adapted_run
+    assert updated_by_type["1D"].request.parameters["prompt"] == (
+        "The bird launches smoothly from its perch."
+    )
+    assert (
+        updated_by_type["1D"].request.job_id
+        != original_by_type["1D"].request.job_id
+    )
+    # A2V base avatar remains pinned and is not changed by I2V refinement.
+    assert updated_by_type["1A"].request.job_id == original_by_type["1A"].request.job_id
+    assert updated_by_type["2A"].request.job_id == original_by_type["2A"].request.job_id
+
+
 def test_avatar_runs_share_one_audio_and_use_exact_pinned_prompts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
