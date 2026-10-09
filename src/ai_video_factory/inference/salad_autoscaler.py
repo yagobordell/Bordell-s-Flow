@@ -4,10 +4,11 @@ import math
 import os
 from collections import Counter
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 from .coordination import acquire_instance_drain_lock
+from .ltx_economics import plan_ltx_capacity
 from .salad import SaladClient
 
 ACTIVE_STATUSES = (
@@ -76,6 +77,9 @@ class PredictiveAutoscalerConfig:
     drain_ttl_seconds: float = 120.0
     nonconvergence_failure_polls: int = 4
     provider_pending_max_seconds: float = 7200.0
+    ltx_cost_aware: bool = False
+    ltx_gpu_hourly_usd: float = 0.50
+    ltx_projected_pool_budget_usd: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -453,6 +457,20 @@ def load_predictive_autoscaler_config(
             7200.0,
             minimum=60.0,
         ),
+        ltx_cost_aware=_bool_env(
+            "SALAD_AUTOSCALER_LTX_COST_AWARE", default=False,
+        ),
+        ltx_gpu_hourly_usd=_float_env(
+            "SALAD_AUTOSCALER_LTX_GPU_HOURLY_USD", 0.50, minimum=0.000001,
+        ),
+        ltx_projected_pool_budget_usd=(
+            _float_env(
+                "SALAD_AUTOSCALER_LTX_PROJECTED_POOL_BUDGET_USD",
+                0.0, minimum=0.0,
+            )
+            if os.getenv("SALAD_AUTOSCALER_LTX_PROJECTED_POOL_BUDGET_USD", "").strip()
+            else None
+        ),
     )
 
 
@@ -622,6 +640,52 @@ class PredictiveSaladAutoscaler:
                 current[stage] = 0
                 continue
             current[stage] = configured
+        if self.config.ltx_cost_aware:
+            adjusted_demands = dict(demands)
+            for stage, demand in demands.items():
+                if stage not in _TIME_BASED_LTX_STAGES or group_transitioning[stage]:
+                    continue
+                startup = (
+                    (self.config.stage_cold_start_seconds or {}).get(
+                        stage, self.config.cold_start_seconds,
+                    )
+                )
+                decision = plan_ltx_capacity(
+                    remaining_work_seconds=demand.remaining_work_seconds,
+                    active_jobs=(
+                        demand.status_counts.get("pending", 0)
+                        + demand.status_counts.get("retryable_failed", 0)
+                        + demand.running_count
+                    ),
+                    running_jobs=demand.running_count,
+                    current_replicas=current[stage],
+                    max_replicas=self.config.stage_max_replicas[stage],
+                    bootstrap_seconds=startup,
+                    target_seconds=demand.target_drain_seconds,
+                    utilization=self.config.target_utilization,
+                    hourly_usd=self.config.ltx_gpu_hourly_usd,
+                    projected_pool_budget_usd=(
+                        self.config.ltx_projected_pool_budget_usd
+                    ),
+                )
+                choice = decision.selected
+                adjusted_demands[stage] = replace(
+                    demand,
+                    ideal_replicas=choice.replicas,
+                    estimated_drain_seconds=choice.eta_seconds,
+                )
+                self.logger(
+                    f"Autoscaler {stage}: cost-aware projection "
+                    f"replicas={choice.replicas}, warm={choice.warm_replicas}, "
+                    f"cold={choice.cold_replicas}, eta={choice.eta_seconds:.0f}s, "
+                    f"estimated_usd={choice.projected_usd:.4f} "
+                    f"(not invoice), reason={decision.reason}."
+                )
+            demands = adjusted_demands
+            targets = allocate_project_quota(
+                demands=demands,
+                project_max_replicas=self.config.project_max_replicas,
+            )
         quota_targets = dict(targets)
         targets = apply_downscale_hysteresis(
             demands=demands,
