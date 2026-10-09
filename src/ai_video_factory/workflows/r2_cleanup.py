@@ -20,7 +20,26 @@ _SCOPE = re.compile(r"^[a-f0-9]{24}$")
 
 
 def _read_scoped_manifest(output: Path, video: dict[str, Any]) -> tuple[list[str], str]:
+    # The real B2 generator returns the completed manifest itself to the runner,
+    # without its path. The path is durably published in video/latest.json.
+    # Require exact identity equality before trusting that pointer: a stale
+    # latest.json must never authorize deletion of another run's R2 objects.
     relative = video.get("manifest_file")
+    if relative is None:
+        latest_path = output / "video" / "latest.json"
+        if (
+            latest_path.is_symlink()
+            or latest_path.parent.is_symlink()
+            or not latest_path.is_file()
+        ):
+            raise ValueError("Video cleanup needs a verified LTX manifest pointer")
+        latest = json.loads(latest_path.read_text(encoding="utf-8"))
+        if not isinstance(latest, dict) or any(
+            latest.get(field) != video.get(field)
+            for field in ("status", "fingerprint", "sha256", "file")
+        ):
+            raise ValueError("LTX manifest pointer differs from the published video")
+        relative = latest.get("manifest_file")
     if not isinstance(relative, str) or not relative:
         raise ValueError("Video cleanup needs the LTX manifest")
     candidate = Path(relative)

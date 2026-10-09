@@ -81,8 +81,11 @@ def test_split_candidates_are_marked_by_exact_code_count() -> None:
 def test_numbered_grid_split_inserts_panel_and_shifts_following_numbers() -> None:
     source = _plan([
         _beat("1A", "Short.", "1. Same subject in a wide shot."),
-        _beat("1B", "This narration is deliberately longer than seventy characters total for testing.",
-              "2. Same subject in a medium shot."),
+        _beat(
+            "1B",
+            "This narration is deliberately longer than seventy characters total for testing.",
+            "2. Same subject in a medium shot.",
+        ),
         _beat("1C", "Short again.", "3. Same subject in a close shot."),
     ])
     original = deepcopy(source)
@@ -183,7 +186,10 @@ def test_numbered_split_cannot_escape_its_grid() -> None:
         _beat("1A", "Short.", "1. First view."),
         _beat(
             "1B",
-            "This second numbered image has well over seventy narration characters in its original line.",
+            (
+                "This second numbered image has well over seventy narration "
+                "characters in its original line."
+            ),
             "2. Second view.",
         ),
     ])

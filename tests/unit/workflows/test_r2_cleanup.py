@@ -32,9 +32,15 @@ def _finished(tmp_path: Path) -> tuple[Path, dict]:
         "jobs": [{"status": "completed", "job_id": _JOB_ID}],
     }
     (run / "manifest.json").write_text(json.dumps(data), encoding="utf-8")
-    return output, {
+    # Production returns the full B2 manifest without manifest_file. Only
+    # latest.json carries the relative path after successful generation.
+    latest = {
         key: data[key] for key in ("status", "fingerprint", "sha256", "file")
     } | {"manifest_file": "video/runs/abc/manifest.json"}
+    (output / "video" / "latest.json").write_text(
+        json.dumps(latest), encoding="utf-8",
+    )
+    return output, data
 
 
 def test_cleanup_only_targets_private_job_and_invalidates_cache(
@@ -105,7 +111,7 @@ def test_cleanup_rejects_unverified_or_incomplete_runs(
         r2_cleanup.cleanup_published_video_jobs(
             output, {**video, "manifest_file": "../other.json"},
         )
-    manifest = output / video["manifest_file"]
+    manifest = output / "video" / "runs" / "abc" / "manifest.json"
     data = json.loads(manifest.read_text(encoding="utf-8"))
     data["jobs"][0]["job_id"] = "fish-speech-original"
     manifest.write_text(json.dumps(data), encoding="utf-8")
@@ -156,3 +162,31 @@ def test_delete_error_keeps_queue_and_does_not_write_success_receipt(
         r2_cleanup.cleanup_published_video_jobs(output, video)
     assert committed == []
     assert not (output / "video" / "r2_cleanup.json").exists()
+
+def test_cleanup_refuses_stale_latest_pointer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output, video = _finished(tmp_path)
+    latest_path = output / "video" / "latest.json"
+    latest = json.loads(latest_path.read_text(encoding="utf-8"))
+    latest["fingerprint"] = "some-other-run"
+    latest_path.write_text(json.dumps(latest), encoding="utf-8")
+    monkeypatch.setattr(
+        r2_cleanup, "PostgresJobQueueClient",
+        lambda **kwargs: pytest.fail("Unsafe pointer must not open Postgres"),
+    )
+    with pytest.raises(ValueError, match="pointer differs"):
+        r2_cleanup.cleanup_published_video_jobs(output, video)
+
+
+def test_cleanup_refuses_missing_latest_pointer_without_explicit_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output, video = _finished(tmp_path)
+    (output / "video" / "latest.json").unlink()
+    monkeypatch.setattr(
+        r2_cleanup, "create_r2_storage",
+        lambda **kwargs: pytest.fail("Missing pointer must not reach R2"),
+    )
+    with pytest.raises(ValueError, match="verified LTX manifest pointer"):
+        r2_cleanup.cleanup_published_video_jobs(output, video)
