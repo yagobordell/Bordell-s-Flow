@@ -33,7 +33,7 @@ def test_warm_worker_finishes_before_slow_cold_worker_is_ready():
 def test_large_backlog_selects_more_workers_to_meet_deadline():
     decision = _plan(
         remaining_work_seconds=12000.0, active_jobs=52,
-        bootstrap_seconds=900.0,
+        bootstrap_seconds=900.0, target_seconds=4800.0,
     )
     assert decision.selected.replicas > 1
     assert decision.selected.meets_deadline
