@@ -77,6 +77,11 @@ from ai_video_factory.providers.avatar_library import (
     organize_avatar,
 )
 from ai_video_factory.providers.avatar_qr import ensure_avatar_qr
+from ai_video_factory.bots.professional_cta import (
+    ProfessionalCTADetection,
+    ProfessionalCTAVisualBeat,
+    ProfessionalCTAVisuals,
+)
 from ai_video_factory.providers.avatar_style import ensure_avatar_style
 from ai_video_factory.providers.avatar_voice import ensure_avatar_voice, valid_voice_provider
 from ai_video_factory.providers.b3_shots import B3ShotImageError, generate_b3_shot_images
@@ -922,7 +927,7 @@ def _clear_outputs_from(output: Path, start_from: str) -> None:
             if not target.is_dir():
                 raise SystemExit(f"Stage output is not a directory: {target}")
             shutil.rmtree(target)
-    if first_stage <= _STAGES.index("B2"):
+    if first_stage <= _STAGES.index("B1.2"):
         for stage in ("CTA Detector", "B2 CTA"):
             folder = output / stage
             if folder.is_symlink():
@@ -3102,6 +3107,38 @@ async def main() -> None:
         elif args.from_stage == "B1.1":
             run_metadata["audio_generation"] = {"status": "skipped"}
             save_report("running", None)
+        prior_cta_groups: tuple[tuple[str, ...], ...] | None = None
+        prior_cta_overrides: dict[str, ProfessionalCTAVisualBeat] | None = None
+        if visual_style == "profesional" and args.from_stage == "B2":
+            previous_detector = output / "CTA Detector" / "output.json"
+            if previous_detector.is_symlink():
+                raise RuntimeError("Unsafe saved professional CTA detector")
+            if previous_detector.is_file():
+                detection = ProfessionalCTADetection.model_validate_json(
+                    previous_detector.read_text(encoding="utf-8")
+                )
+                prior_cta_groups = tuple(
+                    tuple(group) for group in detection.cta_groups
+                )
+                prior_cta_overrides = {}
+                for index, group in enumerate(prior_cta_groups, 1):
+                    previous_director = (
+                        output / "B2 CTA" / f"group_{index}" / "output.json"
+                    )
+                    if previous_director.is_symlink() or not previous_director.is_file():
+                        raise RuntimeError(
+                            "Saved CTA director output is missing; reconcile before retry"
+                        )
+                    decisions = ProfessionalCTAVisuals.model_validate_json(
+                        previous_director.read_text(encoding="utf-8")
+                    )
+                    if [beat.beat_id for beat in decisions.beats] != list(group):
+                        raise RuntimeError("Saved CTA director IDs differ from detector")
+                    for beat in decisions.beats:
+                        if beat.beat_id in prior_cta_overrides:
+                            raise RuntimeError("Duplicate CTA beat in saved checkpoint")
+                        prior_cta_overrides[beat.beat_id] = beat
+
         result = await run_b_pipeline(
             script,
             provider=provider,
@@ -3112,6 +3149,8 @@ async def main() -> None:
             avatar_image=avatar_bytes,
             ebook_image=(covers.files[0].read_bytes()
                          if visual_style == "profesional" and covers is not None else None),
+            previous_cta_groups=prior_cta_groups,
+            previous_cta_overrides=prior_cta_overrides,
             start_from=args.from_stage,
             stop_after=stop_stage or (
                 "B3" if visual_style == "profesional" else "B2"
@@ -3263,6 +3302,8 @@ async def main() -> None:
                         ebook_image=(covers.files[0].read_bytes()
                                      if visual_style == "profesional"
                                      and covers is not None else None),
+                        previous_cta_groups=result.cta_groups,
+                        previous_cta_overrides=result.cta_overrides,
                         start_from="B2",
                         stop_after=(
                             "B3" if visual_style == "profesional" else "B2"
