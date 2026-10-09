@@ -843,8 +843,22 @@ def generate_b2_ltx_video(
         from ai_video_factory.workflows.b22_motion import adapt_b22_motion
 
         _avatar, context_images = _source_assets(output, plan, images)
+        # The STT timeline has timing and motion fields, but deliberately
+        # omits frozen narration text/beat_type. Restore these from the
+        # authoritative visual plan for B2.2 whole-sequence reasoning.
+        source_beats = {
+            beat["beat_id"]: beat
+            for block in plan["blocks"] for beat in block["beats"]
+        }
+        context_timeline = {
+            **timeline,
+            "beats": [
+                {**source_beats[beat["beat_id"]], **beat}
+                for beat in timeline["beats"]
+            ],
+        }
         motion_overrides = adapt_b22_motion(
-            output, timeline, jobs, context_images,
+            output, context_timeline, jobs, context_images,
         )
         if motion_overrides:
             timeline, jobs, run_dir = build_b2_video_plan(
