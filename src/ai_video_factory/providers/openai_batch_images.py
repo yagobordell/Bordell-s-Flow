@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from itertools import chain
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 from PIL import Image
@@ -158,7 +159,11 @@ def _avatar_reference(
 ) -> tuple[str, str] | None:
     """Validate the selected avatar before any paid image request."""
     if not any(
-        job.get("reference") if plan.get("visual_style") == "profesional"
+        (
+            "presenter" in job["cta_reference_sources"]
+            if job.get("cta_reference_sources") is not None
+            else bool(job.get("reference"))
+        ) if plan.get("visual_style") == "profesional"
         else _avatar_requested(job["description"])
         for job in jobs
     ):
@@ -383,6 +388,9 @@ def _fingerprint(job: dict[str, Any], options: ImageOptions) -> str:
     if job.get("cta_reference_hashes"):
         identity["image_endpoint"] = "/v1/images/edits"
         identity["cta_reference_hashes"] = job["cta_reference_hashes"]
+    if job.get("continuity_reference_sha256"):
+        identity["image_endpoint"] = "/v1/images/edits"
+        identity["continuity_reference_sha256"] = job["continuity_reference_sha256"]
     return hashlib.sha256(
         json.dumps(identity, sort_keys=True, ensure_ascii=False).encode("utf-8")
     ).hexdigest()
@@ -454,6 +462,7 @@ def _one_image(
     direct_client: OpenAIImageClient | None,
     avatar_image_url: str | None,
     ebook_image_url: str | None = None,
+    continuity_reference_url: str | None = None,
 ) -> dict[str, Any]:
     reference_url = (
         avatar_image_url if job.get("avatar_reference_sha256") is not None else None
@@ -566,6 +575,24 @@ def _one_image(
             kwargs["reference_image_urls"] = ordered_urls
         elif reference_url is not None:
             kwargs["reference_image_url"] = reference_url
+        if continuity_reference_url is not None:
+            urls = kwargs.pop("reference_image_urls", None)
+            single = kwargs.pop("reference_image_url", None)
+            if urls is None:
+                urls = [single] if single is not None else []
+            urls.append(continuity_reference_url)
+            kwargs["reference_image_urls"] = urls
+            kwargs["prompt"] += (
+                "\n\nThe LAST attached image is the COMPLETE immediately previous "
+                "grid in the same visual story. This requested grid CONTINUES "
+                "that sequence. Preserve recurring character identity, clothing, "
+                "objects, spatial arrangement, setting and persistent physical "
+                "states where appropriate, but create the NEW events and viewpoints "
+                "from the numbered descriptions above. Do not reproduce earlier "
+                "panels, separators, black padding or the old grid layout as "
+                "content inside a new panel. The earlier grid is reference only, "
+                "not an additional output panel."
+            )
         generated = direct_client.generate_png(**kwargs)
     except OpenAIImageRequestRejected as exc:
         state["status"] = "direct_rejected"
@@ -610,7 +637,11 @@ def generate_b2_images(
         jobs = [
             {**job, "avatar_reference_sha256": digest}
             if any(
-                beat.get("reference") if visual_style == "profesional"
+                (
+                    "presenter" in beat["cta_reference_sources"]
+                    if beat.get("cta_reference_sources") is not None
+                    else bool(beat.get("reference"))
+                ) if visual_style == "profesional"
                 else _avatar_requested(beat["description"])
                 for beat in job.get("panels", [job])
             )
@@ -662,11 +693,16 @@ def generate_b2_images(
                     f"Existing non-standard image state at {state_path}; "
                     "reconcile it before using standard image generation."
                 )
-            if state.get("fingerprint") != _fingerprint(job, options):
+            if (
+                job.get("continuity_previous_asset_id") is None
+                and state.get("fingerprint") != _fingerprint(job, options)
+            ):
                 raise ImageGenerationError(
                     f"Image request differs from saved beat {job['beat_id']}; "
                     "use another output root."
                 )
+            # Continuation fingerprints also include the previous paid PNG SHA.
+            # Verify those only once the predecessor has been completed.
     grid_root = output / "images" / "grids"
     if grid_root.is_symlink():
         raise ImageGenerationError("Refusing linked grid directory")
@@ -682,9 +718,44 @@ def generate_b2_images(
     # protects the whole batch rather than resetting for each image job.
     if jobs and direct_client is None:
         direct_client = OpenAIImageClient(api_key)
+    # Build dependency chains. Distinct chains and standalone images remain
+    # parallel, but a continuation is never submitted before its source PNG.
+    job_index = {
+        (job["block_id"], job.get("asset_id", job["beat_id"])): i
+        for i, job in enumerate(jobs)
+    }
+    children: dict[int, int] = {}
+    parents: set[int] = set()
+    for i, job in enumerate(jobs):
+        previous = job.get("continuity_previous_asset_id")
+        if previous is None:
+            continue
+        parent = job_index.get((job["block_id"], previous))
+        if parent is None or parent >= i or jobs[parent].get("grid") is None:
+            raise ImageGenerationError("Invalid chronological grid continuation dependency")
+        if parent in children:
+            raise ImageGenerationError("A completed grid cannot branch to two continuations")
+        children[parent] = i
+        parents.add(i)
+    execution_chains: list[list[int]] = []
+    for i in range(len(jobs)):
+        if i in parents:
+            continue
+        current: list[int] = []
+        cursor = i
+        while True:
+            current.append(cursor)
+            if cursor not in children:
+                break
+            cursor = children[cursor]
+        execution_chains.append(current)
+    if sum(len(c) for c in execution_chains) != len(jobs):
+        raise ImageGenerationError("Cyclic or disconnected image-grid continuation")
+
     worker_count = min(
-        options.max_parallel_images or _DEFAULT_MAX_PARALLEL_IMAGES, len(jobs)
-    ) if jobs else 0
+        options.max_parallel_images or _DEFAULT_MAX_PARALLEL_IMAGES,
+        len(execution_chains),
+    ) if execution_chains else 0
 
     manifest_path = output / "images" / "manifest.json"
     manifest: dict[str, Any] = {
@@ -708,33 +779,67 @@ def generate_b2_images(
     _atomic_json(manifest_path, manifest)
     results: list[dict[str, Any] | None] = [None] * len(jobs)
     failures: list[tuple[str, Exception]] = []
+    manifest_lock = Lock()
+
+    def run_chain(indices: list[int]) -> None:
+        predecessor: dict[str, Any] | None = None
+        for index in indices:
+            job = jobs[index]
+            source_url: str | None = None
+            effective_job = job
+            if job.get("continuity_previous_asset_id") is not None:
+                if predecessor is None or predecessor.get("grid") is None:
+                    raise ImageGenerationError("Chained grid predecessor has not completed")
+                source = output / predecessor["file"]
+                if source.is_symlink() or not source.is_file():
+                    raise ImageGenerationError("Missing or linked prior grid reference")
+                data = source.read_bytes()
+                digest = hashlib.sha256(data).hexdigest()
+                if digest != predecessor["sha256"]:
+                    raise ImageGenerationError("Prior grid reference checksum differs")
+                with Image.open(BytesIO(data)) as image:
+                    if image.format != "PNG":
+                        raise ImageGenerationError("Prior grid reference must be PNG")
+                    image.verify()
+                effective_job = {
+                    **job, "continuity_reference_sha256": digest,
+                }
+                source_url = (
+                    "data:image/png;base64,"
+                    + base64.b64encode(data).decode("ascii")
+                )
+            artifact = _one_image(
+                effective_job, output, options, api_key=api_key,
+                direct_client=direct_client,
+                avatar_image_url=reference[1] if reference is not None else None,
+                ebook_image_url=ebook_reference[1] if ebook_reference is not None else None,
+                continuity_reference_url=source_url,
+            )
+            predecessor = artifact
+            with manifest_lock:
+                results[index] = artifact
+                manifest["items"] = [item for item in results if item is not None]
+                manifest["openai_direct_count"] = sum(
+                    item["provider"] == "openai_direct"
+                    for item in manifest["items"]
+                )
+                _atomic_json(manifest_path, manifest)
+
     try:
-        if jobs:
+        if execution_chains:
             with ThreadPoolExecutor(max_workers=worker_count) as pool:
                 futures = {
-                    pool.submit(
-                        _one_image, job, output, options, api_key=api_key,
-                        direct_client=direct_client,
-                        avatar_image_url=reference[1] if reference is not None else None,
-                        ebook_image_url=(
-                            ebook_reference[1] if ebook_reference is not None else None
-                        ),
-                    ): (i, job.get("asset_id", job["beat_id"]))
-                    for i, job in enumerate(jobs)
+                    pool.submit(run_chain, indices): indices[0]
+                    for indices in execution_chains
                 }
                 for future in as_completed(futures):
-                    index, beat_id = futures[future]
+                    start_index = futures[future]
                     try:
-                        results[index] = future.result()
+                        future.result()
                     except Exception as exc:
-                        failures.append((beat_id, exc))
-                        print(f"  Image {beat_id}: {exc}", flush=True)
-                    manifest["items"] = [item for item in results if item is not None]
-                    manifest["openai_direct_count"] = sum(
-                        item["provider"] == "openai_direct"
-                        for item in manifest["items"]
-                    )
-                    _atomic_json(manifest_path, manifest)
+                        name = jobs[start_index].get("asset_id", jobs[start_index]["beat_id"])
+                        failures.append((name, exc))
+                        print(f"  Image chain {name}: {exc}", flush=True)
         if failures:
             detail = "; ".join(f"{beat}: {exc}" for beat, exc in failures)
             raise ImageGenerationError(
