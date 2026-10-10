@@ -373,7 +373,7 @@ def _restore_v3_source_punctuation(result: V3, block: dict[str, Any]) -> None:
             continue
         # Non-word characters are separators/punctuation; do not change any
         # letter, digit, accent, or word order.
-        letters = lambda value: re.sub(r"[\\W_]+", "", value, flags=re.UNICODE)
+        letters = lambda value: re.sub(r"[\W_]+", "", value, flags=re.UNICODE)
         if not letters(original) or letters(authored) != letters(original):
             continue
         if any(stress not in original for stress in speaks[0].stress):
