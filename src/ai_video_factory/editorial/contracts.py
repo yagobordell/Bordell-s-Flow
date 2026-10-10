@@ -31,7 +31,10 @@ class LayoutIntent(StrictModel):
 
 class EditorialIntervention(StrictModel):
     id: str = Field(pattern=r"^[A-Za-z0-9_-]{3,64}$")
-    kind: Literal["progressive_text", "number_emphasis", "accumulating_list", "text_card"]
+    kind: Literal[
+        "progressive_text", "number_emphasis", "accumulating_list",
+        "text_card", "comparison_cards", "process_flow",
+    ]
     elements: list[EditorialElement] = Field(min_length=1, max_length=8)
     end_beat_id: str
     layout_intent: LayoutIntent
@@ -41,6 +44,10 @@ class EditorialIntervention(StrictModel):
     def size_matches_kind(self) -> EditorialIntervention:
         if self.kind in {"number_emphasis", "text_card"} and len(self.elements) != 1:
             raise ValueError("Single-element effect received multiple elements")
+        if self.kind in {"comparison_cards", "process_flow"} and not (
+            2 <= len(self.elements) <= 3
+        ):
+            raise ValueError("Graphical comparison/flow requires two or three elements")
         return self
 
 
