@@ -213,33 +213,32 @@ def test_grid_video_finishing_requires_no_second_gpt_call_or_api_key(tmp_path):
         tmp_path, plan, original, upscaler=None, api_key=None,
     ) == finished
 
-@pytest.mark.parametrize(("count", "canvas"), [
-    (5, "3840x1440"),
-    (7, "3840x2160"),
-])
+@pytest.mark.parametrize("count", [5, 7])
 def test_large_grid_video_panels_stay_at_native_720p_without_gpt_edits(
-    tmp_path, count, canvas,
+    tmp_path, count,
 ):
     plan = professional(*[
         beat(f"1{chr(ord('B') + i)}", "media_video", f"{i+1}. Scene {i+1}")
         for i in range(count)
     ])
-    direct = RecordingGPT(fail_native=True)
+    direct = RecordingGPT()
     manifest = gpt.generate_b2_images(
         tmp_path, plan, api_key=None, options=gpt.ImageOptions(), direct_client=direct,
     )
-    assert len(direct.calls) == 1
-    assert direct.calls[0]["size"] == canvas
-    assert direct.calls[0]["quality"] == "high"
+    assert len(direct.calls) == 2
+    assert all(call["size"] == "3840x2160" for call in direct.calls)
+    assert all(call["quality"] == "high" for call in direct.calls)
+    assert "reference_image_urls" not in direct.calls[0]
+    assert len(direct.calls[1]["reference_image_urls"]) == 1
     panels = crop_grid_assets(tmp_path, manifest)
     assert len(panels) == count
-    assert all((p["width"], p["height"]) == (1280, 720) for p in panels)
+    assert all((p["width"], p["height"]) == (1920, 1080) for p in panels)
     finished = finish_professional_images(
         tmp_path, plan, manifest, upscaler=None, api_key=None,
     )
-    assert len(direct.calls) == 1
+    assert len(direct.calls) == 2
     assert [f["sha256"] for f in finished] == [p["sha256"] for p in panels]
-    assert all((p["width"], p["height"]) == (1280, 720) for p in finished)
+    assert all((p["width"], p["height"]) == (1920, 1080) for p in finished)
     assert manifest["native_grid_video_calls"] == 0
 
 
@@ -285,22 +284,34 @@ def test_casero_image_jobs_do_not_acquire_new_resolution_or_finishing(tmp_path):
 
 def test_professional_grid_sizes_depend_on_video_and_canvas_limit():
     cases = [
-        (["media_image", "media_image"], "2560x1440", (1280, 720)),
-        (["media_image", "media_video"], "3840x2160", (1920, 1080)),
-        (["media_image", "media_image", "media_video"], "3840x2160", (1920, 1080)),
-        (["media_image"] * 4 + ["media_video"], "3840x1440", (1280, 720)),
-        (["media_image"] * 6 + ["media_video"], "3840x2160", (1280, 720)),
+        (["media_image", "media_image"], ["2560x1440"], [(1280, 720)]),
+        (["media_image", "media_video"], ["3840x2160"], [(1920, 1080)]),
+        (
+            ["media_image", "media_image", "media_video"],
+            ["3840x2160"], [(1920, 1080)],
+        ),
+        (
+            ["media_image"] * 4 + ["media_video"],
+            ["2560x1440", "3840x2160"],
+            [(1280, 720), (1920, 1080)],
+        ),
+        (
+            ["media_image"] * 6 + ["media_video"],
+            ["2560x1440", "3840x2160"],
+            [(1280, 720), (1920, 1080)],
+        ),
     ]
-    for kinds, expected_size, expected_panel in cases:
+    for kinds, expected_sizes, expected_panels in cases:
         plan = professional(*[
             beat(f"1{chr(ord('B') + i)}", kind, f"{i+1}. Step {i+1}")
             for i, kind in enumerate(kinds)
         ])
         jobs = plan_image_jobs(plan, gpt.described_beats(plan))
-        assert len(jobs) == 1
-        assert jobs[0]["size"] == expected_size
-        assert (jobs[0]["grid"]["panel_width"],
-                jobs[0]["grid"]["panel_height"]) == expected_panel
+        assert [job["size"] for job in jobs] == expected_sizes
+        assert [
+            (job["grid"]["panel_width"], job["grid"]["panel_height"])
+            for job in jobs
+        ] == expected_panels
 
 
 def test_video_selected_as_grid_filler_increases_2x2_canvas():

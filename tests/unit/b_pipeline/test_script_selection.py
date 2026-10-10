@@ -271,7 +271,6 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         on_rejected_b12_output,
         on_rejected_b2_output,
         on_rejected_b21_output,
-        on_rejected_b3_output,
         visual_style,
         enable_casero_cta,
         avatar_image,
@@ -281,13 +280,12 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         previous_b12,
     ):
         assert start_from == "B1.1"
-        assert stop_after == "B3"
+        assert stop_after == "B2.1"
         assert previous_b11 is None and previous_b12 is None
         assert callable(on_rejected_output)
         assert callable(on_rejected_b12_output)
         assert callable(on_rejected_b2_output)
         assert callable(on_rejected_b21_output)
-        assert callable(on_rejected_b3_output)
         assert visual_style == "profesional"
         assert enable_casero_cta is False
         assert avatar_image.startswith(b"\x89PNG\r\n\x1a\n")
@@ -305,10 +303,8 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         on_output("B2", 1, {"pipeline_stage": "B2", "blocks": []})
         on_input("B2.1", None, {"pipeline_stage": "B2", "blocks": []})
         on_output("B2.1", None, {"pipeline_stage": "B2.1", "modified_beats": [], "error": None})
-        on_input("B3", 1, {"group_id": 1, "beats": []})
-        on_output("B3", 1, {"pipeline_stage": "B3", "group_id": 1, "beats": []})
         for stage, block_id in (
-            ("B1.1", None), ("B1.2", 1), ("B2", 1), ("B2.1", None), ("B3", 1)
+            ("B1.1", None), ("B1.2", 1), ("B2", 1), ("B2.1", None)
         ):
             on_api_response(
                 stage,
@@ -332,8 +328,6 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             merged = (
                 None
                 if stage == "B1.1"
-                else {"pipeline_stage": "B3", "groups": []}
-                if stage == "B3"
                 else {"pipeline_stage": "B2.1", "modified_beats": [], "error": None}
                 if stage == "B2.1"
                 else {"pipeline_stage": stage, "blocks": [{"block_id": 1, "beats": []}]}
@@ -342,7 +336,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             streamed_stages.append(stage)
             completed_this_run = streamed_stages[call_start:]
             assert completed_this_run == [
-                "B1.1", "B1.2", "B2", "B2.1", "B3"
+                "B1.1", "B1.2", "B2", "B2.1"
             ][:len(completed_this_run)]
             assert printed_events[print_start:] == completed_this_run
             report_path = tmp_path / "output" / ("roma" if "Uno." in script else "japon")
@@ -360,7 +354,6 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             b11=SimpleNamespace(model_dump=lambda: {"pipeline_stage": "B1.1"}),
             b12=[SimpleNamespace(block_id=1)],
             b2=[],
-            b3=[],
             visual_plan=lambda: {
                 "blocks": [{
                     "beats": [
@@ -643,23 +636,3 @@ def test_single_text_model_and_medium_reasoning_configuration() -> None:
     assert "openai_b_reasoning_effort" not in fields
 
 
-def test_b3_artifacts_fail_closed_until_input_and_output_are_durable(
-    tmp_path: Path,
-) -> None:
-    artifacts = runner.BotArtifacts(tmp_path)
-    artifacts.input("B3", 1, {"group_id": 1, "beats": []})
-
-    with pytest.raises(RuntimeError, match="durable output.json"):
-        artifacts.require_b3_group_outputs(1)
-
-    artifacts.output(
-        "B3", 1, {"pipeline_stage": "B3", "group_id": 1, "beats": []}
-    )
-    artifacts.require_b3_group_outputs(1)
-
-    assert json.loads(
-        (tmp_path / "B3" / "group_1" / "input.json").read_text(encoding="utf-8")
-    ) == {"group_id": 1, "beats": []}
-    assert json.loads(
-        (tmp_path / "B3" / "group_1" / "output.json").read_text(encoding="utf-8")
-    ) == {"pipeline_stage": "B3", "group_id": 1, "beats": []}

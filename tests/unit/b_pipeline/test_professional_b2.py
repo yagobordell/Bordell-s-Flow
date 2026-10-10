@@ -322,8 +322,9 @@ def test_professional_video_prompt_is_only_for_video(
     beat = {
         "beat_id": "1A", "text": "Apply moisturizer.",
         "beat_type": "setup", "visual_type": visual_type,
-        "prompt": "Suitable image", "video_prompt": video_prompt,
-        "reference": True, "audio": True if visual_type == "avatar" else False,
+        "prompt": None if visual_type == "avatar" else "Suitable image",
+        "video_prompt": video_prompt,
+        "reference": False, "audio": True if visual_type == "avatar" else False,
     }
     if accepted:
         assert ProfessionalVisualBeat.model_validate(beat).video_prompt == video_prompt
@@ -342,8 +343,8 @@ def test_referenced_presenter_active_application_is_video_not_still() -> None:
         ),
         "video_prompt": None, "reference": True, "audio": False,
     }
-    with pytest.raises(ValidationError, match="active practical step"):
-        ProfessionalVisualBeat.model_validate(beat)
+    # The contract checks carriers/audio; scene fidelity is reviewed by B2.1.
+    assert ProfessionalVisualBeat.model_validate(beat).visual_type == "media_image"
     beat.update(
         visual_type="media_video",
         video_prompt=(
@@ -359,23 +360,24 @@ def test_referenced_presenter_active_application_is_video_not_still() -> None:
     assert ProfessionalVisualBeat.model_validate(beat).visual_type == "media_image"
 
 
-def test_professional_contract_accepts_regenerated_avatar() -> None:
+def test_professional_contract_rejects_regenerated_avatar() -> None:
     data = {
         "pipeline_stage": "B2",
         "narrative_core": {"central_question": "Q", "final_answer": "A"},
-        "blocks": [{"block_id": 1, "type": "development",
-                    "emotional_entry": "A", "emotional_exit": "B",
-                    "span": {"first_words": "First", "last_words": "last"},
-                    "beats": [{"beat_id": "1A", "text": "First beat", "beat_type": "setup",
-                               "visual_type": "avatar", "prompt": "Same speaker at desk",
-                               "video_prompt": None, "reference": True, "audio": True}]}],
+        "blocks": [{
+            "block_id": 1, "type": "development",
+            "emotional_entry": "A", "emotional_exit": "B",
+            "span": {"first_words": "First", "last_words": "last"},
+            "beats": [{
+                "beat_id": "1A", "text": "First beat", "beat_type": "setup",
+                "visual_type": "avatar", "prompt": "Same speaker at desk",
+                "video_prompt": None, "reference": True, "audio": True,
+            }],
+        }],
         "error": None,
     }
-    assert ProfessionalB2Output.model_validate(data).blocks[0].beats[0].reference
-    data["blocks"][0]["beats"][0]["reference"] = False
-    with pytest.raises(ValidationError, match="reference"):
+    with pytest.raises(ValidationError, match="Talking avatar must reuse"):
         ProfessionalB2Output.model_validate(data)
-
 
 def test_professional_image_requests_send_exact_prompts_and_explicit_reference(
     tmp_path: Path,
@@ -643,18 +645,18 @@ def test_professional_schema_retry_recovers_from_speaking_still() -> None:
             assert output_type is ProfessionalB2Output
             attempts.append(instructions)
             if len(attempts) == 2:
-                assert "media_image ALWAYS requires audio=false" in instructions
+                assert "media_image and media_video ALWAYS require audio=false" in instructions
                 assert "nonempty prompt" in instructions
             block = payload["blocks"][0]
             block["beats"][0].update(
                 visual_type="media_image" if len(attempts) == 1 else "media_video",
-                prompt="Referenced speaker with visible mouth.",
+                prompt="A documentary view of the actual step.",
                 video_prompt=(
-                    "Speaking presenter makes a gentle gesture in sync with speech."
+                    "A person moves their hands naturally."
                     if len(attempts) == 2 else None
                 ),
-                reference=True,
-                audio=True,
+                reference=False,
+                audio=len(attempts) == 1,
             )
             return ProfessionalB2Output.model_validate({
                 "pipeline_stage": "B2", "narrative_core": payload["narrative_core"],
