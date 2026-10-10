@@ -297,6 +297,23 @@ class OptiumLabsImageUpscaler(ImageUpscaler):
         self._gateway_recovery_poll_seconds = gateway_recovery_poll_seconds
         self._http_client = http_client or _UrllibRuntimeHttpClient()
 
+    def check_storage_ready(self) -> None:
+        """Verify the same R2 HEAD path used for result recovery before Salad starts.
+
+        Use an intentionally absent object key. Both a successful HEAD and
+        an object-not-found response establish connectivity; only an actual
+        transport/authentication problem prevents paid GPU startup.
+        """
+        try:
+            self._storage.stat("image-upscaler/runtime/connectivity-preflight")
+        except Exception as exc:
+            raise ImageUpscalerError(
+                "Cloudflare R2 is unavailable for image finishing. "
+                "Salad was not started; saved GPT images and finishing "
+                "checkpoints are unchanged. Retry --images-only after R2 "
+                "connectivity recovers."
+            ) from exc
+
     def upscale(
         self,
         image_bytes: bytes,
