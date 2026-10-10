@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import uuid4
 
@@ -24,6 +25,28 @@ def _nonnegative(raw: object) -> float | None:
     except (ValueError, TypeError, OverflowError):
         return None
     return round(value, 3) if math.isfinite(value) and value >= 0 else None
+
+
+def _cost_value(report: dict[str, Any], key: str) -> Decimal | None:
+    entry = report.get(key)
+    if not isinstance(entry, dict):
+        return None
+    value = entry.get("priced_subtotal_usd")
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return amount if amount.is_finite() and amount >= 0 else None
+
+
+def _session_delta(start: object, end: Decimal | None) -> str | None:
+    try:
+        previous = Decimal(str(start))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if end is None or not previous.is_finite() or end < previous:
+        return None
+    return str(end - previous)
 
 
 def _state(report: dict[str, Any]) -> dict[str, Any]:
@@ -66,6 +89,12 @@ def begin_run_session(
         "elapsed_seconds": None, "stage_seconds": {},
         "estimated_api_cost_usd": None, "observed_salad_cost_usd": None,
         "billed_cost_usd": None,
+        "api_estimated_start_snapshot_usd": (
+            str(value) if (value := _cost_value(report, "api_costs")) is not None else None
+        ),
+        "salad_observed_start_snapshot_usd": (
+            str(value) if (value := _cost_value(report, "salad_costs")) is not None else None
+        ),
     })
     return identifier
 
@@ -97,14 +126,22 @@ def finish_run_session(
         status=status, finished_at=_time_iso(at), elapsed_seconds=duration,
         stage_seconds=clean_stages,
     )
-    costs = report.get("api_costs")
-    if isinstance(costs, dict):
-        entry["estimated_api_cost_usd"] = costs.get("priced_subtotal_usd")
-    salad = report.get("salad_costs")
-    if isinstance(salad, dict):
-        # Cumulative Salad snapshots are not per-session invoices. Preserve
-        # them at the session level, but label them explicitly.
-        entry["observed_salad_cost_usd"] = salad.get("observed_total_usd")
+    # Only comparable before/after snapshots may produce a *session delta*.
+    # A cumulative report subtotal is never copied as per-session spending.
+    api_end = _cost_value(report, "api_costs")
+    salad_end = _cost_value(report, "salad_costs")
+    entry["api_estimated_end_snapshot_usd"] = (
+        str(api_end) if api_end is not None else None
+    )
+    entry["salad_observed_end_snapshot_usd"] = (
+        str(salad_end) if salad_end is not None else None
+    )
+    entry["estimated_api_cost_usd"] = _session_delta(
+        entry.get("api_estimated_start_snapshot_usd"), api_end
+    )
+    entry["observed_salad_cost_usd"] = _session_delta(
+        entry.get("salad_observed_start_snapshot_usd"), salad_end
+    )
     saved["cumulative_elapsed_seconds"] = round(sum(
         item["elapsed_seconds"] for item in saved["items"]
         if isinstance(item.get("elapsed_seconds"), (int, float))
