@@ -2599,6 +2599,10 @@ async def main() -> None:
         print("  Existing immutable publication was not changed.", flush=True)
         return
     if getattr(args, "videos_only", False):
+        if getattr(args, "editorial", False):
+            from ai_video_factory.editorial.workflow import preflight_editorial_renderer
+
+            preflight_editorial_renderer()
         output_root = args.output if args.output is not None else settings.output_dir
         from ai_video_factory.workflows.r2_run_scope import (
             reset_active_video_scope,
@@ -2682,6 +2686,10 @@ async def main() -> None:
         visual_style = select_visual_style(getattr(args, "visual_style", None))
     if getattr(args, "editorial", False) and visual_style != "profesional":
         raise SystemExit("--editorial is available only in professional mode")
+    if getattr(args, "editorial", False):
+        from ai_video_factory.editorial.workflow import preflight_editorial_renderer
+
+        preflight_editorial_renderer()
     if getattr(args, "replace_professional_voice", False) and visual_style != "profesional":
         raise SystemExit("--replace-professional-voice is available only in Profesional")
     if visual_style != "casero" and getattr(args, "tts_provider", None) is not None:
