@@ -1,6 +1,7 @@
 """Regression tests for immutable E1/E2 editorial contracts and speech timing."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 
@@ -145,8 +146,7 @@ def test_offline_word_index_uses_verified_transcript_and_original_group_offset(t
     assert words["1A"][1]["end_seconds"] == 4.2
 
 
-@pytest.mark.asyncio
-async def test_e1_cache_reuses_exact_response_without_new_paid_call(tmp_path, monkeypatch):
+def test_e1_cache_reuses_exact_response_without_new_paid_call(tmp_path, monkeypatch):
     from ai_video_factory.editorial import directors
 
     class Provider:
@@ -171,8 +171,8 @@ async def test_e1_cache_reuses_exact_response_without_new_paid_call(tmp_path, mo
         }]}],
     }
     for _ in range(2):
-        answer, _key = await run_e1(
+        answer, _key = asyncio.run(run_e1(
             tmp_path, plan, _timeline(), provider=provider, model="model-one",
-        )
+        ))
         assert answer == _one()
     assert provider.calls == 1
