@@ -112,7 +112,7 @@ DEFAULT_AVATARS_DIR = Path("data/avatar")
 _STAGES = ("B1.1", "B1.2", "B2", "B2.1", "B3")
 _METRIC_STAGES = (
     "B1.1", "CTA", "CTA Ebook", "CTA Motion", "B1.2",
-    "CTA Detector", "B2", "B2 CTA", "B2.1", "B3",
+    "CTA Detector", "B2", "B2 CTA", "B2.1", "B3", "B2.2",
     "V1", "V2", "V3", "V4",
 )
 
@@ -1978,6 +1978,7 @@ def _refresh_audio_costs(report: dict[str, object], output: Path) -> None:
     ledger.sync_professional_voice_usage(output)
     ledger.sync_fish_director_usage(output)
     ledger.sync_image_usage(output)
+    ledger.sync_b22_usage(output)
     stages = previous.get("stages")
     if not isinstance(stages, dict):
         return
@@ -3052,6 +3053,7 @@ async def main() -> None:
         ledger.sync_professional_voice_usage(output)
         ledger.sync_fish_director_usage(output)
         ledger.sync_image_usage(output)
+        ledger.sync_b22_usage(output)
         costs = ledger.report(
             blocks=report_blocks,
             run_status=status,
