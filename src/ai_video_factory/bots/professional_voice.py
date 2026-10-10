@@ -996,12 +996,13 @@ def _reuse_verified_block(
 def reconcile_completed_gemini_narration(
     output: Path, artifact: dict[str, Any],
 ) -> bool:
-    """Recover a mismatched master WAV solely from SHA-verified paid group files.
+    """Reconcile a stale report with the trusted, already-paid Gemini audio run.
 
-    This is a local, zero-provider-call repair for an already completed Gemini
-    run. Never trust a changed WAV digest by itself: the persisted task and
-    latest metadata must agree, and each constituent group must independently
-    match its own completed-task SHA before the master can be reconstructed.
+    STT fidelity regeneration commits the updated root task/latest artifact
+    before the runner writes its report. After an interrupted sync the report
+    may therefore contain the OLD master SHA. Adopt the verified latest state
+    without rejoining; rejoin locally only when the physical master itself no
+    longer matches the trusted latest state. No provider API is ever called.
     """
     if artifact.get("provider") != "gemini" or artifact.get("status") != "completed":
         return False
@@ -1010,34 +1011,43 @@ def reconcile_completed_gemini_narration(
         raise VoicePlanError("Cannot reconcile Gemini narration: invalid run ID")
     run_dir = output / "audio" / "runs" / run_id
     master = run_dir / "narration.wav"
-    if artifact.get("file") != master.relative_to(output).as_posix():
+    name = master.relative_to(output).as_posix()
+    if artifact.get("file") != name:
         raise VoicePlanError("Cannot reconcile Gemini narration: unexpected master path")
-    claimed_sha = artifact.get("sha256")
-    if not isinstance(claimed_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", claimed_sha):
-        raise VoicePlanError("Cannot reconcile Gemini narration: missing source digest")
     if master.is_symlink() or not master.is_file():
         raise VoicePlanError("Cannot reconcile Gemini narration: missing or linked master")
-    with master.open("rb") as stream:
-        actual_sha = hashlib.file_digest(stream, "sha256").hexdigest()
-    if actual_sha == claimed_sha:
-        return False
 
     task_path = run_dir / "task.json"
     latest_path = output / "audio" / "latest.json"
     task = _read(task_path)
+    latest = _read(latest_path)
     if (
         task.get("status") != "completed"
         or task.get("run_id") != run_id
-        or task.get("audio") != artifact
-        or _read(latest_path) != artifact
+        or task.get("audio") != latest
+        or latest.get("provider") != "gemini"
+        or latest.get("status") != "completed"
+        or latest.get("run_id") != run_id
+        or latest.get("voice_id") != artifact.get("voice_id")
+        or latest.get("file") != name
     ):
         raise VoicePlanError(
             "Cannot reconcile Gemini narration: saved task and latest audio disagree"
         )
-    records = artifact.get("blocks")
+    claimed_sha = latest.get("sha256")
+    if not isinstance(claimed_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", claimed_sha):
+        raise VoicePlanError("Cannot reconcile Gemini narration: invalid latest SHA")
+    with master.open("rb") as stream:
+        actual_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+    if actual_sha == claimed_sha and latest == artifact:
+        return False
+
+    # The last completed task is authoritative only if every paid block is
+    # independently verified. A missing/tampered block always fails closed.
+    records = latest.get("blocks")
     if (
         not isinstance(records, list) or not records
-        or artifact.get("block_count") != len(records)
+        or latest.get("block_count") != len(records)
     ):
         raise VoicePlanError("Cannot reconcile Gemini narration: invalid group list")
     sources = []
@@ -1071,6 +1081,14 @@ def reconcile_completed_gemini_narration(
             raise VoicePlanError(f"Cannot reconcile Gemini group {block_id}: WAV differs")
         sources.append(expected)
 
+    if actual_sha == claimed_sha:
+        # Exactly the video03 failure: latest/task were already updated after
+        # STT regeneration; run_report.json was not persisted before sync.
+        artifact.clear()
+        artifact.update(latest)
+        return True
+
+    # Only genuine physical master damage requires a deterministic local join.
     candidate = run_dir / "narration.reconcile.wav"
     if candidate.exists() or candidate.is_symlink():
         raise VoicePlanError("Cannot reconcile Gemini narration: stale candidate exists")
@@ -1081,7 +1099,6 @@ def reconcile_completed_gemini_narration(
         or candidate.stat().st_size != joined["bytes"]):
         raise VoicePlanError("Cannot reconcile Gemini narration: joined WAV hash differs")
 
-    # Preserve the prior master for diagnosis before an atomic local replacement.
     backup = run_dir / f"narration.before_reconciliation.{actual_sha[:16]}.wav"
     if backup.exists() or backup.is_symlink():
         raise VoicePlanError("Cannot reconcile Gemini narration: backup already exists")
@@ -1090,8 +1107,7 @@ def reconcile_completed_gemini_narration(
         if hashlib.file_digest(stream, "sha256").hexdigest() != actual_sha:
             raise VoicePlanError("Cannot reconcile Gemini narration: backup verification failed")
     candidate.replace(master)
-
-    artifact.update({
+    latest.update({
         "sha256": verified_join,
         "bytes": joined["bytes"],
         "duration_seconds": joined["duration_seconds"],
@@ -1099,9 +1115,11 @@ def reconcile_completed_gemini_narration(
         "block_end_seconds": joined["block_end_seconds"],
         "block_durations_seconds": joined["block_durations_seconds"],
     })
-    task["audio"] = artifact
+    task["audio"] = latest
     _json(task_path, task)
-    _json(latest_path, artifact)
+    _json(latest_path, latest)
+    artifact.clear()
+    artifact.update(latest)
     return True
 
 
