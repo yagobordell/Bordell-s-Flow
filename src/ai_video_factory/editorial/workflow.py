@@ -192,8 +192,9 @@ def _composite(
         ):
             raise EditorialError("Remotion layer is not the requested editorial interval")
         path = layers / name
-        if path.is_symlink() or not path.is_file():
-            raise EditorialError("Missing or linked Remotion overlay")
+        if (path.is_symlink() or not path.is_file()
+            or sha256_file(path) != clip.get("sha256")):
+            raise EditorialError("Missing, linked or modified Remotion overlay")
         arguments.extend(["-i", str(path)])
         label = f"e{index}"
         filters.append(
