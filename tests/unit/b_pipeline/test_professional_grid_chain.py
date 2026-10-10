@@ -9,7 +9,6 @@ from PIL import Image
 from pydantic import ValidationError
 
 from ai_video_factory.bots.professional_cta import ProfessionalCTAVisualBeat
-
 from ai_video_factory.providers.image_grids import plan_image_jobs
 from ai_video_factory.providers.openai_batch_images import (
     ImageOptions,
