@@ -38,6 +38,18 @@ class EditorialError(RuntimeError):
     pass
 
 
+def preflight_editorial_renderer() -> None:
+    package = Path(__file__).resolve().parents[3] / "remotion" / "editorial"
+    if shutil.which("node") is None:
+        raise EditorialError("Node.js 20+ is required for professional editorial renders")
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        raise EditorialError("FFmpeg and FFprobe are required for editorial postproduction")
+    if not (package / "node_modules" / "remotion").is_dir():
+        raise EditorialError(
+            "Remotion dependencies are missing. Run npm install in remotion/editorial"
+        )
+
+
 def _verified(output: Path, relative: Any, digest: Any) -> Path:
     if not isinstance(relative, str) or not relative:
         raise EditorialError("Missing editorial source path")
