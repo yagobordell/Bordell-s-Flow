@@ -14,14 +14,19 @@ from PIL import ImageFont
 
 from ai_video_factory.compositor.b_video import _probe_final
 from ai_video_factory.compositor.professional_cta_qr import (
-    apply_professional_ebook_qr, professional_cta_website_windows,
+    apply_professional_ebook_qr,
+    professional_cta_website_windows,
     professional_cta_windows,
 )
 from ai_video_factory.editorial.compiler import (
-    EditorialValidationError, compile_plan, resolve_anchor,
+    EditorialValidationError,
+    compile_plan,
+    resolve_anchor,
 )
 from ai_video_factory.editorial.contracts import (
-    E2Output, EditorialIntervention, LayoutDecision,
+    E2Output,
+    EditorialIntervention,
+    LayoutDecision,
 )
 from ai_video_factory.editorial.directors import _write, run_e1, run_e2
 from ai_video_factory.editorial.frames import extract_frames
@@ -194,12 +199,16 @@ def generate_editorial_video(
     if not isinstance(audio, dict) or audio.get("status") != "completed":
         raise EditorialError("Editorial mode requires completed narration")
     _verified(output, video["file"], video["sha256"])
-    timeline_path = _verified(output, video["timeline_file"], sha256_file(output / video["timeline_file"]))
+    timeline_file = video["timeline_file"]
+    timeline_path = _verified(output, timeline_file, sha256_file(output / timeline_file))
     timeline = json.loads(timeline_path.read_text(encoding="utf-8"))
     base = timeline_path.parent / "final.mp4"
-    if base.is_symlink() or not base.is_file() or not base.resolve().is_relative_to(output.resolve()):
+    if (base.is_symlink() or not base.is_file()
+        or not base.resolve().is_relative_to(output.resolve())):
         raise EditorialError("Original pre-CTA LTX video missing")
-    _probe_final(base, float(timeline["duration_seconds"]), round(timeline["duration_seconds"] * 24))
+    _probe_final(
+        base, float(timeline["duration_seconds"]), round(timeline["duration_seconds"] * 24),
+    )
     index = build_word_index(output, plan, audio)
 
     async def decide() -> tuple[Any, E2Output, list[str], str]:
