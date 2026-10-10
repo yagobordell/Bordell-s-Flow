@@ -27,6 +27,8 @@ _PHASE_KEYS = (
     "stage1_diffusion_seconds",
     "stage2_total_seconds",
     "stage2_diffusion_seconds",
+    "stage1_nondiffusion_seconds",
+    "stage2_nondiffusion_seconds",
     "video_decode_seconds",
     "audio_decode_seconds",
     "audio_prepare_seconds",
@@ -38,6 +40,32 @@ _PHASE_KEYS = (
     "generation_elapsed_seconds",
     "total_elapsed_seconds",
 )
+
+_RESOURCE_KEYS = (
+    "process_cpu_seconds",
+    "host_ram_total_mb",
+    "host_ram_available_mb",
+    "host_swap_total_mb",
+    "host_swap_free_mb",
+    "process_peak_rss_mb",
+    "cuda_allocated_mb",
+    "cuda_reserved_mb",
+    "cuda_peak_allocated_mb",
+    "cuda_peak_reserved_mb",
+)
+
+
+def _prior_successes(source: Mapping[str, Any]) -> int | None:
+    value = source.get("pipeline_prior_successful_generations")
+    return value if type(value) is int and value >= 0 else None
+
+
+def _resource_snapshot(source: Mapping[str, Any]) -> dict[str, float]:
+    return {
+        key: value for key in _RESOURCE_KEYS
+        if (value := _nonnegative_float(source.get(key))) is not None
+    }
+
 
 
 def _nonnegative_float(raw: object) -> float | None:
@@ -129,4 +157,6 @@ def build_ltx_job_telemetry(
         ),
         "pipeline_reused": reused if isinstance(reused, bool) else None,
         "phase_seconds": phases,
+        "resource_metrics": _resource_snapshot(raw_metrics),
+        "pipeline_prior_successful_generations": _prior_successes(raw_metrics),
     }
