@@ -17,9 +17,6 @@ from ai_video_factory.editorial.contracts import E1Output, E2Output
 from ai_video_factory.providers.openai import OpenAIProvider
 
 
-logger = logging.getLogger(__name__)
-
-
 def _canonical(value: object) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
 
@@ -118,7 +115,7 @@ async def run_e1(
         # Responses.parse validates the entire Pydantic model before returning.
         # One bounded repair call prevents a single malformed effect from
         # terminating a completed video; infrastructure errors are not retried.
-        logger.warning(
+        logging.getLogger(__name__).warning(
             "E1 output failed structured validation; attempting one repair: %s",
             str(exc)[:400],
         )
