@@ -1826,6 +1826,9 @@ async def run_b_pipeline(
             beat.pop("cta_group_id", None)
             beat.pop("cta_reference_sources", None)
     b21_payload["b21_review"] = {
+        "protected_cta_beat_ids": [
+            beat_id for group in cta_groups for beat_id in group
+        ],
         "split_candidates": [
             {"block_id": item["block_id"], "beat_id": item["beat_id"]}
             for item in split_candidates
