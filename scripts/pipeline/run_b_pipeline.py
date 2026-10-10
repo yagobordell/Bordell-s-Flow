@@ -106,6 +106,10 @@ from ai_video_factory.workflows.b_video import (
     has_pending_b2_video,
 )
 from ai_video_factory.workflows.casero_cta import prepare_casero_cta
+from ai_video_factory.workflows.execution_sessions import (
+    begin_run_session,
+    finish_run_session,
+)
 
 DEFAULT_SCRIPTS_DIR = Path("data/input")
 DEFAULT_AVATARS_DIR = Path("data/avatar")
@@ -1811,6 +1815,41 @@ async def _run_images_only(
 
 
 
+def _finalize_resumed_video_metrics(
+    report: dict[str, object], output: Path, *,
+    session_id: str, elapsed_seconds: float, status: str,
+) -> None:
+    """Persist elapsed session time and B2.2 without double counting prior reports."""
+    b22_duration = 0.0
+    progress = output / "video" / "b22" / "state" / "progress.json"
+    if progress.is_file() and not progress.is_symlink():
+        snapshot = json.loads(progress.read_text(encoding="utf-8"))
+        if isinstance(snapshot, dict) and snapshot.get("status") == "completed":
+            b22_duration = max(float(snapshot.get("total_elapsed_seconds") or 0), 0.0)
+            report["b22_motion"] = snapshot
+    elapsed = max(elapsed_seconds, 0.0)
+    timings = report.get("timings")
+    if isinstance(timings, dict):
+        prior = timings.get("run_elapsed_seconds")
+        if isinstance(prior, (int, float)):
+            timings["run_elapsed_seconds"] = round(float(prior) + elapsed, 3)
+        stages = timings.get("stages")
+        if isinstance(stages, dict) and b22_duration > 0:
+            stage = stages.get("B2.2")
+            old = stage.get("elapsed_seconds") if isinstance(stage, dict) else None
+            stages["B2.2"] = {
+                "elapsed_seconds": round(
+                    (float(old) if isinstance(old, (int, float)) else 0.0)
+                    + b22_duration, 3,
+                ),
+                "call_count": 0, "sum_call_seconds": 0.0,
+            }
+    finish_run_session(
+        report, session_id, elapsed_seconds=elapsed, status=status,
+        stages={"LTX video session": elapsed, "B2.2": b22_duration},
+    )
+
+
 async def _run_videos_only(
     script_file: Path, output_root: Path,
     *, results_root: Path = Path("data/results"),
@@ -1851,18 +1890,29 @@ async def _run_videos_only(
         flush=True,
     )
     _refresh_audio_costs(report, output)
+    session_started = perf_counter()
+    session_id = begin_run_session(report, mode="videos-only")
+    _write(report_path, report)
     try:
         video = await _video_if_ready(output, report, require=True)
     except Exception:
         report["run"]["video_generation"] = {"status": "incomplete"}
         report["run"]["status"] = "failed"
         _refresh_audio_costs(report, output)
+        _finalize_resumed_video_metrics(
+            report, output, session_id=session_id,
+            elapsed_seconds=perf_counter() - session_started, status="failed",
+        )
         _write(report_path, report)
         raise
     report["run"]["video_generation"] = video
     report["run"]["status"] = "completed"
     report["timings"]["status"] = "completed"
     _refresh_audio_costs(report, output)
+    _finalize_resumed_video_metrics(
+        report, output, session_id=session_id,
+        elapsed_seconds=perf_counter() - session_started, status="completed",
+    )
     _write(report_path, report)
     await asyncio.to_thread(
         _publish_if_ready, output, script_file, results_root, managed_target
