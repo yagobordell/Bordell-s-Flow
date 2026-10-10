@@ -290,6 +290,10 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Generate or resume LTX video from a saved completed preview; no B bots or TTS.",
     )
+    editorial_flags = parser.add_mutually_exclusive_group()
+    editorial_flags.add_argument("--editorial", action="store_true")
+    editorial_flags.add_argument("--no-editorial", action="store_true")
+    parser.add_argument("--edit-only", action="store_true")
     parser.add_argument(
         "--no-video",
         action="store_true",
@@ -311,6 +315,16 @@ def parse_args() -> argparse.Namespace:
         help="Resume saved Casero or Gemini block TTS safely without rerunning B bots.",
     )
     args = parser.parse_args()
+    if args.edit_only:
+        if (args.from_stage != "B1.1" or args.stop_stage is not None
+            or args.images_only or args.videos_only or args.regenerate_audio
+            or args.resume_audio or args.no_audio or args.no_video
+            or args.skip_images or args.editorial or args.no_editorial
+            or args.publish_only or args.youtube_only):
+            parser.error("--edit-only accepts only a saved completed LTX run")
+        return args
+    if args.editorial and (args.no_video or args.skip_images or args.stop_stage):
+        parser.error("--editorial requires a completed professional video")
     if args.replace_professional_voice and (
         args.voice_id is None or args.voice_audio is not None or args.default_voice
         or args.from_stage != "B1.1" or args.regenerate_audio or args.resume_audio
@@ -1748,6 +1762,12 @@ async def _run_images_only(
             raise
         if video is not None:
             report["run"]["video_generation"] = video
+    if editorial:
+        from ai_video_factory.editorial.workflow import generate_editorial_video
+
+        report["run"]["editorial_generation"] = await asyncio.to_thread(
+            generate_editorial_video, output, report,
+        )
     report["run"]["status"] = "completed"
     report["timings"]["status"] = "completed"
     _refresh_audio_costs(report, output)
@@ -1775,6 +1795,7 @@ async def _run_videos_only(
     script_file: Path, output_root: Path,
     *, results_root: Path = Path("data/results"),
     managed_target: Path | None = None,
+    editorial: bool = False,
 ) -> None:
     """Resume durable LTX jobs without repeating OpenAI images, bots or Fish TTS."""
     root = output_root.resolve()
@@ -2555,6 +2576,24 @@ async def main() -> None:
         )
         print(f"  Published result: {target}", flush=True)
         return
+    if getattr(args, "edit_only", False):
+        output_root = args.output if args.output is not None else settings.output_dir
+        output = output_root / script_file.stem
+        report_path = output / "run_report.json"
+        if (output.is_symlink() or not report_path.is_file()
+            or report_path.is_symlink()):
+            raise SystemExit("--edit-only requires an existing saved completed LTX run")
+        saved = json.loads(report_path.read_text(encoding="utf-8"))
+        if saved.get("run", {}).get("script_sha256") != hashlib.sha256(
+            script_file.read_bytes()
+        ).hexdigest():
+            raise SystemExit("--edit-only script differs from saved generation")
+        from ai_video_factory.editorial.workflow import generate_editorial_video
+
+        edited = await asyncio.to_thread(generate_editorial_video, output, saved)
+        print(f"  Editorial edition ready: {output / edited['file']}", flush=True)
+        print("  Existing immutable publication was not changed.", flush=True)
+        return
     if getattr(args, "videos_only", False):
         output_root = args.output if args.output is not None else settings.output_dir
         from ai_video_factory.workflows.r2_run_scope import (
@@ -2568,6 +2607,7 @@ async def main() -> None:
             await _run_videos_only(
                 script_file, output_root, results_root=results_root,
                 managed_target=getattr(args, "managed_target", None),
+                editorial=bool(getattr(args, "editorial", False)),
             )
         finally:
             reset_active_video_scope(token)
@@ -2636,6 +2676,8 @@ async def main() -> None:
         )
     else:
         visual_style = select_visual_style(getattr(args, "visual_style", None))
+    if getattr(args, "editorial", False) and visual_style != "profesional":
+        raise SystemExit("--editorial is available only in professional mode")
     if getattr(args, "replace_professional_voice", False) and visual_style != "profesional":
         raise SystemExit("--replace-professional-voice is available only in Profesional")
     if visual_style != "casero" and getattr(args, "tts_provider", None) is not None:
@@ -3408,6 +3450,14 @@ async def main() -> None:
                     run_metadata["video_generation"] = video
                     if video.get("status") == "completed":
                         print(f"  LTX video ready: {video['file']}", flush=True)
+                        if getattr(args, "editorial", False):
+                            from ai_video_factory.editorial.workflow import (
+                                generate_editorial_video,
+                            )
+
+                            run_metadata["editorial_generation"] = await asyncio.to_thread(
+                                generate_editorial_video, output, {"run": run_metadata},
+                            )
                 else:
                     run_metadata["video_generation"] = {
                         "status": "deferred", "reason": "audio_or_images_incomplete",
