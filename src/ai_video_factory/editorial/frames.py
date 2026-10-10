@@ -5,8 +5,8 @@ import hashlib
 import subprocess
 from pathlib import Path
 
-from ai_video_factory.editorial.contracts import EditorialIntervention
 from ai_video_factory.editorial.compiler import resolve_anchor
+from ai_video_factory.editorial.contracts import EditorialIntervention
 
 
 def extract_frames(
@@ -21,7 +21,8 @@ def extract_frames(
     # Sample beginning, middle and end, including each intervening beat midpoint.
     selected = {first, first + (end-first)//2, end - 1}
     ordered = timeline["beats"]
-    low = next(i for i, beat in enumerate(ordered) if beat["beat_id"] == intervention.elements[0].anchor.beat_id)
+    first_id = intervention.elements[0].anchor.beat_id
+    low = next(i for i, beat in enumerate(ordered) if beat["beat_id"] == first_id)
     high = next(i for i, beat in enumerate(ordered) if beat["beat_id"] == intervention.end_beat_id)
     for beat in ordered[low:high + 1]:
         lo = max(first, beat["start_frame"])
