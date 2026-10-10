@@ -69,6 +69,8 @@ def e1_payload(plan: dict[str, Any], timeline: dict[str, Any]) -> dict[str, Any]
                         "prompt": beat.get("prompt"),
                         "video_prompt": beat.get("video_prompt"),
                         "second_prompt": beat.get("second_prompt"),
+                        "visual_subshots": beat.get("visual_subshots"),
+                        "grid_id": beat.get("grid_id"),
                         "cta_group_id": beat.get("cta_group_id"),
                         "start_frame": keyed[beat["beat_id"]]["start_frame"],
                         "end_frame": keyed[beat["beat_id"]]["end_frame"],
