@@ -105,6 +105,8 @@ class StageDemand:
     target_drain_seconds: float = 0.0
     effective_drain_seconds: float = 0.0
     estimated_drain_seconds: float = 0.0
+    best_possible_eta_seconds: float | None = None
+    target_attainable_under_quota: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1536,6 +1538,7 @@ class PredictiveSaladAutoscaler:
             round(demand.expected_runtime_seconds, 1),
             round(demand.remaining_work_seconds, 1),
             round(demand.target_drain_seconds, 1),
+            demand.target_attainable_under_quota,
             demand.jobs_per_replica,
             demand.job_count_target,
             result.reason,
@@ -1570,7 +1573,8 @@ class PredictiveSaladAutoscaler:
             f"{demand.remaining_work_seconds:.1f}s, "
             f"eta_current={current_eta_text}, eta_target={target_eta_text}, "
             f"target_drain={demand.target_drain_seconds / 60.0:.1f}m, "
-            f"effective_drain={demand.effective_drain_seconds / 60.0:.1f}m"
+            f"effective_drain={demand.effective_drain_seconds / 60.0:.1f}m, "
+            f"goal_feasibility={'optimistically_reachable' if demand.target_attainable_under_quota else 'infeasible_under_quota'}"
             + (
                 f", jobs_per_replica={demand.jobs_per_replica}, "
                 f"job_target={demand.job_count_target}"
@@ -1666,6 +1670,26 @@ def build_global_demands(
                 min(ideal, active_job_count, config.stage_max_replicas[stage]),
             )
         estimated_drain_seconds = work_seconds / ideal if ideal > 0 else 0.0
+        max_workers = min(
+            config.project_max_replicas,
+            config.stage_max_replicas[stage],
+            active_job_count,
+        )
+        longest_job = max(
+            (_job_forecast_seconds(row, expected_runtime) for row in rows),
+            default=0.0,
+        )
+        best_possible_eta = (
+            max(
+                longest_job,
+                work_seconds / (max_workers * config.target_utilization),
+            )
+            if max_workers > 0 else None
+        )
+        quota_feasible = (
+            best_possible_eta <= target_drain_seconds
+            if best_possible_eta is not None else work_seconds <= 0
+        )
         demands[stage] = StageDemand(
             stage=stage,
             rows=tuple(dict(row) for row in rows),
@@ -1681,6 +1705,8 @@ def build_global_demands(
             target_drain_seconds=target_drain_seconds,
             effective_drain_seconds=effective_drain_seconds,
             estimated_drain_seconds=estimated_drain_seconds,
+            best_possible_eta_seconds=best_possible_eta,
+            target_attainable_under_quota=quota_feasible,
         )
     return demands
 
