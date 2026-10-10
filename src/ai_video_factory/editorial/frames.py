@@ -7,15 +7,16 @@ from pathlib import Path
 
 from ai_video_factory.editorial.compiler import resolve_anchor
 from ai_video_factory.editorial.contracts import EditorialIntervention
+from ai_video_factory.editorial.timeline import RENDER_FPS, rendered_windows
 
 
 def extract_frames(
     video: Path, output: Path, intervention: EditorialIntervention,
     index: dict, timeline: dict,
 ) -> list[tuple[str, Path]]:
-    beats = {beat["beat_id"]: beat for beat in timeline["beats"]}
-    first = round(resolve_anchor(intervention.elements[0].anchor, index) * 24)
-    end = beats[intervention.end_beat_id]["end_frame"]
+    windows = rendered_windows(timeline)
+    first = round(resolve_anchor(intervention.elements[0].anchor, index) * RENDER_FPS)
+    end = windows[intervention.end_beat_id][1]
     if end <= first:
         raise ValueError("Invalid editorial frame sample interval")
     # Sample beginning, middle and end, including each intervening beat midpoint.
@@ -25,8 +26,8 @@ def extract_frames(
     low = next(i for i, beat in enumerate(ordered) if beat["beat_id"] == first_id)
     high = next(i for i, beat in enumerate(ordered) if beat["beat_id"] == intervention.end_beat_id)
     for beat in ordered[low:high + 1]:
-        lo = max(first, beat["start_frame"])
-        hi = min(end, beat["end_frame"])
+        lo = max(first, windows[beat["beat_id"]][0])
+        hi = min(end, windows[beat["beat_id"]][1])
         if hi > lo:
             selected.add(lo + (hi - lo)//2)
     selected = sorted(selected)
@@ -49,7 +50,7 @@ def extract_frames(
         if not image.is_file():
             proc = subprocess.run([
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
-                "-ss", f"{n/24:.9f}", "-i", str(video), "-frames:v", "1",
+                "-ss", f"{n / RENDER_FPS:.9f}", "-i", str(video), "-frames:v", "1",
                 "-vf", "scale=960:540", "-q:v", "3", "-y", str(image),
             ], capture_output=True, text=True, check=False)
             if proc.returncode or not image.is_file():
