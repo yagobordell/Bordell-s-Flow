@@ -281,3 +281,47 @@ def test_e1_repairs_single_schema_validation_error(tmp_path, monkeypatch):
         tmp_path, plan, _timeline(), provider=provider, model="model-one",
     ))
     assert len(provider.calls) == 2
+
+
+
+def test_original_30fps_stt_timeline_compiles_on_24fps_ltx_clock():
+    """Regression: the existing 30-fps STT preview must not abort edit-only."""
+    timeline = {
+        "schema_version": "b2-stt-static-timeline-v1",
+        "fps": 30,
+        "duration_seconds": 2.0,
+        "beats": [{
+            "beat_id": "1A", "start_seconds": 0.0, "end_seconds": 2.0,
+            "start_frame": 0, "end_frame": 60,
+            "render_start_frame": 0, "render_end_frame": 48,
+        }],
+    }
+    result = compile_plan(_one(), _e2(), _index(), timeline)
+    assert result["fps"] == 24
+    assert result["duration_frames"] == 48
+    assert result["events"][0]["end_frame"] == 48
+    assert result["events"][0]["elements"] == [
+        {"text": "CLONED", "frame": 12},
+        {"text": "VOICE", "frame": 22},
+    ]
+
+
+def test_30fps_stt_timeline_checks_existing_ltx_frame_fields():
+    from ai_video_factory.editorial.timeline import (
+        EditorialTimelineError,
+        rendered_windows,
+    )
+
+    timeline = {
+        "fps": 30,
+        "duration_seconds": 2,
+        "beats": [{
+            "beat_id": "1A", "start_seconds": 0.0, "end_seconds": 2.0,
+            "start_frame": 0, "end_frame": 60,
+            "render_start_frame": 0, "render_end_frame": 49,
+        }],
+    }
+    with pytest.raises(EditorialTimelineError, match="render_end_frame"):
+        rendered_windows(timeline)
+    timeline["beats"][0]["render_end_frame"] = 48
+    assert rendered_windows(timeline) == {"1A": (0, 48)}
