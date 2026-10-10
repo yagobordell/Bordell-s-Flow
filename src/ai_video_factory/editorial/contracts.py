@@ -38,7 +38,7 @@ class EditorialIntervention(StrictModel):
     animation: Literal["fade", "pop", "slide"] = "fade"
 
     @model_validator(mode="after")
-    def size_matches_kind(self) -> "EditorialIntervention":
+    def size_matches_kind(self) -> EditorialIntervention:
         if self.kind in {"number_emphasis", "text_card"} and len(self.elements) != 1:
             raise ValueError("Single-element effect received multiple elements")
         return self
@@ -49,7 +49,7 @@ class E1Output(StrictModel):
     interventions: list[EditorialIntervention] = Field(max_length=200)
 
     @model_validator(mode="after")
-    def unique_ids(self) -> "E1Output":
+    def unique_ids(self) -> E1Output:
         ids = [item.id for item in self.interventions]
         if len(ids) != len(set(ids)):
             raise ValueError("Duplicated editorial intervention ID")
@@ -71,7 +71,7 @@ class LayoutDecision(StrictModel):
     align: Literal["left", "center", "right"]
 
     @model_validator(mode="after")
-    def on_screen(self) -> "LayoutDecision":
+    def on_screen(self) -> LayoutDecision:
         if self.x + self.width > 1.000001 or self.y + self.height > 1.000001:
             raise ValueError("Layout rectangle escapes visible frame")
         for value in (self.color, self.stroke_color):
