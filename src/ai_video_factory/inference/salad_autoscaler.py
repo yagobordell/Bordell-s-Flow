@@ -625,9 +625,9 @@ def load_predictive_autoscaler_config(
 
 def _ltx_health_mode_env() -> str:
     mode = os.getenv("SALAD_AUTOSCALER_LTX_HEALTH_MODE", "observe").strip().lower()
-    if mode not in {"off", "observe", "recommend"}:
+    if mode not in {"off", "observe", "recommend", "replace"}:
         raise RuntimeError(
-            "SALAD_AUTOSCALER_LTX_HEALTH_MODE must be off, observe or recommend"
+            "SALAD_AUTOSCALER_LTX_HEALTH_MODE must be off, observe, recommend or replace"
         )
     return mode
 
@@ -716,7 +716,7 @@ class PredictiveSaladAutoscaler:
                     status = str(assessment["state"])
                     recommendation = (
                         "review_safe_drain" if (
-                            self.config.ltx_health_mode == "recommend"
+                            self.config.ltx_health_mode in {"recommend", "replace"}
                             and status == "confirmed_degraded"
                         ) else "observe"
                     )
@@ -733,6 +733,155 @@ class PredictiveSaladAutoscaler:
             except Exception as exc:
                 # A diagnostic outage is not a reason to abort safe capacity control.
                 self.logger(f"Autoscaler health {stage}: telemetry unavailable ({exc}).")
+
+    def _reconcile_ltx_reallocations(
+        self, *, rows_by_stage: dict[str, list[dict[str, object]]],
+        groups: dict[str, dict[str, object]],
+        transitioning: dict[str, bool],
+    ) -> set[str]:
+        """Opt-in targeted Salad reallocation; never interrupt a leased job.
+
+        Only the existing singleton controller calls this method. Reallocation
+        does not alter replica counts and cannot exceed the global GPU quota.
+        A durable DB intent is written before the provider POST; uncertain
+        responses require operator review, never an automatic retry.
+        """
+        if self.config.ltx_health_mode != "replace":
+            return set()
+        busy: set[str] = set()
+        now = datetime.now(UTC)
+        for stage in self.clients:
+            if stage not in _TIME_BASED_LTX_STAGES:
+                continue
+            try:
+                intents = self.store.list_ltx_reallocation_intents(stage=stage)
+                active = {
+                    iid: entry for iid, entry in intents.items()
+                    if entry["state"] in {"draining", "requested", "manual_review"}
+                }
+                if active:
+                    busy.add(stage)
+                # Do not issue/confirm capacity mutations during a provider transition.
+                if transitioning[stage] or _group_status(groups[stage]) != "running":
+                    continue
+                instances = self.clients[stage].list_container_group_instances()
+                instance_by_id = {
+                    str(instance["id"]): instance for instance in instances
+                    if instance.get("id")
+                }
+                # Unknown live-worker-to-instance mappings fail closed.
+                running = [
+                    row for row in rows_by_stage.get(stage, [])
+                    if str(row.get("status") or "") == "running"
+                ]
+                active_ids: set[str] = set()
+                mappings_complete = True
+                for row in running:
+                    worker_id = str(row.get("worker_id") or "").strip()
+                    matches = [
+                        iid for iid in instance_by_id if worker_id and iid in worker_id
+                    ]
+                    if len(matches) != 1:
+                        mappings_complete = False
+                        break
+                    active_ids.add(matches[0])
+                if not mappings_complete:
+                    if active:
+                        self.logger(
+                            f"Autoscaler {stage}: reallocation still fenced, "
+                            "incomplete active-worker mapping."
+                        )
+                    continue
+                if active:
+                    # Do not combine normal resize with per-instance reallocation.
+                    for iid, entry in active.items():
+                        if entry["state"] == "manual_review":
+                            continue
+                        if iid not in instance_by_id:
+                            self.store.complete_ltx_reallocation(
+                                stage=stage, instance_id=iid
+                            )
+                            self.logger(
+                                f"Autoscaler {stage}/{iid}: original Salad instance "
+                                "absent; reallocation fence released."
+                            )
+                            continue
+                        if entry["state"] == "requested":
+                            requested = _parse_datetime(entry.get("requested_at"))
+                            if requested is not None and (
+                                now - requested
+                            ).total_seconds() >= 7200:
+                                self.store.flag_stalled_ltx_reallocation(
+                                    stage=stage, instance_id=iid
+                                )
+                                self.logger(
+                                    f"Autoscaler {stage}/{iid}: reallocation unresolved "
+                                    "after 7200s; manual review required, no retry."
+                                )
+                            continue
+                        if iid in active_ids:
+                            continue
+                        detected = _parse_datetime(entry.get("detected_at"))
+                        if detected is None or (
+                            now - detected
+                        ).total_seconds() < self.config.drain_grace_seconds:
+                            continue
+                        # Instance is fenced from fresh claims and not leased.
+                        if self.store.request_ltx_reallocation(
+                            stage=stage, instance_id=iid
+                        ):
+                            self.clients[stage].reallocate_container_group_instance(iid)
+                            self.logger(
+                                f"Autoscaler {stage}/{iid}: targeted reallocation "
+                                "requested; awaiting provider confirmation."
+                            )
+                    continue
+                # Never interfere with a pre-existing ordinary downscale drain.
+                if self.store.list_draining_instances(stage=stage):
+                    continue
+                observations = self.store.list_recent_ltx_health_observations(
+                    stage=stage
+                )
+                scored = assess_ltx_instance_health(observations)
+                candidates = [
+                    row for row in scored
+                    if row["state"] == "confirmed_degraded"
+                    and row["instance_id"] in instance_by_id
+                    and row["instance_id"] not in active_ids
+                    and row["instance_id"] not in intents
+                ]
+                # The provider may be bootstrapping or capacity-constrained:
+                # only move stable running instances, never a deploying one.
+                candidates = [
+                    row for row in candidates
+                    if str(instance_by_id[str(row["instance_id"])].get("state"))
+                    .lower() == "running"
+                ]
+                if not candidates:
+                    continue
+                candidate = max(
+                    candidates,
+                    key=lambda row: float(row["ratio_to_exact_peers"] or 0),
+                )
+                iid = str(candidate["instance_id"])
+                if self.store.begin_ltx_reallocation_drain(
+                    stage=stage, instance_id=iid,
+                    ttl_seconds=max(self.config.drain_ttl_seconds, 120.0),
+                ):
+                    busy.add(stage)
+                    self.logger(
+                        f"Autoscaler {stage}/{iid}: degradation "
+                        f"ratio={candidate['ratio_to_exact_peers']} verified; "
+                        "draining without killing active jobs. Reallocation "
+                        "requires a later idle confirmation."
+                    )
+            except Exception as exc:
+                # Ambiguous provider or database failures never justify deletion.
+                busy.add(stage)
+                self.logger(
+                    f"Autoscaler {stage}: targeted reallocation deferred ({exc})."
+                )
+        return busy
 
     def reconcile(self) -> dict[str, AutoscaleResult]:
         if not self.config.enabled or not self.clients:
@@ -935,6 +1084,10 @@ class PredictiveSaladAutoscaler:
             stage: targets[stage] > quota_targets[stage]
             for stage in self.clients
         }
+        reallocation_busy = self._reconcile_ltx_reallocations(
+            rows_by_stage=rows_by_stage, groups=groups,
+            transitioning=group_transitioning,
+        )
         initial_current = dict(current)
         results: dict[str, AutoscaleResult] = {}
         hard_failures: dict[str, str] = {}
@@ -942,6 +1095,14 @@ class PredictiveSaladAutoscaler:
         # Preserve Media Pipeline ordering: only confirmed capacity releases can fund new capacity.
         for stage in self.clients:
             target = targets[stage]
+            if stage in reallocation_busy:
+                results[stage] = AutoscaleResult(
+                    stage=stage, current_replicas=current[stage],
+                    target_replicas=target, applied_replicas=current[stage],
+                    changed=False, demand=demands[stage],
+                    reason="instance_reallocation_pending",
+                )
+                continue
             if group_transitioning[stage]:
                 pending_drains = tuple(self.store.list_draining_instances(stage=stage))
                 if pending_drains:
@@ -1045,7 +1206,7 @@ class PredictiveSaladAutoscaler:
             0,
         )
         for stage in self.clients:
-            if group_transitioning[stage]:
+            if group_transitioning[stage] or stage in reallocation_busy:
                 continue
             target = targets[stage]
             before = current[stage]
