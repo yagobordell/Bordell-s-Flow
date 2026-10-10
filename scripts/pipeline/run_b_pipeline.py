@@ -2071,6 +2071,48 @@ def _activate_pending_avatar_clone(
     _write(output / "run_report.json", report)
 
 
+def _validate_professional_audio_b2(
+    core: dict[str, object], blocks: list[dict[str, object]],
+) -> None:
+    """Validate saved post-CTA B2 without discarding its visual metadata.
+
+    ProfessionalB2Output is the strict on-the-wire bot schema. The persisted
+    merged B2 also contains CTA-only annotations added after bot validation.
+    Validate those annotations against the CTA contract separately, then
+    validate a transient B2 view; leave the original blocks untouched for V3.
+    """
+    for block in blocks:
+        if not isinstance(block, dict) or not isinstance(block.get("beats"), list):
+            raise ValueError("Saved professional B2 block is malformed")
+        plain_beats = []
+        for beat in block["beats"]:
+            if not isinstance(beat, dict):
+                raise ValueError("Saved professional B2 beat is malformed")
+            plain = dict(beat)
+            has_group = "cta_group_id" in plain
+            has_sources = "cta_reference_sources" in plain
+            if has_group != has_sources:
+                raise ValueError("Saved CTA beat metadata is incomplete")
+            if has_group:
+                group_id = plain.pop("cta_group_id")
+                sources = plain.pop("cta_reference_sources")
+                if type(group_id) is not int or group_id < 1:
+                    raise ValueError("Saved CTA group ID must be a positive integer")
+                ProfessionalCTAVisualBeat.model_validate({
+                    key: plain[key] for key in (
+                        "beat_id", "visual_type", "prompt", "video_prompt",
+                        "reference", "audio",
+                    )
+                } | {"reference_sources": sources})
+            plain_beats.append(plain)
+        ProfessionalB2Output.model_validate({
+            "pipeline_stage": "B2",
+            "narrative_core": core,
+            "blocks": [{**block, "beats": plain_beats}],
+            "error": None,
+        })
+
+
 def _professional_audio_nonce(
     pending: list[Path], *, resume: bool, previous_audio: object,
 ) -> str:
@@ -2201,11 +2243,7 @@ async def _run_audio_only(
                 core = merged.get("narrative_core")
                 if not isinstance(blocks, list) or not blocks or not isinstance(core, dict):
                     raise RuntimeError("Professional B2 merged checkpoint is incomplete")
-                for block in blocks:
-                    ProfessionalB2Output.model_validate({
-                        "pipeline_stage": "B2", "narrative_core": core,
-                        "blocks": [block], "error": None,
-                    })
+                _validate_professional_audio_b2(core, blocks)
                 pending = unfinished_audio_runs(output)
                 nonce = _professional_audio_nonce(
                     pending, resume=resume, previous_audio=previous_audio,
