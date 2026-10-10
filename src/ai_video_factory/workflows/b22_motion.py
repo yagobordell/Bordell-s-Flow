@@ -143,6 +143,15 @@ def _save_diagnostic_json(path: Path, data: dict[str, Any]) -> None:
         temp.unlink(missing_ok=True)
 
 
+def _best_effort_diagnostic_json(path: Path, data: dict[str, Any]) -> None:
+    try:
+        _save_diagnostic_json(path, data)
+    except (OSError, TypeError, ValueError) as exc:
+        # A failed metrics write must not discard a completed paid B2.2 result.
+        print(f"  B2.2 diagnostic persistence unavailable: {type(exc).__name__}",
+              flush=True)
+
+
 def _response_usage(raw: object, model: str) -> dict[str, Any]:
     """Read only bounded, billable metadata; never persist provider payloads."""
     def get(item: object, name: str) -> Any:
@@ -366,7 +375,7 @@ async def _call_group(
             output_type=B22Result,
         )
         recorded.append(_response_usage(_raw, model))
-        _save_diagnostic_json(metrics_path, {
+        _best_effort_diagnostic_json(metrics_path, {
             "schema_version": 1, "attempts": recorded,
         })
         try:
@@ -434,7 +443,7 @@ def adapt_b22_motion(
                 elapsed = round(time.monotonic() - started, 3)
                 print(f"  B2.2 group {index}/{count} FAILED "
                       f"after {elapsed:.1f}s: {type(error).__name__}", flush=True)
-                _save_diagnostic_json(state_path, {
+                _best_effort_diagnostic_json(state_path, {
                     "schema_version": 1, "status": "failed",
                     "groups_completed": index - 1, "groups_total": count,
                     "group_elapsed_seconds": elapsed,
@@ -455,7 +464,7 @@ def adapt_b22_motion(
                 f"attempts={event['attempts']}",
                 flush=True,
             )
-            _save_diagnostic_json(state_path, {
+            _best_effort_diagnostic_json(state_path, {
                 "schema_version": 1, "status": "running" if index < count else "completed",
                 "groups_completed": index, "groups_total": count,
                 "adapted_shots": len(result), "groups": summaries,
