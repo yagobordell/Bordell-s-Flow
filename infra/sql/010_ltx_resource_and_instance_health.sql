@@ -33,6 +33,7 @@ REVOKE ALL ON TABLE gpu.ltx_instance_health FROM anon, authenticated;
 CREATE TABLE IF NOT EXISTS gpu.ltx_instance_reallocations (
     stage text NOT NULL CHECK (stage IN ('ltx25', 'ltx25_i2v')),
     instance_id text NOT NULL,
+    original_machine_id text,
     state text NOT NULL CHECK (
         state IN ('draining', 'requested', 'recovered', 'manual_review')
     ),
