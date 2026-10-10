@@ -993,6 +993,118 @@ def _reuse_verified_block(
     return None
 
 
+def reconcile_completed_gemini_narration(
+    output: Path, artifact: dict[str, Any],
+) -> bool:
+    """Recover a mismatched master WAV solely from SHA-verified paid group files.
+
+    This is a local, zero-provider-call repair for an already completed Gemini
+    run. Never trust a changed WAV digest by itself: the persisted task and
+    latest metadata must agree, and each constituent group must independently
+    match its own completed-task SHA before the master can be reconstructed.
+    """
+    if artifact.get("provider") != "gemini" or artifact.get("status") != "completed":
+        return False
+    run_id = artifact.get("run_id")
+    if not isinstance(run_id, str) or not run_id or Path(run_id).name != run_id:
+        raise VoicePlanError("Cannot reconcile Gemini narration: invalid run ID")
+    run_dir = output / "audio" / "runs" / run_id
+    master = run_dir / "narration.wav"
+    if artifact.get("file") != master.relative_to(output).as_posix():
+        raise VoicePlanError("Cannot reconcile Gemini narration: unexpected master path")
+    claimed_sha = artifact.get("sha256")
+    if not isinstance(claimed_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", claimed_sha):
+        raise VoicePlanError("Cannot reconcile Gemini narration: missing source digest")
+    if master.is_symlink() or not master.is_file():
+        raise VoicePlanError("Cannot reconcile Gemini narration: missing or linked master")
+    with master.open("rb") as stream:
+        actual_sha = hashlib.file_digest(stream, "sha256").hexdigest()
+    if actual_sha == claimed_sha:
+        return False
+
+    task_path = run_dir / "task.json"
+    latest_path = output / "audio" / "latest.json"
+    task = _read(task_path)
+    if (
+        task.get("status") != "completed"
+        or task.get("run_id") != run_id
+        or task.get("audio") != artifact
+        or _read(latest_path) != artifact
+    ):
+        raise VoicePlanError(
+            "Cannot reconcile Gemini narration: saved task and latest audio disagree"
+        )
+    records = artifact.get("blocks")
+    if (
+        not isinstance(records, list) or not records
+        or artifact.get("block_count") != len(records)
+    ):
+        raise VoicePlanError("Cannot reconcile Gemini narration: invalid group list")
+    sources = []
+    seen_ids: set[int] = set()
+    for record in records:
+        if not isinstance(record, dict):
+            raise VoicePlanError("Cannot reconcile Gemini narration: malformed group")
+        block_id = record.get("block_id")
+        relative = record.get("file")
+        digest = record.get("sha256")
+        if (
+            type(block_id) is not int or block_id < 1 or block_id in seen_ids
+            or not isinstance(relative, str)
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+        ):
+            raise VoicePlanError("Cannot reconcile Gemini narration: invalid group identity")
+        seen_ids.add(block_id)
+        expected = run_dir / "blocks" / f"block_{block_id}" / "audio.wav"
+        if (
+            relative != expected.relative_to(output).as_posix()
+            or expected.is_symlink() or not expected.is_file()
+        ):
+            raise VoicePlanError(f"Cannot reconcile Gemini group {block_id}: unsafe WAV")
+        block_task = _read(expected.parent / "task.json")
+        if block_task.get("status") != "completed" or block_task.get("sha256") != digest:
+            raise VoicePlanError(f"Cannot reconcile Gemini group {block_id}: task differs")
+        with expected.open("rb") as stream:
+            verified = hashlib.file_digest(stream, "sha256").hexdigest()
+        if verified != digest:
+            raise VoicePlanError(f"Cannot reconcile Gemini group {block_id}: WAV differs")
+        sources.append(expected)
+
+    candidate = run_dir / "narration.reconcile.wav"
+    if candidate.exists() or candidate.is_symlink():
+        raise VoicePlanError("Cannot reconcile Gemini narration: stale candidate exists")
+    joined = join_audio_blocks(sources, candidate)
+    with candidate.open("rb") as stream:
+        verified_join = hashlib.file_digest(stream, "sha256").hexdigest()
+    if (verified_join != joined["sha256"]
+        or candidate.stat().st_size != joined["bytes"]):
+        raise VoicePlanError("Cannot reconcile Gemini narration: joined WAV hash differs")
+
+    # Preserve the prior master for diagnosis before an atomic local replacement.
+    backup = run_dir / f"narration.before_reconciliation.{actual_sha[:16]}.wav"
+    if backup.exists() or backup.is_symlink():
+        raise VoicePlanError("Cannot reconcile Gemini narration: backup already exists")
+    shutil.copyfile(master, backup)
+    with backup.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != actual_sha:
+            raise VoicePlanError("Cannot reconcile Gemini narration: backup verification failed")
+    candidate.replace(master)
+
+    artifact.update({
+        "sha256": verified_join,
+        "bytes": joined["bytes"],
+        "duration_seconds": joined["duration_seconds"],
+        "block_start_seconds": joined["block_start_seconds"],
+        "block_end_seconds": joined["block_end_seconds"],
+        "block_durations_seconds": joined["block_durations_seconds"],
+    })
+    task["audio"] = artifact
+    _json(task_path, task)
+    _json(latest_path, artifact)
+    return True
+
+
 async def regenerate_professional_audio_block(
     output: Path,
     plan: dict[str, Any],
