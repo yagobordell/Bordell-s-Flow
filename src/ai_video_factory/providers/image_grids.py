@@ -99,7 +99,7 @@ def _grid_prompt(
         ]
         if presenter_panels:
             prompt += (
-                "\n\nThe attached presenter identity reference is for panels "
+                "\n\nThe attached presenter identity reference may be used ONLY for panels "
                 + ", ".join(presenter_panels)
                 + " ONLY. Preserve recognizable identity where needed, but never "
                 "copy the presenter's original narration room into a generated scene."
