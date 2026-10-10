@@ -428,18 +428,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         assert (destination / "B2" / "block_1" / "output.json").is_file()
         assert (destination / "B2.1" / "input.json").is_file()
         assert (destination / "B2.1" / "output.json").is_file()
-        assert (destination / "B3" / "group_1" / "input.json").is_file()
-        assert (destination / "B3" / "group_1" / "output.json").is_file()
-        b3_input = json.loads(
-            (destination / "B3" / "group_1" / "input.json").read_text(encoding="utf-8")
-        )
-        b3_output = json.loads(
-            (destination / "B3" / "group_1" / "output.json").read_text(encoding="utf-8")
-        )
-        assert b3_input == {"group_id": 1, "beats": []}
-        assert b3_output == {
-            "pipeline_stage": "B3", "group_id": 1, "beats": []
-        }
+        assert not (destination / "B3").exists()
         b12_merged = json.loads(
             (destination / "B1.2" / "merged_output.json").read_text(encoding="utf-8")
         )
@@ -449,15 +438,11 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
         b21_merged = json.loads(
             (destination / "B2.1" / "merged_output.json").read_text(encoding="utf-8")
         )
-        b3_merged = json.loads(
-            (destination / "B3" / "merged_output.json").read_text(encoding="utf-8")
-        )
         assert [block["block_id"] for block in b12_merged["blocks"]] == [1]
         assert [block["block_id"] for block in b2_merged["blocks"]] == [1]
         assert b21_merged == {
             "pipeline_stage": "B2.1", "modified_beats": [], "error": None
         }
-        assert b3_merged == {"pipeline_stage": "B3", "groups": []}
         consolidated = json.loads(
             (destination / "run_report.json").read_text(encoding="utf-8")
         )
@@ -494,7 +479,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
             (destination / "B2" / "block_1" / "output.json").read_text(encoding="utf-8")
         )
         assert consolidated["api_costs"]["pricing_status"] == "complete"
-        assert consolidated["api_costs"]["estimated_total_usd"] == "0.00010000"
+        assert consolidated["api_costs"]["estimated_total_usd"] == "0.00008000"
         timing = consolidated["timings"]
         assert timing["status"] == "completed"
         assert timing["run_elapsed_seconds"] >= 0
@@ -509,30 +494,29 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     assert (folder / "roma.txt").read_bytes() == b"  Uno.\r\n\r\nDos.  "
     terminal = capsys.readouterr().out
     lines = terminal.splitlines()
-    assert len(lines) == 21
-    for offset in (0, 7, 14):
-        assert lines[offset:offset + 5] == [
+    assert len(lines) == 18
+    for offset in (0, 6, 12):
+        assert lines[offset:offset + 4] == [
             "  B1.1 total: 0.250 s $0.00002000",
             "  B1.2 total: 0.250 s $0.00002000",
             "  B2 total: 0.250 s $0.00002000",
             "  B2.1 total: 0.250 s $0.00002000",
-            "  B3 total: 0.250 s $0.00002000",
         ]
         assert re.fullmatch(
             r"  B2 images total: \d+\.\d{3} s \$0\.00000000",
-            lines[offset + 5],
+            lines[offset + 4],
         ) is not None
         assert re.fullmatch(
-            r"  Run total: \d+\.\d{3} s \$0\.00010000",
-            lines[offset + 6],
+            r"  Run total: \d+\.\d{3} s \$0\.00008000",
+            lines[offset + 5],
         ) is not None
-    assert streamed_stages == ["B1.1", "B1.2", "B2", "B2.1", "B3"] * 3
+    assert streamed_stages == ["B1.1", "B1.2", "B2", "B2.1"] * 3
     assert printed_events == [
-        "B1.1", "B1.2", "B2", "B2.1", "B3", "B2 images", "Run"
+        "B1.1", "B1.2", "B2", "B2.1", "B2 images", "Run"
     ] * 3
     assert "This token-based estimate is not an OpenAI invoice" not in terminal
 
-    # Skipping images still preserves the complete professional B3 plan.
+    # Skipping images still preserves the complete professional reviewed plan.
     async def image_stage_must_not_run(_destination, _plan):
         pytest.fail("--no-image must not invoke AI33 or the official OpenAI fallback")
 
@@ -542,7 +526,7 @@ def test_selected_scripts_reach_b11_verbatim_and_outputs_do_not_collide(
     skipped_output = tmp_path / "output" / "roma"
     assert (skipped_output / "B2" / "merged_output.json").is_file()
     assert (skipped_output / "B2.1" / "merged_output.json").is_file()
-    assert (skipped_output / "B3" / "merged_output.json").is_file()
+    assert not (skipped_output / "B3").exists()
     assert (skipped_output / "visual_plan.json").is_file()
     assert not (skipped_output / "images").exists()
     skipped_report = json.loads(
