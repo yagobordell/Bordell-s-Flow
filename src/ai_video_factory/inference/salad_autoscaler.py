@@ -334,7 +334,7 @@ class PostgresAutoscalerStore:
         with self._pool.connection() as connection:
             rows = connection.execute(
                 """
-                SELECT instance_id, state, detected_at, requested_at
+                SELECT instance_id, original_machine_id, state, detected_at, requested_at
                 FROM gpu.ltx_instance_reallocations WHERE stage = %s
                 """, (stage,),
             ).fetchall()
@@ -342,15 +342,17 @@ class PostgresAutoscalerStore:
 
     def begin_ltx_reallocation_drain(
         self, *, stage: str, instance_id: str, ttl_seconds: float,
+        original_machine_id: str | None = None,
     ) -> bool:
         """Atomically fence future claims and persist exactly one drain intent."""
         with self._pool.connection() as connection, connection.transaction():
             acquire_instance_drain_lock(connection, instance_id)
             cursor = connection.execute(
                 """
-                INSERT INTO gpu.ltx_instance_reallocations(stage, instance_id, state)
-                VALUES (%s, %s, 'draining') ON CONFLICT DO NOTHING
-                """, (stage, instance_id),
+                INSERT INTO gpu.ltx_instance_reallocations(
+                    stage, instance_id, original_machine_id, state
+                ) VALUES (%s, %s, %s, 'draining') ON CONFLICT DO NOTHING
+                """, (stage, instance_id, original_machine_id),
             )
             if cursor.rowcount != 1:
                 return False
@@ -797,7 +799,17 @@ class PredictiveSaladAutoscaler:
                     for iid, entry in active.items():
                         if entry["state"] == "manual_review":
                             continue
-                        if iid not in instance_by_id:
+                        original_machine = str(
+                            entry.get("original_machine_id") or ""
+                        ).strip()
+                        replacement_machine = str(
+                            instance_by_id.get(iid, {}).get("machine_id") or ""
+                        ).strip()
+                        moved = (
+                            bool(original_machine and replacement_machine)
+                            and original_machine != replacement_machine
+                        )
+                        if iid not in instance_by_id or moved:
                             self.store.complete_ltx_reallocation(
                                 stage=stage, instance_id=iid
                             )
@@ -867,6 +879,10 @@ class PredictiveSaladAutoscaler:
                 if self.store.begin_ltx_reallocation_drain(
                     stage=stage, instance_id=iid,
                     ttl_seconds=max(self.config.drain_ttl_seconds, 120.0),
+                    original_machine_id=(
+                        str(instance_by_id[iid]["machine_id"])
+                        if instance_by_id[iid].get("machine_id") else None
+                    ),
                 ):
                     busy.add(stage)
                     self.logger(
