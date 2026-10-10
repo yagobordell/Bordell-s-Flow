@@ -108,6 +108,7 @@ async def run_e1(
     )
     if answer.schema_version != "e1-v1":
         raise ValueError("E1 version mismatch")
+    _write(cache.with_suffix(".input.json"), payload)
     _write(cache, answer.model_dump(mode="json"))
     _write(cache.with_suffix(".usage.json"), _usage(raw))
     return answer, key
@@ -148,6 +149,7 @@ async def run_e2(
         decision.id for decision in answer.decisions
     ] != [intervention["id"]]:
         raise ValueError("E2 response changes intervention IDs")
+    _write(cache.with_suffix(".input.json"), manifest)
     _write(cache, answer.model_dump(mode="json"))
     _write(cache.with_suffix(".usage.json"), _usage(raw))
     return answer, key
