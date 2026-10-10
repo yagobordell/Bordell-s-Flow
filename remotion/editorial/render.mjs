@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {bundle} from '@remotion/bundler';
@@ -32,6 +33,7 @@ for (let i = 0; i < plan.events.length; i++) {
   clips.push({
     file: basename, start_frame: event.start_frame,
     end_frame: event.end_frame, id: event.id,
+    sha256: createHash('sha256').update(await fs.readFile(location)).digest('hex'),
   });
 }
 await fs.writeFile(
