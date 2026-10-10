@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import logging
 import time
-from pathlib import Path
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
