@@ -36,4 +36,5 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: node render.mjs tests/render-smoke.json tests/smoke
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
       - run: ffprobe -v error -show_entries stream=codec_name,nb_frames -of json tests/smoke/layer-000.mov
