@@ -4,14 +4,20 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from ai_video_factory.config import settings
 from ai_video_factory.editorial.contracts import E1Output, E2Output
 from ai_video_factory.providers.openai import OpenAIProvider
+
+
+logger = logging.getLogger(__name__)
 
 
 def _canonical(value: object) -> bytes:
@@ -102,10 +108,30 @@ async def run_e1(
     if cache.is_file():
         return E1Output.model_validate_json(cache.read_text(encoding="utf-8")), key
     provider = provider or OpenAIProvider(api_key=settings.openai_api_key)
-    answer, raw = await provider.generate_structured_with_response(
-        model=model, instructions=instructions,
-        input_text=json.dumps(payload, ensure_ascii=False), output_type=E1Output,
-    )
+    submitted = json.dumps(payload, ensure_ascii=False)
+    try:
+        answer, raw = await provider.generate_structured_with_response(
+            model=model, instructions=instructions,
+            input_text=submitted, output_type=E1Output,
+        )
+    except ValidationError as exc:
+        # Responses.parse validates the entire Pydantic model before returning.
+        # One bounded repair call prevents a single malformed effect from
+        # terminating a completed video; infrastructure errors are not retried.
+        logger.warning(
+            "E1 output failed structured validation; attempting one repair: %s",
+            str(exc)[:400],
+        )
+        repair = (
+            "\\n\\nStructured-output repair: Return a fully valid result under "
+            "the supplied schema. Preserve the video narrative, spoken anchors "
+            "and editing purpose. Adapt the selection and grouping of elements "
+            "to satisfy the exact schema constraints."
+        )
+        answer, raw = await provider.generate_structured_with_response(
+            model=model, instructions=instructions + repair,
+            input_text=submitted, output_type=E1Output,
+        )
     if answer.schema_version != "e1-v1":
         raise ValueError("E1 version mismatch")
     _write(cache.with_suffix(".input.json"), payload)
