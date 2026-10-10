@@ -108,18 +108,9 @@ def test_non_presenter_visual_resets_run() -> None:
 
 
 def test_professional_media_video_audio_true_extends_120_character_run() -> None:
-    supplied, result = _b2_pair(
-        [60, 61],
-        ["avatar", "media_video"],
-        professional=True,
-        audios=[True, True],
-    )
-    with pytest.raises(
-        BPipelineValidationError,
-        match=r"consecutive audio=true beats .* total 121 characters",
-    ):
-        validate_visuals(result, supplied)
-
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError, match="Only avatar and avatar_media may have audio=true"):
+        _b2_pair([60, 61], ["avatar", "media_video"], professional=True, audios=[True, True])
 
 def test_professional_audio_false_resets_run_even_for_media_video() -> None:
     supplied, result = _b2_pair(
@@ -133,14 +124,11 @@ def test_professional_audio_false_resets_run_even_for_media_video() -> None:
 
 def test_professional_visual_type_change_does_not_reset_spoken_run() -> None:
     supplied, result = _b2_pair(
-        [40, 40, 41],
-        ["avatar", "avatar_media", "media_video"],
-        professional=True,
+        [40, 40, 41], ["avatar", "avatar_media", "avatar"], professional=True,
         audios=[True, True, True],
     )
     with pytest.raises(BPipelineValidationError, match="total 121 characters"):
         validate_visuals(result, supplied)
-
 
 def test_professional_retry_targets_only_single_break_that_solves_39_29_78_47() -> None:
     _supplied, result = _b2_pair(

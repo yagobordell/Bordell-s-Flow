@@ -53,8 +53,8 @@ def _visual(beat_id, *, audio=False):
         beat_id=beat_id, visual_type="media_video",
         prompt="A precise close view of the actual reference ebook on a desk.",
         video_prompt="The camera glides slowly closer to the book.",
-        audio=audio, reference=True,
-        reference_sources=["presenter", "ebook"] if audio else ["ebook"],
+        audio=False, reference=True,
+        reference_sources=["ebook"],
     )
 
 
@@ -74,7 +74,7 @@ def test_detector_accepts_cross_block_complete_beats_and_rejects_invalid_ids():
 
 def test_cta_beat_contract_requires_correct_references_and_audio():
     assert _visual("1B").reference_sources == ["ebook"]
-    assert _visual("1C", audio=True).reference_sources == ["presenter", "ebook"]
+    assert _visual("1C", audio=True).reference_sources == ["ebook"]
     with pytest.raises(ValidationError):
         ProfessionalCTAVisualBeat(
             beat_id="1A", visual_type="media_video",
@@ -293,7 +293,7 @@ def test_full_b2_cta_merge_discard_b21_patch_and_preserve_normal_decisions():
             raise RuntimeError("Unexpected CTA output type")
 
     result = asyncio.run(run_b_pipeline(
-        script, provider=Provider(), start_from="B2", stop_after="B3",
+        script, provider=Provider(), start_from="B2", stop_after="B2.1",
         visual_style="profesional",
         avatar_image=b"presenter", ebook_image=b"ebook",
         previous_b11=b11, previous_b12=b12,

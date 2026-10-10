@@ -55,114 +55,24 @@ def _plan(avatar: bytes) -> dict:
 
 
 def test_professional_b2_keeps_global_image_style_out_of_bot_prompt() -> None:
-    instructions = (
-        files("ai_video_factory.bots.prompts")
-        .joinpath("b2_professional.md")
-        .read_text(encoding="utf-8")
-    )
-    lowered = instructions.lower()
-    assert "iphone 16/17 pro max" not in lowered
-    assert "application owns the" in lowered
-    assert "global visual style" in lowered
-
+    prompt = files("ai_video_factory.bots.prompts").joinpath("b2_professional.md").read_text(encoding="utf-8").lower()
+    assert "iphone 16/17 pro max" not in prompt
+    assert "runtime adds overall photographic style" in prompt
 
 def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
-    prompt = (
-        files("ai_video_factory.bots.prompts")
-        .joinpath("b2_professional.md")
-        .read_text(encoding="utf-8")
-    )
-    lowered = prompt.lower()
-    # Carrier choice must remain semantic rather than quota-driven.
-    assert "no carrier quotas, cadence targets or variety quotas influenced selection" in lowered
-    # Narrative identity must win over convenient presenter substitution.
-    assert "do not replace an established third-party person with the presenter" in lowered
-    assert "presenter identity was not erased where semantically required" in lowered
-    # Reference identity does not freeze expression, gaze or framing.
-    assert "expression" in lowered
-    assert "gaze/attention" in lowered
-    assert "preserve identity, not the source image's fixed expression or pose" in lowered
-    # Voice sync is restricted to the narrator's preserved setup.
-    assert "preserve setup when possible" in lowered
-    assert "audio = true is valid for" in lowered
-    assert "media_video showing the supplied narrator in the preserved narration setup" in lowered
-    assert "leaving the setup changes the speaking route" in lowered
-    # The model must know the same hard audio-run limit enforced by Python validation.
-    assert "hard maximum of 120 narration characters" in lowered
-    assert "any audio=false beat breaks the spoken run" in lowered
-    assert "prefer a break position that leaves both" in lowered
-    assert "neighboring audio=true segments at or below 120 characters" in lowered
-    # Text-bearing objects must not acquire invented readability/branding constraints.
-    assert "do not add any such visibility/readability property unless" in lowered
-    assert (
-        "text-bearing objects do not receive invented readability, legibility, branding,"
-        in lowered
-    )
-    assert "text-absence or content-visibility constraints" in lowered
+    prompt = files("ai_video_factory.bots.prompts").joinpath("b2_professional.md").read_text(encoding="utf-8").lower()
+    assert "100% the original avatar speaking" in prompt
+    assert "only avatar and avatar_media speak" in prompt
+    assert "120 characters" in prompt
+    assert "different room or physical location" in prompt
+    assert "screens and documents" in prompt
 
 def test_professional_prompt_has_no_stock_exclusions() -> None:
-    prompt = (
-        files("ai_video_factory.bots.prompts")
-        .joinpath("b2_professional.md")
-        .read_text(encoding="utf-8")
-    )
-    lowered = prompt.lower()
-    assert "for the last beat of a close block:" in lowered
-    assert "including the first beat of an intro block" in lowered
-    assert "skip discretionary" in lowered
-    assert "write image and video prompts as concise affirmative descriptions" in lowered
-    assert "omit negative clauses, preventive exclusions and routine disclaimers" in lowered
-    assert "13. screens and documents" in lowered
-    assert (
-        "must not describe, summarize, identify, characterize, or otherwise specify "
-        "any content shown within the screen or document"
-    ) in lowered
-    assert "(for context:" in lowered
-    assert (
-        "must not be repeated, paraphrased, or converted into a description of visible "
-        "screen or document content elsewhere in the prompt"
-    ) in lowered
-    assert "must not predetermine what that visible content should be" in lowered
-
-def _professional_anchor_output(
-    kind: str, beats: list[dict],
-) -> dict:
-    return {
-        "pipeline_stage": "B2",
-        "narrative_core": {"central_question": "Q", "final_answer": "A"},
-        "blocks": [{
-            "block_id": 1,
-            "type": kind,
-            "emotional_entry": "Starts here",
-            "emotional_exit": "Ends here",
-            "span": {"first_words": "First", "last_words": "Last"},
-            "beats": beats,
-        }],
-        "error": None,
-    }
-
-
-def _professional_beat(
-    beat_id: str, *, visual_type: str = "avatar",
-) -> dict:
-    fields = {
-        "avatar": (None, None, False, True),
-        "avatar_media": ("Support photo", None, False, True),
-        "media_image": ("A still image", None, False, False),
-        "media_video": ("Motion-ready frame", "One controlled action", False, False),
-    }
-    image_prompt, video_prompt, reference, audio = fields[visual_type]
-    return {
-        "beat_id": beat_id,
-        "text": "Preserve the narration exactly.",
-        "beat_type": "setup",
-        "visual_type": visual_type,
-        "prompt": image_prompt,
-        "video_prompt": video_prompt,
-        "reference": reference,
-        "audio": audio,
-    }
-
+    prompt = files("ai_video_factory.bots.prompts").joinpath("b2_professional.md").read_text(encoding="utf-8").lower()
+    assert "act as a creative editor" in prompt
+    assert "last beat of any close block" in prompt
+    assert "intro blocks" in prompt
+    assert "up to 18" in prompt
 
 @pytest.mark.parametrize(
     ("kind", "visuals"),
@@ -242,23 +152,11 @@ def test_professional_close_last_beat_cannot_regenerate_avatar() -> None:
 
 
 def test_professional_b2_global_framing_sequence_progression_and_still_audio() -> None:
-    instructions = (
-        files("ai_video_factory.bots.prompts")
-        .joinpath("b2_professional.md")
-        .read_text(encoding="utf-8")
-    )
-    lowered = instructions.lower()
-    assert "14. camera and composition" in lowered
-    assert "for every generated beat" in lowered
-    assert "do not vary framing solely for variety" in lowered
-    assert "a tighter image" in lowered
-    assert "composition is a framing choice" in lowered
-    assert "avoid accidental near-duplicate adjacent shots" in lowered
-    assert "18. continuity shot progression" in lowered
-    assert "media_image always uses audio=false" in lowered
-    assert "never show the narrator occupying the preserved narration setup as a frozen" in lowered
-
-
+    prompt = files("ai_video_factory.bots.prompts").joinpath("b2_professional.md").read_text(encoding="utf-8").lower()
+    assert "audio=false" in prompt
+    assert "physical location" in prompt
+    assert "singular instants" in prompt
+    assert "narrative/visual continuity" in prompt
 
 @pytest.mark.parametrize(
     ("visual_type", "audio", "accepted"),
@@ -266,7 +164,7 @@ def test_professional_b2_global_framing_sequence_progression_and_still_audio() -
         ("media_image", False, True),
         ("media_image", True, False),
         ("media_video", False, True),
-        ("media_video", True, True),
+        ("media_video", True, False),
     ],
 )
 def test_professional_contract_requires_speaking_generated_shots_to_be_video(
@@ -297,47 +195,26 @@ def test_professional_contract_requires_speaking_generated_shots_to_be_video(
     if accepted:
         assert ProfessionalB2Output.model_validate(data).blocks[0].beats[0].audio is audio
     else:
-        with pytest.raises(ValidationError, match="media_image must have audio=false"):
+        with pytest.raises(ValidationError, match="Only avatar and avatar_media may have audio=true"):
             ProfessionalB2Output.model_validate(data)
 
 
 def test_professional_speaking_media_video_requires_avatar_reference() -> None:
     beat = {
-        "beat_id": "1A",
-        "text": "I am still speaking from my usual setup.",
-        "beat_type": "claim",
-        "visual_type": "media_video",
-        "prompt": "The narrator remains seated in the reference setup.",
-        "video_prompt": "She speaks naturally with one small hand gesture.",
-        "reference": False,
-        "audio": True,
+        "beat_id": "1A", "text": "Narration.", "beat_type": "claim",
+        "visual_type": "media_video", "prompt": "New B-roll scene.",
+        "video_prompt": "The subject moves naturally.",
+        "reference": False, "audio": True,
     }
-    with pytest.raises(ValidationError, match="Speaking media_video must use"):
-        ProfessionalVisualBeat.model_validate(beat)
-
-    beat["reference"] = True
-    assert ProfessionalVisualBeat.model_validate(beat).audio is True
-
+    for reference in (False, True):
+        beat["reference"] = reference
+        with pytest.raises(ValidationError, match="Only avatar and avatar_media may have audio=true"):
+            ProfessionalVisualBeat.model_validate(beat)
 
 def test_professional_prompt_forbids_frozen_narrator_in_reference_setup() -> None:
-    prompt = (
-        files("ai_video_factory.bots.prompts")
-        .joinpath("b2_professional.md")
-        .read_text(encoding="utf-8")
-    )
-    lowered = prompt.lower()
-    assert "never show the narrator occupying the preserved narration setup as a frozen" in lowered
-    assert (
-        "never use media_image or media_video with audio=false for a narrator visibly"
-        in lowered
-    )
-    assert "physical location" in lowered
-    assert "posture class" in lowered
-    assert "camera angle" in lowered
-    assert "shot size" in lowered
-    assert "crop" in lowered
-
-
+    prompt = files("ai_video_factory.bots.prompts").joinpath("b2_professional.md").read_text(encoding="utf-8").lower()
+    assert "never generate a new image of the narrator in the original reference room" in prompt
+    assert "never depict anyone speaking to camera" in prompt
 
 @pytest.mark.parametrize(
     "wording",
@@ -561,21 +438,11 @@ def test_professional_grid_keeps_original_voice_over_as_context() -> None:
 
 def test_audio_ownership_and_regenerated_avatar_split_ltx_jobs() -> None:
     beats = [
-        {"block_id": 1, "beat_id": "1A", "visual_type": "avatar", "prompt": None,
-         "audio": True},
-        {"block_id": 1, "beat_id": "1B", "visual_type": "avatar_media",
-         "prompt": "Support image", "audio": True},
-        {"block_id": 1, "beat_id": "1C", "visual_type": "avatar",
-         "prompt": "Regenerated speaker", "audio": True},
-        {"block_id": 1, "beat_id": "1D", "visual_type": "media_video",
-         "prompt": "Speaking presenter", "audio": True},
-        {"block_id": 1, "beat_id": "1E", "visual_type": "media_video",
-         "prompt": "Walking presenter", "audio": False},
+        {"block_id": 1, "beat_id": "1A", "visual_type": "avatar", "prompt": None, "audio": True},
+        {"block_id": 1, "beat_id": "1B", "visual_type": "avatar_media", "prompt": "Support", "audio": True},
+        {"block_id": 1, "beat_id": "1C", "visual_type": "media_video", "prompt": "B-roll", "audio": False},
     ]
-    assert _group_beats(beats) == [
-        ("a2v", 0, 1), ("a2v", 2, 2), ("a2v", 3, 3), ("i2v", 4, 4)
-    ]
-
+    assert _group_beats(beats) == [("a2v", 0, 1), ("i2v", 2, 2)]
 
 def test_video_planner_rejects_historical_speaking_media_image() -> None:
     from ai_video_factory.workflows.b_video import B2VideoError
@@ -584,23 +451,17 @@ def test_video_planner_rejects_historical_speaking_media_image() -> None:
         "block_id": 3, "beat_id": "3B", "visual_type": "media_image",
         "prompt": "Presenter mid-speech", "audio": True,
     }]
-    with pytest.raises(B2VideoError, match="Speaking media_image beat 3B is invalid"):
+    with pytest.raises(B2VideoError, match="Generated B-roll beat 3B must have audio=false"):
         _group_beats(beats)
 
 
 def test_speaking_presenter_media_video_uses_a2v_not_unsynced_i2v() -> None:
-    beats = [
-        {"block_id": 3, "beat_id": "3D", "visual_type": "media_video",
-         "prompt": "Presenter with visible mouth lightly pressing toner on cheeks.",
-         "reference": True, "audio": True},
-        {"block_id": 3, "beat_id": "3E", "visual_type": "media_video",
-         "prompt": "Hands-only close view of toner being spread.",
-         "reference": False, "audio": False},
-    ]
-    assert _group_beats(beats) == [
-        ("a2v", 0, 0), ("i2v", 1, 1)
-    ]
-
+    from ai_video_factory.workflows.b_video import B2VideoError
+    beats = [{"block_id": 3, "beat_id": "3D", "visual_type": "media_video", "audio": True}]
+    with pytest.raises(B2VideoError, match="must have audio=false"):
+        _group_beats(beats)
+    beats[0]["audio"] = False
+    assert _group_beats(beats) == [("i2v", 0, 0)]
 
 @pytest.mark.parametrize("block_type", ["intro", "close"])
 def test_professional_schema_boundary_matches_current_contract(
@@ -802,47 +663,10 @@ def test_professional_video_prompt_reaches_i2v_and_owns_paid_identity(
     )
 
 
-def test_speaking_media_video_adds_video_prompt_to_a2v_without_rewriting_avatar(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    avatar = tmp_path / "avatar.png"
-    avatar.write_bytes(_avatar_png())
-    master = tmp_path / "master.wav"
-    with wave.open(str(master), "wb") as wav:
-        wav.setnchannels(1)
-        wav.setsampwidth(2)
-        wav.setframerate(48000)
-        wav.writeframes(bytes(48000 * 2))
-    monkeypatch.setattr(
-        b_video, "_source_assets",
-        lambda *_: (avatar, {(1, "1A"): avatar}),
-    )
-    monkeypatch.setattr(b_video, "_verified_asset", lambda *_: master)
-    monkeypatch.setattr(
-        b_video, "reference_num_frames_for_samples", lambda *_, **__: 25,
-    )
-    motion = (
-        "She speaks naturally in sync with the supplied speech, "
-        "blinks, and makes one small, relaxed hand gesture."
-    )
-    beat = {
-        "block_id": 1, "beat_id": "1A", "visual_type": "media_video",
-        "text": "Here is how I use it.", "description": "Face visible.",
-        "prompt": "Face visible.", "video_prompt": motion,
-        "audio": True, "start_seconds": 0.0, "end_seconds": 1.0,
-    }
-    timeline = {"beats": [beat], "duration_seconds": 1.0}
-    monkeypatch.setattr(b_video, "build_stt_beat_timeline", lambda *_: timeline)
-    plan = {"visual_style": "profesional"}
-    audio = {"sha256": "b" * 64, "file": "master.wav"}
-    _, jobs, _ = b_video.build_b2_video_plan(tmp_path, plan, audio, {})
-    assert len(jobs) == 1
-    assert jobs[0].kind == "a2v"
-    assert jobs[0].request.parameters["prompt"] == (
-        b_video.AVATAR_PROMPT + " " + motion
-    )
-    assert jobs[0].request.parameters["prompt"].startswith(b_video.AVATAR_PROMPT)
-
+def test_speaking_media_video_adds_video_prompt_to_a2v_without_rewriting_avatar() -> None:
+    from ai_video_factory.workflows.b_video import B2VideoError
+    with pytest.raises(B2VideoError, match="must have audio=false"):
+        _group_beats([{"block_id": 1, "beat_id": "1A", "visual_type": "media_video", "audio": True}])
 
 def test_style_selector_defaults_to_legacy_for_unattended_execution() -> None:
     assert select_visual_style(None, interactive=False) == "casero"
