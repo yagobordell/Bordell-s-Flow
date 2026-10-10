@@ -30,6 +30,7 @@ from ai_video_factory.editorial.contracts import (
 )
 from ai_video_factory.editorial.directors import _write, run_e1, run_e2
 from ai_video_factory.editorial.frames import extract_frames
+from ai_video_factory.editorial.timeline import RENDER_FPS, rendered_windows
 from ai_video_factory.editorial.word_index import build_word_index
 from ai_video_factory.inference.storage import sha256_file
 
@@ -296,6 +297,7 @@ def generate_editorial_video(
         base, float(timeline["duration_seconds"]), round(timeline["duration_seconds"] * 24),
     )
     index = build_word_index(output, plan, audio)
+    windows = rendered_windows(timeline)
 
     async def decide() -> tuple[Any, E2Output, list[str], str]:
         e1, key = await run_e1(output, plan, timeline, provider=provider)
@@ -304,9 +306,10 @@ def generate_editorial_video(
         keys = []
         for effect in e1.interventions:
             frames = extract_frames(base, output, effect, index, timeline)
-            start = round(resolve_anchor(effect.elements[0].anchor, index) * 24)
-            ends = {beat["beat_id"]: beat for beat in timeline["beats"]}
-            last = ends[effect.end_beat_id]["end_frame"]
+            start = round(
+                resolve_anchor(effect.elements[0].anchor, index) * RENDER_FPS
+            )
+            last = windows[effect.end_beat_id][1]
             protected = _protected(start, last, timeline, plan)
             response, e2key = await run_e2(
                 output, effect.model_dump(mode="json"), frames, protected,
