@@ -229,6 +229,20 @@ def _final_video(
         or state.get("master_audio_sha256") != audio["sha256"]
     ):
         raise PublicationError("Completed final video does not match its LTX/audio manifest")
+    editorial = run.get("editorial_generation")
+    if editorial is not None:
+        if not isinstance(editorial, dict) or editorial.get("status") != "completed":
+            raise PublicationError("Incomplete editorial result cannot be published")
+        edited = _source(work, editorial.get("file"), editorial.get("sha256"))
+        edit_path = Path(editorial["file"])
+        snapshot = _json(work, (edit_path.parent / "manifest.json").as_posix())
+        if (
+            snapshot != editorial
+            or editorial.get("source_video_sha256") != video.get("sha256")
+            or editorial.get("source_audio_sha256") != audio.get("sha256")
+        ):
+            raise PublicationError("Editorial output does not match LTX and audio sources")
+        return edited
     return source
 
 
