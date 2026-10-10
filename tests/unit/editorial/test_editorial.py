@@ -176,3 +176,17 @@ def test_e1_cache_reuses_exact_response_without_new_paid_call(tmp_path, monkeypa
         ))
         assert answer == _one()
     assert provider.calls == 1
+
+
+def test_comparison_and_process_flow_need_small_coherent_compositions():
+    valid = _one().interventions[0].model_dump(mode="json")
+    valid["kind"] = "process_flow"
+    valid["elements"] = [
+        {"text": "Person", "anchor": {"beat_id": "1A", "phrase": "cloned"}},
+        {"text": "Message", "anchor": {"beat_id": "1A", "phrase": "voice"}},
+    ]
+    E1Output.model_validate({"schema_version": "e1-v1", "interventions": [valid]})
+    valid["elements"].append(valid["elements"][-1])
+    valid["elements"].append(valid["elements"][-1])
+    with pytest.raises(ValidationError):
+        E1Output.model_validate({"schema_version": "e1-v1", "interventions": [valid]})
