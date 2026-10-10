@@ -5,11 +5,17 @@ import json
 from typing import Any
 
 from ai_video_factory.compositor.static_preview import (
-    StaticPreviewError, _align_stt_tokens, _spoken_tokens, _tokens, _verified_asset,
+    StaticPreviewError,
+    _align_stt_tokens,
+    _spoken_tokens,
+    _tokens,
+    _verified_asset,
 )
 
 
-def build_word_index(output: Any, plan: dict[str, Any], audio: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+def build_word_index(
+    output: Any, plan: dict[str, Any], audio: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
     blocks = plan["blocks"]
     recorded = audio["blocks"]
     groups = audio.get("block_groups")
@@ -35,12 +41,16 @@ def build_word_index(output: Any, plan: dict[str, Any], audio: dict[str, Any]) -
         stt = recording["stt"]
         path = _verified_asset(output, stt["file"], stt["sha256"])
         transcript = json.loads(path.read_text(encoding="utf-8"))
-        if transcript.get("source_audio_sha256") != recording["sha256"] or transcript.get("model") != stt["model"]:
+        if (transcript.get("source_audio_sha256") != recording["sha256"]
+            or transcript.get("model") != stt["model"]):
             raise StaticPreviewError("Editorial STT identity mismatch")
         spoken = []
         for word in transcript["words"]:
             for token in _tokens(word["word"]):
-                spoken.append({"token": token, "start": float(word["start"]), "end": float(word["end"])})
+                spoken.append({
+                    "token": token, "start": float(word["start"]),
+                    "end": float(word["end"]),
+                })
         beats = [beat for block in source_group for beat in block["beats"]]
         expected = [_spoken_tokens(beat["text"]) for beat in beats]
         flat = [word for beat_words in expected for word in beat_words]
