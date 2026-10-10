@@ -145,33 +145,79 @@ def _verify_e1(
             raise EditorialValidationError("Invalid end beat order")
 
 
-def _render_overlay(plan_file: Path, overlay: Path) -> None:
+def _render_overlay(plan_file: Path, layers: Path) -> None:
     package = Path(__file__).resolve().parents[3] / "remotion" / "editorial"
     if not (package / "node_modules" / "remotion").is_dir():
         raise EditorialError(
             "Remotion dependencies are missing. Run npm install in remotion/editorial"
         )
+    if layers.is_symlink():
+        raise EditorialError("Unsafe editorial layers directory")
     process = subprocess.run([
-        "node", str(package / "render.mjs"), str(plan_file), str(overlay),
+        "node", str(package / "render.mjs"), str(plan_file), str(layers),
     ], cwd=package, capture_output=True, text=True, check=False)
-    if process.returncode != 0 or not overlay.is_file():
-        raise EditorialError("Remotion overlay failed: " + process.stderr[-800:])
+    if process.returncode != 0 or not (layers / "layers.json").is_file():
+        raise EditorialError("Remotion layer rendering failed: " + process.stderr[-800:])
 
 
-def _composite(base: Path, overlay: Path, target: Path, frames: int, seconds: float) -> None:
+def _composite(
+    base: Path, layers: Path, target: Path, events: list[dict[str, Any]],
+    frames: int, seconds: float,
+) -> None:
+    manifest_file = layers / "layers.json"
+    if manifest_file.is_symlink() or not manifest_file.is_file():
+        raise EditorialError("Missing verified Remotion layer metadata")
+    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    clips = manifest.get("clips")
+    if (
+        manifest.get("schema_version") != "editorial-layers-v1"
+        or not isinstance(clips, list) or len(clips) != len(events)
+    ):
+        raise EditorialError("Remotion layer manifest differs from render plan")
+    arguments = [
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
+        "-y", "-i", str(base),
+    ]
+    filters = []
+    previous = "[0:v]"
+    for index, (clip, event) in enumerate(zip(clips, events, strict=True), start=1):
+        name = f"layer-{index-1:03d}.mov"
+        if (
+            clip.get("file") != name or clip.get("id") != event["id"]
+            or clip.get("start_frame") != event["start_frame"]
+            or clip.get("end_frame") != event["end_frame"]
+        ):
+            raise EditorialError("Remotion layer is not the requested editorial interval")
+        path = layers / name
+        if path.is_symlink() or not path.is_file():
+            raise EditorialError("Missing or linked Remotion overlay")
+        arguments.extend(["-i", str(path)])
+        label = f"e{index}"
+        filters.append(
+            f"[{index}:v]setpts=PTS-STARTPTS+"
+            f"{event['start_frame']}/(24*TB)[{label}]"
+        )
+        out = f"[v{index}]"
+        filters.append(
+            f"{previous}[{label}]overlay=0:0:format=auto:"
+            f"repeatlast=0:eof_action=pass{out}"
+        )
+        previous = out
+    filters.append(f"{previous}format=yuv420p[v]")
     temporary = target.with_name(target.stem + "." + uuid4().hex + ".part.mp4")
     try:
         process = subprocess.run([
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-            "-i", str(base), "-i", str(overlay),
-            "-filter_complex", "[0:v][1:v]overlay=0:0:format=auto,format=yuv420p[v]",
+            *arguments,
+            "-filter_complex", ";".join(filters),
             "-map", "[v]", "-map", "0:a:0", "-frames:v", str(frames),
             "-r", "24", "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
             "-pix_fmt", "yuv420p", "-c:a", "copy",
             "-movflags", "+faststart", str(temporary),
         ], capture_output=True, text=True, check=False)
-        if process.returncode != 0:
-            raise EditorialError("Editorial composition failed: " + process.stderr[-900:])
+        if process.returncode:
+            raise EditorialError(
+                "Editorial composition failed: " + process.stderr[-900:]
+            )
         _probe_final(temporary, seconds, frames)
         temporary.replace(target)
     finally:
@@ -256,12 +302,12 @@ def generate_editorial_video(
         raise EditorialError("Unsafe edited video output")
     if not result_file.is_file():
         if render_plan["events"]:
-            overlay = folder / "overlay.mov"
-            if not overlay.is_file():
-                _render_overlay(plan_file, overlay)
+            layers = folder / "layers"
+            if not (layers / "layers.json").is_file():
+                _render_overlay(plan_file, layers)
             _composite(
-                base, overlay, result_file, render_plan["duration_frames"],
-                timeline["duration_seconds"],
+                base, layers, result_file, render_plan["events"],
+                render_plan["duration_frames"], timeline["duration_seconds"],
             )
         else:
             shutil.copyfile(base, result_file)
