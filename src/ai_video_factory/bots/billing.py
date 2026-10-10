@@ -156,7 +156,7 @@ class ApiCostLedger:
                 self.record("B2.2", None, response)
                 entry = self._records.pop()
                 entry["source_state_file"] = (
-                    (path.relative_to(output).as_posix() + f"#{index}")
+                    path.relative_to(output).as_posix() + f"#{index}"
                 )
                 updated.append(entry)
         self._records = old + updated
@@ -533,7 +533,10 @@ class ApiCostLedger:
         return {
             "currency": "USD",
             "kind": "estimated_api_token_cost_not_invoice",
-            "included": "GPT-6 Luna B/V planning including B2.2, Fish director and GPT Image 2.5 calls",
+            "included": (
+                "GPT-6 Luna B/V planning including B2.2, Fish director "
+                "and GPT Image 2.5 calls"
+            ),
             "excluded": "OpenAI STT and all Gemini/AI33 TTS provider charges",
             "run_status": run_status,
             "pricing_status": "complete" if complete else "partial_or_unavailable",
