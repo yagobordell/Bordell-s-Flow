@@ -98,24 +98,47 @@ def _font(size: int) -> ImageFont.FreeTypeFont | None:
 
 
 def _fits(effect: EditorialIntervention, decision: LayoutDecision) -> bool:
-    # The browser uses Arial Bold; compare with a conservative 10% safety pad.
+    """Conservatively check the complete composition, not only its first state."""
     texts = [item.text for item in effect.elements]
     if effect.kind == "progressive_text":
         texts = [" ".join(texts)]
     elif effect.kind == "accumulating_list":
         texts = [f"{i}. {text}" for i, text in enumerate(texts, 1)]
+
+    width = decision.width * 1920 - 16
+    height = decision.height * 1080 - 16
+    count = len(texts)
+    if effect.kind in {"comparison_cards", "process_flow"}:
+        columns = (
+            1 if effect.kind == "process_flow" and count > 3
+            else 2 if effect.kind == "comparison_cards" and count > 3
+            else count
+        )
+        rows = (count + columns - 1) // columns
+        gap = 8 if count > 3 else 14
+        cell_width = (width - (columns - 1) * gap) / columns
+        cell_height = (height - (rows - 1) * gap) / rows
+        font_px = max(14, round(decision.font_size_px * 0.68))
+        font = _font(font_px)
+        if font is None or cell_width <= 28 or cell_height <= 28:
+            return False
+        available_width = cell_width - 26
+        available_height = cell_height - 26
+        for i, item in enumerate(texts, 1):
+            label = f"{i}. {item}" if effect.kind == "process_flow" and count > 3 else item
+            # Text may wrap inside the card, but every row must fit vertically.
+            lines = max(1, -(-font.getlength(label) // available_width))
+            if lines * font_px * 1.12 * 1.10 > available_height:
+                return False
+        return True
+
     font = _font(decision.font_size_px)
     if font is None:
         return False
-    widths = [font.getlength(text) for text in texts]
-    if effect.kind in {"comparison_cards", "process_flow"}:
-        max_width = sum(widths) * 1.14 + (len(widths) - 1) * 90 + 60
-    else:
-        max_width = max(widths) * 1.12 + 16
-    row_count = len(texts) if effect.kind == "accumulating_list" else 1
-    height = row_count * decision.font_size_px * 1.45 + 16
-    return max_width <= decision.width * 1920 and height <= decision.height * 1080
-
+    maximum = max(font.getlength(item) for item in texts) * 1.12 + 16
+    rows = count if effect.kind == "accumulating_list" else 1
+    needed_height = rows * decision.font_size_px * 1.45 + 16
+    return maximum <= width and needed_height <= height
 
 def _safe_decision(
     effect: EditorialIntervention, decision: LayoutDecision,
