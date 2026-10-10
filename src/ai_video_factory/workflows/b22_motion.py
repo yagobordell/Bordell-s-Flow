@@ -11,6 +11,8 @@ import asyncio
 import base64
 import hashlib
 import json
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
@@ -130,6 +132,47 @@ def _save_cache(path: Path, result: B22Result) -> None:
         temp.unlink(missing_ok=True)
 
 
+def _save_diagnostic_json(path: Path, data: dict[str, Any]) -> None:
+    """Atomic local metrics write, excluding prompts and image contents."""
+    temp = path.with_name(f"{path.name}.{uuid4().hex}.part")
+    try:
+        temp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n",
+                        encoding="utf-8")
+        temp.replace(path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def _response_usage(raw: object, model: str) -> dict[str, Any]:
+    """Read only bounded, billable metadata; never persist provider payloads."""
+    def get(item: object, name: str) -> Any:
+        return item.get(name) if isinstance(item, dict) else getattr(item, name, None)
+
+    usage = get(raw, "usage")
+    details = get(usage, "input_tokens_details")
+    out_details = get(usage, "output_tokens_details")
+
+    def tokens(value: object) -> int | None:
+        return value if type(value) is int and value >= 0 else None
+
+    return {
+        "id": get(raw, "id") if isinstance(get(raw, "id"), str) else None,
+        "model": get(raw, "model") if isinstance(get(raw, "model"), str) else model,
+        "service_tier": get(raw, "service_tier") or "default",
+        "usage": {
+            "input_tokens": tokens(get(usage, "input_tokens")),
+            "output_tokens": tokens(get(usage, "output_tokens")),
+            "input_tokens_details": {
+                "cached_tokens": tokens(get(details, "cached_tokens")),
+                "cache_write_tokens": tokens(get(details, "cache_write_tokens")),
+            },
+            "output_tokens_details": {
+                "reasoning_tokens": tokens(get(out_details, "reasoning_tokens")),
+            },
+        },
+    }
+
+
 def _validate(result: B22Result, expected: list[str]) -> dict[str, str]:
     ids = [beat.beat_id for beat in result.beats]
     if ids != expected:
@@ -167,6 +210,7 @@ async def _call_group(
     model: str,
     provider: Any,
     instructions: str,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, str]:
     by_id = {beat["beat_id"]: beat for beat in timeline["beats"]}
     indices = [shots.index(shot) for shot in selected]
@@ -283,10 +327,15 @@ async def _call_group(
     }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(signature.encode()).hexdigest()
     cached = _safe_cache(output / "video" / "b22" / "groups", digest)
+    metrics_path = _safe_cache(output / "video" / "b22" / "usage", digest)
     expected = manifest["expected_output_beat_ids"]
     if cached.exists():
         restored = B22Result.model_validate_json(cached.read_text(encoding="utf-8"))
-        return _validate(restored, expected)
+        validated = _validate(restored, expected)
+        if on_event:
+            on_event({"cache_hit": True, "adapted": len(validated),
+                      "attempts": 0, "group_id": manifest["group_id"]})
+        return validated
 
     urls = [
         "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
@@ -299,6 +348,11 @@ async def _call_group(
         + json.dumps(manifest, ensure_ascii=False, separators=(",", ":"))
     )
     last_error: B22MotionError | None = None
+    recorded = []
+    if metrics_path.exists():
+        previous = json.loads(metrics_path.read_text(encoding="utf-8"))
+        if isinstance(previous, dict) and isinstance(previous.get("attempts"), list):
+            recorded = list(previous["attempts"])
     for attempt in range(2):
         response, _raw = await provider.generate_structured_with_response(
             model=model,
@@ -311,12 +365,20 @@ async def _call_group(
             input_image_urls=urls,
             output_type=B22Result,
         )
+        recorded.append(_response_usage(_raw, model))
+        _save_diagnostic_json(metrics_path, {
+            "schema_version": 1, "attempts": recorded,
+        })
         try:
             validated = _validate(response, expected)
         except B22MotionError as exc:
             last_error = exc
             continue
         _save_cache(cached, response)
+        if on_event:
+            on_event({"cache_hit": False, "adapted": len(validated),
+                      "attempts": attempt + 1,
+                      "group_id": manifest["group_id"]})
         return validated
     raise last_error or B22MotionError("B2.2 output could not be validated")
 
@@ -351,14 +413,54 @@ def adapt_b22_motion(
         result: dict[str, str] = {}
         # Bounded multimodal waves, with full future text and adjacent image
         # context. A model never writes one prompt without knowing later events.
-        for first in range(0, len(eligible), _MAX_ELIGIBLE_PER_GROUP):
+        count = (len(eligible) + _MAX_ELIGIBLE_PER_GROUP - 1) // _MAX_ELIGIBLE_PER_GROUP
+        overall_started = time.monotonic()
+        summaries: list[dict[str, Any]] = []
+        state_path = _safe_cache(output / "video" / "b22" / "state", "progress")
+        for index, first in enumerate(range(0, len(eligible), _MAX_ELIGIBLE_PER_GROUP), 1):
             group = eligible[first:first + _MAX_ELIGIBLE_PER_GROUP]
-            adapted = await _call_group(
-                output=output, shots=shots, selected=group,
-                timeline=timeline, context_images=context_images,
-                model=model, provider=provider, instructions=instructions,
-            )
+            started = time.monotonic()
+            event: dict[str, Any] = {}
+            print(f"  B2.2 group {index}/{count} START shots={len(group)}",
+                  flush=True)
+            try:
+                adapted = await _call_group(
+                    output=output, shots=shots, selected=group,
+                    timeline=timeline, context_images=context_images,
+                    model=model, provider=provider, instructions=instructions,
+                    on_event=event.update,
+                )
+            except Exception as error:
+                elapsed = round(time.monotonic() - started, 3)
+                print(f"  B2.2 group {index}/{count} FAILED "
+                      f"after {elapsed:.1f}s: {type(error).__name__}", flush=True)
+                _save_diagnostic_json(state_path, {
+                    "schema_version": 1, "status": "failed",
+                    "groups_completed": index - 1, "groups_total": count,
+                    "group_elapsed_seconds": elapsed,
+                    "total_elapsed_seconds": round(time.monotonic() - overall_started, 3),
+                })
+                raise
             result.update(adapted)
+            elapsed = round(time.monotonic() - started, 3)
+            group_record = {
+                "group_index": index, "adapted": event["adapted"],
+                "cache_hit": event["cache_hit"], "attempts": event["attempts"],
+                "elapsed_seconds": elapsed,
+            }
+            summaries.append(group_record)
+            print(
+                f"  B2.2 group {index}/{count} DONE shots={event['adapted']} "
+                f"elapsed={elapsed:.1f}s cache={'hit' if event['cache_hit'] else 'miss'} "
+                f"attempts={event['attempts']}",
+                flush=True,
+            )
+            _save_diagnostic_json(state_path, {
+                "schema_version": 1, "status": "running" if index < count else "completed",
+                "groups_completed": index, "groups_total": count,
+                "adapted_shots": len(result), "groups": summaries,
+                "total_elapsed_seconds": round(time.monotonic() - overall_started, 3),
+            })
         return result
 
     return asyncio.run(run())
