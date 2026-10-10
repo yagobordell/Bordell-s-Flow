@@ -95,7 +95,11 @@ from ai_video_factory.providers.openai_batch_images import (
     generate_b2_images,
 )
 from ai_video_factory.providers.openai_stt import OpenAISttClient
-from ai_video_factory.providers.optium_image_upscaler import create_optium_image_upscaler
+from ai_video_factory.providers.optium_image_upscaler import (
+    ImageUpscalerError,
+    OptiumLabsImageUpscaler,
+    create_optium_image_upscaler,
+)
 from ai_video_factory.providers.postgres_queue import PostgresJobQueueClient
 from ai_video_factory.providers.professional_avatar_voice import ensure_professional_avatar_voice
 from ai_video_factory.providers.professional_image_finishing import finish_professional_images
@@ -1066,6 +1070,14 @@ async def _generate_images(
             raise ImageGenerationError(
                 "Professional x2 requires a configured image upscaler"
             )
+        # Preflight R2 before requesting a Salad GPU. A HEAD timeout is a
+        # storage/network problem, not a failed image or paid upscale task.
+        # The live upscaler uses this very same storage client afterwards.
+        if isinstance(upscaler, OptiumLabsImageUpscaler):
+            try:
+                await asyncio.to_thread(upscaler.check_storage_ready)
+            except ImageUpscalerError as exc:
+                raise ImageGenerationError(str(exc)) from exc
 
         def finish_with_upscaler_session() -> list[dict[str, object]]:
             with image_upscaler_usage(
