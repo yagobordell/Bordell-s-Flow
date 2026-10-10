@@ -102,3 +102,44 @@ def test_editorial_orchestration_does_not_modify_original_media(tmp_path, monkey
     assert again == result
     assert called["overlay"] == 1
     assert called["composite"] == 1
+
+
+
+def test_remotion_uses_absolute_paths_when_node_changes_working_directory(
+    tmp_path, monkeypatch,
+):
+    """Regression: edit-only work paths must not resolve under remotion/editorial."""
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from ai_video_factory.editorial import workflow
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        workflow, "__file__",
+        str(tmp_path / "src" / "ai_video_factory" / "editorial" / "workflow.py"),
+    )
+    package = tmp_path / "remotion" / "editorial"
+    (package / "node_modules" / "remotion").mkdir(parents=True)
+
+    relative_run = Path(".video_factory_work/enzo/video02/editorial/runs/test")
+    relative_run.mkdir(parents=True)
+    plan = relative_run / "render_plan.json"
+    layers = relative_run / "layers"
+    plan.write_text('{"schema_version": "editorial-render-v1"}', encoding="utf-8")
+
+    def fake_node(argv, *, cwd, capture_output, text, check):
+        assert cwd == package
+        assert argv[0] == "node"
+        node_plan, node_layers = Path(argv[2]), Path(argv[3])
+        assert node_plan.is_absolute()
+        assert node_layers.is_absolute()
+        assert node_plan.read_text(encoding="utf-8") == plan.read_text(encoding="utf-8")
+        assert node_layers == layers.resolve()
+        node_layers.mkdir(parents=True)
+        (node_layers / "layers.json").write_text('{"clips":[]}', encoding="utf-8")
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(workflow.subprocess, "run", fake_node)
+    workflow._render_overlay(plan, layers)
+    assert (layers / "layers.json").is_file()
