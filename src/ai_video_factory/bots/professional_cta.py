@@ -33,7 +33,10 @@ class ProfessionalCTAVisualBeat(StrictModel):
                 raise ValueError("Reused avatar must not regenerate an image")
         if self.visual_type == "avatar_media" and self.reference_sources != ["ebook"]:
             raise ValueError("CTA avatar_media must use only the ebook reference")
-        if self.visual_type in {"media_image", "media_video"} and "ebook" not in self.reference_sources:
+        if (
+            self.visual_type in {"media_image", "media_video"}
+            and "ebook" not in self.reference_sources
+        ):
             raise ValueError("Every generated CTA B-roll requires ebook reference")
         if self.visual_type == "avatar" and self.prompt is not None:
             raise ValueError("CTA avatar must reuse the original image")

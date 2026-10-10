@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import io
 import json
-import wave
 from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
@@ -55,12 +54,22 @@ def _plan(avatar: bytes) -> dict:
 
 
 def test_professional_b2_keeps_global_image_style_out_of_bot_prompt() -> None:
-    prompt = files("ai_video_factory.bots.prompts").joinpath("b2_professional.md").read_text(encoding="utf-8").lower()
+    prompt = (
+        files("ai_video_factory.bots.prompts")
+        .joinpath("b2_professional.md")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
     assert "iphone 16/17 pro max" not in prompt
     assert "runtime adds overall photographic style" in prompt
 
 def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
-    prompt = files("ai_video_factory.bots.prompts").joinpath("b2_professional.md").read_text(encoding="utf-8").lower()
+    prompt = (
+        files("ai_video_factory.bots.prompts")
+        .joinpath("b2_professional.md")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
     assert "100% the original avatar speaking" in prompt
     assert "only avatar and avatar_media speak" in prompt
     assert "120 characters" in prompt
@@ -68,11 +77,56 @@ def test_professional_b2_presenter_text_audio_and_expression_guidance() -> None:
     assert "screens and documents" in prompt
 
 def test_professional_prompt_has_no_stock_exclusions() -> None:
-    prompt = files("ai_video_factory.bots.prompts").joinpath("b2_professional.md").read_text(encoding="utf-8").lower()
+    prompt = (
+        files("ai_video_factory.bots.prompts")
+        .joinpath("b2_professional.md")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
     assert "act as a creative editor" in prompt
     assert "last beat of any close block" in prompt
     assert "intro blocks" in prompt
     assert "up to 18" in prompt
+
+def _professional_anchor_output(
+    kind: str, beats: list[dict],
+) -> dict:
+    return {
+        "pipeline_stage": "B2",
+        "narrative_core": {"central_question": "Q", "final_answer": "A"},
+        "blocks": [{
+            "block_id": 1,
+            "type": kind,
+            "emotional_entry": "Starts here",
+            "emotional_exit": "Ends here",
+            "span": {"first_words": "First", "last_words": "Last"},
+            "beats": beats,
+        }],
+        "error": None,
+    }
+
+
+def _professional_beat(
+    beat_id: str, *, visual_type: str = "avatar",
+) -> dict:
+    fields = {
+        "avatar": (None, None, False, True),
+        "avatar_media": ("Support photo", None, False, True),
+        "media_image": ("A still image", None, False, False),
+        "media_video": ("Motion-ready frame", "One controlled action", False, False),
+    }
+    image_prompt, video_prompt, reference, audio = fields[visual_type]
+    return {
+        "beat_id": beat_id,
+        "text": "Preserve the narration exactly.",
+        "beat_type": "setup",
+        "visual_type": visual_type,
+        "prompt": image_prompt,
+        "video_prompt": video_prompt,
+        "reference": reference,
+        "audio": audio,
+    }
+
 
 @pytest.mark.parametrize(
     ("kind", "visuals"),
@@ -138,21 +192,26 @@ def test_professional_close_avatar_cannot_move_off_last_beat() -> None:
 def test_professional_intro_first_beat_may_regenerate_avatar() -> None:
     beat = _professional_beat("1A")
     beat.update(prompt="Generate a new presenter image", reference=True)
-    validated = ProfessionalB2Output.model_validate(
-        _professional_anchor_output("intro", [beat])
-    )
-    assert validated.blocks[0].beats[0].reference is True
+    with pytest.raises(ValidationError, match="Talking avatar must reuse"):
+        ProfessionalB2Output.model_validate(
+            _professional_anchor_output("intro", [beat])
+        )
 
 
 def test_professional_close_last_beat_cannot_regenerate_avatar() -> None:
     beat = _professional_beat("1A")
     beat.update(prompt="Generate a new presenter image", reference=True)
-    with pytest.raises(ValidationError, match="Professional close last beat must reuse"):
+    with pytest.raises(ValidationError, match="Talking avatar must reuse"):
         ProfessionalB2Output.model_validate(_professional_anchor_output("close", [beat]))
 
 
 def test_professional_b2_global_framing_sequence_progression_and_still_audio() -> None:
-    prompt = files("ai_video_factory.bots.prompts").joinpath("b2_professional.md").read_text(encoding="utf-8").lower()
+    prompt = (
+        files("ai_video_factory.bots.prompts")
+        .joinpath("b2_professional.md")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
     assert "audio=false" in prompt
     assert "physical location" in prompt
     assert "singular instants" in prompt
@@ -195,7 +254,9 @@ def test_professional_contract_requires_speaking_generated_shots_to_be_video(
     if accepted:
         assert ProfessionalB2Output.model_validate(data).blocks[0].beats[0].audio is audio
     else:
-        with pytest.raises(ValidationError, match="Only avatar and avatar_media may have audio=true"):
+        with pytest.raises(
+            ValidationError, match="Only avatar and avatar_media may have audio=true"
+        ):
             ProfessionalB2Output.model_validate(data)
 
 
@@ -208,11 +269,18 @@ def test_professional_speaking_media_video_requires_avatar_reference() -> None:
     }
     for reference in (False, True):
         beat["reference"] = reference
-        with pytest.raises(ValidationError, match="Only avatar and avatar_media may have audio=true"):
+        with pytest.raises(
+            ValidationError, match="Only avatar and avatar_media may have audio=true"
+        ):
             ProfessionalVisualBeat.model_validate(beat)
 
 def test_professional_prompt_forbids_frozen_narrator_in_reference_setup() -> None:
-    prompt = files("ai_video_factory.bots.prompts").joinpath("b2_professional.md").read_text(encoding="utf-8").lower()
+    prompt = (
+        files("ai_video_factory.bots.prompts")
+        .joinpath("b2_professional.md")
+        .read_text(encoding="utf-8")
+        .lower()
+    )
     assert "never generate a new image of the narrator in the original reference room" in prompt
     assert "never depict anyone speaking to camera" in prompt
 
@@ -439,8 +507,8 @@ def test_professional_grid_keeps_original_voice_over_as_context() -> None:
 def test_audio_ownership_and_regenerated_avatar_split_ltx_jobs() -> None:
     beats = [
         {"block_id": 1, "beat_id": "1A", "visual_type": "avatar", "prompt": None, "audio": True},
-        {"block_id": 1, "beat_id": "1B", "visual_type": "avatar_media", "prompt": "Support", "audio": True},
-        {"block_id": 1, "beat_id": "1C", "visual_type": "media_video", "prompt": "B-roll", "audio": False},
+        {"block_id": 1, "beat_id": "1B", "visual_type": "avatar_media", "prompt": "Support", "audio": True},  # noqa: E501
+        {"block_id": 1, "beat_id": "1C", "visual_type": "media_video", "prompt": "B-roll", "audio": False},  # noqa: E501
     ]
     assert _group_beats(beats) == [("a2v", 0, 1), ("i2v", 2, 2)]
 
@@ -666,7 +734,9 @@ def test_professional_video_prompt_reaches_i2v_and_owns_paid_identity(
 def test_speaking_media_video_adds_video_prompt_to_a2v_without_rewriting_avatar() -> None:
     from ai_video_factory.workflows.b_video import B2VideoError
     with pytest.raises(B2VideoError, match="must have audio=false"):
-        _group_beats([{"block_id": 1, "beat_id": "1A", "visual_type": "media_video", "audio": True}])
+        _group_beats([
+            {"block_id": 1, "beat_id": "1A", "visual_type": "media_video", "audio": True},
+        ])
 
 def test_style_selector_defaults_to_legacy_for_unattended_execution() -> None:
     assert select_visual_style(None, interactive=False) == "casero"

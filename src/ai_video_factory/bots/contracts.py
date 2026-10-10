@@ -5,7 +5,6 @@ provide JSON transport, so the Markdown code fences requested by the human-reada
 prompt files are intentionally not part of the parsed response.
 """
 
-import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
