@@ -1,0 +1,37 @@
+name: Editorial E1 E2 CI
+
+on:
+  push:
+    branches:
+      - feat/e1-e2-editorial-postproduction
+  pull_request:
+    branches:
+      - main
+      - feat/pro-editor-broll-cta-grid4-chain-no-b3
+
+jobs:
+  python-editorial:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --locked --extra dev
+      - run: uv run --no-sync ruff check src/ai_video_factory/editorial scripts/pipeline/run_b_pipeline.py scripts/pipeline/run_managed.py src/ai_video_factory/publishing.py src/ai_video_factory/managed_media.py tests/unit/editorial
+      - run: uv run --no-sync python -m pytest tests/unit/editorial -q
+
+  remotion-editorial:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: remotion/editorial
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
